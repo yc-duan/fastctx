@@ -179,3 +179,35 @@ export function ticks(points: Point[], every: number, length: number, width: num
   }
   return marks;
 }
+
+/** A round dot of ink, a little off true. */
+export function dot(center: Point, radius: number, random: () => number): string {
+  const points = circlePoints(center, radius, random).slice(0, -4);
+  return `M${points.map(([x, y]) => `${f(x)} ${f(y)}`).join("L")}Z`;
+}
+
+/** A cell of ink with softened corners, each a little off true: a day on
+ *  a calendar, a bar of a chart. */
+export function swatch(x: number, y: number, width: number, height: number, random: () => number, corner = 2.4): string {
+  const jitter = () => (random() - 0.5) * 0.9;
+  const x0 = x + jitter();
+  const y0 = y + jitter();
+  const x1 = x + width + jitter();
+  const y1 = y + height + jitter();
+  const r = Math.max(0, Math.min(corner, width / 2, height / 2));
+  return `M${f(x0 + r)} ${f(y0)}L${f(x1 - r)} ${f(y0 + jitter() * 0.3)}Q${f(x1)} ${f(y0)} ${f(x1)} ${f(y0 + r)}L${f(x1 + jitter() * 0.3)} ${f(y1 - r)}Q${f(x1)} ${f(y1)} ${f(x1 - r)} ${f(y1)}L${f(x0 + r)} ${f(y1 + jitter() * 0.3)}Q${f(x0)} ${f(y1)} ${f(x0)} ${f(y1 - r)}L${f(x0 + jitter() * 0.3)} ${f(y0 + r)}Q${f(x0)} ${f(y0)} ${f(x0 + r)} ${f(y0)}Z`;
+}
+
+/** A dashed line: short ruled strokes along it. */
+export function dashed(from: Point, to: Point, width: number, random: () => number, dash = 6, gap = 5): string {
+  const length = Math.hypot(to[0] - from[0], to[1] - from[1]);
+  if (!length) return "";
+  const ux = (to[0] - from[0]) / length;
+  const uy = (to[1] - from[1]) / length;
+  const parts: string[] = [];
+  for (let at = 0; at < length; at += dash + gap) {
+    const end = Math.min(length, at + dash);
+    parts.push(ruled([from[0] + ux * at, from[1] + uy * at], [from[0] + ux * end, from[1] + uy * end], width, random));
+  }
+  return parts.join("");
+}

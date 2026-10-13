@@ -32,6 +32,11 @@
   border-radius: var(--radius-m);
 }
 
+/* Claude Code's rows carry the weekly amount beside the deadline. */
+.assist-row.weekly {
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+}
+
 .assist-row.editing {
   padding-bottom: var(--space-3);
   background: var(--bg-sunken);
@@ -84,16 +89,18 @@
   gap: var(--space-2);
 }
 
-/* Whom to and until when on the left, the month beside them. */
+/* Whom to and until when on the left, the month beside them; the weekly
+   amount under the deadline. */
 .assist-new {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto auto auto 1fr;
+  grid-template-rows: auto auto auto auto 1fr;
   grid-template-areas:
     "who pick"
     "label pick"
     "choice pick"
-    "said pick";
+    "said pick"
+    "weekly pick";
   column-gap: var(--space-5);
   row-gap: var(--space-2);
   align-items: start;
@@ -115,6 +122,30 @@
   margin-top: var(--space-3);
 }
 
+.assist-new > .assist-weekly {
+  grid-area: weekly;
+}
+
+/* The amount: dollars written in the field, before what is typed. */
+.assist-weekly-input {
+  display: flex;
+  align-items: center;
+  max-width: 220px;
+  padding-left: var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--field);
+  color: var(--text-3);
+}
+
+.field .assist-weekly-input input {
+  padding-left: 4px;
+  background: transparent;
+}
+
+.assist-edit .assist-weekly {
+  margin-top: 0;
+}
+
 @media (max-width: 760px) {
   .assist-new {
     grid-template-columns: minmax(0, 1fr);
@@ -124,7 +155,18 @@
       "label"
       "choice"
       "said"
-      "pick";
+      "pick"
+      "weekly";
+  }
+
+  .assist-row.weekly {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .assist-row.weekly > .assist-until + .assist-until {
+    grid-row: 3;
+    grid-column: 1;
+    justify-self: start;
   }
 }
 

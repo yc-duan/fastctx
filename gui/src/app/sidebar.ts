@@ -25,7 +25,7 @@ import type { WorldNow } from "../world/bridge";
 import type { MachineFacts, ResidentNow } from "../world/world";
 import type { Place } from "./places";
 import { link } from "./places";
-import { groupsOf, isComputer, loginLabel, machinesOf, residentIn } from "./reach";
+import { assistantsOf, groupsOf, isComputer, loginLabel, machinesOf, residentIn } from "./reach";
 import { effect } from "./signals";
 import type { Store } from "./store";
 import type { TalkActs } from "./talk-acts";
@@ -190,6 +190,8 @@ export class Sidebar {
     const waiting = talks.filter((r) => r.now?.waiting_for_user).length;
 
     const machines = !!world && machinesOf(world).length > 0;
+    // Agents of others assisting the user show on the agents page too.
+    const assisted = assistantsOf(world).length > 0;
     const loggedIn = loginsOf(world?.accounts).length > 0;
     const at = (kinds: Place["kind"][]) => (kinds.includes(place.kind) ? " current" : "");
     const top = (href: string, current: string, mark: string, name: string, extra = "") =>
@@ -198,7 +200,7 @@ export class Sidebar {
     // computer of its own.
     const places = `<div class="side-places">
         ${talking ? top(link({ kind: "home" }), at(["home"]), knotMark(), words.world, waiting ? `<span class="count waiting"><span class="spoken">${escape(words.waiting)}</span>${waiting}</span>` : "") : ""}
-        ${machines ? top(link({ kind: "agents", machine: null }), at(["agents"]), glyph("agents", 18), words.agents) : ""}
+        ${machines || assisted ? top(link({ kind: "agents", machine: null }), at(["agents", "usage"]), glyph("agents", 18), words.agents) : ""}
         ${machines ? top(link({ kind: "machines" }), at(["machines", "machine"]), glyph("machine", 18), words.machines) : ""}
         ${machines || loggedIn ? top(link({ kind: "features" }), at(["features", "feature"]), glyph("features", 18), words.features) : ""}
       </div>

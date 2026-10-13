@@ -479,9 +479,10 @@ pub enum Change {
     },
     /// Lets `agent`'s login `home` on `machine`, one of the account's own,
     /// assist `to`, or no longer; none is that agent's default login there.
-    /// Given again, the assistance takes the deadline given now, or none.
-    /// Sent under the name hubs of every version read: a hub that cannot
-    /// read a change ends the connection that sent it.
+    /// Given again, the assistance takes the deadline and the weekly
+    /// allowance given now, or none. Sent under the name hubs of every
+    /// version read: a hub that cannot read a change ends the connection
+    /// that sent it.
     #[serde(rename = "lend")]
     Assist {
         machine: MachineName,
@@ -493,6 +494,8 @@ pub enum Change {
         assisting: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         until: Option<Timestamp>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        weekly: Option<fastctx_types::usage::Usd>,
     },
     /// The super administrator sets the plan shown for `agent`'s login
     /// `home` on `machine`, or takes it away.

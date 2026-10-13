@@ -181,6 +181,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       assists: [
         { machine: "desktop", account: "ada", agent: "codex", home: "C:\\Users\\me\\.codex-work", until: daysAhead(3) },
         { machine: "desktop", account: "bo", agent: "codex", home: "C:\\Users\\me\\.codex-work", until: null },
+        { machine: "desktop", account: "ada", agent: "claude", home: null, until: daysAhead(6), weekly: 20_000_000 },
       ],
       plans: [],
       acting: [{ machine: "gpu", account: "me", since: at("03:42:00") }],
@@ -219,7 +220,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         member("render", "computer", ["ops"], "ops", "00:07:00", true, "4e11d3a9"),
       ],
       shares: [{ machine: "build", account: "yc" }],
-      assists: [{ machine: "render", account: "yc", agent: "claude", home: null, until: daysAhead(1) }],
+      assists: [{ machine: "render", account: "yc", agent: "claude", home: null, until: daysAhead(1), weekly: 40_000_000 }],
       plans: [{ machine: "render", agent: "claude", home: null, plan: "max" }],
       acting: [{ machine: "build", account: "yc", since: at("09:15:00") }],
       projects: [{ name: "ingest", owner: "yc", granted: [] }],
@@ -544,7 +545,7 @@ export function specimenChange(world: WorldNow | null, hub: string, made: Accoun
     const hubs = world.accounts.hubs.map((one) => {
       if (one.hub !== hub) return one;
       const kept = one.assists.filter((assist) => !(assist.machine === made.machine && assist.account === made.to && assist.agent === made.agent && assist.home === home));
-      const assists = made.assisting ? [...kept, { machine: made.machine, account: made.to, agent: made.agent, home, until: made.until ?? null }] : kept;
+      const assists = made.assisting ? [...kept, { machine: made.machine, account: made.to, agent: made.agent, home, until: made.until ?? null, ...(made.weekly ? { weekly: made.weekly } : {}) }] : kept;
       return { ...one, assists };
     });
     return { ...world, accounts: { ...world.accounts, hubs } };

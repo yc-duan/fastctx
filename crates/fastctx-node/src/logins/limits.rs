@@ -30,8 +30,10 @@ pub(crate) fn listen(node: Arc<Node>, mut reports: mpsc::UnboundedReceiver<Limit
     });
 }
 
-/// Records one report of a Codex login's limits.
+/// Records one report of a Codex login's limits, and keeps it as a reading
+/// of the login's windows in its usage ledger.
 pub(super) fn keep(node: &Node, report: LimitsReport) -> std::io::Result<()> {
+    let (home, at) = (report.home.clone(), report.at);
     kept::change(node, |kept| {
         let limits = &mut kept.codex.limits;
         let index = limits.iter().position(|known| crate::homes::same_dir(&known.dir, &report.home));
@@ -60,7 +62,11 @@ pub(super) fn keep(node: &Node, report: LimitsReport) -> std::io::Result<()> {
                 entry.at = report.at;
             }
         }
-    })
+    })?;
+    if let Fact::Known { value } = kept_of(node, &home)? {
+        crate::usage::codex_reading(node, &home, value.windows, at);
+    }
+    Ok(())
 }
 
 /// The limits of the Codex login in `dir` as they were last read or pushed.

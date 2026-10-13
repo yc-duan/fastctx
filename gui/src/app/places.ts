@@ -22,6 +22,8 @@ export type Place =
   | { kind: "machine"; name: string }
   /** The agents on every machine, or on one. */
   | { kind: "agents"; machine: string | null }
+  /** What an agent's login on a machine was used for. */
+  | { kind: "usage"; machine: string; agent: "codex" | "claude"; dir: string }
   /** The features, one card each, and a feature's own page. */
   | { kind: "features" }
   | { kind: "feature"; feature: Feature }
@@ -68,6 +70,8 @@ export function link(place: Place): string {
       return `#/machine/${part(place.name)}`;
     case "agents":
       return place.machine === null ? "#/agents" : `#/agents/${part(place.machine)}`;
+    case "usage":
+      return `#/agents/${part(place.machine)}/${place.agent}/${part(place.dir)}`;
     case "features":
       return "#/features";
     case "feature":
@@ -123,6 +127,7 @@ export function placeOf(hash: string): Place {
       if (parts[1]) return { kind: "machine", name: parts[1] };
       break;
     case "agents":
+      if (parts[1] && (parts[2] === "codex" || parts[2] === "claude") && parts[3]) return { kind: "usage", machine: parts[1], agent: parts[2], dir: parts[3] };
       return { kind: "agents", machine: parts[1] || null };
     case "features":
       return { kind: "features" };

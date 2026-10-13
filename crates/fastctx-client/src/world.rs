@@ -344,6 +344,20 @@ impl World {
         machine_logins(self.ask(Call::ReadAgentLimits { machine, agent, dir }).await?)
     }
 
+    /// What a login on a machine was used for, as this computer's user may
+    /// see it.
+    pub async fn agent_usage(
+        &self,
+        machine: MachineName,
+        agent: fastctx_types::AgentName,
+        dir: std::path::PathBuf,
+    ) -> Result<fastctx_types::usage::UsageReport, Error> {
+        match self.ask(Call::AgentUsage { machine, agent, dir }).await? {
+            Reply::AgentUsage(report) => Ok(*report),
+            other => Err(unexpected(other)),
+        }
+    }
+
     /// The user's word on whether Claude Code on `machine`, in its home
     /// `home` or its default one, may run the World's sessions without
     /// approvals. Answers what it now records and whether that changed.

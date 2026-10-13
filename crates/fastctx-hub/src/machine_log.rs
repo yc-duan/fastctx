@@ -303,13 +303,14 @@ pub(crate) fn action(change: &Change, book: &Book) -> Action {
         Change::Share { machine, to, shared } => {
             Action::Share { machine: machine.clone(), to: to.clone(), shared: *shared }
         }
-        Change::Assist { machine, to, agent, home, assisting, until } => Action::Assist {
+        Change::Assist { machine, to, agent, home, assisting, until, weekly } => Action::Assist {
             machine: machine.clone(),
             to: to.clone(),
             agent: agent.clone(),
             home: home.clone(),
             assisting: *assisting,
             until: until.filter(|_| *assisting),
+            weekly: weekly.filter(|_| *assisting),
         },
         Change::Plan { machine, agent, home, plan } => {
             Action::Plan { machine: machine.clone(), agent: agent.clone(), home: home.clone(), plan: *plan }

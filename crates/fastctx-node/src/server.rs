@@ -897,6 +897,12 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }
+        Call::AgentUsage { machine, agent, dir } => {
+            users_voice(node, peer)?;
+            crate::logins::remote::usage(node, machine, agent, dir)
+                .await
+                .map(|report| Reply::AgentUsage(Box::new(report)))
+        }
         Call::FindFiles { machine, request } => {
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
             crate::file_search::call(node, &acting, machine, request).await.map(Reply::FilesFound)

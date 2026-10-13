@@ -30,7 +30,7 @@ import { agentName, osName, titleOf } from "../world/names";
 import type { AccessWords, MachinesWords } from "./account-words";
 import type { Confirm } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
-import { AssistSheet, type Assistance } from "./assist-sheet";
+import { AssistSheet, assistChange, assistancesIn, type Assistance } from "./assist-sheet";
 import { HubMoving, type HubMovingOptions } from "./hub-moving";
 import { GiveSheet } from "./machine-sheets";
 import { MachineLog, type ReadLog } from "./machine-log";
@@ -595,22 +595,19 @@ export class MachinesPage implements Page {
    *  `login`, with `editing`'s deadline open. */
   private assist(login: Login, machine: string, agent: string, home: string | null, editing: string | null): void {
     const { options } = this;
-    const assistances = (): Assistance[] =>
-      (this.hubOf(login)?.assists ?? [])
-        .filter((assist) => assist.machine === machine && assist.agent === agent && (assist.home ?? null) === home)
-        .map((assist) => ({ to: assist.account, until: assist.until ?? null }));
+    const assistances = (): Assistance[] => assistancesIn(this.hubOf(login)?.assists ?? [], machine, agent, home);
     const name = home ? `${agentName(agent)} · ${home.split(/[\\/]/).filter(Boolean).pop() ?? home}` : agentName(agent);
     this.assistSheet.open(
       options.access.assistTitle(name, machine),
       assistances(),
-      async (to, until, assisting) => {
-        const ends = assisting && until ? { until: until.toISOString() } : {};
-        await options.change(login, { change: "assist", machine, to, agent, ...(home ? { home } : {}), assisting, ...ends });
+      async (to, until, weekly, assisting) => {
+        await options.change(login, assistChange(machine, agent, home, to, until, weekly, assisting));
         await options.store.refresh();
         this.redraw();
         return assistances();
       },
       editing,
+      agent === "claude",
     );
   }
 

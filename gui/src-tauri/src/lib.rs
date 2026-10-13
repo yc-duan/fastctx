@@ -1091,6 +1091,7 @@ pub fn run() {
             logins::preview_agent_change,
             logins::change_agent_login,
             logins::read_agent_limits,
+            logins::agent_usage,
             world_watch::world_now,
             world_watch::world_watch,
             since,

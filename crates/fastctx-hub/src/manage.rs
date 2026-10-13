@@ -181,14 +181,21 @@ fn apply(
             }
             Ok(Told::Done)
         }
-        Change::Assist { machine, to, agent, home, assisting, until } => {
+        Change::Assist { machine, to, agent, home, assisting, until, weekly } => {
             let directory = &mut store.book.directory;
             let owner = own_machine(directory, account, super_, &machine)?;
             other_account(directory, &owner, &to, &machine)?;
             if assisting && until.is_some_and(|until| until <= Timestamp::now()) {
                 return Err("the assistance's deadline has already passed".to_string());
             }
-            let assist = Assist { machine, account: to, agent, home, until: until.filter(|_| assisting) };
+            let assist = Assist {
+                machine,
+                account: to,
+                agent,
+                home,
+                until: until.filter(|_| assisting),
+                weekly: weekly.filter(|_| assisting),
+            };
             directory.assists.retain(|existing| !existing.same(&assist));
             if assisting {
                 directory.assists.push(assist);

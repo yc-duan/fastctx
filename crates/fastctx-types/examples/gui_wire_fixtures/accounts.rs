@@ -119,6 +119,7 @@ fn hub() -> HubAccounts {
                 agent: "codex".parse().unwrap(),
                 home: None,
                 until: None,
+                weekly: None,
             },
             AssistSeen {
                 machine: "gpu".parse().unwrap(),
@@ -126,6 +127,7 @@ fn hub() -> HubAccounts {
                 agent: "claude".parse().unwrap(),
                 home: Some("/home/bo/.claude-team".into()),
                 until: Some("2026-10-20T10:00:00Z".parse().unwrap()),
+                weekly: Some(fastctx_types::usage::Usd(42_500_000)),
             },
         ],
         plans: vec![PlanSeen {
@@ -168,6 +170,16 @@ pub fn fixtures() -> Fixtures {
                 home: Some("C:/Users/ada/.codex-work".into()),
                 assisting: true,
                 until: Some("2026-10-20T10:00:00Z".parse().unwrap()),
+                weekly: None,
+            },
+            AccountChange::Assist {
+                machine: machine(),
+                to: "cy".parse().unwrap(),
+                agent: "claude".parse().unwrap(),
+                home: None,
+                assisting: true,
+                until: None,
+                weekly: Some(fastctx_types::usage::Usd(50_000_000)),
             },
             AccountChange::Plan {
                 machine: "gpu".parse().unwrap(),

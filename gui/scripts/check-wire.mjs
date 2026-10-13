@@ -48,6 +48,7 @@ import type { Choices } from "../src/world/bridge";
 import type { ComposerSnapshot, ComposerMutation, ComposerUpdated } from "../src/world/composer";
 import type { MachineLogPage } from "../src/world/machine-log";
 import type { MachineStats } from "../src/world/stats";
+import type { UsageReport } from "../src/world/usage";
 export const fixture = ${json.trimEnd()} satisfies {
   machine_log: MachineLogPage[];
   composer: { snapshots: ComposerSnapshot[]; mutations: ComposerMutation[]; updated: ComposerUpdated };
@@ -126,6 +127,8 @@ export const fixture = ${json.trimEnd()} satisfies {
   renewal: { requests: MaintenanceRequest[]; responses: MaintenanceResponse[]; statuses: RenewalStatus[]; refused: VersionRefusal };
   // How a machine says it is doing, for its details page.
   stats: { stats: MachineStats[] };
+  // What a login was used for, as its machine's node answers it.
+  usage: { calls: unknown; replies: ({ reply: "agent_usage" } & UsageReport)[]; remote_calls: unknown; remote_replies: unknown };
   // Finding files for an @ mention: what the interface asks and is answered.
   file_search: {
     calls: { call: "find_files"; machine: string | null; request: FileSearchRequest }[];

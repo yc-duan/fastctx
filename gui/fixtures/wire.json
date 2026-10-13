@@ -76,7 +76,8 @@
             "agent": "claude",
             "home": null,
             "lent": true,
-            "until": "2026-10-10T12:00:00Z"
+            "until": "2026-10-10T12:00:00Z",
+            "weekly": 25000000
           },
           "outcome": {
             "kind": "done"
@@ -1645,7 +1646,8 @@
                 "account": "ada",
                 "agent": "claude",
                 "home": "/home/bo/.claude-team",
-                "until": "2026-10-20T10:00:00Z"
+                "until": "2026-10-20T10:00:00Z",
+                "weekly": 42500000
               }
             ],
             "plans": [
@@ -1715,6 +1717,14 @@
         "home": "C:/Users/ada/.codex-work",
         "assisting": true,
         "until": "2026-10-20T10:00:00Z"
+      },
+      {
+        "change": "assist",
+        "machine": "desktop",
+        "to": "cy",
+        "agent": "claude",
+        "assisting": true,
+        "weekly": 50000000
       },
       {
         "change": "plan",
@@ -19846,6 +19856,243 @@
           "started": "2026-10-01T00:00:00Z",
           "service": false
         }
+      }
+    ]
+  },
+  "usage": {
+    "calls": [
+      {
+        "call": "agent_usage",
+        "machine": "desktop",
+        "agent": "claude",
+        "dir": "C:\\Users\\me\\.claude"
+      }
+    ],
+    "replies": [
+      {
+        "reply": "agent_usage",
+        "people": [
+          {
+            "account": null,
+            "week": {
+              "tokens": 61200000,
+              "usd": 96400000
+            }
+          },
+          {
+            "account": {
+              "hub": "w-5be1fcee3751dc7a",
+              "account": "ada"
+            },
+            "week": {
+              "tokens": 3900000,
+              "usd": 5790000
+            }
+          }
+        ],
+        "hours": [
+          {
+            "at": "2026-10-12T09:00:00Z",
+            "person": 0,
+            "tokens": 1840000,
+            "usd": 2910000
+          },
+          {
+            "at": "2026-10-12T09:00:00Z",
+            "person": 1,
+            "tokens": 220000,
+            "usd": 310000
+          },
+          {
+            "at": "2026-10-12T14:00:00Z",
+            "person": 0,
+            "tokens": 960000,
+            "usd": 1480000
+          }
+        ],
+        "week": {
+          "start": "2026-10-08T18:00:00Z",
+          "end": "2026-10-15T18:00:00Z",
+          "window": true,
+          "models": [
+            {
+              "model": "claude-opus-5-5",
+              "tokens": 50800000,
+              "usd": 79500000
+            },
+            {
+              "model": "claude-haiku-5-5",
+              "tokens": 14300000,
+              "usd": 22690000
+            }
+          ],
+          "tokens": {
+            "input": 650000,
+            "cache_read": 58900000,
+            "cache_write": 3900000,
+            "output": 1650000
+          },
+          "kinds_usd": {
+            "input": 3060000,
+            "cache_read": 30600000,
+            "cache_write": 25500000,
+            "output": 43030000
+          }
+        },
+        "readings": [
+          {
+            "at": "2026-10-12T14:20:00Z",
+            "windows": [
+              {
+                "name": "five_hour",
+                "minutes": 300,
+                "used_tenths": 410,
+                "resets_at": "2026-10-12T17:00:00Z"
+              },
+              {
+                "name": "seven_day",
+                "minutes": 10080,
+                "used_tenths": 640,
+                "resets_at": "2026-10-15T18:00:00Z"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "reply": "agent_usage",
+        "people": [
+          {
+            "account": null,
+            "week": {
+              "tokens": 17000000
+            }
+          }
+        ],
+        "hours": [
+          {
+            "at": "2026-10-12T10:00:00Z",
+            "person": 0,
+            "tokens": 2400000
+          }
+        ],
+        "week": {
+          "start": "2026-10-05T14:00:00Z",
+          "end": "2026-10-12T14:00:00Z",
+          "window": false,
+          "models": [
+            {
+              "model": "gpt-6.1-sol",
+              "tokens": 17000000
+            }
+          ],
+          "tokens": {
+            "input": 4000000,
+            "cache_read": 12000000,
+            "output": 834000,
+            "reasoning": 334000
+          }
+        },
+        "readings": []
+      }
+    ],
+    "remote_calls": [
+      {
+        "call": "agent_usage",
+        "agent": "claude",
+        "dir": "C:\\Users\\me\\.claude"
+      }
+    ],
+    "remote_replies": [
+      {
+        "reply": "agent_usage",
+        "people": [
+          {
+            "account": null,
+            "week": {
+              "tokens": 61200000,
+              "usd": 96400000
+            }
+          },
+          {
+            "account": {
+              "hub": "w-5be1fcee3751dc7a",
+              "account": "ada"
+            },
+            "week": {
+              "tokens": 3900000,
+              "usd": 5790000
+            }
+          }
+        ],
+        "hours": [
+          {
+            "at": "2026-10-12T09:00:00Z",
+            "person": 0,
+            "tokens": 1840000,
+            "usd": 2910000
+          },
+          {
+            "at": "2026-10-12T09:00:00Z",
+            "person": 1,
+            "tokens": 220000,
+            "usd": 310000
+          },
+          {
+            "at": "2026-10-12T14:00:00Z",
+            "person": 0,
+            "tokens": 960000,
+            "usd": 1480000
+          }
+        ],
+        "week": {
+          "start": "2026-10-08T18:00:00Z",
+          "end": "2026-10-15T18:00:00Z",
+          "window": true,
+          "models": [
+            {
+              "model": "claude-opus-5-5",
+              "tokens": 50800000,
+              "usd": 79500000
+            },
+            {
+              "model": "claude-haiku-5-5",
+              "tokens": 14300000,
+              "usd": 22690000
+            }
+          ],
+          "tokens": {
+            "input": 650000,
+            "cache_read": 58900000,
+            "cache_write": 3900000,
+            "output": 1650000
+          },
+          "kinds_usd": {
+            "input": 3060000,
+            "cache_read": 30600000,
+            "cache_write": 25500000,
+            "output": 43030000
+          }
+        },
+        "readings": [
+          {
+            "at": "2026-10-12T14:20:00Z",
+            "windows": [
+              {
+                "name": "five_hour",
+                "minutes": 300,
+                "used_tenths": 410,
+                "resets_at": "2026-10-12T17:00:00Z"
+              },
+              {
+                "name": "seven_day",
+                "minutes": 10080,
+                "used_tenths": 640,
+                "resets_at": "2026-10-15T18:00:00Z"
+              }
+            ]
+          }
+        ]
       }
     ]
   }

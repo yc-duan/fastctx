@@ -84,6 +84,7 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }
             | RemoteCall::ReadAgentLimits { .. }
+            | RemoteCall::AgentUsage { .. }
             // What is there, as the account may see it.
             | RemoteCall::Agents
             | RemoteCall::Look { .. }

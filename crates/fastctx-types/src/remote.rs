@@ -235,6 +235,12 @@ pub enum RemoteCall {
         agent: AgentName,
         dir: std::path::PathBuf,
     },
+    /// What a login there was used for: everyone's to an account that may
+    /// work there, its own alone to one the login assists.
+    AgentUsage {
+        agent: AgentName,
+        dir: std::path::PathBuf,
+    },
     /// The documents of a canon there, for a town's map.
     Canon {
         path: String,
@@ -463,6 +469,7 @@ impl RemoteCall {
             RemoteCall::Agents
             | RemoteCall::AgentLogins
             | RemoteCall::ReadAgentLimits { .. }
+            | RemoteCall::AgentUsage { .. }
             | RemoteCall::Look { .. }
             | RemoteCall::Find { .. }
             | RemoteCall::Who { .. }
@@ -513,6 +520,7 @@ pub enum RemoteReply {
     Since(crate::since::SinceReply),
     Agents(AgentsReply),
     AgentLogins(Box<crate::logins::MachineLogins>),
+    AgentUsage(Box<crate::usage::UsageReport>),
     AgentChangePreview(Box<crate::logins::ChangePreview>),
     AgentLoginChanged(Box<crate::logins::LoginChange>),
     FileRead {

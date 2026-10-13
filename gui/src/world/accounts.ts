@@ -118,6 +118,9 @@ export interface AssistSeen {
   home: string | null;
   /** When the assistance ends by itself; null while the owner keeps it on. */
   until: Timestamp | null;
+  /** What the account may spend of the login in a week, in millionths of a
+   *  US dollar; absent is no limit. */
+  weekly?: number;
 }
 
 /** A plan a login names none of (a Claude Code long-lived token), set by
@@ -196,7 +199,7 @@ export interface AccountsReply {
 /** A change made as an account (`fastctx_types::accounts::AccountChange`). */
 export type AccountChange =
   | { change: "share"; machine: MachineName; to: AccountName; shared: boolean }
-  | { change: "assist"; machine: MachineName; to: AccountName; agent: string; home?: string; assisting: boolean; until?: Timestamp }
+  | { change: "assist"; machine: MachineName; to: AccountName; agent: string; home?: string; assisting: boolean; until?: Timestamp; weekly?: number }
   | { change: "plan"; machine: MachineName; agent: string; home?: string; plan: PlanLabel | null }
   | { change: "stop_acting"; machine: MachineName }
   /** The administrator's change: the server checks it reaches the machine

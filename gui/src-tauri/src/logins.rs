@@ -106,6 +106,17 @@ pub(crate) async fn change_agent_login(
         .map_err(|error| error.to_string())
 }
 
+/// What a login on a machine was used for.
+#[fastctx_gui_command::command]
+pub(crate) async fn agent_usage(
+    shell: tauri::State<'_, Shell>,
+    machine_name: String,
+    agent_name: String,
+    dir: PathBuf,
+) -> Result<fastctx_types::usage::UsageReport, String> {
+    shell.world().agent_usage(machine(machine_name)?, agent(agent_name)?, dir).await.map_err(|error| error.to_string())
+}
+
 /// Reads a login's limits afresh on its machine.
 #[fastctx_gui_command::command]
 pub(crate) async fn read_agent_limits(

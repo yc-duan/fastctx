@@ -115,8 +115,9 @@ pub enum AccountChange {
     /// Lets one login of an agent on `machine`, one of the account's own,
     /// assist `to`; or no longer. `home` is the login's directory as
     /// `machine` writes it, none for that agent's default login there.
-    /// `until` is when the assistance ends by itself; assisting again sets
-    /// it anew.
+    /// `until` is when the assistance ends by itself; `weekly` is what
+    /// `to` may spend of a Claude Code login in a week of its own seven-day
+    /// window; assisting again sets both anew.
     Assist {
         machine: MachineName,
         to: AccountName,
@@ -126,6 +127,8 @@ pub enum AccountChange {
         assisting: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         until: Option<Timestamp>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        weekly: Option<crate::usage::Usd>,
     },
     /// The plan shown for one login of an agent on `machine`, set by the
     /// hub's super administrator on a login that names none (a Claude Code
@@ -329,6 +332,9 @@ pub struct AssistSeen {
     /// When the assistance ends by itself; none while the owner keeps it
     /// on.
     pub until: Option<Timestamp>,
+    /// What the account may spend of the login in a week; none is no limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weekly: Option<crate::usage::Usd>,
 }
 
 /// A plan a login names none of, as the hub's super administrator set it

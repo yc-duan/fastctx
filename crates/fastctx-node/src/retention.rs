@@ -111,6 +111,7 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
                 crate::books::retire(&retiring)
                     .and(crate::claude::garbage::collect(&retiring.world))
                     .and(crate::claude::garbage::untrust_departed(&retiring))
+                    .and(crate::usage::collect(&retiring))
                     .and(crate::gather::sweep(&retiring.world))
             })
             .await

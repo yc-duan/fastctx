@@ -39,6 +39,10 @@ import { AdminPage } from "./app/admin";
 import { LoginPage } from "./app/login";
 import { MachinesPage } from "./app/machines";
 import { AgentLoginsPage } from "./app/agent-logins";
+import { LoginUsagePage } from "./app/usage/login-page";
+import { enUsage, zhUsage } from "./app/usage/words";
+import "./app/usage/usage.css";
+import { specimenUsage } from "./specimen/usage";
 import { enAgentLogins, zhAgentLogins } from "./app/agent-logins-words";
 import { enAgentChange, zhAgentChange } from "./app/agent-change";
 import "./app/agent-logins.css";
@@ -105,7 +109,7 @@ import {
 import { enRemoval, zhRemoval } from "./app/removal-words";
 import { enAccess, enAccount, enAdmin, enLogin, enMachines, enToken, zhAccess, zhAccount, zhAdmin, zhLogin, zhMachines, zhToken } from "./app/account-words";
 import { loginsOf, type AccountChange, type Login } from "./world/accounts";
-import { assistantOf, assistantsOf, fileHome, filePlaces, groupsOf, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
+import { assistantOf, assistantsOf, fileHome, filePlaces, groupsOf, loginKey, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
 import type { FocusPlace } from "./app/focus-panel";
 import { folders as foldersOf, noFocus, type Focus, type Folders } from "./world/focus";
 import { Details } from "./conversation/details";
@@ -167,6 +171,7 @@ import {
   addAgentLogin,
   agentFolder,
   agentLogins,
+  agentUsage,
   changeAgentLogin,
   pickFolder,
   previewAgentChange,
@@ -290,13 +295,15 @@ let place: Place = { kind: "home" };
 /** The pages one comes into from another, which have a way back in their
  *  head (`world-gui.md`, 界面的结构); the sidebar's own pages have none. */
 function inner(at: Place): boolean {
-  return ["feature", "data", "admin", "network", "journal", "page", "file", "login", "talks", "archived", "machine"].includes(at.kind);
+  return ["feature", "data", "admin", "network", "journal", "page", "file", "login", "talks", "archived", "machine", "usage"].includes(at.kind);
 }
 
 /** Where a page's back goes when it was not come into from another page,
  *  as when the window opened on it. */
 function parentOf(at: Place): Place {
   switch (at.kind) {
+    case "usage":
+      return { kind: "agents", machine: at.machine };
     case "feature":
       return { kind: "features" };
     case "data":
@@ -321,6 +328,7 @@ function placeName(at: Place): string {
     case "home":
       return deviceFeatures.conversations.peek() ? shellWords.world : shellWords.agents;
     case "agents":
+    case "usage":
       return shellWords.agents;
     case "machines":
     case "machine":
@@ -1745,8 +1753,14 @@ function show(next: Place): void {
         words: english ? enAgentLogins : zhAgentLogins,
         changeWords: english ? enAgentChange : zhAgentChange,
         access: english ? enAccess : zhAccess,
+        usage: english ? enUsage : zhUsage,
         head,
         machine: next.machine,
+        showing: (machine) => {
+          // The address follows the machine shown, without coming anew.
+          place = { kind: "agents", machine };
+          history.replaceState(history.state, "", link(place));
+        },
         when,
         workbench: deviceFeatures.conversations,
         read: (machine) => (live ? agentLogins(machine) : specimenLogins(machine, specimen.now)),
@@ -1760,8 +1774,24 @@ function show(next: Place): void {
         preview: (machine, agent, dir, into) => (live ? previewAgentChange(machine, agent, dir, into) : specimenPreview(machine, agent, dir, into)),
         change: (machine, agent, dir, into, raise) => (live ? changeAgentLogin(machine, agent, dir, into, raise) : specimenLoginChange(machine, agent, dir, into)),
         limits: (machine, agent, dir) => (live ? readAgentLimits(machine, agent, dir) : notLive()),
+        usageOf: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen.now)),
         change_: change,
         confirm: accountConfirm,
+      });
+      break;
+    case "usage":
+      page = new LoginUsagePage({
+        store,
+        words: english ? enUsage : zhUsage,
+        logins: english ? enAgentLogins : zhAgentLogins,
+        head,
+        machine: next.machine,
+        agent: next.agent,
+        dir: next.dir,
+        workbench: deviceFeatures.conversations,
+        read: (machine) => (live ? agentLogins(machine) : specimenLogins(machine, specimen.now)),
+        usage: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen.now)),
+        talk: (machine, agent, home) => beginTalk(null, loginKey(machine, agent, home), machine),
       });
       break;
     case "talks":

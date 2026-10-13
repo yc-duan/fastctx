@@ -8,10 +8,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use fastctx_net::link::CallFailure;
-use fastctx_types::access::{Acting, Purpose};
+use fastctx_types::access::{Acting, HubAccount, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::logins::{ChangePreview, FolderChange, LoginChange, MachineLogins, MachineLoginsHeard, WorldLogins};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
+use fastctx_types::usage::UsageReport;
 use fastctx_types::{AgentName, MachineName};
 
 use crate::Node;
@@ -224,6 +225,37 @@ pub(crate) async fn read_limits(
     }
 }
 
+/// What `agent`'s login `dir` on `machine` was used for, as this computer's
+/// user may see it.
+pub(crate) async fn usage(
+    node: &Arc<Node>,
+    machine: MachineName,
+    agent: AgentName,
+    dir: PathBuf,
+) -> Result<UsageReport, Failure> {
+    if node.is_me(&machine) {
+        return here_usage(node, agent, dir, None).await;
+    }
+    match ask(node, &machine, Purpose::Look, RemoteCall::AgentUsage { agent, dir }).await? {
+        RemoteReply::AgentUsage(report) => Ok(*report),
+        _ => Err(other(&machine)),
+    }
+}
+
+/// What a login here was used for: everyone's, or `only`'s alone.
+async fn here_usage(
+    node: &Arc<Node>,
+    agent: AgentName,
+    dir: PathBuf,
+    only: Option<HubAccount>,
+) -> Result<UsageReport, Failure> {
+    let node = node.clone();
+    tokio::task::spawn_blocking(move || crate::usage::report(&node, agent.as_str(), &dir, only.as_ref()))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(format!("reading what the login was used for: {error}")))
+}
+
 /// Answers another machine's call about this machine's logins, for
 /// `asker`, whom the door let in.
 pub(crate) async fn answer(
@@ -265,6 +297,22 @@ pub(crate) async fn answer(
             let dir = login.dir.clone();
             super::limits::read(node, &agent, &dir).await?;
             super::here(node).await.map(logins)
+        }
+        RemoteCall::AgentUsage { agent, dir } => {
+            let record = super::here(node).await?;
+            let side = record.of(agent.as_str()).ok_or_else(|| Failure::not_run(format!("{agent} keeps no logins")))?;
+            let login = side
+                .listed
+                .iter()
+                .find(|login| crate::homes::same_dir(&login.dir, &dir))
+                .filter(|login| may_see(view, asker, &agent, &login.dir, login.default))
+                .ok_or_else(|| {
+                    Failure::not_run(format!("no {agent} login {} here is the account's to see", dir.display()))
+                })?;
+            let only = (!asker.hands).then(|| HubAccount { hub: asker.hub.clone(), account: asker.account.clone() });
+            here_usage(node, agent, login.dir.clone(), only)
+                .await
+                .map(|report| RemoteReply::AgentUsage(Box::new(report)))
         }
         _ => Err(Failure::new("not a call about the agents' logins")),
     }

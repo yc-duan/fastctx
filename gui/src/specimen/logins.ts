@@ -8,21 +8,29 @@
 // Times are told from `at`, the specimen's own morning.
 
 import type { ChangePreview, Folder, FolderChange, FoundIn, Login, LoginChange, MachineLogins, WorldLogins } from "../world/logins";
+import { specimenLimits } from "./usage";
 
 let base = Date.now();
 const ago = (minutes: number) => new Date(base - minutes * 60_000).toISOString();
 const later = (minutes: number) => new Date(base + minutes * 60_000).toISOString();
 
-const limits = (five: number, week: number) => ({
+const limits = (five: number, week: number, weekResets = 3 * 1440) => ({
   kind: "known" as const,
   value: {
     observed_at: ago(3),
     windows: [
       { name: "five_hour", minutes: 300, used_tenths: five, resets_at: later(140) },
-      { name: "seven_day", minutes: 10080, used_tenths: week, resets_at: later(3 * 1440) },
+      { name: "seven_day", minutes: 10080, used_tenths: week, resets_at: later(weekResets) },
     ],
   },
 });
+
+/** The limits a listed login says now: those its usage specimen climbs
+ *  to, so its rings and its readings agree. */
+const limitsOf = (machine: string, agent: string, dir: string, five: number, week: number) => {
+  const said = specimenLimits(machine, agent, dir);
+  return said ? limits(said.five, said.week, said.resetsIn / 60_000) : limits(five, week);
+};
 
 const HOMES = "C:\\Users\\me\\CodexHomes";
 
@@ -94,8 +102,8 @@ function desktop(now: number): MachineLogins {
         { how: "desktop_app", within: { name: "ChatGPT", id: "OpenAI.ChatGPT", version: "26.1007.2314.0", path: "C:\\Program Files\\WindowsApps\\OpenAI.ChatGPT" }, on_path: false },
       ],
       listed: [
-        { dir: "C:\\Users\\me\\.codex", default: true, found: "default", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "chatgpt", email: "me@example.com", plan: "pro" } } }, limits: limits(412, 233), programs: [0, 1], integration: "in" },
-        { dir: "C:\\Users\\me\\.codex-work", default: false, found: "home", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "chatgpt", email: "work@example.com", plan: "plus" } } }, limits: limits(880, 610), programs: [0], integration: "in" },
+        { dir: "C:\\Users\\me\\.codex", default: true, found: "default", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "chatgpt", email: "me@example.com", plan: "pro" } } }, limits: limitsOf("desktop", "codex", "C:\\Users\\me\\.codex", 412, 233), programs: [0, 1], integration: "in" },
+        { dir: "C:\\Users\\me\\.codex-work", default: false, found: "home", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "chatgpt", email: "work@example.com", plan: "plus" } } }, limits: limitsOf("desktop", "codex", "C:\\Users\\me\\.codex-work", 880, 610), programs: [0], integration: "in" },
       ],
       candidates: takenUp.filter((one) => one.agent === "codex").map((one) => candidate("codex", one.dir)),
       elsewhere: [],
@@ -103,7 +111,7 @@ function desktop(now: number): MachineLogins {
     claude: {
       programs: [{ path: "C:\\Users\\me\\.local\\bin\\claude.exe", how: "official", version: "2.1.296", on_path: true }],
       listed: [
-        { dir: "C:\\Users\\me\\.claude", default: true, found: "default", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "oauth_token" } } }, limits: { kind: "unavailable", reason: "not read yet" }, programs: [0], integration: "in", unattended: true },
+        { dir: "C:\\Users\\me\\.claude", default: true, found: "default", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "oauth_token" } } }, limits: limitsOf("desktop", "claude", "C:\\Users\\me\\.claude", 410, 640), programs: [0], integration: "in", unattended: true },
       ],
       candidates: [
         { dir: "C:\\Users\\me\\.claude-max", default: false, found: "home", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "claude.ai", email: "me@example.com", plan: "max" } } }, limits: limits(120, 300), programs: [0], integration: "out" },
@@ -123,9 +131,48 @@ export function specimenLogins(machine: string | null, at: Date): Promise<WorldL
       { kind: "answered", logins: desktop(Date.now()) },
       { kind: "answered", logins: laptop() },
       { kind: "offline", machine: "studio", since: ago(12 * 60) },
+      ...others(),
     ],
   };
-  return Promise.resolve(machine ? { ...all, machines: all.machines.filter((one) => (one.kind === "answered" ? one.logins.machine : one.machine) === machine) } : all);
+  if (!machine) return Promise.resolve(all);
+  const found = all.machines.filter((one) => (one.kind === "answered" ? one.logins.machine : one.machine) === machine);
+  return Promise.resolve({ ...all, machines: found.length ? found : [{ kind: "no_answer", machine, reason: "the specimen has no record of it" }] });
+}
+
+/** A machine scanned with one listed login of `agent`: its default one,
+ *  and the program that uses it where `programs`. */
+function scanned(machine: string, agent: "codex" | "claude", dir: string, who: string | null, plan: string | null, programs: boolean): MachineLogins {
+  const empty = { programs: [], listed: [], candidates: [], elsewhere: [] };
+  const program = { path: `/usr/local/bin/${agent}`, how: "npm" as const, version: agent === "codex" ? "0.160.0" : "2.1.296", on_path: true };
+  const login: Login = {
+    dir,
+    default: true,
+    found: "default",
+    identity: { at: ago(30), who: { kind: "known", value: { logged_in: true, method: agent === "codex" ? "chatgpt" : "claude.ai", ...(who ? { email: who } : {}), ...(plan ? { plan } : {}) } } },
+    limits: specimenLimits(machine, agent, dir) ? limitsOf(machine, agent, dir, 0, 0) : { kind: "unavailable", reason: "not read yet" },
+    programs: programs ? [0] : [],
+    integration: "in",
+  };
+  return { machine, scan: { started_at: ago(300), usual: { state: "done", at: ago(300) } }, codex: empty, claude: empty, [agent]: { ...empty, programs: programs ? [program] : [], listed: [login] } };
+}
+
+/** The other machines the specimen's user may look at: lab and server,
+ *  their own; bo's gpu, which they see as the administrator; at work, the
+ *  build shared with them and render, whose Claude Code assists them. */
+function others(): WorldLogins["machines"] {
+  const lab = scanned("lab", "codex", "/home/me/.codex", "me@example.com", "pro", true);
+  const server = scanned("server", "codex", "/root/.codex", null, null, false);
+  const render = scanned("render", "claude", "/home/ops/.claude", "ops@acme.example", "max", false);
+  // What render shows an account it assists: its listed assisting login
+  // alone, without its scan.
+  delete render.scan;
+  return [
+    { kind: "answered", logins: { ...lab, codex: { ...lab.codex, listed: lab.codex.listed.map((login) => ({ ...login, limits: { kind: "unavailable", reason: "not read yet" } })) } } },
+    { kind: "answered", logins: { ...server, codex: { programs: [], listed: [], candidates: [], elsewhere: [] } } },
+    { kind: "answered", logins: scanned("gpu", "claude", "/home/bo/.claude", "bo@example.com", "max", true) },
+    { kind: "answered", logins: scanned("build", "codex", "/home/ops/.codex", "ops@acme.example", "team", true) },
+    { kind: "answered", logins: render },
+  ];
 }
 
 function laptop(): MachineLogins {

@@ -235,6 +235,18 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
 }
 
 /// The most specific login whose sessions a Claude transcript is among.
+/// The Claude Code login a session's transcript is kept in, among those the
+/// World knows here; the default one when it is in none of them.
+pub(crate) fn claude_login_of(node: &Node, transcript: &Path) -> Result<PathBuf, Failure> {
+    let context = Context::of(node)?;
+    let kept = kept::read(node).map_err(|error| Failure::new(format!("reading the agents' logins: {error}")))?;
+    let homes: Vec<AgentHome> = dirs(node, &context, &kept, "claude")?
+        .into_iter()
+        .map(|(dir, _)| AgentHome { dir, found: HomeFound::Added })
+        .collect();
+    Ok(owner(&homes, transcript).map(Path::to_path_buf).unwrap_or(context.claude_default))
+}
+
 fn owner<'a>(homes: &'a [AgentHome], transcript: &Path) -> Option<&'a Path> {
     crate::homes::limits_home(homes, transcript).map(|home| home.dir.as_path())
 }

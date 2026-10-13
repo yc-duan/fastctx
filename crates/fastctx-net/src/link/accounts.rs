@@ -38,9 +38,9 @@ impl Link {
         };
         let wire = match change {
             AccountChange::Share { machine, to, shared } => Change::Share { machine, to, shared },
-            AccountChange::Assist { machine, to, agent, home, assisting, until } => {
+            AccountChange::Assist { machine, to, agent, home, assisting, until, weekly } => {
                 return self
-                    .assist(account, Assist { machine, account: to, agent, home, until }, assisting)
+                    .assist(account, Assist { machine, account: to, agent, home, until, weekly }, assisting)
                     .await
                     .map(|()| None);
             }
@@ -88,35 +88,42 @@ impl Link {
     }
 
     /// Lets `assist`'s login assist as `account`, or no longer. A hub from
-    /// before assistance had deadlines drops the deadline it does not know
-    /// and keeps the assistance without one; one meant to end must not
-    /// outlive it, so it is ended at once and the owner told why.
+    /// before assistance had deadlines or weekly allowances drops what it
+    /// does not know and keeps the assistance without it; one meant to end,
+    /// or to stop at an allowance, must not outlive that, so it is ended at
+    /// once and the owner told why.
     async fn assist(&self, account: &AccountName, assist: Assist, assisting: bool) -> Result<(), String> {
-        let change = |assisting: bool, until: Option<Timestamp>| Change::Assist {
+        let change = |assisting: bool, until: Option<Timestamp>, weekly| Change::Assist {
             machine: assist.machine.clone(),
             to: assist.account.clone(),
             agent: assist.agent.clone(),
             home: assist.home.clone(),
             assisting,
             until,
+            weekly,
         };
-        self.manage(account, change(assisting, assist.until)).await?;
-        if !assisting || assist.until.is_none() {
+        self.manage(account, change(assisting, assist.until, assist.weekly)).await?;
+        if !assisting || (assist.until.is_none() && assist.weekly.is_none()) {
             return Ok(());
         }
         let hub = self.hub_name();
-        // The view read again after the change: the assistance with its
-        // deadline, the assistance without one (a hub that does not know
-        // deadlines), or not what was just asked (the view could not be
-        // read again).
-        let why = match self.view().assists.iter().find(|found| found.same(&assist)).map(|found| found.until) {
-            Some(kept) if kept == assist.until => return Ok(()),
-            Some(None) => {
+        // The view read again after the change: the assistance as asked,
+        // the assistance without what a hub of an older version does not
+        // know, or not what was just asked (the view could not be read
+        // again).
+        let kept =
+            self.view().assists.iter().find(|found| found.same(&assist)).map(|found| (found.until, found.weekly));
+        let why = match kept {
+            Some((until, weekly)) if until == assist.until && weekly == assist.weekly => return Ok(()),
+            Some((None, _)) if assist.until.is_some() => {
                 format!("the hub {hub} keeps no deadline on assistance; upgrade it to assist until a set time")
             }
-            _ => format!("the hub {hub} could not be asked whether it kept the deadline; give the assistance again"),
+            Some(_) => {
+                format!("the hub {hub} keeps no weekly allowance on assistance; upgrade it to assist up to an amount")
+            }
+            None => format!("the hub {hub} could not be asked whether it kept the assistance as given; give it again"),
         };
-        match self.manage(account, change(false, None)).await {
+        match self.manage(account, change(false, None, None)).await {
             Ok(_) => Err(format!("{why}. The assistance was ended")),
             Err(error) => Err(format!("{why}. Ending the assistance failed too: {error}; end it by hand")),
         }
@@ -191,6 +198,7 @@ impl Link {
                     agent: assist.agent.clone(),
                     home: assist.home.clone(),
                     until: assist.until,
+                    weekly: assist.weekly,
                 })
                 .collect(),
             plans: view

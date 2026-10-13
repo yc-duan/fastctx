@@ -1,11 +1,12 @@
 //! A session on a login assisting another account works for the accounts
 //! it assists (`world-network.md`, 共享机器与智能体协助), and takes a new
-//! turn only while one of them may still use that login here. When the
-//! assistance is ended or reaches its deadline, the turn already running
-//! goes on, which the owner sees and may stop (收回立刻生效); nothing starts
-//! another: words, a colleague's answer or a queued message for it stay
-//! kept, and go in with whatever is next handed to it once the login
-//! assists them again.
+//! turn only while one of them may still use that login here, within the
+//! weekly allowance the assistance gives it (`usage`). When the assistance
+//! is ended or reaches its deadline, the turn already running goes on,
+//! which the owner sees and may stop (收回立刻生效); nothing starts another:
+//! words, a colleague's answer or a queued message for it stay kept, and go
+//! in with whatever is next handed to it once the login assists them again,
+//! or their next week begins.
 
 use fastctx_types::access::Acting;
 use fastctx_types::ipc::Failure;
@@ -21,16 +22,27 @@ use crate::Node;
 pub(crate) fn may_turn(node: &Node, about: &About) -> Result<(), Failure> {
     let Acting::Accounts { accounts } = &about.acting else { return Ok(()) };
     let mut refused = Vec::new();
+    let mut spent = None;
     for account in accounts {
         let Some(link) = node.link_of(&account.hub) else { continue };
         let view = link.view();
         let Some(here) = view.me().map(|me| me.name.clone()) else { continue };
-        if view.logged_in(&here, &account.account)
-            || view.may_use_login(&account.account, &here, &about.host.agent, about.home.as_deref())
-        {
+        if view.logged_in(&here, &account.account) {
             return Ok(());
         }
+        if view.may_use_login(&account.account, &here, &about.host.agent, about.home.as_deref()) {
+            match crate::usage::used_up(node, about, account) {
+                None => return Ok(()),
+                Some(used) => {
+                    spent.get_or_insert(used.said(account));
+                    continue;
+                }
+            }
+        }
         refused.push(account.account.to_string());
+    }
+    if let Some(said) = spent {
+        return Err(Failure::not_run(said));
     }
     if refused.is_empty() {
         return Ok(());

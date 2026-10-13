@@ -101,6 +101,10 @@ pub struct Assist {
     /// When the assistance ends by itself; none while the owner keeps it on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until: Option<Timestamp>,
+    /// What the account may spend of the login in a week of its own
+    /// seven-day window (a Claude Code login's); none is no limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weekly: Option<fastctx_types::usage::Usd>,
 }
 
 impl Assist {
@@ -110,7 +114,7 @@ impl Assist {
     }
 
     /// Whether `other` is the same login assisting the same account,
-    /// whatever its deadline.
+    /// whatever its deadline and allowance.
     pub fn same(&self, other: &Assist) -> bool {
         self.machine == other.machine && self.account == other.account && other.is(&self.agent, self.home.as_deref())
     }

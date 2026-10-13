@@ -1391,7 +1391,9 @@ pub(crate) fn untrust(directory: &Path, home: Option<&Path>) -> Result<(), Strin
     let env = environment().map_err(|failure| failure.message)?;
     let configured = match home {
         Some(home) => Some(home.as_os_str().to_owned()),
-        None => env.into_iter().find(|(name, _)| name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR")).map(|(_, value)| value),
+        None => {
+            env.into_iter().find(|(name, _)| name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR")).map(|(_, value)| value)
+        }
     };
     let key = claude::trust::uninstall_key(directory).map_err(|error| error.to_string())?;
     claude::trust::remove_world_trust(configured.as_deref(), &key).map(|_| ()).map_err(|error| error.to_string())

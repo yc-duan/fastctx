@@ -95,10 +95,24 @@ pub struct AssistArgs {
     /// ended.
     #[arg(long, conflicts_with = "off", value_parser = deadline)]
     until: Option<Timestamp>,
+    /// What the account may spend of a Claude Code login in a week of the
+    /// login's own seven-day window, in US dollars as its cost ledger
+    /// counts them, such as 50; no limit when not given.
+    #[arg(long, conflicts_with = "off", value_parser = dollars)]
+    weekly: Option<fastctx_types::usage::Usd>,
     #[arg(long = "as")]
     owner: Option<AccountName>,
     #[arg(long)]
     hub: Option<HubName>,
+}
+
+/// An amount of US dollars as typed, such as 50 or 12.5.
+fn dollars(text: &str) -> Result<fastctx_types::usage::Usd, String> {
+    let amount: f64 =
+        text.trim().trim_start_matches('$').parse().map_err(|_| format!("{text} is not an amount of dollars"))?;
+    fastctx_types::usage::Usd::from_dollars(amount)
+        .filter(|usd| usd.0 > 0)
+        .ok_or_else(|| format!("{text} is not an amount of dollars above zero"))
 }
 
 /// A deadline as typed: a timestamp, or a date and time on this
@@ -328,6 +342,7 @@ pub fn assist(args: AssistArgs) -> anyhow::Result<()> {
         home: args.home,
         assisting: !args.off,
         until: args.until,
+        weekly: args.weekly,
     };
     self::change(args.hub, owner, change)?;
     if args.off {

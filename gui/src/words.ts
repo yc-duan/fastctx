@@ -1,4 +1,5 @@
 import type { HealthKind } from "./world/events";
+import { enProblems, zhProblems } from "./app/problem";
 import type { FileLinkWords } from "./conversation/file-links";
 import type { PictureWords } from "./conversation/pictures";
 import type { QueueWords } from "./conversation/queue";
@@ -216,6 +217,9 @@ export interface Words {
   /** What the session's host said of its own health, in a plain line; the
    *  host's words go on hover. */
   health: Record<HealthKind, string>;
+  /** An assistance's weekly amount spent, and when its week ends: a turn
+   *  stopped for it says so. */
+  allowanceUsed(amount: string, until: Date): string;
   /** Links an agent writes to files. */
   files: FileLinkWords;
   /** The conversation's pictures, small and over the whole window. */
@@ -462,6 +466,7 @@ export const zh: Words = {
     warning: "有一条提醒",
     error: "这一轮出错了",
   },
+  allowanceUsed: zhProblems.allowanceUsed,
   files: {
     reveal: "在文件夹中显示",
     copyPath: "复制路径",
@@ -707,6 +712,7 @@ export const en: Words = {
     warning: "A notice",
     error: "This turn hit an error",
   },
+  allowanceUsed: enProblems.allowanceUsed,
   files: {
     reveal: "Show in folder",
     copyPath: "Copy path",

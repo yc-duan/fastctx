@@ -47,6 +47,7 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
     if about.host.agent.as_str() == "claude" {
         crate::claude::turn_facts::observe(&directory, &event.happened)?;
     }
+    crate::usage::measurement(node, id, &about, &event).await;
     crate::run_facts::attach(&directory, &mut event)?;
     if let Happened::Changed { change: SessionChange::Status { waiting_for_user: Some(waiting), .. }, .. } =
         &event.happened
@@ -237,6 +238,9 @@ async fn finish_at(
         readers.extend(handover.inputs.iter().flat_map(|input| input.readers.iter().cloned()));
     }
     let (finished, first) = crate::delivery::finish_at(&directory, turn, end, &readers, ended_at)?;
+    if first {
+        crate::usage::turn_ended(node, id, &about, &finished.end, ended_at.unwrap_or_else(Timestamp::now));
+    }
     if !first && directory.path().join("books-retired").try_exists()? {
         return Ok(());
     }

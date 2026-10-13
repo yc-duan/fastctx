@@ -30,7 +30,7 @@
 // appears only once the turn is over.
 
 import { layerOpened } from "../app/back";
-import type { AgentActivity, Content, MachineName, Notice, Speaker, Tool, TurnEnd } from "../world/events";
+import type { AgentActivity, Content, Health, MachineName, Notice, Speaker, Tool, TurnEnd } from "../world/events";
 import { STOPPED_BY_USER } from "../world/events";
 import type { Attachment } from "../world/attachments";
 import type { Decoding } from "../world/remote-lines";
@@ -51,7 +51,7 @@ import { DiffLines, RemoteDiff, diffPaint, memoryDiff } from "./diff-lines";
 import { headline, onlyWrites, tenseOf, writeHeadline } from "./tool";
 import { drawDiagrams } from "./diagrams";
 import { readTold, worldSaid, type WorldSaid } from "./told";
-import { detailOf } from "../app/problem";
+import { allowanceOf, detailOf } from "../app/problem";
 import { AnchorLayout, AnchoredHeight } from "../longview";
 import { FEW, LongText, type LongLines, type LongTextWords, type OtherSource } from "./long-text";
 import { Said, WholeOutput, outputPaint, type OpenedLines } from "./run-output";
@@ -1031,7 +1031,7 @@ export class ConversationView {
         return `<div class="note ${entry.end.how === "failed" ? "wrong" : "caution"}">${escape(said)}</div>`;
       }
       case "health":
-        return `<div class="note caution" title="${escape(entry.health.text)}">${escape(this.context.words.health[entry.health.kind] ?? entry.health.text)}</div>`;
+        return `<div class="note caution" title="${escape(entry.health.text)}">${escape(healthSaid(entry.health, this.context.words))}</div>`;
       case "uncertain":
         // Words that never began a conversation: it could not start, and
         // why, as it was given, where the first words wait.
@@ -1342,7 +1342,7 @@ export class ConversationView {
       }
       case "health":
         ok = false;
-        said = `${notice.label} · ${words.health[notice.health.kind] ?? notice.health.text}`;
+        said = `${notice.label} · ${healthSaid(notice.health, words)}`;
         break;
       case "world": {
         const fact = notice.fact;
@@ -2447,9 +2447,17 @@ function turnInfo(end: TurnEnd, words: Words, english: boolean): [string, string
   return rows;
 }
 
+/** A host's word on the session's health, in a plain line: a turn stopped
+ *  at an assistance's weekly amount says so and until when. */
+function healthSaid(health: Health, words: Words): string {
+  const allowance = health.kind === "warning" ? allowanceOf(health.text) : null;
+  if (allowance) return words.allowanceUsed(allowance.amount, allowance.until);
+  return words.health[health.kind] ?? health.text;
+}
+
 /** A model as people call it: `claude-opus-5-5` is Opus 5.5; any other
  *  name as its host writes it. */
-function modelName(id: string): string {
+export function modelName(id: string): string {
   const claude = /^claude-([a-z]+)-(\d+)(?:-(\d+))?(?:-\d{8})?$/.exec(id);
   if (!claude) return id;
   const [, family, major, minor] = claude;

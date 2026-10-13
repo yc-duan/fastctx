@@ -1,10 +1,130 @@
-/* The agents page: a tab for each agent, a section per machine, the logins
-   as slips; candidates as quiet rows; the change card over the page. */
+/* The agents page: the machine shown chosen in the head, a tab for each
+   agent, the logins listed as rows; candidates and folders as quiet rows
+   below; the change card over the page. */
+
+/* The head's machine: a pill with whether it is online, opening the menu
+   of every machine the page can show. */
+.agents-pick-place {
+  position: relative;
+  display: inline-flex;
+  align-self: center;
+  min-width: 0;
+  margin-left: var(--space-2);
+}
+
+.agents-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 8px 0 12px;
+  border-radius: var(--radius-full);
+  background: var(--fill);
+  color: var(--text-strong);
+  font-size: var(--size-ui);
+  transition: background-color var(--hover) ease;
+}
+
+.agents-pick:hover,
+.agents-pick[aria-expanded="true"] {
+  background: var(--fill-strong);
+}
+
+.agents-pick > svg {
+  flex: none;
+  color: var(--text-3);
+}
+
+.agents-pick-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agents-pick-sub {
+  flex: none;
+  font-size: var(--size-small);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.agents-pick-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--pen-trace);
+}
+
+.agents-pick-dot.online {
+  background: var(--alive);
+}
+
+.agents-pick-menu {
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  min-width: max(100%, 280px);
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.agents-pick-group + .agents-pick-group {
+  margin-top: var(--space-1);
+}
+
+.agents-pick-hold {
+  display: block;
+  padding: var(--space-2) var(--space-3) 4px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.agents-pick-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-s);
+  color: var(--text-2);
+  font-size: var(--size-ui);
+  text-align: left;
+}
+
+.agents-pick-item .agents-pick-name {
+  flex: 1;
+}
+
+.agents-pick-item:hover,
+.agents-pick-item:focus-visible {
+  outline: 0;
+  color: var(--text-strong);
+  background: var(--fill);
+}
+
+.agents-pick-item.current {
+  color: var(--text-strong);
+  background: var(--accent-wash);
+}
+
+/* Under the head: the agent's tabs; across from them, its programs on the
+   machine, how the scan goes, and scanning again. */
+.logins-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding: 0 var(--gutter) var(--space-3);
+}
 
 .logins-tabs {
   display: flex;
   gap: var(--space-1);
-  padding: 0 var(--gutter) var(--space-3);
 }
 
 .logins-tabs [role="tab"] {
@@ -28,39 +148,22 @@
   background: var(--fill-strong);
 }
 
-.logins-body {
-  padding: 0 var(--gutter) var(--space-8);
-}
-
-.logins-machine + .logins-machine {
-  margin-top: var(--space-6);
-}
-
-.logins-machine-head {
+.logins-machine-state {
+  flex: 1;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2) var(--space-3);
-  margin-bottom: var(--space-3);
-  color: var(--text-3);
+  justify-content: flex-end;
+  gap: var(--space-2) var(--space-4);
+  min-width: 0;
 }
 
-.logins-machine-link {
-  color: inherit;
-  text-decoration: none;
-  transition: color var(--hover) ease;
+.logins-machine-state:empty {
+  display: none;
 }
 
-.logins-machine-link:hover {
-  color: var(--accent);
-}
-
-.logins-machine-head h2 {
-  margin: 0;
-  font-family: var(--font-emphasis);
-  font-size: var(--size-h3);
-  font-weight: 400;
-  color: var(--text-strong);
+.logins-body {
+  padding: 0 var(--gutter) var(--space-8);
 }
 
 .logins-programs {
@@ -75,7 +178,6 @@
   text-decoration: none;
 }
 
-.logins-away,
 .logins-scanning {
   display: inline-flex;
   align-items: center;
@@ -88,45 +190,71 @@
   color: var(--wrong);
 }
 
-.logins-rescan {
-  margin-left: auto;
+.logins-reading,
+.logins-none {
+  padding: var(--space-4) 0;
 }
 
-/* Never scanned: the agent's mark and the way to look, in the middle. */
+/* Never scanned, or not heard: the agent's mark or the machine's, and the
+   way to look, in the middle. */
 .logins-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--space-4);
-  padding: var(--space-8) 0;
+  padding: var(--space-10) 0;
   color: var(--text-3);
 }
 
-.logins-slips {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
-  gap: var(--space-3);
+/* The logins listed: a solid row each, who on the left, then its windows,
+   this week and its last weeks; the row opens the login's usage. */
+.logins-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-/* A slip: a solid card, one line of who, the bars, the stamp. */
-.logins-slip {
+.logins-row {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-4) var(--space-3);
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(170px, 1.25fr) 112px auto 32px;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
   border-radius: var(--radius-l);
+  background: var(--fill);
+  cursor: pointer;
+  transition: background-color var(--hover) ease;
+}
+
+.logins-row:hover {
+  background: var(--fill-strong);
+}
+
+.logins-row.plain {
+  grid-template-columns: minmax(0, 1fr) 32px;
+  cursor: default;
+}
+
+.logins-row.plain:hover {
   background: var(--fill);
 }
 
-.logins-slip.changing {
+.logins-row.changing {
   opacity: 0.75;
 }
 
-.logins-slip-head {
+.logins-row-who {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.logins-row-name {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -134,20 +262,29 @@
 }
 
 .logins-slip-mark {
+  flex: none;
   display: inline-flex;
   color: var(--text-2);
 }
 
-.logins-slip-who {
+.logins-row-who-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-strong);
+  text-decoration: none;
 }
 
-.logins-more {
-  margin-left: auto;
+.logins-row-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px var(--space-3);
+}
+
+.logins-row .tag {
+  flex: none;
 }
 
 .tag-token {
@@ -156,6 +293,115 @@
 
 .tag-warn {
   color: var(--caution);
+}
+
+.tag.logins-assisted {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: default;
+}
+
+.logins-row-week {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.logins-row-key {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.logins-row-big {
+  font-size: 18px;
+  line-height: 1.25;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.logins-row-big.quiet {
+  color: var(--text-3);
+}
+
+.logins-row-about {
+  margin-right: 3px;
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.logins-row-small {
+  font-size: 12px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.logins-row-mini {
+  display: flex;
+  align-items: center;
+}
+
+.logins-row-mini svg {
+  display: block;
+}
+
+.usage-mini .usage-empty {
+  fill: var(--fill-strong);
+}
+
+.logins-more {
+  justify-self: end;
+}
+
+.logins-row-note {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 1080px) {
+  .logins-row {
+    grid-template-columns: minmax(0, 1fr) minmax(170px, 1.1fr) 112px 32px;
+  }
+
+  .logins-row-mini {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .logins-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-3) var(--space-3);
+    padding: var(--space-3);
+  }
+
+  .logins-row-who {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .logins-row .logins-more {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: start;
+  }
+
+  .logins-row .logins-bars {
+    grid-column: 1 / -1;
+  }
+
+  .logins-row-week {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: baseline;
+    gap: var(--space-2);
+  }
+
+  .logins-row-big {
+    font-size: 16px;
+  }
 }
 
 /* The rows share their columns: the window's name, the bar, how much is
@@ -239,13 +485,6 @@
 .logins-credits {
   color: var(--accent);
   font-weight: 600;
-}
-
-.logins-slip-foot {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2) var(--space-3);
 }
 
 /* The stamp: a solid wash of clay, slightly turned, as if pressed by hand;
@@ -461,7 +700,7 @@
 .logins-candidate.fresh,
 .logins-found-row.fresh,
 .logins-folder.fresh,
-.logins-slip.fresh {
+.logins-row.fresh {
   animation: logins-fresh 2400ms ease-out both;
 }
 
@@ -478,7 +717,7 @@
 :root[data-reduced] .logins-candidate.fresh,
 :root[data-reduced] .logins-found-row.fresh,
 :root[data-reduced] .logins-folder.fresh,
-:root[data-reduced] .logins-slip.fresh {
+:root[data-reduced] .logins-row.fresh {
   animation: none;
   background-color: var(--accent-wash);
 }
@@ -528,7 +767,7 @@
 
 .logins-menu {
   position: absolute;
-  top: 44px;
+  top: calc(50% + 18px);
   right: var(--space-3);
   z-index: 10;
 }
@@ -775,4 +1014,16 @@
   display: flex;
   gap: var(--space-2);
   color: var(--text-3);
+}
+
+/* On a phone the tabs keep their row: the programs stay a hover on a
+   wider screen, and scanning again is its mark alone. */
+@media (max-width: 560px) {
+  .logins-machine-state .logins-programs {
+    display: none;
+  }
+
+  .logins-rescan span {
+    display: none;
+  }
 }

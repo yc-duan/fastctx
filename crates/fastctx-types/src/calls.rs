@@ -337,6 +337,12 @@ pub enum Call {
         agent: AgentName,
         dir: std::path::PathBuf,
     },
+    /// What a login on a machine was used for, as the user may see it.
+    AgentUsage {
+        machine: MachineName,
+        agent: AgentName,
+        dir: std::path::PathBuf,
+    },
     /// One resident or job in detail, by its id, from every machine that
     /// has it (`fastctx w <id>`).
     Look {
@@ -685,6 +691,7 @@ pub enum Reply {
     Agents(WorldAgents),
     AgentLogins(crate::logins::WorldLogins),
     MachineAgentLogins(Box<crate::logins::MachineLogins>),
+    AgentUsage(Box<crate::usage::UsageReport>),
     AgentChangePreview(Box<crate::logins::ChangePreview>),
     AgentLoginChanged(Box<crate::logins::LoginChange>),
     Towns {

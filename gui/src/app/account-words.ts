@@ -6,6 +6,7 @@
 // super administrator's page of the hub. In the user's words
 // (`world-gui.md`, 用词).
 
+import { wholeDollars } from "../world/money";
 import type { MemberKind } from "../world/accounts";
 import type { PasswordProblem } from "./password";
 import { enProblems, failure, zhProblems, type ProblemWords } from "./problem";
@@ -742,7 +743,7 @@ export const zhMachines: MachinesWords = {
       // Assistance, under the names the hub first wrote it under.
       case "lend":
         if (!a.lent) return `结束 ${a.machine} 上的 ${agentName(a.agent)} 对 ${a.to} 的协助`;
-        return `让 ${a.machine} 上的 ${agentName(a.agent)} 协助 ${a.to}${a.until ? `，到 ${zhMoment.stamp(new Date(a.until))}` : ""}`;
+        return `让 ${a.machine} 上的 ${agentName(a.agent)} 协助 ${a.to}${a.until ? `，到 ${zhMoment.stamp(new Date(a.until))}` : ""}${a.weekly ? `，每周 约 ${wholeDollars(a.weekly / 1_000_000)}` : ""}`;
       case "lend_ended":
         return `${agentName(a.agent)} 对 ${a.to} 的协助到期结束`;
       case "plan":
@@ -975,7 +976,7 @@ export const enMachines: MachinesWords = {
       // Assistance, under the names the hub first wrote it under.
       case "lend":
         if (!a.lent) return `Ended the assistance of ${agentName(a.agent)} on ${a.machine} to ${a.to}`;
-        return `Let ${agentName(a.agent)} on ${a.machine} assist ${a.to}${a.until ? ` until ${enMoment.stamp(new Date(a.until))}` : ""}`;
+        return `Let ${agentName(a.agent)} on ${a.machine} assist ${a.to}${a.until ? ` until ${enMoment.stamp(new Date(a.until))}` : ""}${a.weekly ? `, ≈ ${wholeDollars(a.weekly / 1_000_000)} a week` : ""}`;
       case "lend_ended":
         return `The assistance of ${agentName(a.agent)} to ${a.to} reached its end`;
       case "plan":
@@ -1032,6 +1033,14 @@ export interface AccessWords {
   endAssist: string;
   changeUntil: string;
   untilPassed: string;
+  /** The weekly allowance, Claude Code's only: an amount in dollars. */
+  weekly: string;
+  weeklyHint: string;
+  weeklyNone: string;
+  weeklyUnlimited: string;
+  weeklyOf(amount: string): string;
+  weeklyBad: string;
+  change: string;
   save: string;
   cancel: string;
   when: WhenWords;
@@ -1066,6 +1075,13 @@ export const zhAccess: AccessWords = {
   endAssist: "结束",
   changeUntil: "改截止时间",
   untilPassed: "这个截止时间已经过了",
+  weekly: "每周上限",
+  weeklyHint: "约 $ 按 API 标价折算；到了就停，和这个登录的 7 天额度一起重置。空着是不限。",
+  weeklyNone: "不限",
+  weeklyUnlimited: "每周不限",
+  weeklyOf: (amount) => `每周 约 ${amount}`,
+  weeklyBad: "每周上限要填一个大于 0 的金额",
+  change: "改",
   save: "保存",
   cancel: "取消",
   when: zhWhen,
@@ -1100,6 +1116,13 @@ export const enAccess: AccessWords = {
   endAssist: "End",
   changeUntil: "Change when it ends",
   untilPassed: "That time has already passed",
+  weekly: "Weekly limit",
+  weeklyHint: "Dollars at the API's list prices; reaching it stops them until this login's 7-day limit resets. Empty is no limit.",
+  weeklyNone: "No limit",
+  weeklyUnlimited: "No weekly limit",
+  weeklyOf: (amount) => `≈ ${amount} a week`,
+  weeklyBad: "The weekly limit needs an amount above 0",
+  change: "Change",
   save: "Save",
   cancel: "Cancel",
   when: enWhen,

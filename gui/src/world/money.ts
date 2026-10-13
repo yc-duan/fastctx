@@ -9,3 +9,8 @@ export function dollars(amount: number): string {
 export function underCent(amount: number): boolean {
   return amount > 0 && amount < 0.005;
 }
+
+/** A limit set by hand: whole dollars without cents, otherwise to the cent. */
+export function wholeDollars(amount: number): string {
+  return Number.isInteger(amount) ? `$${amount.toLocaleString("en-US")}` : dollars(amount);
+}

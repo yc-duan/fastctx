@@ -1,0 +1,155 @@
+// A listed login on the agents page (`world-gui.md`, 智能体页): a row with
+// who it is and its plan, whom it assists or who lets it assist the reader,
+// and with the workbench on, a bar for each usage window, what it used this
+// week and its last seventeen weeks as a small calendar; the row opens the
+// login's own page of usage. Its 「⋯」 holds the rest.
+
+import { glyph } from "../conversation/glyphs";
+import { escape } from "../conversation/prose";
+import type { AgentLimits, Fact, LimitWindow } from "../world/agents";
+import type { AssistSeen } from "../world/accounts";
+import type { FoundProgram, Login } from "../world/logins";
+import { wholeDollars } from "../world/money";
+import type { AccessWords } from "./account-words";
+import type { AgentLoginsWords } from "./agent-logins-words";
+import type { Assistance } from "./assist-sheet";
+import { link } from "./places";
+import { miniCalendar } from "./usage/draw";
+import { byDay, dayOf, valueOf, type Usage } from "./usage/model";
+import type { UsageWords } from "./usage/words";
+
+type Agent = "codex" | "claude";
+
+export interface RowFacts {
+  machine: string;
+  agent: Agent;
+  login: Login;
+  /** The programs that use it, a line each, for its mark's hover. */
+  versions: string;
+  plan: string | null;
+  /** Whom it assists, where the reader owns it. */
+  assisting: Assistance[];
+  /** The assistance it gives the reader, where that is how they use it. */
+  assistsMe: { assist: AssistSeen; owner: string | null } | null;
+  /** Its usage as last read; none before the first read. */
+  usage: Usage | null;
+  workbench: boolean;
+  fresh: string;
+  note: { text: string; detail: string } | undefined;
+  now: Date;
+}
+
+export interface RowWords {
+  words: AgentLoginsWords;
+  access: AccessWords;
+  usage: UsageWords;
+  when(at: Date, now: Date): string;
+}
+
+export function loginRow(facts: RowFacts, { words, access, usage: usageWords, when }: RowWords): string {
+  const { machine, agent, login, workbench, now } = facts;
+  const identity = login.identity?.who.kind === "known" ? login.identity.who.value : null;
+  const token = identity?.method === "oauth_token";
+  const who = identity?.email ?? dirName(login.dir);
+  const changing = login.change && !login.change.end;
+  const at = `data-machine="${escape(machine)}" data-dir="${escape(login.dir)}"`;
+  const tags = [
+    facts.plan ? `<span class="tag">${escape(planName(facts.plan))}</span>` : "",
+    token ? `<span class="tag tag-token" title="${escape(words.tokenSaid)}">${escape(words.token)}</span>` : "",
+    identity && !identity.logged_in ? `<span class="tag tag-warn">${escape(words.loggedOut)}</span>` : "",
+  ].join("");
+  const assisting = facts.assisting.map((one) => assistanceTag(machine, login.dir, one, now, words, access)).join("");
+  const mine = facts.assistsMe ? assistedTag(facts.assistsMe, now, words, access, usageWords) : "";
+  const stamp = changing ? `<span class="logins-stamp busy">${escape(login.change!.into ? words.applying : words.removing)}</span>` : "";
+  const sub = stamp || assisting || mine ? `<div class="logins-row-sub">${stamp}${assisting ? `<span class="logins-assisting">${escape(words.assisting)}${assisting}</span>` : ""}${mine}</div>` : "";
+  const href = link({ kind: "usage", machine, agent, dir: login.dir });
+  const name = workbench
+    ? `<a class="logins-row-who-name" href="${href}" title="${escape(`${words.openUsage}\n${login.dir}`)}">${escape(who)}</a>`
+    : `<span class="logins-row-who-name" title="${escape(login.dir)}">${escape(who)}</span>`;
+  const more = `<button class="icon-button logins-more" type="button" data-act="menu" ${at} aria-label="${escape(words.more)}" title="${escape(words.more)}">${glyph("more", 16)}</button>`;
+  const head = `<div class="logins-row-who"><div class="logins-row-name"><span class="logins-slip-mark" title="${escape(facts.versions)}">${glyph(agent, 18)}</span>${name}${tags}</div>${sub}</div>`;
+  const note = facts.note ? `<p class="feature-note logins-row-note" title="${escape(facts.note.detail)}">${escape(facts.note.text)}</p>` : "";
+  if (!workbench) return `<li class="logins-row plain${changing ? " changing" : ""}${facts.fresh}>${head}${more}${note}</li>`;
+  return `<li class="logins-row${changing ? " changing" : ""}${facts.fresh} data-open="${href}">
+    ${head}
+    ${bars(agent, login.limits, now, words, when)}
+    ${week(facts, usageWords, words)}
+    <div class="logins-row-mini">${miniCalendar(facts.usage ? byDay(facts.usage, facts.usage.usd ? "usd" : "tokens") : new Map(), dayOf(now.getTime()), `${machine}:${login.dir}`)}</div>
+    ${more}${note}
+  </li>`;
+}
+
+/** What it used this week: dollars first for Claude Code, then tokens. */
+function week(facts: RowFacts, usageWords: UsageWords, words: AgentLoginsWords): string {
+  const { usage } = facts;
+  const key = facts.assistsMe ? words.myWeek : words.week;
+  if (!usage) return `<div class="logins-row-week"><span class="logins-row-key">${escape(key)}</span><span class="logins-row-big quiet">–</span></div>`;
+  const tokens = usage.people.reduce((sum, person) => sum + person.week.tokens, 0);
+  if (usage.usd) {
+    const usd = usage.people.reduce((sum, person) => sum + valueOf(person.week, "usd"), 0);
+    return `<div class="logins-row-week"><span class="logins-row-key">${escape(key)}</span><span class="logins-row-big"><span class="logins-row-about" title="${escape(usageWords.aboutWhy)}">${escape(usageWords.about)}</span>${escape(usageWords.money(usd))}</span><span class="logins-row-small">${escape(usageWords.tokens(tokens))} ${escape(usageWords.tokenUnit)}</span></div>`;
+  }
+  return `<div class="logins-row-week"><span class="logins-row-key">${escape(key)}</span><span class="logins-row-big">${escape(usageWords.tokens(tokens))}</span><span class="logins-row-small">${escape(usageWords.tokenUnit)}</span></div>`;
+}
+
+/** A row for each usage window: its name, a short bar, how much of it is
+ *  used and how long until it starts again, in columns shared by the
+ *  rows; the rest a hover away. A window never read is a dashed empty
+ *  bar. */
+export function bars(agent: Agent, limits: Fact<AgentLimits>, now: Date, words: AgentLoginsWords, when: (at: Date, now: Date) => string): string {
+  if (limits.kind !== "known") {
+    const why = limits.kind === "failed" ? limits.reason : words.notRead(agent);
+    return `<div class="logins-bars" title="${escape(why)}"><span class="logins-bar unread"><span class="logins-bar-name">5h</span><span class="logins-bar-track"></span><span class="logins-bar-used"></span><span class="logins-bar-reset"></span></span><span class="logins-bar unread"><span class="logins-bar-name">7d</span><span class="logins-bar-track"></span><span class="logins-bar-used"></span><span class="logins-bar-reset"></span></span></div>`;
+  }
+  const value = limits.value;
+  const credits = value.credits;
+  const read = words.observed(when(new Date(value.observed_at), now));
+  const rows = value.windows.map((window) => {
+    // A whole number, rounded: hosts often give no more.
+    const percent = `${Math.round(window.used_tenths / 10)}%`;
+    const said = [words.used(percent), window.resets_at ? words.resets(new Date(window.resets_at), now) : "", read, credits ? words.credits(credits.balance ?? null, credits.unlimited) : ""].filter(Boolean).join(" · ");
+    const width = Math.min(100, window.used_tenths / 10).toFixed(1);
+    const onCredits = window.used_tenths >= 1000 && !!credits;
+    const left = window.resets_at ? words.resetsIn(new Date(window.resets_at), now) : "";
+    const used = `${escape(percent)}${onCredits ? `<span class="logins-credits" title="${escape(words.creditsMark)}">¢</span>` : ""}`;
+    return `<span class="logins-bar${levelOf(window)}" title="${escape(said)}"><span class="logins-bar-name">${escape(words.window(window.name, window.minutes ?? null))}</span><span class="logins-bar-track"><span style="width:${width}%"></span></span><span class="logins-bar-used">${used}</span><span class="logins-bar-reset">${left ? `${glyph("history", 12)}${escape(left)}` : ""}</span></span>`;
+  });
+  return `<div class="logins-bars">${rows.join("")}</div>`;
+}
+
+/** One account assisted, on a row: whom, the day it ends and what it may
+ *  spend a week, when set; pressed, it opens to be changed; its cross ends
+ *  it. */
+function assistanceTag(machine: string, dir: string, assistance: Assistance, now: Date, words: AgentLoginsWords, access: AccessWords): string {
+  const at = `data-machine="${escape(machine)}" data-dir="${escape(dir)}" data-to="${escape(assistance.to)}"`;
+  const until = assistance.until ? new Date(assistance.until) : null;
+  const said = [until ? access.moment.until(until, now) : access.when.none, assistance.weekly ? access.weeklyOf(wholeDollars(assistance.weekly)) : ""].filter(Boolean).join(" · ");
+  return `<span class="tag assist-tag"><button class="assist-tag-open" type="button" data-act="assist-edit" ${at} title="${escape(`${access.changeUntil} · ${said}`)}">${escape(assistance.to)}${until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : ""}${assistance.weekly ? `<span class="assist-tag-until">${escape(words.weeklyShort(wholeDollars(assistance.weekly)))}</span>` : ""}</button><button class="assist-tag-x" type="button" data-act="assist-end" ${at} aria-label="${escape(words.endAssist(assistance.to))}" title="${escape(words.endAssist(assistance.to))}">${glyph("cross", 12)}</button></span>`;
+}
+
+/** The assistance the reader has of it: from whom, until when, and what it
+ *  may spend a week. */
+function assistedTag(mine: { assist: AssistSeen; owner: string | null }, now: Date, words: AgentLoginsWords, access: AccessWords, usageWords: UsageWords): string {
+  const { assist, owner } = mine;
+  const until = assist.until ? new Date(assist.until) : null;
+  const weekly = assist.weekly ? assist.weekly / 1_000_000 : null;
+  const said = [usageWords.assistUntil(until, now), weekly ? usageWords.weekly(wholeDollars(weekly)) : usageWords.weeklyNone].join(" · ");
+  return `<span class="tag logins-assisted" title="${escape(said)}">${escape(words.assistedFrom(owner ?? "–"))}${until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : ""}${weekly ? `<span class="assist-tag-until">${escape(words.weeklyShort(wholeDollars(weekly)))}</span>` : ""}</span>`;
+}
+
+export function dirName(dir: string): string {
+  return dir.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? dir;
+}
+
+export function planName(plan: string): string {
+  return plan.length ? plan[0]!.toUpperCase() + plan.slice(1) : plan;
+}
+
+export function programLine(program: FoundProgram, words: AgentLoginsWords): string {
+  const what = program.within ? words.within(program.within.name, program.within.version ?? null) : words.how[program.how];
+  return [program.path ?? program.within?.path ?? "", program.version ?? "", what, program.on_path ? words.onPath : ""].filter(Boolean).join(" · ");
+}
+
+function levelOf(window: LimitWindow): string {
+  return window.used_tenths >= 1000 ? " spent" : window.used_tenths >= 900 ? " high" : "";
+}

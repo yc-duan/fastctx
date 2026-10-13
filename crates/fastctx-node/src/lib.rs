@@ -99,6 +99,7 @@ mod turns;
 mod uninstall;
 mod unpublished;
 mod unstarted;
+mod usage;
 mod user_images;
 mod waiting;
 mod watch;
@@ -176,6 +177,8 @@ pub(crate) struct Node {
     facts: facts::Facts,
     /// Deletions of conversations still to be asked of hubs (`forget`).
     forget_asks: forget::Asks,
+    /// What the agents' logins here were used for (`usage`).
+    usage: usage::Usage,
     /// Held while the projects' ledgers are taken or written, one at a time.
     syncing: tokio::sync::Mutex<()>,
     /// Held while a town's record or journals are written from here, from
@@ -515,6 +518,7 @@ pub async fn run_prepared(
         shown: tokio::sync::watch::channel(0).0,
         facts: facts::Facts::default(),
         forget_asks: forget::Asks::default(),
+        usage: usage::Usage::default(),
         syncing: tokio::sync::Mutex::new(()),
         writing: tokio::sync::Mutex::new(()),
         taking: Default::default(),

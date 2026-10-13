@@ -3,9 +3,10 @@
 // lines, and what stays a hover away.
 
 import type { Installed } from "../world/logins";
+import type { MachinePickWords } from "./agent-machines";
 import type { FolderWalkWords } from "./folder-walk";
 
-export interface AgentLoginsWords {
+export interface AgentLoginsWords extends MachinePickWords {
   title: string;
   codex: string;
   claude: string;
@@ -15,6 +16,10 @@ export interface AgentLoginsWords {
   sharedBy(owner: string): string;
   offline: string;
   noAnswer: string;
+  reading: string;
+  /** A machine whose agents only assist the reader, with none of this
+   *  agent's among them. */
+  noneForYou(agent: "codex" | "claude"): string;
   /** Before the first scan of a machine. */
   scanHere: string;
   scanThere: string;
@@ -69,6 +74,13 @@ export interface AgentLoginsWords {
   planNone: string;
   assisting: string;
   endAssist(account: string): string;
+  /** A login assisting the reader: from whom. */
+  assistedFrom(owner: string): string;
+  weeklyShort(amount: string): string;
+  /** What a row says of this week, and its way to the login's page. */
+  week: string;
+  myWeek: string;
+  openUsage: string;
   /** The usage bars and their hover. */
   window(name: string, minutes: number | null): string;
   used(percent: string): string;
@@ -107,6 +119,11 @@ export const zhAgentLogins: AgentLoginsWords = {
   sharedBy: (owner) => `${owner} 共享`,
   offline: "离线",
   noAnswer: "没有回应",
+  reading: "正在读",
+  noneForYou: (agent) => `这台机器上的 ${agent === "codex" ? "Codex" : "Claude Code"} 没有协助你`,
+  holds: { mine: "我的机器", shared: "共享给我的", others: "其他成员的", assist: "协助我的" },
+  ownedBy: (owner) => `${owner} 的`,
+  pickMachine: "换一台机器",
   scanHere: "扫描这台电脑",
   scanThere: "扫描这台机器",
   rescan: "重新扫描",
@@ -154,6 +171,11 @@ export const zhAgentLogins: AgentLoginsWords = {
   planNone: "不标",
   assisting: "协助",
   endAssist: (account) => `结束对 ${account} 的协助`,
+  assistedFrom: (owner) => `来自 ${owner}`,
+  weeklyShort: (amount) => `${amount}/周`,
+  week: "本周",
+  myWeek: "我本周",
+  openUsage: "看用量",
   window: (name, minutes) => {
     if (name.startsWith("five_hour") || minutes === 300) return "5h";
     if (name.startsWith("seven_day") || minutes === 10080) return "7d";
@@ -185,6 +207,11 @@ export const enAgentLogins: AgentLoginsWords = {
   sharedBy: (owner) => `Shared by ${owner}`,
   offline: "Offline",
   noAnswer: "No answer",
+  reading: "Reading",
+  noneForYou: (agent) => `No ${agent === "codex" ? "Codex" : "Claude Code"} login here assists you`,
+  holds: { mine: "My machines", shared: "Shared with me", others: "Other members'", assist: "Assisting me" },
+  ownedBy: (owner) => `${owner}'s`,
+  pickMachine: "Choose a machine",
   scanHere: "Scan this computer",
   scanThere: "Scan this machine",
   rescan: "Scan again",
@@ -232,6 +259,11 @@ export const enAgentLogins: AgentLoginsWords = {
   planNone: "None",
   assisting: "Assisting",
   endAssist: (account) => `Stop assisting ${account}`,
+  assistedFrom: (owner) => `From ${owner}`,
+  weeklyShort: (amount) => `${amount}/wk`,
+  week: "This week",
+  myWeek: "My week",
+  openUsage: "Usage",
   window: (name, minutes) => {
     if (name.startsWith("five_hour") || minutes === 300) return "5h";
     if (name.startsWith("seven_day") || minutes === 10080) return "7d";

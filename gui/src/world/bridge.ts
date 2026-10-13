@@ -18,6 +18,7 @@ import type { BytesRead, TextRead } from "../app/reader";
 import type { Address, AgentActivity, MachineName, SessionEvent } from "./events";
 import type { Cut, Edge, FindDoc, Found, PartRead, Window } from "../conversation/conversation";
 import type { AccountChange, AccountsReply, HubAccount } from "./accounts";
+import type { UsageReport } from "./usage";
 import type { HubMoveReply, HubMoveRequest } from "./hub-move";
 import type { MachineStats } from "./stats";
 import type { RemoteHub, RemoteKey, RemoteServer, RemoteStep } from "../app/remote-world";
@@ -373,6 +374,12 @@ export function changeAgentLogin(
 /** Reads a login's limits afresh on its machine. */
 export function readAgentLimits(machine: MachineName, agent: string, dir: string): Promise<MachineLogins> {
   return invoke("read_agent_limits", { machineName: machine, agentName: agent, dir });
+}
+
+/** What a login on a machine was used for, as this device's accounts may
+ *  see it. */
+export function agentUsage(machine: MachineName, agent: string, dir: string): Promise<UsageReport> {
+  return invoke("agent_usage", { machineName: machine, agentName: agent, dir });
 }
 
 /** Residents or jobs in detail, from every machine that has them. */
