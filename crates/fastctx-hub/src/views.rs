@@ -19,7 +19,8 @@
 //! the super administrator's view names them and whether they are online,
 //! nothing of how they connect; nobody else's view has them. A member whose
 //! release does not read visitors is sent them as members. Each member is
-//! also told the tokens its accounts made that still let devices in.
+//! also told the tokens its accounts made that still let devices in, and
+//! the super administrator's devices those of every account.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -75,11 +76,17 @@ pub(crate) fn view_for(
     let logged: BTreeSet<&AccountName> =
         all.member(me).map(|member| member.logins.iter().collect()).unwrap_or_default();
     let now = Timestamp::now();
+    // The codes of the accounts it is logged in to; the super
+    // administrator's devices see every account's, as it may revoke any.
+    let every = all
+        .accounts
+        .iter()
+        .any(|account| logged.contains(&account.name) && account.level == fastctx_net::directory::Level::Super);
     let tokens = store
         .book
         .tokens
         .iter()
-        .filter(|record| logged.contains(&record.account) && record.closed(now).is_none())
+        .filter(|record| (every || logged.contains(&record.account)) && record.closed(now).is_none())
         .map(|record| fastctx_types::accounts::TokenSeen {
             key: record.key.to_string(),
             account: record.account.clone(),
@@ -89,6 +96,10 @@ pub(crate) fn view_for(
             uses: record.uses,
             used: record.used_count(),
             expires: record.expires,
+            way: record.way,
+            name: record.name.clone(),
+            made_by: Some(record.made_by.clone()),
+            made_at: Some(record.made_at),
         })
         .collect();
     let forwarders = all

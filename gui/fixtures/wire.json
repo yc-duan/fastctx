@@ -3,7 +3,7 @@
     {
       "records": [
         {
-          "id": 37,
+          "id": 38,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -20,7 +20,7 @@
           }
         },
         {
-          "id": 36,
+          "id": 37,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -39,7 +39,7 @@
           }
         },
         {
-          "id": 35,
+          "id": 36,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -61,7 +61,7 @@
           }
         },
         {
-          "id": 34,
+          "id": 35,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -84,7 +84,7 @@
           }
         },
         {
-          "id": 33,
+          "id": 34,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -104,7 +104,7 @@
           }
         },
         {
-          "id": 32,
+          "id": 33,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -124,7 +124,7 @@
           }
         },
         {
-          "id": 31,
+          "id": 32,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -141,7 +141,7 @@
           }
         },
         {
-          "id": 30,
+          "id": 31,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -166,7 +166,7 @@
           }
         },
         {
-          "id": 29,
+          "id": 30,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -184,7 +184,7 @@
           }
         },
         {
-          "id": 28,
+          "id": 29,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -204,7 +204,7 @@
           }
         },
         {
-          "id": 27,
+          "id": 28,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -222,7 +222,7 @@
           }
         },
         {
-          "id": 26,
+          "id": 27,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": null,
@@ -240,7 +240,7 @@
           }
         },
         {
-          "id": 25,
+          "id": 26,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -258,7 +258,7 @@
           }
         },
         {
-          "id": 24,
+          "id": 25,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -276,7 +276,7 @@
           }
         },
         {
-          "id": 23,
+          "id": 24,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -294,7 +294,7 @@
           }
         },
         {
-          "id": 22,
+          "id": 23,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -310,7 +310,7 @@
           }
         },
         {
-          "id": 21,
+          "id": 22,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -330,7 +330,7 @@
           }
         },
         {
-          "id": 20,
+          "id": 21,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -345,7 +345,28 @@
             "kind": "computer",
             "expires": "2026-10-10T12:00:00Z",
             "managed": true,
-            "label": "机房 A"
+            "label": "机房 A",
+            "uses": 40,
+            "way": "paste"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 20,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "revoke_token",
+            "label": "机房 A",
+            "way": "paste",
+            "managed": true
           },
           "outcome": {
             "kind": "done"
@@ -361,8 +382,7 @@
             "peer": null
           },
           "action": {
-            "change": "revoke_token",
-            "label": "机房 A"
+            "change": "revoke_token"
           },
           "outcome": {
             "kind": "done"
@@ -1855,7 +1875,31 @@
                 "managed": true,
                 "uses": 40,
                 "used": 12,
-                "expires": "2026-10-09T08:30:00Z"
+                "expires": "2026-10-09T08:30:00Z",
+                "way": "paste",
+                "made_by": "desktop",
+                "made_at": "2026-10-09T08:30:00Z"
+              },
+              {
+                "key": "YW5vdGhlci1rZXktZm9yLXRoZS1maXh0dXJlLW9ubHk",
+                "account": "ada",
+                "kind": "phone",
+                "uses": 0,
+                "used": 0,
+                "expires": "9999-12-30T00:00:00Z",
+                "way": "scan"
+              },
+              {
+                "key": "YS1zZXJ2ZXItbGluZS1rZXktZm9yLXRoZS1maXh0dXJl",
+                "account": "ada",
+                "kind": "computer",
+                "uses": 1,
+                "used": 0,
+                "expires": "2026-10-09T08:30:00Z",
+                "way": "line",
+                "name": "gpu-3",
+                "made_by": "desktop",
+                "made_at": "2026-10-09T08:30:00Z"
               }
             ]
           }
@@ -1950,7 +1994,17 @@
         "expires": "2026-10-09T08:30:00Z",
         "managed": true,
         "uses": 40,
-        "label": "机房 A"
+        "label": "机房 A",
+        "way": "paste"
+      },
+      {
+        "change": "token",
+        "register": false,
+        "name": null,
+        "kind": "phone",
+        "expires": "9999-12-30T00:00:00Z",
+        "uses": 0,
+        "way": "scan"
       },
       {
         "change": "revoke_token",

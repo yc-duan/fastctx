@@ -329,7 +329,10 @@ async fn work(world: &World, job: Job) -> Result<Done, fastctx_client::Error> {
         }
         Job::ServerLine { hub, account, hours } => {
             let expires = Timestamp::now() + jiff::SignedDuration::from_hours(i64::from(hours));
-            Done::ServerLine { text: world.server_command(Some(hub), account, None, expires, false).await?, expires }
+            Done::ServerLine {
+                text: world.server_command(Some(hub), account, None, expires, false, None, None).await?,
+                expires,
+            }
         }
         Job::Device { hub, account } => {
             let accounts = world.accounts().await?;

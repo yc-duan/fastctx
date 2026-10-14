@@ -328,17 +328,24 @@ pub(crate) fn action(change: &Change, book: &Book) -> Action {
             Action::RenameGroup { owner: owner.clone(), from: from.clone(), to: to.clone() }
         }
         Change::Logout => Action::Logout,
-        Change::Token { register, name, kind, expires, managed, label, .. } => Action::Token {
+        Change::Token { register, name, kind, expires, managed, label, uses, way } => Action::Token {
             register: *register,
             name: name.clone(),
             kind: *kind,
             expires: *expires,
             managed: *managed,
             label: label.clone(),
+            uses: *uses,
+            way: *way,
         },
-        Change::RevokeToken { token } => Action::RevokeToken {
-            label: book.tokens.iter().find(|record| record.key == *token).and_then(|record| record.label.clone()),
-        },
+        Change::RevokeToken { token } => {
+            let record = book.tokens.iter().find(|record| record.key == *token);
+            Action::RevokeToken {
+                label: record.and_then(|record| record.label.clone()),
+                way: record.and_then(|record| record.way),
+                managed: record.is_some_and(|record| record.managed),
+            }
+        }
         Change::SetRole { name, visitor } => Action::SetRole { name: name.clone(), visitor: *visitor },
         Change::AcceptRole { accept } => Action::AcceptRole { accept: *accept },
         Change::PasswordStart { target, .. } => Action::PasswordStart { target: target.clone() },

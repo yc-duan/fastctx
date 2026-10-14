@@ -188,8 +188,10 @@ pub enum AccountChange {
     /// A token for another device; `managed` makes the computers that use
     /// it managed machines of the account (`world-network.md`, 受管机器),
     /// which only a hub that says so registers. `uses` is how many
-    /// computers may use it: one when none, any number at zero. `label`
-    /// names a code that is kept a while, as 「机房 A」.
+    /// devices may use it: one when none, any number at zero. `label`
+    /// names a code that is kept a while, as 「机房 A」; `expires` at
+    /// `LASTING`, it lasts until it is revoked. `way` is how it is given,
+    /// for its maker to know it again.
     Token {
         register: bool,
         name: Option<MachineName>,
@@ -201,6 +203,8 @@ pub enum AccountChange {
         uses: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         label: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        way: Option<TokenWay>,
     },
     /// No device comes in with the token whose key is `token` any more;
     /// those that came in stay.
@@ -390,7 +394,34 @@ impl std::fmt::Display for Unfit {
     }
 }
 
-/// A token that still lets devices in, as the account that made it sees it.
+/// How a code reaches the devices it lets in, for whoever made it to know
+/// it again: a phone scans it, a Linux host runs the line it is in, a
+/// computer has it pasted, or this computer's own SSH session with a host
+/// uses it at once. It is only told, never acted on; a way a later release
+/// names reads as `Other`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenWay {
+    Scan,
+    Line,
+    Paste,
+    Ssh,
+    #[serde(other)]
+    Other,
+}
+
+/// When a code that lasts until it is revoked is said to expire: the end
+/// of the last day a timestamp holds, as a certificate with no end says
+/// the last day of 9999.
+pub const LASTING: Timestamp = Timestamp::constant(253_402_128_000, 0);
+
+/// Whether a code expiring at `expires` lasts until it is revoked.
+pub fn lasting(expires: Timestamp) -> bool {
+    expires >= LASTING
+}
+
+/// A token that still lets devices in, as the accounts it lets into see it,
+/// and the super administrator.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenSeen {
     /// Its key, by which it is revoked.
@@ -401,11 +432,23 @@ pub struct TokenSeen {
     pub kind: MemberKind,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub managed: bool,
-    /// How many computers may use it: any number at zero.
+    /// How many devices may use it: any number at zero.
     pub uses: u32,
     /// How many have.
     pub used: u32,
+    /// At `LASTING`, never.
     pub expires: Timestamp,
+    /// How it is given; an earlier hub does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub way: Option<TokenWay>,
+    /// The name the one device it is for takes, when it names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<MachineName>,
+    /// The device that made it, and when; an earlier hub does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub made_by: Option<MachineName>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub made_at: Option<Timestamp>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

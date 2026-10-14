@@ -163,8 +163,15 @@ pub enum Intent {
     /// What the token `token` lets a device into, without using it: the
     /// hub answers `Down::TokenInfo` and closes. Sent only to a hub that
     /// says it registers managed machines; an earlier hub refuses the
-    /// connection, which the asking device takes as that.
-    Peek { token: PublicKey, proof: Signature },
+    /// connection, which the asking device takes as that. `member` is the
+    /// asking device's key, so one that came in by it already is told what
+    /// using it again would tell it; an earlier hub reads past it.
+    Peek {
+        token: PublicKey,
+        proof: Signature,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        member: Option<PublicKey>,
+    },
     /// Opening `account` on a hub that lets anyone: the first OPAQUE
     /// registration message. The hub answers `Down::RegisterResponse`.
     Register { account: AccountName, request: Bytes },
@@ -588,6 +595,10 @@ pub enum Change {
         uses: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         label: Option<String>,
+        /// How it is given (`fastctx_types::accounts::TokenWay`), kept to be
+        /// told; an earlier hub reads past it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        way: Option<fastctx_types::accounts::TokenWay>,
     },
     /// No device comes in by the token whose key is `token` any more: the
     /// account that made it, or the super administrator, takes it back.

@@ -167,13 +167,14 @@ pub async fn login(
 /// machine is used only by a World that may become one (`managed::unfit`).
 pub async fn login_with_token(node: &Arc<Node>, token: &str, name: Option<MachineName>) -> Result<Reply, Failure> {
     let token = fastctx_net::token::Token::parse(token).map_err(Failure::new)?;
-    if let Some(peeked) = fastctx_net::login::peek(&token).await.map_err(Failure::new)?
+    let key = own_key(node).await?;
+    // Asked as this computer, so a first try cut off is finished again.
+    if let Some(peeked) = fastctx_net::login::peek(&token, Some(&key.public())).await.map_err(Failure::new)?
         && peeked.managed
         && let Some(why) = crate::managed::unfit(node, &peeked.hub)
     {
         return Err(Failure::not_run(why.to_string()));
     }
-    let key = own_key(node).await?;
     let name = asked_name(node, name)?;
     // What the token is for, registering or not, a managed machine or not,
     // the hub keeps with it.
@@ -186,7 +187,10 @@ pub async fn login_with_token(node: &Arc<Node>, token: &str, name: Option<Machin
 /// it; none from a hub that says nothing of a token before it is used.
 pub async fn peek_token(node: &Arc<Node>, token: &str) -> Result<Option<fastctx_types::accounts::TokenPeek>, Failure> {
     let token = fastctx_net::token::Token::parse(token.trim()).map_err(Failure::new)?;
-    let Some(peeked) = fastctx_net::login::peek(&token).await.map_err(Failure::new)? else { return Ok(None) };
+    let key = own_key(node).await?;
+    let Some(peeked) = fastctx_net::login::peek(&token, Some(&key.public())).await.map_err(Failure::new)? else {
+        return Ok(None);
+    };
     let refused = if peeked.managed { crate::managed::unfit(node, &peeked.hub) } else { None };
     Ok(Some(fastctx_types::accounts::TokenPeek {
         hub: peeked.hub_name,

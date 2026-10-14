@@ -159,15 +159,15 @@ pub(crate) async fn with_token(
             .verify(Domain::Session, &binding, &proof)
             .map_err(|_| "the proof of the token does not verify".to_string())?;
         proved(&member, &binding)?;
-        let record = {
+        let (record, inside) = {
             let store = hub.store();
-            store.book.tokens.iter().find(|record| record.key == token).cloned()
+            let record = store.book.tokens.iter().find(|record| record.key == token).cloned();
+            (record, store.book.directory.by_key(&member.key).is_some())
         };
         let record = record.ok_or("the hub knows no such token; it may have been taken back")?;
-        // A device that used it may use it again, as when its first try was
-        // cut off; any other only while it is open.
-        let refused = if record.used_by(&member.key) { None } else { record.closed(Timestamp::now()) };
-        if let Some(reason) = refused {
+        // Asked again as the device joins, under the same hold of the
+        // directory as its joining; refused here, the refusal is kept.
+        if let Some(reason) = record.refuses(&member.key, inside, Timestamp::now()) {
             let mut store = hub.store();
             let directory = store.book.directory.clone();
             crate::machine_log::keep(
@@ -213,7 +213,8 @@ pub(crate) async fn with_token(
 
 /// What the token whose key is `token` lets a device into, told without
 /// using it: whose, which network, whether as a managed machine. A token
-/// that would not let this device in is refused as its use would be.
+/// that would not let this device in is refused as its use would be: the
+/// device `member`, when it says which it is.
 pub(crate) async fn peek(
     hub: Arc<Hub>,
     mut socket: Socket,
@@ -221,6 +222,7 @@ pub(crate) async fn peek(
     binding: [u8; 32],
     token: PublicKey,
     proof: Signature,
+    member: Option<PublicKey>,
 ) {
     let told = (|| {
         token
@@ -229,7 +231,11 @@ pub(crate) async fn peek(
         let store = hub.store();
         let record = store.book.tokens.iter().find(|record| record.key == token);
         let record = record.ok_or("the hub knows no such token; it may have been taken back")?;
-        if let Some(reason) = record.closed(Timestamp::now()) {
+        let refused = match member {
+            Some(key) => record.refuses(&key, store.book.directory.by_key(&key).is_some(), Timestamp::now()),
+            None => record.closed(Timestamp::now()),
+        };
+        if let Some(reason) = refused {
             return Err(reason.to_string());
         }
         Ok(Down::TokenInfo {
@@ -482,6 +488,17 @@ fn join(
             }
             if managed && !(register && joining.kind.is_computer()) {
                 return Err("only a computer registering as a machine joins as a managed machine".to_string());
+            }
+            // The code is asked again here, under the hold of the directory
+            // its use is counted in, so two devices using its last turn at
+            // once do not both come in.
+            if let Some(token) = token {
+                let inside = store.book.directory.by_key(&joining.key).is_some();
+                let record = store.book.tokens.iter().find(|record| record.key == *token);
+                let record = record.ok_or("the hub knows no such token; it may have been taken back")?;
+                if let Some(reason) = record.refuses(&joining.key, inside, Timestamp::now()) {
+                    return Err(reason.to_string());
+                }
             }
             // A machine that comes in by a named code for several machines is
             // in the group of that name, as the machines of one such code

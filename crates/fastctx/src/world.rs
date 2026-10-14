@@ -4,7 +4,7 @@
 //! hub itself.
 
 use clap::{Args, Subcommand};
-use fastctx_types::accounts::{AccountChange, AccountsReply, MemberKind};
+use fastctx_types::accounts::{AccountChange, AccountsReply, HubAccounts, Level, MemberKind, TokenSeen, TokenWay};
 use fastctx_types::world::{HubNodes, LinkState, NodesReply, Path};
 use fastctx_types::{AccountName, Call, HubName, MachineName, Reply};
 use jiff::{SignedDuration, Timestamp};
@@ -37,6 +37,33 @@ pub struct LogoutArgs {
     hub: Option<HubName>,
 }
 
+#[derive(Subcommand)]
+pub enum TokenCommand {
+    /// Make a code that lets other devices into an account: a phone or a
+    /// computer logs in with it; for a server, the line that installs it
+    /// and registers it as a machine is printed instead.
+    New(TokenArgs),
+    /// The codes that still let devices in, of the accounts this computer
+    /// is logged in to, and every account's for the network's
+    /// administrator: what each is for, how many came in by it, until when,
+    /// and its key.
+    List {
+        /// The hub, when this computer is on more than one.
+        #[arg(long)]
+        hub: Option<HubName>,
+    },
+    /// Revoke a code: no device comes in by it any more; those that did
+    /// stay.
+    Revoke {
+        /// The code: its key, the start of it of six characters or more, or
+        /// its name.
+        code: String,
+        /// The hub, when this computer is on more than one.
+        #[arg(long)]
+        hub: Option<HubName>,
+    },
+}
+
 #[derive(Args)]
 pub struct TokenArgs {
     /// The account it logs in to.
@@ -48,23 +75,34 @@ pub struct TokenArgs {
     /// is printed instead.
     #[arg(long = "for", default_value = "computer", value_parser = ["phone", "computer", "server"])]
     used_by: String,
-    /// How many hours it stays valid: 1, 24 or 72; a code for managed
-    /// machines, 168 or 720 too.
-    #[arg(long, default_value_t = 1, value_parser = hours)]
-    hours: u32,
-    /// For a server: the name it takes.
+    /// How long it stays valid: hours or days, as 1h or 7d, up to a year,
+    /// or `never`, until it is revoked. An hour for a phone or a computer,
+    /// a day for a server and a week for managed machines when not given.
+    #[arg(long, value_parser = valid)]
+    valid: Option<Valid>,
+    /// For a code used once: the name the device takes.
     #[arg(long)]
     name: Option<MachineName>,
     /// For a computer or server: the computers that use it join as managed
     /// machines of the account, logged in to none.
     #[arg(long)]
     managed: bool,
-    /// How many computers may use it; 0 for any number. One when not given.
-    #[arg(long)]
+    /// How many devices may use it: a number up to 9999, or `any`. One when
+    /// not given; each of several takes its own name.
+    #[arg(long, value_parser = uses)]
     uses: Option<u32>,
-    /// A name for it, as 「机房 A」.
+    /// A name for it, as 「机房 A」; the machines that come in by a code for
+    /// several are put in the group of its name.
     #[arg(long)]
     label: Option<String>,
+}
+
+/// How long a code stays valid.
+#[derive(Clone, Copy)]
+pub enum Valid {
+    For(SignedDuration),
+    /// Until it is revoked.
+    Never,
 }
 
 #[derive(Args)]
@@ -322,56 +360,173 @@ pub fn logout(args: LogoutArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn token(args: TokenArgs) -> anyhow::Result<()> {
-    if args.hours > 72 && !args.managed {
-        anyhow::bail!("only a code for managed machines stays valid longer than 72 hours");
+pub fn token(command: TokenCommand) -> anyhow::Result<()> {
+    match command {
+        TokenCommand::New(args) => new_token(args),
+        TokenCommand::List { hub } => list_tokens(hub),
+        TokenCommand::Revoke { code, hub } => revoke_token(&code, hub),
     }
-    let expires = Timestamp::now() + SignedDuration::from_hours(i64::from(args.hours));
-    let until = expires.to_zoned(jiff::tz::TimeZone::system()).strftime("%Y-%m-%d %H:%M %Z");
-    if args.used_by == "server" {
-        let managed = args.managed;
-        match call(Call::ServerCommand { hub: args.hub, account: args.account, name: args.name, expires, managed })? {
-            Reply::ServerInvitation { command } => {
-                println!("{command}");
-                eprintln!(
-                    "Paste this line into the server's terminal, as the user it is for. It works once, until {until}."
-                );
-            }
-            other => anyhow::bail!("the node answered something else: {other:?}"),
-        }
+}
+
+fn new_token(args: TokenArgs) -> anyhow::Result<()> {
+    let server = args.used_by == "server";
+    let kind = if args.used_by == "phone" { MemberKind::Phone } else { MemberKind::Computer };
+    if args.managed && kind == MemberKind::Phone {
+        anyhow::bail!("a phone is never a managed machine");
+    }
+    if args.uses.is_some_and(|uses| uses != 1) && args.name.is_some() {
+        anyhow::bail!("a code for several devices names none of them: each takes its own name");
+    }
+    let day = SignedDuration::from_hours(24);
+    let valid = args.valid.unwrap_or(Valid::For(if args.managed {
+        day * 7
+    } else if server {
+        day
+    } else {
+        SignedDuration::from_hours(1)
+    }));
+    let expires = match valid {
+        Valid::Never => fastctx_types::accounts::LASTING,
+        Valid::For(span) => Timestamp::now() + span,
+    };
+    let works = format!("It works {}, {}.", how_many(args.uses.unwrap_or(1)), until(expires));
+    if server {
+        let reply = call(Call::ServerCommand {
+            hub: args.hub,
+            account: args.account,
+            name: args.name,
+            expires,
+            managed: args.managed,
+            uses: args.uses,
+            label: args.label,
+        })?;
+        let Reply::ServerInvitation { command } = reply else {
+            anyhow::bail!("the node answered something else: {reply:?}")
+        };
+        println!("{command}");
+        eprintln!("Paste this line into each server's terminal, as the user it is for. {works}");
         return Ok(());
     }
-    let kind = if args.used_by == "phone" { MemberKind::Phone } else { MemberKind::Computer };
     let token = change(
         args.hub,
         args.account,
         AccountChange::Token {
             register: kind == MemberKind::Computer,
-            name: None,
+            name: args.name,
             kind,
             expires,
-            managed: args.managed && kind == MemberKind::Computer,
+            managed: args.managed,
             uses: args.uses,
-            label: args.label.clone(),
+            label: args.label,
+            way: Some(if kind == MemberKind::Phone { TokenWay::Scan } else { TokenWay::Paste }),
         },
     )?
     .ok_or_else(|| anyhow::anyhow!("the hub made no token"))?;
     println!("{token}");
-    let how_many = match args.uses.unwrap_or(1) {
-        0 => "any number of computers".to_string(),
-        1 => "once".to_string(),
-        uses => format!("for {uses} computers"),
-    };
-    if args.managed && kind == MemberKind::Computer {
+    if args.managed {
         eprintln!(
-            "On each computer, in a system account no one at it signs in to, run `fastctx login --token <code>`, or paste it in Join a network in Fastctx. It works {how_many}, until {until}."
+            "On each computer, in a system account no one at it signs in to, run `fastctx login --token <code>`, or paste it in Join a network in Fastctx. {works}"
         );
     } else {
-        eprintln!(
-            "On the other device, run `fastctx login --token <token>`, or scan it in the Fastctx app. It works {how_many}, until {until}."
-        );
+        eprintln!("On the other device, run `fastctx login --token <code>`, or scan it in the Fastctx app. {works}");
     }
     Ok(())
+}
+
+fn list_tokens(hub: Option<HubName>) -> anyhow::Result<()> {
+    let Reply::Accounts(reply) = call(Call::Accounts)? else { anyhow::bail!("the node answered something else") };
+    let now = Timestamp::now();
+    let mut text = String::new();
+    for seen in reply.hubs.iter().filter(|seen| hub.as_ref().is_none_or(|hub| seen.name == *hub)) {
+        if seen.tokens.is_empty() {
+            text.push_str(&format!("no code lets a device into {} now\n", seen.name));
+        }
+        for token in &seen.tokens {
+            text.push_str(&format!("{}\n", token_line(token, now)));
+        }
+    }
+    print!("{text}");
+    Ok(())
+}
+
+fn revoke_token(code: &str, hub: Option<HubName>) -> anyhow::Result<()> {
+    let Reply::Accounts(reply) = call(Call::Accounts)? else { anyhow::bail!("the node answered something else") };
+    let named = |token: &TokenSeen| {
+        token.key == code || (code.len() >= 6 && token.key.starts_with(code)) || token.label.as_deref() == Some(code)
+    };
+    let found: Vec<(&HubAccounts, &TokenSeen)> = reply
+        .hubs
+        .iter()
+        .filter(|seen| hub.as_ref().is_none_or(|hub| seen.name == *hub))
+        .flat_map(|seen| seen.tokens.iter().filter(|token| named(token)).map(move |token| (seen, token)))
+        .collect();
+    let [(seen, token)] = found.as_slice() else {
+        if found.is_empty() {
+            anyhow::bail!("no code that still lets devices in is {code}; `fastctx token list` lists them");
+        }
+        anyhow::bail!("{} codes are {code}; name one by its key", found.len());
+    };
+    // Revoked as the account it lets into, or by the network's
+    // administrator.
+    let account = if seen.logins.contains(&token.account) {
+        token.account.clone()
+    } else {
+        seen.accounts
+            .iter()
+            .find(|account| account.level == Level::Super && seen.logins.contains(&account.name))
+            .map(|account| account.name.clone())
+            .ok_or_else(|| anyhow::anyhow!("this computer is not logged in to {}, whose code it is", token.account))?
+    };
+    change(Some(seen.name.clone()), account, AccountChange::RevokeToken { token: token.key.clone() })?;
+    println!("revoked {}; the devices that came in by it stay", what_token(token));
+    Ok(())
+}
+
+/// A code as `fastctx token list` and `fastctx accounts` say it.
+fn token_line(token: &TokenSeen, now: Timestamp) -> String {
+    let came = match token.uses {
+        0 => format!("{} in, any number may come", token.used),
+        uses => format!("{} of {uses} in", token.used),
+    };
+    let made = match (&token.made_by, token.made_at) {
+        (Some(by), Some(at)) => format!(", made on {by} {} ago", age(at, now)),
+        _ => String::new(),
+    };
+    let key: String = token.key.chars().take(10).collect();
+    format!("{key}  {} of {}: {came}, {}{made}", what_token(token), token.account, until(token.expires))
+}
+
+/// What a code is for, by how it is given and its name.
+fn what_token(token: &TokenSeen) -> String {
+    let way = match (token.way, token.managed, token.kind) {
+        (Some(TokenWay::Line), true, _) => "the server line for managed machines",
+        (Some(TokenWay::Line), false, _) => "the server line",
+        (Some(TokenWay::Ssh), _, _) => "the code for a server added over SSH",
+        (_, true, _) => "the code for managed machines",
+        (_, false, MemberKind::Phone) => "the phone code",
+        _ => "the computer code",
+    };
+    match (&token.label, &token.name) {
+        (Some(label), _) => format!("{way} {label}"),
+        (None, Some(name)) => format!("{way} for {name}"),
+        (None, None) => way.to_string(),
+    }
+}
+
+fn how_many(uses: u32) -> String {
+    match uses {
+        0 => "for any number of devices".to_string(),
+        1 => "once".to_string(),
+        uses => format!("for {uses} devices"),
+    }
+}
+
+fn until(expires: Timestamp) -> String {
+    if fastctx_types::accounts::lasting(expires) {
+        "until it is revoked".to_string()
+    } else {
+        format!("until {}", local(expires))
+    }
 }
 
 pub fn share(args: ShareArgs) -> anyhow::Result<()> {
@@ -820,12 +975,35 @@ fn account_or_owner(
     }
 }
 
-/// A token stays valid an hour, a day or three; a code for managed
-/// machines, a week or thirty days too.
-fn hours(text: &str) -> Result<u32, String> {
-    match text {
-        "1" | "24" | "72" | "168" | "720" => Ok(text.parse().expect("listed")),
-        _ => Err("a token stays valid 1, 24 or 72 hours; a code for managed machines 168 or 720 too".to_string()),
+/// How long a code stays valid: hours or days, as `1h` or `7d`, up to a
+/// year; or `never`.
+fn valid(text: &str) -> Result<Valid, String> {
+    if text == "never" {
+        return Ok(Valid::Never);
+    }
+    let said = "give hours or days, as 1h or 7d, up to a year, or never";
+    let (count, unit) = text.split_at(text.len().saturating_sub(1));
+    let count: i64 = count.parse().map_err(|_| said.to_string())?;
+    let hours = match unit {
+        "h" => count,
+        "d" => count.saturating_mul(24),
+        _ => return Err(said.to_string()),
+    };
+    if !(1..=366 * 24).contains(&hours) {
+        return Err(said.to_string());
+    }
+    Ok(Valid::For(SignedDuration::from_hours(hours)))
+}
+
+/// How many devices a code lets in: a number up to 9999, or `any`, said
+/// as zero.
+fn uses(text: &str) -> Result<u32, String> {
+    if text == "any" {
+        return Ok(0);
+    }
+    match text.parse::<u32>() {
+        Ok(uses @ 1..=9999) => Ok(uses),
+        _ => Err("give a number from 1 to 9999, or any".to_string()),
     }
 }
 
@@ -1056,6 +1234,9 @@ fn render_accounts(reply: &AccountsReply, now: Timestamp) -> String {
                 acting.account,
                 age(acting.since, now)
             ));
+        }
+        for token in &hub.tokens {
+            text.push_str(&format!("code {}\n", token_line(token, now)));
         }
         for project in &hub.projects {
             let granted = if project.granted.is_empty() {

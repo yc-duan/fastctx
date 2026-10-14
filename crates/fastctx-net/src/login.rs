@@ -33,7 +33,7 @@ use rand_core::OsRng;
 use crate::dial::{self, HubSocket};
 use crate::directory::Kind;
 use crate::ids::{CertPin, HubId};
-use crate::sign::{Bytes, Domain, SecretKey};
+use crate::sign::{Bytes, Domain, PublicKey, SecretKey};
 use crate::token::Token;
 use crate::wire::{self, Down, Intent, Joining, SILENCE, Up};
 
@@ -150,16 +150,18 @@ pub async fn with_token(token: &Token, device: Device<'_>) -> Result<Joined, Str
     Ok(joined)
 }
 
-/// Opens `account` with `password` on a hub that lets anyone, reached at
-/// `hub`. The device then logs in to it like any other.
-/// What `token` lets this device into, asked of its hub without using it. A
-/// hub from before managed machines refuses the asking connection; that is
-/// said as `Ok(None)`, as such a hub makes no token for one.
-pub async fn peek(token: &Token) -> Result<Option<Peeked>, String> {
+/// What `token` lets this device into, asked of its hub without using it;
+/// `member`, the device's key, makes one that came in by it already told
+/// what using it again would tell it. A hub from before managed machines
+/// refuses the asking connection; that is said as `Ok(None)`, as such a hub
+/// makes no token for one.
+pub async fn peek(token: &Token, member: Option<&PublicKey>) -> Result<Option<Peeked>, String> {
     let dialed = dial::dial(&token.addresses, Some(token.cert), wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME).await?;
     let (mut socket, binding) = (dialed.socket, dialed.binding);
     let key = token.secret.key();
-    hello(&mut socket, Intent::Peek { token: key.public(), proof: key.sign(Domain::Session, &binding) }).await?;
+    let intent =
+        Intent::Peek { token: key.public(), proof: key.sign(Domain::Session, &binding), member: member.copied() };
+    hello(&mut socket, intent).await?;
     let answer = next(&mut socket).await;
     let _ = futures_util::SinkExt::close(&mut socket).await;
     match answer {
@@ -175,6 +177,8 @@ pub async fn peek(token: &Token) -> Result<Option<Peeked>, String> {
     }
 }
 
+/// Opens `account` with `password` on a hub that lets anyone, reached at
+/// `hub`. The device then logs in to it like any other.
 pub async fn open_account(hub: &[SocketAddr], account: &AccountName, password: &str) -> Result<(), String> {
     fastctx_types::password::check(account.as_str(), password)?;
     let dialed = dial::dial(hub, None, wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME).await?;

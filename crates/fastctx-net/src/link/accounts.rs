@@ -77,8 +77,8 @@ impl Link {
                     self.hub_name()
                 ));
             }
-            AccountChange::Token { register, name, kind, expires, managed, uses, label } => {
-                Change::Token { register, name, kind, expires, managed, uses, label }
+            AccountChange::Token { register, name, kind, expires, managed, uses, label, way } => {
+                Change::Token { register, name, kind, expires, managed, uses, label, way }
             }
             AccountChange::RevokeToken { .. } if !self.view().managed => {
                 return Err(format!("the hub {} runs an older fastctx that takes no token back", self.hub_name()));

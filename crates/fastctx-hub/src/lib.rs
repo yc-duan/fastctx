@@ -578,8 +578,8 @@ async fn intended(
         (wire::CONTROL_PATH, Intent::Token { token, proof, member }) => {
             login::with_token(hub, socket, peer, binding, token, proof, member).await;
         }
-        (wire::CONTROL_PATH, Intent::Peek { token, proof }) => {
-            login::peek(hub, socket, peer, binding, token, proof).await;
+        (wire::CONTROL_PATH, Intent::Peek { token, proof, member }) => {
+            login::peek(hub, socket, peer, binding, token, proof, member).await;
         }
         (wire::CONTROL_PATH, Intent::Register { account, request }) => {
             login::open_account(hub, socket, peer, account, request).await;

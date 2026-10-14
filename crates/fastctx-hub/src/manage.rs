@@ -274,14 +274,18 @@ fn apply(
             log_out(store, asker, account, None, "logged out", ended)?;
             Ok(Told::Done)
         }
-        Change::Token { register, name, kind, expires, managed, uses, label } => {
-            if expires <= Timestamp::now() {
+        Change::Token { register, name, kind, expires, managed, uses, label, way } => {
+            let now = Timestamp::now();
+            if expires <= now {
                 return Err("the token would have expired already".to_string());
             }
             if managed && !(register && kind.is_computer()) {
                 return Err("a token for managed machines registers computers".to_string());
             }
             let uses = uses.unwrap_or(1);
+            if uses > crate::store::MOST_USES {
+                return Err(format!("a code lets in at most {} devices, or any number", crate::store::MOST_USES));
+            }
             if uses != 1 && name.is_some() {
                 return Err("a token for several computers names none of them: each takes its own name".to_string());
             }
@@ -298,6 +302,7 @@ fn apply(
                 }
             }
             let secret = TokenSecret::generate().map_err(|error| format!("making the token: {error}"))?;
+            store.book.tokens.retain(|record| !record.spent(now));
             store.book.tokens.push(TokenRecord {
                 key: secret.key().public(),
                 account: account.clone(),
@@ -310,9 +315,10 @@ fn apply(
                 label,
                 revoked: false,
                 made_by: asker.clone(),
-                made_at: Timestamp::now(),
+                made_at: now,
                 used_by: None,
                 used: Vec::new(),
+                way,
             });
             let token = Token { addresses: store.hub.public.clone(), cert: hub.pin, hub: store.hub.id.clone(), secret };
             Ok(Told::Token { text: token.to_text() })
@@ -375,6 +381,8 @@ fn apply(
                 return Err(format!("the token was made for the account {}", record.account));
             }
             record.revoked = true;
+            let now = Timestamp::now();
+            store.book.tokens.retain(|record| !record.spent(now));
             Ok(Told::Done)
         }
         Change::SetAccount { name, locked } => {

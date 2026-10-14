@@ -230,9 +230,11 @@ enum Command {
     Login(world::LoginArgs),
     /// Log this computer out of an account.
     Logout(world::LogoutArgs),
-    /// Make a one-time token that logs another device in to an account, or,
-    /// for a server, the line that installs and registers it.
-    Token(world::TokenArgs),
+    /// Codes that let other devices into an account: make one, for a
+    /// server the line that installs and registers it; list those that
+    /// still let devices in; or revoke one.
+    #[command(subcommand)]
+    Token(world::TokenCommand),
     /// The hubs this computer is on, with their accounts, machines, what is
     /// shared, which agents assist whom, and projects, and who came into its
     /// accounts.
@@ -444,7 +446,7 @@ fn main() -> ExitCode {
         Command::Page(command) => page::run(command),
         Command::Login(args) => world::login(args),
         Command::Logout(args) => world::logout(args),
-        Command::Token(args) => world::token(args),
+        Command::Token(command) => world::token(command),
         Command::Accounts => world::accounts(),
         Command::Data(args) => data::run(args),
         Command::Share(args) => world::share(args),

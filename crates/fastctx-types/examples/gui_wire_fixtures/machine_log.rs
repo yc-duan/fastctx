@@ -1,4 +1,4 @@
-use fastctx_types::accounts::{MemberKind, PlanLabel, Relay};
+use fastctx_types::accounts::{MemberKind, PlanLabel, Relay, TokenWay};
 use fastctx_types::machine_log::{Action, Actor, LoginMethod, Outcome, Page, Record};
 
 pub fn fixtures() -> Vec<Page> {
@@ -50,6 +50,8 @@ pub fn fixtures() -> Vec<Page> {
             expires: at,
             managed: false,
             label: None,
+            uses: None,
+            way: None,
         },
         Action::Token {
             register: true,
@@ -58,8 +60,11 @@ pub fn fixtures() -> Vec<Page> {
             expires: at,
             managed: true,
             label: Some("机房 A".into()),
+            uses: Some(40),
+            way: Some(TokenWay::Paste),
         },
-        Action::RevokeToken { label: Some("机房 A".into()) },
+        Action::RevokeToken { label: Some("机房 A".into()), way: Some(TokenWay::Paste), managed: true },
+        Action::RevokeToken { label: None, way: None, managed: false },
         Action::SetRole { name: to(), visitor: true },
         Action::AcceptRole { accept: true },
         Action::PasswordStart { target: account() },

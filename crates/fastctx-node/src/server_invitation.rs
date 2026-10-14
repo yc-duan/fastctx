@@ -1,26 +1,37 @@
 //! The one line that installs fastctx on a Linux server and registers it as
 //! a machine of an account (`world-network.md`, 登录与入网), or as a managed
 //! machine of it (受管机器): a token is made only after the offered archives
-//! and bootstrap inputs have been checked.
+//! and bootstrap inputs have been checked. One line may serve several
+//! servers, each taking its own name, as its code says.
 
 use std::sync::Arc;
 
 use fastctx_install::server::{Kernel, Source, certificate_pin, command as line};
-use fastctx_types::accounts::{AccountChange, MemberKind};
+use fastctx_types::accounts::{AccountChange, MemberKind, TokenWay};
 use fastctx_types::ipc::Failure;
 use fastctx_types::{AccountName, HubName, MachineName};
 use jiff::Timestamp;
 
 use crate::Node;
 
+/// What the code in a line is: the name its one server takes, until when,
+/// for managed machines or not, for how many servers (one when none, any
+/// number at zero) and what it is called.
+pub struct Code {
+    pub name: Option<MachineName>,
+    pub expires: Timestamp,
+    pub managed: bool,
+    pub uses: Option<u32>,
+    pub label: Option<String>,
+}
+
 pub async fn command(
     node: &Arc<Node>,
     hub: Option<&HubName>,
     account: &AccountName,
-    name: Option<MachineName>,
-    expires: Timestamp,
-    managed: bool,
+    code: Code,
 ) -> Result<String, Failure> {
+    let Code { name, expires, managed, uses, label } = code;
     let link = crate::world::hub_link(node, hub)?;
     let version = env!("CARGO_PKG_VERSION");
     let (release, certificate) = link.kernel_release(version).await.map_err(Failure::new)?;
@@ -48,8 +59,9 @@ pub async fn command(
         kind: MemberKind::Computer,
         expires,
         managed,
-        uses: None,
-        label: None,
+        uses,
+        label,
+        way: Some(TokenWay::Line),
     };
     let token = link
         .account_change(account, change)

@@ -101,10 +101,19 @@ pub enum Action {
         managed: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         label: Option<String>,
+        /// How many devices it lets in, one when none, any number at zero.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uses: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        way: Option<crate::accounts::TokenWay>,
     },
     RevokeToken {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         label: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        way: Option<crate::accounts::TokenWay>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        managed: bool,
     },
     PasswordStart {
         target: AccountName,

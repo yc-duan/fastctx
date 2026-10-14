@@ -108,7 +108,18 @@ pub struct TokenRecord {
     /// Every device that used it, the first among them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub used: Vec<PublicKey>,
+    /// How it is given, only to be told (`fastctx_types::accounts::TokenWay`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub way: Option<fastctx_types::accounts::TokenWay>,
 }
+
+/// The most devices one code lets in, short of any number.
+pub const MOST_USES: u32 = 9999;
+
+/// How long a code no device comes in by any more is kept before it is
+/// forgotten: its maker still sees which machines came in by it, and a
+/// device cut off on its last use may still finish.
+const SPENT_KEPT: jiff::SignedDuration = jiff::SignedDuration::from_hours(30 * 24);
 
 fn one() -> u32 {
     1
@@ -131,6 +142,30 @@ impl TokenRecord {
             count += 1;
         }
         u32::try_from(count).unwrap_or(u32::MAX)
+    }
+
+    /// Why the device `key` may not come in by it now, if it may not. One
+    /// that came in by it and is `inside` the hub still may come again, as
+    /// when its first try was cut off, unless the code was revoked; any
+    /// other, a device taken off the hub since among them, only while the
+    /// code is open.
+    pub fn refuses(&self, key: &PublicKey, inside: bool, now: Timestamp) -> Option<&'static str> {
+        if self.revoked {
+            return Some("the code was revoked");
+        }
+        if inside && self.used_by(key) {
+            return None;
+        }
+        self.closed(now)
+    }
+
+    /// Whether no device has come in by it for long enough that it is
+    /// forgotten: expired a month ago, or revoked or used up and made more
+    /// than a month ago.
+    pub fn spent(&self, now: Timestamp) -> bool {
+        let Ok(month_ago) = now.checked_sub(SPENT_KEPT) else { return false };
+        let used_up = self.uses != 0 && self.used_count() >= self.uses;
+        self.expires < month_ago || ((self.revoked || used_up) && self.made_at < month_ago)
     }
 
     /// Why a device that did not use it yet may not, if it may not.

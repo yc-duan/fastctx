@@ -561,6 +561,13 @@ pub enum Call {
         /// (`world-network.md`, 受管机器).
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         managed: bool,
+        /// How many servers may run the line, one when none, any number at
+        /// zero; each takes its own name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uses: Option<u32>,
+        /// What the code in it is called; for several servers, their group.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
     },
     /// Moving the hub named `hub`, or the one hub, as `account`, its super
     /// administrator (`crate::hub_move`).

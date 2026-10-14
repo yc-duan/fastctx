@@ -167,19 +167,20 @@ pub(crate) async fn rename_here(shell: tauri::State<'_, Shell>, name: String) ->
 }
 
 /// The line that installs fastctx on a Linux server and registers it as a
-/// machine of `account`, valid for `hours`.
+/// machine of `account`, valid until `expires`: for `uses` servers, one when
+/// none, any number at zero, its code called `label`.
 #[fastctx_gui_command::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn server_command(
     shell: tauri::State<'_, Shell>,
     hub_name: Option<String>,
     account_name: String,
     name: Option<String>,
-    hours: u32,
+    expires: jiff::Timestamp,
     managed: Option<bool>,
+    uses: Option<u32>,
+    label: Option<String>,
 ) -> Result<String, String> {
-    let expires = jiff::Timestamp::now()
-        .checked_add(jiff::SignedDuration::from_hours(i64::from(hours)))
-        .map_err(|error| error.to_string())?;
     shell
         .world()
         .server_command(
@@ -188,6 +189,8 @@ pub(crate) async fn server_command(
             crate::machine(name)?,
             expires,
             managed.unwrap_or(false),
+            uses,
+            label,
         )
         .await
         .map_err(|error| error.to_string())
