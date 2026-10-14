@@ -65,6 +65,7 @@ import {
   type Assistant,
   type Machine,
 } from "./reach";
+import { DraftFit } from "../conversation/fit-draft";
 import type { Store } from "./store";
 import type { FocusWords, NewTalkWords } from "./words";
 
@@ -384,10 +385,11 @@ export class NewTalk {
     this.element.classList.remove("begun");
   }
 
+  private fitter: DraftFit | null = null;
+
   private fit(): void {
-    this.input.style.height = "auto";
-    this.input.style.height = `${this.input.scrollHeight}px`;
-    this.input.style.overflowY = this.input.scrollHeight > this.input.clientHeight + 1 ? "auto" : "hidden";
+    this.fitter ??= new DraftFit(this.input);
+    this.fitter.fit();
   }
 
   /** Files come with the first words: picked with the paperclip, pasted,

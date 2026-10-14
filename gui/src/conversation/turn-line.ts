@@ -78,25 +78,28 @@ export class TurnLine {
       const land = LANDS[index]!;
       // A little later from left to right, as ink laid later dries later.
       const dries = DRIES + index * 40;
+      // The pen moves the dots' own properties (`design/breath.css`), not
+      // their opacity and transform, so no layer is made for them and the
+      // words beside them stay sharp.
       const inked = ink.animate(
         eased([
-          { offset: 0, opacity: 0, transform: "scale(0.4)" },
-          { offset: at(land), opacity: 0, transform: "scale(0.4)" },
-          { offset: at(land + 110), opacity: 1, transform: "scale(1.18)" },
-          { offset: at(land + 260), opacity: 1, transform: "scale(1)" },
-          { offset: at(dries), opacity: 1, transform: "scale(1)" },
-          { offset: at(dries + DRY), opacity: 0, transform: "scale(1)" },
-          { offset: 1, opacity: 0, transform: "scale(1)" },
+          { offset: 0, "--ink-alpha": 0, "--ink-scale": 0.4 },
+          { offset: at(land), "--ink-alpha": 0, "--ink-scale": 0.4 },
+          { offset: at(land + 110), "--ink-alpha": 1, "--ink-scale": 1.18 },
+          { offset: at(land + 260), "--ink-alpha": 1, "--ink-scale": 1 },
+          { offset: at(dries), "--ink-alpha": 1, "--ink-scale": 1 },
+          { offset: at(dries + DRY), "--ink-alpha": 0, "--ink-scale": 1 },
+          { offset: 1, "--ink-alpha": 0, "--ink-scale": 1 },
         ]),
         { duration: WHOLE, iterations: Infinity },
       );
       const bloomed = blooms[index]!.animate(
         eased([
-          { offset: 0, opacity: 0, transform: "scale(0.5)" },
-          { offset: at(land + 60), opacity: 0, transform: "scale(0.5)" },
-          { offset: at(land + 160), opacity: 0.32, transform: "scale(0.8)" },
-          { offset: at(land + 900), opacity: 0, transform: "scale(1.25)" },
-          { offset: 1, opacity: 0, transform: "scale(1.25)" },
+          { offset: 0, "--ink-alpha": 0, "--ink-scale": 0.5 },
+          { offset: at(land + 60), "--ink-alpha": 0, "--ink-scale": 0.5 },
+          { offset: at(land + 160), "--ink-alpha": 0.32, "--ink-scale": 0.8 },
+          { offset: at(land + 900), "--ink-alpha": 0, "--ink-scale": 1.25 },
+          { offset: 1, "--ink-alpha": 0, "--ink-scale": 1.25 },
         ]),
         { duration: WHOLE, iterations: Infinity },
       );
@@ -145,7 +148,7 @@ export class TurnLine {
     this.tick();
     if (!drawn) return;
     const duration = time(getComputedStyle(this.element), "--line-in");
-    if (duration > 0) this.element.animate([{ opacity: 0 }, { opacity: 1 }], { duration, delay: after, easing: "ease-out", fill: "backwards" });
+    if (duration > 0) this.element.animate([{ "--rise": 0 }, { "--rise": 1 }], { duration, delay: after, easing: "ease-out", fill: "backwards" });
   }
 
   /** Takes the line away at once. */

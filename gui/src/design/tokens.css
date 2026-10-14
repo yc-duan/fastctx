@@ -33,15 +33,19 @@
   --size-h2: calc(var(--body-size) * 1.154);
   --size-h3: calc(var(--body-size) * 1.077);
   --size-title: calc(var(--body-size) * 1.6);
+  /* A size under the body, as the conversation reads on a phone; reckoned
+     here, where the body's size is the one chosen. */
+  --size-under: calc(var(--body-size) - 1px);
 
   --leading-prose: 1.68;
   --leading-ui: 1.45;
   --leading-code: 1.55;
   --leading-heading: 1.36;
 
-  /* The reading column: 46 body widths, as claude.ai measures, whatever
+  /* The reading column: 48 body widths, a little wider than claude.ai's
+     46, so a stretch of tools and its boxes have room to breathe, whatever
      the size. Gutters close in on a phone and open out on a wide screen. */
-  --column: calc(var(--body-size) * 46);
+  --column: calc(var(--body-size) * 48);
   --gutter: clamp(16px, 4.5vw, 36px);
 
   /* Space, on a 4px step. */

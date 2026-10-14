@@ -372,7 +372,7 @@ export class AgentChangeSheet {
     const scroller = this.sheet.body.querySelector<HTMLElement>(".agent-change-details");
     const list = scroller?.querySelector<HTMLElement>(".agent-change-files");
     if (!scroller || !list) return;
-    const layout = new AnchorLayout(scroller, list);
+    const layout = new AnchorLayout(scroller);
     const { words } = this;
     state.preview.files.forEach((file, index) => {
       const item = list.querySelector<HTMLElement>(`[data-file="${index}"]`);

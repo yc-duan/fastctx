@@ -4,7 +4,9 @@
 // that draws only the lines in view and scrolls inside; the button then
 // reads "− 收起". The box's corner opens the whole of it full screen, to
 // search and to go to a line, beside any other source of it (a command's
-// whole output on its machine). Short text is simply shown.
+// whole output on its machine). Short text is simply shown. In the
+// conversation the lines go unnumbered, unless their painter numbers them
+// (a diff's); the full-screen view numbers them.
 
 import { glyph } from "./glyphs";
 import {
@@ -45,6 +47,9 @@ export interface LongLines {
   source?: LineSource;
   /** Draws a line itself, for lines that say more than their text. */
   paint?: LinePaint;
+  /** Draws a line in the conversation, where that is not as `paint` draws
+   *  it: a command's output, numbered only full screen. */
+  inline?: LinePaint;
   /** What these lines are called beside the others in the full-screen view. */
   name?: string;
   others?: readonly OtherSource[];
@@ -80,8 +85,9 @@ export class LongText {
     const lines = Array.isArray(given.lines) ? (given.lines as readonly string[]) : null;
     this.source = given.source ?? (lines ? new MemoryLines(lines, true) : (given.lines as LineSource));
     this.element.className = `long-text${given.kind ? ` ${given.kind}` : ""}`;
+    const inline = given.inline ?? given.paint;
     if (lines && lines.length <= FEW && !others.length) {
-      this.element.append(given.paint ? painted(lines, given.paint) : plainText(lines));
+      this.element.append(inline ? painted(lines, inline) : plainText(lines));
       return;
     }
     const viewerWords: ViewerWords = { ...(words.english ? englishViewer : chineseViewer), ...(words.failed ? { failed: words.failed } : {}) };
@@ -105,7 +111,8 @@ export class LongText {
       limit: PREVIEW,
       failed: viewerWords.failed,
       interrupted: viewerWords.interrupted,
-      ...(given.paint ? { paint: given.paint } : {}),
+      numbers: false,
+      ...(inline ? { paint: inline } : {}),
     });
     this.box.append(this.viewport.element, corner);
     this.more.type = "button";
@@ -122,6 +129,15 @@ export class LongText {
       });
     }
     queueMicrotask(() => this.settle());
+  }
+
+  /** The button for the rest, out of the text, for the caller to put on
+   *  the line it shares with what else is said under the text; none where
+   *  the text is short enough to be shown whole. */
+  takeMore(): HTMLElement | null {
+    if (!this.viewport) return null;
+    this.more.remove();
+    return this.more;
   }
 
   private get length(): number {

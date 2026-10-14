@@ -3,11 +3,19 @@
    in a rail of glyphs until the reader opens it. */
 
 .transcript {
-  /* What the agent did, in quiet lines: each one a 32px line, its glyph
-     16px in a rail as wide, the words 10px on, at the size of the words
-     around them. */
-  --row-line: 32px;
+  /* What the agent did, in quiet lines: each one a 38px line, its glyph
+     16px in a rail as wide, the words 12px on, at the size of the words
+     around them. The lines of the rows and of the code are whole pixels,
+     so no line of text falls between two. */
+  --row-line: 38px;
   --rail-glyph: 16px;
+  --rail-gap: 12px;
+  --leading-prose: 1.72;
+  --row-leading: round(nearest, calc(var(--body-size) * var(--leading-ui)), 1px);
+  --code-leading: round(nearest, calc(var(--size-code) * var(--leading-code)), 1px);
+  /* Room above a block, more above a turn. */
+  --block-gap: var(--space-5);
+  --turn-gap: calc(var(--space-10) + var(--space-1));
   max-width: calc(var(--column) + 2 * var(--gutter));
   margin: 0 auto;
   padding: var(--space-6) var(--gutter) var(--space-12);
@@ -21,11 +29,11 @@
    others (`view.ts`). */
 .block {
   min-width: 0;
-  padding-top: var(--space-4);
+  padding-top: var(--block-gap);
 }
 
 .block.turn-start {
-  padding-top: var(--space-8);
+  padding-top: var(--turn-gap);
 }
 
 .block.first {
@@ -106,12 +114,9 @@
 }
 
 .gap-row.loading .gap-line {
+  transform: scaleX(var(--breath-scale));
+  opacity: var(--breath-alpha);
   animation: gap-draw 1.4s var(--fold-easing) infinite alternate;
-}
-
-@keyframes gap-draw {
-  from { transform: scaleX(0.35); opacity: 0.5; }
-  to { transform: scaleX(1); opacity: 1; }
 }
 
 :root[data-reduced] .gap-row.loading .gap-line {
@@ -394,7 +399,7 @@
   gap: var(--space-1);
   max-width: 100%;
   min-height: var(--row-line);
-  font-size: var(--size-ui);
+  line-height: var(--row-leading);
   color: var(--text-2);
   border-radius: var(--radius-s);
   transition: color var(--hover) ease;
@@ -425,30 +430,20 @@
   color: var(--text-2);
 }
 
-/* While something runs, the heading says what, and a light passes over
-   the words. */
+/* While something runs, the heading says what, its words slowly
+   brightening and dimming. They stay drawn as words: painted through a
+   moving background they would lose their subpixel smoothing. */
 .group-head.going .group-title {
-  background: linear-gradient(
-      100deg,
-      var(--text-2) 0%,
-      var(--text-2) 40%,
-      var(--text-strong) 50%,
-      var(--text-2) 60%,
-      var(--text-2) 100%
-    )
-    0 0 / 250% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: shimmer 2.2s linear infinite;
+  animation: heading-glow 2.2s ease-in-out infinite;
 }
 
-@keyframes shimmer {
-  from {
-    background-position: 100% 0;
+@keyframes heading-glow {
+  0%,
+  100% {
+    color: var(--text-2);
   }
-  to {
-    background-position: -150% 0;
+  50% {
+    color: var(--text-strong);
   }
 }
 
@@ -475,7 +470,7 @@
 }
 
 .rows {
-  padding-top: var(--space-1);
+  padding-top: var(--space-2);
 }
 
 /* A row: a glyph in the rail, then what it did and on what, its figures
@@ -548,11 +543,12 @@
   color: var(--text-3);
 }
 
-/* Under a finger the rail is a little larger, as every glyph is there. */
+/* Under a finger the rail is a little larger, as every glyph is there,
+   and the lines are as tall as a finger. */
 @media (hover: none) and (pointer: coarse) {
   .transcript {
     --rail-glyph: 18px;
-    --row-line: 36px;
+    --row-line: 44px;
   }
 }
 
@@ -575,8 +571,7 @@
   align-content: center;
   min-height: var(--row-line);
   min-width: 0;
-  font-size: var(--size-ui);
-  line-height: var(--leading-ui);
+  line-height: var(--row-leading);
   color: var(--text-2);
   text-align: left;
   border-radius: var(--radius-s);
@@ -743,15 +738,14 @@
 }
 
 .row > .fold > .fold-inner > :first-child {
-  margin-top: var(--space-1);
+  margin-top: var(--space-2);
 }
 
 .row > .fold > .fold-inner > :last-child {
-  margin-bottom: var(--space-3);
+  margin-bottom: var(--space-4);
 }
 
 .thinking-text {
-  font-size: var(--size-ui);
   color: var(--text-2);
   line-height: var(--leading-prose);
 }
@@ -762,19 +756,9 @@
   height: 7px;
   border-radius: var(--radius-full);
   background: var(--accent);
+  transform: scale(var(--breath-scale));
+  opacity: var(--breath-alpha);
   animation: pulse 1.6s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.35;
-    transform: scale(0.8);
-  }
 }
 
 .row-running .row-action,
@@ -784,19 +768,13 @@
 
 /* A tool that arrives in a live conversation comes in once, quietly. */
 .row.entering {
-  animation: enter var(--enter) var(--fold-easing) both;
-}
-
-@keyframes enter {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
+  opacity: var(--rise);
+  translate: 0 calc((1 - var(--rise)) * 4px);
+  animation: rise var(--enter) var(--fold-easing) both;
 }
 
 :root[data-reduced] .group-head.going .group-title {
   animation: none;
-  background: none;
   color: var(--text);
 }
 
@@ -997,47 +975,60 @@
   color: var(--text-3);
 }
 
-/* Words in and out of a tool. */
-
-.io-part {
-  display: grid;
-  grid-template-columns: 3em minmax(0, 1fr);
-  align-items: start;
-  padding: var(--space-2) var(--space-3);
+/* Words in and out of a tool, on one solid surface: what it was given on
+   top, in the shade of a surface's head, what it wrote beneath; both from
+   the same edge. The output's box is as wide as the surface, its scrollbar
+   at the surface's own edge. How much more there is and how it ended
+   share one quiet line at the foot. No labels: the two shades say which is
+   which. */
+.surface.io {
+  --io-pad: var(--space-4);
 }
 
-.io-part + .io-part {
-  border-top: 1px solid var(--divider);
+.io-in {
+  background: var(--surface-header);
 }
 
-/* How a command ended, small under what it wrote. */
-.io-end {
-  margin: var(--space-1) 0 0;
+.io-part > .long-text > .io-text,
+.io-part > .long-text > .long-static {
+  padding: var(--space-3) var(--io-pad);
+}
+
+.io-part > .long-text > .long-text-box {
+  margin: var(--space-2) 0;
+}
+
+.io-part .long-text-box .lv-line {
+  padding-left: var(--io-pad);
+  padding-right: var(--io-pad);
+}
+
+.io-pictures {
+  padding: 0 var(--io-pad) var(--space-3);
+}
+
+.io-foot {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding: 0 var(--io-pad) var(--space-3);
   font-size: var(--size-small);
+  line-height: var(--leading-ui);
+}
+
+/* How a command ended, at the end of the foot. */
+.io-end {
+  margin-left: auto;
   color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.io-end:first-child {
+  margin-left: 0;
 }
 
 .io-end.nonzero {
   color: var(--wrong);
-}
-
-.io-label {
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  color: var(--text-3);
-  line-height: calc(var(--size-code) * var(--leading-code));
-  user-select: none;
-}
-
-/* On a narrow screen the code has the whole width, its label above it. */
-@media (max-width: 600px) {
-  .io-part {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .io-label {
-    line-height: 1.6;
-  }
 }
 
 .io-text {
@@ -1045,17 +1036,20 @@
   font-family: var(--font-code);
   font-variation-settings: var(--code-axes);
   font-size: var(--size-code);
-  line-height: var(--leading-code);
+  line-height: var(--code-leading, var(--leading-code));
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--text);
 }
 
 .io-more {
-  margin-top: var(--space-1);
   font-size: var(--size-small);
   color: var(--text-3);
   transition: color var(--hover) ease;
+}
+
+.io-more:hover {
+  color: var(--text);
 }
 
 .io-more:hover {
@@ -1106,6 +1100,8 @@
   border-radius: var(--radius-full);
   background: var(--accent);
   vertical-align: 0.05em;
+  transform: scale(var(--breath-scale));
+  opacity: var(--breath-alpha);
   animation: pulse 1.6s ease-in-out infinite;
 }
 
@@ -1160,6 +1156,8 @@
   height: 8px;
   border-radius: var(--radius-full);
   box-shadow: inset 0 0 0 2px var(--accent);
+  transform: scale(var(--breath-scale));
+  opacity: var(--breath-alpha);
   animation: pulse 1.6s ease-in-out infinite;
 }
 
@@ -1169,6 +1167,8 @@
   height: 8px;
   border-radius: var(--radius-full);
   box-shadow: inset 0 0 0 2px var(--accent);
+  transform: scale(var(--breath-scale));
+  opacity: var(--breath-alpha);
   animation: pulse 1.6s ease-in-out infinite;
 }
 
@@ -2038,15 +2038,17 @@ a.bubble-file:hover {
    own words came from is for a wider screen. */
 @media (max-width: 600px) {
   .transcript {
-    --body-size: 15px;
+    --body-size: var(--size-under);
     --size-small: calc(var(--body-size) - 2px);
     --size-ui: calc(var(--body-size) - 1px);
     --size-code: calc(var(--body-size) * 0.88);
     --size-h1: calc(var(--body-size) * 1.154);
     --size-h2: calc(var(--body-size) * 1.154);
     --size-h3: calc(var(--body-size) * 1.077);
-    --leading-prose: 1.62;
+    --leading-prose: 1.72;
     --gutter: 22px;
+    --block-gap: calc(var(--space-5) + 2px);
+    --turn-gap: var(--space-12);
     font-size: var(--body-size);
   }
 

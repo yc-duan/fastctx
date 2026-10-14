@@ -455,6 +455,8 @@
   height: 8px;
   border-radius: var(--radius-full);
   box-shadow: inset 0 0 0 1.8px var(--accent);
+  transform: scale(var(--breath-scale));
+  opacity: var(--breath-alpha);
   animation: pulse 1.6s ease-in-out infinite;
 }
 

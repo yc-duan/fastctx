@@ -1,4 +1,3 @@
-.lv-anchor-space { flex: none; overflow-anchor: none; pointer-events: none; }
 .lv-fold { min-width: 0; }
 .lv-fold-heading { display: block; min-height: 44px; width: 100%; }
 .lv-fold-heading::before { content: "›"; display: inline-block; width: 1.3em; }
@@ -7,7 +6,7 @@
 .lv-fold-content { position: relative; min-width: 0; }
 .lv-corner { position: absolute; z-index: 1; right: 0; top: 0; width: 44px; height: 44px; text-align: center; background: var(--surface-header); border-radius: var(--radius-s); }
 .lv-more { min-height: 44px; white-space: nowrap; color: var(--text-2); }
-.lv-viewport { position: relative; min-width: 0; overflow: auto; overscroll-behavior: auto; overflow-anchor: none; touch-action: pan-x pinch-zoom; font-family: var(--font-code); font-variation-settings: var(--code-axes); font-size: var(--size-code); line-height: var(--leading-code); background: var(--surface-code); border-radius: var(--radius-s); scrollbar-gutter: stable; }
+.lv-viewport { position: relative; min-width: 0; overflow: auto; overscroll-behavior: auto; overflow-anchor: none; touch-action: pan-x pinch-zoom; font-family: var(--font-code); font-variation-settings: var(--code-axes); font-size: var(--size-code); line-height: var(--code-leading, var(--leading-code)); background: var(--surface-code); border-radius: var(--radius-s); scrollbar-gutter: stable; }
 .lv-track { position: relative; min-width: 100%; }
 .lv-line { position: absolute; left: 0; min-width: 100%; width: max-content; display: flex; align-items: baseline; white-space: pre; padding-right: var(--space-4); }
 .lv-fold .lv-line { padding-right: calc(44px + var(--space-4)); }

@@ -500,6 +500,10 @@
   color: var(--text-2);
 }
 
+.turn-status {
+  opacity: var(--rise);
+}
+
 .turn-status-mark {
   flex: none;
   display: grid;
@@ -521,7 +525,8 @@
 .turn-status-mark .ellipsis-ink,
 .turn-status-mark .ellipsis-bloom {
   fill: var(--pen-clay);
-  opacity: 0;
+  opacity: var(--ink-alpha);
+  transform: scale(var(--ink-scale));
   transform-box: fill-box;
   transform-origin: center;
 }
@@ -629,13 +634,8 @@
 
 /* A stretch's line under way: the step in hand fades in where the last was. */
 .group-title.fresh {
-  animation: title-fade 0.24s ease both;
-}
-
-@keyframes title-fade {
-  from {
-    opacity: 0;
-  }
+  opacity: var(--rise);
+  animation: rise 0.24s ease both;
 }
 
 :root[data-reduced] .group-title.fresh {

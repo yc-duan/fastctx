@@ -44,6 +44,7 @@ import { headline } from "./tool";
 import { ConversationView, modelName } from "./view";
 import { departureOf } from "./flight";
 import { detailOf } from "../app/problem";
+import { DraftFit } from "./fit-draft";
 
 /** How many events the page holds at most, and how many its latest part
  *  holds before what comes before its newest turns is let go, down to how
@@ -186,6 +187,7 @@ export class ConversationPage {
   /** What the open pop-up was last drawn from. */
   private usageDrawn = "";
   private input: HTMLTextAreaElement;
+  private fitter: DraftFit;
   private action: HTMLButtonElement;
   private scroller: HTMLElement;
   private name: HTMLElement;
@@ -339,6 +341,7 @@ export class ConversationPage {
       this.usagePop = new UsagePop(this.element.querySelector<HTMLElement>(".usage-pop")!, options.controls.words.usage, () => this.openSteps());
     }
     this.input = this.element.querySelector("textarea")!;
+    this.fitter = new DraftFit(this.input);
     this.action = this.element.querySelector<HTMLButtonElement>(".composer-action")!;
     this.note = this.element.querySelector<HTMLElement>(".composer-note")!;
     this.note.addEventListener("pointerover", () => {
@@ -1562,11 +1565,7 @@ export class ConversationPage {
   }
 
   private fit(): void {
-    this.input.style.height = "auto";
-    this.input.style.height = `${this.input.scrollHeight}px`;
-    // A scrollbar only once the words outgrow the box's tallest; below that
-    // a rounding of the line height would show one for nothing.
-    this.input.style.overflowY = this.input.scrollHeight > this.input.clientHeight + 1 ? "auto" : "hidden";
+    this.fitter.fit();
   }
 
   private jobs: JobsPanel | null = null;

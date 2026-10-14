@@ -201,20 +201,9 @@
 
 .composer-jobs .glyph {
   color: var(--accent);
+  transform: scale(var(--breath-scale));
+  opacity: var(--breath-alpha);
   animation: ink-breathe 2.6s ease-in-out infinite;
-}
-
-/* A mark for work under way breathes, slowly. */
-@keyframes ink-breathe {
-  0%,
-  100% {
-    opacity: 0.95;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.45;
-    transform: scale(0.78);
-  }
 }
 
 .jobs-pop {

@@ -72,7 +72,8 @@
 }
 
 .agent-now.fresh .agent-now-said {
-  animation: title-fade 0.24s ease both;
+  opacity: var(--rise);
+  animation: rise 0.24s ease both;
 }
 
 /* What an agent did, opened under its row: its own conversation, drawn as
@@ -85,10 +86,17 @@
   --size-small: calc(var(--body-size) - 3px);
   --size-ui: calc(var(--body-size) - 2px);
   --size-code: calc((var(--body-size) - 1px) * 0.88);
+  --row-line: 34px;
   margin: var(--space-1) 0 var(--space-2);
   border-radius: var(--radius-m);
   background: var(--bg-sunken);
   font-size: var(--body-size-in);
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .agent-box {
+    --row-line: 40px;
+  }
 }
 
 .agent-box .agent-box {
@@ -221,6 +229,8 @@
 
 .composer-agents.going .glyph {
   color: var(--accent);
+  transform: scale(var(--breath-scale));
+  opacity: var(--breath-alpha);
   animation: ink-breathe 2.6s ease-in-out infinite;
 }
 
@@ -344,24 +354,14 @@
   fill: var(--pen-clay);
   transform-box: fill-box;
   transform-origin: center;
+  transform: scale(var(--breath-scale));
+  opacity: var(--breath-alpha);
   animation: lane-breathe 1.6s ease-in-out infinite;
 }
 
 .state-waiting .lane-head {
   animation: none;
   opacity: 0.6;
-}
-
-@keyframes lane-breathe {
-  0%,
-  100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-  50% {
-    transform: scale(0.7);
-    opacity: 0.55;
-  }
 }
 
 .agents-axis {

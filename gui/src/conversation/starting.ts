@@ -86,7 +86,6 @@ export class Starting {
     const fresh = document.createElement("div");
     fresh.className = "conversation";
     root.replaceWith(fresh);
-    for (const space of this.element.querySelectorAll(".lv-anchor-space")) space.remove();
     this.view = this.made(fresh);
   }
 }

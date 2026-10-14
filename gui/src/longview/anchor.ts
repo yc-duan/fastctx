@@ -1,34 +1,17 @@
 import { onMotion, reducedMotion } from "../motion";
 
-/** Owns the conversation's scroll anchoring during an explicit user action.
- * Content must be one normal-flow child of the scroller. Reserve space allows
- * the clicked pixel to remain fixed even at either end of a short conversation. */
+/** Owns the conversation's scroll anchoring during an explicit user action:
+ * the pressed element stays where it was on the screen as far as the content
+ * lets the view go. Nothing is added past the content's ends to hold it
+ * there: at the end of a short or scrolled-down conversation the content
+ * settles against the edge as a box closes, so the reader can never scroll
+ * into empty room that a fold left behind. */
 export class AnchorLayout {
-  private before = document.createElement("div");
-  private after = document.createElement("div");
   private locks = 0;
   private previousAnchor = "";
   private previousBehavior = "";
 
-  constructor(readonly scroller: HTMLElement, content: HTMLElement) {
-    this.before.className = this.after.className = "lv-anchor-space";
-    content.before(this.before);
-    content.after(this.after);
-    scroller.addEventListener("scroll", this.trim, { passive: true });
-  }
-
-  private trim = (): void => {
-    if (this.locks) return;
-    const top = this.before.offsetHeight;
-    const bottom = this.after.offsetHeight;
-    if (top && this.scroller.scrollTop >= top) {
-      this.before.style.height = "0px";
-      this.scroller.scrollTop -= top;
-    }
-    if (bottom && this.scroller.scrollHeight - this.scroller.clientHeight - this.scroller.scrollTop >= bottom) {
-      this.after.style.height = "0px";
-    }
-  };
+  constructor(readonly scroller: HTMLElement) {}
 
   hold(anchor: HTMLElement): { correct: () => number; release: () => void } {
     const y = anchor.getBoundingClientRect().top;
@@ -40,13 +23,8 @@ export class AnchorLayout {
     }
     return {
       correct: () => {
-        let delta = anchor.getBoundingClientRect().top - y;
-        const wanted = this.scroller.scrollTop + delta;
-        const maximum = this.scroller.scrollHeight - this.scroller.clientHeight;
-        if (wanted < 0) this.before.style.height = `${this.before.offsetHeight - wanted}px`;
-        if (wanted > maximum) this.after.style.height = `${this.after.offsetHeight + wanted - maximum}px`;
-        delta = anchor.getBoundingClientRect().top - y;
-        this.scroller.scrollTop += delta;
+        const delta = anchor.getBoundingClientRect().top - y;
+        if (delta) this.scroller.scrollTop += delta;
         return anchor.getBoundingClientRect().top - y;
       },
       release: () => {
@@ -58,11 +36,7 @@ export class AnchorLayout {
     };
   }
 
-  destroy(): void {
-    this.scroller.removeEventListener("scroll", this.trim);
-    this.before.remove();
-    this.after.remove();
-  }
+  destroy(): void {}
 }
 
 export interface FoldFrame { time: number; height: number; anchorError: number; }

@@ -143,13 +143,7 @@ export class FindContent {
           } else {
             const { given, shown, output, ending } = toolText(member.tool, words);
             let index = 0;
-            if (given) {
-              yield part(`${row.key}/in-label`, rowStamp, { row: row.key, selector: ".io-part:first-child > .io-label" }, () => "IN");
-              yield part(`${row.key}/in`, rowStamp, { row: row.key, long: index++ }, () => given.replace(/\n$/, ""));
-            }
-            if (shown || output || ending || member.tool.output.some((one) => one.type === "image" || one.type === "image_url")) {
-              yield part(`${row.key}/out-label`, rowStamp, { row: row.key, selector: `.io-part:nth-child(${given ? 2 : 1}) > .io-label` }, () => "OUT");
-            }
+            if (given) yield part(`${row.key}/in`, rowStamp, { row: row.key, long: index++ }, () => given.replace(/\n$/, ""));
             if (shown || output) yield part(`${row.key}/out`, rowStamp, { row: row.key, long: index }, () => shown ? shown.lines.join("\n") : output.replace(/\n$/, ""));
             if (ending) yield part(`${row.key}/end`, rowStamp, { row: row.key, selector: ".io-end" }, () => ending);
           }

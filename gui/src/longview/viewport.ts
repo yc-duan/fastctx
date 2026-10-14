@@ -18,6 +18,8 @@ export interface LineViewportOptions {
   /** Said while the way to the lines is broken, why on hover. */
   interrupted?: string;
   paint?: LinePaint;
+  /** Unpainted lines are numbered, unless this is false. */
+  numbers?: boolean;
 }
 
 /** Fixed-height logical lines; native horizontal scrolling preserves shaping,
@@ -224,13 +226,16 @@ export class LineViewport {
         row.className = "lv-line";
         row.dataset.line = String(index);
         if (!paint) {
-          const number = document.createElement("span");
-          number.className = "lv-number";
-          number.textContent = String(index + 1);
-          number.setAttribute("aria-hidden", "true");
           const text = document.createElement("span");
           text.className = "lv-text";
-          row.append(number, text);
+          if (this.options.numbers !== false) {
+            const number = document.createElement("span");
+            number.className = "lv-number";
+            number.textContent = String(index + 1);
+            number.setAttribute("aria-hidden", "true");
+            row.append(number);
+          }
+          row.append(text);
         }
         this.rows.set(index, row);
         this.track.append(row);

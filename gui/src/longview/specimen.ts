@@ -41,7 +41,7 @@ const chinese = params.get("lang") === "zh";
 document.documentElement.lang = chinese ? "zh-CN" : "en";
 const scroller = document.querySelector<HTMLElement>("#conversation")!;
 const content = document.querySelector<HTMLElement>("#content")!;
-const layout = new AnchorLayout(scroller, content);
+const layout = new AnchorLayout(scroller);
 const log = new SliceSource({ length: 100000, complete: true });
 const million = new SliceSource({ length: 1000000, complete: true });
 const unicode = new SliceSource({ length: 40, complete: true }, "unicode");

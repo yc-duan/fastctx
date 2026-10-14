@@ -282,7 +282,7 @@ export class ConversationView {
       notice: (entry) => !!this.noticeOf(entry),
       write: (key, signal) => this.findWrite(key, signal),
     });
-    this.layoutAnchor = new AnchorLayout(context.scroller, root);
+    this.layoutAnchor = new AnchorLayout(context.scroller);
     this.line = new TurnLine(context.words);
     // A block drawn grows or shrinks (its pictures arrive, it is opened, the
     // column narrows): its height is kept, and what is above the reader
@@ -2106,23 +2106,30 @@ export class ConversationView {
     // from what its writes printed of themselves, which their rows show.
     const { run, shown, output, given, ending: endText } = toolText(tool, words);
     const images = imagesOf(tool.output);
+    // What it was given above what it wrote, both from one edge, the
+    // output's box as wide as the surface; how much more there is and how
+    // it ended on one quiet line at the foot.
     const surface = document.createElement("div");
     surface.className = "surface io";
     const longs: LongText[] = [];
     const closers: (() => void)[] = [];
-    const part = (label: string, text: string | LongLines, extra = "") => {
+    const part = (side: "in" | "out", label: string, text: string | LongLines, pictures = "", end = "") => {
       const holder = document.createElement("div");
-      holder.className = "io-part";
-      holder.innerHTML = `<span class="io-label">${label}</span>`;
-      const out = document.createElement("div");
-      out.className = "io-out";
+      holder.className = `io-part io-${side}`;
+      holder.setAttribute("role", "group");
+      holder.setAttribute("aria-label", label);
+      const foot = document.createElement("div");
+      foot.className = "io-foot";
       if (text) {
         const long = new LongText(text, label, this.layoutAnchor, this.longWords());
         longs.push(long);
-        out.append(long.element);
+        holder.append(long.element);
+        const more = long.takeMore();
+        if (more) foot.append(more);
       }
-      if (extra) out.insertAdjacentHTML("beforeend", extra);
-      holder.append(out);
+      if (pictures) holder.insertAdjacentHTML("beforeend", `<div class="io-pictures">${pictures}</div>`);
+      if (end) foot.insertAdjacentHTML("beforeend", end);
+      if (foot.childElementCount) holder.append(foot);
       surface.append(holder);
     };
     // What the model got, and beside it in the full-screen view the whole
@@ -2150,12 +2157,12 @@ export class ConversationView {
       // Numbered by place in the whole output where that is not simply the
       // line's place here: something was left out, or a write's note was.
       const plain = !shown.cut && shown.numbers.every((kept, index) => kept === index + 1);
-      printed = { lines: shown.lines, ...(plain ? {} : { paint: outputPaint(shown) }), name: words.output.modelCopy, others };
+      printed = { lines: shown.lines, ...(plain ? {} : { paint: outputPaint(shown), inline: outputPaint(shown, false) }), name: words.output.modelCopy, others };
     }
     // How a command ended, under what it wrote.
-    const ending = endText ? `<p class="io-end${tool.does.as === "command" && !tool.does.job && tool.does.exit !== null && tool.does.exit !== 0 ? " nonzero" : ""}">${escape(endText)}</p>` : "";
-    if (given) part("IN", given);
-    if (printed || images || ending) part("OUT", printed, images + ending);
+    const ending = endText ? `<span class="io-end${tool.does.as === "command" && !tool.does.job && tool.does.exit !== null && tool.does.exit !== 0 ? " nonzero" : ""}">${escape(endText)}</span>` : "";
+    if (given) part("in", "IN", given);
+    if (printed || images || ending) part("out", "OUT", printed, images, ending);
     content.append(surface);
     this.longs.set(key, longs);
     this.closers.set(key, closers);

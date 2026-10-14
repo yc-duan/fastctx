@@ -125,8 +125,8 @@ export function shownOutput(spans: readonly OutputSpan[], writes: readonly Write
 }
 
 /** Draws an output line with its number in the whole output, and what was
- *  left out as a quiet line of its own. */
-export function outputPaint(shown: ShownOutput): LinePaint {
+ *  left out as a quiet line of its own; unnumbered, unless `numbered`. */
+export function outputPaint(shown: ShownOutput, numbered = true): LinePaint {
   // Not spread into Math.max: an output may have more lines than a call
   // takes arguments.
   let most = 0;
@@ -134,7 +134,7 @@ export function outputPaint(shown: ShownOutput): LinePaint {
   const widest = String(most).length;
   return (row, line, index, match) => {
     const holder = row.parentElement;
-    if (holder && widest > Number(holder.style.getPropertyValue("--line-digits") || 0)) holder.style.setProperty("--line-digits", String(widest));
+    if (numbered && holder && widest > Number(holder.style.getPropertyValue("--line-digits") || 0)) holder.style.setProperty("--line-digits", String(widest));
     const number = document.createElement("span");
     number.className = "lv-number";
     number.setAttribute("aria-hidden", "true");
@@ -150,7 +150,8 @@ export function outputPaint(shown: ShownOutput): LinePaint {
       mark.textContent = line.slice(match.start, match.end);
       text.append(line.slice(0, match.start), mark, line.slice(match.end));
     } else text.textContent = line;
-    row.append(number, text);
+    if (numbered) row.append(number);
+    row.append(text);
   };
 }
 

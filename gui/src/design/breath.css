@@ -1,0 +1,96 @@
+/* Motion that goes on while something works (a pulse, a breath, the
+   ellipsis, a heading's light) and the brief fades of what comes in move
+   properties registered here, never `transform` or `opacity` themselves.
+   Those the browser runs in a layer of its own, and everything painted
+   after such a layer that could overlap it is given a layer too, where text
+   loses its subpixel smoothing and reads blurred on Windows: while a model
+   worked, the rows of its tools and its words went soft. A registered
+   property is animated where the page is painted, a few pixels repainted a
+   frame, and no layer is made. */
+
+@property --breath-scale {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+@property --breath-alpha {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+@property --rise {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+@property --ink-scale {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+@property --ink-alpha {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+/* A mark that something runs. */
+@keyframes pulse {
+  0%,
+  100% {
+    --breath-scale: 1;
+    --breath-alpha: 1;
+  }
+  50% {
+    --breath-scale: 0.8;
+    --breath-alpha: 0.35;
+  }
+}
+
+/* A mark of work under way breathes, slowly. */
+@keyframes ink-breathe {
+  0%,
+  100% {
+    --breath-scale: 1;
+    --breath-alpha: 0.95;
+  }
+  50% {
+    --breath-scale: 0.78;
+    --breath-alpha: 0.45;
+  }
+}
+
+@keyframes lane-breathe {
+  0%,
+  100% {
+    --breath-scale: 1;
+    --breath-alpha: 1;
+  }
+  50% {
+    --breath-scale: 0.7;
+    --breath-alpha: 0.55;
+  }
+}
+
+/* A line being drawn while what it stands for is read. */
+@keyframes gap-draw {
+  from {
+    --breath-scale: 0.35;
+    --breath-alpha: 0.5;
+  }
+  to {
+    --breath-scale: 1;
+    --breath-alpha: 1;
+  }
+}
+
+/* What comes in, from nothing. */
+@keyframes rise {
+  from {
+    --rise: 0;
+  }
+}

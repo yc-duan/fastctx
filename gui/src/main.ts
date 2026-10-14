@@ -9,6 +9,7 @@ import type { Attachment, UploadTarget } from "./world/attachments";
 import "katex/dist/katex.min.css";
 import "./design/fonts.css";
 import "./design/tokens.css";
+import "./design/breath.css";
 import "./design/base.css";
 import "./design/highlight.css";
 import "./conversation/conversation.css";
