@@ -188,6 +188,16 @@
   color: var(--wrong);
 }
 
+/* Walking to a folder, as tall as it may be at once: walking from one
+   folder to the next moves nothing (`../app/steady`). */
+.focus-pop:has(.folder-walk) {
+  min-height: min(64dvh, 520px);
+}
+
+.talk-pop:has(.folder-walk) {
+  min-height: min(56dvh, 460px);
+}
+
 .focus-pop {
   position: absolute;
   top: 100%;

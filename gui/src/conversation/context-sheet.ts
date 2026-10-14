@@ -3,11 +3,14 @@
 // drawn as a ledger filling up — the context so far a pale wash, and on its
 // edge what each step added, stacked in the inks of what made it: what the
 // tools returned in clay, the model's own answers in graphite, anything
-// else in sage. Under it the calls that took the most room, each a row that
-// opens its place in the conversation; a step chosen on the drawing lists
-// its own instead. The drawing is a staircase, a step to each request, what
-// a step added standing on the stair before it. All of it is read from
-// what the conversation holds.
+// else in sage. Under it the five calls that took the most room, each a row
+// that opens its place in the conversation; a step chosen on the drawing
+// lists its own instead, five rows at most, and its list's head leads back.
+// The list is always five rows high, so the page keeps its size whatever is
+// chosen. A row opened in the conversation leaves the way back to the page
+// as it was (`page.ts`). The drawing is a staircase, a step to each
+// request, what a step added standing on the stair before it. All of it is
+// read from what the conversation holds.
 
 import type { ComposerWords } from "../app/words";
 import { Sheet } from "../app/confirm";
@@ -39,8 +42,9 @@ const INKS: Record<Cause["kind"], string> = { call: "var(--pen-clay)", answer: "
 const ORDER: Cause["kind"][] = ["call", "answer", "other"];
 /** The ink of where the context began, or what a compaction left. */
 const BASE = "color-mix(in srgb, var(--pen-graphite) 32%, transparent)";
-/** How many of the heaviest calls are listed. */
-const HEAVIEST = 12;
+/** How many rows the list under the drawing holds, the heaviest calls or a
+ *  step's own parts. */
+const ROWS = 5;
 const f = (n: number) => (Math.round(n * 10) / 10).toString();
 
 export class ContextSheet {
@@ -61,6 +65,7 @@ export class ContextSheet {
       const target = event.target as HTMLElement;
       const row = target.closest<HTMLElement>("[data-call]");
       if (row) {
+        this.left = this.sheet.body.scrollTop;
         this.sheet.close();
         this.opening(row.dataset.call!);
         return;
@@ -70,11 +75,15 @@ export class ContextSheet {
     this.sheet.dialog.addEventListener("close", () => this.resizing.disconnect());
   }
 
-  /** Opens it over the conversation, on the steps `input` makes. */
-  show(input: StepsInput): void {
+  /** Where the page was scrolled to when a row opened the conversation. */
+  private left = 0;
+
+  /** Opens it over the conversation, on the steps `input` makes; `again`,
+   *  as it was left when a row was opened, the step chosen still chosen. */
+  show(input: StepsInput, again = false): void {
     this.input = input;
     this.steps = contextSteps(input.requests, input.calls);
-    this.chosen = null;
+    if (!again || (this.chosen !== null && this.chosen >= this.steps.length)) this.chosen = null;
     const { words } = this;
     this.sheet.body.innerHTML = `
       ${this.sheet.head(words.steps, words.close)}
@@ -96,7 +105,9 @@ export class ContextSheet {
     });
     this.resizing.observe(chart);
     this.drawChart();
+    this.mark();
     this.drawList();
+    this.sheet.body.scrollTop = again ? this.left : 0;
   }
 
   /** The figures at the top: the context now, and what it holds, each
@@ -273,21 +284,37 @@ export class ContextSheet {
   }
 
   /** Under the drawing: the heaviest calls of the whole conversation, or
-   *  what the step chosen was made of. */
+   *  what the step chosen was made of, the largest first; past five rows
+   *  the rest of a step's are one row, how many and how much. */
   private drawList(): void {
     const list = this.sheet.body.querySelector<HTMLElement>(".ctx-list");
     if (!list || !this.input) return;
     const { words } = this;
     const step = this.chosen === null ? null : this.steps[this.chosen]!;
-    const rows = step
-      ? step.causes.map((cause) => ({ cause, step: step.index }))
-      : heaviestCalls(this.steps, HEAVIEST).map((call) => ({ cause: { kind: "call" as const, key: call.key, tokens: call.tokens }, step: call.step }));
+    let rows: { cause: Cause; step: number }[];
+    let rest: { count: number; tokens: number } | null = null;
+    if (step) {
+      const causes = [...step.causes].sort((a, b) => b.tokens - a.tokens);
+      const shown = causes.length > ROWS ? causes.slice(0, ROWS - 1) : causes;
+      const others = causes.slice(shown.length);
+      if (others.length) rest = { count: others.length, tokens: others.reduce((sum, cause) => sum + cause.tokens, 0) };
+      rows = shown.map((cause) => ({ cause, step: step.index }));
+    } else {
+      rows = heaviestCalls(this.steps, ROWS).map((call) => ({ cause: { kind: "call" as const, key: call.key, tokens: call.tokens }, step: call.step }));
+    }
     const most = Math.max(1, ...rows.map((row) => row.cause.tokens));
     const title = step ? words.stepSaid(step.index + 1, tokensShort(step.context), step.grew > 0 ? `+${tokensShort(step.grew)}` : "") : words.heaviest;
     const body = rows.length
-      ? rows.map((row) => this.row(row.cause, row.step, most, !step)).join("")
+      ? rows.map((row) => this.row(row.cause, row.step, most, !step)).join("") + (rest ? this.restRow(rest) : "")
       : `<p class="ctx-none">${escape(step?.compacted ? words.compacted : words.noCalls)}</p>`;
-    list.innerHTML = `<header class="ctx-list-head"><h3 class="picker-title"${step ? "" : ` title="${escape(words.heaviestWhy)}"`}>${escape(title)}</h3>${step ? `<button class="text-button" type="button" data-all>${escape(words.allSteps)}</button>` : ""}</header><div class="ctx-rows">${body}</div>`;
+    // A step's own list leads back from its head, where the eye is.
+    const back = step ? `<button class="text-button ctx-back" type="button" data-all>${glyph("chevron", 14)}<span>${escape(words.backToHeaviest)}</span></button>` : "";
+    list.innerHTML = `<header class="ctx-list-head">${back}<h3 class="picker-title"${step ? "" : ` title="${escape(words.heaviestWhy)}"`}>${escape(title)}</h3></header><div class="ctx-rows">${body}</div>`;
+  }
+
+  /** What a step held past the rows shown, as one quiet row. */
+  private restRow(rest: { count: number; tokens: number }): string {
+    return `<div class="ctx-row ctx-rest"><span class="ctx-row-mark"></span><span class="ctx-row-what">${escape(this.words.rest(rest.count))}</span><span class="ctx-row-step"></span><span class="ctx-row-ink"></span><span class="ctx-row-tokens">+${escape(tokensShort(rest.tokens))}</span></div>`;
   }
 
   /** One row: what it was, which step (in the whole list), a bar of its

@@ -90,6 +90,7 @@ export class TalkMenu {
     this.element.classList.toggle("as-sheet", sheet);
     this.shade.hidden = !sheet;
     this.element.hidden = false;
+    this.fit();
     how.anchor?.setAttribute("aria-expanded", "true");
     how.anchor?.closest(".talk-item")?.classList.add("menu-open");
     if (!sheet) this.place();
@@ -98,8 +99,28 @@ export class TalkMenu {
     if (document.activeElement === how.anchor || !how.anchor) this.items()[0]?.focus({ preventScroll: true });
   }
 
+  /** The menu's size while it is open: as tall and as wide as the larger
+   *  of its two faces, its acts and the projects to move to, so turning
+   *  from one to the other moves nothing. Both are laid out at once, before
+   *  it is painted. */
+  private fit(): void {
+    this.element.style.height = this.element.style.width = "";
+    if (!this.opened || this.opened.r.removed) return;
+    let height = 0;
+    let width = 0;
+    for (const towns of [true, false]) {
+      this.towns = towns;
+      this.draw();
+      height = Math.max(height, this.element.offsetHeight);
+      width = Math.max(width, this.element.offsetWidth);
+    }
+    this.element.style.height = `${height}px`;
+    if (!this.element.classList.contains("as-sheet")) this.element.style.width = `${width}px`;
+  }
+
   close(): void {
     if (this.element.hidden) return;
+    this.element.style.height = this.element.style.width = "";
     this.element.hidden = true;
     this.shade.hidden = true;
     const anchor = this.opened?.how.anchor;

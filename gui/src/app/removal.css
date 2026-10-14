@@ -12,14 +12,16 @@
   overflow-y: auto;
 }
 
-/* The first step is the two slips as they are, before the dialog takes its
-   one height. */
-.removal-stage.choosing {
-  height: auto;
+/* The first step is the two slips as they are, at the top of the same
+   height the later steps take: nothing in it is stretched to fill it. */
+.removal-stage > .removal-ways {
+  flex: none;
+  margin: 0;
 }
 
-.removal-stage > .removal-ways {
-  margin: 0;
+.removal-stage.choosing {
+  justify-content: center;
+  padding-bottom: var(--space-8);
 }
 
 .removal-chosen {

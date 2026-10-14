@@ -27,8 +27,13 @@
   }
 }
 
+/* Never past the screen: what is taller scrolls inside it. */
 .sheet-body {
   width: min(560px, 100vw - 32px);
+  max-height: calc(88dvh - var(--space-6));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
   padding: var(--space-5) var(--space-6);
   border-radius: var(--radius-l);
   background: var(--bg-elevated);
@@ -538,6 +543,41 @@
     width: min(240px, 70vw);
     justify-self: center;
   }
+}
+
+/* The sheets that hold a run of steps, adding a device (over SSH among
+   them) and moving the server, are one height from the first to the last:
+   what one step holds more scrolls inside it. */
+.token-sheet .sheet-body,
+.move-sheet .sheet-body {
+  height: min(660px, calc(88dvh - var(--space-6)));
+}
+
+/* A way in that is only a few things to say stands in the middle of the
+   room the sheet keeps; one taller than it starts at the top and scrolls. */
+.token-sheet .sheet-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.token-sheet .device-body {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.token-sheet .device-body > * {
+  flex: none;
+}
+
+.token-sheet .device-body:not(:has(.device-remote))::before,
+.token-sheet .device-body:not(:has(.device-remote))::after {
+  content: "";
+  flex: 1 1 0;
+}
+
+.token-sheet .device-body:not(:has(.device-remote))::after {
+  flex-grow: 1.4;
 }
 
 /* Giving a machine or a login: who has it already, then whom to give it

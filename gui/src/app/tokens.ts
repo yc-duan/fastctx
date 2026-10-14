@@ -16,7 +16,7 @@ import type { Login } from "../world/accounts";
 import type { NameProblem } from "../world/bridge";
 import type { LoginWords, TokenWords } from "./account-words";
 import { Sheet } from "./confirm";
-import { managedSteps } from "./managed-art";
+import { joinSteps, managedSteps } from "./managed-art";
 import { plainly } from "./problem";
 import { RemoteWorld, type RemoteSeams } from "./remote-world";
 
@@ -238,7 +238,8 @@ export class Tokens {
       body = `<dl class="facts device-facts">
           <dt>${escape(words.hub)}</dt><dd><span class="mono">${escape(address || "—")}</span>${address ? this.copy(this.options.addresses(login)[0]!) : ""}</dd>
           <dt>${escape(words.account)}</dt><dd><span class="mono">${escape(login.account)}</span></dd>
-        </dl>`;
+        </dl>
+        ${this.storyboard("computer")}`;
     } else if (this.kind === "managed") {
       const uses = (["one", "any"] as const)
         .map(
@@ -257,6 +258,7 @@ export class Tokens {
         <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(words.makeManaged)}</button></footer>`;
     } else {
       body = `
+        ${this.storyboard(this.kind === "phone" ? "phone" : "line")}
         ${
           this.kind === "server"
             ? `<label class="field"><span class="field-label">${escape(words.name)}</span>
@@ -366,6 +368,13 @@ export class Tokens {
     } finally {
       sheet.busy = false;
     }
+  }
+
+  /** How the device comes in by what this sheet gives it, in three small
+   *  drawings and a line each, as a code for managed machines says it. */
+  private storyboard(way: "computer" | "phone" | "line"): string {
+    const art = joinSteps(way);
+    return `<ol class="managed-steps join-steps">${this.options.words.joinSteps[way].map((step, index) => `<li class="managed-step">${art[index]}<span><b>${index + 1}</b>${escape(step)}</span></li>`).join("")}</ol>`;
   }
 
   /** A code for managed machines, made: the code to copy, how long and for

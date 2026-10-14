@@ -47,7 +47,7 @@ import type { WorldNow } from "../world/bridge";
 import type { Offers } from "../world/control";
 import type { Address } from "../world/events";
 import { accountOf, homeChoice, homeLabel, homesOf, installed, listed, loggedOut, type HomeWords } from "./agent-homes";
-import { agentPicker, type PickerMachine, type PickerRow } from "./agent-picker";
+import { agentPicker, FILTER_PAST, narrowPicker, type PickerMachine, type PickerRow } from "./agent-picker";
 import type { ConsentHome } from "./claude-consent";
 import {
   assistantsOf,
@@ -66,6 +66,7 @@ import {
   type Machine,
 } from "./reach";
 import { DraftFit } from "../conversation/fit-draft";
+import { Steady } from "./steady";
 import type { Store } from "./store";
 import type { FocusWords, NewTalkWords } from "./words";
 
@@ -386,6 +387,11 @@ export class NewTalk {
   }
 
   private fitter: DraftFit | null = null;
+  /** The choices open over the input keep the size they opened at, as
+   *  more answers come only growing (`steady.ts`). */
+  private popSteady: Steady | null = null;
+  /** What narrows the table of agents, while it is open. */
+  private narrowed = "";
 
   private fit(): void {
     this.fitter ??= new DraftFit(this.input);
@@ -728,8 +734,16 @@ export class NewTalk {
       this.models.hide();
       layerOpened({ isOpen: () => this.opened === pop && this.element.isConnected, close: () => this.choose(null) });
     }
+    const opening = pop !== null && pop !== this.opened;
     this.opened = pop;
+    this.narrowed = "";
+    this.popSteady ??= new Steady(this.pop, true);
+    this.popSteady.free();
     this.draw();
+    if (!opening) return;
+    // It opens with the one chosen in view, and keeps that size.
+    this.pop.querySelector(".agent-row.chosen")?.scrollIntoView({ block: "nearest" });
+    this.popSteady.hold();
   }
 
   private click(event: Event): void {
@@ -897,7 +911,9 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
               logins.chosen ? `${logins.chosen.hub}/${logins.chosen.account}` : "",
             )}</div>`
           : "";
-      html = `${this.picker(lines)}${account}`;
+      this.drawAgents(lines, `${this.picker(lines)}${account}`);
+      this.popSteady?.settle();
+      return;
     } else if (this.opened === "town") {
       html = `<h3 class="picker-title">${escape(words.project)}</h3>${this.list("town", words.project, towns, this.town ?? "")}`;
     }
@@ -906,6 +922,47 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
       pop.innerHTML = html;
       pop.scrollTop = scroll;
     }
+    this.popSteady?.settle();
+  }
+
+  /** The table of agents, under the field that narrows it once there are
+   *  many; the field and what is typed in it stay as the table is drawn
+   *  again. */
+  private drawAgents(lines: Line[], html: string): void {
+    const pop = this.pop;
+    let list = pop.querySelector<HTMLElement>(":scope > .agent-list");
+    let field = pop.querySelector<HTMLInputElement>(":scope > .agent-filter");
+    if (!list) {
+      pop.replaceChildren();
+      list = document.createElement("div");
+      list.className = "agent-list";
+      pop.append(list);
+      field = null;
+    }
+    const many = lines.reduce((sum, line) => sum + line.options.length, 0) > FILTER_PAST;
+    if (many && !field) {
+      field = document.createElement("input");
+      field.className = "agent-filter";
+      field.type = "search";
+      field.placeholder = this.options.words.narrow;
+      field.setAttribute("aria-label", this.options.words.narrow);
+      field.autocomplete = "off";
+      field.spellcheck = false;
+      field.addEventListener("input", () => {
+        this.narrowed = field!.value;
+        narrowPicker(list!, this.narrowed);
+      });
+      pop.prepend(field);
+    } else if (!many && field) {
+      field.remove();
+      this.narrowed = "";
+    }
+    if (list.innerHTML !== html) {
+      const scroll = pop.scrollTop;
+      list.innerHTML = html;
+      pop.scrollTop = scroll;
+    }
+    narrowPicker(list, this.narrowed);
   }
 
   /** The machines its account may use: where it lives and those the

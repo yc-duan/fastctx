@@ -45,6 +45,8 @@ import { ConversationView, modelName } from "./view";
 import { departureOf } from "./flight";
 import { detailOf } from "../app/problem";
 import { DraftFit } from "./fit-draft";
+import { Popover } from "./popover";
+import { Steady } from "../app/steady";
 
 /** How many events the page holds at most, and how many its latest part
  *  holds before what comes before its newest turns is let go, down to how
@@ -183,6 +185,10 @@ export class ConversationPage {
    *  it; where the host offers no controls, the context's share alone. */
   private badge: UsageBadge | null = null;
   private usagePop: UsagePop | null = null;
+  /** Its button opens it and closes it; a press outside closes it, as the
+   *  model's panel does; it keeps the size it opened at. */
+  private usagePopover: Popover | null = null;
+  private usageSteady: Steady | null = null;
   private steps: ContextSheet | null = null;
   /** What the open pop-up was last drawn from. */
   private usageDrawn = "";
@@ -243,6 +249,7 @@ export class ConversationPage {
       <div class="talk-scroller scroller"><div class="conversation"></div></div>
       <footer class="composer-dock">
         <button class="to-latest" type="button" hidden aria-label="${escape(words.toLatest)}" title="${escape(words.toLatest)}">${glyph("chevron", 18)}</button>
+        <div class="steps-back" hidden><button class="steps-back-go" type="button">${glyph("chevron", 14)}<span></span></button><button class="steps-back-x" type="button">${glyph("close", 12)}</button></div>
         <p class="composer-gone" hidden></p>
         <div class="composer-queue"></div>
         <form class="composer">
@@ -338,7 +345,10 @@ export class ConversationPage {
     this.context = this.element.querySelector<HTMLElement>(".composer-context")!;
     if (options.controls) {
       this.badge = new UsageBadge(this.context, options.controls.words.usage);
-      this.usagePop = new UsagePop(this.element.querySelector<HTMLElement>(".usage-pop")!, options.controls.words.usage, () => this.openSteps());
+      const usagePop = this.element.querySelector<HTMLElement>(".usage-pop")!;
+      this.usagePop = new UsagePop(usagePop, options.controls.words.usage, () => this.openSteps());
+      this.usageSteady = new Steady(usagePop);
+      this.usagePopover = new Popover(usagePop, this.context, () => this.usageSteady?.free());
     }
     this.input = this.element.querySelector("textarea")!;
     this.fitter = new DraftFit(this.input);
@@ -363,10 +373,9 @@ export class ConversationPage {
         return;
       }
       const pop = this.element.querySelector<HTMLElement>(".usage-pop")!;
-      if (event.key !== "Escape" || pop.hidden) return;
+      if (event.key !== "Escape" || !this.usagePopover?.open) return;
       const inside = pop.contains(document.activeElement) || document.activeElement === this.context;
-      pop.hidden = true;
-      this.context.setAttribute("aria-expanded", "false");
+      this.usagePopover.hide();
       if (inside) this.context.focus({ preventScroll: true });
     });
     if (options.attach) this.attaching(options.attach);
@@ -452,6 +461,14 @@ export class ConversationPage {
     options.conversation.changed = () => this.update({ read: true });
     this.latest = this.element.querySelector<HTMLButtonElement>(".to-latest")!;
     this.latest.addEventListener("click", () => this.toLatest());
+    // The way back to each step's context, after one of its rows was
+    // opened here: the page as it was left.
+    const back = this.element.querySelector<HTMLElement>(".steps-back")!;
+    back.querySelector(".steps-back-go")!.addEventListener("click", () => {
+      back.hidden = true;
+      this.openSteps(true);
+    });
+    back.querySelector(".steps-back-x")!.addEventListener("click", () => (back.hidden = true));
 
     const form = this.element.querySelector("form")!;
     form.addEventListener("submit", (event) => {
@@ -1244,32 +1261,38 @@ export class ConversationPage {
   /** What the conversation has used, as its host says: its context, the
    *  account's limits and when they reset, what it cost. */
   private toggleUsage(): void {
-    const pop = this.element.querySelector<HTMLElement>(".usage-pop")!;
-    if (!pop.hidden) {
-      pop.hidden = true;
-      this.context.setAttribute("aria-expanded", "false");
-      return;
-    }
-    if (!this.fillUsage()) return;
-    layerOpened({ isOpen: () => !pop.hidden && pop.isConnected, close: () => this.toggleUsage() });
-    pop.hidden = false;
-    this.context.setAttribute("aria-expanded", "true");
-    // What the host pushed since the page last asked; nothing is read
-    // afresh from the provider for this.
-    void this.askOffers().then(() => {
-      if (!pop.hidden) this.fillUsage();
+    const popover = this.usagePopover;
+    if (!popover) return;
+    if (popover.open) return popover.hide();
+    void this.showUsage(popover);
+  }
+
+  /** Opens the pop-up whole: what the host pushed since the page last
+   *  asked comes first, waited for a moment so the pop-up does not open
+   *  and then grow; nothing is read afresh from the provider for this. */
+  private async showUsage(popover: Popover): Promise<void> {
+    const asked = this.askOffers();
+    await Promise.race([asked, new Promise((done) => setTimeout(done, 150))]);
+    if (popover.open || !this.fillUsage()) return;
+    popover.show();
+    this.usageSteady?.hold();
+    void asked.then(() => {
+      if (popover.open) this.fillUsage();
     });
   }
 
   /** Each step's context on a page of its own, over the conversation: what
    *  the page holds of its requests and its calls (`context-sheet.ts`). A
    *  call's row brings it into view, opened. */
-  private openSteps(): void {
+  private openSteps(again = false): void {
     const controls = this.options.controls;
     if (!controls) return;
-    const pop = this.element.querySelector<HTMLElement>(".usage-pop")!;
-    if (!pop.hidden) this.toggleUsage();
-    this.steps ??= new ContextSheet(controls.words.usage, (key) => void this.view.openRow(key));
+    this.usagePopover?.hide();
+    this.element.querySelector<HTMLElement>(".steps-back")!.hidden = true;
+    this.steps ??= new ContextSheet(controls.words.usage, (key) => {
+      void this.view.openRow(key);
+      this.offerStepsBack();
+    });
     const { conversation, words } = this.options;
     const calls: CallSpan[] = [];
     const tools = new Map<string, Extract<Entry, { kind: "tool" }>>();
@@ -1280,16 +1303,32 @@ export class ConversationPage {
         calls.push({ key: entry.key, item: entry.item, turn: entry.turn, ended: entry.ended?.at ?? null, size: returnedSize(entry.tool) });
       }
     }
-    this.steps.show({
-      requests: conversation.requests,
-      calls,
-      named: (key) => {
-        const entry = tools.get(key);
-        if (!entry) return null;
-        const line = headline(entry.tool, entry.ended, words, () => null, true);
-        return { glyph: line.glyph, action: line.action, object: line.object };
+    this.steps.show(
+      {
+        requests: conversation.requests,
+        calls,
+        named: (key) => {
+          const entry = tools.get(key);
+          if (!entry) return null;
+          const line = headline(entry.tool, entry.ended, words, () => null, true);
+          return { glyph: line.glyph, action: line.action, object: line.object };
+        },
       },
-    });
+      again,
+    );
+  }
+
+  /** Over the composer, the way back to each step's context. */
+  private offerStepsBack(): void {
+    const controls = this.options.controls;
+    if (!controls) return;
+    const { usage } = controls.words;
+    const back = this.element.querySelector<HTMLElement>(".steps-back")!;
+    back.querySelector(".steps-back-go span")!.textContent = usage.steps;
+    const close = back.querySelector<HTMLElement>(".steps-back-x")!;
+    close.setAttribute("aria-label", usage.close);
+    close.title = usage.close;
+    back.hidden = false;
   }
 
   /** Draws the usage pop-up from what the page holds. */
@@ -1483,7 +1522,7 @@ export class ConversationPage {
     if (command.source === "codex" && !given && !args) {
       if (command.name === "status" || command.name === "usage") {
         this.say("");
-        if (this.element.querySelector<HTMLElement>(".usage-pop")!.hidden) this.toggleUsage();
+        if (!this.usagePopover?.open) this.toggleUsage();
         return true;
       }
       if (command.name === "skills") {
@@ -1663,11 +1702,16 @@ export class ConversationPage {
     });
   }
 
+  /** The machines and folders keep the size they opened at, growing only
+   *  as a folder is walked to (`../app/steady`). */
+  private focusSteady: Steady | null = null;
+
   private openFocus(focus: NonNullable<PageOptions["focus"]>): void {
     const current = this.options.someone.focus;
     if (!current || this.focusSaving) return;
     const strip = this.element.querySelector<HTMLElement>(".focus-strip")!;
     const pop = strip.querySelector<HTMLElement>(".focus-pop")!;
+    this.focusSteady ??= new Steady(pop, true);
     this.focusDraft = structuredClone(current);
     this.focusPanel ??= new FocusPanel(
       {
@@ -1684,6 +1728,8 @@ export class ConversationPage {
     this.focusPanel.set(current);
     pop.replaceChildren(this.focusPanel.element);
     pop.hidden = false;
+    this.focusSteady.hold();
+    this.focusSteady.watch();
     strip.querySelector(".focus-chip")!.setAttribute("aria-expanded", "true");
     layerOpened({ isOpen: () => !pop.hidden && this.element.isConnected, close: () => this.closeFocus(focus) });
   }
@@ -1693,6 +1739,7 @@ export class ConversationPage {
     const pop = strip.querySelector<HTMLElement>(".focus-pop")!;
     if (pop.hidden) return;
     pop.hidden = true;
+    this.focusSteady?.free();
     strip.querySelector(".focus-chip")!.setAttribute("aria-expanded", "false");
     const before = this.options.someone.focus;
     const next = this.focusDraft;

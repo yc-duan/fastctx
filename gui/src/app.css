@@ -120,6 +120,66 @@
   from { opacity: 0; transform: translate(-50%, 6px); }
 }
 
+/* Back to each step's context, after one of its rows was opened in the
+   conversation: a solid pill at the composer's left edge, and its cross. */
+.steps-back {
+  position: absolute;
+  left: max(var(--gutter), calc(50% - var(--column) / 2));
+  bottom: calc(100% + var(--space-3));
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+  animation: sheet-in var(--enter) var(--fold-easing) both;
+}
+
+.steps-back[hidden] {
+  display: none;
+}
+
+.steps-back-go,
+.steps-back-x {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 var(--space-3) 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--size-ui);
+  cursor: pointer;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.steps-back-go .glyph {
+  transform: rotate(90deg);
+}
+
+.steps-back-x {
+  padding: 0 var(--space-2);
+  color: var(--text-3);
+}
+
+.steps-back-go:hover,
+.steps-back-x:hover {
+  color: var(--text-strong);
+  background: var(--fill);
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .steps-back-go,
+  .steps-back-x {
+    min-height: 40px;
+  }
+}
+
 @media (hover: none) and (pointer: coarse) {
   .to-latest {
     width: 44px;

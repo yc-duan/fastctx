@@ -153,6 +153,8 @@ export interface NewTalkWords {
   assisting: string;
   ownedBy(owner: string): string;
   noAgents: string;
+  /** The field that narrows many agents to those typed for. */
+  narrow: string;
   /** An assisting login, which its machine does not list. */
   assistantGone: string;
   /** A login whose usage window is spent goes on with credits. */
@@ -210,6 +212,7 @@ export const zhNewTalk: NewTalkWords = {
   assisting: "协助我的",
   ownedBy: (owner) => `${owner} 的`,
   noAgents: "没有可用的智能体",
+  narrow: "按机器、智能体、账号筛选",
   assistantGone: "该登录已不可用",
   onCredits: "使用 credits",
   token: "长期令牌",
@@ -250,6 +253,7 @@ export const enNewTalk: NewTalkWords = {
   assisting: "Assisting me",
   ownedBy: (owner) => `${owner}'s`,
   noAgents: "No agents available",
+  narrow: "Filter by machine, agent or account",
   assistantGone: "Login unavailable",
   onCredits: "on credits",
   token: "Token",
@@ -1074,7 +1078,10 @@ export interface ComposerWords {
     step(step: number): string;
     heaviest: string;
     heaviestWhy: string;
-    allSteps: string;
+    /** Back from a step's own list to the heaviest calls. */
+    backToHeaviest: string;
+    /** What a step held past the rows shown. */
+    rest(count: number): string;
     noCalls: string;
   };
 }
@@ -1286,7 +1293,8 @@ export const zhComposer: ComposerWords = {
     step: (step) => `第 ${step} 步`,
     heaviest: "最占地方的工具调用",
     heaviestWhy: "一步里几次调用各占多少，按各自返回了多少来分",
-    allSteps: "全部",
+    backToHeaviest: "最占地方的",
+    rest: (count) => `其余 ${count} 项`,
     noCalls: "这一步没有工具调用",
   },
 };
@@ -1498,7 +1506,8 @@ export const enComposer: ComposerWords = {
     step: (step) => `step ${step}`,
     heaviest: "Calls that took the most room",
     heaviestWhy: "Within a step, its calls share what it added by how much each returned",
-    allSteps: "All",
+    backToHeaviest: "Most room",
+    rest: (count) => `${count} more`,
     noCalls: "No tool calls in this step",
   },
 };

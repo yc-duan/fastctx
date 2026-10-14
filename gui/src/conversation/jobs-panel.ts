@@ -1,12 +1,15 @@
 // What the resident started that still runs: a mark in the input's row with
 // how many, quietly moving, and over it a small panel of each, where it runs
-// and for how long. A row pressed opens its output in place, read from the
-// machine running it a screen at a time and following as it grows; a row's
-// stop asks once, and the agent is told the user stopped it, so it does not
-// take it for a failure. A row whose output is open stays until it is
-// closed, also after its command ends.
+// and for how long. A row pressed turns the panel to its output, the row
+// at the top leading back, read from the machine running it a screen at a
+// time and following as it grows; a row's stop asks once, and the agent is
+// told the user stopped it, so it does not take it for a failure. A row
+// whose output is open stays until it is closed, also after its command
+// ends. The panel keeps the size it opened at, as tall as an output needs,
+// so turning to an output and back moves nothing (`../app/steady`).
 
 import { Popover } from "./popover";
+import { Steady } from "../app/steady";
 import { LineViewport, type LineSource } from "../longview";
 import { glyph } from "./glyphs";
 import { escape } from "./prose";
@@ -60,25 +63,29 @@ export class JobsPanel {
   private readonly rows = new Map<string, Row>();
   private readonly popover: Popover;
   private readonly list: HTMLUListElement;
+  private readonly steady: Steady;
 
   constructor(
     private readonly button: HTMLButtonElement,
-    pop: HTMLElement,
+    private readonly pop: HTMLElement,
     private readonly options: JobsPanelOptions,
   ) {
     pop.innerHTML = `<p class="jobs-title">${escape(options.words.title)}</p><ul class="jobs-list"></ul>`;
     this.list = pop.querySelector("ul")!;
+    this.steady = new Steady(pop);
     // Closed, rows of ended commands are let go with their output.
     this.popover = new Popover(pop, button, () => {
       for (const row of [...this.rows.values()]) if (row.ended) this.remove(row);
+      this.steady.free();
     });
-    button.addEventListener("click", () => this.popover.toggle());
+    button.addEventListener("click", () => this.show(!this.popover.open));
     pop.addEventListener("click", (event) => void this.act(event));
   }
 
   private show(shown: boolean): void {
-    if (shown) this.popover.show();
-    else this.popover.hide();
+    if (!shown) return this.popover.hide();
+    this.popover.show();
+    this.steady.hold();
   }
 
   update(jobs: Job[], now: Date): void {
@@ -116,7 +123,7 @@ export class JobsPanel {
     element.className = "job-item";
     element.dataset.job = job.job;
     const command = job.command.split("\n")[0] ?? "";
-    const what = `<code class="job-command">${escape(command)}</code><span class="job-where"></span>`;
+    const what = `<span class="job-back" aria-hidden="true">${glyph("chevron", 14)}</span><code class="job-command">${escape(command)}</code><span class="job-where"></span>`;
     element.innerHTML = `<div class="job-row"><span class="pulse" aria-hidden="true"></span>${
       this.options.output
         ? `<button class="job-what" type="button" data-open aria-expanded="false" title="${escape(job.command)}">${what}</button>`
@@ -152,7 +159,11 @@ export class JobsPanel {
       if (row.open) {
         this.close(row);
         if (row.ended) this.remove(row);
-      } else void this.openOutput(row);
+      } else {
+        // One output at a time: the panel turns to it.
+        for (const other of this.rows.values()) if (other !== row && other.open) this.close(other);
+        void this.openOutput(row);
+      }
       return;
     }
     if (target.dataset.stop !== undefined) {
@@ -194,6 +205,8 @@ export class JobsPanel {
     row.element.querySelector(".job-what")?.setAttribute("aria-expanded", "true");
     const open: NonNullable<Row["open"]> = { element, viewport: null, lines: null, closed: false };
     row.open = open;
+    row.element.classList.add("reading");
+    this.pop.classList.add("reading");
     try {
       const lines = await output(row.job);
       if (open.closed) {
@@ -225,6 +238,8 @@ export class JobsPanel {
     if (open.lines) void open.lines.close().catch((error: unknown) => console.warn("a job's output could not be let go", error));
     open.element.remove();
     row.open = null;
+    row.element.classList.remove("reading");
+    this.pop.classList.remove("reading");
     row.element.querySelector(".job-what")?.setAttribute("aria-expanded", "false");
   }
 }

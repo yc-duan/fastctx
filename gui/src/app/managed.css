@@ -143,6 +143,16 @@
   list-style: none;
 }
 
+/* A way in told before what it gives is made: the drawings first, the
+   form under them. */
+.join-steps {
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+.join-steps .managed-step-art {
+  max-width: 156px;
+}
+
 .managed-step {
   display: flex;
   flex-direction: column;

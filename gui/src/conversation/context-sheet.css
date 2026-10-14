@@ -185,22 +185,50 @@
   margin-top: var(--space-6);
 }
 
+/* One height whether it leads back or not. */
 .ctx-list-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
+  gap: var(--space-2);
+  min-height: 36px;
+  margin-bottom: var(--space-2);
 }
 
 .ctx-list-head .picker-title {
   flex: 1;
-  margin-bottom: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+/* Five rows high whatever is listed, so choosing a step, or none, never
+   changes the page's size. */
 .ctx-rows {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  min-height: calc(5 * 42px + 4 * 3px);
+}
+
+.ctx-rest {
+  background: transparent;
+  color: var(--text-3);
+}
+
+.ctx-rest .ctx-row-tokens {
+  color: var(--text-3);
+}
+
+/* Back to the heaviest calls, before a step's own title. */
+.ctx-back {
+  flex: none;
+  margin-left: calc(-1 * var(--space-2));
+}
+
+.ctx-back .glyph {
+  transform: rotate(90deg);
 }
 
 .ctx-row {

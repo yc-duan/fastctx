@@ -5,7 +5,9 @@
 // assist them; under each machine a row a login, and every row has the
 // same columns down the whole list: the agent, who is logged in, the plan,
 // each usage window as a short bar with how much of it is spent, and why
-// it cannot begin where it cannot. The chosen row is washed in clay.
+// it cannot begin where it cannot. The chosen row is washed in clay. Past
+// ten logins a field above the table narrows it to those whose machine,
+// agent, account or plan holds what is typed (`new-talk.ts`).
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -49,6 +51,9 @@ export interface PickerWords {
 }
 
 const HOLDS: PickerHold[] = ["mine", "shared", "others", "assist"];
+
+/** Past this many logins the table can be narrowed by what is typed. */
+export const FILTER_PAST = 10;
 const programName = (agent: string) => (agent === "codex" ? "Codex" : agent === "claude" ? "Claude" : agent);
 const markOf = (agent: string) => (agent === "claude" ? "claude" : "codex");
 
@@ -56,7 +61,7 @@ export function agentPicker(machines: PickerMachine[], words: PickerWords): stri
   const body = HOLDS.map((hold) => {
     const held = machines.filter((machine) => machine.hold === hold);
     if (!held.length) return "";
-    return `<h3 class="agent-group">${escape(words.holds[hold])}</h3>${held.map((machine) => machineRows(machine, words)).join("")}`;
+    return `<div class="agent-hold"><h3 class="agent-group">${escape(words.holds[hold])}</h3>${held.map((machine) => machineRows(machine, words)).join("")}</div>`;
   }).join("");
   return `<div class="agent-picker" role="radiogroup" aria-label="${escape(words.agent)}">${body || `<p class="agent-none">${escape(words.noMachine)}</p>`}</div>`;
 }
@@ -64,9 +69,10 @@ export function agentPicker(machines: PickerMachine[], words: PickerWords): stri
 function machineRows(machine: PickerMachine, words: PickerWords): string {
   const state = machine.online === false ? " offline" : machine.online === true ? " online" : "";
   const head = `<div class="agent-machine${state}"><span class="agent-machine-dot" aria-hidden="true"></span><span class="agent-machine-name">${escape(machine.written)}</span>${machine.notes.map((note) => `<span class="agent-machine-note">${escape(note)}</span>`).join("")}</div>`;
-  if (machine.online === false) return head;
+  const host = (inner: string) => `<div class="agent-host" data-find="${escape(machine.written.toLowerCase())}">${inner}</div>`;
+  if (machine.online === false) return host(head);
   const rows = machine.rows.length ? machine.rows.map((row) => rowHtml(row, words)).join("") : `<p class="agent-none quiet">${escape(words.noAgents)}</p>`;
-  return head + rows;
+  return host(head + rows);
 }
 
 function rowHtml(row: PickerRow, words: PickerWords): string {
@@ -80,7 +86,8 @@ function rowHtml(row: PickerRow, words: PickerWords): string {
   const note = row.note ?? row.caution ?? credits;
   const said = [name, row.who, plan, limits ? windowsShort(facts?.limits).map((window) => `${window.label} ${window.percent}`).join(" · ") : "", note].filter(Boolean).join(" · ");
   const kind = row.note ? "" : row.caution ? " caution" : credits ? " credits" : "";
-  return `<button type="button" class="agent-row${row.chosen ? " chosen" : ""}" role="radio" aria-checked="${row.chosen}" aria-label="${escape(said)}" title="${escape(said)}" data-choice="pick" data-value="${escape(row.key)}"${row.startable ? "" : " disabled"}>
+  const find = [name, row.who, plan].filter(Boolean).join(" ").toLowerCase();
+  return `<button type="button" class="agent-row${row.chosen ? " chosen" : ""}" role="radio" aria-checked="${row.chosen}" aria-label="${escape(said)}" title="${escape(said)}" data-choice="pick" data-value="${escape(row.key)}" data-find="${escape(find)}"${row.startable ? "" : " disabled"}>
     <span class="agent-row-mark">${glyph(markOf(row.agent), 16)}</span>
     <span class="agent-row-agent">${escape(name)}</span>
     <span class="agent-row-who">${escape(row.who ?? "")}</span>
@@ -88,6 +95,30 @@ function rowHtml(row: PickerRow, words: PickerWords): string {
     <span class="agent-row-limits">${limits}</span>
     <span class="agent-row-note${kind}">${note ? escape(note) : ""}</span>
   </button>`;
+}
+
+/** Narrows the table drawn in `root` to what holds `typed`: a machine
+ *  whose name holds it keeps all its logins; otherwise the logins whose
+ *  agent, account or plan holds it, under their machines; a group with
+ *  none left goes. Nothing is narrowed for nothing typed. */
+export function narrowPicker(root: HTMLElement, typed: string): void {
+  const query = typed.trim().toLowerCase();
+  for (const hold of root.querySelectorAll<HTMLElement>(".agent-hold")) {
+    let any = false;
+    for (const host of hold.querySelectorAll<HTMLElement>(".agent-host")) {
+      const named = !query || (host.dataset.find ?? "").includes(query);
+      let rows = false;
+      for (const row of host.querySelectorAll<HTMLElement>(".agent-row")) {
+        const shown = named || (row.dataset.find ?? "").includes(query);
+        row.hidden = !shown;
+        rows ||= shown;
+      }
+      for (const none of host.querySelectorAll<HTMLElement>(".agent-none")) none.hidden = !named;
+      host.hidden = !named && !rows;
+      any ||= !host.hidden;
+    }
+    hold.hidden = !any;
+  }
 }
 
 /** Each usage window a short bar with how much of it is spent. */

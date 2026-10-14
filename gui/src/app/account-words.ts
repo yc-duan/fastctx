@@ -1422,6 +1422,8 @@ export interface TokenWords {
   makeManaged: string;
   codeUntil(at: string, uses: number): string;
   steps: [string, string, string];
+  /** How each way in is used, in three steps each, under its drawings. */
+  joinSteps: Record<"computer" | "phone" | "line", [string, string, string]>;
   line: string;
   /** A Linux host as a managed machine: the switch, what it means behind a
    *  pointer's rest, and why it cannot be had. */
@@ -1465,6 +1467,11 @@ export const zhToken: TokenWords = {
   makeManaged: "生成入网码",
   codeUntil: (at, uses) => `${at} 前有效 · ${uses === 0 ? "不限台数" : uses === 1 ? "只能进 1 台" : `能进 ${uses} 台`}`,
   steps: ["换到使用者不登录的系统账户", "装好 Fastctx，打开", "在「加入网络」里粘贴"],
+  joinSteps: {
+    computer: ["在那台电脑上装好 Fastctx，打开", "点「加入网络」", "填上面的地址和账号，输入密码"],
+    phone: ["在手机上装好 Fastctx，打开", "点「加入网络」，扫这里生成的码", "码一小时内有效，只能用一次"],
+    line: ["生成下面这一行", "在服务器的终端里粘贴运行", "它装好 Fastctx，加入网络"],
+  },
   line: "或在那个账户的终端里运行",
   managed: "受管机器",
   managedWhat: "它不登录任何账号，只归你：你的智能体在上面干活，它自己什么都用不了",
@@ -1506,6 +1513,11 @@ export const enToken: TokenWords = {
   makeManaged: "Create code",
   codeUntil: (at, uses) => `Valid until ${at} · ${uses === 0 ? "any number of computers" : uses === 1 ? "one computer" : `${uses} computers`}`,
   steps: ["Sign in as a system account no one at it uses", "Install Fastctx and open it", "Paste it in Join a network"],
+  joinSteps: {
+    computer: ["Install Fastctx on that computer and open it", "Choose Join a network", "Enter the address and account above, and the password"],
+    phone: ["Install Fastctx on the phone and open it", "Choose Join a network and scan the code made here", "The code works for an hour, once"],
+    line: ["Make the line below", "Paste it in the server's terminal and run it", "It installs Fastctx and joins"],
+  },
   line: "Or run in that account's terminal",
   managed: "Managed machine",
   managedWhat: "Logged in to no account, it is yours alone: your agents work on it, and it uses nothing itself",

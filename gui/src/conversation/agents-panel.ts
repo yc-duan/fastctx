@@ -18,6 +18,7 @@ import type { Words } from "../words";
 import type { AgentRun } from "./agents";
 import { blot, outline, ruled, seeded, type Point } from "../pen/shapes";
 import { Popover } from "./popover";
+import { Steady } from "../app/steady";
 import { glyph } from "./glyphs";
 
 export interface AgentsPanelOptions {
@@ -69,6 +70,7 @@ interface Group {
 
 export class AgentsPanel {
   private readonly popover: Popover;
+  private readonly steady: Steady;
   private readonly title: HTMLElement;
   private readonly groups: HTMLElement;
   private readonly lanes = new Map<string, Lane>();
@@ -87,11 +89,18 @@ export class AgentsPanel {
     pop.innerHTML = `<p class="agents-title"></p><div class="agents-groups"></div>`;
     this.title = pop.querySelector(".agents-title")!;
     this.groups = pop.querySelector(".agents-groups")!;
-    this.popover = new Popover(pop, button, () => this.stopClock());
+    // It keeps the size it opened at; an agent sent out while it is open
+    // may only make it taller (`../app/steady`).
+    this.steady = new Steady(pop, true);
+    this.popover = new Popover(pop, button, () => {
+      this.stopClock();
+      this.steady.free();
+    });
     button.addEventListener("click", () => {
       this.popover.toggle();
       if (!this.popover.open) return;
       this.lay();
+      this.steady.hold();
       // The latest of them is nearest the input.
       pop.scrollTop = pop.scrollHeight;
     });
@@ -122,7 +131,10 @@ export class AgentsPanel {
     this.button.setAttribute("aria-label", going ? `${words.agents.title} · ${words.agents.running(going)}` : words.agents.title);
     const html = `${glyph("delegate", 16)}${going ? `<span class="agents-count">${going}</span>` : ""}`;
     if (this.button.innerHTML !== html) this.button.innerHTML = html;
-    if (this.popover.open) this.lay();
+    if (this.popover.open) {
+      this.lay();
+      this.steady.settle();
+    }
   }
 
   destroy(): void {

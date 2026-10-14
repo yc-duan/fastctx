@@ -4,6 +4,7 @@
 // It says what will happen, waits for the one button, and stays open with
 // what went wrong if the World refuses.
 
+import { Steady } from "./steady";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 
@@ -11,6 +12,10 @@ export class Sheet {
   readonly dialog: HTMLDialogElement;
   readonly body: HTMLElement;
   busy = false;
+  /** Open, it keeps the size it opened at: what changes in it may make it
+   *  taller, as far as the screen allows, and never shorter, so nothing in
+   *  it moves under the reader (`steady.ts`). */
+  private readonly steady: Steady;
 
   constructor(className: string) {
     this.dialog = document.createElement("dialog");
@@ -18,12 +23,14 @@ export class Sheet {
     this.dialog.innerHTML = `<form class="sheet-body" method="dialog"></form>`;
     document.body.append(this.dialog);
     this.body = this.dialog.querySelector("form")!;
+    this.steady = new Steady(this.body, true);
     this.dialog.addEventListener("click", (event) => {
       if (event.target === this.dialog || (event.target as HTMLElement).closest(".sheet-close")) this.close();
     });
     this.dialog.addEventListener("cancel", (event) => {
       if (this.busy) event.preventDefault();
     });
+    this.dialog.addEventListener("close", () => this.steady.free());
   }
 
   head(title: string, close: string): string {
@@ -31,7 +38,10 @@ export class Sheet {
   }
 
   show(): void {
-    if (!this.dialog.open) this.dialog.showModal();
+    if (this.dialog.open) return;
+    this.dialog.showModal();
+    this.steady.hold();
+    this.steady.watch();
   }
 
   close(): void {

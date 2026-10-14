@@ -56,11 +56,15 @@
   transform: rotate(0deg);
 }
 
+/* In the controls' place, filling the panel, which keeps the size of the
+   taller face (`model-panel.ts`). */
 .model-list {
+  flex: 1 1 auto;
+  min-height: 0;
   list-style: none;
   margin: calc(-1 * var(--space-2)) calc(-1 * var(--space-2)) 0;
   padding: 0;
-  max-height: 220px;
+  max-height: 260px;
   overflow-y: auto;
   scrollbar-width: thin;
 }
@@ -157,7 +161,7 @@
 
   /* A sheet risen from the bottom lays a shade over the rest, as every
      sheet on a phone does: a tap on the shade only puts the sheet away. */
-  .composer-dock:has(.model-panel:not([hidden]), .jobs-pop:not([hidden]), .agents-pop:not([hidden]))::after {
+  .composer-dock:has(.model-panel:not([hidden]), .jobs-pop:not([hidden]), .agents-pop:not([hidden]), .usage-pop:not([hidden]))::after {
     content: "";
     position: fixed;
     inset: 0;
@@ -206,14 +210,19 @@
   animation: ink-breathe 2.6s ease-in-out infinite;
 }
 
+/* The panel of commands still running, as tall as an output needs from
+   the moment it opens, so turning to one moves nothing. */
 .jobs-pop {
   position: absolute;
   left: var(--space-3);
   right: var(--space-3);
   bottom: calc(100% + var(--space-2));
   z-index: 6;
+  display: flex;
+  flex-direction: column;
   max-width: 560px;
-  max-height: min(50dvh, 380px);
+  min-height: min(46dvh, 340px);
+  max-height: min(70dvh, 520px);
   overflow-y: auto;
   padding: var(--space-3) var(--space-3) var(--space-2);
   border-radius: var(--radius-l);
@@ -274,24 +283,78 @@ button.job-what[aria-expanded="true"] .job-command {
   color: var(--text-strong);
 }
 
-/* A job's output, opened under its row: a few screens' height at most,
-   read from the machine as it is scrolled, following the end. */
+/* Turned to a job's output: its row at the top leads back, the others and
+   the title give way, the output fills the rest, read from the machine as
+   it is scrolled, following the end. */
+.job-back {
+  display: none;
+  color: var(--text-3);
+}
+
+.job-back .glyph {
+  transform: rotate(90deg);
+}
+
+.jobs-pop.reading .jobs-title,
+.jobs-pop.reading .job-item:not(.reading) {
+  display: none;
+}
+
+.jobs-pop.reading {
+  overflow: hidden;
+}
+
+.jobs-pop.reading .jobs-list,
+.job-item.reading {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.job-item.reading .job-back {
+  display: inline-grid;
+  grid-area: back;
+  align-self: center;
+}
+
+.job-item.reading .job-what {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "back command"
+    ". where";
+  column-gap: 6px;
+  justify-items: start;
+  align-content: center;
+}
+
+.job-item.reading .job-command {
+  grid-area: command;
+  max-width: 100%;
+}
+
+.job-item.reading .job-where {
+  grid-area: where;
+}
+
 .job-output {
-  margin: 2px var(--space-1) var(--space-2) calc(10px + var(--space-3));
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin: 2px var(--space-1) var(--space-1);
   font-size: var(--size-small);
   color: var(--text-3);
 }
 
 .job-output .lv-viewport {
-  height: min(240px, 34dvh);
+  flex: 1;
+  min-height: 0;
 }
 
 .job-output.failed {
   color: var(--wrong);
-}
-
-.jobs-pop:has(.job-output) {
-  max-height: min(70dvh, 560px);
 }
 
 .job-item.ended .pulse {
@@ -390,7 +453,8 @@ button.job-what:hover .job-command {
 
 /* Settling away, the way it rose; on a phone the sheet sinks. */
 .model-panel.popover-leaving,
-.jobs-pop.popover-leaving {
+.jobs-pop.popover-leaving,
+.usage-pop.popover-leaving {
   animation: panel-settle var(--fold) var(--fold-easing) both;
 }
 
@@ -403,7 +467,8 @@ button.job-what:hover .job-command {
 
 @media (max-width: 760px) {
   .model-panel.popover-leaving,
-  .jobs-pop.popover-leaving {
+  .jobs-pop.popover-leaving,
+  .usage-pop.popover-leaving {
     animation-name: sheet-sink;
   }
 

@@ -54,6 +54,23 @@
   padding: var(--space-4) var(--space-4) var(--space-3);
 }
 
+/* On a phone it is a sheet from the bottom, as the model's panel is, the
+   rest shaded behind it. */
+@media (max-width: 760px) {
+  .usage-pop {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 5;
+    width: auto;
+    max-height: 86dvh;
+    padding: var(--space-4) var(--space-5) calc(var(--space-5) + var(--safe-bottom));
+    border-radius: var(--radius-l) var(--radius-l) 0 0;
+    animation-name: sheet-rise;
+  }
+}
+
 .talk-usage-rule {
   height: 8px;
   margin: var(--space-3) 0;

@@ -318,8 +318,46 @@
   color: var(--text-3);
 }
 
-.agent-group:first-child {
+.agent-picker > .agent-hold:first-child > .agent-group {
   margin-top: 0;
+}
+
+/* A group and a machine are only ways to narrow the table: their rows
+   stand on the table's own columns. */
+.agent-hold,
+.agent-host {
+  display: contents;
+}
+
+.agent-hold[hidden],
+.agent-host[hidden],
+.agent-row[hidden],
+.agent-none[hidden] {
+  display: none;
+}
+
+/* Past ten logins, what narrows them: a solid field at the top that stays
+   there as the table scrolls. */
+.agent-filter {
+  position: sticky;
+  top: calc(-1 * var(--space-3));
+  z-index: 1;
+  display: block;
+  width: 100%;
+  margin: calc(-1 * var(--space-3)) 0 var(--space-2);
+  padding: 8px var(--space-3);
+  border: 0;
+  border-radius: var(--radius-m);
+  outline: 0;
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--size-ui);
+  box-shadow: 0 var(--space-3) 0 var(--bg-elevated), 0 calc(-1 * var(--space-3)) 0 var(--bg-elevated);
+}
+
+.agent-filter::placeholder {
+  color: var(--text-3);
 }
 
 .agent-group::after {

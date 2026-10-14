@@ -74,7 +74,10 @@ export class ModelPanel {
     this.element.setAttribute("aria-label", words.model);
     this.slider = new EffortSlider(words.effort, (effort) => this.want({ effort }));
     this.element.addEventListener("click", (event) => this.click(event));
-    this.popover = new Popover(this.element, chip, () => (this.listing = false));
+    this.popover = new Popover(this.element, chip, () => {
+      this.listing = false;
+      this.element.style.height = "";
+    });
     chip.addEventListener("click", () => (this.popover.open ? this.hide() : this.show()));
     chip.setAttribute("aria-haspopup", "dialog");
     this.element.addEventListener("keydown", (event) => {
@@ -97,10 +100,24 @@ export class ModelPanel {
   }
 
   show(listing = false): void {
-    this.listing = listing;
     this.popover.show();
-    this.draw();
+    this.fit(listing);
     this.element.querySelector<HTMLElement>("button, [tabindex]")?.focus({ preventScroll: true });
+  }
+
+  /** The panel's size, for as long as it is open: as tall as the taller of
+   *  its two faces, the controls and the list of models, so turning from
+   *  one to the other moves nothing. Both are laid out at once, before it
+   *  is painted. */
+  private fit(listing: boolean): void {
+    this.element.style.height = "";
+    let tallest = 0;
+    for (const face of [!listing, listing]) {
+      this.listing = face;
+      this.draw();
+      tallest = Math.max(tallest, this.element.getBoundingClientRect().height);
+    }
+    this.element.style.height = `${Math.ceil(tallest)}px`;
   }
 
   hide(): void {
@@ -158,12 +175,13 @@ export class ModelPanel {
               .map((tier) => `<button class="segment${tier.id === chosen ? " chosen" : ""}" type="button" role="radio" data-tier="${escape(tier.id)}" aria-checked="${tier.id === chosen}"${tier.description ? ` title="${escape(tier.description)}"` : ""}>${escape(tier.name)}</button>`)
               .join("")}</div></div>`
           : "";
-    const html = `
-      <button class="model-name" type="button" data-list aria-expanded="${this.listing}"><span class="model-label">${escape(words.model)}</span><span class="model-value">${escape(model?.name ?? offered?.model ?? "")}</span>${glyph("chevron", 14)}</button>
-      ${list}
-      ${model && model.efforts.length > 1 ? `<div class="model-effort"><span class="model-label">${escape(words.effort)}</span><div class="model-slider"></div></div>` : ""}
+    // The list of models takes the place of the controls under the name.
+    const controls = `${model && model.efforts.length > 1 ? `<div class="model-effort"><span class="model-label">${escape(words.effort)}</span><div class="model-slider"></div></div>` : ""}
       ${speed}
       <button class="text-button quiet-button model-default" type="button" data-default>${glyph("regenerate", 14)}<span>${escape(words.backToDefault)}</span></button>`;
+    const html = `
+      <button class="model-name" type="button" data-list aria-expanded="${this.listing}"><span class="model-label">${escape(words.model)}</span><span class="model-value">${escape(model?.name ?? offered?.model ?? "")}</span>${glyph("chevron", 14)}</button>
+      ${this.listing ? list : controls}`;
     if (html !== this.drawn || !this.element.firstElementChild) {
       this.element.innerHTML = html;
       this.drawn = html;
