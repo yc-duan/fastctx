@@ -1,8 +1,7 @@
 // Words said while the agent is working. They do not cut into its turn:
 // they wait above the composer, in order, and the conversation sends the
 // first of them once a turn has ended as it should, then the next once the
-// turn that one began has ended, never two at once and never merged (the
-// way incipit queues, `V:\incipit\specs\deferred-queue.md`). A turn that was
+// turn that one began has ended, never two at once and never merged. A turn that was
 // stopped or failed holds them: they are kept, not sent, until the user
 // sends one. Each can be sent at once into the turn under way, changed,
 // taken out, or moved. They live while the app runs; leaving the

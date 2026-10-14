@@ -8,9 +8,8 @@
 //! each World release, and only ever passes a full id: `--model` when a
 //! conversation starts, and the request's model when the user switches.
 //!
-//! The rows, their order and their efforts were read from Claude Code 2.1.296
-//! (`A:\fastctx-work\scratch\claudemodel\evidence.json`); the order is that of
-//! its own picker. A login may lack a family (Fable on some plans): the mod
+//! The rows, their order and their efforts were read from Claude Code 2.1.296;
+//! the order is that of its own picker. A login may lack a family (Fable on some plans): the mod
 //! reports which aliases the login offers, and a family it does not offer is
 //! left out.
 

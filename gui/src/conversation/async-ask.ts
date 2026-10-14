@@ -3,9 +3,8 @@
 // message carrying `questions`; the user answers whenever they like, or not
 // at all, and the answer goes in as the user's own words, written as Codex's
 // own client writes them: a `<send_user_message_question_reply>` envelope
-// whose ids are `["request_user_input_async", item id, question index]`
-// (`A:\fastctx-work\scratch\codexask\REPORT.md`). The conversation shows
-// what was answered, never the envelope.
+// whose ids are `["request_user_input_async", item id, question index]`.
+// The conversation shows what was answered, never the envelope.
 
 export interface AsyncQuestion {
   title: string;

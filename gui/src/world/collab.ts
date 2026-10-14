@@ -1,5 +1,4 @@
-// Model collaboration, as an account's setting (`world-gui.md`, 功能; the
-// shape in `dev-notes/2026-10-10-界面结构化事实设计.md`, 六): which agents
+// Model collaboration, as an account's setting (`world-gui.md`, 功能): which agents
 // may call others, which they may call and how each is started, the text
 // given to callers and the rules given to callees.
 

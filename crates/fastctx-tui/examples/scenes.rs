@@ -1,5 +1,5 @@
-//! Draws every scene of `fastctx_tui::preview` into cell dumps that
-//! `dev-notes/validation/world-tui/render_cells.py` turns into images:
+//! Draws every scene of `fastctx_tui::preview` into cell dumps, for turning
+//! into images:
 //! `cargo run -p fastctx-tui --features preview --example scenes -- <dir> [zh|en]`.
 
 use std::path::PathBuf;

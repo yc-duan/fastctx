@@ -1,6 +1,6 @@
 // How a tool reads in one line: what was done, in the tense of where it
 // stands, to what, and how much changed. The verbs follow claude.ai's
-// activity list as incipit settled them: done is past, running is
+// activity list: done is past, running is
 // present, failed is its own word. Only what the tool says is shown; a
 // count that cannot be read from it is not guessed.
 

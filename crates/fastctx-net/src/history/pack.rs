@@ -6,9 +6,9 @@
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-/// The zstd level: 3 is the format's default, measured on the real
-/// histories (`A:\fastctx-work\scratch\histsize\REPORT.md`) at 20 ms for a
-/// 15 MB Codex history and 0.6 s for a 297 MB Claude one before slimming.
+/// The zstd level: 3 is the format's default, measured on real histories
+/// at 20 ms for a 15 MB Codex history and 0.6 s for a 297 MB Claude one
+/// before slimming.
 const LEVEL: i32 = 3;
 
 /// The magic number every zstd frame begins with; JSON never does.

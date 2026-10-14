@@ -296,7 +296,7 @@ export function sameHome(home: string | null, dir: string | null): boolean {
   return plain(home) === plain(dir);
 }
 
-/** "hangzhou · ada": a login as the user reads it. */
+/** "home · ada": a login as the user reads it. */
 export function loginLabel(login: Login): string {
   return `${login.hubName} · ${login.account}`;
 }

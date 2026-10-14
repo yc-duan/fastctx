@@ -10,9 +10,9 @@
 //! nothing in it is read.
 //!
 //! The places looked in follow each installer's and manager's published
-//! defaults and the environment variables that move them, as checked in
-//! `A:\fastctx-work\scratch\agentscan\REPORT.md` (2026-10-11). A place this
-//! user may not look into is reported, never taken for empty.
+//! defaults and the environment variables that move them, as checked on
+//! 2026-10-11. A place this user may not look into is reported, never taken
+//! for empty.
 
 mod packages;
 mod programs;

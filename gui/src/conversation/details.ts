@@ -32,7 +32,7 @@ export interface DetailsOptions {
   attach?: (() => Promise<void>) | undefined;
   /** The conversation as Markdown, for copying out. */
   markdown?: (() => Promise<string>) | undefined;
-  /** "hangzhou · ada" for each account it works for; empty for this
+  /** "home · ada" for each account it works for; empty for this
    *  computer's logins. */
   actingFor(resident: ResidentNow): string[];
   /** Whose agent it is, for one of another account assisting the user;

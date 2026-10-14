@@ -7,8 +7,8 @@
    field keeps one fill whether pointed at, pressed or typed in. Lines on
    the page are the pen's: ruled across, down a margin.
 
-   Colour is by role. The three themes are the user's own, from incipit,
-   value for value, and the terminal interface takes the same ones
+   Colour is by role. The three themes are the user's own, value for
+   value, and the terminal interface takes the same ones
    (`crates/fastctx-tui/src/design.rs`): warm black, the default dark; ink
    black, its colourless sibling; warm white, the light one. The page names
    its theme on the root before it paints (`theme.ts`): the one chosen, or

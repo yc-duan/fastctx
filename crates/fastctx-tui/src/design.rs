@@ -1,6 +1,6 @@
 //! The World's design language as the terminal speaks it (`world-gui.md`,
 //! 审美): literary rather than a cold console. Its three themes are the
-//! user's own, from incipit, value for value: warm black, a warm near-black
+//! user's own, value for value: warm black, a warm near-black
 //! ground with greys in steps of brightness and a terracotta accent shown
 //! sparingly; ink black, its colourless sibling, whose accent is a grey and
 //! whose user's words sit on an inverted, near-white ground; and warm
@@ -72,10 +72,10 @@ pub enum Role {
 }
 
 /// The values of each role, as `#rrggbb`: the tokens the graphical
-/// interface takes too. All but `Caution` are incipit's (`--ink-surface-*`,
+/// interface takes too. All but `Caution` are the themes' own (`--ink-surface-*`,
 /// `--ink-text-*`, `--ink-accent*`, `--ink-bubble-*`, the diff colours for
 /// alive and wrong; the rule is `--ink-border-strong` laid over the
-/// ground); incipit has no colour for something to look at.
+/// ground); the themes have no colour for something to look at.
 pub const fn token(theme: Theme, role: Role) -> (u8, u8, u8) {
     match (theme, role) {
         (Theme::WarmBlack, Role::Ground) => (0x1f, 0x1f, 0x1e),

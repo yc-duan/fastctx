@@ -7,8 +7,7 @@
 //! a configuration together with what using it leaves behind. A
 //! repository's project settings (`.claude/settings.json`,
 //! `.codex/config.toml`) are the agents' project layer, not a login, and
-//! meet neither rule (`world-agent-logins.md`; the measurements behind the
-//! rules are in `A:\fastctx-work\scratch\agentscan\REPORT.md`).
+//! meet neither rule (`world-agent-logins.md`).
 
 /// An entry of a directory: its name, and whether it is a directory.
 pub type Entry = (String, bool);

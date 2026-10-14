@@ -1,5 +1,4 @@
-//! A thread item as the World reads it (Codex 0.160's `ThreadItem`, the
-//! inventory in `dev-notes/research_notes/驱动官方智能体/2026-10-04-Codex-0.160协议清单/items.md`).
+//! A thread item as the World reads it (Codex 0.160's `ThreadItem`).
 //! Words that went in are told apart, as whoever sent them tells them; every
 //! other item is something the agent did, shown as the official app shows
 //! it: a reasoning item by its summary, a command with its output, a file

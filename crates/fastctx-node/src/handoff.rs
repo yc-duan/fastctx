@@ -1,6 +1,5 @@
 //! A node a guardian keeps, and how it hands the World to its successor
-//! (`world-network.md`, 加入了就一直连着; the contract is in
-//! `dev-notes/research_notes/世界的网络/2026-10-04-看护与节点的交接约定.md`).
+//! (`world-network.md`, 加入了就一直连着).
 //!
 //! On Windows a guardian runs as the system and keeps the user's node
 //! running: under the user's restricted identity before they sign in, under
