@@ -393,7 +393,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 500;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
 }
 
 .talk-menu-shade {

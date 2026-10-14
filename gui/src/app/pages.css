@@ -1213,7 +1213,8 @@ a.details-job {
 .remote-withdraw b {
   display: block;
   margin-bottom: 2px;
-  font-weight: 600;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
   color: var(--wrong);
 }
 

@@ -123,7 +123,8 @@
 .ctx-tip-head {
   margin: 0 0 4px;
   font-size: var(--size-small);
-  font-weight: 600;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
   color: var(--text-strong);
   font-variant-numeric: tabular-nums;
 }
@@ -151,7 +152,8 @@
 }
 
 .ctx-tip-row b {
-  font-weight: 500;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
   color: var(--text-strong);
   font-variant-numeric: tabular-nums;
 }
@@ -245,7 +247,8 @@ button.ctx-row:hover {
 }
 
 .ctx-row-what b {
-  font-weight: 500;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
   color: var(--text-strong);
 }
 

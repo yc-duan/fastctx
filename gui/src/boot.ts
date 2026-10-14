@@ -52,7 +52,7 @@ function tooOld(): void {
   const page = document.createElement("main");
   page.setAttribute("style", `min-height:100vh;display:flex;flex-direction:column;justify-content:center;padding:32px 24px;box-sizing:border-box;max-width:560px;margin:0 auto;font:16px/1.7 system-ui,sans-serif;color:${light ? "#0d0d0d" : "#f8f8f6"}`);
   const heading = document.createElement("h1");
-  heading.setAttribute("style", "font-size:20px;font-weight:600;margin:0 0 12px");
+  heading.setAttribute("style", "font-size:20px;font-family:Emphasis,Reading,serif;font-weight:400;margin:0 0 12px");
   heading.textContent = title;
   page.append(heading);
   for (const line of [why, what]) {

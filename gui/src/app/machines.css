@@ -1462,12 +1462,14 @@
 .map-names .box-name {
   fill: var(--text-strong);
   font-size: 14px;
-  font-weight: 600;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
 }
 
 .map-names .box-count {
   fill: var(--text-3);
   font-size: 12px;
+  font-family: var(--font-reading);
   font-weight: 400;
 }
 
@@ -1483,6 +1485,7 @@
    ring that adds a machine. */
 .map-names .box-name.adding {
   fill: var(--text-3);
+  font-family: var(--font-reading);
   font-weight: 400;
   font-size: 13px;
 }

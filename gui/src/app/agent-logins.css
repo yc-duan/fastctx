@@ -89,7 +89,8 @@
   display: block;
   padding: 6px var(--space-3) 2px calc(var(--space-3) + 17px);
   font-size: 12px;
-  font-weight: 600;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
   color: var(--text-2);
 }
 
@@ -494,7 +495,8 @@
 
 .logins-credits {
   color: var(--accent);
-  font-weight: 600;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
 }
 
 /* The stamp: a solid wash of clay, slightly turned, as if pressed by hand;
@@ -582,7 +584,8 @@
 .logins-apply {
   margin-left: auto;
   color: var(--accent);
-  font-weight: 600;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
 }
 
 /* 「添加文件夹…」, and the folders searched for logins: a row each, the

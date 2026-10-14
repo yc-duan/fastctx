@@ -38,6 +38,10 @@ body {
   font-size: var(--body-size);
   line-height: var(--leading-ui);
   font-feature-settings: "kern", "liga", "calt";
+  /* The faces come in the weights their designers drew, each a family of
+     its own (`fonts.css`); a weight none of them has is never made up by
+     thickening strokes, which smears them. */
+  font-synthesis-weight: none;
   /* Space between Chinese and Latin, and trimmed fullwidth punctuation,
      where the engine can do it. */
   text-autospace: normal;
@@ -124,8 +128,9 @@ select:focus-visible,
   margin: 1em 0;
 }
 
-.prose strong,
-.prose b {
+/* Bold words anywhere are the semibold face, never thickened strokes. */
+strong,
+b {
   font-family: var(--font-emphasis);
   font-weight: 400;
 }
