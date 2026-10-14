@@ -52,7 +52,7 @@
 @media not ((hover: hover) and (pointer: fine)) {
   .canvas-hint { display: none; }
 }
-.canvas-ink { position: absolute; transform-origin: 0 0; pointer-events: none; }
+.canvas-under, .canvas-ink, .canvas-over { position: absolute; transform-origin: 0 0; pointer-events: none; }
 .canvas-overlay, .canvas-hits, .canvas-names { position: absolute; inset: 0; pointer-events: none; }
 .canvas-object, .canvas-handle, .canvas-name { position: absolute; left: 0; top: 0; margin: 0; }
 .canvas-object, .canvas-handle {

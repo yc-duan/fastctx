@@ -35,6 +35,14 @@ interface ButtonLabel { item: CanvasItem; button: HTMLButtonElement; label: HTML
  * objects and plain HTML names. Dispose it when its page leaves the screen. */
 export class MapCanvas {
   readonly element = document.createElement("figure");
+  /** What lies on the paper under the ink, and over it. They move with the
+   *  ink but are not scaled with it: the page draws them to the camera's
+   *  scale itself, as SVG text under a scaled HTML layer is painted, in
+   *  Chrome on Android, at the scale it was last laid out at. Neither is
+   *  blended with the paper. */
+  readonly under = document.createElement("div");
+  readonly over = document.createElement("div");
+  /** The ink: the page may blend it with the paper. */
   readonly ink = document.createElement("div");
   readonly overlay = document.createElement("div");
   readonly camera: CanvasCamera;
@@ -78,6 +86,10 @@ export class MapCanvas {
     this.element.setAttribute("aria-label", options.label);
     this.ink.className = "canvas-ink";
     this.ink.setAttribute("aria-hidden", "true");
+    for (const [layer, name] of [[this.under, "canvas-under"], [this.over, "canvas-over"]] as const) {
+      layer.className = name;
+      layer.setAttribute("aria-hidden", "true");
+    }
     this.overlay.className = "canvas-overlay";
     this.names.className = "canvas-names";
     this.names.setAttribute("aria-hidden", "true");
@@ -104,7 +116,7 @@ export class MapCanvas {
     this.marquee.className = "canvas-marquee";
     this.marquee.hidden = true;
     this.overlay.append(this.marquee);
-    this.element.append(this.ink, this.overlay, this.hits, this.names, this.status);
+    this.element.append(this.under, this.ink, this.over, this.overlay, this.hits, this.names, this.status);
     if (!options.still) this.element.append(this.control);
     if (options.hints && !options.still) {
       const hints = document.createElement("div");
@@ -296,6 +308,7 @@ export class MapCanvas {
     const moving = this.pointers.size > 0 || changed;
     this.previousView = view;
     this.ink.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.scale})`;
+    for (const layer of [this.under, this.over]) layer.style.transform = `translate(${view.x}px,${view.y}px)`;
     const obstacles: Bounds[] = [...this.labelObstacles];
     for (const entry of this.buttons.values()) {
       const [x, y] = this.camera.toScreen(entry.item.point);

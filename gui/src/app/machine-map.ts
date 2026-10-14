@@ -124,6 +124,10 @@ const SVG = "http://www.w3.org/2000/svg";
 /** How long the drawing takes to glide to where it is brought. */
 const GLIDE_MS = 240;
 
+/** Room round the drawing in its layers, for what they draw beyond it: the
+ *  names above a hub and those right of the rings. */
+const LAYER_ROOM = 160;
+
 export class MachineMap {
   readonly element: HTMLElement;
   private readonly surface: MapCanvas;
@@ -155,6 +159,10 @@ export class MachineMap {
   /** The boxes folded as of the last placing: a fold the person made keeps
    *  the drawing where it is. */
   private placedFolds: string | null = null;
+  /** The box of the drawing the layers over and under the ink are laid
+   *  over, and the scale they are drawn at. */
+  private layerBox: Bounds | null = null;
+  private layerScale = NaN;
 
   constructor(private readonly options: MachineMapOptions) {
     const { words } = options;
@@ -181,12 +189,14 @@ export class MachineMap {
       svg.setAttribute("aria-hidden", "true");
       return svg;
     };
+    // Only the pens' strokes are ink, blended with the paper; the boxes'
+    // washes lie under them, the names and the live marks over them.
     this.boxes = layer("map-boxes");
-    this.surface.ink.append(this.boxes);
+    this.surface.under.append(this.boxes);
     this.pens = new PenLayer(this.surface.ink, "texture");
     this.names = layer("map-names");
     this.marks = layer("map-live");
-    this.surface.ink.append(this.names, this.marks);
+    this.surface.over.append(this.names, this.marks);
     // The ink's colours are resolved for the textures: drawn again when the
     // theme changes.
     this.themes = new MutationObserver(() => {
@@ -348,8 +358,16 @@ export class MachineMap {
     return width > 0 && width < 600;
   }
 
+  /** Draws the layers over and under the ink at `scale`. */
+  private frameLayers(scale: number): void {
+    this.layerScale = scale;
+    if (!this.layerBox) return;
+    for (const layer of [this.boxes, this.names, this.marks]) frameLayer(layer, this.layerBox, scale);
+  }
+
   private onFrame(frame: CanvasFrame): void {
     this.pens.view(frame);
+    if (frame.view.scale !== this.layerScale) this.frameLayers(frame.view.scale);
     // Laid again when the page becomes narrow or wide, or a still drawing's
     // frame changes shape.
     if (this.options.still) {
@@ -595,6 +613,12 @@ export class MachineMap {
     }
     void this.pens.update(strokes).catch((error: unknown) => console.warn("the machines drawing could not be inked", error));
 
+    // Each layer is as large as the drawing and the room round it, drawn to
+    // the camera's scale by its own view box (`MapCanvas.over`).
+    const { bounds } = placement;
+    this.layerBox = { x: bounds.x - LAYER_ROOM, y: bounds.y - LAYER_ROOM, width: bounds.width + 2 * LAYER_ROOM, height: bounds.height + 2 * LAYER_ROOM };
+    this.frameLayers(this.surface.camera.view.scale);
+
     // The boxes: a wash for the body and a deeper one for the title strip,
     // no line round either; folded, the strip alone.
     this.boxes.innerHTML = placement.groups
@@ -758,6 +782,16 @@ function keepRings(layer: SVGGElement, rings: Ring[]): void {
     }
     if (element.getAttribute("d") !== ring.d) element.setAttribute("d", ring.d);
   }
+}
+
+/** Lays `layer` over `frame`, a box of the drawing, at `scale` screen
+ *  pixels to the drawing's unit: its user space is the drawing's. */
+function frameLayer(layer: SVGSVGElement, frame: Bounds, scale: number): void {
+  layer.setAttribute("viewBox", `${frame.x} ${frame.y} ${frame.width} ${frame.height}`);
+  layer.setAttribute("width", String(frame.width * scale));
+  layer.setAttribute("height", String(frame.height * scale));
+  layer.style.left = `${frame.x * scale}px`;
+  layer.style.top = `${frame.y * scale}px`;
 }
 
 /** A crescent moon of radius `r` round `centre`, opening to the right. */
