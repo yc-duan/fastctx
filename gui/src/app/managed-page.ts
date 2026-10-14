@@ -1,16 +1,16 @@
 // The one page of a managed machine (`world-gui.md`, 受管机器上的界面): the
 // whole window, with no sidebar. A drawing of this computer, its one line to
 // the server and the lines of others' agents coming in; whose machine it is
-// and on which network; whether it is connected; and, quietly in a corner,
-// leaving the network and taking Fastctx off. A machine that no one signs
-// in to is connected by its startup service alone: one missing is said,
-// with the way to install it. Taken off the network by its owner, it says
-// so, and comes back by a code.
+// and on which network; whether it is connected. Nothing here takes it off
+// the network or takes Fastctx off it: its owner does that from theirs. A
+// machine that no one signs in to is connected by its startup service alone:
+// one missing is said, with the way to install it. Taken off the network by
+// its owner, it says so, comes back by a code, and Fastctx can be taken off
+// it, quietly in a corner.
 
 import { escape } from "../conversation/prose";
 import { names, type AccountsReply, type HubAccounts, type MemberSeen } from "../world/accounts";
 import type { KeptNow } from "../world/bridge";
-import type { Confirm } from "./confirm";
 import { managedMachine } from "./managed-art";
 import type { ManagedWords } from "./managed-words";
 import type { Page } from "./shell";
@@ -33,8 +33,6 @@ export interface ManagedOptions {
   words: ManagedWords;
   /** When, as the interface says it. */
   when(at: Date, now: Date): string;
-  /** Leaves `hub`: this computer starts fresh after. */
-  leave(hub: HubAccounts, owner: string): Promise<void>;
   /** Joining again, by a code. */
   rejoin(): void;
   /** Taking Fastctx off this computer, where it can be. */
@@ -42,7 +40,6 @@ export interface ManagedOptions {
   /** Whether the startup service is installed, and installing it, where
    *  this computer can say. */
   service?: { kept(): Promise<boolean>; keep(): Promise<KeptNow> } | undefined;
-  confirm: Confirm;
 }
 
 export class ManagedPage implements Page {
@@ -108,10 +105,7 @@ export class ManagedPage implements Page {
         }
         ${removed ? "" : this.serviceSlip()}
       </div>
-      <div class="managed-corner">
-        <button class="text-button" type="button" data-act="leave">${escape(words.leave)}</button>
-        ${this.options.remove ? `<button class="text-button" type="button" data-act="remove">${escape(words.uninstall)}</button>` : ""}
-      </div>`;
+      ${removed && this.options.remove ? `<div class="managed-corner"><button class="text-button" type="button" data-act="remove">${escape(words.uninstall)}</button></div>` : ""}`;
   }
 
   /** The startup service missing: what that means here, and installing it. */
@@ -129,7 +123,6 @@ export class ManagedPage implements Page {
   private click(event: Event): void {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-act]");
     if (!button) return;
-    const { words, confirm, store } = this.options;
     switch (button.dataset.act) {
       case "keep": {
         const service = this.options.service;
@@ -151,18 +144,6 @@ export class ManagedPage implements Page {
         return this.options.rejoin();
       case "remove":
         return this.options.remove?.();
-      case "leave": {
-        const found = managedOf(store.world.peek()?.accounts);
-        if (!found) return;
-        const { hub, me } = found;
-        return confirm.ask({
-          title: words.leaveTitle(hub.name),
-          what: words.leaveWhat(hub.name),
-          go: words.leaveGo,
-          act: () => this.options.leave(hub, me.home ?? ""),
-          done: () => void store.refresh(),
-        });
-      }
     }
   }
 }

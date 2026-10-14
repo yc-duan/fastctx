@@ -19,6 +19,13 @@ pub use fastctx_types::uninstall::{Event, Plan};
 pub use inventory::{Action, Request, Step, preview};
 pub use privileged::system_worker;
 
+/// The managed machine whose owner keeps it, as this World's memberships
+/// say (`world-network.md`, 受管机器).
+pub fn managed(world: &fastctx_types::layout::WorldDir) -> anyhow::Result<Option<fastctx_types::uninstall::Managed>> {
+    Ok(fastctx_net::link::state::managed_on(&world.net())?
+        .map(|(hub, owner)| fastctx_types::uninstall::Managed { hub: hub.to_string(), owner: owner.to_string() }))
+}
+
 pub(crate) fn entries(path: &std::path::Path) -> std::io::Result<Vec<std::fs::DirEntry>> {
     match std::fs::read_dir(path) {
         Ok(entries) => entries.collect(),

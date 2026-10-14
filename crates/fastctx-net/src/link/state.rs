@@ -9,6 +9,7 @@
 //! outbox/<seq>      letters not yet held by the hub
 //! received/<from>/<id>   letters taken, by sender and id, for good
 //! failures/         letters that could not be delivered or opened, and why
+//! ended.json        that the hub ended this machine's place, and why
 //! ```
 
 use std::io;
@@ -92,6 +93,11 @@ impl NetDir {
         self.root.join("failures")
     }
 
+    /// Kept once the hub ended this machine's place on it.
+    pub fn ended(&self) -> PathBuf {
+        self.root.join("ended.json")
+    }
+
     /// Makes the directories, private.
     pub fn prepare(&self) -> io::Result<()> {
         for directory in [self.root.clone(), self.outbox(), self.root.join("received"), self.failures()] {
@@ -99,6 +105,38 @@ impl NetDir {
         }
         Ok(())
     }
+}
+
+/// The hub ended this machine's place on it: it was removed, or its network
+/// was dissolved. Kept beside the membership, so what reads the link from
+/// disk knows the place is over without asking the hub.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Ended {
+    pub at: jiff::Timestamp,
+    pub reason: String,
+}
+
+/// The network this World is a managed machine on and its owner there, as
+/// the memberships under `net` keep them, while its place has not ended
+/// (`world-network.md`, 受管机器).
+pub fn managed_on(net: &Path) -> io::Result<Option<(HubName, fastctx_types::AccountName)>> {
+    let entries = match std::fs::read_dir(net) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let dir = NetDir::new(entry?.path());
+        if !dir.membership().is_file() || dir.ended().try_exists()? || older_view(&dir.view()) {
+            continue;
+        }
+        let membership: Membership = read(&dir.membership())?;
+        let Some(view) = read_or::<Option<crate::directory::View>>(&dir.view(), None)? else { continue };
+        if let Some(me) = view.me().filter(|me| me.managed) {
+            return Ok(Some((membership.hub_name, me.home.clone().unwrap_or_else(|| "?".parse().expect("a name")))));
+        }
+    }
+    Ok(None)
 }
 
 /// The numbers a machine sends its messages under. They are reserved on

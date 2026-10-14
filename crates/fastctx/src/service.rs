@@ -56,6 +56,15 @@ pub fn run(args: ServiceArgs) -> anyhow::Result<()> {
             if kind == Kind::Hub { fastctx_hub::default_dir(&root) } else { root }
         }
     };
+    // What keeps a managed machine connected stays while its owner keeps it,
+    // unless an administrator of this computer takes it off.
+    if kind == Kind::Node
+        && matches!(args.action, Action::Uninstall)
+        && let Some(managed) = fastctx_uninstall::managed(&fastctx_types::layout::WorldDir::under(&directory))?
+        && !fastctx_platform::elevation::is_administrator()?
+    {
+        anyhow::bail!("{}", managed.refusal());
+    }
     let executable = match args.executable {
         Some(path) => std::path::absolute(path)?,
         None => {
@@ -82,7 +91,9 @@ pub fn run(args: ServiceArgs) -> anyhow::Result<()> {
         Action::Status => service.status()?,
     };
     #[cfg(target_os = "linux")]
-    if matches!(args.action, Action::Install) && let Some(owner) = args.package_owner {
+    if matches!(args.action, Action::Install)
+        && let Some(owner) = args.package_owner
+    {
         fastctx_uninstall::package::remember(serde_json::from_str(&owner)?)?;
     }
     println!("{}", serde_json::to_string_pretty(&status)?);

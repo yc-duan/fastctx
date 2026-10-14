@@ -73,6 +73,11 @@ Var FastctxParameters
         ${IfNot} ${Silent}
           MessageBox MB_OK|MB_ICONINFORMATION "This computer is a world's server, so its data was kept. Removing everything is done inside Fastctx, where the network's name is typed to confirm."
         ${EndIf}
+      ${ElseIf} $0 == 11
+        ${IfNot} ${Silent}
+          MessageBox MB_OK|MB_ICONINFORMATION "This computer is a managed machine. Its owner takes it off the network in Fastctx; Fastctx can be removed here after. An administrator of this computer can remove it now."
+        ${EndIf}
+        Abort "This computer is a managed machine its owner keeps; nothing was removed."
       ${ElseIf} $0 != 0
         Abort "Fastctx could not finish removing this computer's kernel (exit $0)."
       ${EndIf}

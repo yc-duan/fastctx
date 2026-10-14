@@ -28,6 +28,13 @@ pub async fn run(mut request: Request, mut events: impl FnMut(Event)) -> anyhow:
     request.installation.validate()?;
     let root = &request.installation.root;
     let world = fastctx_types::layout::WorldDir::under(root);
+    // A managed machine its owner has not taken off keeps Fastctx, unless
+    // an administrator of this computer takes it off.
+    if let Some(managed) = crate::managed(&world)?
+        && !fastctx_platform::elevation::is_administrator()?
+    {
+        anyhow::bail!("{}", managed.refusal());
+    }
     let places = request.installation.places(std::env::current_exe()?);
     if !root.try_exists()? && request.steps.iter().all(|step| matches!(step.action, Action::Path | Action::Programs)) {
         for step in &request.steps {

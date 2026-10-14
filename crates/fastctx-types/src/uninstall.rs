@@ -18,6 +18,25 @@ pub struct Hub {
     pub dir: String,
 }
 
+/// The network this computer is a managed machine on, and its owner there,
+/// while the owner has not taken it off: only an administrator of this
+/// computer takes Fastctx off it then (`world-network.md`, 受管机器).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Managed {
+    pub hub: String,
+    pub owner: String,
+}
+
+impl Managed {
+    /// Why an uninstall that is not an administrator's stops here.
+    pub fn refusal(&self) -> String {
+        format!(
+            "this computer is a managed machine of {} on {}: its owner takes it off the network in Fastctx, and Fastctx can be removed here after; an administrator of this computer may remove it now",
+            self.owner, self.hub
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Other {
     pub path: String,
@@ -31,6 +50,8 @@ pub struct Plan {
     pub keeps: Vec<Item>,
     pub hub: Option<Hub>,
     pub other: Option<Other>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed: Option<Managed>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

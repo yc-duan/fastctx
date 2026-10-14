@@ -123,7 +123,8 @@ pub fn preview(mut installation: Installation, everything: bool) -> anyhow::Resu
     let places = installation.places(std::env::current_exe()?);
     let homes = apply::integrations(&places)?;
     let registrations = service::registrations(&installation)?;
-    let mut plan = Plan { everything, steps: Vec::new(), keeps: Vec::new(), hub: None, other: None };
+    let managed = crate::managed(&world)?;
+    let mut plan = Plan { everything, steps: Vec::new(), keeps: Vec::new(), hub: None, other: None, managed };
     let mut steps = Vec::new();
     let mut add = |kind: &str, what: &str, location: String, admin: bool, action: Action| {
         let item = Item {

@@ -38,6 +38,40 @@ pub fn is_elevated() -> io::Result<bool> {
     Ok(unsafe { libc::geteuid() } == 0)
 }
 
+/// Whether this process acts as an administrator of the computer now: on
+/// Windows its token holds the Administrators group enabled, which neither
+/// an administrator's token filtered by User Account Control nor one with
+/// their rights held back, as a basic user's, does; root on Unix. What only
+/// an administrator may override is asked of this.
+#[cfg(windows)]
+pub fn is_administrator() -> io::Result<bool> {
+    use windows_sys::Win32::Security::{
+        CheckTokenMembership, CreateWellKnownSid, SECURITY_MAX_SID_SIZE, WinBuiltinAdministratorsSid,
+    };
+
+    let mut sid = [0u8; SECURITY_MAX_SID_SIZE as usize];
+    let mut size = SECURITY_MAX_SID_SIZE;
+    // SAFETY: the buffer holds the largest SID and its size is given.
+    if unsafe {
+        CreateWellKnownSid(WinBuiltinAdministratorsSid, std::ptr::null_mut(), sid.as_mut_ptr().cast(), &mut size)
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    let mut member = 0;
+    // SAFETY: a null token is the calling thread's effective token; the SID
+    // was made above and outlives the call.
+    if unsafe { CheckTokenMembership(std::ptr::null_mut(), sid.as_mut_ptr().cast(), &mut member) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(member != 0)
+}
+
+#[cfg(unix)]
+pub fn is_administrator() -> io::Result<bool> {
+    is_elevated()
+}
+
 /// Runs `program` with `args` as an administrator, once the person at the
 /// screen agrees, and waits for it; returns its exit code. Their saying no
 /// is `PermissionDenied`.

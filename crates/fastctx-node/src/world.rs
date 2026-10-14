@@ -420,8 +420,12 @@ pub async fn rename_here(node: &Arc<Node>, to: MachineName) -> Result<(), Failur
 }
 
 /// Logs this computer out of `account`; with no login left on that hub,
-/// its membership is put aside and the link stops.
+/// its membership is put aside and the link stops. A managed machine leaves
+/// only once its owner took it off.
 async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> Result<(), Failure> {
+    if link.view().me().is_some_and(|me| me.managed) {
+        crate::managed::stays(node)?;
+    }
     let last = link.view().me().is_none_or(|me| me.logins.iter().all(|login| login == account));
     let answer = link.manage(account, Change::Logout).await;
     if !last {

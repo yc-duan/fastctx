@@ -2085,10 +2085,6 @@ function managedPage(): Page {
     store,
     words: english ? enManaged : zhManaged,
     when: (at, now) => when(at, now),
-    leave: async (hub, owner) => {
-      if (live) await accountChange(hub.name, owner, { change: "logout" });
-      else specimenLeaveManaged();
-    },
     // Joining again starts from this computer off the network it was
     // taken off: its link there ended, and a code brings it in anew.
     rejoin: () => {
@@ -2109,7 +2105,6 @@ function managedPage(): Page {
         ? { kept: async () => (await setupState()).service, keep: keepHere }
         : undefined
       : { kept: async () => params.get("managed") !== "unkept", keep: async () => ({ kind: "installed" as const }) },
-    confirm: accountConfirm,
   });
 }
 

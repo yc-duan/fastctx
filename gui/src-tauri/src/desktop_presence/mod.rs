@@ -199,9 +199,10 @@ pub fn enter() -> Result<Option<Instance>, String> {
             Ok(None)
         }
         // The package uninstaller's steps. Their output is the uninstaller's
-        // details; a failure ends with its reason and a nonzero status, and
-        // exit status 10 says a removal of everything kept the data because
-        // this computer is a world's server.
+        // details; a failure ends with its reason and a nonzero status, exit
+        // status 10 says a removal of everything kept the data because this
+        // computer is a world's server, and 11 that nothing was removed from
+        // a managed machine its owner keeps.
         [command, rest @ ..] if command == "--uninstall-world" => {
             let everything = match rest {
                 [] => false,
@@ -211,6 +212,7 @@ pub fn enter() -> Result<Option<Instance>, String> {
             match crate::package_removal::at_package_uninstall(everything) {
                 Ok(crate::package_removal::Removed::AsAsked) => Ok(None),
                 Ok(crate::package_removal::Removed::KeptForHub) => std::process::exit(10),
+                Ok(crate::package_removal::Removed::Managed) => std::process::exit(11),
                 Err(error) => {
                     crate::installer_lines::complain(&error);
                     std::process::exit(1);

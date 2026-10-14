@@ -70,6 +70,10 @@ pub(super) async fn run(inner: Arc<Inner>, mut changes: Option<super::changes::C
         match ended {
             Ended::Stop(reason) => {
                 inner.node.log(format!("the link to the hub stopped: {reason}"));
+                let ended = super::state::Ended { at: Timestamp::now(), reason: reason.clone() };
+                if let Err(error) = super::state::write(&inner.dir.ended(), &ended) {
+                    inner.node.log(format!("keeping that the hub ended this machine's place: {error}"));
+                }
                 inner.status.send_replace(Status::Stopped { reason });
                 return;
             }

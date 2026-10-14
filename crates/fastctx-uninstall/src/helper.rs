@@ -9,6 +9,13 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 pub fn run_outside(request: &Request) -> anyhow::Result<()> {
+    // Nothing is copied or started for a removal a managed machine refuses
+    // (`crate::execute::run`).
+    if let Some(managed) = &request.plan.managed
+        && !fastctx_platform::elevation::is_administrator()?
+    {
+        anyhow::bail!("{}", managed.refusal());
+    }
     let temporary = tempfile::Builder::new().prefix("fastctx-uninstall-").tempdir()?;
     fastctx_platform::ensure_private_dir(temporary.path())?;
     let original = std::env::current_exe()?;

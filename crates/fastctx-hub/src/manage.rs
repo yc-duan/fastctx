@@ -478,16 +478,10 @@ fn apply(
     }
 }
 
-/// Whether `asker` may log out of `account`: it is logged in to it, or it
-/// is a read-only device of it, which leaves the account it serves so.
-fn leaves(directory: &fastctx_net::directory::Directory, asker: &MachineName, account: &AccountName) -> bool {
-    directory.logged_in(asker, account)
-        || directory.member(asker).is_some_and(|member| member.managed && member.home.as_ref() == Some(account))
-}
-
 /// Whether `asker` may make a change as `account`: a device logged in to
-/// it; a machine acting for it opens projects for it; a managed machine
-/// leaves the account it serves.
+/// it; a machine acting for it opens projects for it. A managed machine,
+/// logged in to nothing, makes none, leaving among them: its owner takes it
+/// off (`world-network.md`, 受管机器).
 fn may_change(
     directory: &fastctx_net::directory::Directory,
     change: &Change,
@@ -496,7 +490,6 @@ fn may_change(
 ) -> bool {
     match change {
         Change::OpenProject { .. } => directory.may_act_for(account, asker),
-        Change::Logout => leaves(directory, asker, account),
         _ => directory.logged_in(asker, account),
     }
 }

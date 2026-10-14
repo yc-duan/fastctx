@@ -22,6 +22,9 @@ pub(crate) enum Removed {
     /// world ends only from inside World, where its name is typed, so the
     /// data was kept and the rest removed.
     KeptForHub,
+    /// Nothing was removed: this computer is a managed machine its owner
+    /// keeps, and the uninstaller is not an administrator's.
+    Managed,
 }
 
 fn command(action: &str, everything: bool) -> Result<Command, String> {
@@ -69,6 +72,12 @@ fn complete_removal_begun() -> Result<bool, String> {
 pub(crate) fn at_package_uninstall(everything: bool) -> Result<Removed, String> {
     let mut removed = Removed::AsAsked;
     let mut plan = plan(everything)?;
+    if let Some(managed) = &plan.managed
+        && !fastctx_platform::elevation::is_administrator().map_err(|error| error.to_string())?
+    {
+        say(&managed.refusal());
+        return Ok(Removed::Managed);
+    }
     if everything
         && let Some(hub) = &plan.hub
         && !complete_removal_begun()?

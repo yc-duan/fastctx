@@ -595,6 +595,10 @@ export interface RemovalPlan {
   /** Another fastctx on the PATH that is not the World's, such as one npm
    *  installed; it is not taken away. */
   other: { path: string; version: string | null } | null;
+  /** The network this computer is a managed machine on, and its owner, while
+   *  the owner keeps it: only an administrator of this computer removes
+   *  Fastctx then. */
+  managed?: { hub: string; owner: string };
 }
 
 /** What came of one step, and at the end what is left and why. */
