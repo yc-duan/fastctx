@@ -373,17 +373,8 @@ export class MachineMap {
     const { words } = this.options;
     const items: CanvasItem[] = [
       ...scene.hubs.map((hub): CanvasItem => ({ key: `hub:${hub.id}`, kind: "hub", point: placement.hubs.get(hub.id)!, radius: KNOT + 6, label: hub.name, sub: scene.hubLabels.get(hub.id) ?? "" })),
-      // A box is pressed anywhere on its title strip.
-      ...placement.groups.map((group): CanvasItem => ({
-        key: group.key,
-        kind: "group",
-        point: group.point,
-        radius: TITLE / 2 + 4,
-        box: { x: group.box.x, y: group.box.y, width: group.box.width, height: TITLE, corners: group.box.height <= TITLE ? [7, 7, 7, 7] : [7, 7, 0, 0] },
-        label: group.kind === "adding" ? (this.options.people?.addPerson ?? "") : group.label,
-        sub: group.kind === "adding" ? "" : this.countOf(group),
-      })),
-      // A person's "⋯", over the end of their box's strip.
+      // A person's "⋯", over the end of their box's strip: listed before
+      // the strips, since a press goes to the first that holds it.
       ...placement.groups.flatMap((group): CanvasItem[] => {
         const person = group.person;
         if (!person || !this.options.people) return [];
@@ -399,6 +390,16 @@ export class MachineMap {
           },
         ];
       }),
+      // A box is pressed anywhere else on its title strip.
+      ...placement.groups.map((group): CanvasItem => ({
+        key: group.key,
+        kind: "group",
+        point: group.point,
+        radius: TITLE / 2 + 4,
+        box: { x: group.box.x, y: group.box.y, width: group.box.width, height: TITLE, corners: group.box.height <= TITLE ? [7, 7, 7, 7] : [7, 7, 0, 0] },
+        label: group.kind === "adding" ? (this.options.people?.addPerson ?? "") : group.label,
+        sub: group.kind === "adding" ? "" : this.countOf(group),
+      })),
       ...scene.adds.flatMap((hub): CanvasItem[] => {
         const point = this.pointOf(addKey(hub));
         return point ? [{ key: addKey(hub), kind: "machine", point, radius: RING, label: scene.waiting.has(hub) ? words.waitingJoin : words.addMachine }] : [];
