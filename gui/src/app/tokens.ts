@@ -8,6 +8,9 @@
 // A managed machine (受管机器) comes in by a code pasted on it: named, for
 // as many computers and as long as the owner says, and shown with the three
 // steps of using it and the line that does the same.
+//
+// Every way in is laid out alike: what to copy or fill in at the top, its
+// three drawings in the middle of the room left, what it makes at the foot.
 
 import qrcode from "qrcode-generator";
 import { glyph } from "../conversation/glyphs";
@@ -16,6 +19,7 @@ import type { Login } from "../world/accounts";
 import type { NameProblem } from "../world/bridge";
 import type { LoginWords, TokenWords } from "./account-words";
 import { Sheet } from "./confirm";
+import { copyButton, copyFrom } from "./copy-button";
 import { joinSteps, managedSteps } from "./managed-art";
 import { plainly } from "./problem";
 import { RemoteWorld, type RemoteSeams } from "./remote-world";
@@ -148,12 +152,9 @@ export class Tokens {
         if (this.uses === "some" && !target.closest("input")) body.querySelector<HTMLInputElement>("[name=count]")?.focus();
         return;
       }
-      const copy = target.closest<HTMLElement>(".copy-code");
+      const copy = target.closest<HTMLElement>(".copy-button");
       if (copy) {
-        void navigator.clipboard.writeText(copy.dataset.copy ?? "").then(() => {
-          const label = copy.querySelector("span");
-          if (label) label.textContent = options.words.copied;
-        });
+        void copyFrom(copy, options.words.copied);
         return;
       }
       if (target.closest(".make-again")) this.draw();
@@ -204,7 +205,7 @@ export class Tokens {
   }
 
   private copy(text: string): string {
-    return `<button class="text-button copy-code" type="button" data-copy="${escape(text)}">${glyph("copy", 16)}<span>${escape(this.options.words.copy)}</span></button>`;
+    return copyButton(text, this.options.words.copy);
   }
 
   private draw(): void {
@@ -233,13 +234,15 @@ export class Tokens {
     let body: string;
     if (ssh) body = `<div class="device-remote"></div>`;
     else if (this.kind === "computer") {
-      // Joined from that computer's own World with the account's password.
-      const address = this.options.addresses(login).join("  ");
+      // Joined from that computer's own World with the account's password:
+      // each address the server is reached at, on a line of its own.
+      const addresses = this.options.addresses(login);
+      const reached = addresses.length ? addresses.map((address) => `<dd><span class="mono">${escape(address)}</span>${this.copy(address)}</dd>`).join("") : `<dd><span class="mono">—</span></dd>`;
       body = `<dl class="facts device-facts">
-          <dt>${escape(words.hub)}</dt><dd><span class="mono">${escape(address || "—")}</span>${address ? this.copy(this.options.addresses(login)[0]!) : ""}</dd>
+          <dt>${escape(words.hub)}</dt>${reached}
           <dt>${escape(words.account)}</dt><dd><span class="mono">${escape(login.account)}</span></dd>
         </dl>
-        ${this.storyboard("computer")}`;
+        <div class="device-middle">${this.storyboard("computer")}</div>`;
     } else if (this.kind === "managed") {
       const uses = (["one", "any"] as const)
         .map(
@@ -254,11 +257,11 @@ export class Tokens {
           <div class="choice-options" role="radiogroup" aria-label="${escape(words.uses)}">${uses}<label class="choice choice-count${this.uses === "some" ? " chosen" : ""}" role="radio" aria-checked="${this.uses === "some"}" data-uses="some"><input name="count" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="${escape(words.usesSome)}" aria-label="${escape(words.usesSome)}">${words.unit ? `<span>${escape(words.unit)}</span>` : ""}</label></div></div>
         <div class="field"><span class="field-label">${escape(words.valid)}</span>
           ${choices(words.valid, "data-days", days.map(String), String(this.days), (n) => words.days(Number(n)))}</div>
+        <div class="device-middle">${this.storyboard("managed")}</div>
         <p class="sheet-note" role="alert" hidden></p>
         <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(words.makeManaged)}</button></footer>`;
     } else {
       body = `
-        ${this.storyboard(this.kind === "phone" ? "phone" : "line")}
         ${
           this.kind === "server"
             ? `<label class="field"><span class="field-label">${escape(words.name)}</span>
@@ -267,6 +270,7 @@ export class Tokens {
           ${choices(words.valid, "data-hours", validity.map(String), String(this.hours), (hours) => words.hours(Number(hours)))}</div>`
             : ""
         }
+        <div class="device-middle">${this.storyboard(this.kind === "phone" ? "phone" : "line")}</div>
         <p class="sheet-note" role="alert" hidden></p>
         <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(this.kind === "phone" ? words.makeCode : words.makeCommand)}</button></footer>`;
     }
@@ -349,14 +353,15 @@ export class Tokens {
             : await this.options.token(login, "phone", false, null, hours);
       this.given = true;
       const at = this.options.when(new Date(Date.now() + hours * 3_600_000));
-      sheet.body.querySelector(".device-body")!.innerHTML =
+      // The code to scan stands where the drawings stood; a line to copy
+      // and a managed machine's code are read from the top.
+      sheet.body.querySelector(".device-body")!.innerHTML = `${
         kind === "managed"
           ? this.managedCode(made, codeName, words.codeUntil(at, uses))
-          : `${
-              kind === "phone"
-                ? `<div class="invitation"><div class="qr-frame">${qrSvg(made, words.qr)}</div><p class="field-hint">${escape(words.until(at))}</p></div>`
-                : `<div class="invitation invitation-wide"><p class="field-label">${escape(words.command)}</p><p class="invite-code mono">${escape(made)}</p><p class="field-hint">${escape(words.until(at))}</p>${this.copy(made)}</div>`
-            }
+          : kind === "phone"
+            ? `<div class="device-middle"><div class="invitation"><div class="qr-frame">${qrSvg(made, words.qr)}</div><p class="field-hint">${escape(words.until(at))}</p></div></div>`
+            : `<div class="device-made"><p class="field-label">${escape(words.command)}</p><div class="code-box"><p class="invite-code mono">${escape(made)}</p>${this.copy(made)}</div><p class="field-hint">${escape(words.until(at))}</p></div>`
+      }
         <footer class="sheet-foot"><span></span><button class="text-button make-again" type="button">${escape(words.again)}</button></footer>`;
     } catch (error) {
       const { text, detail } = plainly(error, words.problems);
@@ -371,10 +376,12 @@ export class Tokens {
   }
 
   /** How the device comes in by what this sheet gives it, in three small
-   *  drawings and a line each, as a code for managed machines says it. */
-  private storyboard(way: "computer" | "phone" | "line"): string {
-    const art = joinSteps(way);
-    return `<ol class="managed-steps join-steps">${this.options.words.joinSteps[way].map((step, index) => `<li class="managed-step">${art[index]}<span><b>${index + 1}</b>${escape(step)}</span></li>`).join("")}</ol>`;
+   *  drawings and a line each. */
+  private storyboard(way: "computer" | "phone" | "line" | "managed"): string {
+    const { words } = this.options;
+    const art = way === "managed" ? managedSteps() : joinSteps(way);
+    const steps = way === "managed" ? words.steps : words.joinSteps[way];
+    return `<ol class="managed-steps">${steps.map((step, index) => `<li class="managed-step">${art[index]}<span><b>${index + 1}</b>${escape(step)}</span></li>`).join("")}</ol>`;
   }
 
   /** A code for managed machines, made: the code to copy, how long and for
@@ -382,14 +389,13 @@ export class Tokens {
    *  line that does the same, for a tool that runs one on many computers. */
   private managedCode(code: string, name: string | null, until: string): string {
     const { words } = this.options;
-    const art = managedSteps();
     const line = `fastctx login --token ${code}`;
     return `<div class="managed-code">
         ${name ? `<p class="managed-code-name">${escape(name)}</p>` : ""}
-        <div class="managed-code-box"><p class="invite-code mono">${escape(code)}</p>${this.copy(code)}</div>
+        <div class="code-box"><p class="invite-code mono">${escape(code)}</p>${this.copy(code)}</div>
         <p class="field-hint">${escape(until)}</p>
-        <ol class="managed-steps">${words.steps.map((step, index) => `<li class="managed-step">${art[index]}<span><b>${index + 1}</b>${escape(step)}</span></li>`).join("")}</ol>
-        <div class="managed-line"><span class="field-label">${escape(words.line)}</span><code class="mono" title="${escape(line)}">${escape(line)}</code>${this.copy(line)}</div>
+        ${this.storyboard("managed")}
+        <div class="managed-line"><span class="field-label">${escape(words.line)}</span><div class="code-box code-line"><code class="mono" title="${escape(line)}">${escape(line)}</code>${this.copy(line)}</div></div>
       </div>`;
   }
 }

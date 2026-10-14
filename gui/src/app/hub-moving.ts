@@ -6,6 +6,7 @@
 // switched, say who has not followed yet, with the old place's forwarding
 // stopped and its data deleted from there.
 
+import { copyButton, copyFrom } from "./copy-button";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { HubAccounts, Login } from "../world/accounts";
@@ -268,7 +269,7 @@ export class HubMoving {
       move.waiting?.kind === "service" && !move.error
         ? move.to === here
           ? `<p class="panel-said">${escape(words.moveInstallHere)}</p><div class="move-acts">${button("arrive", words.moveInstall)}</div>`
-          : `<p class="panel-said">${escape(words.moveInstallThere(move.to))}</p><p class="move-command"><code class="mono">${escape(words.moveInstallCommand(move.waiting.os))}</code>${button("copy", words.moveCopy, `data-copy="${escape(words.moveInstallCommand(move.waiting.os))}"`)}</p>`
+          : `<p class="panel-said">${escape(words.moveInstallThere(move.to))}</p><p class="move-command"><code class="mono">${escape(words.moveInstallCommand(move.waiting.os))}</code>${copyButton(words.moveInstallCommand(move.waiting.os), words.moveCopy, `data-move-act="copy"`)}</p>`
         : "";
     const following = move.following;
     const old = following
@@ -311,9 +312,7 @@ export class HubMoving {
         this.watch(watching.login, hub, true);
         return;
       case "copy":
-        await navigator.clipboard.writeText(button.dataset.copy ?? "");
-        button.querySelector("span")!.textContent = words.moveCopied;
-        return;
+        return copyFrom(button, words.moveCopied);
       case "call":
         return ask({ request: "cancel" });
       case "retry":

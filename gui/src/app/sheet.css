@@ -459,19 +459,20 @@
   }
 }
 
-/* An invitation: its QR code beside the code itself, then how to use it. */
 .device-sheet .sheet-body {
   width: min(600px, 100vw - 32px);
 }
 
+/* A code for a phone to scan, how long it lasts under it. */
 .invitation {
-  display: grid;
-  grid-template-columns: 196px minmax(0, 1fr);
-  gap: var(--space-5);
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
 }
 
 .qr-frame {
+  width: min(232px, 64vw);
   padding: 10px;
   border-radius: var(--radius-m);
   background: #fff;
@@ -483,10 +484,6 @@
   height: auto;
 }
 
-.invitation-text .field-label {
-  margin: 0;
-}
-
 .invite-code {
   max-height: 9.5em;
   margin: var(--space-1) 0 var(--space-2);
@@ -496,10 +493,6 @@
   color: var(--text-2);
   word-break: break-all;
   user-select: all;
-}
-
-.invitation-text .copy-code {
-  margin: var(--space-2) 0 0 calc(-1 * var(--space-3));
 }
 
 .how-to {
@@ -534,17 +527,6 @@
   background: color-mix(in srgb, var(--wrong) 85%, var(--text));
 }
 
-@media (max-width: 760px) {
-  .invitation {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .qr-frame {
-    width: min(240px, 70vw);
-    justify-self: center;
-  }
-}
-
 /* The sheets that hold a run of steps, adding a device (over SSH among
    them) and moving the server, are one height from the first to the last:
    what one step holds more scrolls inside it. */
@@ -553,8 +535,10 @@
   height: min(660px, calc(88dvh - var(--space-6)));
 }
 
-/* A way in that is only a few things to say stands in the middle of the
-   room the sheet keeps; one taller than it starts at the top and scrolls. */
+/* Every way in is laid out alike in the room the sheet keeps: what to copy
+   or fill in from the top, its drawings (or the code to scan) in the
+   middle of what is left, what it makes at the foot. One taller than the
+   room scrolls. */
 .token-sheet .sheet-body {
   display: flex;
   flex-direction: column;
@@ -566,28 +550,56 @@
   flex-direction: column;
 }
 
-.token-sheet .device-body > * {
-  flex: none;
+.token-sheet .device-middle {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: var(--space-5) 0;
 }
 
-.token-sheet .device-body:not(:has(.device-remote))::before,
-.token-sheet .device-body:not(:has(.device-remote))::after {
-  content: "";
-  flex: 1 1 0;
+.token-sheet .device-middle .managed-steps {
+  margin: 0;
 }
 
-.token-sheet .device-body:not(:has(.device-remote))::after {
-  flex-grow: 1.4;
+.token-sheet .device-body > .sheet-foot {
+  margin-top: auto;
+}
+
+/* A value made to copy: on one solid box, its copy mark at its end. */
+.code-box {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+}
+
+.code-box .invite-code {
+  flex: 1;
+  min-width: 0;
+  max-height: 6em;
+  margin: 6px 0;
+  color: var(--text);
+}
+
+.device-made {
+  margin-top: var(--space-4);
+}
+
+.device-made > .field-label {
+  margin: 0 0 var(--space-1);
+}
+
+.device-made > .field-hint {
+  margin: var(--space-2) 0 0;
 }
 
 /* Giving a machine or a login: who has it already, then whom to give it
    to. */
 .give-sheet .sheet-body {
   width: min(600px, 100vw - 32px);
-}
-
-.invitation.invitation-wide {
-  grid-template-columns: minmax(0, 1fr);
 }
 
 /* On a phone every sheet rises from the bottom, edge to edge, whatever

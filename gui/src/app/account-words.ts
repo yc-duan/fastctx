@@ -1421,6 +1421,8 @@ export interface TokenWords {
   days(n: number): string;
   makeManaged: string;
   codeUntil(at: string, uses: number): string;
+  /** Three steps under drawings; in Chinese a zero-width space marks
+   *  where a line may wrap, between phrases, never inside one. */
   steps: [string, string, string];
   /** How each way in is used, in three steps each, under its drawings. */
   joinSteps: Record<"computer" | "phone" | "line", [string, string, string]>;
@@ -1466,11 +1468,11 @@ export const zhToken: TokenWords = {
   days: (n) => `${n} 天`,
   makeManaged: "生成入网码",
   codeUntil: (at, uses) => `${at} 前有效 · ${uses === 0 ? "不限台数" : uses === 1 ? "只能进 1 台" : `能进 ${uses} 台`}`,
-  steps: ["换到使用者不登录的系统账户", "装好 Fastctx，打开", "在「加入网络」里粘贴"],
+  steps: ["换到使用者\u200b不登录的\u200b系统账户", "装好 Fastctx，\u200b打开", "在「加入网络」里\u200b粘贴"],
   joinSteps: {
-    computer: ["在那台电脑上装好 Fastctx，打开", "点「加入网络」", "填上面的地址和账号，输入密码"],
-    phone: ["在手机上装好 Fastctx，打开", "点「加入网络」，扫这里生成的码", "码一小时内有效，只能用一次"],
-    line: ["生成下面这一行", "在服务器的终端里粘贴运行", "它装好 Fastctx，加入网络"],
+    computer: ["在那台电脑上\u200b装好 Fastctx，\u200b打开", "点「加入网络」", "填上面的\u200b地址和账号，\u200b输入密码"],
+    phone: ["在手机上\u200b装好 Fastctx，\u200b打开", "点「加入网络」，\u200b扫这里生成的码", "码一小时内有效，\u200b只能用一次"],
+    line: ["生成\u200b下面这一行", "在服务器的终端里\u200b粘贴运行", "它装好 Fastctx，\u200b加入网络"],
   },
   line: "或在那个账户的终端里运行",
   managed: "受管机器",

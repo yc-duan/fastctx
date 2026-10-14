@@ -106,6 +106,12 @@ body {
   background: var(--hairline);
 }
 
+/* A value's copy mark, a tick for a moment once it copied. */
+.copy-button.copied,
+.copy-button.copied:hover {
+  color: var(--alive);
+}
+
 .new-talk {
   flex: none;
   display: flex;
