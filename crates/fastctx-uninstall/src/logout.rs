@@ -81,29 +81,32 @@ async fn open(world: &WorldDir, directory: &Path) -> anyhow::Result<Option<dial:
     }
 }
 
+/// The hub's answer to `question`. While its node is down, this session is
+/// the machine's on the hub, which sends it what it sends the machine:
+/// calls of other machines, letters, what changed. None of it is the
+/// answer, and none of it is taken up; a call left unanswered is lost to
+/// its caller when the session ends.
 async fn ask(socket: &mut dial::HubSocket, id: u64, question: wire::Question) -> anyhow::Result<Option<wire::Told>> {
     dial::send(socket, &wire::Up::Ask { id, question }).await.map_err(anyhow::Error::msg)?;
     let deadline = tokio::time::Instant::now() + wire::SILENCE;
     loop {
-        match tokio::time::timeout_at(deadline, frame(socket))
+        let heard = tokio::time::timeout_at(deadline, dial::hear(socket))
             .await
-            .context("the hub did not answer the withdrawal question")??
-        {
-            Some(wire::Down::Told { id: received, answer }) if received == id => {
-                return answer.map(Some).map_err(anyhow::Error::msg);
-            }
-            Some(wire::Down::Refused { reason: wire::Refusal::Removed { .. } | wire::Refusal::NotMember }) => {
-                return Ok(None);
-            }
-            Some(wire::Down::Refused { reason }) => return Err(reason.into()),
-            Some(
-                wire::Down::DirectoryChanged
-                | wire::Down::Deliver { .. }
-                | wire::Down::Pong { .. }
-                | wire::Down::LedgerChanged { .. },
-            ) => {}
+            .context("the hub did not answer the withdrawal question")?
+            .map_err(anyhow::Error::msg)?;
+        match heard {
+            Some(dial::Heard::Frame(frame)) => match *frame {
+                wire::Down::Told { id: received, answer } if received == id => {
+                    return answer.map(Some).map_err(anyhow::Error::msg);
+                }
+                wire::Down::Refused { reason: wire::Refusal::Removed { .. } | wire::Refusal::NotMember } => {
+                    return Ok(None);
+                }
+                wire::Down::Refused { reason } => return Err(reason.into()),
+                _ => {}
+            },
+            Some(dial::Heard::Unread) => {}
             None => bail!("the hub connection ended without confirming withdrawal"),
-            Some(_) => bail!("the hub sent an unexpected withdrawal reply"),
         }
     }
 }

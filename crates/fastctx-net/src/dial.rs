@@ -520,14 +520,38 @@ pub async fn recv<S>(socket: &mut S) -> Result<Option<Down>, String>
 where
     S: futures_util::Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
 {
+    let Some(bytes) = next(socket).await? else { return Ok(None) };
+    serde_json::from_slice(&bytes).map(Some).map_err(|error| format!("a frame from the hub: {error}"))
+}
+
+/// A frame as a short session waiting for one answer reads it, such as a
+/// withdrawal while the machine's node is down: the hub sends it whatever
+/// it sends the machine, calls of other machines among them, in forms a
+/// newer hub or caller may have that this build cannot read.
+pub enum Heard {
+    Frame(Box<Down>),
+    /// A frame this build cannot read, which is not the answer it waits for.
+    Unread,
+}
+
+/// As `recv`, a frame this build cannot read being `Heard::Unread`.
+pub async fn hear<S>(socket: &mut S) -> Result<Option<Heard>, String>
+where
+    S: futures_util::Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    let Some(bytes) = next(socket).await? else { return Ok(None) };
+    Ok(Some(serde_json::from_slice(&bytes).map_or(Heard::Unread, |frame| Heard::Frame(Box::new(frame)))))
+}
+
+/// The next binary message; `None` when the hub closed the connection.
+async fn next<S>(socket: &mut S) -> Result<Option<tokio_tungstenite::tungstenite::Bytes>, String>
+where
+    S: futures_util::Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
     loop {
         match socket.next().await {
             None | Some(Ok(WsMessage::Close(_))) => return Ok(None),
-            Some(Ok(WsMessage::Binary(bytes))) => {
-                return serde_json::from_slice(&bytes)
-                    .map(Some)
-                    .map_err(|error| format!("a frame from the hub: {error}"));
-            }
+            Some(Ok(WsMessage::Binary(bytes))) => return Ok(Some(bytes)),
             Some(Ok(WsMessage::Ping(_) | WsMessage::Pong(_) | WsMessage::Frame(_))) => {}
             Some(Ok(WsMessage::Text(_))) => {
                 return Err("the hub sent text, not a frame".to_string());
