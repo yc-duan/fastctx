@@ -63,7 +63,8 @@ import { readFeatures, setFeature, watchFeatures } from "./world/features";
 import { untilAnswered, whyOf } from "./world/again";
 import { enFeatures, zhFeatures } from "./app/features-words";
 import { accountOf, enHomes, homeChoice, homeLabel, homesOf, installed, loggedOut, zhHomes } from "./app/agent-homes";
-import { Tokens } from "./app/tokens";
+import { Tokens, type CodeAsked } from "./app/tokens";
+import { codeName, codesOf, enCodes, zhCodes } from "./app/code-rows";
 import { ManagedPage, managedOf } from "./app/managed-page";
 import { enManaged, zhManaged } from "./app/managed-words";
 import { RemovalSheet } from "./app/removal-sheet";
@@ -119,7 +120,7 @@ import {
   readerWords } from "./app/words";
 import { enRemoval, zhRemoval } from "./app/removal-words";
 import { enAccess, enLogin, enMachines, enToken, zhAccess, zhLogin, zhMachines, zhToken } from "./app/account-words";
-import { loginsOf, type AccountChange, type Login } from "./world/accounts";
+import { LASTING, loginsOf, type AccountChange, type Login, type TokenSeen, type TokenWay } from "./world/accounts";
 import { assistantOf, assistantsOf, fileHome, filePlaces, groupsOf, inNoNetwork, loginKey, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
 import type { FocusPlace } from "./app/focus-panel";
 import { folders as foldersOf, noFocus, type Focus, type Folders } from "./world/focus";
@@ -580,36 +581,65 @@ const remoteSeams: RemoteSeams = {
 const accountConfirm = new Confirm(english ? enAccess : zhAccess);
 /** The specimen's server moving, kept across pages. */
 const specimenMove = specimenHubMove();
+/** When a code asked for now stops letting devices in, as the hub is told. */
+const codeExpires = (asked: CodeAsked) => (asked.expires ? asked.expires.toISOString() : LASTING);
+/** A specimen's code: listed as a real one would be, letting nobody in. */
+const specimenCode = async (login: Login, way: TokenWay, kind: "phone" | "computer", asked: CodeAsked): Promise<string> => {
+  const made: TokenSeen = {
+    key: `specimen-${Date.now().toString(36)}`,
+    account: login.account,
+    ...(asked.label ? { label: asked.label } : {}),
+    kind,
+    ...(asked.managed ? { managed: true } : {}),
+    uses: asked.uses,
+    used: 0,
+    expires: codeExpires(asked),
+    way,
+    ...(asked.name ? { name: asked.name } : {}),
+    made_by: specimen.world.accounts.machine,
+    made_at: new Date().toISOString(),
+  };
+  specimen.world = { ...specimen.world, accounts: { ...specimen.world.accounts, hubs: specimen.world.accounts.hubs.map((hub) => (hub.hub === login.hub ? { ...hub, tokens: [...(hub.tokens ?? []), made] } : hub)) } };
+  await store.refresh();
+  return `FX5${"0SPECIMEN0NOT0A0REAL0CODE".repeat(5)}`;
+};
+/** Asks once, then revokes a code; whether it was revoked. */
+const revokeCode = (login: Login, token: TokenSeen): Promise<boolean> =>
+  new Promise((resolve) => {
+    const words = english ? enCodes : zhCodes;
+    accountConfirm.ask({
+      title: words.revokeTitle(codeName(token, words)),
+      what: words.revokeWhat,
+      go: words.revokeGo,
+      act: () => change(login, { change: "revoke_token", token: token.key }),
+      done: () => resolve(true),
+    });
+  });
 const tokens = new Tokens({
   words: english ? enToken : zhToken,
+  codeWords: english ? enCodes : zhCodes,
   addresses: (login) => store.world.peek()?.accounts.hubs.find((hub) => hub.hub === login.hub)?.addresses ?? (live ? [] : ["192.168.1.20:7443"]),
-  // A specimen shows what a token looks like; it lets nobody in.
-  token: (login, kind, register, name, hours) =>
+  code: (login, kind, asked) =>
     live
       ? accountChange(login.hubName, login.account, {
           change: "token",
-          register,
-          name,
+          register: kind === "computer",
+          name: asked.name,
           kind,
-          expires: new Date(Date.now() + hours * 3_600_000).toISOString(),
+          expires: codeExpires(asked),
+          ...(asked.managed ? { managed: true } : {}),
+          ...(asked.uses === 1 ? {} : { uses: asked.uses }),
+          ...(asked.label ? { label: asked.label } : {}),
+          way: kind === "phone" ? "scan" : "paste",
         }).then((token) => token ?? Promise.reject(new Error("the hub made no token")))
-      : Promise.resolve(`FX5${"0SPECIMEN0NOT0A0REAL0TOKEN".repeat(4)}${hours}`),
-  // A code for managed machines; the specimen's lets nobody in either.
-  managed: (login, label, uses, hours) =>
+      : specimenCode(login, kind === "phone" ? "scan" : "paste", kind, asked),
+  server: (login, asked) =>
     live
-      ? accountChange(login.hubName, login.account, {
-          change: "token",
-          register: true,
-          name: null,
-          kind: "computer",
-          expires: new Date(Date.now() + hours * 3_600_000).toISOString(),
-          managed: true,
-          ...(uses === 1 ? {} : { uses }),
-          ...(label ? { label } : {}),
-        }).then((token) => token ?? Promise.reject(new Error("the hub made no token")))
-      : Promise.resolve(`FX5${"0SPECIMEN0NOT0A0REAL0CODE".repeat(5)}`),
-  server: (login, name, hours, managed) =>
-    live ? serverCommand(login.hubName, login.account, name, hours, managed) : Promise.resolve("echo 'Specimen: no real token or download'"),
+      ? serverCommand(login.hubName, login.account, asked.name, codeExpires(asked), asked.managed, asked.uses === 1 ? null : asked.uses, asked.label)
+      : specimenCode(login, "line", "computer", asked).then(() => "echo 'Specimen: no real token or download'"),
+  codes: (login) => codesOf(store.world.peek()?.accounts.hubs.find((hub) => hub.hub === login.hub), login, new Date()),
+  revoke: revokeCode,
+  here: () => store.world.peek()?.accounts.machine ?? "",
   manages: (login) => !live || !!store.world.peek()?.accounts.hubs.find((hub) => hub.hub === login.hub)?.managed,
   when: (at) => when(at, new Date()),
   nameProblem: live ? nameProblem : specimenNameProblem,
@@ -622,7 +652,7 @@ const tokens = new Tokens({
           words: english ? enLogin : zhLogin,
           token: (login, machine, managed) =>
             live
-              ? accountChange(login.hubName, login.account, { change: "token", register: true, name: machine, kind: "computer", expires: new Date(Date.now() + 3_600_000).toISOString(), ...(managed ? { managed: true } : {}) }).then(
+              ? accountChange(login.hubName, login.account, { change: "token", register: true, name: machine, kind: "computer", expires: new Date(Date.now() + 3_600_000).toISOString(), ...(managed ? { managed: true } : {}), way: "ssh" }).then(
                   (token) => token ?? Promise.reject(new Error("the hub made no token")),
                 )
               : Promise.resolve("FX5SPECIMEN"),
@@ -1816,7 +1846,7 @@ function show(next: Place): void {
                   words: english ? enLogin : zhLogin,
                   token: (login, machine) =>
                     live
-                      ? accountChange(login.hubName, login.account, { change: "token", register: true, name: machine, kind: "computer", expires: new Date(Date.now() + 3_600_000).toISOString() }).then(
+                      ? accountChange(login.hubName, login.account, { change: "token", register: true, name: machine, kind: "computer", expires: new Date(Date.now() + 3_600_000).toISOString(), way: "ssh" }).then(
                           (token) => token ?? Promise.reject(new Error("the hub made no token")),
                         )
                       : Promise.resolve("FX5SPECIMEN"),

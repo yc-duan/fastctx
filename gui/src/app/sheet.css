@@ -535,6 +535,12 @@
   height: min(660px, calc(88dvh - var(--space-6)));
 }
 
+/* How a Linux host comes in, the first thing of its face, a step below
+   the ways of adding a device. */
+.token-sheet .device-ways {
+  margin-top: var(--space-4);
+}
+
 /* Every way in is laid out alike in the room the sheet keeps: what to copy
    or fill in from the top, its drawings (or the code to scan) in the
    middle of what is left, what it makes at the foot. One taller than the
@@ -586,6 +592,50 @@
 
 .device-made {
   margin-top: var(--space-4);
+}
+
+/* The codes made that still let devices in: a quiet choice beside the
+   title, how many on it, and once chosen their rows from the top. */
+.sheet-head-end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.codes-pill {
+  align-items: center;
+  gap: 6px;
+  padding-left: 10px;
+}
+
+.codes-pill .glyph {
+  color: var(--text-3);
+}
+
+.codes-pill.chosen .glyph {
+  color: var(--text-2);
+}
+
+.codes-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  color: var(--text-2);
+  font-size: var(--size-small);
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.token-sheet .codes-rows {
+  margin-top: var(--space-4);
+}
+
+.codes-none {
+  margin: var(--space-6) 0 0;
+  color: var(--text-3);
+  font-size: var(--size-ui);
 }
 
 .device-made > .field-label {

@@ -957,11 +957,14 @@ export const zhMachines: MachinesWords = {
         return a.group ? `把 ${a.machine} 放进「${a.group}」` : `让 ${a.machine} 不再分组`;
       case "rename_group":
         return a.to ? `把 ${a.owner} 的「${a.from}」改叫「${a.to}」` : `解散 ${a.owner} 的「${a.from}」`;
-      case "token":
-        if (a.managed) return `生成受管机器的入网码${a.label ? ` · ${a.label}` : ""}`;
-        return a.register ? `生成加入命令${a.name ? ` · ${a.name}` : ""}` : "生成登录二维码";
+      case "token": {
+        const named = a.label ?? a.name;
+        const many = a.uses === 0 ? " · 不限台数" : a.uses && a.uses > 1 ? ` · ${a.uses} 台` : "";
+        const what = a.way === "line" || (!a.way && a.register && !a.managed) ? (a.managed ? "受管 Linux 一行命令" : "Linux 一行命令") : a.managed ? "受管机器的入网码" : a.register ? "电脑入网码" : "手机二维码";
+        return `生成${what}${named ? ` · ${named}` : ""}${many}`;
+      }
       case "revoke_token":
-        return `作废入网码${a.label ? ` · ${a.label}` : ""}`;
+        return `作废${a.way === "scan" ? "手机二维码" : a.way === "line" ? "Linux 一行命令" : a.managed ? "受管机器的入网码" : "入网码"}${a.label ? ` · ${a.label}` : ""}`;
       case "joined":
         if (a.managed) return `${a.name} 作为受管机器加入`;
         return a.registered ? `${a.name} 加入` : `${a.name} 登录`;
@@ -1229,11 +1232,14 @@ export const enMachines: MachinesWords = {
         return a.group ? `Put ${a.machine} in “${a.group}”` : `Took ${a.machine} out of its group`;
       case "rename_group":
         return a.to ? `Renamed ${a.owner}'s “${a.from}” to “${a.to}”` : `Ungrouped ${a.owner}'s “${a.from}”`;
-      case "token":
-        if (a.managed) return `Made a code for managed machines${a.label ? ` · ${a.label}` : ""}`;
-        return a.register ? `Made a join command${a.name ? ` · ${a.name}` : ""}` : "Made a sign-in QR code";
+      case "token": {
+        const named = a.label ?? a.name;
+        const many = a.uses === 0 ? " · any number" : a.uses && a.uses > 1 ? ` · ${a.uses} devices` : "";
+        const what = a.way === "line" || (!a.way && a.register && !a.managed) ? (a.managed ? "a managed Linux command" : "a Linux command") : a.managed ? "a code for managed machines" : a.register ? "a computer code" : "a sign-in QR code";
+        return `Made ${what}${named ? ` · ${named}` : ""}${many}`;
+      }
       case "revoke_token":
-        return `Revoked a code${a.label ? ` · ${a.label}` : ""}`;
+        return `Revoked ${a.way === "scan" ? "a sign-in QR code" : a.way === "line" ? "a Linux command" : a.managed ? "a code for managed machines" : "a code"}${a.label ? ` · ${a.label}` : ""}`;
       case "joined":
         if (a.managed) return `${a.name} joined as a managed machine`;
         return a.registered ? `${a.name} joined` : `${a.name} signed in`;
@@ -1395,7 +1401,9 @@ export interface TokenWords {
   nameAuto: string;
   nameSaid: NameSaid;
   valid: string;
-  hours(n: number): string;
+  /** How long a code may stay valid: an hour, a day, a week, thirty days,
+   *  or as long as it is not revoked. */
+  spans: [string, string, string, string, string];
   makeCode: string;
   makeCommand: string;
   making: string;
@@ -1403,24 +1411,28 @@ export interface TokenWords {
   command: string;
   copy: string;
   copied: string;
-  until(at: string): string;
   again: string;
   close: string;
   problems: ProblemWords;
-  /** A code for managed machines (`world-network.md`, 受管机器): its name,
-   *  how many computers it lets in, for how many days, and once made, how
-   *  long and for how many, the three steps of using it, and the line. */
+  /** A code (`world-network.md`, 入网码): its name, how many devices it
+   *  lets in, for how long, and once made, how long and for how many; for
+   *  managed machines, the three steps of using it and the line. A Linux
+   *  line for several hosts names their group. */
   label: string;
   labelHint: string;
+  lineHint: string;
   uses: string;
   usesOne: string;
   usesAny: string;
   usesSome: string;
   unit: string;
   usesSaid(most: number): string;
-  days(n: number): string;
   makeManaged: string;
   codeUntil(at: string, uses: number): string;
+  codeLasting(uses: number): string;
+  /** The codes made that still let devices in, beside the title. */
+  codes: string;
+  codesNone: string;
   /** Three steps under drawings; in Chinese a zero-width space marks
    *  where a line may wrap, between phrases, never inside one. */
   steps: [string, string, string];
@@ -1434,6 +1446,10 @@ export interface TokenWords {
   managedOld: string;
 }
 
+/** How many devices a code lets in, as its line under it says. */
+const zhUses = (uses: number) => (uses === 0 ? "不限台数" : uses === 1 ? "只能进 1 台" : `能进 ${uses} 台`);
+const enUses = (uses: number) => (uses === 0 ? "any number of devices" : uses === 1 ? "one device" : `${uses} devices`);
+
 export const zhToken: TokenWords = {
   title: "添加设备",
   kinds: { computer: "电脑", phone: "手机", server: "Linux 主机", managed: "受管机器" },
@@ -1445,7 +1461,7 @@ export const zhToken: TokenWords = {
   nameAuto: "自动",
   nameSaid: zhNameSaid,
   valid: "有效期",
-  hours: (n) => (n < 24 ? `${n} 小时` : `${n / 24} 天`),
+  spans: ["1 小时", "1 天", "7 天", "30 天", "不过期"],
   makeCode: "生成二维码",
   makeCommand: "生成命令",
   making: "正在生成…",
@@ -1453,25 +1469,27 @@ export const zhToken: TokenWords = {
   command: "在主机终端中运行",
   copy: "复制",
   copied: "已复制",
-  until: (at) => `${at} 前有效，仅可使用一次`,
   again: "重新生成",
   close: "关闭",
   problems: zhProblems,
   label: "名字",
   labelHint: "如：机房 A",
+  lineHint: "如：GPU 集群",
   uses: "能进几台",
   usesOne: "1 台",
   usesAny: "不限",
   usesSome: "自定",
   unit: "台",
   usesSaid: (most) => `填 1 到 ${most} 之间的台数`,
-  days: (n) => `${n} 天`,
   makeManaged: "生成入网码",
-  codeUntil: (at, uses) => `${at} 前有效 · ${uses === 0 ? "不限台数" : uses === 1 ? "只能进 1 台" : `能进 ${uses} 台`}`,
+  codeUntil: (at, uses) => `${at} 前有效 · ${zhUses(uses)}`,
+  codeLasting: (uses) => `不过期 · ${zhUses(uses)}`,
+  codes: "入网码",
+  codesNone: "没有还能用的入网码",
   steps: ["换到使用者\u200b不登录的\u200b系统账户", "装好 Fastctx，\u200b打开", "在「加入网络」里\u200b粘贴"],
   joinSteps: {
     computer: ["在那台电脑上\u200b装好 Fastctx，\u200b打开", "点「加入网络」", "填上面的\u200b地址和账号，\u200b输入密码"],
-    phone: ["在手机上\u200b装好 Fastctx，\u200b打开", "点「加入网络」，\u200b扫这里生成的码", "码一小时内有效，\u200b只能用一次"],
+    phone: ["在手机上\u200b装好 Fastctx，\u200b打开", "点「加入网络」", "扫\u200b这里生成的码"],
     line: ["生成\u200b下面这一行", "在服务器的终端里\u200b粘贴运行", "它装好 Fastctx，\u200b加入网络"],
   },
   line: "或在那个账户的终端里运行",
@@ -1491,7 +1509,7 @@ export const enToken: TokenWords = {
   nameAuto: "automatic",
   nameSaid: enNameSaid,
   valid: "Valid for",
-  hours: (n) => (n < 24 ? `${n} hour${n === 1 ? "" : "s"}` : `${n / 24} day${n === 24 ? "" : "s"}`),
+  spans: ["1 hour", "1 day", "7 days", "30 days", "Never expires"],
   makeCode: "Create QR code",
   makeCommand: "Create command",
   making: "Creating…",
@@ -1499,25 +1517,27 @@ export const enToken: TokenWords = {
   command: "Run in the host's terminal",
   copy: "Copy",
   copied: "Copied",
-  until: (at) => `Valid until ${at}, once`,
   again: "Create again",
   close: "Close",
   problems: enProblems,
   label: "Name",
   labelHint: "e.g. Lab A",
-  uses: "How many computers",
+  lineHint: "e.g. GPU cluster",
+  uses: "How many devices",
   usesOne: "One",
   usesAny: "Any",
   usesSome: "Custom",
   unit: "",
   usesSaid: (most) => `Give a number from 1 to ${most}`,
-  days: (n) => `${n} day${n === 1 ? "" : "s"}`,
   makeManaged: "Create code",
-  codeUntil: (at, uses) => `Valid until ${at} · ${uses === 0 ? "any number of computers" : uses === 1 ? "one computer" : `${uses} computers`}`,
+  codeUntil: (at, uses) => `Valid until ${at} · ${enUses(uses)}`,
+  codeLasting: (uses) => `Never expires · ${enUses(uses)}`,
+  codes: "Codes",
+  codesNone: "No code lets a device in now",
   steps: ["Sign in as a system account no one at it uses", "Install Fastctx and open it", "Paste it in Join a network"],
   joinSteps: {
     computer: ["Install Fastctx on that computer and open it", "Choose Join a network", "Enter the address and account above, and the password"],
-    phone: ["Install Fastctx on the phone and open it", "Choose Join a network and scan the code made here", "The code works for an hour, once"],
+    phone: ["Install Fastctx on the phone and open it", "Choose Join a network", "Scan the code made here"],
     line: ["Make the line below", "Paste it in the server's terminal and run it", "It installs Fastctx and joins"],
   },
   line: "Or run in that account's terminal",

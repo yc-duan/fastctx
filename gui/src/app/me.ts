@@ -13,14 +13,16 @@
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { circle, seeded } from "../pen/shapes";
-import { loginsOf, type AccountChange, type Arrival, type AssistSeen, type HubAccounts, type Login, type MemberSeen, type TokenSeen } from "../world/accounts";
+import { loginsOf, type AccountChange, type Arrival, type AssistSeen, type HubAccounts, type Login, type MemberSeen } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import { wholeDollars } from "../world/money";
 import { agentName } from "../world/names";
 import type { MachinesWords } from "./account-words";
 import { assistChange } from "./assist-sheet";
+import { codeName, codeRow, codesOf } from "./code-rows";
 import { Confirm, Sheet } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
+import { row } from "./rows";
 import { linkSaid } from "./machines";
 import type { MeWords } from "./me-words";
 import { newPasswordFields, passwordReady, sayPassword } from "./new-password";
@@ -141,10 +143,11 @@ export class MePage implements Page {
       case "revoke": {
         const token = this.hubOf(login)?.tokens?.find((one) => one.key === button.dataset.key);
         if (!token) return;
+        const codes = words.codeRows;
         return confirm.ask({
-          title: words.revokeTitle(token.label ?? words.codeUnnamed),
-          what: words.revokeWhat,
-          go: words.revokeGo,
+          title: codes.revokeTitle(codeName(token, codes)),
+          what: codes.revokeWhat,
+          go: codes.revokeGo,
           act: () => change(login, { change: "revoke_token", token: token.key }),
           done: refresh,
         });
@@ -158,7 +161,7 @@ export class MePage implements Page {
         const code = button.dataset.code ?? "";
         const came = this.byCode(login, code);
         const token = this.hubOf(login)?.tokens?.find((one) => one.key === code);
-        const named = token?.label ?? words.someCode;
+        const named = token ? codeName(token, words.codeRows) : words.someCode;
         return confirm.ask({
           title: words.notMeCodeTitle(named, came.length),
           what: words.notMeCodeWhat(came.length),
@@ -320,7 +323,7 @@ export class MePage implements Page {
       ${this.given(login, hub, world, now)}
       ${this.reaching(login, hub, now)}
       ${this.devices(login, hub, world, now)}
-      ${this.codes(login, hub, now)}
+      ${this.codes(login, hub, world, now)}
       <div class="me-leave"><button class="text-button danger-text" type="button" data-act="leave">${glyph("logout", 16)}<span>${escape(computer ? words.leave : words.logout)}</span></button></div>
     </section>`;
   }
@@ -359,23 +362,14 @@ export class MePage implements Page {
     </div>`;
   }
 
-  /** The codes for managed machines this account made that still let them
-   *  in: each with how many came in, until when, and a way to revoke it. */
-  private codes(login: Login, hub: HubAccounts, now: Date): string {
+  /** The codes that still let devices into this account, of every way in,
+   *  and for the administrator every account's: each with how many came
+   *  in, until when, and a way to revoke it (`code-rows`). */
+  private codes(login: Login, hub: HubAccounts, world: WorldNow, now: Date): string {
     const { words, when } = this.options;
-    // A code past its day is gone, though the server tells of it only with
-    // its next change.
-    const codes = (hub.tokens ?? []).filter((token: TokenSeen) => token.account === login.account && token.managed && new Date(token.expires) > now);
+    const codes = codesOf(hub, login, now);
     if (!codes.length) return "";
-    const rows = codes.map((token) =>
-      row(
-        glyph("key", 16),
-        escape(token.label ?? words.codeUnnamed),
-        escape([words.codeUsed(token.used, token.uses), words.codeUntil(when(new Date(token.expires), now))].join(" · ")),
-        "",
-        `<button class="text-button quiet-button" type="button" data-act="revoke" data-key="${escape(token.key)}">${escape(words.revoke)}</button>`,
-      ),
-    );
+    const rows = codes.map((token) => codeRow(token, login, world.accounts.machine, words.codeRows, (at) => when(at, now)));
     return part(words.codes, "", `<ul class="me-rows">${rows.join("")}</ul>`);
   }
 
@@ -389,7 +383,8 @@ export class MePage implements Page {
     const batches = codes.map((code) => {
       const came = all.filter((arrival) => arrival.code === code);
       const last = came.reduce((late, arrival) => (arrival.noticed_at > late ? arrival.noticed_at : late), came[0]!.noticed_at);
-      const named = hub.tokens?.find((token) => token.key === code)?.label ?? words.someCode;
+      const token = hub.tokens?.find((one) => one.key === code);
+      const named = token ? codeName(token, words.codeRows) : words.someCode;
       return `<li class="me-arrival">${glyph("machine", 16)}<span class="me-arrival-text" title="${escape(came.map((arrival) => arrival.name).join(words.separator))}">${escape(words.arrivedByCode(named, came.length, when(new Date(last), now)))}</span><span class="me-arrival-acts"><button class="text-button quiet-button" type="button" data-act="seen-code" data-code="${escape(code)}">${escape(words.me)}</button><button class="text-button quiet-button danger" type="button" data-act="not-me-code" data-code="${escape(code)}">${escape(words.notMe)}</button></span></li>`;
     });
     const arrivals = all.filter((arrival) => !arrival.code);
@@ -483,12 +478,6 @@ function part(title: string, what: string, body: string): string {
 
 /** A row: its mark, its name with a quieter line beside it, what is said
  *  of the things at its end, and those things. */
-function row(mark: string, name: string, sub: string, verb: string, end: string, state = ""): string {
-  // A row that ends in one button keeps it on its line, even on a phone.
-  const act = !verb && end.startsWith("<button") ? " act" : "";
-  return `<li class="me-row${state}${act}"><span class="me-row-mark">${mark}</span><span class="me-row-name">${name}${sub ? `<span class="me-row-sub">${sub}</span>` : ""}</span><span class="me-row-end">${verb ? `<span class="me-row-verb">${escape(verb)}</span>` : ""}${end}</span></li>`;
-}
-
 function assistKey(assist: AssistSeen): string {
   return [assist.machine, assist.agent, assist.home ?? "", assist.account].join("\n");
 }

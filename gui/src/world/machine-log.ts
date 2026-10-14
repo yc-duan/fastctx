@@ -1,5 +1,5 @@
 // The hub's machine-layer history (`fastctx_types::machine_log`).
-import type { AccountName, MemberKind, PlanLabel, Relay } from "./accounts";
+import type { AccountName, MemberKind, PlanLabel, Relay, TokenWay } from "./accounts";
 import type { Address, MachineName, Timestamp } from "./wire";
 
 export interface MachineLogActor {
@@ -26,8 +26,8 @@ export type MachineLogAction =
   | { change: "group"; machine: MachineName; group?: string }
   | { change: "rename_group"; owner: AccountName; from: string; to?: string }
   | { change: "logout" }
-  | { change: "token"; register: boolean; name: MachineName | null; kind: MemberKind; expires: Timestamp; managed?: boolean; label?: string }
-  | { change: "revoke_token"; label?: string }
+  | { change: "token"; register: boolean; name: MachineName | null; kind: MemberKind; expires: Timestamp; managed?: boolean; label?: string; uses?: number; way?: TokenWay }
+  | { change: "revoke_token"; label?: string; way?: TokenWay; managed?: boolean }
   | { change: "password_start" | "password_finish"; target: AccountName }
   | { change: "open_account"; name: AccountName; visitor?: boolean }
   | { change: "delete_account"; name: AccountName }

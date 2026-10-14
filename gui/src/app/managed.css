@@ -24,32 +24,47 @@
 
 /* How many computers a code lets in: one, any, or a number typed into the
    third choice itself. */
+/* A number of one's own: the word alone until it is chosen, then a small
+   solid field for the number, its unit after it, at the height of the
+   choices beside it. */
 .choice.choice-count {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  cursor: text;
+  gap: 6px;
+  cursor: pointer;
 }
 
-.choice-count input {
-  width: 2.6em;
+.choice-count input,
+.choice-count .count-unit {
+  display: none;
+}
+
+.choice-count.chosen .count-word {
+  display: none;
+}
+
+.choice-count.chosen input {
+  display: block;
+  width: 3.6em;
+  height: 22px;
   min-width: 0;
-  padding: 0;
+  margin: 0 -4px;
+  padding: 0 6px;
   border: 0;
-  background: transparent;
-  color: inherit;
+  border-radius: var(--radius-s);
+  background: var(--field);
+  color: var(--text-strong);
   font: inherit;
   text-align: center;
   outline: none;
+  cursor: text;
   font-variant-numeric: tabular-nums;
 }
 
-.choice-count input::placeholder {
-  color: var(--text-3);
-}
-
-.choice-count span {
-  color: var(--text-3);
+.choice-count.chosen .count-unit {
+  display: inline;
+  margin-left: 4px;
+  color: var(--text-2);
 }
 
 /* A Linux host as a managed machine: one solid row under the ways, its

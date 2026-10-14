@@ -1,6 +1,7 @@
 // What the page of the user's own things says (`world-gui.md`, 账号、机器、
 // 共享与协助: 「我」).
 
+import { enCodes, zhCodes, type CodeWords } from "./code-rows";
 import type { MemberKind } from "../world/accounts";
 import type { PasswordProblem } from "./password";
 import { enPasswordFloor, enPasswordRule, enStrength, zhPasswordFloor, zhPasswordRule, zhStrength } from "./account-words";
@@ -26,13 +27,8 @@ export interface MeWords {
   /** The codes for managed machines the account made that still let them
    *  in (`world-network.md`, 受管机器). */
   codes: string;
-  codeUnnamed: string;
-  codeUsed(used: number, uses: number): string;
-  codeUntil(at: string): string;
-  revoke: string;
-  revokeTitle(name: string): string;
-  revokeWhat: string;
-  revokeGo: string;
+  /** The codes' rows, as the sheet that adds a device has them too. */
+  codeRows: CodeWords;
   /** Managed machines that came in by one code, told together. */
   arrivedByCode(name: string, count: number, at: string): string;
   someCode: string;
@@ -119,13 +115,7 @@ export const zhMe: MeWords = {
   accepted: "你现在是成员",
   declined: "你照旧是访客",
   codes: "入网码",
-  codeUnnamed: "受管机器的入网码",
-  codeUsed: (used, uses) => (uses ? `已进 ${used} / ${uses} 台` : `已进 ${used} 台`),
-  codeUntil: (at) => `到 ${at}`,
-  revoke: "作废",
-  revokeTitle: (name) => `作废「${name}」？`,
-  revokeWhat: "已经进来的机器照旧，新的进不来。",
-  revokeGo: "作废",
+  codeRows: zhCodes,
   arrivedByCode: (name, count, at) => `${at} · 「${name}」进来了 ${count} 台受管机器`,
   someCode: "一个入网码",
   notMeCodeTitle: (name, count) => `作废「${name}」并移除这 ${count} 台？`,
@@ -207,13 +197,7 @@ export const enMe: MeWords = {
   accepted: "You are a member now",
   declined: "You stay a visitor",
   codes: "Codes",
-  codeUnnamed: "Code for managed machines",
-  codeUsed: (used, uses) => (uses ? `${used} of ${uses} in` : `${used} in`),
-  codeUntil: (at) => `until ${at}`,
-  revoke: "Revoke",
-  revokeTitle: (name) => `Revoke "${name}"?`,
-  revokeWhat: "The machines already in stay; no new one comes in.",
-  revokeGo: "Revoke",
+  codeRows: enCodes,
   arrivedByCode: (name, count, at) => `${at} · ${count} managed machine${count === 1 ? "" : "s"} came in by "${name}"`,
   someCode: "a code",
   notMeCodeTitle: (name, count) => `Revoke "${name}" and remove these ${count}?`,

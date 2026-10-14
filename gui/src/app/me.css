@@ -219,6 +219,24 @@
   color: var(--text-3);
 }
 
+/* A code says more of itself: its name, and under it how many came in by
+   it, until when and who made it; its revoking at the end. */
+.me-row.code-row {
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+}
+
+.me-row.code-row .me-row-name {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+/* Its line folds between what it says, not inside a date. */
+.me-row.code-row .me-row-sub {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
 /* The people things are given to, in the hand of the page rather than the
    code face the machines' chips use; how long and how much after the name. */
 .me .chip {

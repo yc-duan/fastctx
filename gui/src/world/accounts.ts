@@ -177,7 +177,22 @@ export interface Arrival {
   code?: string;
 }
 
-/** A code that still lets devices in, as the account that made it sees it. */
+/** How a code reaches the devices it lets in, for whoever made it to know
+ *  it again: a phone scans it, a Linux host runs the line it is in, a
+ *  computer has it pasted, or this computer's SSH session with a host uses
+ *  it at once. A way a later release names reads as `other`. */
+export type TokenWay = "scan" | "line" | "paste" | "ssh" | "other";
+
+/** When a code that lasts until it is revoked is said to expire. */
+export const LASTING = "9999-12-30T00:00:00Z";
+
+/** Whether a code expiring at `expires` lasts until it is revoked. */
+export function lasting(expires: Timestamp): boolean {
+  return new Date(expires).getTime() >= Date.parse(LASTING);
+}
+
+/** A code that still lets devices in, as the accounts it lets into see it,
+ *  and the network's administrator. */
 export interface TokenSeen {
   /** Its key, by which it is revoked. */
   key: string;
@@ -185,11 +200,19 @@ export interface TokenSeen {
   label?: string;
   kind: MemberKind;
   managed?: boolean;
-  /** How many computers may use it: any number at zero. */
+  /** How many devices may use it: any number at zero. */
   uses: number;
   /** How many have. */
   used: number;
+  /** At `LASTING`, never. */
   expires: Timestamp;
+  /** How it is given; an earlier hub does not say. */
+  way?: TokenWay;
+  /** The name the one device it is for takes, when it names one. */
+  name?: MachineName;
+  /** The device that made it, and when; an earlier hub does not say. */
+  made_by?: MachineName;
+  made_at?: Timestamp;
 }
 
 /** What a code lets this computer into, as its hub told before it is used. */
@@ -272,8 +295,8 @@ export type AccountChange =
   | { change: "logout" }
   /** A code for another device; `managed` makes the computers that use it
    *  managed machines, `uses` of them at most (any number at zero, one when
-   *  absent). */
-  | { change: "token"; register: boolean; name: MachineName | null; kind: MemberKind; expires: Timestamp; managed?: boolean; uses?: number; label?: string }
+   *  absent); expiring at `LASTING`, it lasts until it is revoked. */
+  | { change: "token"; register: boolean; name: MachineName | null; kind: MemberKind; expires: Timestamp; managed?: boolean; uses?: number; label?: string; way?: TokenWay }
   | { change: "revoke_token"; token: string }
   | { change: "set_password"; target: AccountName; password: string }
   | { change: "open_account"; name: AccountName; password: string; visitor?: boolean }

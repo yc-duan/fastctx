@@ -4,7 +4,7 @@
 // interface grouped by account.
 
 import type { Address } from "../world/events";
-import type { AccountChange, HubAccounts, MemberSeen, Paths, Reach } from "../world/accounts";
+import { LASTING, type AccountChange, type HubAccounts, type MemberSeen, type Paths, type Reach } from "../world/accounts";
 import type { About, Action, HubNodes, LinkState, MachineFacts, Node, ProjectRecord, ResidentNow } from "../world/world";
 import type { Away, WorldState } from "../home/model";
 import type { AgentFacts, WorldAgents } from "../world/agents";
@@ -190,7 +190,12 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         { ...member("lab-a-02", "computer", [], "me", "12:31:00", false, "8a4b2f60"), managed: true, code: LAB_CODE, group: "机房 A" },
         member("cy-mac", "computer", ["cy"], "cy", "09:20:00", true, "e7c13d52"),
       ],
-      tokens: [{ key: LAB_CODE, account: "me", label: "机房 A", kind: "computer", managed: true, uses: 40, used: 2, expires: daysAhead(6) }],
+      tokens: [
+        { key: LAB_CODE, account: "me", label: "机房 A", kind: "computer", managed: true, uses: 40, used: 2, expires: daysAhead(6), way: "paste", made_by: "desktop", made_at: at("10:40:00") },
+        { key: "specimen-gpu-line", account: "me", label: "GPU 集群", kind: "computer", uses: 0, used: 0, expires: LASTING, way: "line", made_by: "laptop", made_at: at("09:12:00") },
+        { key: "specimen-phone-qr", account: "me", kind: "phone", uses: 1, used: 0, expires: daysAhead(1), way: "scan", made_by: "desktop", made_at: at("13:05:00") },
+        { key: "specimen-bo-code", account: "bo", label: "实验室", kind: "computer", managed: true, uses: 10, used: 3, expires: daysAhead(20), way: "paste", made_by: "gpu", made_at: at("08:00:00") },
+      ],
       shares: [{ machine: "lab", account: "ada" }],
       assists: [
         { machine: "desktop", account: "ada", agent: "codex", home: "C:\\Users\\me\\.codex-work", until: daysAhead(3) },
@@ -617,6 +622,10 @@ export function specimenAgents(machine: string, at: Date = new Date()): WorldAge
 export function specimenChange(world: WorldNow | null, hub: string, made: AccountChange): WorldNow | null {
   if (!world) return null;
   if (made.change === "rename") return renamed(world, hub, made.machine, made.to);
+  if (made.change === "revoke_token") {
+    const hubs = world.accounts.hubs.map((one) => (one.hub === hub ? { ...one, tokens: (one.tokens ?? []).filter((token) => token.key !== made.token) } : one));
+    return { ...world, accounts: { ...world.accounts, hubs } };
+  }
   const people = peopleChanged(world, hub, made);
   if (people) return people;
   if (made.change === "assist") {
