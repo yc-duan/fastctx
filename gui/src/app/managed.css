@@ -534,6 +534,10 @@
   color: var(--text);
 }
 
+.managed-slip > span {
+  text-wrap: balance;
+}
+
 .managed-slip pre {
   flex-basis: 100%;
   margin: 0;
