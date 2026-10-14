@@ -243,17 +243,12 @@ select:focus-visible,
   background-color: var(--accent-wash);
 }
 
-/* Inline code is one of the words, in the words' own face: the prose has a
-   single face, and only fenced code and what a tool shows are in the code
-   face. A faint solid wash behind it says it is a name to type as written. */
+/* Inline code is one of the words, in the words' own face and nothing
+   around it: the prose has a single face, and only fenced code and what a
+   tool shows are in the code face. */
 .prose :not(pre) > code {
   font-family: inherit;
   font-variation-settings: normal;
-  padding: 0.04em 0.28em;
-  border-radius: 4px;
-  background: var(--fill);
-  -webkit-box-decoration-break: clone;
-  box-decoration-break: clone;
 }
 
 /* Fenced code: a solid surface, wrapped rather than scrolled, so a phone
