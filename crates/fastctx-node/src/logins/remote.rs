@@ -225,6 +225,25 @@ pub(crate) async fn read_limits(
     }
 }
 
+/// Turns automatic naming of Codex conversations in a login on or off,
+/// here or on another of the user's machines.
+pub(crate) async fn set_title(
+    node: &Arc<Node>,
+    machine: MachineName,
+    agent: AgentName,
+    dir: PathBuf,
+    on: bool,
+) -> Result<MachineLogins, Failure> {
+    if node.is_me(&machine) {
+        super::set_title(node, &agent, &dir, on)?;
+        return super::here(node).await;
+    }
+    match ask(node, &machine, Purpose::Hands, RemoteCall::SetAgentTitle { agent, dir, on }).await? {
+        RemoteReply::AgentLogins(logins) => Ok(*logins),
+        _ => Err(other(&machine)),
+    }
+}
+
 /// What `agent`'s login `dir` on `machine` was used for, as this computer's
 /// user may see it.
 pub(crate) async fn usage(
@@ -270,6 +289,10 @@ pub(crate) async fn answer(
         RemoteCall::ScanAgents { stop, limits } => super::scan::scan(node, stop, limits).await.map(logins),
         RemoteCall::AddAgentLogin { agent, dir, limits } => super::take_up(node, agent, dir, limits).await.map(logins),
         RemoteCall::AgentFolder { dir, change } => super::folders::change(node, dir, change).await.map(logins),
+        RemoteCall::SetAgentTitle { agent, dir, on } => {
+            super::set_title(node, &agent, &dir, on)?;
+            super::here(node).await.map(logins)
+        }
         RemoteCall::PreviewAgentChange { agent, dir, into } => super::change::preview(node, agent, dir, into)
             .await
             .map(|preview| RemoteReply::AgentChangePreview(Box::new(preview))),

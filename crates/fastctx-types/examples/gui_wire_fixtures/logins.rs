@@ -44,6 +44,7 @@ pub fn fixtures() -> Fixtures {
         programs: vec![0, 1],
         integration: Integration::In,
         unattended: None,
+        auto_title: true,
         launcher: Some(Launcher {
             path: "C:/app/codex.exe".into(),
             version: Some("0.162.0".into()),
@@ -90,6 +91,7 @@ pub fn fixtures() -> Fixtures {
         programs: vec![],
         integration: Integration::Out,
         unattended: Some(false),
+        auto_title: false,
         launcher: Some(Launcher { path: "/home/me/.local/bin/claude".into(), version: None, desktop_app: false }),
         models: vec![],
         change: Some(LoginChange {
@@ -111,6 +113,7 @@ pub fn fixtures() -> Fixtures {
         programs: vec![],
         integration: Integration::Old,
         unattended: None,
+        auto_title: false,
         launcher: None,
         models: vec![],
         change: Some(LoginChange {

@@ -214,6 +214,13 @@ pub enum RemoteCall {
         dir: std::path::PathBuf,
         change: crate::logins::FolderChange,
     },
+    /// Turn the automatic naming of new Codex conversations in a login there
+    /// on or off; only for the machine's owner.
+    SetAgentTitle {
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        on: bool,
+    },
     /// What a change of a login there would do; only for the machine's
     /// owner.
     PreviewAgentChange {
@@ -449,6 +456,7 @@ impl RemoteCall {
             | RemoteCall::ScanAgents { .. }
             | RemoteCall::AddAgentLogin { .. }
             | RemoteCall::AgentFolder { .. }
+            | RemoteCall::SetAgentTitle { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }
             | RemoteCall::Stats { .. } => Purpose::Hands,

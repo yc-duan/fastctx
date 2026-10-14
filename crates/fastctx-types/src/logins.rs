@@ -112,6 +112,10 @@ pub struct Login {
     /// which putting the World's tools in grants.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unattended: Option<bool>,
+    /// For Codex: whether the World names a new conversation in it the way
+    /// the official client does; off by default (`world-agent-logins.md`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub auto_title: bool,
     /// The program the World starts for this login, when one was found.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launcher: Option<Launcher>,

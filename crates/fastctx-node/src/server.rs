@@ -889,6 +889,12 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }
+        Call::SetAgentTitle { machine, agent, dir, on } => {
+            users_voice(node, peer)?;
+            crate::logins::remote::set_title(node, machine, agent, dir, on)
+                .await
+                .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
+        }
         Call::PreviewAgentChange { machine, agent, dir, into } => {
             users_voice(node, peer)?;
             crate::logins::remote::preview(node, machine, agent, dir, into)

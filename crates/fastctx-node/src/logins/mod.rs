@@ -217,6 +217,7 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
                 programs: if default { (0..side.programs.len() as u32).collect() } else { Vec::new() },
                 integration,
                 unattended,
+                auto_title: agent == "codex" && kept.codex.titled.iter().any(|known| crate::homes::same_dir(known, dir)),
                 launcher: known.and_then(|login| login.launcher.clone()),
                 models,
                 change,
@@ -265,6 +266,33 @@ fn claude_reading(homes: &[AgentHome], dir: &Path, readings: &[(PathBuf, AgentLi
 
 /// The login `dir` of `agent` is one the World knows here, listed or a
 /// candidate; it must still be a directory.
+/// Turns the automatic naming of new conversations in a Codex login here on
+/// or off. Known only for Codex; a login the scan does not yet list is added
+/// to the record so the setting is kept.
+pub(crate) fn set_title(node: &Node, agent: &AgentName, dir: &Path, on: bool) -> Result<(), Failure> {
+    if agent.as_str() != "codex" {
+        return Err(Failure::not_run("only Codex names its own conversations; Claude Code does its own"));
+    }
+    known(node, agent, dir)?;
+    let dir = dir.to_path_buf();
+    kept::change(node, move |kept| {
+        kept.codex.titled.retain(|known| !crate::homes::same_dir(known, &dir));
+        if on {
+            kept.codex.titled.push(dir);
+        }
+    })
+    .map_err(|error| Failure::new(format!("keeping the login's naming: {error}")))
+}
+
+/// Whether the Codex login `dir` (the default one when none) names its new
+/// conversations. Quiet about any trouble reading the record: unread is off.
+pub(crate) fn codex_auto_title(node: &Node, dir: Option<&Path>) -> bool {
+    let Ok(kept) = kept::read(node) else { return false };
+    let default = node.codex.default().config_home().to_path_buf();
+    let dir = dir.unwrap_or(&default);
+    kept.codex.titled.iter().any(|known| crate::homes::same_dir(known, dir))
+}
+
 pub(crate) fn known(node: &Node, agent: &AgentName, dir: &Path) -> Result<(), Failure> {
     host(agent.as_str())?;
     let context = Context::of(node)?;

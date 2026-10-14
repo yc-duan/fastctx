@@ -311,6 +311,15 @@ pub enum Call {
         dir: std::path::PathBuf,
         change: crate::logins::FolderChange,
     },
+    /// Whether the World names a new Codex conversation in the login `dir`
+    /// on `machine` the way the official client does; off by default, set by
+    /// whoever may manage the login (`world-agent-logins.md`, 在哪个登录里干活).
+    SetAgentTitle {
+        machine: MachineName,
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        on: bool,
+    },
     /// What putting the World's tools into a login on `machine` (`into`),
     /// or taking them out, would change, with nothing written.
     PreviewAgentChange {

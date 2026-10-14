@@ -131,3 +131,19 @@ pub(crate) async fn read_agent_limits(
         .await
         .map_err(|error| error.to_string())
 }
+
+/// Turns naming new Codex conversations in a login on or off.
+#[fastctx_gui_command::command]
+pub(crate) async fn set_agent_title(
+    shell: tauri::State<'_, Shell>,
+    machine_name: String,
+    agent_name: String,
+    dir: PathBuf,
+    on: bool,
+) -> Result<MachineLogins, String> {
+    shell
+        .world()
+        .set_agent_title(machine(machine_name)?, agent(agent_name)?, dir, on)
+        .await
+        .map_err(|error| error.to_string())
+}

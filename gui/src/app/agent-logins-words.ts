@@ -70,6 +70,8 @@ export interface AgentLoginsWords extends MachinePickWords {
   rereadLimits: string;
   copyDir: string;
   copied: string;
+  autoTitle: string;
+  autoTitleWhy: string;
   plan: string;
   planNone: string;
   assisting: string;
@@ -167,6 +169,8 @@ export const zhAgentLogins: AgentLoginsWords = {
   rereadLimits: "重读额度",
   copyDir: "复制目录",
   copied: "已复制",
+  autoTitle: "自动命名对话",
+  autoTitleWhy: "像 Codex 官方那样，用第一句话给新对话起个标题",
   plan: "套餐",
   planNone: "不标",
   assisting: "协助",
@@ -255,6 +259,8 @@ export const enAgentLogins: AgentLoginsWords = {
   rereadLimits: "Read limits again",
   copyDir: "Copy directory",
   copied: "Copied",
+  autoTitle: "Name conversations",
+  autoTitleWhy: "Name a new conversation from its first words, as the Codex app does",
   plan: "Plan",
   planNone: "None",
   assisting: "Assisting",

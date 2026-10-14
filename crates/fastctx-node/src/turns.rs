@@ -272,6 +272,11 @@ async fn finish_at(
         happened: Happened::TurnEnded { turn: turn.to_string(), end: finished.end.clone() },
     };
     let recorded = crate::delivery::event(&directory, &format!("ended:{turn}"), &event)?;
+    if first {
+        // Once a Codex conversation has its first words in, its login may
+        // name it (`codex_title`); it is tried at most once.
+        crate::codex_title::maybe(node, id, &about);
+    }
     if first || recorded {
         crate::desk::turn_ended(node, id, turn);
         node.watchers.publish(id, &event);

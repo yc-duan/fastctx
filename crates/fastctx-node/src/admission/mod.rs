@@ -98,6 +98,7 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
         RemoteCall::ScanAgents { .. }
             | RemoteCall::AddAgentLogin { .. }
             | RemoteCall::AgentFolder { .. }
+            | RemoteCall::SetAgentTitle { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }
     ) && view.member(&here).and_then(|member| member.home.as_ref()) != Some(&caller.account)

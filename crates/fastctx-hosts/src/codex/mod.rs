@@ -34,6 +34,7 @@ mod notifications;
 mod offers;
 mod presentation;
 mod server;
+mod title;
 mod tool_images;
 mod transport;
 mod user_images;
@@ -301,6 +302,9 @@ struct State {
     /// The models the running app-server last listed. Choosing a model or an
     /// effort checks against it rather than asking again.
     catalog: Option<Vec<fastctx_types::session::control::ModelOffer>>,
+    /// Hidden threads making a title now, each waiting for its turn to end
+    /// (`title`). Their notifications stay here, never reaching the node.
+    title_waiters: HashMap<String, oneshot::Sender<Result<String, String>>>,
 }
 
 struct StateGuard<'a>(std::sync::MutexGuard<'a, State>);
@@ -400,6 +404,7 @@ impl CodexHost {
                 server_users: 0,
                 server: None,
                 catalog: None,
+                title_waiters: HashMap::new(),
             }),
             finished,
             generation: Mutex::new(()),
@@ -531,7 +536,12 @@ impl CodexHost {
             .map_err(|error| SendError::Unknown(format!("the turn submission task stopped: {error}")))?
     }
 
-    async fn send_inner(self: &Arc<Self>, thread: &str, input: Input, client: Option<String>) -> Result<Sent, SendError> {
+    async fn send_inner(
+        self: &Arc<Self>,
+        thread: &str,
+        input: Input,
+        client: Option<String>,
+    ) -> Result<Sent, SendError> {
         let server = self.server().await.map_err(SendError::NotSent)?;
         self.ensure_loaded(&server, thread).await.map_err(SendError::NotSent)?;
         let mut params = json!({
@@ -986,6 +996,27 @@ impl CodexHost {
                 self.emit(&thread, at, Happened::Changed { turn: None, change: SessionChange::CommandsChanged });
             }
             return;
+        }
+        // A hidden title thread's notifications are its own: its turn's end
+        // goes to whoever waits for it, and nothing of it reaches the node.
+        if let Some(thread) =
+            params.get("threadId").or_else(|| params.pointer("/thread/id")).and_then(Value::as_str).map(str::to_string)
+        {
+            let waiting = self.lock().title_waiters.contains_key(&thread);
+            if waiting {
+                if method == "turn/completed" {
+                    let title = title::read_turn_message(params).ok_or_else(|| {
+                        format!(
+                            "the title turn ended {}",
+                            params.pointer("/turn/status").and_then(Value::as_str).unwrap_or("without a message")
+                        )
+                    });
+                    if let Some(waiter) = self.lock().title_waiters.remove(&thread) {
+                        let _ = waiter.send(title);
+                    }
+                }
+                return;
+            }
         }
         self.observe_controls(method, params);
         let revision = {

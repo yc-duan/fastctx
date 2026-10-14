@@ -310,6 +310,18 @@ impl World {
         machine_logins(self.ask(Call::AgentFolder { machine, dir, change }).await?)
     }
 
+    /// Turns the automatic naming of Codex conversations in a login on or
+    /// off (`world-agent-logins.md`, 在哪个登录里干活).
+    pub async fn set_agent_title(
+        &self,
+        machine: MachineName,
+        agent: fastctx_types::AgentName,
+        dir: std::path::PathBuf,
+        on: bool,
+    ) -> Result<fastctx_types::logins::MachineLogins, Error> {
+        machine_logins(self.ask(Call::SetAgentTitle { machine, agent, dir, on }).await?)
+    }
+
     /// What putting the World's tools into a login (`into`), or taking them
     /// out, would change.
     pub async fn preview_agent_change(

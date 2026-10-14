@@ -50,7 +50,7 @@ import { specimenUsage } from "./specimen/usage";
 import { enAgentLogins, zhAgentLogins } from "./app/agent-logins-words";
 import { enAgentChange, zhAgentChange } from "./app/agent-change";
 import "./app/agent-logins.css";
-import { specimenChange as specimenLoginChange, specimenFolder, specimenLogins, specimenPreview, specimenScan, specimenTakeUp } from "./specimen/logins";
+import { specimenChange as specimenLoginChange, specimenFolder, specimenLogins, specimenPreview, specimenScan, specimenSetTitle, specimenTakeUp } from "./specimen/logins";
 import { TalksPage, enTalks, zhTalks } from "./app/talks";
 import { FeaturesPage } from "./app/features";
 import { deviceFeatures } from "./app/device-features";
@@ -179,6 +179,7 @@ import {
   pickFolder,
   previewAgentChange,
   readAgentLimits,
+  setAgentTitle,
   scanAgents,
   control,
   offers,
@@ -1805,6 +1806,7 @@ function show(next: Place): void {
         preview: (machine, agent, dir, into) => (live ? previewAgentChange(machine, agent, dir, into) : specimenPreview(machine, agent, dir, into)),
         change: (machine, agent, dir, into, raise) => (live ? changeAgentLogin(machine, agent, dir, into, raise) : specimenLoginChange(machine, agent, dir, into)),
         limits: (machine, agent, dir) => (live ? readAgentLimits(machine, agent, dir) : notLive()),
+        setTitle: (machine, agent, dir, on) => (live ? setAgentTitle(machine, agent, dir, on) : specimenSetTitle(machine, agent, dir, on, specimen.now)),
         usageOf: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen.now)),
         change_: change,
         confirm: accountConfirm,

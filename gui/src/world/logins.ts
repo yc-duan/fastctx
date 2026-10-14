@@ -60,6 +60,9 @@ export interface Login {
   /** Claude Code: whether the World's conversations start without asking
    *  for approvals; granted with the tools. Read for listed logins only. */
   unattended?: boolean;
+  /** Codex: whether the World names new conversations in it the way the
+   *  official client does. Off unless turned on. */
+  auto_title?: boolean;
   /** The program the World starts for it. */
   launcher?: Launcher;
   /** The models a conversation in it can start on, as last read. */

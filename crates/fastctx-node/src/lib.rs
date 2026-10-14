@@ -26,6 +26,7 @@ mod books;
 mod claude;
 pub mod claude_request;
 mod codex;
+mod codex_title;
 mod collab;
 mod colleagues;
 mod composer;

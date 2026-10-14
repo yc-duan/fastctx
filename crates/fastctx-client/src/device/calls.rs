@@ -130,6 +130,9 @@ impl Device {
                 (machine, RemoteCall::AddAgentLogin { agent, dir, limits }, None)
             }
             Call::AgentFolder { machine, dir, change } => (machine, RemoteCall::AgentFolder { dir, change }, None),
+            Call::SetAgentTitle { machine, agent, dir, on } => {
+                (machine, RemoteCall::SetAgentTitle { agent, dir, on }, None)
+            }
             Call::PreviewAgentChange { machine, agent, dir, into } => {
                 (machine, RemoteCall::PreviewAgentChange { agent, dir, into }, None)
             }
@@ -246,6 +249,7 @@ impl Device {
                 RemoteCall::ScanAgents { .. }
                 | RemoteCall::AddAgentLogin { .. }
                 | RemoteCall::AgentFolder { .. }
+                | RemoteCall::SetAgentTitle { .. }
                 | RemoteCall::ReadAgentLimits { .. },
                 RemoteReply::AgentLogins(logins),
             ) => Reply::MachineAgentLogins(logins),

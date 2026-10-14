@@ -63,6 +63,8 @@ let chosen: Chosen[] = [
 /** Candidates taken up from what a search found. */
 let takenUp: { agent: "codex" | "claude"; dir: string }[] = [];
 let scanUntil = 0;
+/** Codex logins the specimen names conversations in, as the toggle sets. */
+const titled = new Set<string>();
 /** When the laptop was scanned, finding nothing; never, at first. */
 let laptopScanned: number | null = null;
 
@@ -102,8 +104,8 @@ function desktop(now: number): MachineLogins {
         { how: "desktop_app", within: { name: "ChatGPT", id: "OpenAI.ChatGPT", version: "26.1007.2314.0", path: "C:\\Program Files\\WindowsApps\\OpenAI.ChatGPT" }, on_path: false },
       ],
       listed: [
-        { dir: "C:\\Users\\me\\.codex", default: true, found: "default", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "chatgpt", email: "me@example.com", plan: "pro" } } }, limits: limitsOf("desktop", "codex", "C:\\Users\\me\\.codex", 412, 233), programs: [0, 1], integration: "in" },
-        { dir: "C:\\Users\\me\\.codex-work", default: false, found: "home", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "chatgpt", email: "work@example.com", plan: "plus" } } }, limits: limitsOf("desktop", "codex", "C:\\Users\\me\\.codex-work", 880, 610), programs: [0], integration: "in" },
+        { dir: "C:\\Users\\me\\.codex", default: true, found: "default", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "chatgpt", email: "me@example.com", plan: "pro" } } }, limits: limitsOf("desktop", "codex", "C:\\Users\\me\\.codex", 412, 233), programs: [0, 1], integration: "in", auto_title: titled.has("C:\\Users\\me\\.codex") },
+        { dir: "C:\\Users\\me\\.codex-work", default: false, found: "home", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "chatgpt", email: "work@example.com", plan: "plus" } } }, limits: limitsOf("desktop", "codex", "C:\\Users\\me\\.codex-work", 880, 610), programs: [0], integration: "in", auto_title: titled.has("C:\\Users\\me\\.codex-work") },
       ],
       candidates: takenUp.filter((one) => one.agent === "codex").map((one) => candidate("codex", one.dir)),
       elsewhere: [],
@@ -217,6 +219,16 @@ export function specimenFolder(machine: string, dir: string, change: FolderChang
     chosen = chosen.filter((one) => one.dir !== dir);
   }
   return new Promise((resolve) => setTimeout(() => resolve(desktop(Date.now())), 240));
+}
+
+/** Turns naming conversations in a Codex login on or off in the specimen. */
+export function specimenSetTitle(machine: string, agent: string, dir: string, on: boolean, at: Date): Promise<MachineLogins> {
+  void machine;
+  void agent;
+  base = at.getTime();
+  if (on) titled.add(dir);
+  else titled.delete(dir);
+  return new Promise((resolve) => setTimeout(() => resolve(desktop(Date.now())), 200));
 }
 
 /** What a folder's search found, taken up as a candidate. */

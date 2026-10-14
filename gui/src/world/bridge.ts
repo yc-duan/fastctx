@@ -376,6 +376,11 @@ export function readAgentLimits(machine: MachineName, agent: string, dir: string
   return invoke("read_agent_limits", { machineName: machine, agentName: agent, dir });
 }
 
+/** Turns naming new Codex conversations in a login on or off. */
+export function setAgentTitle(machine: MachineName, agent: string, dir: string, on: boolean): Promise<MachineLogins> {
+  return invoke("set_agent_title", { machineName: machine, agentName: agent, dir, on });
+}
+
 /** What a login on a machine was used for, as this device's accounts may
  *  see it. */
 export function agentUsage(machine: MachineName, agent: string, dir: string): Promise<UsageReport> {

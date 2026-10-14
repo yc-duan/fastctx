@@ -71,6 +71,8 @@ export interface AgentLoginsOptions {
   preview(machine: string, agent: Agent, dir: string, into: boolean): Promise<ChangePreview>;
   change(machine: string, agent: Agent, dir: string, into: boolean, raise: boolean): Promise<LoginChange>;
   limits(machine: string, agent: Agent, dir: string): Promise<MachineLogins>;
+  /** Codex only: turns naming new conversations in a login on or off. */
+  setTitle(machine: string, agent: Agent, dir: string, on: boolean): Promise<MachineLogins>;
   usageOf(machine: string, agent: Agent, dir: string): Promise<UsageReport>;
   change_(login: AccountLogin, change: AccountChange): Promise<void>;
   confirm: Confirm;
@@ -619,6 +621,12 @@ export class AgentLoginsPage implements Page {
     if (owner) entries.push({ act: "assist", icon: "person", label: words.assist });
     if (this.options.workbench.peek()) entries.push({ act: "limits", icon: "reread", label: words.rereadLimits });
     entries.push({ act: "copy", icon: "folder", label: words.copyDir });
+    // Codex names its own conversations when the login's owner asks it to;
+    // Claude Code does its own. Only a login the World's tools are in hosts
+    // World conversations, so only such a login shows it.
+    if (this.agent === "codex" && found.machine.mine && login.integration === "in") {
+      entries.push({ rule: true }, { note: words.autoTitleWhy }, { act: "title", label: words.autoTitle, checked: !!login.auto_title });
+    }
     if (identity?.method === "oauth_token" && admin) {
       const current = this.planOf(found.machine, login, world);
       const plans: (PlanLabel | null)[] = ["max", "pro", "free", null];
@@ -651,6 +659,9 @@ export class AgentLoginsPage implements Page {
         return;
       case "limits":
         await this.quietly(null, key, () => options.limits(machineName, this.agent, dir));
+        return;
+      case "title":
+        await this.quietly(null, key, () => options.setTitle(machineName, this.agent, dir, !found.login!.auto_title));
         return;
       case "copy":
         await navigator.clipboard.writeText(dir).catch(() => {});
