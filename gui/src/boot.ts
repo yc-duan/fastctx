@@ -65,5 +65,6 @@ function tooOld(): void {
   document.getElementById("app")?.replaceWith(page);
 }
 
-if (canDraw()) void import("./main");
+// The language is settled first: the interface reads it as it starts.
+if (canDraw()) void import("./language").then(({ settleLanguage }) => settleLanguage()).then(() => import("./main"));
 else tooOld();

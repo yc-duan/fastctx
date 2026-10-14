@@ -8,6 +8,8 @@ export interface Features {
   /** Talking to agents here: home, new conversations, projects and
    *  conversations in the sidebar, the notifications that ask. */
   conversations: boolean;
+  /** The language chosen, by its tag, `zh` or `en`; none until chosen. */
+  language?: string;
 }
 
 export type Feature = "conversations";
@@ -23,6 +25,12 @@ export function readFeatures(): Promise<Features> {
 /** Turns one switch on or off; all of them after. */
 export function setFeature(feature: Feature, on: boolean): Promise<Features> {
   return invoke("features_set", { feature, on });
+}
+
+/** Says the interface speaks the language tagged `language`; all the
+ *  switches after. */
+export function setLanguage(language: string): Promise<Features> {
+  return invoke("features_language", { language });
 }
 
 /** Follows the switches: first as they are, then after each change, from

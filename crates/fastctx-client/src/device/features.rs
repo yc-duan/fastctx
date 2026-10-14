@@ -36,10 +36,22 @@ impl Device {
 
     /// Turns `feature` on or off; what the switches are after.
     pub(crate) fn set_feature(&self, feature: Feature, on: bool) -> Result<Features, Error> {
+        self.change(|features| features.set(feature, on))
+    }
+
+    /// Says this device's interface speaks the language tagged `language`.
+    pub(crate) fn set_language(&self, language: &str) -> Result<Features, Error> {
+        if let Some(why) = fastctx_types::features::unspoken(language) {
+            return Err(failed(why));
+        }
+        self.change(|features| features.language = Some(language.to_string()))
+    }
+
+    fn change(&self, edit: impl FnOnce(&mut Features)) -> Result<Features, Error> {
         let _writing = self.features.writing.lock().expect("never poisoned");
         let current = self.features()?;
-        let mut next = current;
-        next.set(feature, on);
+        let mut next = current.clone();
+        edit(&mut next);
         if next != current {
             let path = path(self.directory());
             let bytes = serde_json::to_vec_pretty(&next).expect("features serialize");

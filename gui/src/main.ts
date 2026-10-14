@@ -59,11 +59,12 @@ import { specimenChange as specimenLoginChange, specimenFolder, specimenLogins, 
 import { TalksPage, enTalks, zhTalks } from "./app/talks";
 import { FeaturesPage } from "./app/features";
 import { deviceFeatures } from "./app/device-features";
-import { readFeatures, setFeature, watchFeatures } from "./world/features";
+import { readFeatures, setFeature, setLanguage, watchFeatures } from "./world/features";
 import { untilAnswered, whyOf } from "./world/again";
 import { enFeatures, zhFeatures } from "./app/features-words";
 import { accountOf, enHomes, homeChoice, homeLabel, homesOf, installed, loggedOut, zhHomes } from "./app/agent-homes";
 import { Tokens, type CodeAsked } from "./app/tokens";
+import { keepLanguage } from "./language";
 import { codeName, codesOf, enCodes, zhCodes } from "./app/code-rows";
 import { ManagedPage, managedOf } from "./app/managed-page";
 import { enManaged, zhManaged } from "./app/managed-words";
@@ -2023,15 +2024,12 @@ function show(next: Place): void {
         head,
         language,
         chooseLanguage(chosen) {
-          try {
-            localStorage.setItem("lang", chosen);
-          } catch {
-            // Not kept: the language holds for this window only.
-          }
+          keepLanguage(chosen);
           const url = new URL(location.href);
           url.searchParams.delete("lang");
           if (chosen === "en") url.searchParams.set("lang", "en");
-          location.replace(url);
+          // The device keeps it too, so the TUI speaks it.
+          void (live ? setLanguage(chosen).catch((error: unknown) => console.error("keeping the language chosen", error)) : Promise.resolve()).finally(() => location.replace(url));
         },
         ago: (at, now) => homeWords.ago(now.getTime() - at.getTime()),
         renaming: {

@@ -263,10 +263,22 @@ fn who(now: Timestamp, scope: WhoScope) -> WorldWho {
         scope,
         machines: vec![
             MachineWho::Answered {
-                reply: WhoReply { history: None, machine: machine("desktop"), residents: desktop, jobs: desktop_jobs, busy: None },
+                reply: WhoReply {
+                    history: None,
+                    machine: machine("desktop"),
+                    residents: desktop,
+                    jobs: desktop_jobs,
+                    busy: None,
+                },
             },
             MachineWho::Answered {
-                reply: WhoReply { history: None, machine: machine("laptop"), residents: laptop, jobs: laptop_jobs, busy: None },
+                reply: WhoReply {
+                    history: None,
+                    machine: machine("laptop"),
+                    residents: laptop,
+                    jobs: laptop_jobs,
+                    busy: None,
+                },
             },
             MachineWho::Offline { machine: machine("server"), since: Some(ago(now, 95)), last: None },
         ],
@@ -366,6 +378,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         facts,
         owner: Some("me".parse().expect("an account")),
         rights: vec![("me".parse().expect("an account"), fastctx_types::access::Rights { hands: true, agents: true })],
+        group: None,
     };
     NodesReply {
         machine: machine("desktop"),

@@ -8,6 +8,7 @@ pub mod design;
 pub mod editor;
 pub mod feed;
 pub mod input;
+pub mod language;
 pub mod managed;
 pub mod markdown;
 pub mod pages;
@@ -35,7 +36,7 @@ use crate::input::Input;
 use crate::pages::Page;
 use crate::pages::world::WorldPage;
 use crate::terminal::Screen;
-use crate::words::Words;
+use crate::words::{Lang, Words};
 
 /// How often a mark of something happening is redrawn as it breathes: ten
 /// frames a second is smooth for a slow fade and quiet for the terminal.
@@ -52,10 +53,26 @@ async fn live(world: World) -> anyhow::Result<()> {
     // Read before anything changes the console's modes.
     let depth = design::depth().context("reading what the terminal can show")?;
     let look = Look { depth, theme: design::theme() };
-    let words = Words::new(words::lang());
     let mut screen = Screen::open().context("taking the terminal")?;
     let (input_sender, mut inputs) = mpsc::unbounded_channel();
     input::start(input_sender.clone()).context("reading the terminal's input")?;
+    // The language asked for, or the one this computer's interfaces speak;
+    // the first time, the user chooses it, and the graphical interface
+    // speaks it after.
+    let features = world.features().await.ok();
+    let lang =
+        match words::asked().or_else(|| features.as_ref().and_then(|features| features.spoken()).and_then(Lang::of)) {
+            Some(lang) => lang,
+            None => {
+                let Some(chosen) = language::choose(&mut screen, &mut inputs, look, words::system()).await? else {
+                    return Ok(());
+                };
+                // A node that cannot keep it asks again next time.
+                let _ = world.set_language(chosen.tag()).await;
+                chosen
+            }
+        };
+    let words = Words::new(lang);
     // A managed machine has its one screen, and the World only once it is
     // one no longer.
     if let Ok(accounts) = world.accounts().await

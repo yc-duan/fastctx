@@ -26,6 +26,15 @@ impl World {
         }
     }
 
+    /// Says the interfaces speak the language tagged `language`; the
+    /// switches after.
+    pub async fn set_language(&self, language: &str) -> Result<Features, Error> {
+        match self.ask(Call::SetLanguage { language: language.to_string() }).await? {
+            Reply::Features(features) => Ok(features),
+            other => Err(Error::Unexpected(format!("{other:?}"))),
+        }
+    }
+
     /// Follows the switches: the first `next` gives them as they are, each
     /// later one as they change.
     pub async fn watch_features(&self) -> Result<FeaturesWatch, Error> {

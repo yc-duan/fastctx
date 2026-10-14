@@ -33,9 +33,9 @@ pub struct Ctx {
     pub breath: f32,
     /// Tenths of a second since the screen opened: what turns, turns by it.
     pub frame: u64,
-    /// The optional parts this computer's interfaces show, shared with its
-    /// graphical interface: all off until the node says otherwise.
-    pub features: fastctx_types::features::Features,
+    /// Whether this computer's interfaces talk to agents, shared with its
+    /// graphical interface: off until the node says otherwise.
+    pub conversations: bool,
 }
 
 /// What a page wants after a key or an answer.
@@ -301,7 +301,7 @@ pub struct App {
 
 impl App {
     pub fn new(look: Look, words: Words, root: Page) -> Self {
-        let ctx = Ctx { look, words, now: Timestamp::now(), breath: 0.0, frame: 0, features: Default::default() };
+        let ctx = Ctx { look, words, now: Timestamp::now(), breath: 0.0, frame: 0, conversations: false };
         Self {
             ctx,
             pages: vec![(0, root)],
@@ -331,7 +331,7 @@ impl App {
     /// computer's interfaces. Without conversations, the pages that belong
     /// to them close; what they started goes on.
     pub fn features(&mut self, features: fastctx_types::features::Features) {
-        self.ctx.features = features;
+        self.ctx.conversations = features.conversations;
         if !features.conversations {
             let mut first = true;
             self.pages.retain(|(_, page)| std::mem::take(&mut first) || !page.of_conversations());

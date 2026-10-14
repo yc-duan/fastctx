@@ -33,13 +33,27 @@ fn main() -> anyhow::Result<()> {
         for (width, height) in sizes {
             // The breath half way, as a busy mark would be at some moment.
             // Every scene, so conversations are on.
-            let features = fastctx_types::features::Features { conversations: true };
-            let ctx = Ctx { look, words: Words::new(lang), now: Timestamp::now(), breath: 0.25, frame: 0, features };
-            for (name, mut page) in fastctx_tui::preview::scenes(&ctx) {
+            let ctx = Ctx {
+                look,
+                words: Words::new(lang),
+                now: Timestamp::now(),
+                breath: 0.25,
+                frame: 0,
+                conversations: true,
+            };
+            // The first screen, asking the language, before any page.
+            let mut scenes: Vec<(String, Option<fastctx_tui::pages::Page>)> = vec![("language".into(), None)];
+            scenes.extend(
+                fastctx_tui::preview::scenes(&ctx).into_iter().map(|(name, page)| (name.to_string(), Some(page))),
+            );
+            for (name, mut page) in scenes {
                 let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-                terminal.draw(|frame| {
-                    let area = frame.area();
-                    page.draw(&ctx, frame, area, None);
+                terminal.draw(|frame| match page.as_mut() {
+                    Some(page) => {
+                        let area = frame.area();
+                        page.draw(&ctx, frame, area, None);
+                    }
+                    None => fastctx_tui::language::draw(frame, &look, lang, 0),
                 })?;
                 let cursor = terminal.get_cursor_position().ok();
                 let shown = terminal.backend().cursor_visible();

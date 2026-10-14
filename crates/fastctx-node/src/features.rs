@@ -1,8 +1,8 @@
-//! The optional parts of the interface this computer shows
-//! (`fastctx_types::features`). Its graphical interface and its TUI both
-//! read them here, so they show the same; each watching interface is told
-//! when they change. They only say what an interface shows: nothing the
-//! World does depends on them.
+//! The optional parts of the interface this computer shows, and the
+//! language it speaks (`fastctx_types::features`). Its graphical interface
+//! and its TUI both read them here, so they show the same; each watching
+//! interface is told when they change. They only say what an interface
+//! shows: nothing the World does depends on them.
 
 use fastctx_types::features::{Feature, Features};
 use fastctx_types::ipc::Failure;
@@ -36,10 +36,24 @@ pub(crate) fn read(world: &WorldDir) -> Result<Features, Failure> {
 
 /// Turns `feature` on or off; what the switches are after.
 pub(crate) fn set(world: &WorldDir, switches: &Switches, feature: Feature, on: bool) -> Result<Features, Failure> {
+    change(world, switches, |features| features.set(feature, on))
+}
+
+/// Says the interfaces speak the language tagged `language`.
+pub(crate) fn speak(world: &WorldDir, switches: &Switches, language: &str) -> Result<Features, Failure> {
+    if let Some(why) = fastctx_types::features::unspoken(language) {
+        return Err(Failure::new(why));
+    }
+    change(world, switches, |features| features.language = Some(language.to_string()))
+}
+
+/// Changes the switches as `edit` says, one change at a time, telling the
+/// watching interfaces when anything changed.
+fn change(world: &WorldDir, switches: &Switches, edit: impl FnOnce(&mut Features)) -> Result<Features, Failure> {
     let _writing = switches.writing.lock().expect("never poisoned");
     let current = read(world)?;
-    let mut next = current;
-    next.set(feature, on);
+    let mut next = current.clone();
+    edit(&mut next);
     if next != current {
         let path = world.features();
         let bytes = serde_json::to_vec_pretty(&next).expect("features serialize");

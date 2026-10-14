@@ -51,6 +51,11 @@ pub enum Call {
         feature: crate::features::Feature,
         on: bool,
     },
+    /// Says which language this device's interfaces speak, by its tag;
+    /// answered with the switches after.
+    SetLanguage {
+        language: String,
+    },
     /// Answered with `NodeFrame::Features`: the switches as they are, then
     /// again each time they change, until the client leaves.
     WatchFeatures,

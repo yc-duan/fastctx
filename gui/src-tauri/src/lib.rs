@@ -1078,6 +1078,7 @@ pub fn run() {
             collab::collab_write,
             features::features_read,
             features::features_set,
+            features::features_language,
             features::features_watch,
             #[cfg(desktop)]
             data::data,

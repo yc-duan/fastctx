@@ -79,6 +79,7 @@ impl Device {
             Call::WorldNow => return Ok((Reply::WorldNow(Box::new(self.world_now().await?)), here())),
             Call::Features => return Ok((Reply::Features(self.features()?), here())),
             Call::SetFeature { feature, on } => return Ok((Reply::Features(self.set_feature(feature, on)?), here())),
+            Call::SetLanguage { language } => return Ok((Reply::Features(self.set_language(&language)?), here())),
             Call::Accounts => {
                 let mut hubs = Vec::new();
                 for session in self.sessions() {

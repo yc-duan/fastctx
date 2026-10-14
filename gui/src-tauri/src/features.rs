@@ -1,6 +1,7 @@
 //! The interface's optional parts this device shows (`world-gui.md`, 功能),
-//! remembered by the device: through the local node on a computer, so the
-//! TUI shows the same, or in the device's own directory on a phone.
+//! and the language it speaks, remembered by the device: through the local
+//! node on a computer, so the TUI shows the same, or in the device's own
+//! directory on a phone.
 
 use std::sync::atomic::Ordering;
 
@@ -23,6 +24,13 @@ pub(crate) async fn features_set(
     on: bool,
 ) -> Result<Features, String> {
     shell.world().set_feature(feature, on).await.map_err(|error| error.to_string())
+}
+
+/// Says the interface speaks the language tagged `language`; all the
+/// switches after.
+#[fastctx_gui_command::command]
+pub(crate) async fn features_language(shell: tauri::State<'_, Shell>, language: String) -> Result<Features, String> {
+    shell.world().set_language(&language).await.map_err(|error| error.to_string())
 }
 
 /// What a features watch sends: the switches, at first and after each

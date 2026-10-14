@@ -1,0 +1,54 @@
+/* The first screen while no language is chosen: the mark, the question in
+   both languages, and the two languages as solid choices, one above the
+   other in the middle of the window. */
+.first-language {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  min-height: 100dvh;
+  padding: var(--space-6) var(--space-4);
+  box-sizing: border-box;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.first-mark {
+  color: var(--text-2);
+}
+
+.first-title {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-reading);
+  font-size: var(--size-ui);
+  font-weight: 400;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.first-choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(320px, 100%);
+}
+
+.first-choice {
+  min-height: 56px;
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-l);
+  background: var(--fill);
+  color: var(--text-strong);
+  font-family: var(--font-emphasis);
+  font-size: var(--size-h3);
+  font-weight: 400;
+  text-align: center;
+  transition: background-color var(--hover) ease;
+}
+
+.first-choice:hover,
+.first-choice:focus-visible {
+  background: var(--accent-wash);
+  outline: none;
+}

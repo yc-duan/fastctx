@@ -102,7 +102,7 @@ impl WorldPage {
     }
 
     pub fn key(&mut self, ctx: &Ctx, key: KeyEvent) -> Act {
-        self.conversations = ctx.features.conversations;
+        self.conversations = ctx.conversations;
         let items = self.items();
         if self.list.key(&key, items.len()) {
             return Act::Stay;
@@ -134,7 +134,7 @@ impl WorldPage {
     }
 
     pub fn draw(&mut self, ctx: &Ctx, frame: &mut Frame, area: Rect) {
-        self.conversations = ctx.features.conversations;
+        self.conversations = ctx.conversations;
         let words = &ctx.words;
         let width = paint::column(area).width as usize;
         let mut rows = Vec::new();

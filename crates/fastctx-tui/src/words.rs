@@ -6,8 +6,6 @@
 //! Each message keeps its languages side by side, so one is never changed
 //! without the other in view.
 
-use std::sync::OnceLock;
-
 use fastctx_types::NameProblem;
 use fastctx_types::session::HealthKind;
 use fastctx_types::world::Route;
@@ -22,16 +20,37 @@ pub enum Lang {
     En,
 }
 
-/// The user's language: `FASTCTX_LANG` when set, otherwise the system's.
-pub fn lang() -> Lang {
-    static LANG: OnceLock<Lang> = OnceLock::new();
-    *LANG.get_or_init(|| {
-        let name = std::env::var("FASTCTX_LANG").ok().filter(|name| !name.is_empty()).or_else(system_locale);
-        match name {
-            Some(name) if name.to_lowercase().starts_with("zh") => Lang::Zh,
-            _ => Lang::En,
+impl Lang {
+    /// Its tag, as the node keeps the language chosen.
+    pub fn tag(self) -> &'static str {
+        match self {
+            Lang::Zh => "zh",
+            Lang::En => "en",
         }
-    })
+    }
+
+    /// The language a tag or a locale's name says, when it is one spoken.
+    pub fn of(name: &str) -> Option<Lang> {
+        let name = name.to_lowercase();
+        if name.starts_with("zh") {
+            Some(Lang::Zh)
+        } else if name.starts_with("en") {
+            Some(Lang::En)
+        } else {
+            None
+        }
+    }
+}
+
+/// The language asked for in `FASTCTX_LANG`, when it is set to one spoken:
+/// asked so, no other is chosen.
+pub fn asked() -> Option<Lang> {
+    std::env::var("FASTCTX_LANG").ok().and_then(|name| Lang::of(&name))
+}
+
+/// The system's display language, offered first when one is chosen.
+pub fn system() -> Lang {
+    system_locale().and_then(|name| Lang::of(&name)).unwrap_or(Lang::En)
 }
 
 /// The first of the user's display languages. Not the locale, which sets

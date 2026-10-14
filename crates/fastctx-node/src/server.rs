@@ -142,8 +142,8 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             let mut told = None;
             loop {
                 match crate::features::read(&node.world) {
-                    Ok(features) if told != Some(features) => {
-                        writer.send(&json(&NodeFrame::Features { id, features })).await?;
+                    Ok(features) if told.as_ref() != Some(&features) => {
+                        writer.send(&json(&NodeFrame::Features { id, features: features.clone() })).await?;
                         told = Some(features);
                     }
                     Ok(_) => {}
@@ -1177,6 +1177,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::SetFeature { feature, on } => {
             users_voice(node, peer)?;
             crate::features::set(&node.world, &node.features, feature, on).map(Reply::Features)
+        }
+        Call::SetLanguage { language } => {
+            users_voice(node, peer)?;
+            crate::features::speak(&node.world, &node.features, &language).map(Reply::Features)
         }
         Call::WatchFeatures => Err(Failure::new("a features watch is answered as it goes, not at once")),
         Call::WatchWorld => Err(Failure::new("a World watch is answered as it goes, not at once")),
