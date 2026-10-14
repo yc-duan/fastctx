@@ -386,8 +386,16 @@ pub enum Refusal {
     Protocol { hub: u32, version: String },
     #[error("this computer is not logged in to the hub")]
     NotMember,
-    #[error("this computer was removed from the hub{} at {}{}", by.as_ref().map(|by| format!(" by the account {by}")).unwrap_or_default(), .at.strftime("%Y-%m-%d %H:%M:%S UTC"), if reason.is_empty() { String::new() } else { format!(": {reason}") })]
-    Removed { by: Option<AccountName>, at: Timestamp, reason: String },
+    #[error("{}", removed_said(by.as_ref(), at, reason, *dissolved))]
+    Removed {
+        by: Option<AccountName>,
+        at: Timestamp,
+        reason: String,
+        /// The whole network was dissolved, this computer's place with it;
+        /// an earlier release reads past it, and takes it as removed.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        dissolved: bool,
+    },
     #[error("{reason}")]
     Login { reason: String },
     #[error("another connection of this machine replaced this one")]
@@ -399,6 +407,18 @@ pub enum Refusal {
     ShuttingDown,
     #[error("{reason}")]
     Broken { reason: String },
+}
+
+/// How a removal is said: by whom and when, and why; a dissolution as the
+/// end of the whole network.
+fn removed_said(by: Option<&AccountName>, at: &Timestamp, reason: &str, dissolved: bool) -> String {
+    let when = at.strftime("%Y-%m-%d %H:%M:%S UTC");
+    let by = by.map(|by| format!(" by the account {by}")).unwrap_or_default();
+    if dissolved {
+        return format!("the network was dissolved{by} at {when}");
+    }
+    let why = if reason.is_empty() { String::new() } else { format!(": {reason}") };
+    format!("this computer was removed from the hub{by} at {when}{why}")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -651,6 +671,12 @@ pub enum Change {
     /// Whether anyone who reaches the hub may open an account.
     Settings {
         self_registration: bool,
+    },
+    /// The super administrator dissolves the network named `name`, typed
+    /// as it is: every machine and device is taken off it, and the hub lets
+    /// nobody in again. Sent only to a hub whose view says it dissolves.
+    Dissolve {
+        name: HubName,
     },
     /// Opens a project in the account.
     OpenProject {

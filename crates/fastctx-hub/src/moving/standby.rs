@@ -77,6 +77,7 @@ pub fn prepare(dir: &Path, id: &str, to: &MachineName, identity: &Identity) -> a
         public: identity.addresses.clone(),
         listen,
         self_registration: identity.self_registration,
+        dissolved: None,
     };
     let arriving = Arriving {
         id: id.to_string(),
@@ -256,7 +257,9 @@ pub(crate) async fn connected(
                         .await;
                     standby.finish(Done::Serve);
                 }
-                Err(error) => refuse(&mut socket, Refusal::Broken { reason: error }).await,
+                Err(error) => {
+                    refuse(&mut socket, Refusal::Broken { reason: error }).await;
+                }
             }
         }
         HandoverRole::Old => {

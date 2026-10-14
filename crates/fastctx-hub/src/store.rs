@@ -47,6 +47,20 @@ pub struct HubFile {
     /// Whether anyone who reaches the hub may open an account.
     #[serde(default)]
     pub self_registration: bool,
+    /// The network was dissolved: the hub lets nobody in again, and tells
+    /// every machine that was on it, as it comes, that it is gone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dissolved: Option<Dissolved>,
+}
+
+/// Who dissolved the network, and when; and the machines and devices that
+/// were on it and have not been told yet (`crate::dissolve`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Dissolved {
+    pub by: AccountName,
+    pub at: Timestamp,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub untold: Vec<PublicKey>,
 }
 
 /// The directory as the hub keeps it: what every member sees a cut of, and
@@ -193,6 +207,9 @@ pub struct Removed {
     pub by: Option<AccountName>,
     pub at: Timestamp,
     pub reason: String,
+    /// It went with the whole network, dissolved.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dissolved: bool,
 }
 
 /// Where one member's letters stand.

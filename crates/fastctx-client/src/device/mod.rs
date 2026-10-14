@@ -192,7 +192,7 @@ impl Device {
         }
     }
 
-    async fn logged_in(&self, joined: Joined) -> Result<DeviceJoined, Error> {
+    async fn logged_in(self: &Arc<Self>, joined: Joined) -> Result<DeviceJoined, Error> {
         let Joined { hub, hub_name, name, account, addresses, cert } = joined;
         match self.session(&hub) {
             Some(session) => session.link.refresh().await.map_err(failed)?,
@@ -212,6 +212,19 @@ impl Device {
         Ok(DeviceJoined { hub: hub_name, name, account })
     }
 
+    /// Leaves the network `hub`, named `name`, which its administrator
+    /// dissolved, as a logout leaves it; the user is told once. The notice
+    /// is kept first, so nothing shows the network gone without it.
+    async fn left_dissolved(&self, hub: &HubId, name: &HubName) -> io::Result<()> {
+        let _changing = self.lifecycle.lock().await;
+        self.store.note_dissolved(name)?;
+        let Some(session) = self.sessions.write().expect("device sessions").remove(hub) else { return Ok(()) };
+        drop(session);
+        changed(&self.ways);
+        changed(&self.shown_changes);
+        self.store.forget(hub)
+    }
+
     /// Logs this device out of `account` on the hub `hub`, or the one hub;
     /// with no login left there, the link stops and its records go aside.
     pub async fn logout(self: &Arc<Self>, hub: Option<HubName>, account: AccountName) -> Result<(), Error> {
@@ -224,7 +237,9 @@ impl Device {
             if !last {
                 return answer.map(|_| ()).map_err(failed);
             }
-            if answer.is_err() && !matches!(session.link.status(), Status::Stopped { .. }) {
+            // Stopped, the hub ended the session first; unreachable, it is
+            // not told, and the device leaves it all the same.
+            if answer.is_err() && matches!(session.link.status(), Status::Online { .. }) {
                 answer.map_err(failed)?;
             }
             let id = session.link.membership().id.clone();
@@ -238,13 +253,14 @@ impl Device {
         .map_err(failed)?
     }
 
-    fn start(&self, membership: Membership) -> io::Result<()> {
+    fn start(self: &Arc<Self>, membership: Membership) -> io::Result<()> {
         let start = if self.managed { Link::start_managed } else { Link::start };
         let key = self.store.key()?;
         let id = membership.id.clone();
         let arrivals = self.store.arrivals(&id);
         let handler = Arc::new(Handler {
             _store: self.store.clone(),
+            device: Arc::downgrade(self),
             cache: self.cache.clone(),
             link: std::sync::OnceLock::new(),
             arrivals,
@@ -345,6 +361,8 @@ struct Handler {
     // finishing disk writes. The link's handler lives with its last task,
     // so the identity remains locked until all its network work has ended.
     _store: Arc<Store>,
+    /// The device, to leave a network dissolved.
+    device: std::sync::Weak<Device>,
     /// The device's (`Device::cache`).
     cache: Arc<crate::cache::Cache>,
     /// The link it handles for, set once it is made.
@@ -410,6 +428,20 @@ impl fastctx_net::link::Node for Handler {
 
     fn connected(&self) {
         self.towns_changed();
+    }
+
+    /// A network dissolved is left at once, as a computer leaves it
+    /// (`world-network.md`, 解散网络).
+    fn place_ended(&self, dissolved: bool) {
+        let Some(device) = self.device.upgrade().filter(|_| dissolved) else { return };
+        let Some(link) = self.link.get().and_then(std::sync::Weak::upgrade) else { return };
+        let (hub, name) = (link.membership().id.clone(), link.hub_name());
+        drop(link);
+        tokio::spawn(async move {
+            if let Err(error) = device.left_dissolved(&hub, &name).await {
+                eprintln!("World device: leaving the dissolved network {name}: {error}");
+            }
+        });
     }
 
     fn ways_changed(&self) {

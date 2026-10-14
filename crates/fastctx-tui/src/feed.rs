@@ -108,7 +108,7 @@ async fn feed_page(world: World, sender: Sender, page: u64, feed: Feed) {
         // And what its accounts see: who came in, and their levels.
         if matches!(feed, Feed::Nodes)
             && let Ok(accounts) = world.accounts().await
-            && sender.send((page, Data::Accounts(accounts.hubs))).is_err()
+            && sender.send((page, Data::Accounts(accounts.hubs, accounts.dissolved))).is_err()
         {
             return;
         }
@@ -359,6 +359,10 @@ async fn work(world: &World, job: Job) -> Result<Done, fastctx_client::Error> {
         }
         Job::Seen { hub, account, name } => {
             world.account(Some(hub), account, AccountChange::Seen { name }).await?;
+            Done::Changed
+        }
+        Job::SeenDissolved => {
+            world.seen_dissolved().await?;
             Done::Changed
         }
         Job::Conversations { on } => {

@@ -191,7 +191,8 @@ export type LinkState =
   /** `through`, the machine it reaches the hub through when its own line
    *  is down; `ms`, the round trip to the hub as last measured. */
   | { kind: "online"; since: Timestamp; hub: string; through?: string | null; route: Route; ms?: number | null }
-  | { kind: "stopped"; reason: string };
+  /** `dissolved`, the whole network was, not only this machine removed. */
+  | { kind: "stopped"; reason: string; dissolved?: boolean };
 
 /** How this computer's calls to a machine go: over a direct link between
  *  the two, or through the hub, with why there is no direct link when it

@@ -1134,6 +1134,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             crate::handoff::hand_over(node.clone());
             Ok(Reply::Done)
         }
+        Call::SeenDissolved => {
+            users_voice(node, peer)?;
+            crate::world::seen_dissolved(node).map(|()| Reply::Done)
+        }
         Call::UninstallPrepare => {
             users_voice(node, peer)?;
             crate::uninstall::prepare(node).await?;

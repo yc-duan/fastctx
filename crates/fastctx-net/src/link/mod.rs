@@ -106,6 +106,11 @@ pub trait Node: Send + Sync + 'static {
     }
     /// The link connected to the hub again and has asked it for the view.
     fn connected(&self) {}
+    /// The hub ended this machine's place on it, for good: the machine was
+    /// taken off, or, `dissolved`, the whole network was.
+    fn place_ended(&self, dissolved: bool) {
+        let _ = dissolved;
+    }
     /// The ways to other machines may have changed (`Link::way_to`): the
     /// line to the hub came or went, the hub said anew who is online, or a
     /// direct link came up or went down.
@@ -257,6 +262,8 @@ pub(crate) struct Inner {
     afoots: afoot::Afoots,
     /// The task that keeps the connection.
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// The hub said, refusing this machine, that its network was dissolved.
+    dissolved: std::sync::atomic::AtomicBool,
 }
 
 struct Letters {
@@ -362,6 +369,7 @@ impl Link {
             calls: Mutex::new(HashMap::new()),
             asks: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(0),
+            dissolved: std::sync::atomic::AtomicBool::new(false),
             outbox_changed: Notify::new(),
             reconnect: Notify::new(),
             check: Notify::new(),
@@ -398,6 +406,12 @@ impl Link {
     /// ends the session, and `subscribe` says so.
     pub fn checks(&self) -> watch::Receiver<u64> {
         self.inner.checks.subscribe()
+    }
+
+    /// Whether the hub said, ending this machine's place, that the whole
+    /// network was dissolved.
+    pub fn dissolved(&self) -> bool {
+        self.inner.dissolved.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Connection changes, including removal. The initial value is the

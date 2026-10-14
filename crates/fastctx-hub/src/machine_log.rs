@@ -175,7 +175,7 @@ impl History {
             Action::Logout => {
                 names.extend(actor.member.iter().cloned());
             }
-            Action::Settings { .. } => {
+            Action::Settings { .. } | Action::Dissolve { .. } => {
                 accounts.extend(directory.accounts.iter().map(|account| account.name.clone()));
             }
             Action::Collab { .. } | Action::Forget { .. } | Action::Forgotten { .. } => {}
@@ -355,6 +355,7 @@ pub(crate) fn action(change: &Change, book: &Book) -> Action {
         Change::Transfer { to } => Action::Transfer { to: to.clone() },
         Change::DeleteAccount { name } => Action::DeleteAccount { name: name.clone() },
         Change::Settings { self_registration } => Action::Settings { self_registration: *self_registration },
+        Change::Dissolve { name } => Action::Dissolve { name: name.clone() },
         Change::OpenProject { town, name } => Action::OpenProject { town: town.clone(), name: name.clone() },
         Change::ShareProject { town, with, shared } => {
             Action::ShareProject { town: town.clone(), name: project_name(town), with: with.clone(), shared: *shared }

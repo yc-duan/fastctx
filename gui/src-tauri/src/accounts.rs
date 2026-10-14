@@ -134,6 +134,12 @@ pub(crate) async fn accounts(shell: tauri::State<'_, Shell>) -> Result<AccountsR
     shell.world().accounts().await.map_err(|error| error.to_string())
 }
 
+/// The networks said dissolved were seen: they are said no more.
+#[fastctx_gui_command::command]
+pub(crate) async fn seen_dissolved(shell: tauri::State<'_, Shell>) -> Result<(), String> {
+    shell.world().seen_dissolved().await.map_err(|error| error.to_string())
+}
+
 /// Machine changes visible in the selected account, newest first.
 #[fastctx_gui_command::command]
 pub(crate) async fn machine_log(

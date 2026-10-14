@@ -6,7 +6,8 @@
 // with a few answers to choose from carries them as buttons, answered from
 // the notification without opening the window. A notification is taken
 // back once what it called for no longer holds, and a click on it opens
-// that conversation. The shell's own mechanics are in `world/desktop.ts`.
+// that conversation. A network this computer was on, dissolved, is called
+// about once too. The shell's own mechanics are in `world/desktop.ts`.
 
 import { replyOf } from "../conversation/async-ask";
 import { connectDesktop, desktopAvailable, dismissDesktopNotice, getWindowPresence, notifyDesktop } from "../world/desktop";
@@ -28,6 +29,9 @@ export interface PresenceWords {
   /** Managed machines coming in by a code, called about once a batch. */
   arrivedManaged(login: string): string;
   arrivedBody: string;
+  /** Networks this computer was on, dissolved by their administrators. */
+  dissolved(hubs: string[]): string;
+  dissolvedBody: string;
 }
 
 export interface PresenceOptions {
@@ -145,6 +149,27 @@ export function startPresence(options: PresenceOptions): void {
         actions: [{ id: "open", title: words.open }],
       });
     }
+  });
+
+  // The networks dissolved, each called about once; the first look only
+  // learns, and the window says them itself when it opens.
+  let dissolved: Set<string> | null = null;
+  effect(() => {
+    const world = store.world.get();
+    if (!world) return;
+    const now = world.accounts.dissolved ?? [];
+    const key = (one: (typeof now)[number]) => `${one.hub}@${one.at}`;
+    const before = dissolved;
+    dissolved = new Set(now.map(key));
+    if (!before || !notifying()) return;
+    const fresh = now.filter((one) => !before.has(key(one)));
+    if (!fresh.length) return;
+    void call(`dissolved:${fresh.map(key).join(",")}`, {
+      title: words.dissolved([...new Set(fresh.map((one) => one.hub))]),
+      body: words.dissolvedBody,
+      route: link({ kind: "machines" }),
+      actions: [{ id: "open", title: words.open }],
+    });
   });
 
   // What each conversation was last seen doing; the first look only learns.

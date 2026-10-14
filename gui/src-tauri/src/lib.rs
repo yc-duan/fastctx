@@ -1073,6 +1073,7 @@ pub fn run() {
             accounts::peek_token,
             accounts::open_account,
             accounts::accounts,
+            accounts::seen_dissolved,
             accounts::machine_log,
             collab::collab_read,
             collab::collab_write,

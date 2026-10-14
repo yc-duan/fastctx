@@ -1684,6 +1684,7 @@
             "managed": true,
             "roles": true,
             "groups": true,
+            "dissolves": true,
             "logins": [
               "ada"
             ],
@@ -1910,7 +1911,13 @@
         "was": [
           "desktop-7q2m9x"
         ],
-        "hubs": []
+        "hubs": [],
+        "dissolved": [
+          {
+            "hub": "lab",
+            "at": "2026-10-09T08:30:00Z"
+          }
+        ]
       }
     ],
     "changes": [
@@ -11990,6 +11997,148 @@
             "link": {
               "kind": "stopped",
               "reason": "machine revoked"
+            },
+            "logins": [
+              "ada"
+            ],
+            "home": "ada",
+            "machines": [
+              {
+                "name": "lab",
+                "written": "lab",
+                "online": null,
+                "since": null,
+                "through": "server",
+                "path": {
+                  "kind": "hub"
+                },
+                "facts": {
+                  "Ok": {
+                    "name": "lab",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
+                },
+                "owner": "grace",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": false,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "laptop",
+                "written": "laptop",
+                "online": false,
+                "since": "2026-10-04T12:06:07Z",
+                "facts": {
+                  "Err": "offline"
+                },
+                "owner": "ada",
+                "group": "lab A",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "server",
+                "written": "server",
+                "online": true,
+                "since": "2026-10-04T12:06:07Z",
+                "allows_direct": true,
+                "path": {
+                  "kind": "direct",
+                  "ms": 41
+                },
+                "facts": {
+                  "Ok": {
+                    "name": "server",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
+                },
+                "owner": "ada",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "machine": "desktop",
+        "facts": {
+          "name": "desktop",
+          "os": "windows",
+          "arch": "x86_64",
+          "home": "C:/Users/example",
+          "temp": "C:/Temp",
+          "path_separator": "\\",
+          "case_sensitive": false,
+          "version": "fixture-version",
+          "stats": true,
+          "shell": "",
+          "node_lifetime": {
+            "process": {
+              "pid": 123,
+              "token": "node-created"
+            },
+            "starter": {
+              "process": {
+                "pid": 122,
+                "token": "serve-created"
+              },
+              "session": {
+                "agent": "codex",
+                "client": "codex-fixture",
+                "version": "fixture-version"
+              }
+            },
+            "supervised": false,
+            "windows_job": {
+              "kill_on_close": true,
+              "breakaway_allowed": false,
+              "silent_breakaway": false
+            }
+          }
+        },
+        "hubs": [
+          {
+            "hub": "w-0123456789abcdef",
+            "name": "home",
+            "link": {
+              "kind": "stopped",
+              "reason": "the network was dissolved",
+              "dissolved": true
             },
             "logins": [
               "ada"

@@ -336,7 +336,9 @@ export class SettingsPage implements Page {
             ? words.online(link.hub, this.options.ago(new Date(link.since), now))
             : link.kind === "connecting"
               ? words.connecting(link.last_error)
-              : words.stopped(link.reason);
+              : link.dissolved
+                ? words.dissolved
+                : words.stopped(link.reason);
       const why = link.kind === "connecting" ? (link.last_error ?? "") : link.kind === "stopped" ? link.reason : "";
       return [words.hub(hub.name), [linked, words.as(hub.logins.join(", "))].filter(Boolean).join(" · "), why];
     });

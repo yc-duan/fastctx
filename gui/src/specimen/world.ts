@@ -172,6 +172,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       managed: true,
       roles: true,
       groups: true,
+      dissolves: true,
       accounts: [
         { name: "me", level: "super", locked: false, opened: at("00:00:00") },
         { name: "ada", level: "member", locked: false, opened: at("00:05:00") },

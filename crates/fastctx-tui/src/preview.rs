@@ -849,8 +849,19 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
 
     machines.data(Data::Agents(Ok(agents(now))));
 
+    // This computer just after the network it was on was dissolved.
+    let mut alone = nodes(now);
+    alone.hubs.clear();
+    let mut dissolved = MachinesPage::with(alone);
+    dissolved.data(Data::Agents(Ok(agents(now))));
+    let lab = fastctx_types::accounts::Dissolution {
+        hub: "lab".parse().expect("a name"),
+        at: now.checked_sub(jiff::SignedDuration::from_mins(3)).expect("in range"),
+    };
+    dissolved.data(Data::Accounts(Vec::new(), vec![lab]));
+
     vec![
-        ("world", Page::World(WorldPage::with(world_view, nodes(now)))),
+        ("world", Page::World(Box::new(WorldPage::with(world_view, nodes(now))))),
         ("project", Page::Project(Box::new(ProjectPage::with(town("mark50"), town_view, map(now))))),
         ("talk", Page::Talk(Box::new(talk))),
         ("talk-details", Page::Talk(Box::new(detailed))),
@@ -860,7 +871,8 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
         ("colleague-picked", Page::Talk(Box::new(picking))),
         ("typing", Page::Talk(Box::new(typing))),
         ("journal", Page::Journal(Box::new(JournalPage::with("Mark 50 研发".into(), journal(now))))),
-        ("machines", Page::Machines(machines)),
+        ("machines", Page::Machines(Box::new(machines))),
+        ("machines-dissolved", Page::Machines(Box::new(dissolved))),
         ("open-agent", Page::Form(Box::new(open))),
         ("new-project", Page::Form(Box::new(new_project))),
     ]

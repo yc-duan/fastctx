@@ -70,11 +70,13 @@ pub(super) async fn run(inner: Arc<Inner>, mut changes: Option<super::changes::C
         match ended {
             Ended::Stop(reason) => {
                 inner.node.log(format!("the link to the hub stopped: {reason}"));
-                let ended = super::state::Ended { at: Timestamp::now(), reason: reason.clone() };
+                let dissolved = inner.dissolved.load(std::sync::atomic::Ordering::Relaxed);
+                let ended = super::state::Ended { at: Timestamp::now(), reason: reason.clone(), dissolved };
                 if let Err(error) = super::state::write(&inner.dir.ended(), &ended) {
                     inner.node.log(format!("keeping that the hub ended this machine's place: {error}"));
                 }
                 inner.status.send_replace(Status::Stopped { reason });
+                inner.node.place_ended(dissolved);
                 return;
             }
             Ended::Reroute(reason) => {
@@ -242,7 +244,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             }
             Ok(Opened { socket, address, route, taken, hub_letters: letters })
         }
-        Down::Refused { reason } => Err(refused(reason)),
+        Down::Refused { reason } => Err(refused(inner, reason)),
         _ => Err(Ended::Retry("the first frame was not a welcome".to_string())),
     }
 }
@@ -461,7 +463,7 @@ async fn connected(
                     let _ = up.send(Up::Forgot { id, outcome });
                 });
             }
-            Down::Refused { reason } => break refused(reason),
+            Down::Refused { reason } => break refused(inner, reason),
             Down::Welcome { .. }
             | Down::LoginResponse { .. }
             | Down::TokenInfo { .. }
@@ -527,9 +529,12 @@ impl Drop for Tasks {
     }
 }
 
-fn refused(reason: Refusal) -> Ended {
+fn refused(inner: &Inner, reason: Refusal) -> Ended {
     match reason {
-        Refusal::Removed { .. } => Ended::Stop(reason.to_string()),
+        Refusal::Removed { dissolved, .. } => {
+            inner.dissolved.store(dissolved, std::sync::atomic::Ordering::Relaxed);
+            Ended::Stop(reason.to_string())
+        }
         // Connected again at once, under the name the hub gives.
         Refusal::Renamed { .. } => Ended::Reroute(reason.to_string()),
         other => Ended::Retry(other.to_string()),

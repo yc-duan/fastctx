@@ -789,6 +789,10 @@ impl Words {
         }
     }
 
+    pub fn link_dissolved(&self) -> &'static str {
+        self.pick("网络已解散", "the network was dissolved")
+    }
+
     pub fn link_stopped(&self, reason: &str) -> String {
         match self.lang {
             Lang::Zh => format!("已被中枢服务器移除：{reason}"),
@@ -1415,6 +1419,20 @@ impl Words {
 
     pub fn not_me_reason(&self) -> &'static str {
         self.pick("用户确认不是本人", "the user said it was not them")
+    }
+
+    /// A network this computer was on, dissolved by its administrator.
+    pub fn dissolved(&self, hub: &str, at: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("{at} · {hub} 已被管理员解散，这台电脑已离开；Fastctx 和这里的数据都还在"),
+            Lang::En => format!(
+                "{at} · {hub} was dissolved by its administrator; this computer has left, and Fastctx and your data here are untouched"
+            ),
+        }
+    }
+
+    pub fn key_seen_dissolved(&self) -> &'static str {
+        self.pick("知道了", "got it")
     }
 
     pub fn key_its_me(&self) -> &'static str {

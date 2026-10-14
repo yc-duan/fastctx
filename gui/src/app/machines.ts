@@ -34,6 +34,7 @@ import type { Confirm } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
 import { AssistSheet, assistChange, assistancesIn, type Assistance } from "./assist-sheet";
 import { HubMoving, type HubMovingOptions } from "./hub-moving";
+import { holdUntilNamed, typedName } from "./typed-name";
 import { GiveSheet } from "./machine-sheets";
 import { MachineLog, type ReadLog } from "./machine-log";
 import { boxParts, chosenGroup, groupChange, groupForm, groupingOf, groupingTogether, groupMoreKey, groupMoreOf, groupNameOf, groupRenameForm, wireGroupForm, type Grouping } from "./machine-groups";
@@ -697,6 +698,23 @@ export class MachinesPage implements Page {
     });
   }
 
+  /** Dissolves `hub`'s network, once its administrator typed its name:
+   *  every machine and phone leaves it, this computer too. */
+  private dissolve(login: Login, hub: HubAccounts): void {
+    const { words } = this.options;
+    const confirm = this.options.confirm;
+    const away = hub.members.filter((member) => !member.online).length;
+    confirm.ask({
+      title: words.dissolveTitle(hub.name),
+      what: words.dissolveWhat(hub.name, away),
+      fields: typedName(words.typeName(hub.name)),
+      go: words.dissolveGo,
+      act: () => this.options.change(login, { change: "dissolve", name: hub.name }),
+      done: () => void this.options.store.refresh(),
+    });
+    holdUntilNamed(confirm.body, hub.name);
+  }
+
   /** Signs a phone out of the account, once asked. */
   private removePhone(login: Login, name: string): void {
     const { access, words } = this.options;
@@ -964,6 +982,7 @@ export class MachinesPage implements Page {
         ...(top ? [{ act: "move", label: words.moveHub, icon: "move" as const }] : []),
         ...(top ? [{ act: "signup", label: this.options.people.signUpState(open), icon: "signup" as const, on: open }] : []),
         details,
+        ...(top && spot.hub.dissolves ? [{ act: "dissolve", label: words.dissolve, icon: "close" as const, danger: true }] : []),
       ];
     }
     if (spot.kind === "assist") return [{ act: "talk", label: words.talk, icon: "plus" }, details];
@@ -1066,6 +1085,10 @@ export class MachinesPage implements Page {
       const login = this.hubLogin(spot.hub.hub);
       if (act === "invite" && login) this.invite(login);
       else if (act === "signup") this.people.signUp(spot.hub.hub);
+      else if (act === "dissolve") {
+        const top = this.superLogin(spot.hub, world);
+        if (top) this.dissolve(top, spot.hub);
+      }
       else if (act === "move") {
         const top = this.superLogin(spot.hub, world);
         if (!top) return;
@@ -1909,7 +1932,7 @@ export function linkSaid(link: LinkState, words: MachinesWords): string {
     case "connecting":
       return words.linkConnecting(link.last_error);
     case "stopped":
-      return words.linkStopped(link.reason);
+      return link.dissolved ? words.linkDissolved : words.linkStopped(link.reason);
     case "alone":
       return "";
   }

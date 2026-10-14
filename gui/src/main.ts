@@ -69,6 +69,7 @@ import { codeName, codesOf, enCodes, zhCodes } from "./app/code-rows";
 import { ManagedPage, managedOf } from "./app/managed-page";
 import { enManaged, zhManaged } from "./app/managed-words";
 import { RemovalSheet } from "./app/removal-sheet";
+import { noticeDissolved } from "./app/dissolved-notice";
 import { NewTalk } from "./app/new-talk";
 import { enModelPanel, zhModelPanel } from "./conversation/model-panel";
 import "./app/new-talk.css";
@@ -85,7 +86,7 @@ import { specimenStats } from "./specimen/stats";
 import { SettingsPage } from "./app/settings";
 import { DataPage, enData, totalOf, zhData } from "./app/data-page";
 import { data } from "./world/data";
-import { keptUsage, keptClear } from "./world/bridge";
+import { keptUsage, keptClear, seenDissolved } from "./world/bridge";
 import { specimenCache, specimenData } from "./specimen/data";
 import { ReaderPage } from "./app/reader";
 import { Shell, pageHead, type Page } from "./app/shell";
@@ -288,6 +289,9 @@ if (params.get("accounts") === "0") {
   specimen.world.accounts.hubs = [];
   specimen.world.nodes.hubs = [];
 }
+// `?dissolved`: a network this computer was on, dissolved by its
+// administrator while it was away, said once.
+if (params.has("dissolved")) specimen.world.accounts.dissolved = [{ hub: "lab", at: new Date().toISOString() }];
 // `?quiet`: a quiet morning, nothing waiting, nothing come back, nobody at
 // work.
 if (params.has("quiet")) {
@@ -2351,6 +2355,19 @@ startPresence({
   say: (address, text) => {
     const id = crypto.randomUUID();
     return untilAnswered(() => talk(address, text, [], null, id), () => {}, address.machine);
+  },
+});
+
+// A network this computer or phone was on, dissolved, is said once.
+noticeDissolved({
+  store,
+  words: english ? enMachines : zhMachines,
+  close: (english ? enAccess : zhAccess).close,
+  phone: asDevice,
+  seen: async () => {
+    if (live) return seenDissolved();
+    const world = store.world.peek();
+    if (world) store.world.set({ ...world, accounts: { ...world.accounts, dissolved: [] } });
   },
 });
 

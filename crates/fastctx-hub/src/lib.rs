@@ -28,6 +28,7 @@ mod assists;
 mod control;
 mod data;
 mod direct;
+pub mod dissolve;
 mod forget;
 mod ledger;
 mod log;
@@ -88,6 +89,12 @@ pub struct New {
 /// first account, its super administrator, with its password. Returns the
 /// certificate's pin, which devices learn when they first log in.
 pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
+    if let Some((name, untold)) = dissolve::dissolved(dir)? {
+        anyhow::bail!(
+            "{} holds the hub of the dissolved network {name}, still telling {untold} machines that were away; `fastctx hub retire` ends it",
+            dir.display()
+        );
+    }
     if Store::hub_file(dir).exists() {
         anyhow::bail!("{} already holds a hub", dir.display());
     }
@@ -121,6 +128,7 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
         public: new.public,
         listen: new.listen,
         self_registration: false,
+        dissolved: None,
     };
     Store::create(dir, &hub, &certificate, &secrets.to_bytes(), &book)?;
     Ok(certificate.pin())
@@ -210,6 +218,9 @@ pub(crate) struct Hub {
     next_assist_end: assists::NextEnd,
     /// What is afoot on each machine, taken after `sessions` and `store`.
     afoots: Mutex<afoot::Afoots>,
+    /// Told when the network is dissolved, and as each machine on it is
+    /// told so (`dissolve`).
+    dissolution: tokio::sync::Notify,
 }
 
 /// A member's open control connection.
@@ -276,9 +287,12 @@ impl Hub {
             return Ok(member.name.clone());
         }
         Err(match store.book.removed.iter().rev().find(|removed| removed.key == *key) {
-            Some(removed) => {
-                Refusal::Removed { by: removed.by.clone(), at: removed.at, reason: removed.reason.clone() }
-            }
+            Some(removed) => Refusal::Removed {
+                by: removed.by.clone(),
+                at: removed.at,
+                reason: removed.reason.clone(),
+                dissolved: removed.dissolved,
+            },
             None => Refusal::NotMember,
         })
     }
@@ -346,6 +360,9 @@ pub(crate) enum Next {
     Stop,
     /// The directory changed what it runs as; the listener goes on to it.
     Again(Option<Kept>),
+    /// The network was dissolved and every machine on it told: the hub
+    /// retires, for the reason given.
+    Retire(String),
 }
 
 /// A listener one mode leaves to the next, and where it listens.
@@ -388,6 +405,7 @@ pub async fn serve(dir: &Path, leave: Leave) -> anyhow::Result<()> {
         match next {
             Next::Stop => return Ok(()),
             Next::Again(listener) => kept = listener,
+            Next::Retire(why) => moving::retire(dir, &why, &log, &leave),
         }
     }
 }
@@ -439,10 +457,13 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         assists_changed: tokio::sync::Notify::new(),
         next_assist_end: assists::NextEnd::default(),
         afoots: Mutex::new(afoot::Afoots::default()),
+        dissolution: tokio::sync::Notify::new(),
     });
     if driven {
         moving::out::drive(&hub);
     }
+    let settled = dissolve::settled(&hub);
+    tokio::pin!(settled);
     let switched = loop {
         tokio::select! {
             accepted = kept.listener.accept() => match accepted {
@@ -461,6 +482,15 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
             expired = machine_log::expire(&hub) => expired?,
             ended = assists::expire(&hub) => ended?,
             Ok(()) = &mut switch => break true,
+            why = &mut settled => {
+                hub.log.line(format_args!("{why}: the hub retires"));
+                // What was still answering a machine lets the data go.
+                let deadline = tokio::time::Instant::now() + SILENCE;
+                while Arc::strong_count(&hub) > 1 && tokio::time::Instant::now() < deadline {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+                return Ok(Next::Retire(why));
+            }
         }
     };
     if switched {
@@ -533,6 +563,18 @@ async fn intended(
     intent: Intent,
     peer: SocketAddr,
 ) {
+    // A dissolved network lets nobody in again: a device asking to is told
+    // so, a member's own session by its removal (`Hub::member`).
+    let dissolved = {
+        let store = hub.store();
+        store.hub.dissolved.is_some().then(|| store.hub.name.clone())
+    };
+    if let Some(name) = dissolved
+        && matches!(intent, Intent::Login { .. } | Intent::Token { .. } | Intent::Peek { .. } | Intent::Register { .. })
+    {
+        refuse(&mut socket, Refusal::Login { reason: format!("the network {name} was dissolved") }).await;
+        return;
+    }
     // What may change the records is not taken while the hub hands over.
     let changes = matches!(
         intent,
@@ -605,9 +647,11 @@ pub(crate) async fn send(socket: &mut Socket, frame: &Down) -> Result<(), String
     socket.send(WsMessage::Binary(wire::encode(frame).into())).await.map_err(|error| error.to_string())
 }
 
-pub(crate) async fn refuse(socket: &mut Socket, reason: Refusal) {
-    let _ = send(socket, &Down::Refused { reason }).await;
+/// Says why the hub will not go on, and closes; whether it was said.
+pub(crate) async fn refuse(socket: &mut Socket, reason: Refusal) -> bool {
+    let said = send(socket, &Down::Refused { reason }).await.is_ok();
     let _ = socket.close(None).await;
+    said
 }
 
 /// The next frame from a machine; `None` when it closed the connection.

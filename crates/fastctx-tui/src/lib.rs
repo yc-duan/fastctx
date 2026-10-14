@@ -82,7 +82,7 @@ async fn live(world: World) -> anyhow::Result<()> {
         return Ok(());
     }
     let (answer_sender, mut answers) = mpsc::unbounded_channel();
-    let mut app = App::new(look, words, Page::World(WorldPage::new()));
+    let mut app = App::new(look, words, Page::World(Box::new(WorldPage::new())));
     let mut feeds = Feeds::new(world.clone(), answer_sender.clone());
     let (features_sender, mut features) = mpsc::unbounded_channel();
     let following = tokio::spawn(feed::features(world.clone(), features_sender));

@@ -4,6 +4,7 @@
 //! <root>/device.lock        held while an application has the identity open
 //! <root>/device.key         this device's key, the same on every hub
 //! <root>/hubs/<hub id>/     one link's records (`fastctx_net::link::state`)
+//! <root>/dissolved.json     the networks it was on that were dissolved, not yet seen
 //! ```
 
 use std::io;
@@ -13,6 +14,8 @@ use fastctx_net::ids::HubId;
 use fastctx_net::link::{Membership, NetDir, state};
 use fastctx_net::sign::SecretKey;
 use fastctx_platform::{FileLock, ensure_private_dir};
+use fastctx_types::HubName;
+use fastctx_types::accounts::Dissolution;
 
 pub(super) struct Store {
     root: PathBuf,
@@ -86,5 +89,30 @@ impl Store {
     pub fn forget(&self, hub: &HubId) -> io::Result<()> {
         let aside = self.root.join(format!("left-{hub}-{}", jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ")));
         std::fs::rename(self.net(hub).path(), aside)
+    }
+
+    fn dissolved(&self) -> PathBuf {
+        self.root.join("dissolved.json")
+    }
+
+    /// The networks this device was on that were dissolved, not yet seen.
+    pub fn dissolutions(&self) -> io::Result<Vec<Dissolution>> {
+        state::read_or(&self.dissolved(), Vec::new())
+    }
+
+    /// Keeps that the network `hub` was dissolved, to be said once.
+    pub fn note_dissolved(&self, hub: &HubName) -> io::Result<()> {
+        let mut said = self.dissolutions()?;
+        said.retain(|one| one.hub != *hub);
+        said.push(Dissolution { hub: hub.clone(), at: jiff::Timestamp::now() });
+        state::write(&self.dissolved(), &said)
+    }
+
+    /// The networks said dissolved were seen.
+    pub fn seen_dissolved(&self) -> io::Result<()> {
+        match std::fs::remove_file(self.dissolved()) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        }
     }
 }

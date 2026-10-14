@@ -92,7 +92,10 @@ pub(crate) async fn session(
         Ok(name) => name,
         Err(reason) => {
             hub.log.line(format_args!("{peer}: refused a session: {reason}"));
-            refuse(&mut socket, reason).await;
+            let tells = crate::dissolve::tells(&reason);
+            if refuse(&mut socket, reason).await && tells {
+                crate::dissolve::told(&hub, &key);
+            }
             return;
         }
     };
@@ -119,6 +122,7 @@ pub(crate) async fn session(
 
     let (mut sink, mut stream) = socket.split();
     let (stopped, mut writer_stopped) = tokio::sync::oneshot::channel::<()>();
+    let (telling, member) = (hub.clone(), key);
     let writer = tokio::spawn(async move {
         // Dropped when the writer returns, which the reader notices.
         let _stopped = stopped;
@@ -129,6 +133,12 @@ pub(crate) async fn session(
             };
             if sink.send(WsMessage::Binary(wire::encode(&frame).into())).await.is_err() {
                 return;
+            }
+            // A machine on the network, told it was dissolved.
+            if let Down::Refused { reason } = &frame
+                && crate::dissolve::tells(reason)
+            {
+                crate::dissolve::told(&telling, &member);
             }
             if last {
                 let _ = sink.close().await;

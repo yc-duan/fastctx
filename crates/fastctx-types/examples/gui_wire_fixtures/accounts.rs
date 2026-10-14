@@ -41,6 +41,7 @@ fn hub() -> HubAccounts {
         managed: true,
         roles: true,
         groups: true,
+        dissolves: true,
         logins: vec!["ada".parse().unwrap()],
         home: Some("ada".parse().unwrap()),
         self_registration: true,
@@ -254,8 +255,13 @@ pub fn fixtures() -> Fixtures {
     let account = || "ada".parse().unwrap();
     Fixtures {
         replies: vec![
-            AccountsReply { machine: machine(), was: vec![], hubs: vec![hub()] },
-            AccountsReply { machine: machine(), was: vec!["desktop-7q2m9x".parse().unwrap()], hubs: vec![] },
+            AccountsReply { machine: machine(), was: vec![], hubs: vec![hub()], dissolved: vec![] },
+            AccountsReply {
+                machine: machine(),
+                was: vec!["desktop-7q2m9x".parse().unwrap()],
+                hubs: vec![],
+                dissolved: vec![Dissolution { hub: "lab".parse().unwrap(), at: at() }],
+            },
         ],
         changes: vec![
             AccountChange::Share { machine: machine(), to: "bo".parse().unwrap(), shared: true },

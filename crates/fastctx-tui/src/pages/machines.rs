@@ -2,10 +2,11 @@
 //! logged in to, how it is linked to it and with which accounts, each
 //! machine there and what it is like; this computer's agents, a line for
 //! each of their logins (`world-agent-logins.md`); logging in and out,
-//! tokens for other devices, and who came into its accounts, with 「不是我」.
+//! tokens for other devices, and who came into its accounts, with 「不是我」;
+//! the networks it was on that were dissolved, said once.
 
 use crossterm::event::{KeyCode, KeyEvent};
-use fastctx_types::accounts::{Arrival, HubAccounts, Level};
+use fastctx_types::accounts::{Arrival, Dissolution, HubAccounts, Level};
 use fastctx_types::agents::{AgentsReply, Integration};
 use fastctx_types::world::{HubNodes, LinkState, NodesReply};
 use fastctx_types::{AccountName, HubName, MachineName};
@@ -28,6 +29,8 @@ pub struct MachinesPage {
     nodes: Option<NodesReply>,
     /// Who came into this computer's accounts and was not shown yet.
     arrivals: Vec<Arrival>,
+    /// The networks this computer was on that were dissolved, not yet seen.
+    dissolved: Vec<Dissolution>,
     /// What this computer's accounts see of each hub, for their levels.
     accounts: Vec<HubAccounts>,
     failed: Option<String>,
@@ -44,6 +47,7 @@ pub struct MachinesPage {
 
 /// What a row the keys can be on stands for.
 enum Entry {
+    Dissolved,
     Login(usize),
     Arrival(usize),
     Machine { hub: usize, machine: usize },
@@ -77,12 +81,15 @@ impl MachinesPage {
                 self.had_at = Some(Timestamp::now());
             }
             Data::Nodes(Err(why)) => self.failed = Some(why),
-            Data::Accounts(accounts) => {
+            Data::Accounts(accounts, dissolved) => {
                 self.arrivals = accounts.iter().flat_map(|hub| hub.arrivals.iter().cloned()).collect();
                 self.accounts = accounts;
+                self.dissolved = dissolved;
                 self.list.clamp(self.entries().len());
             }
-            Data::Done { job: Job::Seen { .. } | Job::Remove { .. }, result: Err(why) } => self.failed = Some(why),
+            Data::Done { job: Job::Seen { .. } | Job::Remove { .. } | Job::SeenDissolved, result: Err(why) } => {
+                self.failed = Some(why);
+            }
             Data::Sessions(sessions) => self.sessions = Some(sessions),
             Data::Agents(agents) => {
                 self.agents = Some(agents);
@@ -131,7 +138,8 @@ impl MachinesPage {
 
     /// The rows the keys can be on, in the order they are drawn.
     fn entries(&self) -> Vec<Entry> {
-        let mut entries: Vec<Entry> = (0..self.logins_here().len()).map(Entry::Login).collect();
+        let mut entries: Vec<Entry> = self.dissolved.iter().map(|_| Entry::Dissolved).collect();
+        entries.extend((0..self.logins_here().len()).map(Entry::Login));
         entries.extend((0..self.arrivals.len()).map(Entry::Arrival));
         if let Some(nodes) = &self.nodes {
             for (hub, nodes) in nodes.hubs.iter().enumerate() {
@@ -160,7 +168,7 @@ impl MachinesPage {
                     arrival.account.clone(),
                 ));
             }
-            Entry::Login(_) => nodes.hubs.first()?,
+            Entry::Dissolved | Entry::Login(_) => nodes.hubs.first()?,
         };
         Some((hub.name.clone(), hub.logins.first()?.clone()))
     }
@@ -175,6 +183,11 @@ impl MachinesPage {
         let node = hub.machines.get(*machine)?;
         let owner = node.owner.as_ref().filter(|owner| hub.logins.contains(owner))?;
         Some((hub.name.clone(), owner.clone(), node.name.clone()))
+    }
+
+    /// Whether the keys are on a network said dissolved.
+    fn on_dissolved(&self) -> bool {
+        matches!(self.entries().get(self.list.selected), Some(Entry::Dissolved))
     }
 
     /// The arrival the keys are on, as the jobs name it.
@@ -209,6 +222,11 @@ impl MachinesPage {
                 }
                 None => Act::Stay,
             },
+            KeyCode::Char('y') if self.on_dissolved() => {
+                self.dissolved.clear();
+                self.list.clamp(self.entries().len());
+                Act::Do(Job::SeenDissolved)
+            }
             KeyCode::Char('y') => match self.selected_arrival() {
                 Some((hub, account, name)) => Act::Do(Job::Seen { hub, account, name }),
                 None => Act::Stay,
@@ -393,6 +411,13 @@ impl MachinesPage {
                     rows.push(Row::new(line));
                 }
             }
+            for dissolution in &self.dissolved {
+                let said = words.dissolved(dissolution.hub.as_str(), &crate::words::clock(dissolution.at, ctx.now));
+                for line in text::wrap_plain(&said, look.text(Role::Caution), width) {
+                    rows.push(Row::new(line).item(item));
+                }
+                item += 1;
+            }
             rows.extend(self.sessions_rows(ctx, width));
             rows.push(Row::blank());
             paint::open_section(&mut rows, paint::section(words.agents_here(), look));
@@ -439,7 +464,9 @@ impl MachinesPage {
             keys.push(("t", words.key_device()));
             keys.push(("o", words.key_logout()));
         }
-        if self.selected_arrival().is_some() {
+        if self.on_dissolved() {
+            keys.push(("y", words.key_seen_dissolved()));
+        } else if self.selected_arrival().is_some() {
             keys.push(("y", words.key_its_me()));
             keys.push(("n", words.key_not_me()));
         } else if self.removable().is_some() {
@@ -505,7 +532,8 @@ fn hub_rows(
         LinkState::Online { since, hub, through, route, .. } => {
             (words.link_online(hub, through.as_deref(), route, &crate::words::clock(*since, ctx.now)), Role::Muted)
         }
-        LinkState::Stopped { reason } => (words.link_stopped(&text::first_line(reason)), Role::Wrong),
+        LinkState::Stopped { dissolved: true, .. } => (words.link_dissolved().to_string(), Role::Wrong),
+        LinkState::Stopped { reason, .. } => (words.link_stopped(&text::first_line(reason)), Role::Wrong),
     };
     for line in text::wrap_plain(&line, look.text(role), width) {
         rows.push(Row::new(line));

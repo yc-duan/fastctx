@@ -136,14 +136,29 @@ pub fn key(world: &WorldDir) -> io::Result<SecretKey> {
 pub fn start(node: &Arc<Node>, membership: Membership) -> io::Result<Arc<Link>> {
     let key = key(&node.world)?;
     let hub = membership.id.clone();
+    let net = net_dir(&node.world, &hub);
+    // A network dissolved as this computer last ran, before it was left, is
+    // left now: its hub may have retired since.
+    let dissolved = fastctx_net::link::state::read_or::<Option<fastctx_net::link::state::Ended>>(&net.ended(), None)
+        .ok()
+        .flatten()
+        .is_some_and(|ended| ended.dissolved);
     let handler = Arc::new(Handler { node: Arc::downgrade(node), hub: hub.clone() });
-    let link = Arc::new(Link::start(net_dir(&node.world, &hub), membership, key, handler)?);
+    let link = Arc::new(Link::start(net, membership, key, handler)?);
     if let Some(old) = node.links.write().expect("never poisoned").insert(hub.clone(), link.clone()) {
         old.stop();
     }
     // What the link said of its ways before it was among the links was not
     // seen in them.
     node.ways_changed();
+    if dissolved {
+        let node = node.clone();
+        tokio::spawn(async move {
+            if let Err(failure) = left_dissolved(&node, &hub).await {
+                node.log.line(format_args!("leaving the dissolved network: {failure}"));
+            }
+        });
+    }
     Ok(link)
 }
 
@@ -432,10 +447,51 @@ async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> R
         return answer.map(|_| ()).map_err(Failure::new);
     }
     // The hub ends the session of a member with no login left, and may do
-    // so before its answer is out: being stopped is the answer then.
-    if answer.is_err() && !matches!(link.status(), Status::Stopped { .. }) {
+    // so before its answer is out: being stopped is the answer then. A hub
+    // that cannot be reached is not told, and the computer leaves it all
+    // the same: there it stays a machine away until it is removed.
+    if answer.is_err() && matches!(link.status(), Status::Online { .. }) {
         answer.map_err(Failure::new)?;
     }
+    let aside = put_aside(node, link).await?;
+    node.log.line(format_args!("logged out of the hub {}; its records are in {}", link.hub_name(), aside.display()));
+    Ok(())
+}
+
+/// Leaves a network whose administrator dissolved it: its membership is put
+/// aside as a logout puts it, and the user is told once. The notice is kept
+/// first, so no interface sees the network gone without it.
+async fn left_dissolved(node: &Arc<Node>, hub: &fastctx_types::access::HubId) -> Result<(), Failure> {
+    static NOTICES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let Some(link) = node.link_of(hub) else { return Ok(()) };
+    let name = link.hub_name();
+    {
+        let _one = NOTICES.lock().expect("never poisoned");
+        let path = node.world.dissolved();
+        let mut seen: Vec<fastctx_types::accounts::Dissolution> =
+            fastctx_net::link::state::read_or(&path, Vec::new()).map_err(|error| Failure::new(error.to_string()))?;
+        seen.retain(|said| said.hub != name);
+        seen.push(fastctx_types::accounts::Dissolution { hub: name.clone(), at: Timestamp::now() });
+        fastctx_net::link::state::write(&path, &seen).map_err(|error| Failure::new(error.to_string()))?;
+    }
+    let aside = put_aside(node, &link).await?;
+    node.log.line(format_args!("the network {name} was dissolved; its records are in {}", aside.display()));
+    Ok(())
+}
+
+/// The networks said dissolved were seen: no interface says so again.
+pub fn seen_dissolved(node: &Node) -> Result<(), Failure> {
+    match std::fs::remove_file(node.world.dissolved()) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(Failure::new(error.to_string())),
+        _ => {}
+    }
+    node.shown_changed();
+    Ok(())
+}
+
+/// Stops the link of a network this computer leaves and puts its records
+/// aside; where they are put.
+async fn put_aside(node: &Arc<Node>, link: &Arc<Link>) -> Result<std::path::PathBuf, Failure> {
     let hub = link.membership().id.clone();
     // Leaving its last network, the computer keeps the model collaboration
     // that named it as its own (`own_collab`).
@@ -445,6 +501,8 @@ async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> R
     link.stop();
     node.links.write().expect("never poisoned").remove(&hub);
     node.ways_changed();
+    // Its view is gone, and every interface shows the World without it.
+    node.views_changed();
     // The machines each session may use, and who may ask for colleagues,
     // are in its tools.
     node.tools_changed(None);
@@ -460,12 +518,12 @@ async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> R
     let aside = node.world.path().join(format!("net-left-{}-{}", hub, Timestamp::now().strftime("%Y%m%dT%H%M%SZ")));
     std::fs::rename(net.path(), &aside)
         .map_err(|error| Failure::new(format!("putting {} aside: {error}", net.path().display())))?;
-    node.log.line(format_args!("logged out of the hub {}; its records are in {}", link.hub_name(), aside.display()));
-    Ok(())
+    Ok(aside)
 }
 
 /// Every hub this computer is on, as its views show them.
 pub fn accounts(node: &Node) -> AccountsReply {
+    let dissolved = fastctx_net::link::state::read_or(&node.world.dissolved(), Vec::new()).unwrap_or_default();
     let hubs = node
         .links()
         .iter()
@@ -476,7 +534,7 @@ pub fn accounts(node: &Node) -> AccountsReply {
         })
         .collect();
     let names = node.machine_names();
-    AccountsReply { machine: names.name, was: names.was, hubs }
+    AccountsReply { machine: names.name, was: names.was, hubs, dissolved }
 }
 
 /// What this machine is like.
@@ -1000,6 +1058,18 @@ impl fastctx_net::link::Node for Handler {
         if let Some(node) = self.node.upgrade() {
             follow_rename(&node, &self.hub, from, to);
         }
+    }
+
+    /// A network dissolved is left here as well: the computer is on it no
+    /// more, whoever made it (`world-network.md`, 解散网络).
+    fn place_ended(&self, dissolved: bool) {
+        let Some(node) = self.node.upgrade().filter(|_| dissolved) else { return };
+        let hub = self.hub.clone();
+        tokio::spawn(async move {
+            if let Err(failure) = left_dissolved(&node, &hub).await {
+                node.log.line(format_args!("leaving the dissolved network: {failure}"));
+            }
+        });
     }
 
     /// Connected again: a hub that calls this computer otherwise than the

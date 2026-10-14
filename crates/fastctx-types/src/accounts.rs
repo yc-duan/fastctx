@@ -247,6 +247,11 @@ pub enum AccountChange {
     Settings {
         self_registration: bool,
     },
+    /// The super administrator dissolves the network named `name`, typed as
+    /// it is (`world-network.md`, 解散网络).
+    Dissolve {
+        name: HubName,
+    },
     ShareProject {
         town: TownName,
         with: AccountName,
@@ -272,6 +277,17 @@ pub struct AccountsReply {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub was: Vec<MachineName>,
     pub hubs: Vec<HubAccounts>,
+    /// The networks it was on that were dissolved, not yet seen.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dissolved: Vec<Dissolution>,
+}
+
+/// A network this computer was on, dissolved by its administrator: the
+/// computer left it then, and says so once (`world-network.md`, 解散网络).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Dissolution {
+    pub hub: HubName,
+    pub at: Timestamp,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -301,6 +317,10 @@ pub struct HubAccounts {
     /// 机器的分组).
     #[serde(default)]
     pub groups: bool,
+    /// Whether the hub dissolves its network when its super administrator
+    /// asks (`world-network.md`, 解散网络).
+    #[serde(default)]
+    pub dissolves: bool,
     /// The accounts this computer is logged in to there.
     pub logins: Vec<AccountName>,
     /// The account this computer is registered under there, as a machine.

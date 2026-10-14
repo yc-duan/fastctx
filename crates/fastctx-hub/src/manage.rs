@@ -12,7 +12,7 @@
 
 use fastctx_net::directory::{Account, Assist, Level, LoginPlan, Project, Share};
 use fastctx_net::login::HubSecrets;
-use fastctx_net::sign::Bytes;
+use fastctx_net::sign::{Bytes, PublicKey};
 use fastctx_net::token::{Token, TokenSecret};
 use fastctx_net::wire::{Change, Refusal, Told};
 use fastctx_types::machine_log::{Actor, Outcome};
@@ -34,11 +34,15 @@ pub(crate) fn change(
 ) -> (Result<Told, String>, Vec<(MachineName, Refusal)>) {
     let mut ended = Vec::new();
     let renaming = matches!(change, Change::Rename { .. });
+    let dissolving = matches!(change, Change::Dissolve { .. });
     let told = match made(hub, asker, account, change, &mut ended, renaming) {
         Ok(told) => told,
         Err(reason) => return (Err(reason), Vec::new()),
     };
     hub.changed();
+    if dissolving {
+        crate::dissolve::changed(hub);
+    }
     (Ok(told), ended)
 }
 
@@ -113,7 +117,9 @@ fn made(
             }
             Err(reason) => {
                 store.book = before;
-                if store.hub.self_registration != before_hub.self_registration {
+                if store.hub.self_registration != before_hub.self_registration
+                    || store.hub.dissolved != before_hub.dissolved
+                {
                     store.hub = before_hub;
                     store.save_hub().map_err(|error| format!("restoring the hub's settings: {error}"))?;
                 }
@@ -229,7 +235,7 @@ fn apply(
             let directory = &store.book.directory;
             let member = directory.member(&name).cloned().ok_or_else(|| format!("there is no member {name}"))?;
             if super_ || member.home.as_ref() == Some(account) {
-                remove_member(store, &name, Some(account), &reason, ended)?;
+                remove_member(store, &name, Some(account), &reason, false, ended)?;
             } else if member.logins.contains(account) {
                 log_out(store, &name, account, Some(account), &reason, ended)?;
             } else {
@@ -431,6 +437,28 @@ fn apply(
             store.save_hub().map_err(|error| format!("the hub could not keep its settings: {error}"))?;
             Ok(Told::Done)
         }
+        // The network ends: every machine and device is taken off it, told
+        // now or as it next comes that the network is gone; no code lets
+        // anything in, and the hub lets nobody in again
+        // (`world-network.md`, 解散网络).
+        Change::Dissolve { name } => {
+            need_super()?;
+            if name != store.hub.name {
+                return Err(format!("the network is called {}, not {name}", store.hub.name));
+            }
+            let members: Vec<(MachineName, PublicKey)> =
+                store.book.directory.members.iter().map(|member| (member.name.clone(), member.key)).collect();
+            for (member, _) in &members {
+                remove_member(store, member, Some(account), "the network was dissolved", true, ended)?;
+            }
+            store.book.tokens.clear();
+            let untold = members.into_iter().map(|(_, key)| key).collect();
+            store.hub.dissolved = Some(crate::store::Dissolved { by: account.clone(), at: Timestamp::now(), untold });
+            store
+                .save_hub()
+                .map_err(|error| format!("the hub could not keep that its network is dissolved: {error}"))?;
+            Ok(Told::Done)
+        }
         Change::OpenProject { town, name } => {
             let book = &mut store.book;
             if book.directory.project(&town).is_some() || book.archived.iter().any(|project| project.town == town) {
@@ -629,7 +657,7 @@ fn log_out(
         forget_machine(directory, name);
     }
     if left {
-        remove_member(store, name, by, reason, ended)?;
+        remove_member(store, name, by, reason, false, ended)?;
     }
     Ok(())
 }
@@ -651,6 +679,7 @@ fn remove_member(
     name: &MachineName,
     by: Option<&AccountName>,
     reason: &str,
+    dissolved: bool,
     ended: &mut Vec<(MachineName, Refusal)>,
 ) -> Result<(), String> {
     let directory = &mut store.book.directory;
@@ -665,9 +694,10 @@ fn remove_member(
         by: by.cloned(),
         at,
         reason: reason.to_string(),
+        dissolved,
     });
     store.forget_letters(name).map_err(|error| format!("dropping the letters of {name}: {error}"))?;
-    ended.push((name.clone(), Refusal::Removed { by: by.cloned(), at, reason: reason.to_string() }));
+    ended.push((name.clone(), Refusal::Removed { by: by.cloned(), at, reason: reason.to_string(), dissolved }));
     Ok(())
 }
 
@@ -696,7 +726,7 @@ fn delete_account(
         .map(|member| member.name.clone())
         .collect();
     for machine in machines {
-        remove_member(store, &machine, Some(by), &reason, ended)?;
+        remove_member(store, &machine, Some(by), &reason, false, ended)?;
     }
     let logged: Vec<MachineName> = store
         .book

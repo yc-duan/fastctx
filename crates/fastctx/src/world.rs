@@ -204,6 +204,12 @@ pub struct RemoveArgs {
 }
 
 #[derive(Args)]
+pub struct DissolveArgs {
+    /// The network's name, typed as it is, to confirm.
+    network: HubName,
+}
+
+#[derive(Args)]
 pub struct RenameArgs {
     /// The machine's name now, or a name it had; with the new name alone,
     /// this computer.
@@ -317,6 +323,13 @@ pub enum HubCommand {
     },
     /// The hub's name, id, addresses and certificate pin.
     Show {
+        #[arg(long, value_parser = crate::paths::parser())]
+        dir: Option<std::path::PathBuf>,
+    },
+    /// End the hub of a dissolved network kept here before every machine
+    /// that was on it was told: its system service is removed and its data
+    /// deleted, all but its log. Run it as administrator.
+    Retire {
         #[arg(long, value_parser = crate::paths::parser())]
         dir: Option<std::path::PathBuf>,
     },
@@ -583,6 +596,25 @@ pub fn remove(args: RemoveArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Dissolves a network as its super administrator: every machine and device
+/// is taken off it, and nobody comes in again.
+pub fn dissolve(args: DissolveArgs) -> anyhow::Result<()> {
+    let Reply::Accounts(reply) = call(Call::Accounts)? else { anyhow::bail!("the node answered something else") };
+    let seen = reply
+        .hubs
+        .iter()
+        .find(|seen| seen.name == args.network)
+        .ok_or_else(|| anyhow::anyhow!("this computer is on no network called {}", args.network))?;
+    let admin = seen
+        .accounts
+        .iter()
+        .find(|account| account.level == Level::Super && seen.logins.contains(&account.name))
+        .ok_or_else(|| anyhow::anyhow!("only the network's super administrator dissolves it"))?;
+    change(Some(seen.name.clone()), admin.name.clone(), AccountChange::Dissolve { name: args.network.clone() })?;
+    println!("dissolved {}: every machine and device is off it, and nobody comes in again", args.network);
+    Ok(())
+}
+
 pub fn rename(args: RenameArgs) -> anyhow::Result<()> {
     let Some(to) = args.second else {
         let to = args.first;
@@ -727,6 +759,11 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
             let dir = dir(chosen);
             let listen = listen.unwrap_or_else(|| std::net::SocketAddr::from(([0, 0, 0, 0], public[0].port())));
             let password = crate::secret::new_password(&format!("A password for {admin}: "))?;
+            // A hub dissolved here before still tells the machines that were
+            // away; one whose service is replaced anyway is ended first.
+            if service && fastctx_hub::dissolve::dissolved(&dir)?.is_some() {
+                crate::hub_retire::retire_elevated(&dir)?;
+            }
             let new =
                 fastctx_hub::New { name: name.clone(), public: public.clone(), listen, admin: admin.clone(), password };
             fastctx_hub::init(&dir, new)?;
@@ -813,6 +850,23 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
             if hub.self_registration {
                 println!("anyone who reaches it may open an account");
             }
+            if let Some(dissolved) = &hub.dissolved {
+                println!(
+                    "dissolved by {} at {}; {} machines not told yet",
+                    dissolved.by,
+                    dissolved.at.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    dissolved.untold.len()
+                );
+            }
+        }
+        HubCommand::Retire { dir: chosen } => {
+            let (name, untold) = crate::hub_retire::retire(&dir(chosen))?;
+            match untold {
+                0 => println!("the hub of the dissolved network {name} is ended here"),
+                untold => println!(
+                    "the hub of the dissolved network {name} is ended here; {untold} machines that were away were not told"
+                ),
+            }
         }
     }
     Ok(())
@@ -823,10 +877,7 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
 /// process, so another one does it, started on its own.
 fn remove_hub_service(dir: &std::path::Path) -> Result<String, String> {
     use fastctx_install::service::{Kind, Service};
-    let running = std::env::current_exe().map_err(|error| format!("finding this program: {error}"))?;
-    // The installed program, not the copy the service runs, which the removal deletes.
-    let installed = dir.parent().map(fastctx_install::executable::installed_path).filter(|path| path.is_file());
-    let program = installed.unwrap_or(running);
+    let program = crate::hub_retire::program(dir).map_err(|error| format!("finding this program: {error}"))?;
     let service = Service::new(Kind::Hub, &program, dir);
     let status = service.status().map_err(|error| format!("looking for the hub's service: {error}"))?;
     if !status.installed {
@@ -1027,7 +1078,8 @@ fn link(link: &LinkState, now: Timestamp) -> String {
                 format!("connected through {through}, for {}", age(*since, now))
             }
             LinkState::Connecting { since, .. } => format!("not connected to the hub for {}", age(*since, now)),
-            LinkState::Stopped { reason } => format!("the hub removed this computer: {reason}"),
+            LinkState::Stopped { reason, dissolved: true } => reason.clone(),
+            LinkState::Stopped { reason, .. } => format!("the hub removed this computer: {reason}"),
         };
     }
     match link {
@@ -1042,7 +1094,8 @@ fn link(link: &LinkState, now: Timestamp) -> String {
         LinkState::Connecting { since, last_error: Some(error) } => {
             format!("not connected to the hub for {}: {error}", age(*since, now))
         }
-        LinkState::Stopped { reason } => format!("the hub removed this computer: {reason}"),
+        LinkState::Stopped { reason, dissolved: true } => reason.clone(),
+        LinkState::Stopped { reason, .. } => format!("the hub removed this computer: {reason}"),
     }
 }
 
@@ -1172,6 +1225,13 @@ fn render_accounts(reply: &AccountsReply, now: Timestamp) -> String {
     let mut text = format!("=== accounts: {} ===\n", reply.machine);
     if reply.hubs.is_empty() {
         text.push_str("logged in to no hub\n");
+    }
+    for dissolution in &reply.dissolved {
+        text.push_str(&format!(
+            "the network {} was dissolved by its administrator {} ago; this computer left it, and kept all it has\n",
+            dissolution.hub,
+            age(dissolution.at, now)
+        ));
     }
     for hub in &reply.hubs {
         let logins = hub.logins.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");

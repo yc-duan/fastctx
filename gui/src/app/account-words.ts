@@ -491,6 +491,7 @@ export interface MachinesWords {
   linkVia(through: string, address: string): string;
   linkConnecting(error: string | null): string;
   linkStopped(reason: string): string;
+  linkDissolved: string;
   /** Where this computer stands on a hub. */
   registeredUnder(account: string): string;
   onlyLogins(accounts: string): string;
@@ -662,6 +663,17 @@ export interface MachinesWords {
   stopDirectTitle(machine: string): string;
   stopDirectSaid: string;
   directStopped(machine: string): string;
+  /** Dissolving the network: the super administrator's, from beside the
+   *  server on the drawing; `away`, its machines and phones offline now
+   *  (`world-network.md`, 解散网络). */
+  dissolve: string;
+  dissolveTitle(hub: string): string;
+  dissolveWhat(hub: string, away: number): string;
+  dissolveGo: string;
+  /** Said once on each computer or phone that was on networks dissolved. */
+  dissolvedTitle(hubs: string[]): string;
+  dissolvedWhat(phone: boolean, many: boolean): string;
+  dissolvedSeen: string;
   /** Moving the server to another machine: the administrator's, from beside
    *  the server on the drawing (`world-gui.md`, 把中枢服务器搬到别处). */
   moveHub: string;
@@ -675,7 +687,8 @@ export interface MachinesWords {
   moveCarries: string[];
   moveSaid: string;
   moveWhat: string;
-  moveTypeName(hub: string): string;
+  /** Over the field the network's name is typed into, to move or dissolve it. */
+  typeName(hub: string): string;
   moveGo: string;
   moveNewTitle: string;
   moveNext: string;
@@ -742,6 +755,7 @@ export const zhMachines: MachinesWords = {
   linkVia: (through, address) => `经 ${through} 连上 · ${address}`,
   linkConnecting: () => "连接中",
   linkStopped: () => "已被中枢服务器移除",
+  linkDissolved: "网络已解散",
   registeredUnder: (account) => `${account} 的机器`,
   onlyLogins: (accounts) => `已登录 ${accounts}`,
   via: (through) => `经 ${through} 连着中枢服务器`,
@@ -892,6 +906,14 @@ export const zhMachines: MachinesWords = {
   stopDirectTitle: (machine) => `不再允许直接连到 ${machine}？`,
   stopDirectSaid: "别的机器和它之间改经中枢服务器转。",
   directStopped: (machine) => `已不再允许直接连到 ${machine}`,
+  dissolve: "解散网络",
+  dissolveTitle: (hub) => `解散 ${hub}？`,
+  dissolveWhat: (hub, away) =>
+    `所有机器和手机都会离开 ${hub}，入网码作废，以后谁也进不来，不能撤回。${away ? `现在不在线的 ${away} 台，下次上线时离开。` : ""}各台电脑上的 Fastctx 和数据都留着。`,
+  dissolveGo: "解散",
+  dissolvedTitle: (hubs) => `${hubs.join("、")} 已解散`,
+  dissolvedWhat: (phone, many) => `管理员解散了${many ? "这些网络" : "这个网络"}，这台${phone ? "手机" : "电脑"}已离开。Fastctx 和这里的数据都还在。`,
+  dissolvedSeen: "知道了",
   moveHub: "搬到…",
   moveChoose: "选一台接手中枢服务器",
   moveNewServer: "一台新服务器",
@@ -909,7 +931,7 @@ export const zhMachines: MachinesWords = {
   moveCarries: ["账号", "机器", "权限", "项目", "信"],
   moveSaid: "谁都不用重新登录。",
   moveWhat: "中枢服务器的整个目录搬过去，身份不变。拷贝时照常服务，只在切换那一下停一停；之后旧的位置把连过来的机器转过去，直到每台都跟过来。旧的数据停用、不删，在中枢服务器详情里删。",
-  moveTypeName: (hub) => `输入网络名称 ${hub} 确认`,
+  typeName: (hub) => `输入网络名称 ${hub} 确认`,
   moveGo: "搬过去",
   moveNewTitle: "把中枢服务器搬到一台新服务器",
   moveNext: "下一步",
@@ -990,6 +1012,8 @@ export const zhMachines: MachinesWords = {
         return `删除对话 ${a.conversation.resident} · ${a.conversation.machine}`;
       case "forgotten":
         return `${a.on} 上删除 ${a.conversation.resident}`;
+      case "dissolve":
+        return `解散网络 ${a.name}`;
       default:
         return null;
     }
@@ -1022,6 +1046,7 @@ export const enMachines: MachinesWords = {
   linkVia: (through, address) => `connected through ${through} · ${address}`,
   linkConnecting: () => "connecting",
   linkStopped: () => "removed by the hub",
+  linkDissolved: "network dissolved",
   registeredUnder: (account) => `${account}'s machine`,
   onlyLogins: (accounts) => `signed in to ${accounts}`,
   via: (through) => `reaches the hub through ${through}`,
@@ -1172,6 +1197,14 @@ export const enMachines: MachinesWords = {
   stopDirectTitle: (machine) => `Stop direct connections to ${machine}?`,
   stopDirectSaid: "What goes between it and other machines will go through the hub.",
   directStopped: (machine) => `No more direct connections to ${machine}`,
+  dissolve: "Dissolve network",
+  dissolveTitle: (hub) => `Dissolve ${hub}?`,
+  dissolveWhat: (hub, away) =>
+    `Every machine and phone leaves ${hub}, its codes stop working, and no one can join it again. This can't be undone.${away ? ` The ${away} offline now leave when they're next online.` : ""} Fastctx and its data stay on every computer.`,
+  dissolveGo: "Dissolve",
+  dissolvedTitle: (hubs) => `${hubs.join(", ")} ${hubs.length > 1 ? "were" : "was"} dissolved`,
+  dissolvedWhat: (phone, many) => `${many ? "Their administrators dissolved them" : "Its administrator dissolved it"}, and this ${phone ? "phone" : "computer"} has left. Fastctx and your data here are untouched.`,
+  dissolvedSeen: "OK",
   moveHub: "Move to…",
   moveChoose: "Choose the machine to take the hub",
   moveNewServer: "A new server",
@@ -1189,7 +1222,7 @@ export const enMachines: MachinesWords = {
   moveCarries: ["Accounts", "Machines", "Rights", "Projects", "Letters"],
   moveSaid: "Nobody signs in again.",
   moveWhat: "The hub's whole directory moves, its identity unchanged. It keeps serving while it copies and pauses only for the switch; then the old place forwards each machine that comes to it until all have followed. The old data is disabled, not deleted; delete it in the hub's details.",
-  moveTypeName: (hub) => `Type ${hub} to confirm`,
+  typeName: (hub) => `Type ${hub} to confirm`,
   moveGo: "Move",
   moveNewTitle: "Move the hub to a new server",
   moveNext: "Next",
@@ -1270,6 +1303,8 @@ export const enMachines: MachinesWords = {
         return `Deleted conversation ${a.conversation.resident} · ${a.conversation.machine}`;
       case "forgotten":
         return `${a.conversation.resident} deleted on ${a.on}`;
+      case "dissolve":
+        return `Dissolved the network ${a.name}`;
       default:
         return null;
     }

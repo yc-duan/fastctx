@@ -187,7 +187,9 @@ pub(crate) async fn end(
                     drop(pairing);
                     hub.log.line(format_args!("a transfer ended; {carried} bytes came from {me}"));
                 }
-                None => refuse(&mut socket, Refusal::Broken { reason: "the other end did not come".to_string() }).await,
+                None => {
+                    refuse(&mut socket, Refusal::Broken { reason: "the other end did not come".to_string() }).await;
+                }
             }
         }
     }

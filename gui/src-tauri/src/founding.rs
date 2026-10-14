@@ -135,13 +135,15 @@ fn found(name: &str, admin: &str, password: &str, public: &[SocketAddr]) -> Resu
     let dir = places.root.join("hub");
     // A hub made here before, by an attempt whose service was declined, is
     // taken up again when it has this name; the login that follows checks
-    // the password.
-    if let Some(made) = made_here(&places.installed(), &dir)? {
-        return if made == name {
-            Ok(dir)
-        } else {
-            Err(format!("this computer is already the hub of the World {made}, in {}", dir.display()))
-        };
+    // the password. One of a network dissolved here, still telling the
+    // machines that were away, is ended first (`world-network.md`, 解散网络).
+    match made_here(&places.installed(), &dir)? {
+        Some(Made { dissolved: true, .. }) => retire(&places.installed(), &dir)?,
+        Some(Made { name: made, .. }) if made == name => return Ok(dir),
+        Some(Made { name: made, .. }) => {
+            return Err(format!("this computer is already the hub of the World {made}, in {}", dir.display()));
+        }
+        None => {}
     }
     let mut command = std::process::Command::new(places.installed());
     command.args(["hub", "init", "--name", name, "--admin", admin, "--dir"]).arg(&dir);
@@ -172,8 +174,60 @@ fn found(name: &str, admin: &str, password: &str, public: &[SocketAddr]) -> Resu
     Ok(dir)
 }
 
-/// The name of the hub kept in `dir`, if there is one.
-fn made_here(fastctx: &std::path::Path, dir: &std::path::Path) -> Result<Option<String>, String> {
+/// A hub kept on this computer: its name, and whether its network was
+/// dissolved.
+struct Made {
+    name: String,
+    dissolved: bool,
+}
+
+/// Ends the hub of a network dissolved here with the rights it takes, asked
+/// for once: its service is removed and its data deleted, all but its log.
+fn retire(fastctx: &std::path::Path, dir: &std::path::Path) -> Result<(), String> {
+    let args: Vec<std::ffi::OsString> = vec!["hub".into(), "retire".into(), "--dir".into(), dir.into()];
+    #[cfg(windows)]
+    let ended = if fastctx_platform::elevation::is_elevated().map_err(|error| error.to_string())? {
+        use std::os::windows::process::CommandExt as _;
+        let output = std::process::Command::new(fastctx)
+            .args(&args)
+            .creation_flags(0x08000000)
+            .output()
+            .map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        Ok(())
+    } else {
+        match fastctx_platform::elevation::run_elevated(fastctx, &args) {
+            Ok(0) => Ok(()),
+            Ok(code) => Err(format!("ending the dissolved network's hub here failed (exit {code})")),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                Err("administrator rights were declined; the dissolved network's hub still runs here".to_string())
+            }
+            Err(error) => Err(error.to_string()),
+        }
+    };
+    #[cfg(not(windows))]
+    let ended = {
+        let output = std::process::Command::new("pkexec")
+            .arg(fastctx)
+            .args(&args)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|error| format!("starting the administrator prompt: {error}"))?;
+        match output.status.code() {
+            Some(0) => Ok(()),
+            Some(126) => {
+                Err("administrator rights were declined; the dissolved network's hub still runs here".to_string())
+            }
+            _ => Err(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+        }
+    };
+    ended
+}
+
+/// The hub kept in `dir`, if there is one.
+fn made_here(fastctx: &std::path::Path, dir: &std::path::Path) -> Result<Option<Made>, String> {
     if !dir.is_dir() {
         return Ok(None);
     }
@@ -188,12 +242,13 @@ fn made_here(fastctx: &std::path::Path, dir: &std::path::Path) -> Result<Option<
     if !output.status.success() {
         return Ok(None);
     }
-    // "hub NAME (ID)" on the first line.
+    // "hub NAME (ID)" on the first line; "dissolved by …" on one of its own.
     let text = String::from_utf8_lossy(&output.stdout);
+    let dissolved = text.lines().any(|line| line.starts_with("dissolved "));
     Ok(text
         .lines()
         .next()
         .and_then(|line| line.strip_prefix("hub "))
         .and_then(|rest| rest.split_whitespace().next())
-        .map(str::to_string))
+        .map(|name| Made { name: name.to_string(), dissolved }))
 }

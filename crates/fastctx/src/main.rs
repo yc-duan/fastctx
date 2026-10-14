@@ -16,6 +16,7 @@ mod copy;
 mod data;
 mod first_program;
 mod host_change;
+mod hub_retire;
 mod journal;
 mod keep;
 mod on;
@@ -251,6 +252,10 @@ enum Command {
     Disallow(world::DisallowArgs),
     /// Take a device or a machine out of an account.
     Remove(world::RemoveArgs),
+    /// Dissolve a network, as its super administrator, typing its name:
+    /// every machine and device is taken off it, and nobody comes in again.
+    /// Fastctx stays on each computer, with its conversations and files.
+    Dissolve(world::DissolveArgs),
     /// Rename a machine: this computer, one of an account's machines, or,
     /// for the network's administrator, any. Its names before still name it.
     Rename(world::RenameArgs),
@@ -453,6 +458,7 @@ fn main() -> ExitCode {
         Command::Assist(args) => world::assist(args),
         Command::Disallow(args) => world::disallow(args),
         Command::Remove(args) => world::remove(args),
+        Command::Dissolve(args) => world::dissolve(args),
         Command::Rename(args) => world::rename(args),
         Command::Group(args) => world::group(args),
         Command::Direct(args) => world::direct(args),

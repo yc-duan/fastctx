@@ -123,6 +123,7 @@ pub(crate) fn view_for(
         managed: true,
         roles: true,
         groups: true,
+        dissolves: true,
         tokens,
         hub_addresses: crate::moving::addresses_for(store, me),
         hub_moves: crate::moving::requests::told(hub, store, me, whole),

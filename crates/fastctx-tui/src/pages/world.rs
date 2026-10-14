@@ -123,7 +123,7 @@ impl WorldPage {
             },
             KeyCode::Char('n') => Act::Push(Page::Form(Box::new(form::FormPage::open_agent(None)))),
             KeyCode::Char('p') => Act::Push(Page::Form(Box::new(form::FormPage::new_project()))),
-            KeyCode::Char('m') => Act::Push(Page::Machines(machines::MachinesPage::new())),
+            KeyCode::Char('m') => Act::Push(Page::Machines(Box::new(machines::MachinesPage::new()))),
             KeyCode::Char('a') => {
                 self.all = !self.all;
                 Act::Stay

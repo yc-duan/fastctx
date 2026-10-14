@@ -15,6 +15,7 @@ import type { AccessWords, LoginWords, MachinesWords } from "./account-words";
 import { Sheet, type Confirm } from "./confirm";
 import { RemoteWorld, type RemoteSeams } from "./remote-world";
 import { mark } from "./removal";
+import { holdUntilNamed, typedName } from "./typed-name";
 
 /** The steps of a move, in order. */
 const STAGES: MoveStage[] = ["preparing", "service", "reaching", "copying", "switching", "following", "done"];
@@ -137,7 +138,7 @@ export class HubMoving {
           ...cards.map((host) => choice(host, words.directCard, !seen.length)),
         ].join("")}</div></fieldset>
         <label class="field map-card-port"><span class="field-label">${escape(words.directPort)}</span><input class="mono" name="port" inputmode="numeric" value="${choosing.port ?? HUB_PORT}" autocomplete="off" spellcheck="false" required></label>
-        ${this.typedName(choosing.hub.name)}`,
+        ${typedName(words.typeName(choosing.hub.name))}`,
       go: words.moveGo,
       act: async () => {
         const body = confirm.body;
@@ -153,7 +154,7 @@ export class HubMoving {
         done();
       },
     });
-    this.holdUntilNamed(confirm.body, choosing.hub.name);
+    holdUntilNamed(confirm.body, choosing.hub.name);
   }
 
   /** The sheet that moves the server to a new server: the same red words,
@@ -169,9 +170,9 @@ export class HubMoving {
     sheet.body.innerHTML = `${sheet.head(words.moveNewTitle, this.options.access.close)}
       <p class="confirm-what">${escape(words.moveSaid)}</p>
       ${this.carries()}
-      ${this.typedName(choosing.hub.name)}
+      ${typedName(words.typeName(choosing.hub.name))}
       <footer class="sheet-foot"><span></span><button class="sheet-go danger" type="submit">${escape(words.moveNext)}</button></footer>`;
-    this.holdUntilNamed(sheet.body, choosing.hub.name);
+    holdUntilNamed(sheet.body, choosing.hub.name);
     sheet.body.onsubmit = (event) => {
       event.preventDefault();
       if (this.ssh) return this.ssh.submit();
@@ -343,21 +344,6 @@ export class HubMoving {
     const { words } = this.options;
     return `<p class="move-carries">${words.moveCarries.map((one) => `<span class="tag">${escape(one)}</span>`).join("")}</p>
       <details class="map-card-more"><summary>${escape(words.more)}</summary><p>${escape(words.moveWhat)}</p></details>`;
-  }
-
-  private typedName(hub: string): string {
-    return `<label class="field move-name"><span class="field-label">${escape(this.options.words.moveTypeName(hub))}</span><input name="network" class="mono" autocomplete="off" spellcheck="false" autocapitalize="off" required></label>`;
-  }
-
-  /** The button that goes on stays unpressable until the network's name is
-   *  typed as it is. */
-  private holdUntilNamed(form: HTMLElement, name: string): void {
-    const go = form.querySelector<HTMLButtonElement>(".sheet-go");
-    const typed = form.querySelector<HTMLInputElement>("input[name=network]");
-    if (!go || !typed) return;
-    const check = () => (go.disabled = typed.value.trim() !== name);
-    check();
-    typed.addEventListener("input", check);
   }
 }
 

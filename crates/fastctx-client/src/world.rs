@@ -748,6 +748,14 @@ impl World {
         }
     }
 
+    /// The networks said dissolved were seen: they are said no more.
+    pub async fn seen_dissolved(&self) -> Result<(), Error> {
+        match self.ask(Call::SeenDissolved).await? {
+            Reply::Done => Ok(()),
+            other => Err(unexpected(other)),
+        }
+    }
+
     /// Reads the selected account's machine changes from its hub, newest
     /// first. Pass the returned `next_before` to read older visible records.
     pub async fn machine_log(

@@ -79,9 +79,11 @@ pub enum LinkState {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         ms: Option<u32>,
     },
-    /// The hub removed this computer.
+    /// The hub removed this computer, or, `dissolved`, its whole network.
     Stopped {
         reason: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        dissolved: bool,
     },
 }
 

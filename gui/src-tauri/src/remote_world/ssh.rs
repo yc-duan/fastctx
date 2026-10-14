@@ -340,7 +340,9 @@ pub async fn make_hub(
             quote(&request.admin),
             quote(&public.to_string())
         ),
-        format!("{}\n{}", request.password, remote.sudo.line()).into_bytes(),
+        // The second sudo is for ending the hub of a network dissolved there
+        // before, when one still tells the machines that were away.
+        format!("{}\n{}{}", request.password, remote.sudo.line(), remote.sudo.line()).into_bytes(),
     )
     .await?
     .ok("making the World on the server")?;

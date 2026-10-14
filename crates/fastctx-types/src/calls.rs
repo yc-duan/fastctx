@@ -589,6 +589,8 @@ pub enum Call {
     /// The node hands the World over once idle and exits: a system service
     /// now keeps this World's node, and its node waits to take over.
     HandOver,
+    /// The networks said dissolved were seen; they are said no more.
+    SeenDissolved,
     /// Freeze submissions and disconnect the node before local uninstall.
     /// Only a local user command may request this; no node is started for it.
     UninstallPrepare,

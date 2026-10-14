@@ -142,6 +142,12 @@ impl WorldDir {
         self.root.join("features.json")
     }
 
+    /// The networks this computer was on that were dissolved, until the
+    /// user has seen so (`crate::accounts::Dissolution`).
+    pub fn dissolved(&self) -> PathBuf {
+        self.root.join("dissolved.json")
+    }
+
     /// This computer's own model collaboration, which applies while it is
     /// in no network (`world-colleagues.md`, 同事从哪里来、能去哪里).
     pub fn own_collab(&self) -> PathBuf {

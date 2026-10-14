@@ -146,6 +146,10 @@ pub enum Action {
     Settings {
         self_registration: bool,
     },
+    /// The network named `name` was dissolved.
+    Dissolve {
+        name: crate::HubName,
+    },
     OpenProject {
         town: crate::access::TownId,
         name: TownName,

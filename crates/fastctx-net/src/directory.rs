@@ -608,6 +608,11 @@ pub struct View {
     /// would end the session of a member that sent one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub groups: bool,
+    /// Whether this hub dissolves its network when its super administrator
+    /// asks (`Change::Dissolve`). Earlier hubs omit it, and would end the
+    /// session of a member that sent one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dissolves: bool,
     /// The tokens the accounts logged in on this member made that still
     /// let devices in.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -645,6 +650,7 @@ impl View {
             managed: false,
             roles: false,
             groups: false,
+            dissolves: false,
             tokens: Vec::new(),
             hub_addresses: Vec::new(),
             hub_moves: Vec::new(),

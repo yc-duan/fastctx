@@ -249,6 +249,9 @@ export interface HubAccounts {
   /** Whether the hub keeps the groups of machines (`world-network.md`,
    *  机器的分组). */
   groups?: boolean;
+  /** Whether the hub dissolves its network when its super administrator
+   *  asks (`world-network.md`, 解散网络). */
+  dissolves?: boolean;
   logins: AccountName[];
   home: AccountName | null;
   self_registration: boolean;
@@ -273,6 +276,15 @@ export interface AccountsReply {
   /** The names this computer had, oldest first. */
   was?: MachineName[];
   hubs: HubAccounts[];
+  /** The networks this computer was on that were dissolved, not yet seen. */
+  dissolved?: Dissolution[];
+}
+
+/** A network this computer was on, dissolved by its administrator: the
+ *  computer left it, and says so once. */
+export interface Dissolution {
+  hub: HubName;
+  at: Timestamp;
 }
 
 /** A change made as an account (`fastctx_types::accounts::AccountChange`). */
@@ -308,6 +320,9 @@ export type AccountChange =
   | { change: "transfer"; to: AccountName }
   | { change: "delete_account"; name: AccountName }
   | { change: "settings"; self_registration: boolean }
+  /** The super administrator dissolves the network named `name`, typed as
+   *  it is. */
+  | { change: "dissolve"; name: HubName }
   | { change: "share_project"; town: TownName; with: AccountName; shared: boolean }
   | { change: "move_project"; town: TownName; to: AccountName }
   | { change: "seen"; name: MachineName };

@@ -20,7 +20,7 @@ impl Link {
             Status::Online { since, address, through, route } => {
                 LinkState::Online { since, hub: address.to_string(), through, route, ms: self.hub_ms() }
             }
-            Status::Stopped { reason } => LinkState::Stopped { reason },
+            Status::Stopped { reason } => LinkState::Stopped { reason, dissolved: self.dissolved() },
         }
     }
 
@@ -105,6 +105,10 @@ impl Link {
             AccountChange::Transfer { to } => Change::Transfer { to },
             AccountChange::DeleteAccount { name } => Change::DeleteAccount { name },
             AccountChange::Settings { self_registration } => Change::Settings { self_registration },
+            AccountChange::Dissolve { .. } if !self.view().dissolves => {
+                return Err(format!("the hub {} runs an older fastctx that dissolves no network", self.hub_name()));
+            }
+            AccountChange::Dissolve { name } => Change::Dissolve { name },
             AccountChange::ShareProject { town, with, shared } => {
                 Change::ShareProject { town: town_id(&town)?, with, shared }
             }
@@ -185,6 +189,7 @@ impl Link {
             managed: view.managed,
             roles: view.roles,
             groups: view.groups,
+            dissolves: view.dissolves,
             logins: me.map(|me| me.logins.iter().cloned().collect()).unwrap_or_default(),
             home: me.and_then(|me| me.home.clone()),
             self_registration: view.self_registration,

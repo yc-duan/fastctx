@@ -258,7 +258,8 @@ fn nodes() -> Vec<NodesReply> {
         LinkState::Alone,
         LinkState::Connecting { since: at(), last_error: None },
         LinkState::Connecting { since: at(), last_error: Some("hub unavailable".into()) },
-        LinkState::Stopped { reason: "machine revoked".into() },
+        LinkState::Stopped { reason: "machine revoked".into(), dissolved: false },
+        LinkState::Stopped { reason: "the network was dissolved".into(), dissolved: true },
     ];
     for route in [
         Route::Local,

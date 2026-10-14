@@ -614,7 +614,18 @@ fn join(
             }
             hub.machine_log_changed.notify_one();
         }
-        result?
+        let name = result?;
+        // What it said of names holds from now, not from its first session:
+        // one that joined and has not connected yet does not hold back the
+        // names of those joining by the same code after it.
+        if joining.any_names {
+            let kept =
+                store.letters_of(&name).map(|letters| letters.any_names = true).and_then(|()| store.save_letters());
+            if let Err(error) = kept {
+                hub.log.line(format_args!("keeping that {name} reads names of any language: {error}"));
+            }
+        }
+        name
     };
     hub.changed();
     Ok(name)

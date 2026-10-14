@@ -114,6 +114,9 @@ impl NetDir {
 pub struct Ended {
     pub at: jiff::Timestamp,
     pub reason: String,
+    /// The network was dissolved, not only this machine taken off it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dissolved: bool,
 }
 
 /// The network this World is a managed machine on and its owner there, as

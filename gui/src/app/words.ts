@@ -294,6 +294,8 @@ export const zhPresence: PresenceWords = {
   arrived: (name, device, login) => `新${device ? "设备" : "机器"} ${name} 加入 ${login}`,
   arrivedManaged: (login) => `有受管机器用入网码加入 ${login}`,
   arrivedBody: "如果不是你添加的，请在账号页移除",
+  dissolved: (hubs) => `${hubs.join("、")} 已解散`,
+  dissolvedBody: "这台电脑已离开，Fastctx 和数据都还在",
 };
 
 export const enPresence: PresenceWords = {
@@ -305,6 +307,8 @@ export const enPresence: PresenceWords = {
   arrived: (name, device, login) => `New ${device ? "device" : "machine"} ${name} joined ${login}`,
   arrivedManaged: (login) => `Managed machines joined ${login} by a code`,
   arrivedBody: "If you didn't add it, remove it on the Account page",
+  dissolved: (hubs) => `${hubs.join(", ")} ${hubs.length > 1 ? "were" : "was"} dissolved`,
+  dissolvedBody: "This computer has left; Fastctx and your data are untouched",
 };
 
 export interface SettingsWords {
@@ -347,6 +351,7 @@ export interface SettingsWords {
   online(hub: string, since: string): string;
   connecting(error: string | null): string;
   stopped(reason: string): string;
+  dissolved: string;
   notInShell: string;
   service: string;
   /** Which World this computer runs, and putting the new one in place. */
@@ -447,6 +452,7 @@ export const zhSettings: SettingsWords = {
   online: (hub, since) => `已连接 ${hub} · ${since} 起`,
   connecting: () => "连接中",
   stopped: () => "未连接",
+  dissolved: "网络已解散",
   notInShell: "浏览器预览，未连接世界",
   service: "开机自启",
   worldVersion: "本机服务",
@@ -567,6 +573,7 @@ export const enSettings: SettingsWords = {
   online: (hub, since) => `connected to ${hub} · since ${since}`,
   connecting: () => "connecting",
   stopped: () => "not connected",
+  dissolved: "network dissolved",
   notInShell: "Browser preview, not connected",
   service: "Start at boot",
   worldVersion: "Local service",

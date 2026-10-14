@@ -504,6 +504,11 @@ export function accounts(): Promise<AccountsReply> {
   return invoke("accounts");
 }
 
+/** The networks said dissolved were seen: they are said no more. */
+export function seenDissolved(): Promise<void> {
+  return invoke("seen_dissolved");
+}
+
 /** Newest first; pass next_before to read the next page. */
 export function machineLog(hub: string, account: string, before: number | null = null): Promise<import("./machine-log").MachineLogPage> {
   return invoke("machine_log", { hubName: hub, accountName: account, before });

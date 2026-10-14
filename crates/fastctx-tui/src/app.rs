@@ -129,6 +129,8 @@ pub enum Job {
         account: AccountName,
         name: MachineName,
     },
+    /// The user saw that the networks said dissolved were.
+    SeenDissolved,
     /// Put the World's tools into the user's own sessions on this machine;
     /// `raise` agrees to raising Codex's shared output limit.
     Apply {
@@ -241,8 +243,9 @@ pub enum Data {
     },
     Nodes(Result<NodesReply, String>),
     /// What this computer's accounts see of each hub: who came in and was
-    /// not shown yet, and each account's level.
-    Accounts(Vec<fastctx_types::accounts::HubAccounts>),
+    /// not shown yet, and each account's level; and the networks it was on
+    /// that were dissolved, not yet seen.
+    Accounts(Vec<fastctx_types::accounts::HubAccounts>, Vec<fastctx_types::accounts::Dissolution>),
     Choices {
         nodes: Result<NodesReply, String>,
         towns: Result<Vec<TownSummary>, String>,

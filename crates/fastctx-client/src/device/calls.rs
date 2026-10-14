@@ -88,7 +88,16 @@ impl Device {
                         fastctx_net::arrivals::fresh(&self.store.arrivals(&accounts.hub)).map_err(failed)?;
                     hubs.push(accounts);
                 }
-                return Ok((Reply::Accounts(AccountsReply { machine: here(), was: Vec::new(), hubs }), here()));
+                let dissolved = self.store.dissolutions().map_err(failed)?;
+                return Ok((
+                    Reply::Accounts(AccountsReply { machine: here(), was: Vec::new(), hubs, dissolved }),
+                    here(),
+                ));
+            }
+            Call::SeenDissolved => {
+                self.store.seen_dissolved().map_err(failed)?;
+                super::changed(&self.shown_changes);
+                return Ok((Reply::Done, here()));
             }
             _ => {}
         }

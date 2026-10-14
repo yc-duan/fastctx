@@ -134,7 +134,14 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
         if machine { report.machines.push(name) } else { report.devices.push(name) }
     }
     report.letters = count_files(&from.join("outbox"))?;
-    let hub = HubFile { id, name: new.name, public: third.public, listen: third.listen, self_registration: false };
+    let hub = HubFile {
+        id,
+        name: new.name,
+        public: third.public,
+        listen: third.listen,
+        self_registration: false,
+        dissolved: None,
+    };
     Store::create(to, &hub, &certificate, &secrets.to_bytes(), &book)?;
     Ok(report)
 }

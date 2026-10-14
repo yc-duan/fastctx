@@ -21,11 +21,11 @@ use crate::paint::{self, Row};
 use crate::text;
 
 pub enum Page {
-    World(world::WorldPage),
+    World(Box<world::WorldPage>),
     Project(Box<project::ProjectPage>),
     Talk(Box<talk::TalkPage>),
     Journal(Box<journal::JournalPage>),
-    Machines(machines::MachinesPage),
+    Machines(Box<machines::MachinesPage>),
     Form(Box<form::FormPage>),
 }
 
