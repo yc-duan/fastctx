@@ -202,14 +202,14 @@
   display: none;
 }
 
-/* On a touch screen the latest turn's actions stay; an earlier turn's come
-   up from the bottom when its words are held. */
+/* On a touch screen every answer keeps its actions under it; the user's
+   own words carry none, and held, theirs float up beside them. */
 @media (hover: none) {
   .turn-acts {
     opacity: 1;
   }
 
-  .turn-acts:not(.latest) {
+  .user-acts {
     display: none;
   }
 
@@ -242,49 +242,6 @@
     width: 20px;
     height: 20px;
   }
-}
-
-.act-sheet-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  background: rgba(0, 0, 0, 0.36);
-  animation: sheet-scrim var(--fold) ease both;
-}
-
-.act-sheet {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 41;
-  display: flex;
-  flex-direction: column;
-  padding: var(--space-2) var(--space-3) calc(var(--space-4) + var(--safe-bottom));
-  border-radius: var(--radius-l) var(--radius-l) 0 0;
-  background: var(--bg-elevated);
-  box-shadow: var(--shadow-pop);
-  animation: sheet-rise var(--fold) var(--fold-easing) both;
-}
-
-.act-sheet button {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-height: 48px;
-  padding: 0 var(--space-3);
-  border-radius: var(--radius-m);
-  color: var(--text);
-  font-size: var(--size-ui);
-  text-align: left;
-}
-
-.act-sheet button:active {
-  background: var(--hairline);
-}
-
-.act-sheet button .glyph {
-  color: var(--text-2);
 }
 
 @keyframes sheet-rise {
@@ -668,20 +625,6 @@
   /* The view keeps the reader's place itself, as blocks near them are
      drawn and let go (`view.ts`). */
   overflow-anchor: none;
-}
-
-.act-sheet-info {
-  margin: var(--space-2) var(--space-3) 0;
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.turn-info-rows {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  column-gap: var(--space-3);
-  row-gap: 4px;
-  color: var(--text);
 }
 
 /* A stretch's line under way: the step in hand fades in where the last was. */

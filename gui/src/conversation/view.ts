@@ -29,7 +29,7 @@
 // quiet line on the left; what was done to a turn (copy, ask again, fork)
 // appears only once the turn is over.
 
-import { layerOpened } from "../app/back";
+import { ActsMenu } from "../app/acts-menu";
 import type { AgentActivity, Content, Health, MachineName, Notice, Speaker, Tool, TurnEnd } from "../world/events";
 import { STOPPED_BY_USER } from "../world/events";
 import type { Attachment } from "../world/attachments";
@@ -186,6 +186,9 @@ function focusSaid(focus: Focus, words: Words): string {
   return items.length ? words.focusChanged(items.join(words.listSeparator)) : words.focusCleared;
 }
 
+
+/** The menu the user's words raise when held on a touch screen. */
+const heldMenu = new ActsMenu();
 export class ConversationView {
   private openRows = new Set<string>();
   private openStretches = new Set<string>();
@@ -298,15 +301,17 @@ export class ConversationView {
       if (!free?.value.trim()) return;
       for (const option of free.closest("fieldset")?.querySelectorAll<HTMLElement>("[data-question-pick]") ?? []) option.setAttribute("aria-pressed", "false");
     });
-    // On a touch screen, holding an earlier turn's words brings its actions
-    // up from the bottom; the latest turn's are already there.
+    // On a touch screen every answer has its actions under it; the user's
+    // own words have none shown, and held, their two float up beside them.
     root.addEventListener("contextmenu", (event) => {
       if (!this.own(event) || !matchMedia("(hover: none)").matches) return;
-      const block = (event.target as HTMLElement).closest<HTMLElement>(".block");
-      const acts = block?.querySelector<HTMLElement>(".turn-acts:not(.latest)");
-      if (!acts || (event.target as HTMLElement).closest("a, button, input, textarea, pre")) return;
+      const target = event.target as HTMLElement;
+      const block = target.closest<HTMLElement>(".block");
+      const acts = block?.querySelector<HTMLElement>(".user-acts");
+      const bubble = block?.querySelector<HTMLElement>(".bubble");
+      if (!acts || !bubble || target.closest("a, button, input, textarea, pre")) return;
       event.preventDefault();
-      this.sheet(acts);
+      this.heldMenu(bubble, acts);
     });
     // Enter in an answer's field answers, as the card's first button would.
     root.addEventListener("keydown", (event) => {
@@ -1193,34 +1198,19 @@ export class ConversationView {
 
   /** A turn's actions as a sheet risen from the bottom, each with its
    *  name: a press does what the mark beside the turn would. */
-  private sheet(acts: HTMLElement): void {
-    const scrim = document.createElement("div");
-    scrim.className = "act-sheet-scrim";
-    const sheet = document.createElement("div");
-    sheet.className = "act-sheet";
-    sheet.setAttribute("role", "menu");
-    const close = () => {
-      scrim.remove();
-      sheet.remove();
-    };
-    for (const original of acts.querySelectorAll<HTMLElement>("button.turn-icon")) {
-      if (getComputedStyle(original).display === "none") continue;
-      const item = document.createElement("button");
-      item.type = "button";
-      item.setAttribute("role", "menuitem");
-      item.innerHTML = `${original.innerHTML}<span>${escape(original.getAttribute("aria-label") ?? "")}</span>`;
-      item.addEventListener("click", () => {
-        close();
-        original.click();
-      });
-      sheet.append(item);
-    }
-    // What the turn took, its rows as the info card has them.
-    const card = acts.querySelector<HTMLElement>(".turn-info-card");
-    if (card) sheet.insertAdjacentHTML("beforeend", `<div class="act-sheet-info turn-info-rows">${card.innerHTML}</div>`);
-    scrim.addEventListener("click", close);
-    document.body.append(scrim, sheet);
-    layerOpened({ isOpen: () => sheet.isConnected, close });
+  /** The user's words held on a touch screen: their actions as a small
+   *  menu beside them, each doing what its mark does. */
+  private heldMenu(bubble: HTMLElement, acts: HTMLElement): void {
+    const buttons = [...acts.querySelectorAll<HTMLButtonElement>("button.turn-icon")];
+    const shown = buttons.filter((button) => !(button.dataset.needs && !this.root.classList.contains(`can-${button.dataset.needs}`)));
+    if (!shown.length) return;
+    heldMenu.open(
+      bubble,
+      "",
+      shown.map((button, index) => ({ act: String(index), icon: button.dataset.copy !== undefined ? "copy" : "edit", label: button.getAttribute("aria-label") ?? "" })),
+      (act) => shown[Number(act)]?.click(),
+      true,
+    );
   }
 
   /** The user chose in a card: an option is marked, an answer is sent. */
