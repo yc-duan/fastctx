@@ -1027,6 +1027,31 @@
   margin-left: 0;
 }
 
+/* The way to the whole, full screen, at the end of the foot: always
+   there, quiet, covering no line of the text. */
+.io-foot .long-text-full {
+  position: static;
+  align-self: center;
+  width: 28px;
+  height: 28px;
+  margin: -4px -6px -4px auto;
+  background: transparent;
+  opacity: 1;
+}
+
+.io-foot .io-end + .long-text-full {
+  margin-left: calc(-1 * var(--space-2));
+}
+
+@media (hover: none) {
+  .io-foot .long-text-full {
+    width: 36px;
+    height: 36px;
+    margin-top: -8px;
+    margin-bottom: -8px;
+  }
+}
+
 .io-end.nonzero {
   color: var(--wrong);
 }

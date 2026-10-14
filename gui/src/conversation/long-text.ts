@@ -72,6 +72,7 @@ export class LongText {
   private full = false;
   private readonly more = document.createElement("button");
   private readonly box = document.createElement("div");
+  private corner: HTMLButtonElement | null = null;
   private unsubscribe: () => void = () => {};
 
   constructor(
@@ -93,6 +94,7 @@ export class LongText {
     const viewerWords: ViewerWords = { ...(words.english ? englishViewer : chineseViewer), ...(words.failed ? { failed: words.failed } : {}) };
     this.box.className = "long-text-box";
     const corner = document.createElement("button");
+    this.corner = corner;
     corner.type = "button";
     corner.className = "long-text-full";
     corner.title = words.full;
@@ -138,6 +140,15 @@ export class LongText {
     if (!this.viewport) return null;
     this.more.remove();
     return this.more;
+  }
+
+  /** The button that opens the whole full screen, out of the box's corner,
+   *  for the caller to put on that same line, where it covers no line of
+   *  the text. */
+  takeFull(): HTMLElement | null {
+    if (!this.corner) return null;
+    this.corner.remove();
+    return this.corner;
   }
 
   private get length(): number {

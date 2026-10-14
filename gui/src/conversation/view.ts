@@ -2126,6 +2126,12 @@ export class ConversationView {
         holder.append(long.element);
         const more = long.takeMore();
         if (more) foot.append(more);
+        const full = long.takeFull();
+        if (full) {
+          if (end) foot.insertAdjacentHTML("beforeend", end);
+          end = "";
+          foot.append(full);
+        }
       }
       if (pictures) holder.insertAdjacentHTML("beforeend", `<div class="io-pictures">${pictures}</div>`);
       if (end) foot.insertAdjacentHTML("beforeend", end);
