@@ -71,6 +71,8 @@ export class Palette {
       }
     });
     addEventListener("keydown", (event) => {
+      // A managed machine's one page has nowhere else to go.
+      if (document.querySelector(".shell.alone")) return;
       if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "k") {
         event.preventDefault();
         if (this.dialog.open) this.dialog.close();
