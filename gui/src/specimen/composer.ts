@@ -80,7 +80,9 @@ export function specimenComposer(who: Address, busy: () => boolean, queued: stri
         case "send": {
           if (mutation.epoch !== snapshot.draft.epoch) return Promise.reject(new Error("this draft was already sent; keep your local edit and apply it to the new epoch"));
           const next = empty(snapshot.draft.epoch + 1);
-          if (busy() || snapshot.queue.length) {
+          // As the node does: words wait only while the agent works or
+          // others are on their way.
+          if (busy() || snapshot.awaiting_turn || snapshot.queue.some((one) => one.sending)) {
             serial += 1;
             const item: ComposerQueued = { id: `q-${serial}`, from: who.machine, draft: snapshot.draft, editing: false, sending: false, error: null };
             return Promise.resolve(changed({ draft: next, queue: [...snapshot.queue, item] }));

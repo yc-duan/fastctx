@@ -62,6 +62,15 @@ pub(super) async fn dispatch(node: &Arc<Node>, id: &ResidentId, flight: Flight) 
             }
             next.retire_unobserved(&flight.entry);
         }
+        // Words sent straight on, the agent idle, never waited: ones that
+        // could not go come back to the input rather than into the queue,
+        // and the reason goes to the device that sent them.
+        Err(_) if flight.straight() => {
+            if let Some(position) = next.queue.iter().position(|e| e.id == flight.entry) {
+                let entry = next.queue.remove(position);
+                next.draft.take_back(entry.document, crate::speech::new_id("back").as_str());
+            }
+        }
         Err(error) => {
             if let Some(entry) = next.queue.iter_mut().find(|e| e.id == flight.entry) {
                 entry.error = Some(error.message.clone());

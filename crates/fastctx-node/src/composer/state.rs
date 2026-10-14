@@ -75,6 +75,29 @@ impl Document {
         );
         Ok(())
     }
+
+    /// Takes back words that could not go: they come before whatever was
+    /// typed since, on a line of their own, with their files. `line` names
+    /// the line break put between them, a fresh operation of the node's.
+    pub fn take_back(&mut self, words: Document, line: &str) {
+        let mut back: Vec<Atom> = words.atoms.into_iter().filter(|atom| !atom.deleted).collect();
+        let typed = self.atoms.iter().any(|atom| !atom.deleted);
+        if typed && back.last().is_some_and(|atom| atom.character.text != "\n") {
+            back.push(Atom {
+                character: Character { id: CharacterId { operation: line.into(), index: 0 }, text: "\n".into() },
+                deleted: false,
+            });
+        }
+        self.atoms.splice(0..0, back);
+        for attachment in words.attachments {
+            if !self.attachments.iter().any(|kept| kept.id == attachment.id) {
+                self.attachments.push(attachment);
+            }
+        }
+        if self.files_on.is_none() {
+            self.files_on = words.files_on;
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -96,6 +119,15 @@ pub struct Flight {
     pub idle_only: bool,
     #[serde(default)]
     pub files_on: Option<fastctx_types::access::Written>,
+}
+
+impl Flight {
+    /// Sent as the user sent it, the agent idle and nothing on its way
+    /// before it: these words never waited. A queued message sent at once
+    /// is not idle-only, and the queue's own release is automatic.
+    pub fn straight(&self) -> bool {
+        !self.automatic && self.idle_only
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -129,13 +161,23 @@ impl Stored {
         }
     }
 
+    /// Whether these words are on their way as sent straight on.
+    fn going_straight(&self, id: &NoticeId) -> bool {
+        self.sending.iter().chain(self.pending.iter()).any(|flight| &flight.entry == id && flight.straight())
+    }
+
     pub fn view(&self) -> Composer {
         Composer {
             revision: self.revision,
             draft: self.draft.view(),
+            // Words sent straight on are not shown waiting while they go:
+            // the device that sent them shows them in the conversation.
+            // Ones a turn begun meanwhile keeps out stay in the queue, shown
+            // from then on; ones that fail go back to the input.
             queue: self
                 .queue
                 .iter()
+                .filter(|entry| !self.going_straight(&entry.id))
                 .map(|entry| Queued {
                     id: entry.id.clone(),
                     from: entry.from.clone(),

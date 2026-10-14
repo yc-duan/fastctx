@@ -787,7 +787,7 @@ export class ConversationPage {
     // While the shared input is not connected, the words wait here, shown
     // as waiting to send; the node says once they go whether they queue.
     const connected = session.state.connected;
-    const queued = connected && (conversation.busy() || !!draft?.queue.length || !!draft?.awaiting_turn);
+    const queued = connected && this.queues();
     const shown = (draft?.draft.attachments ?? []).map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null }));
     const key = queued ? null : conversation.sending(text, here || null, shown);
     if (key && !connected) conversation.sent(key, { state: "waiting", why: session.state.error?.message ?? "" });
@@ -840,11 +840,22 @@ export class ConversationPage {
       },
       (error: unknown) => {
         const why = error instanceof Error ? error.message : String(error);
-        if (key) conversation.sent(key, { state: "failed", why });
-        else this.say(this.options.words.notSent(why), why, true);
+        // Words that did not go are where the node keeps them, back in the
+        // input or still in the queue: they leave the conversation, and the
+        // reason is said by the input.
+        if (key) conversation.unsend(key);
+        this.say(this.options.words.notSent(why), why, true);
         this.update();
       },
     );
+  }
+
+  /** Whether words sent now wait in the queue: only while the agent works,
+   *  a turn just released has not ended, or other words are on their way,
+   *  as the node decides; with it idle they go straight on. */
+  private queues(): boolean {
+    const composer = this.sharedState?.composer;
+    return this.options.conversation.busy() || !!composer?.awaiting_turn || !!composer?.queue.some((item) => item.sending);
   }
 
   private toggleDetails(open: boolean): void {
@@ -1831,7 +1842,7 @@ export class ConversationPage {
     const busy = conversation.busy();
     const stop = !typed && busy;
     this.action.innerHTML = glyph(stop ? "stop" : "send", 18);
-    const waits = busy || this.released !== null || !!this.sharedState?.composer.queue.length;
+    const waits = this.released !== null || (this.session ? this.queues() : busy);
     const label = stop ? words.stop : typed && waits ? words.queue.queue : words.send;
     this.action.setAttribute("aria-label", label);
     this.action.title = label;
