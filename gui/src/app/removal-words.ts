@@ -6,6 +6,11 @@ import { enProblems, failure, zhProblems } from "./problem";
 
 export interface RemovalWords {
   title: string;
+  /** The three steps: choosing a way, seeing what it does, doing it. */
+  stages: [string, string, string];
+  back: string;
+  /** How many of the steps are done, of all. */
+  count(done: number, all: number): string;
   /** The settings' row that opens the uninstall dialog. */
   open: string;
   keep: string;
@@ -82,6 +87,9 @@ export function groupOf(kind: string): RemovalGroup {
 
 export const zhRemoval: RemovalWords = {
   title: "卸载",
+  stages: ["选择", "确认", "移除"],
+  back: "返回",
+  count: (done, all) => `${done} / ${all}`,
   open: "卸载 Fastctx",
   keep: "保留数据",
   keepWhat: "重新安装后继续使用",
@@ -168,6 +176,9 @@ export const zhRemoval: RemovalWords = {
 
 export const enRemoval: RemovalWords = {
   title: "Uninstall",
+  stages: ["Choose", "Check", "Remove"],
+  back: "Back",
+  count: (done, all) => `${done} / ${all}`,
   open: "Uninstall Fastctx",
   keep: "Keep data",
   keepWhat: "Pick up where you left off after reinstalling",

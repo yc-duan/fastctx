@@ -1,18 +1,93 @@
-/* Taking fastctx off this computer (removal.ts): the two ways as the
-   welcome page's slips, the chosen one a shade deeper; what goes and what
-   stays as solid chips; the list ticked off in pencil as the steps are
-   done. */
+/* Taking fastctx off this computer (removal.ts), in three steps: the two
+   ways as the welcome page's slips; the way chosen, small, over what goes
+   and what stays as solid chips; the list ticked off in pencil as the steps
+   are done. Each step takes the place of the one before, in a dialog of
+   one height: what may run long is in a frame of its own that scrolls. */
 
-.removal-ways {
-  margin-top: var(--space-2);
+.removal-stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  height: min(460px, 64vh);
+  overflow-y: auto;
 }
 
-.removal-way.chosen {
+/* The first step is the two slips as they are, before the dialog takes its
+   one height. */
+.removal-stage.choosing {
+  height: auto;
+}
+
+.removal-stage > .removal-ways {
+  margin: 0;
+}
+
+.removal-chosen {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-2);
+  border-radius: var(--radius-m);
   background: var(--accent-wash);
 }
 
-.removal-way.erase.chosen {
+.removal-chosen.erase {
   background: color-mix(in srgb, var(--wrong) 20%, transparent);
+}
+
+.removal-chosen .welcome-way-mark {
+  flex: none;
+  width: 60px;
+  margin: 0;
+}
+
+.removal-chosen-words {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.removal-chosen-title {
+  font-family: var(--font-emphasis);
+  font-size: var(--size-ui);
+  color: var(--text-strong);
+}
+
+.removal-chosen-what {
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+/* What may run long, framed, filling what the step leaves: the full list,
+   the steps being ticked. */
+.removal-frame {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 96px;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  scroll-behavior: smooth;
+}
+
+.removal-frame .removal-head {
+  margin-top: var(--space-2);
+}
+
+/* Over the steps being ticked: what is happening, and how far along. */
+.removal-tally {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.removal-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
 }
 
 /* On a narrow screen each way is a row: its drawing beside its words. */
@@ -33,18 +108,13 @@
   }
 }
 
-.removal-way:disabled {
-  opacity: 0.45;
-  transform: none;
-  box-shadow: none;
-}
-
 .removal-plan {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   align-items: flex-start;
   gap: var(--space-3);
-  margin-top: var(--space-4);
+  min-height: 0;
   animation: removal-rise 0.28s cubic-bezier(0.33, 1, 0.68, 1);
 }
 
@@ -201,7 +271,8 @@
   justify-content: flex-end;
   gap: var(--space-2);
   width: 100%;
-  margin-top: var(--space-2);
+  margin-top: auto;
+  padding-top: var(--space-2);
 }
 
 .removal-admin {
@@ -256,7 +327,7 @@
 }
 
 .removal-said {
-  margin: var(--space-3) 0 0;
+  margin: 0;
   font-size: var(--size-small);
   color: var(--text-3);
 }
@@ -272,8 +343,7 @@
   stroke-dashoffset: 0;
 }
 
-/* The uninstall dialog: wide enough for its two slips side by side, and
-   tall content scrolls inside it rather than past the screen. */
+/* The uninstall dialog: wide enough for its two slips side by side. */
 .removal-sheet {
   margin-top: 8vh;
 }

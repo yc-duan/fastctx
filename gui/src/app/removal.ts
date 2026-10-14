@@ -1,12 +1,15 @@
-// Taking fastctx off this computer, from the settings (`world-gui.md`, 设置):
-// two ways, each a slip with its own small drawing; choosing one shows what
-// goes and what stays, grouped, with the full list a press away; a hub this
-// computer keeps is said plainly and its World's name typed to go on; then
-// each step is ticked off as it is done, and World closes and uninstalls
-// itself.
+// Taking fastctx off this computer, from the settings (`world-gui.md`, 设置),
+// in three steps under one line of them, each taking the place of the one
+// before rather than growing under it: two ways, each a slip with its own
+// small drawing; then what the way chosen takes and what it keeps, grouped,
+// with the full list a press away in a frame of its own; a hub this computer
+// keeps is said plainly and its World's name typed to go on; then every step
+// listed at once and ticked off in place as it is done, and World closes and
+// uninstalls itself.
 
 import { escape } from "../conversation/prose";
 import type { RemovalEvent, RemovalItem, RemovalPlan } from "../world/bridge";
+import { progressSteps } from "./progress-steps";
 import { groupOf, type RemovalGroup, type RemovalWords } from "./removal-words";
 
 /** What the page needs of the shell to remove fastctx here. */
@@ -35,6 +38,10 @@ export class RemovalSection {
    *  the pressed button it removes as a focusout without a related target,
    *  synchronously inside the rewrite; that is not the reader moving on. */
   private drawing = false;
+  /** The drawings already drawn in: the dialog is drawn again on every
+   *  change, and a drawing seen once stays drawn rather than being drawn in
+   *  anew each time. */
+  private readonly drawn = new Set<string>();
 
   constructor(
     private readonly host: HTMLElement,
@@ -160,7 +167,8 @@ export class RemovalSection {
       });
   }
 
-  /** Marks one step in place, so the rest of the list does not move. */
+  /** Marks one step in place, so the rest of the list does not move; the
+   *  count follows, and the frame keeps the step after it in view. */
   private tick(step: string): void {
     if (this.state.at !== "running") return;
     const row = this.host.querySelector<HTMLElement>(`[data-step="${CSS.escape(step)}"]`);
@@ -169,26 +177,24 @@ export class RemovalSection {
     row.dataset.result = result.result;
     row.querySelector(".removal-mark")!.innerHTML = mark(result.result);
     if (result.why) row.title = result.why;
+    const count = this.host.querySelector<HTMLElement>(".removal-count");
+    if (count) count.textContent = this.words.count(this.state.results.size, this.state.plan.steps.length);
+    const frame = this.host.querySelector<HTMLElement>(".removal-frame");
+    const next = (row.nextElementSibling as HTMLElement | null) ?? row;
+    if (frame && next.offsetTop + next.offsetHeight > frame.scrollTop + frame.clientHeight) frame.scrollTop = next.offsetTop + next.offsetHeight - frame.clientHeight;
   }
 
   private draw(): void {
     const { words } = this;
     const state = this.state;
-    const chosen = state.at === "choose" ? null : state.at === "planning" || state.at === "unlisted" ? state.everything : state.plan.everything;
-    const locked = state.at === "running" || state.at === "finished" || state.at === "finishing";
-    const way = (everything: boolean) => {
-      const [act, title, what, more, drawing] = everything
-        ? ["erase", words.erase, words.eraseWhat, words.eraseMore, eraseMark()]
-        : ["keep", words.keep, words.keepWhat, words.keepMore, keepMark()];
-      const on = chosen === everything;
-      return `<button class="welcome-way removal-way${on ? " chosen" : ""}${everything ? " erase" : ""}" type="button" data-removal="${act}" aria-pressed="${on}" title="${escape(more)}"${locked && !on ? " disabled" : ""}>${drawing}<span class="welcome-way-title">${escape(title)}</span><span class="welcome-way-what">${escape(what)}</span></button>`;
-    };
+    const step = state.at === "choose" ? 0 : state.at === "planning" || state.at === "unlisted" || state.at === "plan" ? 1 : state.at === "running" ? 2 : 3;
     this.drawing = true;
     try {
-      this.host.innerHTML = `<div class="welcome-ways removal-ways">${way(false)}${way(true)}</div>${this.body()}`;
+      this.host.innerHTML = `${progressSteps(words.stages, step, words.title)}<div class="removal-stage${step === 0 ? " choosing" : ""}">${this.body()}</div>`;
     } finally {
       this.drawing = false;
     }
+    for (const drawing of this.host.querySelectorAll<SVGElement>("[data-drawing]")) this.drawn.add(drawing.dataset.drawing!);
     const name = this.host.querySelector<HTMLInputElement>("[data-removal-name]");
     if (name && state.at === "plan") name.value = state.typed;
   }
@@ -196,57 +202,90 @@ export class RemovalSection {
   private body(): string {
     const { words } = this;
     const state = this.state;
+    const back = `<button class="text-button" type="button" data-removal="cancel">${escape(words.back)}</button>`;
     switch (state.at) {
       case "choose":
-        return "";
+        return `<div class="welcome-ways removal-ways">${this.way(false)}${this.way(true)}</div>`;
       case "planning":
-        return `<p class="removal-said">${escape(words.planning)}</p>`;
+        return `${this.chosen(state.everything)}<p class="removal-said">${escape(words.planning)}</p>`;
       case "unlisted":
-        return `<p class="removal-said removal-wrong" title="${escape(state.why)}">${escape(words.failed(state.why))}</p>`;
+        return `${this.chosen(state.everything)}<p class="removal-said removal-wrong" title="${escape(state.why)}">${escape(words.failed(state.why))}</p><div class="removal-go">${back}</div>`;
       case "plan": {
         const { plan } = state;
         const admin = plan.steps.some((step) => step.admin);
         const hub = plan.everything && plan.hub;
-        return `<div class="removal-plan">
-          <div class="removal-columns">
-            ${this.column(words.goes, plan.steps, "goes")}
-            ${plan.keeps.length ? this.column(words.stays, plan.keeps, "stays") : ""}
-          </div>
-          ${hub ? `<p class="removal-warn">${escape(words.hubWarn(plan.hub!.name))}</p>` : ""}
-          ${plan.other ? `<p class="removal-note">${escape(words.other(plan.other.path, plan.other.version))}</p>` : ""}
+        // The full list takes the overview's place, so the step keeps its
+        // height and its foot.
+        const overview = state.open
+          ? `<div class="removal-frame"><h3 class="removal-head">${escape(words.goes)}</h3>${this.list(plan.steps, null)}${plan.keeps.length ? `<h3 class="removal-head">${escape(words.stays)}</h3>${this.list(plan.keeps, null)}` : ""}</div>`
+          : `<div class="removal-columns">
+              ${this.column(words.goes, plan.steps, "goes")}
+              ${plan.keeps.length ? this.column(words.stays, plan.keeps, "stays") : ""}
+            </div>
+            ${hub ? `<p class="removal-warn">${escape(words.hubWarn(plan.hub!.name))}</p>` : ""}
+            ${plan.other ? `<p class="removal-note">${escape(words.other(plan.other.path, plan.other.version))}</p>` : ""}`;
+        return `${this.chosen(plan.everything)}<div class="removal-plan">
+          ${overview}
           <button class="text-button removal-toggle" type="button" data-removal="list" aria-expanded="${state.open}">${escape(state.open ? words.hideList : words.list)}</button>
-          ${state.open ? `<h3 class="removal-head">${escape(words.goes)}</h3>${this.list(plan.steps, null)}${plan.keeps.length ? `<h3 class="removal-head">${escape(words.stays)}</h3>${this.list(plan.keeps, null)}` : ""}` : ""}
-          <div class="removal-go">
-            ${hub ? `<input class="removal-name" data-removal-name type="text" spellcheck="false" autocomplete="off" placeholder="${escape(words.typeName(plan.hub!.name))}" aria-label="${escape(words.typeName(plan.hub!.name))}">` : ""}
-            ${admin ? `<span class="removal-admin">${escape(words.admin)}</span>` : ""}
-            <button class="text-button" type="button" data-removal="cancel">${escape(words.cancel)}</button>
-            <button class="removal-button${state.armed ? " armed" : ""}" type="button" data-removal="go"${this.nameTyped(state) ? "" : " disabled"}>${escape(state.armed ? words.again : plan.everything ? words.goErase : words.go)}</button>
-          </div>
+        </div>
+        <div class="removal-go">
+          ${hub ? `<input class="removal-name" data-removal-name type="text" spellcheck="false" autocomplete="off" placeholder="${escape(words.typeName(plan.hub!.name))}" aria-label="${escape(words.typeName(plan.hub!.name))}">` : ""}
+          ${admin ? `<span class="removal-admin">${escape(words.admin)}</span>` : ""}
+          ${back}
+          <button class="removal-button${state.armed ? " armed" : ""}" type="button" data-removal="go"${this.nameTyped(state) ? "" : " disabled"}>${escape(state.armed ? words.again : plan.everything ? words.goErase : words.go)}</button>
         </div>`;
       }
       case "running":
-        return `<div class="removal-plan"><p class="removal-said">${escape(words.running)}</p>${this.list(state.plan.steps, state.results)}</div>`;
+        return `${this.tally(words.running, state.results.size, state.plan.steps.length)}<div class="removal-frame">${this.list(state.plan.steps, state.results)}</div>`;
       case "finished": {
         const failed = state.left.length > 0 || state.error !== null || [...state.results.values()].some((r) => r.result === "failed");
-        return `<div class="removal-plan">
-          ${this.list(state.plan.steps, state.results)}
+        return `${this.tally(failed ? words.left : words.allDone, state.results.size, state.plan.steps.length, failed)}
           ${state.error ? `<p class="removal-said removal-wrong" title="${escape(state.error)}">${escape(words.failedRun(state.error))}</p>` : ""}
-          ${
-            state.left.length
-              ? `<h3 class="removal-head">${escape(words.left)}</h3><ul class="removal-left">${state.left
-                  .map((item) => `<li><span>${escape(this.words.kinds[item.kind] ?? item.what)}</span>${item.where ? `<code>${escape(item.where)}</code>` : ""}<span class="removal-why" title="${escape(item.why)}">${escape(this.words.leftWhy[item.kind] ?? this.words.unfinished)}</span></li>`)
-                  .join("")}</ul>`
-              : ""
-          }
-          <div class="removal-go">
-            <span class="removal-admin">${escape(failed ? words.finishWhat : `${words.allDone} · ${words.finishWhat}`)}</span>
-            <button class="removal-button" type="button" data-removal="finish">${escape(words.finish)}</button>
+          <div class="removal-frame">
+            ${
+              state.left.length
+                ? `<ul class="removal-left">${state.left
+                    .map((item) => `<li><span>${escape(this.words.kinds[item.kind] ?? item.what)}</span>${item.where ? `<code>${escape(item.where)}</code>` : ""}<span class="removal-why" title="${escape(item.why)}">${escape(this.words.leftWhy[item.kind] ?? this.words.unfinished)}</span></li>`)
+                    .join("")}</ul>`
+                : ""
+            }
+            ${this.list(state.plan.steps, state.results)}
           </div>
-        </div>`;
+          <div class="removal-go">
+            <span class="removal-admin">${escape(words.finishWhat)}</span>
+            <button class="removal-button" type="button" data-removal="finish">${escape(words.finish)}</button>
+          </div>`;
       }
       case "finishing":
-        return `<div class="removal-plan"><p class="removal-said${state.error ? " removal-wrong" : ""}">${escape(state.error ?? words.finishing)}</p></div>`;
+        return `<p class="removal-said${state.error ? " removal-wrong" : ""}">${escape(state.error ?? words.finishing)}</p>`;
     }
+  }
+
+  /** One of the two ways, as a slip with its drawing. */
+  private way(everything: boolean): string {
+    const { words } = this;
+    const [act, title, what, more] = everything ? ["erase", words.erase, words.eraseWhat, words.eraseMore] : ["keep", words.keep, words.keepWhat, words.keepMore];
+    const drawing = this.drawnOnce(act, everything ? eraseMark() : keepMark());
+    return `<button class="welcome-way removal-way${everything ? " erase" : ""}" type="button" data-removal="${act}" title="${escape(more)}">${drawing}<span class="welcome-way-title">${escape(title)}</span><span class="welcome-way-what">${escape(what)}</span></button>`;
+  }
+
+  /** The way chosen, small, over what it does: its drawing and its words. */
+  private chosen(everything: boolean): string {
+    const { words } = this;
+    const [title, what] = everything ? [words.erase, words.eraseWhat] : [words.keep, words.keepWhat];
+    const drawing = this.drawnOnce(everything ? "chosen-erase" : "chosen-keep", everything ? eraseMark() : keepMark());
+    return `<div class="removal-chosen${everything ? " erase" : ""}">${drawing}<span class="removal-chosen-words"><span class="removal-chosen-title">${escape(title)}</span><span class="removal-chosen-what">${escape(what)}</span></span></div>`;
+  }
+
+  /** A drawing named `key`: drawn in the first time it shows, drawn already
+   *  every time after. */
+  private drawnOnce(key: string, svg: string): string {
+    return svg.replace('class="welcome-way-mark"', `class="welcome-way-mark${this.drawn.has(key) ? " drawn" : ""}" data-drawing="${key}"`);
+  }
+
+  /** Over the list being ticked: what is happening, and how far it is. */
+  private tally(said: string, done: number, all: number, wrong = false): string {
+    return `<div class="removal-tally"><span class="removal-tally-said${wrong ? " removal-wrong" : ""}">${escape(said)}</span><span class="removal-count">${escape(this.words.count(done, all))}</span></div>`;
   }
 
   /** What goes, or stays, as a slip per group, each listing its items when
