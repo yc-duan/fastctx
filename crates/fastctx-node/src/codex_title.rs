@@ -52,7 +52,18 @@ pub(crate) fn maybe(node: &Arc<Node>, id: &ResidentId, about: &About) {
     let (node, id) = (node.clone(), id.clone());
     tokio::spawn(async move {
         match codex.make_title(&thread, &words).await {
-            Ok(Some(title)) => node.log.line(format_args!("named {id} {title:?}")),
+            // Named by the user, or by its host, while the title was being
+            // made: that name stays.
+            Ok(Some(_)) if node.residents.now(&id).is_some_and(|now| now.title.is_some()) => {
+                node.log.line(format_args!("{id} was named while its title was made; the title is not used"));
+            }
+            Ok(Some(title)) => match codex.rename(&thread, &title).await {
+                Ok(()) => node.log.line(format_args!("named {id} {title:?}")),
+                Err(error) => {
+                    STARTED.lock().expect("never poisoned").remove(&id);
+                    node.log.line(format_args!("naming {id} {title:?} failed: {error}"));
+                }
+            },
             Ok(None) => node.log.line(format_args!("no title was made for {id}")),
             Err(error) => {
                 // A failed try does not come again on its own, but a later

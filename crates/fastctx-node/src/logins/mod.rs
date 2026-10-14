@@ -217,7 +217,8 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
                 programs: if default { (0..side.programs.len() as u32).collect() } else { Vec::new() },
                 integration,
                 unattended,
-                auto_title: agent == "codex" && kept.codex.titled.iter().any(|known| crate::homes::same_dir(known, dir)),
+                auto_title: agent == "codex"
+                    && kept.codex.titled.iter().any(|known| crate::homes::same_dir(known, dir)),
                 launcher: known.and_then(|login| login.launcher.clone()),
                 models,
                 change,
@@ -264,8 +265,6 @@ fn claude_reading(homes: &[AgentHome], dir: &Path, readings: &[(PathBuf, AgentLi
     }
 }
 
-/// The login `dir` of `agent` is one the World knows here, listed or a
-/// candidate; it must still be a directory.
 /// Turns the automatic naming of new conversations in a Codex login here on
 /// or off. Known only for Codex; a login the scan does not yet list is added
 /// to the record so the setting is kept.
@@ -293,6 +292,8 @@ pub(crate) fn codex_auto_title(node: &Node, dir: Option<&Path>) -> bool {
     kept.codex.titled.iter().any(|known| crate::homes::same_dir(known, dir))
 }
 
+/// The login `dir` of `agent` is one the World knows here, listed or a
+/// candidate; it must still be a directory.
 pub(crate) fn known(node: &Node, agent: &AgentName, dir: &Path) -> Result<(), Failure> {
     host(agent.as_str())?;
     let context = Context::of(node)?;

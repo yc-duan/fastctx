@@ -1,11 +1,12 @@
 //! A title for a new Codex thread, made the way the official client makes
 //! one (`world-agent-logins.md`, 在哪个登录里干活): once a conversation has
 //! its first words, a hidden thread that persists nothing and can touch
-//! nothing asks a cheap model for a short title, and the real thread is
-//! named with it. Nothing of the hidden thread is kept or shown; its turn's
-//! end comes back on a channel of its own (`State::title_waiters`), never to
-//! the node. The caller does this only when the login asks for it and the
-//! thread has no name yet.
+//! nothing asks a cheap model for a short title. Nothing of the hidden thread
+//! is kept or shown; its turn's end comes back on a channel of its own
+//! (`State::title_waiters`), never to the node. The caller asks only when the
+//! login wants it and the thread has no name yet, and names the thread with
+//! the title only if it still has none by then: the user may have named it
+//! while the title was being made.
 
 use std::sync::Arc;
 
@@ -34,10 +35,8 @@ const WITHIN: std::time::Duration = std::time::Duration::from_secs(30);
 const INSTRUCTIONS: &str = "Generate a concise, single-line task title of at most 36 characters and under five words where possible. Start with an imperative verb. Capitalize only the first word unless the user's language, proper nouns, acronyms, or code terms require otherwise. Preserve ticket references exactly. Write in the user's language. Do not use quotes, markdown, or trailing punctuation. Do not answer the request.";
 
 impl CodexHost {
-    /// Makes a title for `thread` from `user_text` and names the thread with
-    /// it when the model gives one, returning the title set. The caller has
-    /// seen that the thread has no name; it may have gained one since, so
-    /// the name is set only while it is still without.
+    /// Makes a title for `thread` from `user_text`; `None` when the model
+    /// gave none of the shape asked for. The thread is not named here.
     pub async fn make_title(self: &Arc<Self>, thread: &str, user_text: &str) -> Result<Option<String>, String> {
         let user_text = user_text.trim();
         if user_text.is_empty() {
@@ -46,11 +45,13 @@ impl CodexHost {
         let server = self.server().await?;
         let (model, cwd) = {
             let mut state = self.lock();
-            let entry = state.threads.entry(thread.to_string()).or_default();
-            let cwd = entry.spec.as_ref().map(|spec| spec.cwd.clone());
+            let (cwd, current) = state
+                .threads
+                .get(thread)
+                .map(|entry| (entry.spec.as_ref().map(|spec| spec.cwd.clone()), entry.model.clone()))
+                .unwrap_or_default();
             let lists_luna =
                 state.catalog.as_ref().is_some_and(|models| models.iter().any(|offer| offer.id == TITLE_MODEL));
-            let current = state.threads.get(thread).and_then(|entry| entry.model.clone());
             (if lists_luna { Some(TITLE_MODEL.to_string()) } else { current }, cwd)
         };
         let cwd = cwd.unwrap_or_else(|| self.workdir.clone());
@@ -79,9 +80,7 @@ impl CodexHost {
         // The hidden thread is let go however the turn went: with no
         // subscriber and no running turn, the app-server unloads it.
         let _ = server.request("thread/unsubscribe", json!({ "threadId": temp })).await;
-        let Some(title) = clean(&answer?) else { return Ok(None) };
-        server.request("thread/name/set", json!({ "threadId": thread, "name": title })).await?;
-        Ok(Some(title))
+        Ok(clean(&answer?))
     }
 
     /// Runs the one titling turn and waits for its end on a channel of its
