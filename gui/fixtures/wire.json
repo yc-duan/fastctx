@@ -15847,6 +15847,7 @@
                       1
                     ],
                     "integration": "in",
+                    "auto_title": true,
                     "launcher": {
                       "path": "C:/app/codex.exe",
                       "version": "0.162.0",
@@ -16173,6 +16174,7 @@
                 1
               ],
               "integration": "in",
+              "auto_title": true,
               "launcher": {
                 "path": "C:/app/codex.exe",
                 "version": "0.162.0",
@@ -16587,6 +16589,7 @@
                 1
               ],
               "integration": "in",
+              "auto_title": true,
               "launcher": {
                 "path": "C:/app/codex.exe",
                 "version": "0.162.0",
