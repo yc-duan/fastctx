@@ -47,6 +47,8 @@ pub struct Content {
     pub facts: String,
     pub text: String,
     pub stopped: bool,
+    /// Whether all of the content is shown.
+    pub whole: bool,
 }
 
 /// The six supported extensions, case insensitive.

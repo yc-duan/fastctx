@@ -231,7 +231,7 @@ impl Output {
             self.text.clear();
             self.stopped = true;
         }
-        Content { facts: self.facts, text: self.text, stopped: self.stopped }
+        Content { facts: self.facts, text: self.text, stopped: self.stopped, whole: false }
     }
 }
 fn notice(facts: &str, resume: &str) -> String {

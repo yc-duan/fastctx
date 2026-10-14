@@ -136,8 +136,9 @@ pub(crate) fn explore(
         }
     }
     whole.facts(spreadsheet::workbook_facts(workbook.sheets.len(), first, last, whole.stopped()));
-    let whole = whole.finish();
+    let mut whole = whole.finish();
     if !whole.stopped && whole.facts.len() + whole.text.len() <= whole_budget {
+        whole.whole = !whole.stopped;
         return Ok(whole);
     }
     head.facts(spreadsheet::workbook_facts(workbook.sheets.len(), 1, 1, true));

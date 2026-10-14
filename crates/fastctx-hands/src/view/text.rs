@@ -20,6 +20,7 @@ use super::{Options, Section, head, hex, plural};
 use crate::encoding::file::{Plan, content, excerpt, visit};
 pub(crate) use crate::text::visible;
 
+#[allow(clippy::too_many_arguments)]
 pub fn look(
     path: &Path,
     options: &Options,
@@ -27,6 +28,7 @@ pub fn look(
     mut file: File,
     start: Vec<u8>,
     metadata: &Metadata,
+    limits: super::explore::Limits,
 ) -> io::Result<(Section, Option<Seen>)> {
     file.rewind()?;
     let (plan, evidence_hash) = {
@@ -50,7 +52,7 @@ pub fn look(
         options.lines,
         options.chars,
     );
-    let mut exploring = options.exploring().then(|| super::explore::Exploring::new(path));
+    let mut exploring = options.exploring().then(|| super::explore::Exploring::new(path, limits));
     let mut labels = std::collections::BTreeSet::new();
     let mut readonly = false;
     let mut previous = None;
@@ -163,6 +165,7 @@ pub fn look(
         && options.chars.is_none()
         && !section.partial
         && !large;
+    section.whole = whole;
     let seen = Seen {
         path: path.to_string_lossy().into_owned(),
         at: Timestamp::now(),
@@ -210,7 +213,7 @@ pub(super) fn section(path: &Path, options: &Options, read: &Read, encoding_fact
     }
     let cost = text.len();
     let shown = read.shown_lines > 0 || read.cut.is_some() || read.total_lines == 0;
-    Section { text, cost, shown, partial: read.cut.is_some() || read.out_of_budget, failed: false }
+    Section { text, cost, shown, partial: read.cut.is_some() || read.out_of_budget, failed: false, whole: false }
 }
 
 /// Which characters of a line too long to show were shown.
@@ -366,6 +369,11 @@ impl Reader {
 
     pub(super) fn preview(budget: usize) -> Self {
         Self { preview: true, ..Self::new(budget, None, None) }
+    }
+
+    /// As `preview`, of the first `lines` lines only.
+    pub(super) fn preview_lines(budget: usize, lines: u64) -> Self {
+        Self { preview: true, ..Self::new(budget, Some((1, lines)), None) }
     }
 
     pub(super) fn take(&mut self, text: &str) {

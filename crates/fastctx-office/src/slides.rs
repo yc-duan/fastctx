@@ -80,8 +80,9 @@ pub(crate) fn explore(
         whole.update_header(header, &lines.facts(false));
     }
     whole.facts(count(total as u64, "slide"));
-    let whole = whole.finish();
+    let mut whole = whole.finish();
     if !whole.stopped && whole.facts.len() + whole.text.len() <= whole_budget {
+        whole.whole = !whole.stopped;
         return Ok(whole);
     }
     head.facts(format!("slides 1-{} of {total}", total.min(2)));

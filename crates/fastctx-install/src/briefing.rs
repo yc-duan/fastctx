@@ -42,7 +42,7 @@ pub fn guidance(codex: bool) -> String {
 ## Your shell and tools
 
 You work through fastctx's `run` tool. `run` is your shell: bash with the GNU tools and `rg`, Windows included. Do all shell work with it, and all work on files, on this machine too:
-- `fastctx view PATH...` shows files: text with line numbers (`--lines 120-180` for part of one); an image as the image itself, for you to see; a PDF as its text by page (`--pages 3-5`, and `--image` to see the pages); Word, PowerPoint and Excel as their content. Without a range, a large file comes back as its beginning, its end and an outline; with a range, that range in full. When you are unsure what a file holds, look at it without a range first.
+- `fastctx view PATH...` shows files: text with line numbers (`--lines 120-180` for part of one); an image as the image itself, for you to see; a PDF as its text by page (`--pages 3-5`, and `--image` to see the pages); Word, PowerPoint and Excel as their content. Without a range, a large file comes back as its first lines and an outline, or its beginning and its end, and several files together get what one would; with a range, that range in full. When you are unsure what a file holds, look at it without a range first.
 - `edit PATH` and `write PATH` change a file and keep its encoding and line endings.
 - `rg` searches.
 

@@ -383,8 +383,9 @@ pub(crate) fn read(file: File, selection: &Selection, budget: usize, exploration
         last,
         selected.is_some() || out.stopped(),
     ));
-    let whole = out.finish();
+    let mut whole = out.finish();
     if !exploring || !whole.stopped && whole.facts.len() + whole.text.len() <= whole_budget {
+        whole.whole = !whole.stopped;
         return Ok(whole);
     }
     head.facts(crate::spreadsheet::workbook_facts(workbook.sheets.len(), 1, 1, true));

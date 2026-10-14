@@ -83,6 +83,9 @@ pub struct Viewed {
 
 /// Shows every requested path and records whether any could not be read.
 pub fn view(paths: &[PathBuf], options: &Options, out: &mut impl Write) -> io::Result<Viewed> {
+    if options.exploring() && paths.len() > 1 {
+        return explore_several(paths, options, out);
+    }
     // The summary and the note each file gets when it is not shown are paid
     // for first: whatever happens, every path is named.
     let files = plural(paths.len() as u64, "file", "files");
@@ -99,7 +102,7 @@ pub fn view(paths: &[PathBuf], options: &Options, out: &mut impl Write) -> io::R
             note
         } else {
             // This file's own note is no longer needed if it is shown.
-            let (section, observed) = match look(path, options, left + note.cost) {
+            let (section, observed) = match look(path, options, left + note.cost, explore::Limits::alone()) {
                 Ok(result) => result,
                 Err(error) => (Section::error(path, options, &describe_error(&error)), None),
             };
@@ -113,12 +116,111 @@ pub fn view(paths: &[PathBuf], options: &Options, out: &mut impl Write) -> io::R
         sections.push(section);
     }
     let shown = sections.iter().filter(|section| section.shown).count();
+    let summary = (shown < paths.len())
+        .then(|| format!("=== view ({files}: {shown} shown, {} not shown) ===", paths.len() - shown));
+    write_answer(options, summary, sections, seen, out)
+}
+
+/// Several files looked at without a range: they share the one window a
+/// file gets before its content is known (`world-view.md`, 探索). Each first
+/// gets its sample, an equal share of the window; then the small ones are
+/// shown whole, smallest first, while the window holds them. An image has no
+/// part to sample: it is shown as itself, from the rest of the answer.
+fn explore_several(paths: &[PathBuf], options: &Options, out: &mut impl Write) -> io::Result<Viewed> {
+    let files = plural(paths.len() as u64, "file", "files");
+    let summary_at_longest =
+        format!("=== view ({files}: {n} shown whole, {n} in part, {n} not shown) ===\n", n = paths.len());
+    let answer =
+        bytes(if options.in_run { BUDGET - RUN_NOTES } else { BUDGET }).saturating_sub(summary_at_longest.len());
+    let images: Vec<bool> = paths.iter().map(|path| shows_image(path)).collect();
+    let sampled = images.iter().filter(|image| !**image).count();
+    let window = if sampled > 0 { explore::WHOLE.min(answer) } else { 0 };
+    let share = window / sampled.max(1);
+    let mut pictures = answer - window;
+    struct Planned {
+        part: (Section, Option<Seen>),
+        whole: Option<(Section, Option<Seen>)>,
+    }
+    let mut plans = Vec::new();
+    for (path, &image) in paths.iter().zip(&images) {
+        let note = not_shown(path, options);
+        let looked = |budget, limits| {
+            look(path, options, budget, limits)
+                .unwrap_or_else(|error| (Section::error(path, options, &describe_error(&error)), None))
+        };
+        if image {
+            let part = looked(pictures.max(note.cost), explore::Limits::alone());
+            pictures = pictures.saturating_sub(part.0.cost);
+            plans.push(Planned { part, whole: None });
+            continue;
+        }
+        let small = fastctx_platform::local_path(path)
+            .and_then(std::fs::metadata)
+            .is_ok_and(|metadata| metadata.len() <= explore::WHOLE as u64);
+        // A file that may fit whole is looked at whole first; a larger one
+        // only as a sample, read once.
+        let whole = if small {
+            let seen = looked(window, explore::Limits::alone());
+            seen.0.whole.then_some(seen)
+        } else {
+            None
+        };
+        let mut part = looked(share.max(note.cost), explore::Limits::share(share));
+        if part.0.whole || part.0.cost > share.max(note.cost) {
+            // What cannot be sampled within its share is named.
+            part = (note, None);
+        }
+        plans.push(Planned { part, whole });
+    }
+    let mut used: usize =
+        plans.iter().zip(&images).filter(|(_, image)| !**image).map(|(plan, _)| plan.part.0.cost).sum();
+    let mut order: Vec<usize> = (0..plans.len()).filter(|&i| plans[i].whole.is_some()).collect();
+    order.sort_by_key(|&i| plans[i].whole.as_ref().map_or(usize::MAX, |whole| whole.0.cost));
+    for i in order {
+        let (part, whole) = (plans[i].part.0.cost, plans[i].whole.as_ref().map_or(usize::MAX, |whole| whole.0.cost));
+        if used - part + whole <= window {
+            used = used - part + whole;
+            plans[i].part = plans[i].whole.take().expect("a whole file");
+        }
+    }
+    let whole = plans.iter().filter(|plan| plan.part.0.whole).count();
+    let not_shown = plans.iter().filter(|plan| !plan.part.0.shown).count();
+    let summary = (whole < paths.len()).then(|| {
+        format!(
+            "=== view ({files}: {whole} shown whole, {} in part, {not_shown} not shown) ===",
+            paths.len() - whole - not_shown
+        )
+    });
+    let mut sections = Vec::new();
+    let mut seen = Vec::new();
+    for plan in plans {
+        seen.extend(plan.part.1);
+        sections.push(plan.part.0);
+    }
+    write_answer(options, summary, sections, seen, out)
+}
+
+/// Whether `view` shows the file as an image, which it has no part of to
+/// sample.
+fn shows_image(path: &Path) -> bool {
+    let Ok(native) = fastctx_platform::local_path(path) else { return false };
+    let Ok(file) = File::open(native) else { return false };
+    matches!(crate::image::header(file), Ok(Some(Header::Shown { .. })))
+}
+
+fn write_answer(
+    options: &Options,
+    summary: Option<String>,
+    sections: Vec<Section>,
+    seen: Vec<Seen>,
+    out: &mut impl Write,
+) -> io::Result<Viewed> {
     let failed = sections.iter().any(|section| section.failed);
     if options.in_run {
         out.write_all(VIEW_MARK.as_bytes())?;
     }
-    if shown < paths.len() {
-        writeln!(out, "=== view ({files}: {shown} shown, {} not shown) ===", paths.len() - shown)?;
+    if let Some(summary) = summary {
+        writeln!(out, "{summary}")?;
     }
     for section in sections {
         out.write_all(section.text.as_bytes())?;
@@ -140,12 +242,14 @@ struct Section {
     /// Whether the budget ran out in it, so later files are not shown.
     partial: bool,
     failed: bool,
+    /// Whether all of the file is shown.
+    whole: bool,
 }
 
 impl Section {
     fn note(path: &Path, options: &Options, facts: &str) -> Self {
         let text = format!("{}\n", head(path, options, facts));
-        Self { cost: text.len(), text, shown: false, partial: false, failed: false }
+        Self { cost: text.len(), text, shown: false, partial: false, failed: false, whole: false }
     }
 
     fn error(path: &Path, options: &Options, facts: &str) -> Self {
@@ -172,7 +276,7 @@ fn not_shown(path: &Path, options: &Options) -> Section {
     }
 }
 
-fn look(path: &Path, options: &Options, budget: usize) -> io::Result<(Section, Option<Seen>)> {
+fn look(path: &Path, options: &Options, budget: usize, limits: explore::Limits) -> io::Result<(Section, Option<Seen>)> {
     let native = match fastctx_platform::local_path(path) {
         Ok(path) => path,
         Err(error) => return Ok((Section::error(path, options, &describe_error(&error)), None)),
@@ -181,14 +285,20 @@ fn look(path: &Path, options: &Options, budget: usize) -> io::Result<(Section, O
         Ok(path) => path,
         Err(error) => return Ok((Section::error(&native, options, &describe_error(&error)), None)),
     };
-    let (section, mut seen) = look_file(&native, &resolved, options, budget)?;
+    let (section, mut seen) = look_file(&native, &resolved, options, budget, limits)?;
     if let Some(seen) = &mut seen {
         seen.path = resolved.to_string_lossy().into_owned();
     }
     Ok((section, seen))
 }
 
-fn look_file(path: &Path, resolved: &Path, options: &Options, budget: usize) -> io::Result<(Section, Option<Seen>)> {
+fn look_file(
+    path: &Path,
+    resolved: &Path,
+    options: &Options,
+    budget: usize,
+    limits: explore::Limits,
+) -> io::Result<(Section, Option<Seen>)> {
     let metadata = match std::fs::metadata(resolved) {
         Ok(metadata) => metadata,
         Err(error) => return Ok((Section::error(path, options, &describe_error(&error)), None)),
@@ -263,7 +373,7 @@ fn look_file(path: &Path, resolved: &Path, options: &Options, budget: usize) -> 
         }
         Some(Header::Unreadable { .. }) | None => {}
     }
-    text::look(path, options, budget, file, start, &metadata)
+    text::look(path, options, budget, file, start, &metadata, limits)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -304,7 +414,7 @@ fn image(
         encoding_selection: None,
     };
     let text = format!("{note}\x1b]1337;File=inline=1;size={}:{}\x07\n", bytes.len(), STANDARD.encode(&bytes));
-    Ok((Section { text, cost, shown: true, partial: false, failed: false }, Some(seen)))
+    Ok((Section { text, cost, shown: true, partial: false, failed: false, whole: true }, Some(seen)))
 }
 
 fn read_up_to(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {

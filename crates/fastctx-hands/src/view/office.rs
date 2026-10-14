@@ -69,6 +69,7 @@ pub(super) fn look(
     section.cost = section.text.len();
     section.shown = true;
     section.partial = content.stopped;
+    section.whole = content.whole;
     let seen = Seen {
         path: path.to_string_lossy().into_owned(),
         at: Timestamp::now(),

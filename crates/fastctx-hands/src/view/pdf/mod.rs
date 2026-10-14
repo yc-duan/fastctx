@@ -56,13 +56,13 @@ fn explore(path: &Path, options: &Options, budget: usize, document: &Document) -
             "=== page {n} (lines 1-{n} of {n}; line {n}: characters 1-{n} of {n} shown; remaining text not shown) ===\n"
         )
         .len();
-    let whole = read_selected(path, options, budget.min(super::explore::WHOLE + spare), document);
+    let mut whole = read_selected(path, options, budget.min(super::explore::WHOLE + spare), document);
     if !whole.partial && whole.cost <= super::explore::WHOLE {
+        whole.whole = true;
         return whole;
     }
     let total = document.page_count() as u64;
     let mut first = options.clone();
-    first.pages = Some((1, 2));
     let mut sample = super::explore::Sample::new();
     let outline = document.outline(|title, page, level| {
         let title = super::text::visible(title);
@@ -81,13 +81,13 @@ fn explore(path: &Path, options: &Options, budget: usize, document: &Document) -
     let mut bookmarks = String::new();
     let mut failed = false;
     let mut shown = false;
+    let mut marked = false;
     match outline {
         Ok(()) => {
             let longest = format!("=== bookmarks ({n} of {n} entries shown) ===\n", n = u64::MAX);
-            let room = budget
-                .min(super::explore::WHOLE - super::explore::HEAD - super::explore::TAIL)
-                .saturating_sub(longest.len());
-            let (total, entries) = sample.finish(room);
+            let room = budget.min(super::explore::WHOLE - super::explore::BRIEF).saturating_sub(longest.len());
+            let (total, entries) = sample.finish(room, super::explore::ENTRIES);
+            marked = total > 0;
             let header = if total == 0 {
                 "=== bookmarks (none) ===\n".into()
             } else {
@@ -104,8 +104,13 @@ fn explore(path: &Path, options: &Options, budget: usize, document: &Document) -
             failed = true;
         }
     }
-    let omitted = if total > 2 { format!("=== pages 3-{total} (not shown) ===\n") } else { String::new() };
-    let head_budget = budget.saturating_sub(bookmarks.len() + omitted.len());
+    // With bookmarks to read by, the start of the first page says what it
+    // is; with none, the first two pages are its only map.
+    let (pages, room) = if marked { (1, super::explore::BRIEF) } else { (2, super::explore::HEAD) };
+    first.pages = Some((1, pages.min(total.max(1))));
+    let omitted =
+        if total > pages { format!("=== pages {}-{total} (not shown) ===\n", pages + 1) } else { String::new() };
+    let head_budget = room.min(budget.saturating_sub(bookmarks.len() + omitted.len()));
     let mut section = read_selected(path, &first, head_budget, document);
     section.append_note(&omitted);
     section.append_note(&bookmarks);

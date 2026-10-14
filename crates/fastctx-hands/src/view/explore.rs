@@ -7,10 +7,51 @@ use super::outline::Outline;
 use super::text::{Read, Reader};
 use super::{Options, Section, head};
 
+/// Bytes a file may take while its content is not known yet: shown whole
+/// within this, sampled beyond it; several files share it (`world-view.md`,
+/// 探索).
 pub(super) const WHOLE: usize = 10_000 * 4;
-pub(super) const HEAD: usize = 4_000 * 4;
-pub(super) const TAIL: usize = 2_000 * 4;
+/// The start of a file with an outline: its first lines, which say what it
+/// is for; the outline says where the rest is.
+pub(super) const BRIEF: usize = 1_000 * 4;
+pub(super) const BRIEF_LINES: u64 = 20;
+/// The start and the end of a file with no outline, its only map.
+pub(super) const HEAD: usize = 2_000 * 4;
+pub(super) const TAIL: usize = 1_000 * 4;
 pub(super) const ENTRIES: usize = 40;
+
+/// How much of a file a sample may take.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Limits {
+    /// The start of a file with no outline, and its end.
+    pub head: usize,
+    pub tail: usize,
+    /// The start of a file with an outline.
+    pub brief: usize,
+    /// The whole sample.
+    pub room: usize,
+    /// A sample even of a file that fits whole: one of several files that
+    /// share the window.
+    pub sampled: bool,
+}
+
+impl Limits {
+    /// One file explored alone.
+    pub fn alone() -> Self {
+        Self { head: HEAD, tail: TAIL, brief: BRIEF, room: WHOLE, sampled: false }
+    }
+
+    /// One of several files, each with `share` bytes of the window.
+    pub fn share(share: usize) -> Self {
+        Self {
+            head: HEAD.min(share / 2),
+            tail: TAIL.min(share / 4),
+            brief: BRIEF.min(share / 2),
+            room: share,
+            sampled: true,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct Entry {
@@ -113,7 +154,7 @@ impl Sample {
         }
     }
 
-    pub fn finish(mut self, budget: usize) -> (u64, Vec<Entry>) {
+    pub fn finish(mut self, budget: usize, cap: usize) -> (u64, Vec<Entry>) {
         if let Some(last) = self.last
             && self.entries.last().is_none_or(|(index, _)| *index != self.total - 1)
         {
@@ -128,7 +169,7 @@ impl Sample {
             })
             .collect();
         let at = |i: usize, count: usize| if count <= 1 { 0 } else { i * (entries.len() - 1) / (count - 1) };
-        let mut count = entries.len().min(ENTRIES);
+        let mut count = entries.len().min(cap);
         // Choose the count before spacing entries so a tight budget still covers the outline.
         while count > 0 && (0..count).map(|i| entries[at(i, count)].1).sum::<usize>() > budget {
             count -= 1;
@@ -139,7 +180,11 @@ impl Sample {
 }
 
 pub(super) struct Exploring {
+    limits: Limits,
     head: Reader,
+    /// The first lines, shown instead of `head` when the file has an outline.
+    brief: Reader,
+    brief_length: Option<u64>,
     outline: Outline,
     tail: VecDeque<Entry>,
     tail_cost: usize,
@@ -159,9 +204,12 @@ pub(super) struct Exploring {
 }
 
 impl Exploring {
-    pub fn new(path: &Path) -> Self {
+    pub fn new(path: &Path, limits: Limits) -> Self {
         Self {
-            head: Reader::preview(HEAD),
+            limits,
+            head: Reader::preview(limits.head),
+            brief: Reader::preview_lines(limits.brief, BRIEF_LINES),
+            brief_length: None,
             outline: Outline::new(path),
             tail: VecDeque::new(),
             tail_cost: 0,
@@ -196,6 +244,9 @@ impl Exploring {
             if !self.head.prefix_filled() {
                 self.head.note(note);
             }
+            if self.line.number <= BRIEF_LINES && !self.brief.prefix_filled() {
+                self.brief.note(note);
+            }
             self.line_cost += note.len() + 1;
         }
         if !bytes {
@@ -207,6 +258,9 @@ impl Exploring {
     pub fn take(&mut self, text: &str) {
         if !self.head.prefix_filled() {
             self.head.take(text);
+        }
+        if self.line.number <= BRIEF_LINES && !self.brief.prefix_filled() {
+            self.brief.take(text);
         }
         let mut text = text;
         if self.pending_cr {
@@ -245,8 +299,8 @@ impl Exploring {
         }
         self.line.text.push_str(&shown);
         self.line_cost = self.line_cost.saturating_add(shown.len()).min(WHOLE + 1);
-        if self.line.text.len() > TAIL {
-            let mut at = self.line.text.len() - TAIL;
+        if self.line.text.len() > self.limits.tail {
+            let mut at = self.line.text.len() - self.limits.tail;
             while !self.line.text.is_char_boundary(at) {
                 at += 1;
             }
@@ -262,6 +316,9 @@ impl Exploring {
     fn end_line(&mut self) {
         if self.head.cut_line() == Some(self.line.number) {
             self.head_length = Some(self.line.length);
+        }
+        if self.brief.cut_line() == Some(self.line.number) {
+            self.brief_length = Some(self.line.length);
         }
         self.total_cost =
             self.total_cost.saturating_add(self.line_cost + self.line.number.to_string().len() + 2).min(WHOLE + 1);
@@ -279,8 +336,8 @@ impl Exploring {
             &mut self.line,
             Entry { number: next, from: 1, length: 0, text: String::new(), note: String::new() },
         ));
-        while self.tail_cost > TAIL && self.tail.len() > 1 {
-            let cut = self.tail_cost - TAIL + self.tail_location;
+        while self.tail_cost > self.limits.tail && self.tail.len() > 1 {
+            let cut = self.tail_cost - self.limits.tail + self.tail_location;
             if self.tail.front().unwrap().text.len() > cut {
                 let first = self.tail.front_mut().unwrap();
                 let before = first.cost();
@@ -302,6 +359,9 @@ impl Exploring {
     }
 
     pub fn fits(&self, path: &Path, options: &Options, facts: &str, total: u64) -> bool {
+        if self.limits.sampled {
+            return false;
+        }
         let pending = if self.line.length > 0 || self.pending_cr {
             self.line_cost + usize::from(self.pending_cr) * 4 + self.line.number.to_string().len() + 2
         } else {
@@ -318,11 +378,17 @@ impl Exploring {
         if self.line.length > 0 {
             self.end_line();
         }
+        let total = full.total_lines;
+        // A file with an outline is read by it: its first lines say what it
+        // is for, the outline where the rest is. One long line has no lines
+        // to point at, and keeps its start and end.
+        if total > 1 && (self.outline.found() > 0 || self.outline.csv_rows().is_some()) {
+            return self.finish_outlined(path, options, budget, full, facts);
+        }
         let mut head_read = self.head.finish();
         if let (Some(cut), Some(length)) = (&mut head_read.cut, self.head_length) {
             cut.length = length;
         }
-        let total = full.total_lines;
         let first_tail = self.tail.front().expect("a large file has lines");
         let head_last = head_read.cut.as_ref().map_or(head_read.shown_lines, |cut| cut.line);
         let mut measure = if total == 1 {
@@ -374,14 +440,57 @@ impl Exploring {
             }
             entry.write(&mut text);
         }
-        let outline_room = WHOLE.saturating_sub(text.len()).min(budget.saturating_sub(text.len()));
-        let csv_rows = self.outline.csv_rows();
+        let times = (self.first_time.take(), self.last_time.take());
+        Self::close(self.limits, self.outline, text, times, path, options, budget, full, facts)
+    }
+
+    /// The first lines of a file with an outline, then the outline.
+    fn finish_outlined(self, path: &Path, options: &Options, budget: usize, full: &Read, facts: &str) -> Section {
+        let total = full.total_lines;
+        let mut read = self.brief.finish();
+        if let (Some(cut), Some(length)) = (&mut read.cut, self.brief_length) {
+            cut.length = length;
+        }
+        let last = read.cut.as_ref().map_or(read.shown_lines, |cut| cut.line);
+        let mut measure = format!("lines 1-{last} of {total}");
+        if let Some(cut) = &read.cut {
+            measure.push_str(&format!("; {}", super::text::cut_facts(cut)));
+        }
+        let mut text = format!("{}\n{}", head(path, options, &format!("{facts}{measure}")), read.body);
+        if let Some(cut) = &read.cut
+            && cut.to < cut.length
+        {
+            text.push_str(&format!("=== line {}: characters {}-{} not shown ===\n", cut.line, cut.to + 1, cut.length));
+        }
+        if last < total {
+            text.push_str(&format!("=== lines {}-{total} not shown ===\n", last + 1));
+        }
+        Self::close(self.limits, self.outline, text, (None, None), path, options, budget, full, facts)
+    }
+
+    /// Closes a sample with the outline, or a log's first and last times,
+    /// and a CSV's count of rows, as far as the room left allows.
+    #[allow(clippy::too_many_arguments)]
+    fn close(
+        limits: Limits,
+        outline: Outline,
+        mut text: String,
+        times: (Option<String>, Option<String>),
+        path: &Path,
+        options: &Options,
+        budget: usize,
+        full: &Read,
+        facts: &str,
+    ) -> Section {
+        let total = full.total_lines;
+        let outline_room = limits.room.saturating_sub(text.len()).min(budget.saturating_sub(text.len()));
+        let csv_rows = outline.csv_rows();
         let reserve = format!(
             "=== outline ({n} of {n} entries shown) ===\n=== CSV ({n} rows including the header) ===\n",
             n = u64::MAX
         )
         .len();
-        let (count, entries) = self.outline.finish(outline_room.saturating_sub(reserve));
+        let (count, entries) = outline.finish(outline_room.saturating_sub(reserve), ENTRIES);
         if count > 0 {
             text.push_str(&format!("=== outline ({} of {count} entries shown) ===\n", entries.len()));
             let mut previous_note = String::new();
@@ -396,13 +505,13 @@ impl Exploring {
                 }
                 entry.write_outline(&mut text);
             }
-        } else if let (Some(first), Some(last)) = (self.first_time, self.last_time) {
+        } else if let (Some(first), Some(last)) = times {
             text.push_str(&format!("=== timestamps (line 1: {first}; line {total}: {last}) ===\n"));
         }
         if let Some(rows) = csv_rows {
             text.push_str(&format!("=== CSV ({rows} rows including the header) ===\n"));
         }
-        let mut section = Section { cost: text.len(), text, shown: true, partial: false, failed: false };
+        let mut section = Section { cost: text.len(), text, shown: true, partial: false, failed: false, whole: false };
         if section.cost > budget {
             // The shared answer budget is distinct from the exploration window.
             let mut limited = options.clone();

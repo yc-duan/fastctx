@@ -4,7 +4,10 @@ use crate::{Content, output::Output};
 use std::collections::BTreeSet;
 
 pub(crate) const WHOLE: usize = 10_000 * 4;
-pub(crate) const HEAD: usize = 4_000 * 4;
+/// The start of a document whose outline says where the rest is.
+pub(crate) const BRIEF: usize = 1_000 * 4;
+/// The start of a document with no outline to give, and of a sheet or a deck.
+pub(crate) const HEAD: usize = 2_000 * 4;
 pub(crate) const ENTRIES: usize = 40;
 
 #[derive(Default)]
@@ -46,6 +49,10 @@ impl Catalogue {
 
     pub fn all(budget: usize) -> Self {
         Self { all: Some(Vec::new()), limit: budget, ..Self::new() }
+    }
+
+    pub fn total(&self) -> usize {
+        self.total
     }
 
     pub fn push(&mut self, text: String) {
@@ -107,7 +114,11 @@ pub(crate) fn header_reserve(label: &str) -> usize {
 }
 
 pub(crate) fn head_budget(budget: usize, label: &str, notes: usize) -> usize {
-    budget.saturating_sub(header_reserve(label) + notes).min(HEAD)
+    head_within(budget, label, notes, HEAD)
+}
+
+pub(crate) fn head_within(budget: usize, label: &str, notes: usize, head: usize) -> usize {
+    budget.saturating_sub(header_reserve(label) + notes).min(head)
 }
 
 pub(crate) fn append_note(content: &mut Content, note: &str, budget: usize) {

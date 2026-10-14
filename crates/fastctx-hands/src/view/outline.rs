@@ -193,8 +193,13 @@ impl Outline {
         }
     }
 
-    pub fn finish(self, budget: usize) -> (u64, Vec<Entry>) {
-        self.sample.finish(budget)
+    pub fn finish(self, budget: usize, cap: usize) -> (u64, Vec<Entry>) {
+        self.sample.finish(budget, cap)
+    }
+
+    /// The entries found so far.
+    pub fn found(&self) -> u64 {
+        self.sample.total
     }
 
     pub fn csv_rows(&self) -> Option<u64> {
