@@ -279,7 +279,6 @@ export class Tokens {
       this.ssh = new RemoteWorld(place, {
         words: remote.words,
         seams: remote.seams,
-        name: () => null,
         back: words.ways.line,
         adding: {
           token: (machine) => remote.token(login, machine, this.managed),

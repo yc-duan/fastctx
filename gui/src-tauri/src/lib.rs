@@ -1058,6 +1058,8 @@ pub fn run() {
             #[cfg(desktop)]
             remote_world::remote_close,
             #[cfg(desktop)]
+            remote_world::remote_withdraw,
+            #[cfg(desktop)]
             retention::retention_read,
             #[cfg(desktop)]
             retention::retention_write,

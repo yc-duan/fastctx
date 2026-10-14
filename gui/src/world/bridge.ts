@@ -21,7 +21,7 @@ import type { AccountChange, AccountsReply, HubAccount, TokenPeek } from "./acco
 import type { UsageReport } from "./usage";
 import type { HubMoveReply, HubMoveRequest } from "./hub-move";
 import type { MachineStats } from "./stats";
-import type { RemoteHub, RemoteKey, RemoteServer, RemoteStep } from "../app/remote-world";
+import type { Looked, RemoteHub, RemoteKey, RemoteServer, RemoteStep } from "../app/remote-world";
 import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
 
 export function inShell(): boolean {
@@ -689,10 +689,17 @@ export function remoteProbe(host: string, port: number): Promise<RemoteKey> {
   return invoke("remote_probe", { host, port });
 }
 
-/** Signs in to the server whose key was confirmed and answers the name it
- *  would take in the World, made from its host name. */
-export function remoteLook(server: RemoteServer): Promise<string> {
+/** Signs in to the server whose key was confirmed and looks at it: the
+ *  name it would take, the ports taken, a World's hub kept there. */
+export function remoteLook(server: RemoteServer): Promise<Looked> {
   return invoke("remote_look", { server });
+}
+
+/** Takes the World a server keeps off it, as for a hub made and not wanted. */
+export function remoteWithdraw(server: RemoteServer, step: (step: RemoteStep) => void): Promise<void> {
+  const steps = new Channel<RemoteStep>();
+  steps.onmessage = step;
+  return invoke("remote_withdraw", { server, steps });
 }
 
 export function remoteHub(request: RemoteHub, step: (step: RemoteStep) => void): Promise<{ session: number; address: string; machine: string }> {

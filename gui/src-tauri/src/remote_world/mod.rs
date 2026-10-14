@@ -41,12 +41,44 @@ pub(crate) async fn remote_probe(host: String, port: u16) -> Result<Probed, Stri
     ssh::probe(&host, port).await
 }
 
-/// Signs in to the server whose key was confirmed and answers the name it
-/// would take in the World, made from its host name.
+/// What the server showed once signed in to: the name it would take in the
+/// World, made from its host name; the ports taken there; the hub of a
+/// World it keeps already, if it does; and whether it is a machine of one.
+#[derive(Serialize)]
+pub(crate) struct Looked {
+    machine: String,
+    busy: Vec<u16>,
+    hub: Option<ssh::Held>,
+    joined: bool,
+}
+
+/// Signs in to the server whose key was confirmed and looks at it.
 #[fastctx_gui_command::command]
-pub(crate) async fn remote_look(server: Server) -> Result<String, String> {
-    let hostname = ssh::look(&server).await?;
-    Ok(fastctx_types::MachineName::from_host(&hostname).to_string())
+pub(crate) async fn remote_look(server: Server) -> Result<Looked, String> {
+    let seen = ssh::look(&server).await?;
+    Ok(Looked {
+        machine: fastctx_types::MachineName::from_host(&seen.hostname).to_string(),
+        busy: seen.busy,
+        hub: seen.hub,
+        joined: seen.joined,
+    })
+}
+
+/// Takes the World a server keeps off it, as for a hub made and not wanted:
+/// signs in, checks it, uploads the program that does it, and leaves
+/// nothing behind.
+#[fastctx_gui_command::command]
+pub(crate) async fn remote_withdraw(
+    app: tauri::AppHandle,
+    server: Server,
+    steps: Channel<&'static str>,
+) -> Result<(), String> {
+    let step = |name| steps.send(name).map_err(|error| error.to_string());
+    let remote = ssh::open(&server, &carried(&app)?, &step).await?;
+    step("withdraw")?;
+    let withdrawn = remote.withdraw().await;
+    let closed = remote.close().await;
+    withdrawn.and(closed)
 }
 
 /// Connects, checks the server, uploads the program and makes the hub; the

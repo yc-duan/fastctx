@@ -30,6 +30,7 @@ import "./app/agents.css";
 import "./app/features.css";
 import "./app/removal.css";
 import "./app/managed.css";
+import "./app/progress-steps.css";
 import "./app/data-page.css";
 import "./app.css";
 import "./conversation/talk-usage.css";
@@ -212,6 +213,7 @@ import {
   remoteLook,
   remoteOpen,
   remoteProbe,
+  remoteWithdraw,
   journal as readJournal,
   journalAdd,
   look,
@@ -560,7 +562,11 @@ const remoteSeams: RemoteSeams = {
   open: remoteOpen,
   join: remoteJoin,
   arrive: remoteArrive,
+  withdraw: remoteWithdraw,
   close: remoteClose,
+  logout: async (hub, account) => {
+    await accountChange(hub, account, { change: "logout" });
+  },
   login: (address, admin, password, name) => login(address, admin, password, true, name),
   nameProblem,
   token: async (hub, admin, machine) => {

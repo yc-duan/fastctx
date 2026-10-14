@@ -59,7 +59,42 @@ export interface LoginWords {
   /** Adding a server to an existing World over SSH. */
   addGo: string;
   adding: string;
-  remoteSteps: Record<"connect" | "check" | "upload" | "hub" | "login" | "join" | "arrive", string>;
+  remoteSteps: Record<"connect" | "check" | "upload" | "hub" | "login" | "join" | "arrive" | "withdraw", string>;
+  /** The four steps of making a World on a server, over its form. */
+  remoteStages: [string, string, string, string];
+  /** On the button while signing in to the server to look at it. */
+  looking: string;
+  /** Where other devices will reach the network made. */
+  networkAt(address: string): string;
+  portTaken: string;
+  portRange: string;
+  /** Under the administrator's fields: who it is, or, for a World the
+   *  server keeps already, that it is the one it was made with. */
+  adminWhat: string;
+  adminAgain: string;
+  /** The name this computer takes in the World made. */
+  hereName: string;
+  sameNames: string;
+  /** A server that keeps a World already: by its name, or one left half
+   *  made; finishing it, signing in to it, taking it down. */
+  found(world: string): string;
+  foundHalf: string;
+  resumeGo: string;
+  signInThere: string;
+  withdrawGo: string;
+  withdrawTitle(world: string | null): string;
+  withdrawWhat: string;
+  withdrawType(world: string): string;
+  withdrawConfirm: string;
+  withdrawing: string;
+  /** Where only a line run on the server takes it down. */
+  withdrawByHand: string;
+  /** After a step that failed: again, or back to what was asked. */
+  retry: string;
+  backToEdit: string;
+  /** In what is being made: the network, its administrator, the server and
+   *  this computer. */
+  thisComputer: string;
   another: string;
   hub: string;
   account: string;
@@ -192,7 +227,30 @@ export const zhLogin: LoginWords = {
   notArch: "这台服务器的架构不受支持，只支持 x86_64 与 aarch64",
   addGo: "添加",
   adding: "正在添加…",
-  remoteSteps: { connect: "连接服务器", check: "查看服务器", upload: "上传程序", hub: "建网络", login: "这台电脑登录", join: "服务器加入", arrive: "中枢服务器搬过去" },
+  remoteSteps: { connect: "连接服务器", check: "查看服务器", upload: "上传程序", hub: "建网络", login: "这台电脑登录", join: "服务器加入", arrive: "中枢服务器搬过去", withdraw: "撤掉网络" },
+  remoteStages: ["服务器", "网络", "管理员", "机器"],
+  looking: "正在连接…",
+  networkAt: (address) => `别的设备用 ${address} 连进来`,
+  portTaken: "服务器上这个端口已被占用",
+  portRange: "端口要在 1 到 65535 之间",
+  adminWhat: "网络里唯一的超级管理员，这台电脑用它登录",
+  adminAgain: "用建这个网络时的管理员账号登录",
+  hereName: "这台电脑的名称",
+  sameNames: "两台机器不能同名",
+  found: (world) => `这台服务器上已经有网络「${world}」`,
+  foundHalf: "这台服务器上有一个没建完的网络",
+  resumeGo: "接着建完",
+  signInThere: "用管理员登录",
+  withdrawGo: "撤掉重来",
+  withdrawTitle: (world) => (world ? `撤掉网络「${world}」` : "撤掉没建完的网络"),
+  withdrawWhat: "服务器上的 Fastctx 会整个移除：这个网络、它的账号和记录都没了，已经连进来的设备再也连不上。",
+  withdrawType: (world) => `输入「${world}」确认`,
+  withdrawConfirm: "撤掉",
+  withdrawing: "正在撤掉…",
+  withdrawByHand: "这台服务器的 sudo 要密码，要在它的终端里运行：",
+  retry: "再试",
+  backToEdit: "返回修改",
+  thisComputer: "这台电脑",
   another: "登录其他账号",
   hub: "中枢服务器地址",
   account: "账号",
@@ -302,7 +360,30 @@ export const enLogin: LoginWords = {
   notArch: "This server's architecture isn't supported; only x86_64 and aarch64 are",
   addGo: "Add",
   adding: "Adding…",
-  remoteSteps: { connect: "Connect", check: "Look at the server", upload: "Upload the program", hub: "Set up the network", login: "Sign this computer in", join: "Add the server", arrive: "Move the hub there" },
+  remoteSteps: { connect: "Connect", check: "Look at the server", upload: "Upload the program", hub: "Set up the network", login: "Sign this computer in", join: "Add the server", arrive: "Move the hub there", withdraw: "Take the network down" },
+  remoteStages: ["Server", "Network", "Administrator", "Machines"],
+  looking: "Connecting…",
+  networkAt: (address) => `Other devices connect at ${address}`,
+  portTaken: "This port is already in use on the server",
+  portRange: "The port is a number from 1 to 65535",
+  adminWhat: "The network's one super administrator; this computer signs in with it",
+  adminAgain: "Sign in with the administrator account the network was made with",
+  hereName: "This computer's name",
+  sameNames: "The two machines need different names",
+  found: (world) => `This server already holds the network “${world}”`,
+  foundHalf: "This server holds a network that was never finished",
+  resumeGo: "Finish it",
+  signInThere: "Sign in as its administrator",
+  withdrawGo: "Take it down and start over",
+  withdrawTitle: (world) => (world ? `Take down “${world}”` : "Take down the unfinished network"),
+  withdrawWhat: "Fastctx goes from the server entirely: the network, its accounts and records go, and devices connected to it can't connect again.",
+  withdrawType: (world) => `Type “${world}” to confirm`,
+  withdrawConfirm: "Take down",
+  withdrawing: "Taking it down…",
+  withdrawByHand: "This server's sudo wants a password; run this in its terminal:",
+  retry: "Try again",
+  backToEdit: "Back to edit",
+  thisComputer: "This computer",
   another: "Log in to another account",
   hub: "Hub address",
   account: "Account",

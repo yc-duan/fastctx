@@ -178,7 +178,6 @@ export class HubMoving {
       this.ssh = new RemoteWorld(sheet.body.querySelector<HTMLElement>(".device-remote")!, {
         words: remote.words,
         seams: remote.seams,
-        name: () => null,
         back: this.options.access.cancel,
         adding: {
           token: (machine) => remote.token(choosing.login, machine),

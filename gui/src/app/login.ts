@@ -364,7 +364,15 @@ export class LoginPage implements Page {
           this.remote = new RemoteWorld(this.body, {
             words,
             seams: this.options.remote,
-            name: () => null,
+            // Its name is asked at its first login; after that it keeps it.
+            here: () => {
+              const world = this.options.store.whole.peek();
+              return { name: world?.here ?? "", fixed: loginsOf(world?.accounts).length > 0 };
+            },
+            loginsAt: (address) =>
+              (this.options.store.whole.peek()?.accounts.hubs ?? [])
+                .filter((hub) => hub.addresses.includes(address))
+                .flatMap((hub) => hub.logins.map((account) => ({ hub: hub.name, account }))),
             back: words.back,
             done: (done) => {
               this.done = done;

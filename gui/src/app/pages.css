@@ -1158,11 +1158,76 @@ a.details-job {
   margin: var(--space-2) 0 0;
 }
 
+/* A step still to come, listed from the start so the list never grows. */
+.remote-steps li[data-state="ahead"] .removal-what {
+  color: var(--text-3);
+}
+
 /* The server being added, above its steps. */
 .remote-host {
   margin: 0;
   font-size: var(--size-small);
   color: var(--text-2);
+}
+
+/* The network's name, and beside it its port, as narrow as five digits. */
+.field-pair.remote-network {
+  grid-template-columns: minmax(0, 1fr) 8.5em;
+}
+
+/* A World the server keeps already: one solid slip, what it is and where. */
+.remote-found {
+  padding: var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+}
+
+.remote-found-title {
+  margin: 0;
+  font-size: var(--size-ui);
+  color: var(--text-strong);
+}
+
+.remote-found-at {
+  margin: var(--space-1) 0 0;
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+/* Taking it down is not taken back: the red slip of a removal. */
+.welcome-slip.remote-withdraw {
+  padding: var(--space-3) var(--space-4);
+  background: color-mix(in srgb, var(--wrong) 14%, var(--fill));
+  line-height: var(--leading-ui);
+}
+
+.remote-withdraw b {
+  display: block;
+  margin-bottom: 2px;
+  font-weight: 600;
+  color: var(--wrong);
+}
+
+/* The names the two machines take: each field's label after the glyph of
+   what it names. */
+.remote-machines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.remote-machines .field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* What is being made, above its ticks. */
+.remote-facts {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--fill);
 }
 
 /* How a Linux host comes in, under which device it is. */

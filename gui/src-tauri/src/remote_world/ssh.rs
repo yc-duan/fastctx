@@ -31,6 +31,10 @@ use sha2::{Digest as _, Sha256};
 /// (`gui/src/app/remote-world.ts`).
 pub const SUDO_WANTED: &str = "sudo needs a password";
 
+/// What the page reads when the World can be taken off the server only by
+/// a line run in its terminal (`gui/src/app/remote-world.ts`).
+pub const WITHDRAW_BY_HAND: &str = "run in the server's terminal";
+
 /// A server signed in to, with the program unpacked in a temporary
 /// directory; for a new World its session stays open for it to join.
 pub struct Remote {
@@ -131,6 +135,64 @@ pub struct Made {
     pub hostname: String,
 }
 
+/// What a server shows of itself once signed in to: its own name, the ports
+/// something listens on already, the hub of a World kept there, if one is,
+/// and whether it is a machine of a World, its node a service.
+#[derive(Serialize, Debug)]
+pub struct Seen {
+    pub hostname: String,
+    pub busy: Vec<u16>,
+    pub hub: Option<Held>,
+    pub joined: bool,
+}
+
+/// A hub a server keeps, as far as `fastctx hub show` could read it: a hub
+/// left half made reads as neither its name nor its port.
+#[derive(Serialize, Debug)]
+pub struct Held {
+    pub name: Option<String>,
+    pub port: Option<u16>,
+    /// The first address machines reach it at.
+    pub address: Option<String>,
+}
+
+/// One look at a server, in four parts a record separator apart: its name,
+/// the ports it listens on, its hub as `fastctx hub show` says it, and
+/// whether its World's node runs as a service.
+const LOOK: &str = r#"hostname
+printf '\036'
+ss -ltnH 2>/dev/null | awk '{print $4}'
+printf '\036'
+h="$HOME/.fastctx/hub"; f="$HOME/.fastctx/bin/fastctx"
+if [ -e "$h" ]; then echo held; [ -x "$f" ] && "$f" hub show --dir "$h" 2>/dev/null; fi
+printf '\036'
+[ -e "$HOME/.fastctx/world/node.service" ] && echo joined
+true"#;
+
+fn seen(text: &str) -> Seen {
+    let mut parts = text.split('\u{1e}');
+    let hostname = parts.next().unwrap_or_default().trim().to_string();
+    let mut busy: Vec<u16> = parts
+        .next()
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| line.trim().rsplit(':').next()?.parse().ok())
+        .collect();
+    busy.sort_unstable();
+    busy.dedup();
+    let held = parts.next().unwrap_or_default().trim();
+    let hub = held.lines().next().is_some_and(|line| line.trim() == "held").then(|| {
+        let after = |prefix: &str| held.lines().find_map(|line| line.trim().strip_prefix(prefix).map(str::to_string));
+        Held {
+            name: after("hub ").and_then(|rest| rest.split(" (").next().map(str::to_string)),
+            port: after("listens on ").and_then(|at| at.rsplit(':').next()?.parse().ok()),
+            address: after("reached at ").and_then(|at| at.split(", ").next().map(str::to_string)),
+        }
+    });
+    let joined = parts.next().unwrap_or_default().trim() == "joined";
+    Seen { hostname, busy, hub, joined }
+}
+
 /// Connects far enough to see the server's key, and says whether this
 /// computer's SSH records know it.
 pub async fn probe(host: &str, port: u16) -> Result<Probed, String> {
@@ -178,15 +240,15 @@ async fn sign_in(server: &Server) -> Result<(SocketAddr, Handle<Checked>), Strin
     Ok((address, handle))
 }
 
-/// Signs in and reads the server's own name, then leaves: the name it is
-/// offered in the World, and a way in that does not work is said before
-/// anything else is asked.
-pub async fn look(server: &Server) -> Result<String, String> {
+/// Signs in and looks at the server, then leaves: before anything is asked
+/// for the World, a way in that does not work is said, and what is there
+/// already is known.
+pub async fn look(server: &Server) -> Result<Seen, String> {
     let (_, handle) = sign_in(server).await?;
-    let named = run(&handle, "hostname", Vec::new()).await;
+    let looked = run(&handle, LOOK, Vec::new()).await;
     let _ = handle.disconnect(Disconnect::ByApplication, "", "").await;
-    let named = named?.ok("reading the server's name")?;
-    Ok(String::from_utf8_lossy(&named).trim().to_string())
+    let looked = looked?.ok("looking at the server")?;
+    Ok(seen(&String::from_utf8_lossy(&looked)))
 }
 
 /// Signs in, checks the server, and uploads the program for its
@@ -311,6 +373,30 @@ impl Remote {
             .await?
             .ok("installing the hub's service on the server")?;
         Ok(())
+    }
+
+    /// Takes the World off the server as its own complete removal does
+    /// (`fastctx uninstall run --everything`): a hub made and not wanted,
+    /// its service, and whatever else of Fastctx is there. Done once the
+    /// hub's directory is gone; a step that matters no more, as logging out
+    /// of the hub being taken down, fails without failing this. The removal
+    /// asks sudo for its services with no way to give it a password, so
+    /// where sudo wants one nothing is begun: the line to run in the
+    /// server's terminal is said instead, before half of it is done.
+    pub async fn withdraw(&self) -> Result<(), String> {
+        if let Sudo::Password(_) = self.sudo {
+            return Err(format!("{WITHDRAW_BY_HAND}: ~/.fastctx/bin/fastctx uninstall run --everything"));
+        }
+        let command = format!("cd {} && ./fastctx uninstall run --everything --json", quote(&self.dir));
+        let ran = run(&self.handle, &command, Vec::new()).await?;
+        let gone = run(&self.handle, "[ ! -e \"$HOME/.fastctx/hub\" ]", Vec::new()).await?;
+        if gone.status == Some(0) {
+            return Ok(());
+        }
+        Err(ran
+            .ok("taking the World off the server")
+            .err()
+            .unwrap_or_else(|| "taking the World off the server: its hub is still there".to_string()))
     }
 
     /// Takes the temporary directory away and ends the session.
