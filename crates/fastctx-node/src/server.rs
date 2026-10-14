@@ -210,14 +210,24 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         if let Call::Wait { jobs, receipt, parent } = call {
             // A wait keeps the connection until the jobs end; its leaving
             // hands back the ends the wait held (`waiting`).
-            let caller = match caller::of(node, &hello.peer) {
-                Ok(Caller::Resident(resident)) => Some(resident),
-                Ok(_) => None,
+            let (caller, acting) = match caller::of(node, &hello.peer) {
+                Ok(caller) => {
+                    let acting = crate::around::acting_of(node, &caller);
+                    (if let Caller::Resident(resident) = caller { Some(resident) } else { None }, acting)
+                }
                 Err(error) => {
                     writer.send(&json(&NodeFrame::Reply { id, reply: Err(error) })).await?;
                     continue;
                 }
             };
+            // The jobs waited for here are this machine's: only whoever may
+            // work on it waits for them, as only they start them here.
+            if let Err(error) =
+                node.works_here(&acting).map_err(Failure::new).and_then(|()| crate::managed::refuse(node))
+            {
+                writer.send(&json(&NodeFrame::Reply { id, reply: Err(error) })).await?;
+                continue;
+            }
             let waited = tokio::select! {
                 waited = crate::waiting::wait(node, caller, jobs, parent) => waited,
                 // The client says nothing more on a wait.

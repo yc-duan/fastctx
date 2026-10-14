@@ -126,6 +126,8 @@ pub(crate) fn only_for(node: &crate::Node, acting: &Acting, reply: &mut WhoReply
         Some(owner) if owner.machine == here => kept.contains(&owner.resident),
         _ => job.account.as_ref().is_some_and(|account| serves(std::slice::from_ref(account))),
     });
+    // What happened here is this machine's own, not theirs.
+    reply.history = None;
 }
 
 /// Marks what `reply` shows that works for no account `acting` works for,

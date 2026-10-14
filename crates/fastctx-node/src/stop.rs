@@ -27,7 +27,11 @@ pub async fn stop(
     machine: Option<crate::reach::Written>,
 ) -> Result<Reply, Failure> {
     let here = node.machine();
-    if machine.as_ref().is_none_or(|machine| node.is_here(machine))
+    // Only whoever may work on this machine stops what runs here; an agent
+    // assisting another account, or someone at a managed machine, may not.
+    let may_here = node.works_here(acting).is_ok() && !crate::managed::is_managed(node);
+    if may_here
+        && machine.as_ref().is_none_or(|machine| node.is_here(machine))
         && let Some(record) = here_(node, &job, &by).await?
     {
         return Ok(Reply::JobStopped { machine: here, record: Box::new(record) });

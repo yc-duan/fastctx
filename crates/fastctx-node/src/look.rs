@@ -29,12 +29,18 @@ pub async fn look(node: &Arc<Node>, acting: &Acting, ids: Vec<String>) -> Vec<Lo
         let mut found = Vec::new();
         let mut unasked = Vec::new();
         let mut jobs = Vec::new();
-        match look_here(node, &id).await {
-            Ok((here, work)) => {
-                found.extend(here);
-                jobs.extend(work);
+        // This machine answers for itself only to whoever may work on it,
+        // and to no one at all when it is a managed machine: an agent
+        // assisting another account, or someone at a managed machine, is
+        // shown nothing of what runs here (`world-network.md`, 一个居民替谁干活).
+        if node.works_here(acting).is_ok() && !crate::managed::is_managed(node) {
+            match look_here(node, &id).await {
+                Ok((here, work)) => {
+                    found.extend(here);
+                    jobs.extend(work);
+                }
+                Err(error) => unasked.push(format!("{} ({error})", node.machine())),
             }
-            Err(error) => unasked.push(format!("{} ({error})", node.machine())),
         }
         let machines = crate::around::reachable(node, acting, Purpose::Look);
         for (name, heard) in crate::around::ask_each(machines, |_| RemoteCall::Look { id: id.clone() }).await {

@@ -75,7 +75,7 @@ async fn new(
         on: node.machine(),
         at: Timestamp::now(),
     };
-    let record = checked(node, owner.as_ref().map(|owner| &owner.hub), record).await?;
+    let record = checked(node, caller, owner.as_ref().map(|owner| &owner.hub), record).await?;
     crate::ledger::open(node, &town, owner).await?;
     write(node, &town, &record).await.map_err(|failure| {
         if failure.message.contains("already") {
@@ -112,7 +112,7 @@ async fn edit(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordF
         at: Timestamp::now(),
     };
     let hub = crate::ledger::names::place(&node.world, &town).ok().flatten().map(|place| place.hub);
-    let record = checked(node, hub.as_ref(), record).await?;
+    let record = checked(node, caller, hub.as_ref(), record).await?;
     write(node, &town, &record).await.map_err(|failure| {
         if failure.message.contains("already") {
             Failure::new(format!(
@@ -127,13 +127,18 @@ async fn edit(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordF
     Ok(Reply::Record { town, record: Box::new(record), opened })
 }
 
-/// The record with its machines checked against the World's, and its paths
-/// written the way their machines write them.
-async fn checked(node: &Arc<Node>, hub: Option<&HubId>, mut record: Record) -> Result<Record, Failure> {
+/// The record with its machines checked against those whoever asks may
+/// work on, and its paths written the way their machines write them.
+async fn checked(
+    node: &Arc<Node>,
+    caller: &Caller,
+    hub: Option<&HubId>,
+    mut record: Record,
+) -> Result<Record, Failure> {
     if record.machines.is_empty() {
         return Err(Failure::new("a project spans at least one machine"));
     }
-    let known = machines(node, hub).await;
+    let known = machines(node, &crate::around::acting_of(node, caller), hub).await;
     let unknown = |machine: &MachineName| !known.contains(machine);
     let named = record
         .machines
@@ -170,15 +175,25 @@ async fn checked(node: &Arc<Node>, hub: Option<&HubId>, mut record: Record) -> R
     Ok(record)
 }
 
-/// The machines of the hub a project is kept at, as this machine knows them
-/// now; a device is never one of a project's machines, and a project spans
-/// one hub. A project of a computer on no hub spans that computer.
-async fn machines(node: &Arc<Node>, hub: Option<&HubId>) -> Vec<MachineName> {
+/// The machines of the hub a project is kept at that `acting` may work on,
+/// as this machine knows them now: no other is named to it, not even in a
+/// refusal (`world-network.md`, 一个居民替谁干活). A device is never one of
+/// a project's machines, and a project spans one hub. A project of a
+/// computer on no hub spans that computer.
+async fn machines(node: &Arc<Node>, acting: &fastctx_types::access::Acting, hub: Option<&HubId>) -> Vec<MachineName> {
     match hub.and_then(|hub| node.link_of(hub)) {
         Some(link) => {
             // Asked afresh, or as last heard when the hub cannot be asked.
             let _ = link.refresh().await;
-            link.view().machines().map(|member| member.name.clone()).collect()
+            let accounts = node.accounts_on(&link, acting);
+            let view = link.view();
+            view.machines()
+                .filter(|member| {
+                    (view.is_me(&member.name) && node.works_here(acting).is_ok())
+                        || accounts.iter().any(|account| view.rights(account, &member.name).hands)
+                })
+                .map(|member| member.name.clone())
+                .collect()
         }
         None => vec![node.machine()],
     }
