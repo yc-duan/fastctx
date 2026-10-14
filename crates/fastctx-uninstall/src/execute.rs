@@ -584,63 +584,19 @@ async fn perform(request: &Request, step: &Step, progress: &mut Progress) -> any
         Action::WorldData => {
             mods_stood_aside(installation).await?;
             let world = installation.root.join("world");
-            // Every owned entry is tried; one that cannot go does not keep the
+            // The World directory is Fastctx's own, all of it
+            // (`world-town.md`, 世界的东西存在哪): it goes whole, never by a
+            // list of names that falls behind what later versions keep there.
+            // Every entry is tried; one that cannot go does not keep the
             // others, the identity among them, on this computer.
             let mut failed = Vec::new();
             for entry in crate::entries(&world)? {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                if name == "bin" {
+                if entry.file_name() == "bin" {
                     // The program step owns it and reports what stayed there.
                     continue;
                 }
-                if matches!(
-                    name.as_ref(),
-                    "outside"
-                        | "conversations"
-                        | "towns"
-                        | "removed-residents"
-                        | "net"
-                        | "net-third-version"
-                        | "device.key"
-                        | "seal.key"
-                        | "machine.json"
-                        | "node.lock"
-                        | "node.log"
-                        | "node.log.1"
-                        | "retention.json"
-                        | "job-deliveries"
-                        | "node.sock"
-                        | "node.service"
-                        | "write.lock"
-                        | "alone.json"
-                        | "claude"
-                        | "claude-calls"
-                        | "claude-plugins"
-                        | "codex"
-                        | "codex-reports"
-                        | "claude-controller.json"
-                        | "resident-cache"
-                        | "agent-homes.json"
-                        | "claude-consent.json"
-                        | "colleagues"
-                        | "elsewhere"
-                        | "on-stops"
-                        | "on-deliveries"
-                        | "letter-parts"
-                ) || name.starts_with("net-left-")
-                    || (name.starts_with("job-") && name.ends_with(".sock"))
-                {
-                    if let Err(error) = uninstall::delete_tree(&entry.path()) {
-                        failed.push(format!("{}: {error}", entry.path().display()));
-                    }
-                } else {
-                    progress.retained.push(Left {
-                        kind: "unrecognized".into(),
-                        what: "Unrecognized addition to the World directory".into(),
-                        location: Some(entry.path().display().to_string()),
-                        why: "It is not an owned World data path.".into(),
-                    });
+                if let Err(error) = uninstall::delete_tree(&entry.path()) {
+                    failed.push(format!("{}: {error}", entry.path().display()));
                 }
             }
             anyhow::ensure!(failed.is_empty(), "{}", failed.join("; "));

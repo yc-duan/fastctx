@@ -89,7 +89,10 @@ pub async fn removal_run(
     everything: bool,
     events: Channel<Event>,
 ) -> Result<(), String> {
+    // The page lets go of everything it follows, and of what it keeps,
+    // before anything is removed: nothing it does writes there again.
     shell.close_page();
+    shell.connection.forget_kept();
     if let Some(device) = shell.world().device() {
         device.disconnect();
     }

@@ -113,6 +113,13 @@ impl World {
         self
     }
 
+    /// The same World keeping nothing of what it views: for an interface
+    /// whose World is being removed, which writes nothing more there.
+    pub fn without_cache(mut self) -> Self {
+        self.cache = None;
+        self
+    }
+
     /// What this device keeps of the conversations it views, if it keeps
     /// them.
     pub fn cache(&self) -> Option<&std::sync::Arc<crate::cache::Cache>> {

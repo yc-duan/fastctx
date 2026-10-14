@@ -91,6 +91,15 @@ impl Connection {
             .ok_or_else(|| "this interface is a device; there is no local node or agent host".into())
     }
 
+    /// Lets go of what this interface keeps of the conversations it views,
+    /// before the World on this computer is removed: from here on nothing
+    /// more is written under the fastctx root.
+    #[cfg(desktop)]
+    pub fn forget_kept(&self) {
+        let mut selected = self.current.write().expect("shell connection");
+        selected.world = selected.world.clone().without_cache();
+    }
+
     /// Keep the transport check and the snapshot together: switching modes
     /// must never pass a device World to code that installs a node service.
     #[cfg(desktop)]
