@@ -62,6 +62,7 @@ pub fn fixtures() -> Fixtures {
         integration: Fact::known(Integration::In),
         unattended: Fact::known(true),
         timings: vec![ProbeTime { step: "model/list".into(), elapsed_ms: 0 }],
+        drift: None,
     };
     let claude = AgentFacts {
         agent: "claude".parse().unwrap(),
@@ -93,6 +94,7 @@ pub fn fixtures() -> Fixtures {
         integration: Fact::known(Integration::Out),
         unattended: Fact::known(false),
         timings: vec![],
+        drift: None,
     };
     let mut missing = codex.clone();
     // What a machine that knew one home per agent answers.
@@ -149,14 +151,17 @@ pub fn fixtures() -> Fixtures {
                         account: "ada".parse().unwrap(),
                     }),
                     focus: fastctx_types::focus::Focus {
-                    machines: vec![
-                        fastctx_types::focus::FocusedMachine {
-                            machine: "lab.home".parse().unwrap(),
-                            folders: vec!["C:/work/中文 项目".into(), "D:/data".into()],
-                        },
-                        fastctx_types::focus::FocusedMachine { machine: "laptop".parse().unwrap(), folders: vec![] },
-                    ],
-                },
+                        machines: vec![
+                            fastctx_types::focus::FocusedMachine {
+                                machine: "lab.home".parse().unwrap(),
+                                folders: vec!["C:/work/中文 项目".into(), "D:/data".into()],
+                            },
+                            fastctx_types::focus::FocusedMachine {
+                                machine: "laptop".parse().unwrap(),
+                                folders: vec![],
+                            },
+                        ],
+                    },
                     home: Some("C:/Users/ada/.codex-work".into()),
                     files_on: None,
                 },

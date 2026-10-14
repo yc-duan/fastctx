@@ -23,6 +23,11 @@ pub struct ApplyArgs {
     /// without this.
     #[arg(long)]
     raise_output_limit: bool,
+    /// Rewrite what the World put in that was changed since: Codex's
+    /// mcp_servers.fastctx entry and the fastctx block in AGENTS.md or
+    /// CLAUDE.md; the rest of each file stays as it is.
+    #[arg(long)]
+    take_back: bool,
 }
 
 #[derive(Args)]
@@ -34,12 +39,13 @@ pub struct UnapplyArgs {
 pub fn apply(args: ApplyArgs) -> anyhow::Result<()> {
     let places = Places::here()?;
     let approval = if args.raise_output_limit { Approval::RaiseOutputLimit } else { Approval::Require };
+    let edits = if args.take_back { apply::Edits::TakeBack } else { apply::Edits::Keep };
     let mut errors = Vec::new();
     let mut applied = Hosts { codex: false, claude: false };
     for (places, hosts) in args.homes.places(&places, true)? {
         applied.codex |= hosts.codex;
         applied.claude |= hosts.claude;
-        let report = match apply::apply(&places, hosts, approval) {
+        let report = match apply::apply_reporting(&places, hosts, approval, edits, None) {
             Ok(report) => report,
             Err(apply::Error::Edit(fastctx_install::Error::TokenLimitApproval { location, current, requested })) => {
                 errors.push(format!(

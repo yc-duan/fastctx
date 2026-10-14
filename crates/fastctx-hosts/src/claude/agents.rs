@@ -29,6 +29,7 @@ pub fn probe(cwd: &Path, env: &[(OsString, OsString)], path: Option<&OsString>) 
         integration: Fact::unavailable("the node supplies its apply status"),
         unattended: Fact::unavailable("the node supplies the user's consent"),
         timings,
+        drift: None,
     };
     if let Some(program) = program {
         // These official commands are independent and create no sessions.

@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use clap::Args;
-use fastctx_install::apply::{self, Host, Hosts, Places, kernel::Failure};
+use fastctx_install::apply::{self, Edits, Host, Hosts, Places, kernel::Failure};
 use fastctx_install::codex::Approval;
 
 #[derive(Args)]
@@ -20,6 +20,9 @@ pub struct HostChangeArgs {
     into: bool,
     #[arg(long)]
     raise_output_limit: bool,
+    /// Rewrite what the World put in and the user changed since.
+    #[arg(long)]
+    take_back: bool,
 }
 
 pub fn run(args: HostChangeArgs) -> anyhow::Result<()> {
@@ -31,7 +34,12 @@ pub fn run(args: HostChangeArgs) -> anyhow::Result<()> {
     }
     let hosts = Hosts { codex: args.codex, claude: args.claude };
     let approval = if args.raise_output_limit { Approval::RaiseOutputLimit } else { Approval::Require };
-    let result = if args.into { apply::apply(&places, hosts, approval) } else { apply::unapply(&places, hosts) };
+    let edits = if args.take_back { Edits::TakeBack } else { Edits::Keep };
+    let result = if args.into {
+        apply::apply_reporting(&places, hosts, approval, edits, None)
+    } else {
+        apply::unapply(&places, hosts)
+    };
     println!("{}", serde_json::to_string(&result.map_err(Failure::from))?);
     Ok(())
 }

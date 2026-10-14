@@ -28,14 +28,26 @@ pub async fn status() -> Result<Status, String> {
     .await
 }
 
-/// Applies or withdraws one home; directory selection is independent of PATH.
-pub async fn change_at(host: Host, home: std::path::PathBuf, into: bool, raise: bool) -> Result<Report, Refused> {
+/// Applies or withdraws one home, with `take_back` rewriting what the user
+/// changed of the World's tools; directory selection is independent of PATH.
+pub async fn change_at(
+    host: Host,
+    home: std::path::PathBuf,
+    into: bool,
+    raise: bool,
+    take_back: bool,
+) -> Result<Report, Refused> {
     blocking(move || {
         let places = Places::here().map_err(|error| Refused::Failed(error.to_string()))?;
         let places = places.at_home(host, &home).map_err(|error| Refused::Failed(error.to_string()))?;
         let hosts = Hosts { codex: host == Host::Codex, claude: host == Host::Claude };
         let approval = if raise { Approval::RaiseOutputLimit } else { Approval::Require };
-        let result = if into { apply::apply(&places, hosts, approval) } else { apply::unapply(&places, hosts) };
+        let edits = if take_back { apply::Edits::TakeBack } else { apply::Edits::Keep };
+        let result = if into {
+            apply::apply_reporting(&places, hosts, approval, edits, None)
+        } else {
+            apply::unapply(&places, hosts)
+        };
         result.map_err(|error| match error {
             apply::Error::Edit(fastctx_install::Error::TokenLimitApproval { current, requested, .. }) => {
                 Refused::OutputLimit { current, requested }

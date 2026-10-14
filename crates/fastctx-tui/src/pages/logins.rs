@@ -1,12 +1,14 @@
 //! This computer's agents on the machines page, a line for each of their
 //! logins (`world-agent-logins.md`): who is logged in and on what plan, how
 //! much of each usage window is spent and when that was read, and whether
-//! sessions the user opens in it have the World's tools. The line the keys
-//! are on is the login `u` and `x` put the tools into or take them out of.
+//! sessions the user opens in it have the World's tools, and what bringing
+//! them up to date waits for. The line the keys are on is the login `u` and
+//! `x` put the tools into or take them out of, and `t` takes them back in.
 
 use std::path::PathBuf;
 
 use fastctx_types::agents::{AgentFacts, AgentsReply, Fact, HomeFound, Integration, LimitWindow, LoginStatus};
+use fastctx_types::logins::Drift;
 use ratatui::text::{Line, Span};
 
 use super::{quiet, title, wrong};
@@ -22,6 +24,8 @@ pub struct Login {
     pub host: Host,
     pub home: PathBuf,
     pub standing: Option<Integration>,
+    /// What bringing its tools up to date waits for, if anything.
+    pub drift: Option<Drift>,
 }
 
 /// The logins, in the order they are drawn.
@@ -39,7 +43,7 @@ pub fn logins(reply: &AgentsReply) -> Vec<Login> {
                 Fact::Known { value } => Some(*value),
                 _ => None,
             };
-            Some(Login { host, home, standing })
+            Some(Login { host, home, standing, drift: facts.drift.clone() })
         })
         .collect()
 }
@@ -139,6 +143,15 @@ fn login_rows(ctx: &Ctx, name: &str, facts: &AgentFacts, many: bool, item: usize
     }
     if facts.agent.as_str() == "claude" && matches!(facts.unattended, Fact::Known { value: false }) {
         said.push(words.login_needs_consent().to_string());
+    }
+    if let Some(drift) = &facts.drift {
+        let line = match drift {
+            Drift::Changed { location, .. } => words.login_changed(location),
+            Drift::Asks { limit } => words.login_asks(limit.current, limit.requested),
+        };
+        for line in text::wrap_plain(&format!("   {line}"), look.text(Role::Caution), width) {
+            rows.push(Row::new(line).item(item));
+        }
     }
     if let Some(read) = read {
         said.push(read);

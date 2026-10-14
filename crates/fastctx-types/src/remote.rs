@@ -227,6 +227,8 @@ pub enum RemoteCall {
         agent: AgentName,
         dir: std::path::PathBuf,
         into: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        take_back: bool,
     },
     /// Put the World's tools into a login there, or take them out; only for
     /// the machine's owner.
@@ -236,6 +238,8 @@ pub enum RemoteCall {
         into: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         raise_output_limit: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        take_back: bool,
     },
     /// Read a login's limits there afresh.
     ReadAgentLimits {

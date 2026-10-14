@@ -616,15 +616,23 @@ pub async fn run_prepared(
 
     // An apply cut short holds copies of the hosts' settings until it is
     // finished; they go as soon as the node is up (`world-run.md`, apply).
-    let settling = node.clone();
-    tokio::task::spawn_blocking(move || {
-        for problem in fastctx_install::apply::settle(&settling.root) {
-            settling.log.line(format_args!("settling an interrupted apply: {problem}"));
+    // Then the World's tools in each login are brought up to what this
+    // fastctx writes (`world-agent-logins.md`, 接入跟着版本走).
+    let integrating = node.clone();
+    tokio::spawn(async move {
+        let settling = integrating.clone();
+        let settled = tokio::task::spawn_blocking(move || {
+            for problem in fastctx_install::apply::settle(&settling.root) {
+                settling.log.line(format_args!("settling an interrupted apply: {problem}"));
+            }
+            login_identity::refresh(&settling);
+        })
+        .await;
+        if let Err(error) = settled {
+            integrating.log.line(format_args!("settling the World's tools in the logins: {error}"));
         }
+        logins::refresh::all(&integrating).await;
     });
-
-    let identity = node.clone();
-    tokio::task::spawn_blocking(move || login_identity::refresh(&identity));
 
     if let Some(supervision) = supervision {
         handoff::follow(node.clone(), supervision);

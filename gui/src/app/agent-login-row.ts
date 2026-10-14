@@ -57,6 +57,7 @@ export function loginRow(facts: RowFacts, { words, access, usage: usageWords, wh
     facts.plan ? `<span class="tag">${escape(planName(facts.plan))}</span>` : "",
     token ? `<span class="tag tag-token" title="${escape(words.tokenSaid)}">${escape(words.token)}</span>` : "",
     identity && !identity.logged_in ? `<span class="tag tag-warn">${escape(words.loggedOut)}</span>` : "",
+    login.drift && !changing ? driftTag(machine, login, words) : "",
   ].join("");
   const assisting = facts.assisting.map((one) => assistanceTag(machine, login.dir, one, now, words, access)).join("");
   const mine = facts.assistsMe ? assistedTag(facts.assistsMe, now, words, access, usageWords) : "";
@@ -135,6 +136,15 @@ function assistedTag(mine: { assist: AssistSeen; owner: string | null }, now: Da
   const weekly = assist.weekly ? assist.weekly / 1_000_000 : null;
   const said = [usageWords.assistUntil(until, now), weekly ? usageWords.weekly(wholeDollars(weekly)) : usageWords.weeklyNone].join(" · ");
   return `<span class="tag logins-assisted" title="${escape(said)}">${escape(words.assistedFrom(owner ?? "–"))}${until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : ""}${weekly ? `<span class="assist-tag-until">${escape(words.weeklyShort(wholeDollars(weekly)))}</span>` : ""}</span>`;
+}
+
+/** The World's tools in it wait for the user: what for on hover, and
+ *  pressed, the card that puts them in again. */
+function driftTag(machine: string, login: Login, words: AgentLoginsWords): string {
+  const drift = login.drift!;
+  const said = drift.kind === "changed" ? words.driftChanged : words.driftAsks;
+  const detail = drift.kind === "changed" ? `${drift.location}\n${drift.reason}` : `${drift.limit.location}: ${drift.limit.current} → ${drift.limit.requested}`;
+  return `<button class="tag tag-warn logins-drift" type="button" data-act="drift" data-machine="${escape(machine)}" data-dir="${escape(login.dir)}" title="${escape(detail)}">${escape(said)}</button>`;
 }
 
 export function dirName(dir: string): string {

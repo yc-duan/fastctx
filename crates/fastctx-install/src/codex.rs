@@ -42,6 +42,9 @@ pub enum Ownership<'a> {
     #[default]
     None,
     Current(&'a Receipt),
+    /// As `Current`, rewriting what of it the user changed since, the
+    /// server's entry and the guidance block, as the plan says.
+    TakeBack(&'a Receipt),
     Legacy(&'a legacy::Receipt),
 }
 
@@ -118,6 +121,7 @@ pub fn apply(
     let mut messages = vec![];
     let mut legacy_agents_existed = None;
     let mut reinstall = false;
+    let take_back = matches!(ownership, Ownership::TakeBack(_));
     let mut receipt = Receipt {
         version: 1,
         config_path: config.path.into(),
@@ -130,7 +134,7 @@ pub fn apply(
     };
     match ownership {
         Ownership::None => {}
-        Ownership::Current(old) => {
+        Ownership::Current(old) | Ownership::TakeBack(old) => {
             old.check(config.path)?;
             receipt = old.clone();
             if let Some(server) = &old.server {
@@ -144,7 +148,7 @@ pub fn apply(
                         location: format!("{}: mcp_servers.fastctx", config.path),
                         reason: "was gone from the configuration; put back".into(),
                     });
-                } else {
+                } else if !take_back {
                     check_server(&source, server)?;
                 }
             }
@@ -220,6 +224,8 @@ pub fn apply(
             messages.push(format!("{}: the matching shared fastctx guidance block is now owned by this login; surrounding user text stays in place", agents.path));
         }
         applied
+    } else if take_back {
+        guidance::take_back(input, body, receipt.guidance.as_ref())?
     } else {
         guidance::apply(input, body, receipt.guidance.as_ref())?
     };

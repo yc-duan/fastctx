@@ -69,8 +69,8 @@ export interface AgentLoginsOptions {
   /** A machine's folders, walked by its node, where its picker is out of
    *  reach. */
   folders(machine: string, path: string | null): Promise<Folders>;
-  preview(machine: string, agent: Agent, dir: string, into: boolean): Promise<ChangePreview>;
-  change(machine: string, agent: Agent, dir: string, into: boolean, raise: boolean): Promise<LoginChange>;
+  preview(machine: string, agent: Agent, dir: string, into: boolean, takeBack: boolean): Promise<ChangePreview>;
+  change(machine: string, agent: Agent, dir: string, into: boolean, raise: boolean, takeBack: boolean): Promise<LoginChange>;
   limits(machine: string, agent: Agent, dir: string): Promise<MachineLogins>;
   /** Codex only: turns naming new conversations in a login on or off. */
   setTitle(machine: string, agent: Agent, dir: string, on: boolean): Promise<MachineLogins>;
@@ -159,8 +159,8 @@ export class AgentLoginsPage implements Page {
     this.pick = this.element.querySelector<HTMLElement>(".agents-pick-place")!;
     this.assistSheet = new AssistSheet(options.access);
     this.sheet = new AgentChangeSheet(options.changeWords, {
-      preview: (target) => options.preview(target.machine, target.agent, target.dir, target.into),
-      change: (target, raise) => options.change(target.machine, target.agent, target.dir, target.into, raise),
+      preview: (target) => options.preview(target.machine, target.agent, target.dir, target.into, !!target.takeBack),
+      change: (target, raise) => options.change(target.machine, target.agent, target.dir, target.into, raise, !!target.takeBack),
       progress: async (target) => {
         const record = await options.read(target.machine);
         const machine = record.machines.find((one) => one.kind === "answered" && one.logins.machine === target.machine);
@@ -568,6 +568,13 @@ export class AgentLoginsPage implements Page {
       case "apply": {
         const target = this.target(machine, dir, true) ?? { agent: this.agent, machine, dir, who: dirName(dir), programs: [], here: this.shown(this.options.store.world.peek())?.here ?? false, into: true };
         this.sheet.open(target);
+        return;
+      }
+      // A listed login whose tools wait for the user: put in again, what
+      // they changed of them taken back where that is what holds them.
+      case "drift": {
+        const target = this.target(machine, dir, true);
+        if (target) this.sheet.open({ ...target, takeBack: this.find(machine, dir)?.login?.drift?.kind === "changed" });
         return;
       }
       case "add-folder":

@@ -353,9 +353,10 @@ export function pickFolder(): Promise<string | null> {
 }
 
 /** What putting the World's tools into a login (`into`), or taking them
- *  out, would change, with nothing written. */
-export function previewAgentChange(machine: MachineName, agent: string, dir: string, into: boolean): Promise<ChangePreview> {
-  return invoke("preview_agent_change", { machineName: machine, agentName: agent, dir, into });
+ *  out, would change, with nothing written; with `takeBack`, rewriting what
+ *  the user changed of them too. */
+export function previewAgentChange(machine: MachineName, agent: string, dir: string, into: boolean, takeBack = false): Promise<ChangePreview> {
+  return invoke("preview_agent_change", { machineName: machine, agentName: agent, dir, into, takeBack });
 }
 
 /** Puts the World's tools into a login, or takes them out, by its
@@ -367,8 +368,9 @@ export function changeAgentLogin(
   dir: string,
   into: boolean,
   raiseOutputLimit = false,
+  takeBack = false,
 ): Promise<LoginChange> {
-  return invoke("change_agent_login", { machineName: machine, agentName: agent, dir, into, raiseOutputLimit });
+  return invoke("change_agent_login", { machineName: machine, agentName: agent, dir, into, raiseOutputLimit, takeBack });
 }
 
 /** Reads a login's limits afresh on its machine. */

@@ -15,6 +15,7 @@ pub(crate) mod folders;
 pub(crate) mod identify;
 pub(crate) mod kept;
 pub(crate) mod limits;
+pub(crate) mod refresh;
 pub(crate) mod remote;
 pub(crate) mod scan;
 
@@ -46,6 +47,9 @@ pub(crate) struct Logins {
     changes: Mutex<Vec<(AgentName, PathBuf, LoginChange)>>,
     /// Changes of the list happen one at a time, as `fastctx apply` does.
     changing: tokio::sync::Mutex<()>,
+    /// The listed logins whose tools were not brought up to date by
+    /// themselves, and why (`refresh`).
+    drift: Mutex<Vec<(AgentName, PathBuf, fastctx_types::logins::Drift)>>,
 }
 
 /// The agents that keep logins.
@@ -222,6 +226,7 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
                 launcher: known.and_then(|login| login.launcher.clone()),
                 models,
                 change,
+                drift: if listed { refresh::of(node, agent, dir) } else { None },
             };
             if listed {
                 side.listed.push(login);

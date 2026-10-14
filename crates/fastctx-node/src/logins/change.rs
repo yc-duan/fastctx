@@ -26,19 +26,22 @@ fn places(node: &Node, agent: &AgentName, dir: &Path) -> Result<(Places, apply::
     Ok((places, host))
 }
 
-/// What putting the World's tools into the login (`into`), or taking them
-/// out, would change.
+/// What putting the World's tools into the login (`into`), taking back what
+/// the user changed of them with `take_back`, or taking them out, would
+/// change.
 pub(crate) async fn preview(
     node: &Arc<Node>,
     agent: AgentName,
     dir: PathBuf,
     into: bool,
+    take_back: bool,
 ) -> Result<ChangePreview, Failure> {
     let node = node.clone();
     tokio::task::spawn_blocking(move || {
         super::known(&node, &agent, &dir)?;
         let (places, host) = places(&node, &agent, &dir)?;
-        let mut preview = apply::preview(&places, host, into).map_err(|error| Failure::new(error.to_string()))?;
+        let mut preview =
+            apply::preview(&places, host, into, edits(take_back)).map_err(|error| Failure::new(error.to_string()))?;
         preview.dir = dir;
         Ok(preview)
     })
@@ -54,6 +57,7 @@ pub(crate) async fn change(
     dir: PathBuf,
     into: bool,
     raise_output_limit: bool,
+    take_back: bool,
 ) -> Result<LoginChange, Failure> {
     let _changing = node.logins.changing.lock().await;
     {
@@ -75,7 +79,7 @@ pub(crate) async fn change(
             let (places, host) = places(&node, &agent, &dir)?;
             let approval = if raise_output_limit { Approval::RaiseOutputLimit } else { Approval::Require };
             let done = if into {
-                apply::apply_reporting(&places, host.only(), approval, Some(progress))
+                apply::apply_reporting(&places, host.only(), approval, edits(take_back), Some(progress))
             } else {
                 apply::unapply_reporting(&places, host.only(), Some(progress))
             };
@@ -89,6 +93,7 @@ pub(crate) async fn change(
         Ok(Ok(report)) => {
             let word = if into { "put the World's tools into" } else { "took the World's tools out of" };
             node.log.line(format_args!("the user {word} the {agent} login {}", dir.display()));
+            super::refresh::settled(node, &agent, &dir);
             ChangeEnd::Done {
                 at,
                 kept: report
@@ -123,6 +128,10 @@ pub(crate) async fn change(
         ended = Some(change.clone());
     });
     Ok(ended.expect("the change was set"))
+}
+
+fn edits(take_back: bool) -> apply::Edits {
+    if take_back { apply::Edits::TakeBack } else { apply::Edits::Keep }
 }
 
 /// Changes the record of the change running in a login.

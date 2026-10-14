@@ -72,7 +72,7 @@ pub(crate) async fn agent_folder(
 }
 
 /// What putting the World's tools into a login, or taking them out, would
-/// change.
+/// change; with `take_back`, rewriting what the user changed of them too.
 #[fastctx_gui_command::command]
 pub(crate) async fn preview_agent_change(
     shell: tauri::State<'_, Shell>,
@@ -80,10 +80,11 @@ pub(crate) async fn preview_agent_change(
     agent_name: String,
     dir: PathBuf,
     into: bool,
+    take_back: Option<bool>,
 ) -> Result<ChangePreview, String> {
     shell
         .world()
-        .preview_agent_change(machine(machine_name)?, agent(agent_name)?, dir, into)
+        .preview_agent_change(machine(machine_name)?, agent(agent_name)?, dir, into, take_back.unwrap_or(false))
         .await
         .map_err(|error| error.to_string())
 }
@@ -98,10 +99,18 @@ pub(crate) async fn change_agent_login(
     dir: PathBuf,
     into: bool,
     raise_output_limit: bool,
+    take_back: Option<bool>,
 ) -> Result<LoginChange, String> {
     shell
         .world()
-        .change_agent_login(machine(machine_name)?, agent(agent_name)?, dir, into, raise_output_limit)
+        .change_agent_login(
+            machine(machine_name)?,
+            agent(agent_name)?,
+            dir,
+            into,
+            raise_output_limit,
+            take_back.unwrap_or(false),
+        )
         .await
         .map_err(|error| error.to_string())
 }

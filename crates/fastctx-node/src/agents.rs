@@ -95,6 +95,7 @@ fn facts(agent: &str, login: &Login) -> AgentFacts {
             (_, None) => Fact::unavailable("granted when the World's tools are put in"),
         },
         timings: Vec::new(),
+        drift: login.drift.clone(),
     }
 }
 

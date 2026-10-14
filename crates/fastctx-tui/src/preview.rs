@@ -312,6 +312,7 @@ fn agents(now: Timestamp) -> fastctx_types::agents::AgentsReply {
         integration: Fact::known(Integration::In),
         unattended: Fact::known(true),
         timings: Vec::new(),
+        drift: None,
     };
     let account = |email: &str, plan: &str| {
         Fact::known(AgentAccount { email: Some(email.into()), organization: None, plan: Some(plan.into()) })

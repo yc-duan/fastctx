@@ -81,6 +81,10 @@ pub struct AgentFacts {
     #[serde(default = "unreported")]
     pub unattended: Fact<bool>,
     pub timings: Vec<ProbeTime>,
+    /// What bringing the World's tools here up to date waits for, if
+    /// anything (`crate::logins::Drift`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drift: Option<crate::logins::Drift>,
 }
 
 fn unreported<T>() -> Fact<T> {

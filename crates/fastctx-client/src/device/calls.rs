@@ -143,11 +143,11 @@ impl Device {
             Call::SetAgentTitle { machine, agent, dir, on } => {
                 (machine, RemoteCall::SetAgentTitle { agent, dir, on }, None)
             }
-            Call::PreviewAgentChange { machine, agent, dir, into } => {
-                (machine, RemoteCall::PreviewAgentChange { agent, dir, into }, None)
+            Call::PreviewAgentChange { machine, agent, dir, into, take_back } => {
+                (machine, RemoteCall::PreviewAgentChange { agent, dir, into, take_back }, None)
             }
-            Call::ChangeAgentLogin { machine, agent, dir, into, raise_output_limit } => {
-                (machine, RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit }, None)
+            Call::ChangeAgentLogin { machine, agent, dir, into, raise_output_limit, take_back } => {
+                (machine, RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit, take_back }, None)
             }
             Call::AgentUsage { machine, agent, dir } => (machine, RemoteCall::AgentUsage { agent, dir }, None),
             Call::ReadAgentLimits { machine, agent, dir } => {

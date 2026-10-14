@@ -69,7 +69,15 @@ export interface Login {
   models?: AgentModel[];
   /** The change running in it now, or the last since the node started. */
   change?: LoginChange;
+  /** What bringing the World's tools in it up to date waits for: none
+   *  when they are as this fastctx writes them. */
+  drift?: Drift;
 }
+
+/** Why the World's tools in a listed login were not brought up to date by
+ *  themselves: something of theirs the user changed, or Codex's shared
+ *  output limit, which only the user raises. */
+export type Drift = { kind: "changed"; location: string; reason: string } | { kind: "asks"; limit: OutputLimit };
 
 export type Found = "default" | "home" | "added" | "elsewhere";
 

@@ -292,8 +292,8 @@ pub fn run(world: World, sender: Sender, page: u64, job: Job) {
                 Err(Refused::Failed(why)) => Err(why),
             },
             Job::Unapply => crate::sessions::unapply().await.map(Done::Unapplied),
-            Job::ApplyHome { host, home, into, raise, machine } => {
-                let result = match crate::sessions::change_at(*host, home.clone(), *into, *raise).await {
+            Job::ApplyHome { host, home, into, raise, take_back, machine } => {
+                let result = match crate::sessions::change_at(*host, home.clone(), *into, *raise, *take_back).await {
                     Ok(report) if *into => Ok(Done::Applied(report)),
                     Ok(report) => Ok(Done::Unapplied(report)),
                     Err(Refused::OutputLimit { current, requested }) => Ok(Done::NeedsRaise { current, requested }),

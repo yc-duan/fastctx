@@ -93,6 +93,10 @@ function candidate(agent: "codex" | "claude", dir: string): Login {
   return { dir, default: false, found: "elsewhere", identity: { at: ago(0), who: { kind: "known", value: { logged_in: true, method: agent === "codex" ? "chatgpt" : "claude.ai", email: `${name}@example.com`, plan: "plus" } } }, limits: limits(60, 140), programs: [0], integration: "out" };
 }
 
+// `?drift`: the World's tools in the desktop's two Codex logins wait for
+// the user, one changed since, one for its output limit.
+const drifting = new URLSearchParams(location.search).has("drift");
+
 function desktop(now: number): MachineLogins {
   const scanning = now < scanUntil - 4000;
   return {
@@ -104,8 +108,8 @@ function desktop(now: number): MachineLogins {
         { how: "desktop_app", within: { name: "ChatGPT", id: "OpenAI.ChatGPT", version: "26.1007.2314.0", path: "C:\\Program Files\\WindowsApps\\OpenAI.ChatGPT" }, on_path: false },
       ],
       listed: [
-        { dir: "C:\\Users\\me\\.codex", default: true, found: "default", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "chatgpt", email: "me@example.com", plan: "pro" } } }, limits: limitsOf("desktop", "codex", "C:\\Users\\me\\.codex", 412, 233), programs: [0, 1], integration: "in", auto_title: titled.has("C:\\Users\\me\\.codex") },
-        { dir: "C:\\Users\\me\\.codex-work", default: false, found: "home", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "chatgpt", email: "work@example.com", plan: "plus" } } }, limits: limitsOf("desktop", "codex", "C:\\Users\\me\\.codex-work", 880, 610), programs: [0], integration: "in", auto_title: titled.has("C:\\Users\\me\\.codex-work") },
+        { dir: "C:\\Users\\me\\.codex", default: true, found: "default", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "chatgpt", email: "me@example.com", plan: "pro" } } }, limits: limitsOf("desktop", "codex", "C:\\Users\\me\\.codex", 412, 233), programs: [0, 1], integration: "in", auto_title: titled.has("C:\\Users\\me\\.codex"), ...(drifting ? { drift: { kind: "changed" as const, location: "C:\\Users\\me\\.codex\\AGENTS.md", reason: "the fastctx block differs from the recorded bytes" } } : {}) },
+        { dir: "C:\\Users\\me\\.codex-work", default: false, found: "home", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "chatgpt", email: "work@example.com", plan: "plus" } } }, limits: limitsOf("desktop", "codex", "C:\\Users\\me\\.codex-work", 880, 610), programs: [0], integration: "in", auto_title: titled.has("C:\\Users\\me\\.codex-work"), ...(drifting ? { drift: { kind: "asks" as const, limit: { location: "C:\\Users\\me\\.codex-work\\config.toml", current: 10000, requested: 30000 } } } : {}) },
       ],
       candidates: takenUp.filter((one) => one.agent === "codex").map((one) => candidate("codex", one.dir)),
       elsewhere: [],

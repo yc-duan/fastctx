@@ -78,6 +78,25 @@ pub fn apply(file: File<'_>, body: &str, previous: Option<&Receipt>) -> Result<A
     Ok(Applied { bytes, receipt: Receipt { path: file.path.into(), original_existed, block, prefix, suffix } })
 }
 
+/// `apply`, rewriting a recorded block the user changed since as `body`
+/// says; what lies around it is theirs and stays.
+pub fn take_back(file: File<'_>, body: &str, previous: Option<&Receipt>) -> Result<Applied, Error> {
+    let original = file.bytes.unwrap_or_default();
+    if let Some(receipt) = previous
+        && let Some(range) = marker_range(original, BEGIN, END, file.path)?
+        && original[range.clone()] != receipt.block
+    {
+        check_path(file.path, &receipt.path)?;
+        let block = block(body, file.path)?;
+        let mut bytes = original.to_vec();
+        bytes.splice(range, block.iter().copied());
+        let mut receipt = receipt.clone();
+        receipt.block = block;
+        return Ok(Applied { bytes, receipt });
+    }
+    apply(file, body, previous)
+}
+
 pub(crate) fn apply_shared(file: File<'_>, body: &str, previous: Option<&Receipt>) -> Result<(Applied, bool), Error> {
     shared::apply(file, body, previous)
 }

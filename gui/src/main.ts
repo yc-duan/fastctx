@@ -1883,8 +1883,8 @@ function show(next: Place): void {
         // specimen's folders.
         pick: live && onComputer() ? pickFolder : null,
         folders: (machine, path) => (live ? foldersOf(machine, path) : specimenFolders(machine, path)),
-        preview: (machine, agent, dir, into) => (live ? previewAgentChange(machine, agent, dir, into) : specimenPreview(machine, agent, dir, into)),
-        change: (machine, agent, dir, into, raise) => (live ? changeAgentLogin(machine, agent, dir, into, raise) : specimenLoginChange(machine, agent, dir, into)),
+        preview: (machine, agent, dir, into, takeBack) => (live ? previewAgentChange(machine, agent, dir, into, takeBack) : specimenPreview(machine, agent, dir, into)),
+        change: (machine, agent, dir, into, raise, takeBack) => (live ? changeAgentLogin(machine, agent, dir, into, raise, takeBack) : specimenLoginChange(machine, agent, dir, into)),
         limits: (machine, agent, dir) => (live ? readAgentLimits(machine, agent, dir) : notLive()),
         setTitle: (machine, agent, dir, on) => (live ? setAgentTitle(machine, agent, dir, on) : specimenSetTitle(machine, agent, dir, on, specimen.now)),
         usageOf: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen.now)),

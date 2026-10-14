@@ -547,6 +547,31 @@ impl Words {
         }
     }
 
+    /// The World's tools in a login, changed since they were put in.
+    pub fn login_changed(&self, location: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("接入被改过，没有跟着更新：{location}"),
+            Lang::En => format!("changed since they were put in, left as they are: {location}"),
+        }
+    }
+
+    /// The World's tools in a login, waiting for the user to raise Codex's
+    /// shared output limit.
+    pub fn login_asks(&self, current: i64, requested: u64) -> String {
+        match self.lang {
+            Lang::Zh => format!("接入要更新：输出上限要从 {current} 调到 {requested}"),
+            Lang::En => format!("to bring up to date: raise the output limit from {current} to {requested}"),
+        }
+    }
+
+    pub fn key_take_back(&self) -> &'static str {
+        self.pick("以 Fastctx 的为准", "take back")
+    }
+
+    pub fn key_update_login(&self) -> &'static str {
+        self.pick("更新接入", "update")
+    }
+
     pub fn login_needs_consent(&self) -> &'static str {
         self.pick("未授权自动运行", "not allowed to run unattended")
     }

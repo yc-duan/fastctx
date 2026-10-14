@@ -45,6 +45,10 @@ export interface AgentLoginsWords extends MachinePickWords {
   searching(directories: number): string;
   stop: string;
   stopped: string;
+  /** A listed login whose tools were not brought up to date by themselves:
+   *  something of theirs changed since, or the output limit waits. */
+  driftChanged: string;
+  driftAsks: string;
   searchFailed: string;
   noneBelow: string;
   notSearched: string;
@@ -145,6 +149,8 @@ export const zhAgentLogins: AgentLoginsWords = {
   searching: (directories) => `已看 ${directories.toLocaleString("zh-CN")} 个文件夹`,
   stop: "停止",
   stopped: "已停止",
+  driftChanged: "接入被改过",
+  driftAsks: "接入要更新",
   searchFailed: "没找完",
   noneBelow: "没找到",
   notSearched: "还没找过",
@@ -235,6 +241,8 @@ export const enAgentLogins: AgentLoginsWords = {
   searching: (directories) => `${directories.toLocaleString("en")} folders seen`,
   stop: "Stop",
   stopped: "Stopped",
+  driftChanged: "Changed since",
+  driftAsks: "Needs update",
   searchFailed: "Not finished",
   noneBelow: "None found",
   notSearched: "Not searched yet",

@@ -36,6 +36,8 @@ pub(crate) async fn scan(node: &Arc<Node>, stop: bool, limits: bool) -> Result<M
     let scanned = tokio::spawn(async move {
         let node = scanning;
         let scanned = scan_once(&node, limits).await;
+        // What the scan finds is listed as this fastctx writes it.
+        super::refresh::all(&node).await;
         node.logins.scanning.store(false, Ordering::Release);
         scanned
     })

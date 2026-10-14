@@ -149,6 +149,8 @@ pub enum Job {
         home: std::path::PathBuf,
         into: bool,
         raise: bool,
+        /// What the user changed of the World's tools is rewritten.
+        take_back: bool,
         machine: MachineName,
     },
 }

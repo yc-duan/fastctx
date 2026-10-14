@@ -126,6 +126,24 @@ pub struct Login {
     /// started, step by step.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub change: Option<LoginChange>,
+    /// Where the World's tools in a listed login stand against what this
+    /// fastctx writes, when that waits for the user; none when they are as
+    /// it writes them (`world-agent-logins.md`, 接入跟着版本走).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drift: Option<Drift>,
+}
+
+/// Why the World's tools in a login were not brought up to date by
+/// themselves.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum Drift {
+    /// Something the World put in was changed since, and is left as it is:
+    /// where, and how.
+    Changed { location: String, reason: String },
+    /// Bringing them up to date raises Codex's shared output limit, which
+    /// only the user may.
+    Asks { limit: OutputLimit },
 }
 
 /// How the World knows of a login.

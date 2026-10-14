@@ -52,6 +52,8 @@ export interface AgentChangeWords {
   removed: string;
   withheld: string;
   raise(limit: OutputLimit): string;
+  /** Said when what the user changed of the World's lines goes back. */
+  takeBack: string;
   /** A change's lines, as a conversation says them. */
   lines: LongTextWords & { unchanged(n: number): string };
   steps: { program: string; command(command: string): string; files: string; check(scope: string): string };
@@ -100,6 +102,7 @@ export const zhAgentChange: AgentChangeWords = {
   withheld: "可能是你自己的值，不显示",
   lines: { more: (n) => `+ ${n.toLocaleString("zh-CN")} 行`, less: "− 收起", full: "整屏查看", english: false, unchanged: (n) => `${n} 行未改动` },
   raise: (limit) => `把输出上限从 ${limit.current.toLocaleString("zh-CN")} 调到 ${limit.requested.toLocaleString("zh-CN")}（${limit.location}，所有工具共用）`,
+  takeBack: "你改过的 Fastctx 那几处换回它现在写的样子，文件里别的地方不动",
   steps: { program: "放好程序", command: (command) => `运行 ${command}`, files: "改配置与说明", check: (scope) => `核对 ${scope}` },
   cancel: "取消",
   apply: "接入",
@@ -146,6 +149,7 @@ export const enAgentChange: AgentChangeWords = {
   withheld: "May be your own value; not shown",
   lines: { more: (n) => `+ ${n.toLocaleString("en")} lines`, less: "− show less", full: "Full screen", english: true, unchanged: (n) => (n === 1 ? "1 unchanged line" : `${n} unchanged lines`) },
   raise: (limit) => `Raise the output limit from ${limit.current.toLocaleString("en")} to ${limit.requested.toLocaleString("en")} (${limit.location}, shared by every tool)`,
+  takeBack: "What you changed of Fastctx's lines goes back to how this version writes them; the rest of each file stays",
   steps: { program: "Put the program in place", command: (command) => `Run ${command}`, files: "Change settings and guidance", check: (scope) => `Check ${scope}` },
   cancel: "Cancel",
   apply: "Hook up",
@@ -170,6 +174,8 @@ export interface AgentChangeTarget {
   /** Whether the login is on this computer. */
   here: boolean;
   into: boolean;
+  /** What the user changed of the World's tools in it is rewritten. */
+  takeBack?: boolean;
 }
 
 export interface AgentChangeSeams {
@@ -307,6 +313,7 @@ export class AgentChangeSheet {
         ]
       : [row(words.restore, words.restoreWhat, `<span class="agent-change-said">${escape(words.restoreWhat)}</span>`), row(words.kept, words.keepsWhat, `<span class="agent-change-said">${escape(words.keepsWhat)}</span>`)];
     const lines = [
+      ...(target.takeBack ? [words.takeBack] : []),
       words.openSessions(target.agent, target.into),
       ...(target.into && target.agent === "claude" ? [words.permission] : []),
       ...(target.here ? [] : [words.elsewhere(target.machine)]),

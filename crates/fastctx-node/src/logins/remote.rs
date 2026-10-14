@@ -181,11 +181,12 @@ pub(crate) async fn preview(
     agent: AgentName,
     dir: PathBuf,
     into: bool,
+    take_back: bool,
 ) -> Result<ChangePreview, Failure> {
     if node.is_me(&machine) {
-        return super::change::preview(node, agent, dir, into).await;
+        return super::change::preview(node, agent, dir, into, take_back).await;
     }
-    match ask(node, &machine, Purpose::Hands, RemoteCall::PreviewAgentChange { agent, dir, into }).await? {
+    match ask(node, &machine, Purpose::Hands, RemoteCall::PreviewAgentChange { agent, dir, into, take_back }).await? {
         RemoteReply::AgentChangePreview(preview) => Ok(*preview),
         _ => Err(other(&machine)),
     }
@@ -198,11 +199,12 @@ pub(crate) async fn change(
     dir: PathBuf,
     into: bool,
     raise_output_limit: bool,
+    take_back: bool,
 ) -> Result<LoginChange, Failure> {
     if node.is_me(&machine) {
-        return super::change::change(node, agent, dir, into, raise_output_limit).await;
+        return super::change::change(node, agent, dir, into, raise_output_limit, take_back).await;
     }
-    let call = RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit };
+    let call = RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit, take_back };
     match ask(node, &machine, Purpose::Hands, call).await? {
         RemoteReply::AgentLoginChanged(change) => Ok(*change),
         _ => Err(other(&machine)),
@@ -293,11 +295,13 @@ pub(crate) async fn answer(
             super::set_title(node, &agent, &dir, on)?;
             super::here(node).await.map(logins)
         }
-        RemoteCall::PreviewAgentChange { agent, dir, into } => super::change::preview(node, agent, dir, into)
-            .await
-            .map(|preview| RemoteReply::AgentChangePreview(Box::new(preview))),
-        RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit } => {
-            super::change::change(node, agent, dir, into, raise_output_limit)
+        RemoteCall::PreviewAgentChange { agent, dir, into, take_back } => {
+            super::change::preview(node, agent, dir, into, take_back)
+                .await
+                .map(|preview| RemoteReply::AgentChangePreview(Box::new(preview)))
+        }
+        RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit, take_back } => {
+            super::change::change(node, agent, dir, into, raise_output_limit, take_back)
                 .await
                 .map(|change| RemoteReply::AgentLoginChanged(Box::new(change)))
         }

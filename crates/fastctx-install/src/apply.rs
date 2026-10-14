@@ -39,6 +39,7 @@ pub mod kernel;
 mod preview;
 mod progress;
 mod recovery;
+mod refresh;
 mod settle;
 mod tools;
 mod withdrawn;
@@ -47,6 +48,7 @@ pub use identity::forward_login_identity;
 pub use preview::preview;
 pub use progress::Progress;
 use progress::tell;
+pub use refresh::{Refresh, refresh};
 pub use settle::settle;
 pub use tools::ToolCheck;
 pub use withdrawn::{Integration, integrations, read_withdrawn, remember_withdrawn, restore_withdrawn};
@@ -379,18 +381,31 @@ pub fn place_executable(places: &Places) -> Result<(PathBuf, Report), Error> {
     Ok((installed, report))
 }
 
+/// What an apply does with what the World put in that the user changed since.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Edits {
+    /// Left as it is: the apply stops there, saying where.
+    #[default]
+    Keep,
+    /// Rewritten as this fastctx writes it, Codex's server entry and the
+    /// guidance blocks; the rest of each file stays the user's.
+    TakeBack,
+}
+
 /// Puts the World's tools into the sessions `hosts` open from now on.
 /// `approval` says whether Codex's shared output limit may be raised when
 /// the user set it lower than the World needs.
 pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report, Error> {
-    apply_reporting(places, hosts, approval, None)
+    apply_reporting(places, hosts, approval, Edits::Keep, None)
 }
 
-/// `apply`, telling `progress` each step as it goes.
+/// `apply`, doing `edits` with what the user changed of the World's, and
+/// telling `progress` each step as it goes.
 pub fn apply_reporting(
     places: &Places,
     hosts: Hosts,
     approval: Approval,
+    edits: Edits,
     progress: Option<Progress>,
 ) -> Result<Report, Error> {
     if places.root.join("uninstalled.json").try_exists().map_err(io("checking uninstall state"))? {
@@ -400,7 +415,7 @@ pub fn apply_reporting(
     crate::placement::ensure(&places.root, &places.fastctx)
         .map_err(|error| Error::Io(format!("placing the World program: {error:#}")))?;
     tell(&progress, progress::Step::Program, progress::StepState::Done);
-    if let Some(report) = progress::delegated(&progress, || kernel::delegate(places, hosts, approval, true))? {
+    if let Some(report) = progress::delegated(&progress, || kernel::delegate(places, hosts, approval, edits, true))? {
         return Ok(report);
     }
     crate::disk::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
@@ -426,6 +441,7 @@ pub fn apply_reporting(
             bind_legacy(old, &config, &agents)?;
         }
         let ownership = match (&record.codex, &old) {
+            (Some(receipt), _) if edits == Edits::TakeBack => Ownership::TakeBack(receipt),
             (Some(receipt), _) => Ownership::Current(receipt),
             (None, Some(receipt)) => Ownership::Legacy(receipt),
             (None, None) => Ownership::None,
@@ -462,7 +478,8 @@ pub fn apply_reporting(
         let initial_settings = Snapshot::read(places.claude_home.join("settings.json"))?;
         let claude_md = Snapshot::read(places.claude_home.join("CLAUDE.md"))?;
         let path = text(claude_md.path());
-        let applied = guidance::apply(
+        let guide = if edits == Edits::TakeBack { guidance::take_back } else { guidance::apply };
+        let applied = guide(
             File { path: &path, bytes: claude_md.bytes() },
             &briefing::guidance(false),
             record.claude_md.as_ref(),
@@ -598,7 +615,8 @@ pub fn unapply(places: &Places, hosts: Hosts) -> Result<Report, Error> {
 
 /// `unapply`, telling `progress` each step as it goes.
 pub fn unapply_reporting(places: &Places, hosts: Hosts, progress: Option<Progress>) -> Result<Report, Error> {
-    if let Some(report) = progress::delegated(&progress, || kernel::delegate(places, hosts, Approval::Require, false))?
+    if let Some(report) =
+        progress::delegated(&progress, || kernel::delegate(places, hosts, Approval::Require, Edits::Keep, false))?
     {
         return Ok(report);
     }

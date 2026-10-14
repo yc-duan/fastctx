@@ -8,6 +8,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use fastctx_types::accounts::{Arrival, Dissolution, HubAccounts, Level};
 use fastctx_types::agents::{AgentsReply, Integration};
+use fastctx_types::logins::Drift;
 use fastctx_types::world::{HubNodes, LinkState, NodesReply};
 use fastctx_types::{AccountName, HubName, MachineName};
 use jiff::Timestamp;
@@ -238,13 +239,17 @@ impl MachinesPage {
                 }
                 None => Act::Stay,
             },
-            KeyCode::Char('u' | 'x' | 'U') if !self.busy() && self.selected_home().is_some() => {
+            KeyCode::Char('u' | 'x' | 'U' | 't') if !self.busy() && self.selected_home().is_some() => {
                 let login = self.selected_home().expect("a login is selected");
                 let into = key.code != KeyCode::Char('x');
                 let raise = key.code == KeyCode::Char('U');
+                let take_back = key.code == KeyCode::Char('t');
+                let changed = matches!(login.drift, Some(Drift::Changed { .. }));
                 let can = match (into, login.standing) {
+                    (true, Some(Integration::In)) if take_back => changed,
+                    (true, _) if take_back => false,
                     (true, Some(Integration::Out | Integration::Old)) => true,
-                    (true, Some(Integration::In)) => raise,
+                    (true, Some(Integration::In)) => raise || login.drift.is_some(),
                     (false, Some(Integration::In | Integration::Old)) => true,
                     _ => false,
                 };
@@ -252,7 +257,7 @@ impl MachinesPage {
                     return Act::Stay;
                 };
                 self.outcome = Some(if into { Outcome::Applying } else { Outcome::Unapplying });
-                Act::Do(Job::ApplyHome { host: login.host, home: login.home, into, raise, machine })
+                Act::Do(Job::ApplyHome { host: login.host, home: login.home, into, raise, take_back, machine })
             }
             KeyCode::Char('u') if !self.busy() && self.any_installed() => {
                 self.outcome = Some(Outcome::Applying);
@@ -475,7 +480,14 @@ impl MachinesPage {
         if let Some(login) = self.selected_home().filter(|_| !self.busy()) {
             match login.standing {
                 Some(Integration::Out | Integration::Old) => keys.push(("u", words.key_apply_login())),
-                Some(Integration::In) => keys.push(("x", words.key_unapply_login())),
+                Some(Integration::In) => {
+                    match login.drift {
+                        Some(Drift::Changed { .. }) => keys.push(("t", words.key_take_back())),
+                        Some(Drift::Asks { .. }) => keys.push(("u", words.key_update_login())),
+                        None => {}
+                    }
+                    keys.push(("x", words.key_unapply_login()));
+                }
                 _ => {}
             }
             if matches!(self.outcome, Some(Outcome::NeedsRaise { .. })) {

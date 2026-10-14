@@ -323,15 +323,17 @@ impl World {
     }
 
     /// What putting the World's tools into a login (`into`), or taking them
-    /// out, would change.
+    /// out, would change; with `take_back`, rewriting what the user changed
+    /// of them too.
     pub async fn preview_agent_change(
         &self,
         machine: MachineName,
         agent: fastctx_types::AgentName,
         dir: std::path::PathBuf,
         into: bool,
+        take_back: bool,
     ) -> Result<fastctx_types::logins::ChangePreview, Error> {
-        match self.ask(Call::PreviewAgentChange { machine, agent, dir, into }).await? {
+        match self.ask(Call::PreviewAgentChange { machine, agent, dir, into, take_back }).await? {
             Reply::AgentChangePreview(preview) => Ok(*preview),
             other => Err(unexpected(other)),
         }
@@ -346,8 +348,9 @@ impl World {
         dir: std::path::PathBuf,
         into: bool,
         raise_output_limit: bool,
+        take_back: bool,
     ) -> Result<fastctx_types::logins::LoginChange, Error> {
-        match self.ask(Call::ChangeAgentLogin { machine, agent, dir, into, raise_output_limit }).await? {
+        match self.ask(Call::ChangeAgentLogin { machine, agent, dir, into, raise_output_limit, take_back }).await? {
             Reply::AgentLoginChanged(change) => Ok(*change),
             other => Err(unexpected(other)),
         }

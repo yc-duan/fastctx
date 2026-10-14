@@ -917,19 +917,19 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }
-        Call::PreviewAgentChange { machine, agent, dir, into } => {
+        Call::PreviewAgentChange { machine, agent, dir, into, take_back } => {
             users_voice(node, peer)?;
             crate::managed::refuse(node)?;
 
-            crate::logins::remote::preview(node, machine, agent, dir, into)
+            crate::logins::remote::preview(node, machine, agent, dir, into, take_back)
                 .await
                 .map(|preview| Reply::AgentChangePreview(Box::new(preview)))
         }
-        Call::ChangeAgentLogin { machine, agent, dir, into, raise_output_limit } => {
+        Call::ChangeAgentLogin { machine, agent, dir, into, raise_output_limit, take_back } => {
             users_voice(node, peer)?;
             crate::managed::refuse(node)?;
 
-            crate::logins::remote::change(node, machine, agent, dir, into, raise_output_limit)
+            crate::logins::remote::change(node, machine, agent, dir, into, raise_output_limit, take_back)
                 .await
                 .map(|change| Reply::AgentLoginChanged(Box::new(change)))
         }

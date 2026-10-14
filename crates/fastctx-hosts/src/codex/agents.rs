@@ -104,6 +104,7 @@ fn empty(program: Fact<Option<AgentProgram>>) -> AgentFacts {
         // The World starts Codex threads with approvals never asked.
         unattended: Fact::known(true),
         timings: Vec::new(),
+        drift: None,
     }
 }
 

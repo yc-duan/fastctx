@@ -16194,7 +16194,8 @@
         "machine": "desktop",
         "agent": "claude",
         "dir": "/home/me/.claude-work",
-        "into": true
+        "into": true,
+        "take_back": true
       },
       {
         "call": "change_agent_login",
@@ -16202,7 +16203,8 @@
         "agent": "codex",
         "dir": "C:/Users/me/.codex",
         "into": true,
-        "raise_output_limit": true
+        "raise_output_limit": true,
+        "take_back": true
       },
       {
         "call": "read_agent_limits",
@@ -16356,6 +16358,11 @@
                           }
                         ]
                       }
+                    },
+                    "drift": {
+                      "kind": "changed",
+                      "location": "C:/Users/me/.codex/AGENTS.md",
+                      "reason": "the fastctx block differs from the recorded bytes"
                     }
                   }
                 ],
@@ -16383,6 +16390,14 @@
                           "current": 1000,
                           "requested": 26000
                         }
+                      }
+                    },
+                    "drift": {
+                      "kind": "asks",
+                      "limit": {
+                        "location": "config.toml",
+                        "current": 1000,
+                        "requested": 26000
                       }
                     }
                   }
@@ -16683,6 +16698,11 @@
                     }
                   ]
                 }
+              },
+              "drift": {
+                "kind": "changed",
+                "location": "C:/Users/me/.codex/AGENTS.md",
+                "reason": "the fastctx block differs from the recorded bytes"
               }
             }
           ],
@@ -16710,6 +16730,14 @@
                     "current": 1000,
                     "requested": 26000
                   }
+                }
+              },
+              "drift": {
+                "kind": "asks",
+                "limit": {
+                  "location": "config.toml",
+                  "current": 1000,
+                  "requested": 26000
                 }
               }
             }
@@ -17098,6 +17126,11 @@
                     }
                   ]
                 }
+              },
+              "drift": {
+                "kind": "changed",
+                "location": "C:/Users/me/.codex/AGENTS.md",
+                "reason": "the fastctx block differs from the recorded bytes"
               }
             }
           ],
@@ -17125,6 +17158,14 @@
                     "current": 1000,
                     "requested": 26000
                   }
+                }
+              },
+              "drift": {
+                "kind": "asks",
+                "limit": {
+                  "location": "config.toml",
+                  "current": 1000,
+                  "requested": 26000
                 }
               }
             }

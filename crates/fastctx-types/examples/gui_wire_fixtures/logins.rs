@@ -78,6 +78,10 @@ pub fn fixtures() -> Fixtures {
                 kept: vec![Kept { location: "AGENTS.md".into(), reason: "changed since apply; left untouched".into() }],
             }),
         }),
+        drift: Some(Drift::Changed {
+            location: "C:/Users/me/.codex/AGENTS.md".into(),
+            reason: "the fastctx block differs from the recorded bytes".into(),
+        }),
     };
     let candidate = Login {
         dir: "/home/me/.claude-work".into(),
@@ -103,6 +107,7 @@ pub fn fixtures() -> Fixtures {
             }],
             end: None,
         }),
+        drift: None,
     };
     let never = Login {
         dir: "C:/Users/me/CodexHomes/b".into(),
@@ -125,6 +130,9 @@ pub fn fixtures() -> Fixtures {
                 reason: "the limit is lower".into(),
                 output_limit: Some(OutputLimit { location: "config.toml".into(), current: 1000, requested: 26000 }),
             }),
+        }),
+        drift: Some(Drift::Asks {
+            limit: OutputLimit { location: "config.toml".into(), current: 1000, requested: 26000 },
         }),
     };
     let record = MachineLogins {
@@ -314,6 +322,7 @@ pub fn fixtures() -> Fixtures {
                 agent: claude.clone(),
                 dir: "/home/me/.claude-work".into(),
                 into: true,
+                take_back: true,
             },
             Call::ChangeAgentLogin {
                 machine: machine.clone(),
@@ -321,6 +330,7 @@ pub fn fixtures() -> Fixtures {
                 dir: "C:/Users/me/.codex".into(),
                 into: true,
                 raise_output_limit: true,
+                take_back: true,
             },
             Call::ReadAgentLimits { machine: machine.clone(), agent: codex.clone(), dir: "C:/Users/me/.codex".into() },
         ],
@@ -347,12 +357,18 @@ pub fn fixtures() -> Fixtures {
             RemoteCall::ScanAgents { stop: true, limits: false },
             RemoteCall::AddAgentLogin { agent: claude.clone(), dir: "/home/me/.claude-work".into(), limits: true },
             RemoteCall::AgentFolder { dir: "/home/me/agents".into(), change: FolderChange::Choose { limits: false } },
-            RemoteCall::PreviewAgentChange { agent: claude.clone(), dir: "/home/me/.claude-work".into(), into: false },
+            RemoteCall::PreviewAgentChange {
+                agent: claude.clone(),
+                dir: "/home/me/.claude-work".into(),
+                into: false,
+                take_back: false,
+            },
             RemoteCall::ChangeAgentLogin {
                 agent: claude,
                 dir: "/home/me/.claude-work".into(),
                 into: false,
                 raise_output_limit: false,
+                take_back: false,
             },
             RemoteCall::ReadAgentLimits { agent: codex, dir: "C:/Users/me/.codex".into() },
         ],

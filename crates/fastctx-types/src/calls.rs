@@ -326,17 +326,21 @@ pub enum Call {
         on: bool,
     },
     /// What putting the World's tools into a login on `machine` (`into`),
-    /// or taking them out, would change, with nothing written.
+    /// or taking them out, would change, with nothing written; with
+    /// `take_back`, what the user changed of them is rewritten too.
     PreviewAgentChange {
         machine: MachineName,
         agent: AgentName,
         dir: std::path::PathBuf,
         into: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        take_back: bool,
     },
     /// Puts the World's tools into a login on `machine`, listing it, or
     /// takes them out, removing it from the list; done by that machine's
     /// node. Codex's shared output limit is raised only with
-    /// `raise_output_limit`.
+    /// `raise_output_limit`; what the user changed of the World's tools is
+    /// rewritten only with `take_back`.
     ChangeAgentLogin {
         machine: MachineName,
         agent: AgentName,
@@ -344,6 +348,8 @@ pub enum Call {
         into: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         raise_output_limit: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        take_back: bool,
     },
     /// Reads a login's usage limits afresh on its machine.
     ReadAgentLimits {

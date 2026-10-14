@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{Error, Hosts, Places, Report};
+use super::{Edits, Error, Hosts, Places, Report};
 use crate::codex::Approval;
 
 /// The private CLI transport preserves approval requests as structured facts.
@@ -35,7 +35,13 @@ impl From<Failure> for Error {
     }
 }
 
-pub(super) fn delegate(places: &Places, hosts: Hosts, approval: Approval, into: bool) -> Result<Option<Report>, Error> {
+pub(super) fn delegate(
+    places: &Places,
+    hosts: Hosts,
+    approval: Approval,
+    edits: Edits,
+    into: bool,
+) -> Result<Option<Report>, Error> {
     let installed = places.installed();
     if !installed.is_file() {
         return Ok(None);
@@ -66,6 +72,9 @@ pub(super) fn delegate(places: &Places, hosts: Hosts, approval: Approval, into: 
     }
     if matches!(approval, Approval::RaiseOutputLimit) {
         command.arg("--raise-output-limit");
+    }
+    if edits == Edits::TakeBack {
+        command.arg("--take-back");
     }
     // A delegated mutation must end with its caller.
     #[cfg(windows)]

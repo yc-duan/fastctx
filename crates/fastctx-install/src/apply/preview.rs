@@ -12,8 +12,9 @@ use super::*;
 mod items;
 
 /// The preview of putting the World's tools into `host`'s selected home
-/// (`into`) or taking them out.
-pub fn preview(places: &Places, host: Host, into: bool) -> Result<ChangePreview, Error> {
+/// (`into`), doing `edits` with what the user changed of the World's, or
+/// taking them out.
+pub fn preview(places: &Places, host: Host, into: bool, edits: Edits) -> Result<ChangePreview, Error> {
     let record_file = Snapshot::read(places.record())?;
     let records = homes::Records::read(&record_file, places)?;
     let record = records.selected(places, host.only())?;
@@ -31,13 +32,13 @@ pub fn preview(places: &Places, host: Host, into: bool) -> Result<ChangePreview,
         kept: Vec::new(),
     };
     match host {
-        Host::Codex => codex(places, &record, into, &mut preview)?,
-        Host::Claude => claude(places, &record, into, &mut preview)?,
+        Host::Codex => codex(places, &record, into, edits, &mut preview)?,
+        Host::Claude => claude(places, &record, into, edits, &mut preview)?,
     }
     Ok(preview)
 }
 
-fn codex(places: &Places, record: &Record, into: bool, preview: &mut ChangePreview) -> Result<(), Error> {
+fn codex(places: &Places, record: &Record, into: bool, edits: Edits, preview: &mut ChangePreview) -> Result<(), Error> {
     let config = Snapshot::read(places.codex_home.join("config.toml"))?;
     let agents = Snapshot::read(places.codex_home.join("AGENTS.md"))?;
     let legacy = if record.codex.is_none() { homes::legacy(places)? } else { None };
@@ -50,6 +51,7 @@ fn codex(places: &Places, record: &Record, into: bool, preview: &mut ChangePrevi
     let agents_file = File { path: &agents_path, bytes: agents.bytes() };
     let (config_after, agents_after, notices) = if into {
         let ownership = match (&record.codex, &old) {
+            (Some(receipt), _) if edits == Edits::TakeBack => Ownership::TakeBack(receipt),
             (Some(receipt), _) => Ownership::Current(receipt),
             (None, Some(receipt)) => Ownership::Legacy(receipt),
             (None, None) => Ownership::None,
@@ -85,7 +87,13 @@ fn codex(places: &Places, record: &Record, into: bool, preview: &mut ChangePrevi
     Ok(())
 }
 
-fn claude(places: &Places, record: &Record, into: bool, preview: &mut ChangePreview) -> Result<(), Error> {
+fn claude(
+    places: &Places,
+    record: &Record,
+    into: bool,
+    edits: Edits,
+    preview: &mut ChangePreview,
+) -> Result<(), Error> {
     let settings_file = Snapshot::read(places.claude_home.join("settings.json"))?;
     let claude_md = Snapshot::read(places.claude_home.join("CLAUDE.md"))?;
     let settings_path = text(settings_file.path());
@@ -119,7 +127,8 @@ fn claude(places: &Places, record: &Record, into: bool, preview: &mut ChangePrev
         let (after, _) =
             crate::claude::consent::grant(tools.bytes.as_deref(), record.consent.as_ref()).map_err(Error::Claude)?;
         file(preview, settings_file.path(), settings_file.bytes(), after.as_deref(), Kind::Json(items::claude_keys))?;
-        let guidance = guidance::apply(
+        let guide = if edits == Edits::TakeBack { guidance::take_back } else { guidance::apply };
+        let guidance = guide(
             File { path: &md_path, bytes: claude_md.bytes() },
             &briefing::guidance(false),
             record.claude_md.as_ref(),
