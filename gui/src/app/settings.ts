@@ -27,7 +27,7 @@ import type { MachinePageWords } from "./machine-page-words";
 import type { NameSaid } from "./name-words";
 import { formerNames } from "./map-of";
 import { link } from "./places";
-import { machinesOf } from "./reach";
+import { inNoNetwork, machinesOf } from "./reach";
 import { RenameField, renamerOf } from "./rename";
 
 export interface SettingsOptions {
@@ -203,9 +203,13 @@ export class SettingsPage implements Page {
     if (!here || !world) return;
     const former = formerNames(world, here);
     const renamable = !!renaming && !!renamerOf(here, world, async () => {}, renaming.here);
-    const html = `<dt>${escape(this.options.words.machine)}</dt><dd class="settings-name-value"><a class="settings-link" href="${link({ kind: "machine", name: here.written })}"${
-      former.length && renaming ? ` title="${escape(renaming.words.formerly(former))}"` : ""
-    }><span>${escape(here.written)}</span>${glyph("chevron", 14)}</a>${
+    const formerly = former.length && renaming ? ` title="${escape(renaming.words.formerly(former))}"` : "";
+    // In no network the computer has no details page: its name is only its
+    // name, renamed here.
+    const name = inNoNetwork(world)
+      ? `<span${formerly}>${escape(here.written)}</span>`
+      : `<a class="settings-link" href="${link({ kind: "machine", name: here.written })}"${formerly}><span>${escape(here.written)}</span>${glyph("chevron", 14)}</a>`;
+    const html = `<dt>${escape(this.options.words.machine)}</dt><dd class="settings-name-value">${name}${
       renamable ? `<button class="text-button quiet-button" type="button" data-rename>${escape(renaming!.words.rename)}</button>` : ""
     }</dd>`;
     if (this.name.innerHTML !== html) this.name.innerHTML = html;

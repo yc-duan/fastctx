@@ -112,7 +112,7 @@ import {
 import { enRemoval, zhRemoval } from "./app/removal-words";
 import { enAccess, enLogin, enMachines, enToken, zhAccess, zhLogin, zhMachines, zhToken } from "./app/account-words";
 import { loginsOf, type AccountChange, type Login } from "./world/accounts";
-import { assistantOf, assistantsOf, fileHome, filePlaces, groupsOf, loginKey, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
+import { assistantOf, assistantsOf, fileHome, filePlaces, groupsOf, inNoNetwork, loginKey, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
 import type { FocusPlace } from "./app/focus-panel";
 import { folders as foldersOf, noFocus, type Focus, type Folders } from "./world/focus";
 import { Details } from "./conversation/details";
@@ -1055,7 +1055,11 @@ function home(): Page {
     const now = store.clock.get();
     if (world) {
       page.update(stateOf(world, away), now);
-      drawing.update(stillScene(world));
+      // A computer in no network is the only machine: there is nothing to
+      // draw, and nothing on the drawing to open.
+      const alone = inNoNetwork(world);
+      page.showDrawing(!alone);
+      if (!alone) drawing.update(stillScene(world));
     }
     if (live && world) {
       const next = shapeOf(world);
@@ -1659,6 +1663,12 @@ function show(next: Place): void {
   // The front page belongs to the workbench: without it, the interface opens on
   // the agents (`world-gui.md`, 界面的结构).
   if (next.kind === "home" && !deviceFeatures.conversations.peek()) next = { kind: "agents", machine: null };
+  // A computer in no network has no machine details: the machines page
+  // tells what a network is (`world-gui.md`, 机器的详情).
+  if (next.kind === "machine" && inNoNetwork(store.world.peek())) {
+    replacePlace(link({ kind: "machines" }));
+    return;
+  }
   const to = link(next);
   const replaced = replacedTo === to;
   replacedTo = null;
@@ -2083,7 +2093,7 @@ new Palette({
           note: [titleOf(r) ? shellWords.someone(agentName(r.about.host.agent), r.about.machine) : null, r.town].filter(Boolean).join(" · "),
           run: go({ kind: "talk", address: { resident: r.about.id, machine: r.about.machine } }),
         })),
-      ...machinesOf(world).map((machine) => ({
+      ...(inNoNetwork(world) ? [] : machinesOf(world)).map((machine) => ({
         group: paletteWords.machines,
         label: machine.written,
         note: machine.here || machine.online ? "" : shellWords.offline,

@@ -32,7 +32,7 @@ import { formerNames, mapOf } from "./map-of";
 import type { NameSaid } from "./name-words";
 import { link, talkLink, type Place } from "./places";
 import { detailOf } from "./problem";
-import { assistantsOn, groupsOf, isSuper, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, type Machine } from "./reach";
+import { assistantsOn, groupsOf, inNoNetwork, isSuper, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, type Machine } from "./reach";
 import { RenameField, renamerOf, type Renamer } from "./rename";
 import type { Page } from "./shell";
 import { effect } from "./signals";
@@ -260,6 +260,9 @@ export class MachinePage implements Page {
 
   private draw(world: WorldNow | null): void {
     if (!world) return;
+    // A computer in no network has no details to show, and is not watched:
+    // the machines page tells what a network is.
+    if (inNoNetwork(world)) return this.options.replace({ kind: "machines" });
     const { machine, now, assist } = this.found(world);
     if (now) return this.options.replace({ kind: "machine", name: now });
     if (assist) return this.options.replace({ kind: "machines", focus: this.options.name });

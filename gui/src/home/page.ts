@@ -76,6 +76,12 @@ export class HomePage {
    *  it was answered. */
   private readonly answered = new Map<string, string>();
 
+  /** Shows the drawing of the World, or leaves the page to the board where
+   *  there is no network to draw. */
+  showDrawing(shown: boolean): void {
+    this.element.querySelector<HTMLElement>(".front-map")!.hidden = !shown;
+  }
+
   constructor(private readonly options: HomeOptions) {
     this.element = document.createElement("div");
     this.element.className = "front-page";

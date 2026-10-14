@@ -76,6 +76,13 @@ export function isComputer(world: WorldNow | null): boolean {
   return !!world?.nodes.facts;
 }
 
+/** Whether this is a computer in no network yet: the only machine there
+ *  is, of which nothing of the machines' side is shown, no drawing, no
+ *  details (`world-gui.md`, 机器的详情). */
+export function inNoNetwork(world: WorldNow | null): boolean {
+  return isComputer(world) && !world!.nodes.hubs.length;
+}
+
 export function machinesOf(world: WorldNow | null): Machine[] {
   if (!world) return [];
   const { nodes } = world;
