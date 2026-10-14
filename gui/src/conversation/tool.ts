@@ -18,8 +18,6 @@ export interface Headline {
   action: string;
   /** What it was done to: a file's base name, a query, a command's words. */
   object: string | null;
-  /** The whole of `object` where it was shortened: a full path, a command. */
-  title: string | null;
   added: number | null;
   removed: number | null;
 }
@@ -96,7 +94,7 @@ export type Named = (path: string) => string | null;
 export function headline(tool: Tool, ended: { use: Use } | null, words: Words, named: Named = () => null, steady = false): Headline {
   const tense = tenseOf(ended);
   const say = (act: Act) => words.act(act, steady ? "done" : tense);
-  const plain = { title: null, added: null, removed: null };
+  const plain = { added: null, removed: null };
   switch (tool.does.as) {
     case "command": {
       const viewed = viewing(tool.does.command);
@@ -105,7 +103,6 @@ export function headline(tool: Tool, ended: { use: Use } | null, words: Words, n
           glyph: "read",
           action: say("read"),
           object: viewed.map((path) => named(path) ?? basename(path)).join(words.listSeparator),
-          title: tool.does.command,
           added: null,
           removed: null,
         };
@@ -114,7 +111,6 @@ export function headline(tool: Tool, ended: { use: Use } | null, words: Words, n
         glyph: "command",
         action: say("command"),
         object: input(tool, "description") ?? firstLine(tool.does.command),
-        title: tool.does.command,
         added: null,
         removed: null,
       };
@@ -129,7 +125,6 @@ export function headline(tool: Tool, ended: { use: Use } | null, words: Words, n
         action: say("image"),
         object: tool.does.path ? (named(tool.does.path) ?? basename(tool.does.path)) : null,
         ...plain,
-        title: tool.does.path,
       };
     case "colleague":
       // What an older node told of the host's own agents as colleagues.
@@ -146,7 +141,7 @@ export function headline(tool: Tool, ended: { use: Use } | null, words: Words, n
       // Which agents it names is said by the row, which knows them.
       const act: Act = { start: "delegate", message: "message", resume: "resume", wait: "wait", stop: "stop", list: "list" }[tool.does.act] as Act;
       const task = tool.does.task ? firstLine(tool.does.task) : null;
-      return { glyph: "delegate", action: say(act), object: tool.does.act === "start" ? (task ?? tool.does.kind) : task, ...plain, title: tool.does.task };
+      return { glyph: "delegate", action: say(act), object: tool.does.act === "start" ? (task ?? tool.does.kind) : task, ...plain };
     }
     case "call":
       return call(tool, steady ? "done" : tense, say, words);
@@ -157,7 +152,7 @@ export function headline(tool: Tool, ended: { use: Use } | null, words: Words, n
  *  lines it added and took away where they could be counted. */
 export function writeHeadline(write: WriteFact, words: Words): Headline {
   const act: Act = write.kind === "added" ? "create" : write.kind === "deleted" ? "delete" : "edit";
-  return { glyph: "edit", action: words.act(act, "done"), object: basename(write.path), title: write.path, added: write.added, removed: write.removed };
+  return { glyph: "edit", action: words.act(act, "done"), object: basename(write.path), added: write.added, removed: write.removed };
 }
 
 /** Whether a run did nothing but write files, and ended well: its writes'
@@ -189,24 +184,23 @@ function edits(changes: Change[], say: (act: Act) => string): Headline {
     } else if (how === "added") act = "create";
     else if (how === "deleted") act = "delete";
     else if (how === "replaced") act = "write";
-    return { glyph: "edit", action: say(act), object, title: change.path, added, removed };
+    return { glyph: "edit", action: say(act), object, added, removed };
   }
   return {
     glyph: "edit",
     action: say("edit"),
     object: changes.length ? `${changes.length} files` : null,
-    title: changes.map((change) => change.path).join("\n") || null,
     added: changes.length ? added : null,
     removed: changes.length ? removed : null,
   };
 }
 
 function call(tool: Tool, tense: Tense, say: (act: Act) => string, words: Words): Headline {
-  const plain = { title: null, added: null, removed: null };
+  const plain = { added: null, removed: null };
   switch (tool.name) {
     case "Read": {
       const path = input(tool, "file_path");
-      return { glyph: "read", action: say("read"), object: path ? basename(path) : null, ...plain, title: path };
+      return { glyph: "read", action: say("read"), object: path ? basename(path) : null, ...plain };
     }
     case "WebFetch":
       return { glyph: "web", action: say("fetch"), object: input(tool, "url"), ...plain };

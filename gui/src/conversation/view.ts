@@ -1715,7 +1715,7 @@ export class ConversationView {
     const fold = expandable ? `<div class="fold-box"${open ? "" : " style=\"height:0\" inert"}><div class="fold-content"></div></div>` : "";
     // A change that could not be read line by line says why on hover.
     const why = write.unavailable ? ` title="${escape(write.unavailable)}"` : "";
-    return `<div class="row row-tool row-done${enter}" data-row="${escape(key)}"><span class="rail">${glyph(line.glyph)}</span><button class="row-line" type="button" ${expandable ? `data-open="${escape(key)}"` : "disabled"} aria-expanded="${open}"${why}><span class="row-action">${escape(line.action)}</span><span class="row-rest"><span class="row-object" title="${escape(write.path)}">${escape(line.object ?? "")}</span><span class="row-meta">${stats}${elsewhere}${chevron}</span></span></button>${fold}</div>`;
+    return `<div class="row row-tool row-done${enter}" data-row="${escape(key)}"><span class="rail">${glyph(line.glyph)}</span><button class="row-line" type="button" ${expandable ? `data-open="${escape(key)}"` : "disabled"} aria-expanded="${open}"${why}><span class="row-action">${escape(line.action)}</span><span class="row-rest"><span class="row-object">${escape(line.object ?? "")}</span><span class="row-meta">${stats}${elsewhere}${chevron}</span></span></button>${fold}</div>`;
   }
 
   /** Whether a row comes in as it is first drawn: once, for a row new to a
@@ -1753,9 +1753,7 @@ export class ConversationView {
         : "";
     const mark = tense === "running" ? `<span class="pulse" aria-hidden="true"></span>` : glyph(line.glyph);
     const named = entry.tool.does.as === "agent" ? this.agentsObject(entry, line.object) : line.object;
-    const object = named
-      ? `<span class="row-object"${line.title ? ` title="${escape(line.title)}"` : ""}>${escape(named)}</span>`
-      : "";
+    const object = named ? `<span class="row-object">${escape(named)}</span>` : "";
     const chevron = expandable ? `<span class="row-chevron">${glyph("chevron", 16)}</span>` : "";
     const fold = expandable ? `<div class="fold-box"${open ? "" : " style=\"height:0\" inert"}><div class="fold-content"></div></div>` : "";
     // A colleague it asked lives on in the World: its own conversation is a
@@ -1846,15 +1844,10 @@ export class ConversationView {
     const kindSaid = run?.name ?? kindOf ?? "";
     if (kind.textContent !== kindSaid) kind.textContent = kindSaid;
     kind.hidden = !kindSaid;
-    const kindTitle = run?.name && kindOf ? kindOf : "";
-    if (kind.title !== kindTitle) kind.title = kindTitle;
     kind.classList.toggle("named", !!run?.name);
     const task = row.querySelector<HTMLElement>(".agent-task")!;
     const taskSaid = run?.task ?? headline(entry.tool, null, this.context.words).object ?? "";
     if (task.textContent !== taskSaid) task.textContent = taskSaid;
-    const object = row.querySelector<HTMLElement>(".agent-object")!;
-    const title = run?.prompt ?? taskSaid;
-    if (object.title !== title) object.title = title;
     const meta = row.querySelector<HTMLElement>(".agent-meta")!;
     if (run?.going && run.began !== null) {
       meta.dataset.since = String(run.began);
