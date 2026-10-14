@@ -154,6 +154,7 @@ fn nodes(node: &Arc<Node>) -> NodesReply {
                 path: Some(link.path_to(&machine.name)),
                 facts,
                 owner: machine.home.clone(),
+                group: machine.group.clone(),
                 rights,
             });
         }

@@ -181,6 +181,29 @@ pub struct RenameArgs {
 }
 
 #[derive(Args)]
+pub struct GroupArgs {
+    /// The machines to put in the group; with --rename, the group's name now.
+    #[arg(value_name = "MACHINE", required = true)]
+    machines: Vec<String>,
+    /// The group: they are shown together under it.
+    #[arg(long, conflicts_with_all = ["none", "rename"])]
+    to: Option<String>,
+    /// Take them out of their group.
+    #[arg(long, conflicts_with = "rename")]
+    none: bool,
+    /// Rename the group named first to this; empty, end it, its machines in
+    /// no group.
+    #[arg(long, value_name = "NAME")]
+    rename: Option<String>,
+    /// The account whose group it is, for --rename; the one this computer is
+    /// registered under by default.
+    #[arg(long = "as")]
+    account: Option<AccountName>,
+    #[arg(long)]
+    hub: Option<HubName>,
+}
+
+#[derive(Args)]
 pub struct DirectArgs {
     /// The machine other machines are to connect to directly.
     machine: MachineName,
@@ -416,6 +439,48 @@ pub fn rename(args: RenameArgs) -> anyhow::Result<()> {
     let account = account_or_owner(args.hub.as_ref(), args.account, Some(&machine))?;
     self::change(args.hub, account, AccountChange::Rename { machine: machine.clone(), to: to.clone() })?;
     println!("{machine} is {to} now; {machine} still names it");
+    Ok(())
+}
+
+/// Groups machines, or renames or ends a group (`world-network.md`, 机器的分组).
+pub fn group(args: GroupArgs) -> anyhow::Result<()> {
+    if let Some(to) = args.rename {
+        let [from] = args.machines.as_slice() else { anyhow::bail!("--rename takes the one group's name now") };
+        let to = fastctx_types::accounts::group_name(&to).map_err(anyhow::Error::msg)?;
+        let owner = account_or_owner(args.hub.as_ref(), args.account, None)?;
+        self::change(
+            args.hub,
+            owner.clone(),
+            AccountChange::RenameGroup { owner, from: from.clone(), to: to.clone() },
+        )?;
+        match to {
+            Some(to) => println!("the group {from} is {to} now"),
+            None => println!("the group {from} is no more; its machines are in no group"),
+        }
+        return Ok(());
+    }
+    let group = match (&args.to, args.none) {
+        (Some(to), _) => Some(
+            fastctx_types::accounts::group_name(to)
+                .map_err(anyhow::Error::msg)?
+                .ok_or_else(|| anyhow::anyhow!("a group has a name"))?,
+        ),
+        (None, true) => None,
+        (None, false) => anyhow::bail!("say the group with --to, or --none to take them out of theirs"),
+    };
+    for machine in &args.machines {
+        let machine: MachineName = machine.parse().map_err(|error| anyhow::anyhow!("{machine}: {error}"))?;
+        let account = account_or_owner(args.hub.as_ref(), args.account.clone(), Some(&machine))?;
+        self::change(
+            args.hub.clone(),
+            account,
+            AccountChange::Group { machine: machine.clone(), group: group.clone() },
+        )?;
+        match &group {
+            Some(group) => println!("{machine} is in the group {group}"),
+            None => println!("{machine} is in no group"),
+        }
+    }
     Ok(())
 }
 
@@ -844,7 +909,31 @@ fn hub_nodes(hub: &HubNodes, now: Timestamp) -> String {
     // Names line up by the columns they take in a terminal: a Chinese
     // character takes two.
     let width = hub.machines.iter().map(|node| fastctx_tui::text::width(&node.written.to_string())).max().unwrap_or(0);
+    // Machines in no group first, then each group under its name: a group
+    // only shows its machines together (`world-network.md`, 机器的分组).
+    let mut shown: Vec<&fastctx_types::world::Node> = hub.machines.iter().filter(|node| node.group.is_none()).collect();
+    let mut groups: Vec<(Option<&AccountName>, &str)> = Vec::new();
     for node in &hub.machines {
+        if let Some(group) = &node.group
+            && !groups.contains(&(node.owner.as_ref(), group.as_str()))
+        {
+            groups.push((node.owner.as_ref(), group.as_str()));
+        }
+    }
+    groups.sort();
+    let mut headers: Vec<(usize, String)> = Vec::new();
+    for (owner, group) in &groups {
+        let whose =
+            owner.filter(|owner| !hub.logins.contains(owner)).map(|owner| format!("{owner}'s ")).unwrap_or_default();
+        headers.push((shown.len(), format!("group {whose}{group}:\n")));
+        shown.extend(
+            hub.machines.iter().filter(|node| node.owner.as_ref() == *owner && node.group.as_deref() == Some(*group)),
+        );
+    }
+    for (at, node) in shown.into_iter().enumerate() {
+        for (_, header) in headers.iter().filter(|(starts, _)| *starts == at) {
+            text.push_str(header);
+        }
         let state = match (node.online, node.since) {
             (Some(true), Some(since)) => format!("online for {}", age(since, now)),
             (Some(true), None) => "online".to_string(),
@@ -937,7 +1026,8 @@ fn render_accounts(reply: &AccountsReply, now: Timestamp) -> String {
             text.push_str(&format!("account {}{marks}\n", account.name));
             for member in hub.members.iter().filter(|member| member.home.as_ref() == Some(&account.name)) {
                 let managed = if member.managed { " (managed)" } else { "" };
-                text.push_str(&format!("  machine {} [{}]{managed}\n", member.name, member.key));
+                let group = member.group.as_ref().map(|group| format!(" in the group {group}")).unwrap_or_default();
+                text.push_str(&format!("  machine {} [{}]{managed}{group}\n", member.name, member.key));
             }
             for member in hub
                 .members

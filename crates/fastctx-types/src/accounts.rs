@@ -170,6 +170,20 @@ pub enum AccountChange {
         machine: MachineName,
         to: MachineName,
     },
+    /// Puts `machine`, one of the account's own or, for the hub's super
+    /// administrator, a member's, in the group named `group`, or in none
+    /// (`world-network.md`, 机器的分组).
+    Group {
+        machine: MachineName,
+        group: Option<String>,
+    },
+    /// Renames the group `from` of `owner`'s machines to `to`, or, with
+    /// none, ends it: its machines are in no group.
+    RenameGroup {
+        owner: AccountName,
+        from: String,
+        to: Option<String>,
+    },
     Logout,
     /// A token for another device; `managed` makes the computers that use
     /// it managed machines of the account (`world-network.md`, 受管机器),
@@ -279,6 +293,10 @@ pub struct HubAccounts {
     /// Whether the hub has visitors (`world-network.md`, 一个中枢，几个账号).
     #[serde(default)]
     pub roles: bool,
+    /// Whether the hub keeps the groups of machines (`world-network.md`,
+    /// 机器的分组).
+    #[serde(default)]
+    pub groups: bool,
     /// The accounts this computer is logged in to there.
     pub logins: Vec<AccountName>,
     /// The account this computer is registered under there, as a machine.
@@ -438,6 +456,26 @@ pub struct MemberSeen {
     /// The token it came in by, when one did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
+    /// The group its owner put it in (`world-network.md`, 机器的分组).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+}
+
+/// A group's name as given, made plain: spaces at its ends dropped and
+/// those within it made one; none when nothing is left. A group only shows
+/// machines together, so any letters do, up to 32 of them.
+pub fn group_name(text: &str) -> Result<Option<String>, String> {
+    let name = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if name.is_empty() {
+        return Ok(None);
+    }
+    if name.chars().count() > 32 {
+        return Err("a group's name is at most 32 characters".to_string());
+    }
+    if name.chars().any(char::is_control) {
+        return Err("a group's name has no control characters".to_string());
+    }
+    Ok(Some(name))
 }
 
 /// A machine shared with an account.

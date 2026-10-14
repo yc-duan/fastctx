@@ -16,10 +16,17 @@ pub struct Machines {
     pub here: Option<String>,
     /// The other machines it may work on.
     pub others: Vec<String>,
+    /// Those of them their owners put in groups.
+    pub groups: Vec<fastctx_types::world::MachineGroup>,
     pub collab: Option<fastctx_types::collab::Offered>,
 }
 
 impl Machines {
+    /// The other machines as the description lists them, group by group.
+    fn listed(&self) -> String {
+        fastctx_types::world::listed(&self.others, &self.groups, self.here.as_deref())
+    }
+
     fn assisting(&self) -> bool {
         self.here.is_none()
     }
@@ -78,15 +85,19 @@ fn opening(machines: Option<&Machines>) -> String {
         return "This tool is your shell: it runs a bash script on this machine. When the user has other machines connected by fastctx, `on MACHINE` inside the script runs a part of it on one of them, with no address, login or key; `fastctx nodes` lists them.".to_string();
     };
     let Some(here) = &machines.here else {
-        return format!("{}\n{SHELL}", fastctx_hands::assist::opening(&machines.others));
+        return format!("{}\n{SHELL}", fastctx_hands::assist::opening(&machines.listed()));
     };
+    // The group this machine is in, as the other machines' are said.
+    let grouped = fastctx_types::world::group_of(&machines.groups, here)
+        .map(|group| format!(", in the group {group}"))
+        .unwrap_or_default();
     if machines.others.is_empty() {
-        return format!("This tool is your shell on {here}, this machine.");
+        return format!("This tool is your shell on {here}, this machine{grouped}.");
     }
     let example = &machines.others[0];
     format!(
-        "Your shell is on {here}, this machine. You have access to these other machines: {}. To run anything on them, write `on MACHINE` before it, as in `on {example} cargo test`; a command without `on` runs on {here}. {SHELL}",
-        machines.others.join(", ")
+        "Your shell is on {here}, this machine{grouped}. You have access to these other machines: {}. To run anything on them, write `on MACHINE` before it, as in `on {example} cargo test`; a command without `on` runs on {here}. {SHELL}",
+        machines.listed()
     )
 }
 

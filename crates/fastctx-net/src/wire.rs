@@ -554,6 +554,19 @@ pub enum Change {
         machine: MachineName,
         to: MachineName,
     },
+    /// Puts `machine`, one of the account's own or, for the super
+    /// administrator, a member's, in the group `group`, or in none. Sent
+    /// only to a hub whose view says it keeps groups.
+    Group {
+        machine: MachineName,
+        group: Option<String>,
+    },
+    /// Renames the group `from` of `owner`'s machines to `to`, or ends it.
+    RenameGroup {
+        owner: AccountName,
+        from: String,
+        to: Option<String>,
+    },
     /// The asking member logs out of the account.
     Logout,
     /// An enrollment token for the account (`crate::token`), valid until

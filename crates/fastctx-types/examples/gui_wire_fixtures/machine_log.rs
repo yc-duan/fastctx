@@ -40,6 +40,8 @@ pub fn fixtures() -> Vec<Page> {
         Action::Direct { machine: machine(), at: vec![] },
         Action::Remove { name: machine(), reason: "retired".into() },
         Action::Rename { machine: machine(), to: "gpu-2".parse().unwrap() },
+        Action::Group { machine: machine(), group: Some("lab A".into()) },
+        Action::RenameGroup { owner: "ada".parse().unwrap(), from: "lab A".into(), to: None },
         Action::Logout,
         Action::Token {
             register: false,

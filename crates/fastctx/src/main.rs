@@ -252,6 +252,9 @@ enum Command {
     /// Rename a machine: this computer, one of an account's machines, or,
     /// for the network's administrator, any. Its names before still name it.
     Rename(world::RenameArgs),
+    /// Put machines in a group, or take them out: a group only shows them
+    /// together. Or rename a group, or end it.
+    Group(world::GroupArgs),
     /// Let other machines connect to a machine directly, at addresses you
     /// choose, instead of through the hub; or no longer. The network's
     /// administrator's change.
@@ -449,6 +452,7 @@ fn main() -> ExitCode {
         Command::Disallow(args) => world::disallow(args),
         Command::Remove(args) => world::remove(args),
         Command::Rename(args) => world::rename(args),
+        Command::Group(args) => world::group(args),
         Command::Direct(args) => world::direct(args),
         Command::Hub(command) => world::hub(command),
         Command::Apply(args) => apply::apply(args),

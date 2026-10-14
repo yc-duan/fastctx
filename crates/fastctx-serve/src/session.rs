@@ -584,7 +584,9 @@ impl Session {
             .call(Call::Machines { resident: self.known_resident(meta), login: self.login(&host), thread })
             .await
         {
-            Ok(Reply::Machines { here, others, collab }) => Ok(Some(crate::tools::Machines { here, others, collab })),
+            Ok(Reply::Machines { here, others, groups, collab }) => {
+                Ok(Some(crate::tools::Machines { here, others, groups, collab }))
+            }
             Ok(other) => Err(format!("the node answered something else: {other:?}")),
             Err(error) => Err(error.to_string()),
         }

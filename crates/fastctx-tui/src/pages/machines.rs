@@ -135,7 +135,7 @@ impl MachinesPage {
         entries.extend((0..self.arrivals.len()).map(Entry::Arrival));
         if let Some(nodes) = &self.nodes {
             for (hub, nodes) in nodes.hubs.iter().enumerate() {
-                entries.extend((0..nodes.machines.len()).map(|machine| Entry::Machine { hub, machine }));
+                entries.extend(shown(nodes).into_iter().map(|machine| Entry::Machine { hub, machine }));
             }
         }
         entries
@@ -540,7 +540,17 @@ fn hub_rows(
         rows.push(Row::new(line));
     }
     rows.push(Row::blank());
-    for node in &hub.machines {
+    let mut group = None;
+    for index in shown(hub) {
+        let node = &hub.machines[index];
+        // Each group's machines under its name.
+        if let Some(name) = &node.group
+            && group != Some((node.owner.as_ref(), name))
+        {
+            group = Some((node.owner.as_ref(), name));
+            let owner = node.owner.as_ref().filter(|owner| !hub.logins.contains(owner)).map(|owner| owner.as_str());
+            rows.push(Row::new(Line::from(Span::styled(words.group_head(owner, name), look.text(Role::Muted)))));
+        }
         let (mark, since) = match node.online {
             Some(true) => (
                 Span::styled("●", look.text(Role::Alive)),
@@ -585,6 +595,18 @@ fn hub_rows(
         rows.push(Row::blank());
         *item += 1;
     }
+}
+
+/// The machines of a hub, by their places in it, in the order they are
+/// drawn: those in no group first, then each group's by whose it is and its
+/// name (`world-network.md`, 机器的分组).
+fn shown(hub: &HubNodes) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..hub.machines.len()).collect();
+    order.sort_by_key(|&at| {
+        let node = &hub.machines[at];
+        node.group.as_ref().map(|group| (node.owner.clone(), group.clone()))
+    });
+    order
 }
 
 /// A path as the TUI writes paths: with forward slashes on every system.

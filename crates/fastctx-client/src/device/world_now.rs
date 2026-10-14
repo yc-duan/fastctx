@@ -188,6 +188,7 @@ impl Device {
                     path: Some(session.link.path_to(&member.name)),
                     facts,
                     owner: member.home.clone(),
+                    group: member.group.clone(),
                     rights: logins
                         .iter()
                         .map(|account| (account.clone(), view.rights(account, &member.name)))

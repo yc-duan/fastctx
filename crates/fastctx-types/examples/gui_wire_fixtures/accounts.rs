@@ -40,6 +40,7 @@ fn hub() -> HubAccounts {
         renames: true,
         managed: true,
         roles: true,
+        groups: true,
         logins: vec!["ada".parse().unwrap()],
         home: Some("ada".parse().unwrap()),
         self_registration: true,
@@ -95,6 +96,7 @@ fn hub() -> HubAccounts {
                 key: "5be1fcee".into(),
                 managed: false,
                 code: None,
+                group: None,
             },
             MemberSeen {
                 name: "server".parse().unwrap(),
@@ -121,6 +123,7 @@ fn hub() -> HubAccounts {
                 key: "71c0de55".into(),
                 managed: false,
                 code: None,
+                group: None,
             },
             MemberSeen {
                 name: "pixel".parse().unwrap(),
@@ -138,6 +141,7 @@ fn hub() -> HubAccounts {
                 key: "4f2a91aa".into(),
                 managed: false,
                 code: None,
+                group: None,
             },
             MemberSeen {
                 name: "lab-a-01".parse().unwrap(),
@@ -155,6 +159,7 @@ fn hub() -> HubAccounts {
                 key: "9d3e0c71".into(),
                 managed: true,
                 code: Some("Zm9yLXRoZS1maXh0dXJlLW9ubHktbm90LWEta2V5".into()),
+                group: Some("lab A".into()),
             },
         ],
         shares: vec![ShareSeen { machine: "desktop".parse().unwrap(), account: "bo".parse().unwrap() }],

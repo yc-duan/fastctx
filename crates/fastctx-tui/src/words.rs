@@ -1316,6 +1316,17 @@ impl Words {
         self.pick("已被移出网络", "Taken off the network")
     }
 
+    /// Over the machines of one group on a hub (`world-network.md`, 机器的分组):
+    /// its name, and whose it is where it is not this computer's accounts'.
+    pub fn group_head(&self, owner: Option<&str>, group: &str) -> String {
+        match (self.lang, owner) {
+            (Lang::Zh, Some(owner)) => format!("{owner} 的分组 · {group}"),
+            (Lang::Zh, None) => format!("分组 · {group}"),
+            (Lang::En, Some(owner)) => format!("{owner}'s group · {group}"),
+            (Lang::En, None) => format!("group · {group}"),
+        }
+    }
+
     pub fn owner_and_rights(&self, owner: Option<&str>, rights: &str) -> String {
         match (self.lang, owner) {
             (Lang::Zh, Some(owner)) => format!("{owner} 的机器  ·  {rights}"),

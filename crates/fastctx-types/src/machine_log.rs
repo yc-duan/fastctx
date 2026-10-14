@@ -182,6 +182,19 @@ pub enum Action {
         machine: MachineName,
         to: MachineName,
     },
+    /// A machine put in a group, or in none.
+    Group {
+        machine: MachineName,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group: Option<String>,
+    },
+    /// A group of an account's machines renamed, or ended.
+    RenameGroup {
+        owner: AccountName,
+        from: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<String>,
+    },
     /// A membership removed by logout, removal, or account deletion.
     Left {
         name: MachineName,

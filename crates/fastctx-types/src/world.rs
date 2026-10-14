@@ -175,8 +175,49 @@ pub struct Node {
     pub facts: Result<MachineFacts, String>,
     /// The account it is registered under.
     pub owner: Option<crate::AccountName>,
+    /// The group its owner put it in, which only says how it is shown
+    /// (`world-network.md`, 机器的分组).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     /// What each of this computer's accounts may do on it.
     pub rights: Vec<(crate::AccountName, crate::access::Rights)>,
+}
+
+/// Machines a session may work on that their owner put in one group, as the
+/// session is told of them: the group, named for the session (an owner
+/// other than the accounts it works for goes before it, `bo's lab A`), and
+/// the machines as written, the one its shell is on among them when it is in
+/// the group.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MachineGroup {
+    pub name: String,
+    pub machines: Vec<String>,
+}
+
+/// The other machines a session may work on as a model is told them
+/// (`world-network.md`, 机器的分组): those in no group first, then each group
+/// with its own, the machine its shell is on, `here`, left out.
+pub fn listed(others: &[String], groups: &[MachineGroup], here: Option<&str>) -> String {
+    let grouped: Vec<&String> = groups.iter().flat_map(|group| &group.machines).collect();
+    let loose: Vec<&str> = others.iter().filter(|name| !grouped.contains(name)).map(String::as_str).collect();
+    let mut parts = Vec::new();
+    if !loose.is_empty() {
+        parts.push(loose.join(", "));
+    }
+    for group in groups {
+        let machines: Vec<&str> =
+            group.machines.iter().map(String::as_str).filter(|name| Some(*name) != here).collect();
+        if !machines.is_empty() {
+            parts.push(format!("group {}: {}", group.name, machines.join(", ")));
+        }
+    }
+    parts.join("; ")
+}
+
+/// The group the machine a session's shell is on, `here`, is in, as the
+/// session is told of it.
+pub fn group_of<'a>(groups: &'a [MachineGroup], here: &str) -> Option<&'a str> {
+    groups.iter().find(|group| group.machines.iter().any(|name| name == here)).map(|group| group.name.as_str())
 }
 
 /// The World as an interface shows it (`world-gui.md`): this computer, who

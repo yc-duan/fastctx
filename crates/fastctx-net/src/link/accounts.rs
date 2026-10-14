@@ -60,6 +60,14 @@ impl Link {
                 return Err(format!("the hub {} runs an older fastctx that renames no machine", self.hub_name()));
             }
             AccountChange::Rename { machine, to } => Change::Rename { machine, to },
+            AccountChange::Group { .. } | AccountChange::RenameGroup { .. } if !self.view().groups => {
+                return Err(format!(
+                    "the hub {} runs an older fastctx that keeps no groups of machines",
+                    self.hub_name()
+                ));
+            }
+            AccountChange::Group { machine, group } => Change::Group { machine, group },
+            AccountChange::RenameGroup { owner, from, to } => Change::RenameGroup { owner, from, to },
             AccountChange::Logout => Change::Logout,
             AccountChange::Token { managed, uses, label, .. }
                 if (managed || uses.is_some() || label.is_some()) && !self.view().managed =>
@@ -176,6 +184,7 @@ impl Link {
             renames: view.renames,
             managed: view.managed,
             roles: view.roles,
+            groups: view.groups,
             logins: me.map(|me| me.logins.iter().cloned().collect()).unwrap_or_default(),
             home: me.and_then(|me| me.home.clone()),
             self_registration: view.self_registration,
@@ -209,6 +218,7 @@ impl Link {
                     key: member.key.to_string().chars().take(8).collect(),
                     managed: member.managed,
                     code: member.code.map(|code| code.to_string()),
+                    group: member.group.clone(),
                 })
                 .collect(),
             shares: view

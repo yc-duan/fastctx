@@ -234,6 +234,8 @@ export interface Node {
   facts: Result<MachineFacts, string>;
   /** The account it is registered under. */
   owner: AccountName | null;
+  /** The group its owner put it in (`world-network.md`, 机器的分组). */
+  group?: string;
   /** What each of this computer's accounts may do on it. */
   rights: [AccountName, Rights][];
 }

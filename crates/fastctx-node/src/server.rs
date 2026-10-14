@@ -1493,12 +1493,12 @@ fn machines(
     login: Option<&fastctx_types::collab::Caller>,
 ) -> Result<Reply, Failure> {
     let acting = resident.and_then(|resident| crate::here::acting(node, resident)).unwrap_or_default();
-    let (here, others) = crate::world::machines(node, &acting);
+    let (here, others, groups) = crate::world::grouped_machines(node, &acting);
     // An agent assisting another account has no shell anywhere, and the
     // machine it runs on is not one it may work on, so it goes unnamed.
     let here = node.works_here(&acting).is_ok().then(|| here.to_string());
     let collab = crate::collab::choices(node, resident, login)?.map(|choices| choices.offered);
-    Ok(Reply::Machines { here, others, collab })
+    Ok(Reply::Machines { here, others, groups, collab })
 }
 
 /// `fastctx nodes`: this computer, and hub by hub the machines whoever asks
@@ -1532,8 +1532,14 @@ async fn nodes(node: &Arc<Node>, acting: &fastctx_types::access::Acting) -> Resu
             let unknown = refreshed.as_ref().err().cloned();
             let allows_direct = !machine.direct.is_empty();
             let path = Some(link.path_to(&machine.name));
-            let (link, name, since, through, owner) =
-                (link.clone(), machine.name.clone(), machine.since, machine.through.clone(), machine.home.clone());
+            let (link, name, since, through, owner, group) = (
+                link.clone(),
+                machine.name.clone(),
+                machine.since,
+                machine.through.clone(),
+                machine.home.clone(),
+                machine.group.clone(),
+            );
             asks.push(tokio::spawn(async move {
                 let facts = match online {
                     Some(true) => {
@@ -1548,7 +1554,7 @@ async fn nodes(node: &Arc<Node>, acting: &fastctx_types::access::Acting) -> Resu
                     Some(false) => Err("it is offline".to_string()),
                     None => Err(format!("the hub could not be asked: {}", unknown.unwrap_or_default())),
                 };
-                NodeView { name, written, online, since, through, allows_direct, path, facts, owner, rights }
+                NodeView { name, written, online, since, through, allows_direct, path, facts, owner, group, rights }
             }));
         }
         let mut machines = Vec::new();

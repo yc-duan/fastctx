@@ -778,6 +778,9 @@ pub enum Reply {
         here: Option<String>,
         /// The other machines it may work on.
         others: Vec<String>,
+        /// Those of `others` their owners put in groups, group by group.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        groups: Vec<crate::world::MachineGroup>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         collab: Option<crate::collab::Offered>,
     },

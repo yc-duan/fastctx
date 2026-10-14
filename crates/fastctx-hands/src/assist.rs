@@ -7,13 +7,12 @@
 //! on purpose twice: it is the opposite of what a model takes for granted.
 
 /// The opening for an assisting agent, with the machines it may work on.
-pub fn opening(machines: &[String]) -> String {
+pub fn opening(machines: &str) -> String {
     let reach = if machines.is_empty() {
         "You have access to no machine yet: the user has none you may work on, so no command of yours can run anywhere; tell the user.".to_string()
     } else {
         format!(
-            "You have access to these machines: {}. Every command must name its machine with `on`: each script you run is a single `on MACHINE ...`, such as `on laptop cargo test`, or `on laptop <<'EOF'`, then the script, then `EOF`. To work on several machines in one script, put the script inside one `on` and use `on` again inside it.",
-            machines.join(", ")
+            "You have access to these machines: {machines}. Every command must name its machine with `on`: each script you run is a single `on MACHINE ...`, such as `on laptop cargo test`, or `on laptop <<'EOF'`, then the script, then `EOF`. To work on several machines in one script, put the script inside one `on` and use `on` again inside it."
         )
     };
     format!(

@@ -1062,24 +1062,59 @@ impl fastctx_net::link::Node for Handler {
 /// The machines a session working for `acting` may work on, each as it is
 /// written here: its name, or `name.hub` where another hub this computer is
 /// on has a different computer of that name. A computer on several hubs is
-/// one machine. One whose agents alone assist it is not among them.
-pub fn machines(node: &Node, acting: &Acting) -> (MachineName, Vec<String>) {
+/// one machine. One whose agents alone assist it is not among them. With
+/// them, those their owners put in groups, group by group, this machine
+/// among them where the session works on it: a group of an owner the session
+/// does not work for is named with the owner (`bo's lab A`), so two owners'
+/// groups of one name stay apart.
+pub fn grouped_machines(
+    node: &Node,
+    acting: &Acting,
+) -> (MachineName, Vec<String>, Vec<fastctx_types::world::MachineGroup>) {
     let here = node.machine();
     let mut others: Vec<String> = Vec::new();
+    let mut groups: Vec<fastctx_types::world::MachineGroup> = Vec::new();
     let mut keys = Vec::new();
+    let here_too = node.works_here(acting).is_ok();
     for link in node.links() {
         let view = link.view();
         let accounts = node.accounts_on(&link, acting);
-        for machine in view.machines().filter(|machine| !view.is_me(&machine.name)) {
+        let mut put = |machine: &fastctx_net::directory::Member, written: &str| {
+            if let (Some(group), Some(owner)) = (&machine.group, &machine.home) {
+                let name = if accounts.contains(owner) { group.clone() } else { format!("{owner}'s {group}") };
+                match groups.iter_mut().find(|known| known.name == name) {
+                    Some(known) => known.machines.push(written.to_string()),
+                    None => {
+                        groups.push(fastctx_types::world::MachineGroup { name, machines: vec![written.to_string()] })
+                    }
+                }
+            }
+        };
+        for machine in view.machines() {
             if keys.contains(&machine.key) {
+                continue;
+            }
+            // This machine is in its group too, where the session's shell
+            // is on it.
+            if view.is_me(&machine.name) {
+                if here_too {
+                    keys.push(machine.key);
+                    put(machine, here.as_str());
+                }
                 continue;
             }
             if accounts.iter().any(|account| view.rights(account, &machine.name).hands) {
                 keys.push(machine.key);
-                others.push(node.written(&link, &machine.name).to_string());
+                let written = node.written(&link, &machine.name).to_string();
+                put(machine, &written);
+                others.push(written);
             }
         }
     }
     others.sort();
-    (here, others)
+    groups.sort_by(|a, b| a.name.cmp(&b.name));
+    for group in &mut groups {
+        group.machines.sort();
+    }
+    (here, others, groups)
 }

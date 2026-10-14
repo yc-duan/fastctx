@@ -23,6 +23,8 @@ export type MachineLogAction =
   | { change: "direct"; machine: MachineName; at: string[] }
   | { change: "remove"; name: MachineName; reason: string }
   | { change: "rename"; machine: MachineName; to: MachineName }
+  | { change: "group"; machine: MachineName; group?: string }
+  | { change: "rename_group"; owner: AccountName; from: string; to?: string }
   | { change: "logout" }
   | { change: "token"; register: boolean; name: MachineName | null; kind: MemberKind; expires: Timestamp; managed?: boolean; label?: string }
   | { change: "revoke_token"; label?: string }

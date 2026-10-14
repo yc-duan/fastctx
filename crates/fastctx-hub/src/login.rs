@@ -483,6 +483,15 @@ fn join(
             if managed && !(register && joining.kind.is_computer()) {
                 return Err("only a computer registering as a machine joins as a managed machine".to_string());
             }
+            // A machine that comes in by a named code for several machines is
+            // in the group of that name, as the machines of one such code
+            // belong together; a code for one names whoever it is for
+            // (`world-network.md`, 机器的分组).
+            let group = token
+                .and_then(|token| store.book.tokens.iter().find(|record| record.key == *token))
+                .filter(|record| record.uses != 1)
+                .and_then(|record| record.label.as_deref())
+                .and_then(|label| fastctx_types::accounts::group_name(label).ok().flatten());
             let directory = &mut store.book.directory;
             let name = match directory.members.iter_mut().find(|member| member.key == joining.key) {
                 // Asked again, as when its first try was cut off, a managed
@@ -517,6 +526,7 @@ fn join(
                         return Err(format!("{taken}; log in under another"));
                     }
                     let home = (register && joining.kind.is_computer()).then(|| account.clone());
+                    let group = group.filter(|_| home.is_some());
                     let logins = if managed { Default::default() } else { [account.clone()].into() };
                     directory.members.push(Member {
                         name: joining.name.clone(),
@@ -527,6 +537,7 @@ fn join(
                         home,
                         managed,
                         code: token.copied(),
+                        group,
                         direct: Vec::new(),
                         added: Timestamp::now(),
                         online: false,

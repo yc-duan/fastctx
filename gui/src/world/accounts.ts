@@ -110,6 +110,9 @@ export interface MemberSeen {
   managed?: boolean;
   /** The code it came in by, when one did. */
   code?: string;
+  /** The group its owner put it in, which only says how it is shown
+   *  (`world-network.md`, 机器的分组). */
+  group?: string;
 }
 
 /** A machine shared with an account: working on it and every agent there. */
@@ -220,6 +223,9 @@ export interface HubAccounts {
   managed?: boolean;
   /** Whether the hub has visitors (`world-network.md`, 一个中枢，几个账号). */
   roles?: boolean;
+  /** Whether the hub keeps the groups of machines (`world-network.md`,
+   *  机器的分组). */
+  groups?: boolean;
   logins: AccountName[];
   home: AccountName | null;
   self_registration: boolean;
@@ -259,6 +265,10 @@ export type AccountChange =
   /** Renames one of the account's machines, or, for the administrator,
    *  any; its names before keep naming it. */
   | { change: "rename"; machine: MachineName; to: MachineName }
+  /** Puts one of the account's machines (or, for the administrator, a
+   *  member's) in a group, or in none; renames a group, or ends it. */
+  | { change: "group"; machine: MachineName; group: string | null }
+  | { change: "rename_group"; owner: AccountName; from: string; to: string | null }
   | { change: "logout" }
   /** A code for another device; `managed` makes the computers that use it
    *  managed machines, `uses` of them at most (any number at zero, one when

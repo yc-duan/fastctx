@@ -61,6 +61,7 @@ pub(crate) fn view_for(
             member.direct.clear();
             member.through = None;
             member.paths = None;
+            member.group = None;
         }
     }
     // A release that cannot read a visitor would lose its whole view to one.
@@ -110,6 +111,7 @@ pub(crate) fn view_for(
         forgets: true,
         managed: true,
         roles: true,
+        groups: true,
         tokens,
         hub_addresses: crate::moving::addresses_for(store, me),
         hub_moves: crate::moving::requests::told(hub, store, me, whole),

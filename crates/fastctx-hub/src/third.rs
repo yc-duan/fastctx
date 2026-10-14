@@ -122,6 +122,7 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
             home: machine.then(|| new.admin.clone()),
             managed: false,
             code: None,
+            group: None,
             direct: Vec::new(),
             added: admitted.joined_at,
             online: false,

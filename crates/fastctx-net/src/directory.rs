@@ -54,6 +54,11 @@ pub struct Member {
     /// their owner together.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<PublicKey>,
+    /// The group its owner put it in: it is shown with the others in that
+    /// group and nothing more. A group names no machine to reach, and gives
+    /// and takes no one's rights (`world-network.md`, 机器的分组).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     /// Where other machines connect to it directly, when the hub's super
     /// administrator allowed that and the hub reached it there
     /// (`world-network.md`, 直连). Its node listens at their ports.
@@ -598,6 +603,11 @@ pub struct View {
     /// hubs omit it, and would end the session of a member that sent one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub roles: bool,
+    /// Whether this hub keeps the groups of machines (`Member::group`,
+    /// `Change::Group`, `Change::RenameGroup`). Earlier hubs omit it, and
+    /// would end the session of a member that sent one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub groups: bool,
     /// The tokens the accounts logged in on this member made that still
     /// let devices in.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -634,6 +644,7 @@ impl View {
             forgets: false,
             managed: false,
             roles: false,
+            groups: false,
             tokens: Vec::new(),
             hub_addresses: Vec::new(),
             hub_moves: Vec::new(),

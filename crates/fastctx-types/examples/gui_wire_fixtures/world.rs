@@ -335,6 +335,7 @@ fn nodes() -> Vec<NodesReply> {
                         path: Some(fastctx_types::world::Path::Hub { why: None }),
                         facts: Ok(facts("lab", "linux", false)),
                         owner: Some("grace".parse().unwrap()),
+                        group: None,
                         rights: vec![(me.clone(), agents)],
                     },
                     Node {
@@ -347,6 +348,7 @@ fn nodes() -> Vec<NodesReply> {
                         path: None,
                         facts: Err("offline".into()),
                         owner: Some(me.clone()),
+                        group: Some("lab A".into()),
                         rights: vec![(me.clone(), all)],
                     },
                     Node {
@@ -365,6 +367,7 @@ fn nodes() -> Vec<NodesReply> {
                         }),
                         facts: Ok(facts("server", "linux", false)),
                         owner: Some(me.clone()),
+                        group: None,
                         rights: vec![(me.clone(), all)],
                     },
                 ],

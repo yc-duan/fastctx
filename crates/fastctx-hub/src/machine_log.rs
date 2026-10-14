@@ -100,8 +100,11 @@ impl History {
             Action::Remove { name, .. } => {
                 names.insert(name.clone());
             }
-            Action::Rename { machine, .. } => {
+            Action::Rename { machine, .. } | Action::Group { machine, .. } => {
                 names.insert(machine.clone());
+            }
+            Action::RenameGroup { owner, .. } => {
+                accounts.insert(owner.clone());
             }
             Action::Joined { .. } => {
                 names.extend(actor.member.iter().cloned());
@@ -320,6 +323,10 @@ pub(crate) fn action(change: &Change, book: &Book) -> Action {
         Change::Direct { machine, at } => Action::Direct { machine: machine.clone(), at: at.clone() },
         Change::Remove { name, reason } => Action::Remove { name: name.clone(), reason: reason.clone() },
         Change::Rename { machine, to } => Action::Rename { machine: machine.clone(), to: to.clone() },
+        Change::Group { machine, group } => Action::Group { machine: machine.clone(), group: group.clone() },
+        Change::RenameGroup { owner, from, to } => {
+            Action::RenameGroup { owner: owner.clone(), from: from.clone(), to: to.clone() }
+        }
         Change::Logout => Action::Logout,
         Change::Token { register, name, kind, expires, managed, label, .. } => Action::Token {
             register: *register,

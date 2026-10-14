@@ -241,6 +241,35 @@ fn apply(
             rename(store, account, super_, &machine, &to, ended)?;
             Ok(Told::Done)
         }
+        Change::Group { machine, group } => {
+            let group = group.as_deref().map(fastctx_types::accounts::group_name).transpose()?.flatten();
+            own_machine(&store.book.directory, account, super_, &machine)?;
+            let key = store.book.directory.member(&machine).expect("own_machine found it").key;
+            let member = store.book.directory.members.iter_mut().find(|member| member.key == key).expect("found");
+            member.group = group;
+            Ok(Told::Done)
+        }
+        Change::RenameGroup { owner, from, to } => {
+            // Whose machines may be grouped is whose may be renamed: the
+            // account's own, and the super administrator's reach, which
+            // stops at a visitor's.
+            let directory = &store.book.directory;
+            if owner != *account && (!super_ || directory.is_visitor(&owner)) {
+                return Err(format!("the machines of {owner} are not the account {account}'s to group"));
+            }
+            let to = to.as_deref().map(fastctx_types::accounts::group_name).transpose()?.flatten();
+            let mut grouped = 0;
+            for member in store.book.directory.members.iter_mut() {
+                if member.home.as_ref() == Some(&owner) && member.group.as_deref() == Some(from.as_str()) {
+                    member.group = to.clone();
+                    grouped += 1;
+                }
+            }
+            if grouped == 0 {
+                return Err(format!("{owner} has no group {from}"));
+            }
+            Ok(Told::Done)
+        }
         Change::Logout => {
             log_out(store, asker, account, None, "logged out", ended)?;
             Ok(Told::Done)

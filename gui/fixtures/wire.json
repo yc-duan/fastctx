@@ -3,7 +3,7 @@
     {
       "records": [
         {
-          "id": 35,
+          "id": 37,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -20,7 +20,7 @@
           }
         },
         {
-          "id": 34,
+          "id": 36,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -39,7 +39,7 @@
           }
         },
         {
-          "id": 33,
+          "id": 35,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -61,7 +61,7 @@
           }
         },
         {
-          "id": 32,
+          "id": 34,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -84,7 +84,7 @@
           }
         },
         {
-          "id": 31,
+          "id": 33,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -104,7 +104,7 @@
           }
         },
         {
-          "id": 30,
+          "id": 32,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -124,7 +124,7 @@
           }
         },
         {
-          "id": 29,
+          "id": 31,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -141,7 +141,7 @@
           }
         },
         {
-          "id": 28,
+          "id": 30,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -166,7 +166,7 @@
           }
         },
         {
-          "id": 27,
+          "id": 29,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -184,7 +184,7 @@
           }
         },
         {
-          "id": 26,
+          "id": 28,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -204,7 +204,7 @@
           }
         },
         {
-          "id": 25,
+          "id": 27,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -222,7 +222,7 @@
           }
         },
         {
-          "id": 24,
+          "id": 26,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": null,
@@ -240,7 +240,7 @@
           }
         },
         {
-          "id": 23,
+          "id": 25,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -252,6 +252,42 @@
             "change": "rename",
             "machine": "laptop",
             "to": "gpu-2"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 24,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "group",
+            "machine": "laptop",
+            "group": "lab A"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 23,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "rename_group",
+            "owner": "ada",
+            "from": "lab A"
           },
           "outcome": {
             "kind": "done"
@@ -1627,6 +1663,7 @@
             "renames": true,
             "managed": true,
             "roles": true,
+            "groups": true,
             "logins": [
               "ada"
             ],
@@ -1741,7 +1778,8 @@
                 "through": null,
                 "key": "9d3e0c71",
                 "managed": true,
-                "code": "Zm9yLXRoZS1maXh0dXJlLW9ubHktbm90LWEta2V5"
+                "code": "Zm9yLXRoZS1maXh0dXJlLW9ubHktbm90LWEta2V5",
+                "group": "lab A"
               }
             ],
             "shares": [
@@ -11521,6 +11559,7 @@
                   "Err": "offline"
                 },
                 "owner": "ada",
+                "group": "lab A",
                 "rights": [
                   [
                     "ada",
@@ -11662,6 +11701,7 @@
                   "Err": "offline"
                 },
                 "owner": "ada",
+                "group": "lab A",
                 "rights": [
                   [
                     "ada",
@@ -11803,6 +11843,7 @@
                   "Err": "offline"
                 },
                 "owner": "ada",
+                "group": "lab A",
                 "rights": [
                   [
                     "ada",
@@ -11943,6 +11984,7 @@
                   "Err": "offline"
                 },
                 "owner": "ada",
+                "group": "lab A",
                 "rights": [
                   [
                     "ada",
@@ -12087,6 +12129,7 @@
                   "Err": "offline"
                 },
                 "owner": "ada",
+                "group": "lab A",
                 "rights": [
                   [
                     "ada",
@@ -12232,6 +12275,7 @@
                   "Err": "offline"
                 },
                 "owner": "ada",
+                "group": "lab A",
                 "rights": [
                   [
                     "ada",
@@ -12377,6 +12421,7 @@
                   "Err": "offline"
                 },
                 "owner": "ada",
+                "group": "lab A",
                 "rights": [
                   [
                     "ada",
@@ -12521,6 +12566,7 @@
                   "Err": "offline"
                 },
                 "owner": "ada",
+                "group": "lab A",
                 "rights": [
                   [
                     "ada",
@@ -12667,6 +12713,7 @@
                   "Err": "offline"
                 },
                 "owner": "ada",
+                "group": "lab A",
                 "rights": [
                   [
                     "ada",

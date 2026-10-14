@@ -401,7 +401,10 @@ pub(crate) async fn instructions(
     let heard = heard_now(node, town).map_err(|error| Failure::new(format!("reading the town's ledger: {error}")))?;
     // An agent assisting another account is given the machines it may work
     // on, and never the name of the one it runs on (`world-run.md`, 这里).
-    let assisting = node.works_here(acting).is_err().then(|| crate::world::machines(node, acting).1);
+    let assisting = node.works_here(acting).is_err().then(|| {
+        let (_, others, groups) = crate::world::grouped_machines(node, acting);
+        fastctx_types::world::listed(&others, &groups, None)
+    });
     let words = words(id, &node.machine(), assisting.as_deref(), town, origin);
     let text = match town {
         Some(town) => format!("{words}\n\n{}", crate::town::map::brief(node, town).await?),
@@ -410,13 +413,13 @@ pub(crate) async fn instructions(
     Ok((text, heard))
 }
 
-/// `assisting` holds the machines it may work on when it is an agent
+/// `assisting` lists the machines it may work on when it is an agent
 /// assisting another account, which may not work on this machine: none of
 /// its scripts starts here, and this machine goes unnamed.
 fn words(
     id: &ResidentId,
     machine: &MachineName,
-    assisting: Option<&[String]>,
+    assisting: Option<&str>,
     town: Option<&TownName>,
     origin: &Origin,
 ) -> String {
