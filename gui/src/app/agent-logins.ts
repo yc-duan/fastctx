@@ -34,6 +34,7 @@ import type { Confirm } from "./confirm";
 import { FolderSheet } from "./folder-sheet";
 import { redrawKeepingFocus } from "./focus";
 import { detailOf } from "./problem";
+import { isVisitor } from "./reach";
 import type { Page } from "./shell";
 import { effect, type Signal } from "./signals";
 import type { Store } from "./store";
@@ -618,7 +619,9 @@ export class AgentLoginsPage implements Page {
     const owner = found.machine.ownerLogin;
     const admin = !!owner && !!this.hubOf(owner, world)?.accounts.some((account) => account.level === "super" && account.name === owner.account);
     const entries: MenuEntry[] = [];
-    if (owner) entries.push({ act: "assist", icon: "person", label: words.assist });
+    // A visitor lets none of its agents assist anyone (`world-network.md`,
+    // 一个中枢，几个账号).
+    if (owner && !isVisitor(world, owner)) entries.push({ act: "assist", icon: "person", label: words.assist });
     if (this.options.workbench.peek()) entries.push({ act: "limits", icon: "reread", label: words.rereadLimits });
     entries.push({ act: "copy", icon: "folder", label: words.copyDir });
     // Codex names its own conversations when the login's owner asks it to;

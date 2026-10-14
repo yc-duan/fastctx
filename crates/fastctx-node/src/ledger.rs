@@ -182,6 +182,11 @@ fn check_size(entry: &Entry) -> Result<(), String> {
 /// for every project this machine spans there. One sync runs at a time.
 pub async fn sync(node: &Arc<Node>, hub: &HubId, town: Option<TownId>) -> Result<(), String> {
     let Some(link) = node.link_of(hub) else { return Ok(()) };
+    // A managed machine keeps no project's records: it acts for no one, and
+    // the hub gives it none (`world-network.md`, 受管机器).
+    if link.view().me().is_some_and(|me| me.managed) {
+        return Ok(());
+    }
     let _syncing = node.syncing.lock().await;
     let mut problems = Vec::new();
     for (id, latest) in link.ledger_towns().await? {

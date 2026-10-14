@@ -47,13 +47,20 @@ pub fn notice(path: &Path, view: &View) -> io::Result<Vec<Arrival>> {
             if seen.insert((name.clone(), key)) {
                 changed = true;
                 if !first {
-                    let device = view.member(&name).is_some_and(|member| !member.is_machine());
+                    let found = view.member(&name);
+                    let device = found.is_some_and(|member| !member.is_machine());
+                    // Managed machines of one code are told together.
+                    let code = found
+                        .filter(|member| member.managed)
+                        .and_then(|member| member.code)
+                        .map(|code| code.to_string());
                     noticed.push(Arrival {
                         hub: view.hub.clone(),
                         account: account.clone(),
                         name,
                         device,
                         noticed_at: Timestamp::now(),
+                        code,
                     });
                 }
             }

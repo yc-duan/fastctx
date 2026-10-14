@@ -1068,6 +1068,7 @@ pub fn run() {
             names::name_problem,
             accounts::login,
             accounts::login_token,
+            accounts::peek_token,
             accounts::open_account,
             accounts::accounts,
             accounts::machine_log,

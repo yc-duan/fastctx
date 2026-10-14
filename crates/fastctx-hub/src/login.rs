@@ -139,7 +139,8 @@ pub(crate) async fn with_password(
         return;
     }
     hub.limits.lock().expect("never poisoned").succeeded(&account, peer.ip());
-    let outcome = proved(&member, &binding).and_then(|()| join(&hub, peer, &account, &member, member.register, None));
+    let enrolled = Enrolled { register: member.register, managed: false };
+    let outcome = proved(&member, &binding).and_then(|()| join(&hub, peer, &account, &member, enrolled, None));
     logged_in(&hub, &mut socket, peer, &account, outcome).await;
 }
 
@@ -163,11 +164,9 @@ pub(crate) async fn with_token(
             store.book.tokens.iter().find(|record| record.key == token).cloned()
         };
         let record = record.ok_or("the hub knows no such token; it may have been taken back")?;
-        let refused = match record.used_by {
-            Some(used) if used != member.key => Some("the token was used already"),
-            None if record.expires <= Timestamp::now() => Some("the token has expired"),
-            _ => None,
-        };
+        // A device that used it may use it again, as when its first try was
+        // cut off; any other only while it is open.
+        let refused = if record.used_by(&member.key) { None } else { record.closed(Timestamp::now()) };
         if let Some(reason) = refused {
             let mut store = hub.store();
             let directory = store.book.directory.clone();
@@ -187,6 +186,7 @@ pub(crate) async fn with_token(
                     kind: record.kind,
                     registered: record.register,
                     via: LoginMethod::Token,
+                    managed: record.managed,
                 },
                 Outcome::Refused { reason: reason.to_string() },
             )?;
@@ -198,13 +198,56 @@ pub(crate) async fn with_token(
             kind: record.kind,
             ..member.clone()
         };
-        let name = join(&hub, peer, &record.account, &joining, record.register, Some(&token))?;
+        let enrolled = Enrolled { register: record.register, managed: record.managed };
+        let name = join(&hub, peer, &record.account, &joining, enrolled, Some(&token))?;
         Ok((record.account, name))
     })();
     match outcome {
         Ok((account, name)) => logged_in(&hub, &mut socket, peer, &account, Ok(name)).await,
         Err(reason) => {
             hub.log.line(format_args!("{peer}: a token login was refused: {reason}"));
+            refuse(&mut socket, Refusal::Login { reason }).await;
+        }
+    }
+}
+
+/// What the token whose key is `token` lets a device into, told without
+/// using it: whose, which network, whether as a managed machine. A token
+/// that would not let this device in is refused as its use would be.
+pub(crate) async fn peek(
+    hub: Arc<Hub>,
+    mut socket: Socket,
+    peer: SocketAddr,
+    binding: [u8; 32],
+    token: PublicKey,
+    proof: Signature,
+) {
+    let told = (|| {
+        token
+            .verify(Domain::Session, &binding, &proof)
+            .map_err(|_| "the proof of the token does not verify".to_string())?;
+        let store = hub.store();
+        let record = store.book.tokens.iter().find(|record| record.key == token);
+        let record = record.ok_or("the hub knows no such token; it may have been taken back")?;
+        if let Some(reason) = record.closed(Timestamp::now()) {
+            return Err(reason.to_string());
+        }
+        Ok(Down::TokenInfo {
+            hub: store.hub.id.clone(),
+            hub_name: store.hub.name.clone(),
+            account: record.account.clone(),
+            managed: record.managed,
+            label: record.label.clone(),
+            expires: record.expires,
+        })
+    })();
+    match told {
+        Ok(info) => {
+            let _ = send(&mut socket, &info).await;
+            let _ = futures_util::SinkExt::close(&mut socket).await;
+        }
+        Err(reason) => {
+            hub.log.line(format_args!("{peer}: a token was asked about and refused: {reason}"));
             refuse(&mut socket, Refusal::Login { reason }).await;
         }
     }
@@ -265,12 +308,16 @@ pub(crate) async fn open_account(
         if store.book.directory.account(&account).is_some() {
             return Err(format!("the account {account} exists already"));
         }
+        // Anyone who reaches the hub may open one, so what it opens is a
+        // visitor's: its machines are its own, and it uses what is given
+        // to it (`world-network.md`, 超级管理员管什么).
         store.book.directory.accounts.push(Account {
             name: account.clone(),
-            level: fastctx_net::directory::Level::Member,
+            level: fastctx_net::directory::Level::Visitor,
             locked: false,
             opened: Timestamp::now(),
             collab: None,
+            promotion: false,
         });
         store.book.passwords.insert(account.clone(), Bytes(record));
         let actor = Actor { account: None, authenticated: false, member: None, peer: Some(peer) };
@@ -278,7 +325,7 @@ pub(crate) async fn open_account(
             &mut store,
             &before.directory,
             actor,
-            Action::OpenAccount { name: account.clone() },
+            Action::OpenAccount { name: account.clone(), visitor: true },
             Outcome::Done,
         ) {
             store.book = before;
@@ -309,7 +356,7 @@ fn record_opening(hub: &Hub, peer: SocketAddr, account: &AccountName, outcome: O
         &mut store,
         &directory,
         Actor { account: None, authenticated: false, member: None, peer: Some(peer) },
-        Action::OpenAccount { name: account.clone() },
+        Action::OpenAccount { name: account.clone(), visitor: true },
         outcome,
     );
     hub.machine_log_changed.notify_one();
@@ -400,17 +447,29 @@ fn proved(member: &Joining, binding: &[u8; 32]) -> Result<(), String> {
         .map_err(|_| "the proof of the device's key does not verify".to_string())
 }
 
+/// What a device joining an account becomes: a machine of it too when
+/// `register`; with `managed`, a machine of it that is logged in to none, a
+/// managed machine (`fastctx_net::directory::Member::managed`).
+#[derive(Clone, Copy)]
+struct Enrolled {
+    register: bool,
+    managed: bool,
+}
+
 /// Logs the device `joining` in to `account`, registering it as one of the
-/// account's machines when `register` and the account may; the token used,
-/// if any, is marked used by it. Returns its name on the hub.
+/// account's machines when it registers and the account may; a managed
+/// machine is registered and logged in to nothing, and nothing logs in on
+/// it after. The token used, if any, is marked used by it. Returns its name
+/// on the hub.
 fn join(
     hub: &Hub,
     peer: SocketAddr,
     account: &AccountName,
     joining: &Joining,
-    register: bool,
+    enrolled: Enrolled,
     token: Option<&PublicKey>,
 ) -> Result<fastctx_types::MachineName, String> {
+    let Enrolled { register, managed } = enrolled;
     let name = {
         let mut store = hub.store();
         let before = store.book.clone();
@@ -421,8 +480,31 @@ fn join(
             if found.locked {
                 return Err(format!("the account {account} is locked"));
             }
+            if managed && !(register && joining.kind.is_computer()) {
+                return Err("only a computer registering as a machine joins as a managed machine".to_string());
+            }
             let directory = &mut store.book.directory;
             let name = match directory.members.iter_mut().find(|member| member.key == joining.key) {
+                // Asked again, as when its first try was cut off, a managed
+                // machine is one already; a member that is anything else
+                // keeps what it is.
+                Some(member) if managed => {
+                    if !(member.managed && member.home.as_ref() == Some(account)) {
+                        return Err(format!(
+                            "this computer is {} on this hub already; only a computer new to the hub joins as a managed machine",
+                            member.name
+                        ));
+                    }
+                    member.name.clone()
+                }
+                // Nothing logs in on a managed machine: whoever sits at it
+                // uses nothing of the network (`world-network.md`, 受管机器).
+                Some(member) if member.managed => {
+                    return Err(format!(
+                        "this computer is a managed machine of {} on this hub, and no account logs in on it",
+                        member.home.as_ref().map(ToString::to_string).unwrap_or_default()
+                    ));
+                }
                 Some(member) => {
                     member.logins.insert(account.clone());
                     if register && member.home.is_none() && member.kind.is_computer() {
@@ -435,13 +517,16 @@ fn join(
                         return Err(format!("{taken}; log in under another"));
                     }
                     let home = (register && joining.kind.is_computer()).then(|| account.clone());
+                    let logins = if managed { Default::default() } else { [account.clone()].into() };
                     directory.members.push(Member {
                         name: joining.name.clone(),
                         was: Vec::new(),
                         key: joining.key,
                         kind: joining.kind,
-                        logins: [account.clone()].into(),
+                        logins,
                         home,
+                        managed,
+                        code: token.copied(),
                         direct: Vec::new(),
                         added: Timestamp::now(),
                         online: false,
@@ -457,7 +542,12 @@ fn join(
             if let Some(token) = token
                 && let Some(record) = store.book.tokens.iter_mut().find(|record| record.key == *token)
             {
-                record.used_by = Some(joining.key);
+                if record.used_by.is_none() {
+                    record.used_by = Some(joining.key);
+                }
+                if !record.used.contains(&joining.key) {
+                    record.used.push(joining.key);
+                }
             }
             Ok(name)
         })();
@@ -480,6 +570,7 @@ fn join(
             kind: store.book.directory.member(&name).map_or(joining.kind, |member| member.kind),
             registered,
             via: if token.is_some() { LoginMethod::Token } else { LoginMethod::Password },
+            managed,
         };
         // Reconnecting a control session never reaches this path. A repeated
         // password login with no membership change is not a new arrival.

@@ -14,6 +14,12 @@
 //! machine's direct address may be chosen from, and the moves of the hub
 //! (`crate::moving`), as the machine the hub moves to sees its move. Once
 //! the hub was moved, every member is told where it reaches the hub now.
+//!
+//! A visitor's machines are its alone (`world-network.md`, 一个中枢，几个账号):
+//! the super administrator's view names them and whether they are online,
+//! nothing of how they connect; nobody else's view has them. A member whose
+//! release does not read visitors is sent them as members. Each member is
+//! also told the tokens its accounts made that still let devices in.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -45,11 +51,45 @@ pub(crate) fn view_for(
     let whole = mine.iter().any(|account| all.logged_in(me, account) && all.is_super(account));
     let mut directory = if whole { all.clone() } else { cut(all, me, &mine) };
     for member in &mut directory.members {
+        let others = member.name != *me
+            && member.home.as_ref().is_some_and(|owner| all.is_visitor(owner) && !mine.contains(owner));
         // Where a machine may be reached is the super administrator's to
-        // choose from, and the machine's own to know.
-        let reach = whole || member.name == *me;
+        // choose from, and the machine's own to know; a visitor's is its own.
+        let reach = (whole && !others) || member.name == *me;
         present(store, online, member, reach);
+        if others {
+            member.direct.clear();
+            member.through = None;
+            member.paths = None;
+        }
     }
+    // A release that cannot read a visitor would lose its whole view to one.
+    if !store.letters.get(me).is_some_and(|letters| letters.roles) {
+        for account in &mut directory.accounts {
+            if account.level == fastctx_net::directory::Level::Visitor {
+                account.level = fastctx_net::directory::Level::Member;
+            }
+        }
+    }
+    let logged: BTreeSet<&AccountName> =
+        all.member(me).map(|member| member.logins.iter().collect()).unwrap_or_default();
+    let now = Timestamp::now();
+    let tokens = store
+        .book
+        .tokens
+        .iter()
+        .filter(|record| logged.contains(&record.account) && record.closed(now).is_none())
+        .map(|record| fastctx_types::accounts::TokenSeen {
+            key: record.key.to_string(),
+            account: record.account.clone(),
+            label: record.label.clone(),
+            kind: record.kind,
+            managed: record.managed,
+            uses: record.uses,
+            used: record.used_count(),
+            expires: record.expires,
+        })
+        .collect();
     let forwarders = all
         .machines()
         .filter(|member| !member.direct.is_empty() && member.name != *me)
@@ -68,6 +108,9 @@ pub(crate) fn view_for(
         renames: true,
         afoot: true,
         forgets: true,
+        managed: true,
+        roles: true,
+        tokens,
         hub_addresses: crate::moving::addresses_for(store, me),
         hub_moves: crate::moving::requests::told(hub, store, me, whole),
         directory,

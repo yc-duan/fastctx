@@ -25,6 +25,8 @@ export interface PresenceWords {
   stop: string;
   /** A device or a machine came into `login`, the account it logged in to. */
   arrived(name: string, device: boolean, login: string): string;
+  /** Managed machines coming in by a code, called about once a batch. */
+  arrivedManaged(login: string): string;
   arrivedBody: string;
 }
 
@@ -119,19 +121,25 @@ export function startPresence(options: PresenceOptions): void {
   }
 
   // Who came into an account this computer or device is logged in to:
-  // each called about once, the first look only learns.
+  // each called about once, the first look only learns. Managed machines
+  // that come in by one code are a batch, called about once while it is
+  // not yet seen (`world-network.md`, 受管机器).
   let arrived: Set<string> | null = null;
   effect(() => {
     const world = store.world.get();
     if (!world) return;
     const now = world.accounts.hubs.flatMap((hub) => hub.arrivals.map((arrival) => ({ hub: hub.name, arrival })));
-    const key = ({ hub, arrival }: (typeof now)[number]) => `${hub}/${arrival.account}/${arrival.name}`;
+    const key = ({ hub, arrival }: (typeof now)[number]) => `${hub}/${arrival.account}/${arrival.code ? `code:${arrival.code}` : arrival.name}`;
     const before = arrived;
     arrived = new Set(now.map(key));
     if (!before || !notifying()) return;
+    const called = new Set<string>();
     for (const one of now.filter((one) => !before.has(key(one)))) {
+      if (called.has(key(one))) continue;
+      called.add(key(one));
+      const where = `${one.hub} · ${one.arrival.account}`;
       void call(`arrived:${key(one)}`, {
-        title: words.arrived(one.arrival.name, one.arrival.device, `${one.hub} · ${one.arrival.account}`),
+        title: one.arrival.code ? words.arrivedManaged(where) : words.arrived(one.arrival.name, one.arrival.device, where),
         body: words.arrivedBody,
         route: link({ kind: "account" }),
         actions: [{ id: "open", title: words.open }],

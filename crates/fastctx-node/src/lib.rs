@@ -68,6 +68,7 @@ mod login_identity;
 mod logins;
 mod look;
 mod machine;
+mod managed;
 mod management;
 mod on;
 mod on_delivery;

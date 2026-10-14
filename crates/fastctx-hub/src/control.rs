@@ -42,6 +42,8 @@ pub(crate) struct Said {
     pub afoot: bool,
     /// Whether it deletes what it keeps of a conversation when told.
     pub forgets: bool,
+    /// Whether it reads visitors among the accounts.
+    pub roles: bool,
 }
 
 /// What a call or a data connection was allowed under: `from` saying it to
@@ -197,6 +199,7 @@ fn open(
     entry.any_names = said.any_names;
     entry.renames = said.renames;
     entry.forgets = said.forgets;
+    entry.roles = said.roles;
     if too_old {
         // A member back on a release from before names of any language,
         // which would fail on the first name it cannot read: it is told why
@@ -569,6 +572,9 @@ fn use_agent(hub: &Hub, message: &Envelope, standing: &Standing) -> Result<(), S
     let noted = {
         let mut store = hub.store();
         let directory = &store.book.directory;
+        if directory.member(to).is_some_and(|member| member.managed) {
+            return Err(format!("{to} is a managed machine: no conversation lives there"));
+        }
         if !directory.may_use_login(account, to, &agent, home.as_deref()) {
             let login = home.as_ref().map(|home| home.display().to_string()).unwrap_or_else(|| "default".to_string());
             return Err(format!("the account {account} may not use the {agent} login {login} on {to}"));

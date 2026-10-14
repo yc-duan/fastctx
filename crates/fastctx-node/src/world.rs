@@ -163,15 +163,39 @@ pub async fn login(
     logged_in(node, joined).await
 }
 
-/// Logs this computer in with an enrollment token.
+/// Logs this computer in with an enrollment token. One for a managed
+/// machine is used only by a World that may become one (`managed::unfit`).
 pub async fn login_with_token(node: &Arc<Node>, token: &str, name: Option<MachineName>) -> Result<Reply, Failure> {
     let token = fastctx_net::token::Token::parse(token).map_err(Failure::new)?;
+    if let Some(peeked) = fastctx_net::login::peek(&token).await.map_err(Failure::new)?
+        && peeked.managed
+        && let Some(why) = crate::managed::unfit(node, &peeked.hub)
+    {
+        return Err(Failure::not_run(why.to_string()));
+    }
     let key = own_key(node).await?;
     let name = asked_name(node, name)?;
-    // What the token is for, registering or not, the hub keeps with it.
+    // What the token is for, registering or not, a managed machine or not,
+    // the hub keeps with it.
     let device = Device { name, key: &key, kind: Kind::Computer, register: true };
     let joined = fastctx_net::login::with_token(&token, device).await.map_err(Failure::new)?;
     logged_in(node, joined).await
+}
+
+/// What `token` lets this computer into, asked of its hub without using
+/// it; none from a hub that says nothing of a token before it is used.
+pub async fn peek_token(node: &Arc<Node>, token: &str) -> Result<Option<fastctx_types::accounts::TokenPeek>, Failure> {
+    let token = fastctx_net::token::Token::parse(token.trim()).map_err(Failure::new)?;
+    let Some(peeked) = fastctx_net::login::peek(&token).await.map_err(Failure::new)? else { return Ok(None) };
+    let refused = if peeked.managed { crate::managed::unfit(node, &peeked.hub) } else { None };
+    Ok(Some(fastctx_types::accounts::TokenPeek {
+        hub: peeked.hub_name,
+        account: peeked.account,
+        managed: peeked.managed,
+        label: peeked.label,
+        expires: peeked.expires,
+        refused,
+    }))
 }
 
 /// Opens `account` on a hub that lets anyone, then logs in to it.

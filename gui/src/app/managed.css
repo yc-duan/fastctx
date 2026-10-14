@@ -1,0 +1,518 @@
+/* A managed machine (`world-gui.md`, 受管机器): its code on the sheet that
+   adds a device, the card a computer sees before joining by one, and the
+   one page a managed machine has. */
+
+/* The drawings: graphite for what is there, clay for what moves. */
+.managed-art,
+.managed-step-art {
+  display: block;
+  height: auto;
+  mix-blend-mode: var(--pen-blend);
+}
+
+.managed-art .ink-graphite,
+.managed-step-art .ink-graphite {
+  color: var(--pen-graphite);
+  stroke: var(--pen-graphite);
+}
+
+.managed-art .ink-clay,
+.managed-step-art .ink-clay {
+  color: var(--pen-clay);
+  stroke: var(--pen-clay);
+}
+
+/* How many computers a code lets in: one, any, or a number typed into the
+   third choice itself. */
+.choice.choice-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: text;
+}
+
+.choice-count input {
+  width: 2.6em;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  outline: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.choice-count input::placeholder {
+  color: var(--text-3);
+}
+
+.choice-count span {
+  color: var(--text-3);
+}
+
+/* A Linux host as a managed machine: one solid row under the ways, its
+   switch at the end. */
+.device-managed {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 40px;
+  margin-top: var(--space-3);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--size-ui);
+  text-align: left;
+  transition: background-color var(--hover) ease;
+}
+
+.device-managed:hover:not(:disabled) {
+  background: var(--fill-strong);
+}
+
+.device-managed:disabled {
+  opacity: 0.55;
+}
+
+.device-managed .glyph {
+  flex: none;
+  color: var(--text-3);
+}
+
+.device-managed[aria-checked="true"] .glyph {
+  color: var(--accent);
+}
+
+.device-managed-label {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The code once made: its name, the code in a solid box with its copy
+   button, how long and for how many, the three steps drawn, and the line
+   that does the same. */
+.managed-code {
+  margin-top: var(--space-4);
+}
+
+.managed-code-name {
+  margin: 0 0 var(--space-2);
+  font-size: var(--size-ui);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.managed-code-box {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+}
+
+.managed-code-box .invite-code {
+  flex: 1;
+  min-width: 0;
+  max-height: 6em;
+  margin: 2px 0;
+  color: var(--text);
+}
+
+.managed-code-box .copy-code {
+  flex: none;
+}
+
+.managed-code > .field-hint {
+  margin: var(--space-2) 0 0;
+}
+
+.managed-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-5) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.managed-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  text-align: center;
+}
+
+.managed-step .managed-step-art {
+  width: 100%;
+  max-width: 132px;
+}
+
+.managed-step span {
+  font-size: var(--size-small);
+  line-height: 1.5;
+  color: var(--text-2);
+  text-wrap: balance;
+}
+
+.managed-step b {
+  margin-right: 6px;
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.managed-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
+.managed-line .field-label {
+  grid-column: 1 / -1;
+  margin: 0 0 var(--space-1);
+}
+
+.managed-line code {
+  overflow: hidden;
+  padding: 6px var(--space-3);
+  border-radius: var(--radius-s);
+  background: var(--fill);
+  font-size: var(--size-small);
+  color: var(--text-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 760px) {
+  .managed-steps {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+
+  .managed-step {
+    flex-direction: row;
+    gap: var(--space-3);
+    text-align: left;
+  }
+
+  .managed-step .managed-step-art {
+    width: 96px;
+    flex: none;
+  }
+}
+
+/* Joining: the two ways as one switch under the title; the code pasted in
+   a field a few lines high, as it wraps. */
+.login-tabs {
+  margin: 0 0 var(--space-4);
+}
+
+.code-input {
+  min-height: 5.4em;
+  resize: vertical;
+  word-break: break-all;
+  line-height: 1.5;
+}
+
+/* What a code lets this computer into, on one solid card: a managed
+   machine's drawing over it, whose machine it becomes and where, and what
+   that means here. */
+.code-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-5) var(--space-5) var(--space-4);
+  border-radius: var(--radius-l);
+  background: var(--fill);
+  text-align: center;
+  animation: removal-rise 0.4s cubic-bezier(0.33, 1, 0.68, 1);
+}
+
+.code-card .code-art {
+  width: min(240px, 64vw);
+  margin-bottom: var(--space-3);
+}
+
+.code-card-title {
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-emphasis);
+  font-size: var(--size-h3);
+  font-weight: 400;
+  color: var(--text-strong);
+}
+
+.code-facts {
+  grid-template-columns: max-content max-content;
+  justify-content: center;
+  column-gap: var(--space-4);
+  row-gap: var(--space-1);
+  margin: 0;
+  text-align: left;
+}
+
+.code-facts dt {
+  color: var(--text-3);
+}
+
+.code-facts dd {
+  color: var(--text-strong);
+}
+
+.code-card-what {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  border: 0;
+  list-style: none;
+  font-size: var(--size-small);
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+.code-card-what li {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.code-confirm .welcome-foot {
+  margin-top: var(--space-5);
+}
+
+/* A Fastctx used before cannot become a managed machine: a red slip, and
+   the way out beside it. */
+.welcome-slip.code-unfit {
+  margin-top: var(--space-3);
+  background: color-mix(in srgb, var(--wrong) 14%, var(--fill));
+  color: var(--text);
+}
+
+.code-unfit b {
+  margin-right: 4px;
+  font-weight: 600;
+  color: var(--wrong);
+}
+
+.code-unfit .remove-first {
+  color: var(--wrong);
+}
+
+/* The one page of a managed machine: the drawing, what it is and whose,
+   whether it is connected, and two quiet ways in a corner. */
+.shell.alone {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.shell.alone .sidebar-frame,
+.shell.alone .scrim,
+.shell.alone .menu-button {
+  display: none;
+}
+
+.managed-page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: auto;
+}
+
+.managed {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-10) var(--space-4) var(--space-12);
+  text-align: center;
+}
+
+.managed-drawing .managed-art {
+  width: min(340px, 78vw);
+}
+
+.managed-page.removed .managed-drawing {
+  opacity: 0.4;
+}
+
+.managed-title {
+  margin: var(--space-6) 0 var(--space-2);
+  font-family: var(--font-emphasis);
+  font-size: var(--size-h1);
+  font-weight: 400;
+  color: var(--text-strong);
+}
+
+.managed-who {
+  margin: 0;
+  font-size: var(--size-ui);
+  color: var(--text-2);
+}
+
+.managed-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-5) 0 0;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  background: var(--fill);
+  font-size: var(--size-small);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.managed-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--text-3);
+}
+
+.managed-link.on .managed-dot {
+  background: var(--alive);
+  box-shadow: none;
+}
+
+.managed-rejoin {
+  margin-top: var(--space-5);
+}
+
+.managed-corner {
+  position: absolute;
+  right: var(--space-5);
+  bottom: var(--space-4);
+  display: flex;
+  gap: var(--space-3);
+}
+
+.managed-corner .text-button {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.managed-corner .text-button:hover {
+  color: var(--text-2);
+}
+
+/* A visitor's box on the administrator's drawing: faint, its machines only
+   seen; the tag after a person's name says they are a visitor, or that
+   they were asked to become a member. */
+.map-boxes .visitor {
+  opacity: 0.6;
+}
+
+.map-names .box-role {
+  fill: var(--accent);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+/* Adding a person: a member or a visitor, side by side, each a solid tile
+   with what it means under its name. */
+.map-roles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+.map-role {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  color: var(--text-2);
+  text-align: left;
+  transition: background-color var(--hover) ease, color var(--hover) ease;
+}
+
+.map-role:hover:not(.chosen) {
+  background: var(--fill-strong);
+}
+
+.map-role.chosen {
+  background: var(--accent-wash);
+  color: var(--text);
+}
+
+.map-role b {
+  font-size: var(--size-ui);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.map-role span {
+  font-size: var(--size-small);
+  line-height: 1.45;
+}
+
+/* A visitor's machine in the list: a faint row that goes nowhere. */
+.ml-row.visitor {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ml-row.visitor:hover {
+  background: transparent;
+}
+
+/* On a visitor's page: why nothing of theirs is given, one quiet line under
+   who they are; asked to become a member, a card first of all, washed in
+   the accent, with the two answers. */
+.me-note {
+  margin: calc(-1 * var(--space-3)) 0 0;
+  padding: 0 var(--space-5);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.me-promotion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-l);
+  background: var(--accent-wash);
+}
+
+.me-promotion-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.me-promotion-text b {
+  font-size: var(--size-ui);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.me-promotion-text span {
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.me-promotion-acts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}

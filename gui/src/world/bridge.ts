@@ -17,7 +17,7 @@ import type { Focus } from "./focus";
 import type { BytesRead, TextRead } from "../app/reader";
 import type { Address, AgentActivity, MachineName, SessionEvent } from "./events";
 import type { Cut, Edge, FindDoc, Found, PartRead, Window } from "../conversation/conversation";
-import type { AccountChange, AccountsReply, HubAccount } from "./accounts";
+import type { AccountChange, AccountsReply, HubAccount, TokenPeek } from "./accounts";
 import type { UsageReport } from "./usage";
 import type { HubMoveReply, HubMoveRequest } from "./hub-move";
 import type { MachineStats } from "./stats";
@@ -461,6 +461,12 @@ export function nameProblem(kind: "machine" | "hub", text: string): Promise<Name
   return invoke("name_problem", { kind, text });
 }
 
+/** What a code lets this computer into, asked of its server before it is
+ *  used; null from a server that says nothing of one before. */
+export function peekToken(token: string): Promise<TokenPeek | null> {
+  return invoke("peek_token", { token });
+}
+
 /** Logs in with a one-time token another device made. */
 export function loginToken(token: string, name: string | null): Promise<LoggedIn> {
   return invoke("login_token", { token, name });
@@ -511,8 +517,8 @@ export function accountChange(hub: string | null, account: string, change: Accou
 
 /** The line that installs fastctx on a Linux server and registers it as a
  *  machine of `account`. */
-export function serverCommand(hub: string | null, account: string, name: string | null, hours: number): Promise<string> {
-  return invoke("server_command", { hubName: hub, accountName: account, name, hours });
+export function serverCommand(hub: string | null, account: string, name: string | null, hours: number, managed = false): Promise<string> {
+  return invoke("server_command", { hubName: hub, accountName: account, name, hours, managed });
 }
 
 /** Turns asking for colleagues on for a conversation, with the machine

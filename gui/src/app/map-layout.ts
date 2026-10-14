@@ -123,7 +123,7 @@ interface Remembered {
   places: Record<string, number>;
 }
 
-const HOLD_RANK: Record<MapNode["hold"], number> = { mine: 0, others: 1, assist: 2 };
+const HOLD_RANK: Record<MapNode["hold"], number> = { mine: 0, others: 1, visitor: 1, assist: 2 };
 
 /** The order a machine first takes in its group: this computer, then by
  *  name. */

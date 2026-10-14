@@ -37,7 +37,7 @@ export type Place =
   | { kind: "data" }
   /** Into a network: joining one, or making a new one; with neither, the
    *  page asks which. */
-  | { kind: "login"; way?: "join" | "new" }
+  | { kind: "login"; way?: "join" | "new" | "code" }
   /** The user's own things in the network shown: 「我」. */
   | { kind: "account" }
   /** A file on a machine, read whole, or its end when it keeps growing. */
@@ -136,7 +136,7 @@ export function placeOf(hash: string): Place {
     // An address from before accounts, kept so old links still open.
     case "welcome":
     case "login":
-      return parts[1] === "join" || parts[1] === "new" ? { kind: "login", way: parts[1] } : { kind: "login" };
+      return parts[1] === "join" || parts[1] === "new" || parts[1] === "code" ? { kind: "login", way: parts[1] } : { kind: "login" };
     // A network's page and the administrator's are gone: what they held is
     // on 「我」 and on the drawing of the machines.
     case "network":

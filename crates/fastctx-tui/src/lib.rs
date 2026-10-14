@@ -8,6 +8,7 @@ pub mod design;
 pub mod editor;
 pub mod feed;
 pub mod input;
+pub mod managed;
 pub mod markdown;
 pub mod pages;
 pub mod paint;
@@ -55,6 +56,14 @@ async fn live(world: World) -> anyhow::Result<()> {
     let mut screen = Screen::open().context("taking the terminal")?;
     let (input_sender, mut inputs) = mpsc::unbounded_channel();
     input::start(input_sender.clone()).context("reading the terminal's input")?;
+    // A managed machine has its one screen, and the World only once it is
+    // one no longer.
+    if let Ok(accounts) = world.accounts().await
+        && let Some(managed) = managed::Managed::of(&accounts)
+        && managed::show(&world, &mut screen, &mut inputs, look, &words, managed).await?
+    {
+        return Ok(());
+    }
     let (answer_sender, mut answers) = mpsc::unbounded_channel();
     let mut app = App::new(look, words, Page::World(WorldPage::new()));
     let mut feeds = Feeds::new(world.clone(), answer_sender.clone());

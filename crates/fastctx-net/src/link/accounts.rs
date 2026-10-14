@@ -61,13 +61,35 @@ impl Link {
             }
             AccountChange::Rename { machine, to } => Change::Rename { machine, to },
             AccountChange::Logout => Change::Logout,
-            AccountChange::Token { register, name, kind, expires } => Change::Token { register, name, kind, expires },
+            AccountChange::Token { managed, uses, label, .. }
+                if (managed || uses.is_some() || label.is_some()) && !self.view().managed =>
+            {
+                return Err(format!(
+                    "the hub {} runs an older fastctx that makes no code for managed machines or several computers",
+                    self.hub_name()
+                ));
+            }
+            AccountChange::Token { register, name, kind, expires, managed, uses, label } => {
+                Change::Token { register, name, kind, expires, managed, uses, label }
+            }
+            AccountChange::RevokeToken { .. } if !self.view().managed => {
+                return Err(format!("the hub {} runs an older fastctx that takes no token back", self.hub_name()));
+            }
+            AccountChange::RevokeToken { token } => Change::RevokeToken { token: token.parse()? },
+            AccountChange::SetRole { .. } | AccountChange::AcceptRole { .. } if !self.view().roles => {
+                return Err(format!("the hub {} runs an older fastctx that has no visitors", self.hub_name()));
+            }
+            AccountChange::SetRole { name, visitor } => Change::SetRole { name, visitor },
+            AccountChange::AcceptRole { accept } => Change::AcceptRole { accept },
             AccountChange::SetPassword { target, password } => {
                 self.set_password(account, &target, &password).await?;
                 return Ok(None);
             }
-            AccountChange::OpenAccount { name, password } => {
-                self.manage(account, Change::OpenAccount { name: name.clone() }).await?;
+            AccountChange::OpenAccount { visitor: true, .. } if !self.view().roles => {
+                return Err(format!("the hub {} runs an older fastctx that has no visitors", self.hub_name()));
+            }
+            AccountChange::OpenAccount { name, password, visitor } => {
+                self.manage(account, Change::OpenAccount { name: name.clone(), visitor }).await?;
                 self.set_password(account, &name, &password).await?;
                 return Ok(None);
             }
@@ -152,6 +174,8 @@ impl Link {
             link: self.state(),
             me: Some(view.me.clone()),
             renames: view.renames,
+            managed: view.managed,
+            roles: view.roles,
             logins: me.map(|me| me.logins.iter().cloned().collect()).unwrap_or_default(),
             home: me.and_then(|me| me.home.clone()),
             self_registration: view.self_registration,
@@ -163,6 +187,7 @@ impl Link {
                     level: account.level,
                     locked: account.locked,
                     opened: account.opened,
+                    promotion: account.promotion,
                 })
                 .collect(),
             members: view
@@ -182,6 +207,8 @@ impl Link {
                     reach: member.reach.clone(),
                     paths: member.paths.clone(),
                     key: member.key.to_string().chars().take(8).collect(),
+                    managed: member.managed,
+                    code: member.code.map(|code| code.to_string()),
                 })
                 .collect(),
             shares: view
@@ -231,6 +258,7 @@ impl Link {
                 .collect(),
             arrivals: Vec::new(),
             links: self.direct_links(),
+            tokens: view.tokens.clone(),
         }
     }
 }

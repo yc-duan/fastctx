@@ -288,6 +288,7 @@ export const zhPresence: PresenceWords = {
   open: "打开",
   stop: "停止",
   arrived: (name, device, login) => `新${device ? "设备" : "机器"} ${name} 加入 ${login}`,
+  arrivedManaged: (login) => `有受管机器用入网码加入 ${login}`,
   arrivedBody: "如果不是你添加的，请在账号页移除",
 };
 
@@ -298,6 +299,7 @@ export const enPresence: PresenceWords = {
   open: "Open",
   stop: "Stop",
   arrived: (name, device, login) => `New ${device ? "device" : "machine"} ${name} joined ${login}`,
+  arrivedManaged: (login) => `Managed machines joined ${login} by a code`,
   arrivedBody: "If you didn't add it, remove it on the Account page",
 };
 

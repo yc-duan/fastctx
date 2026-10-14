@@ -16,7 +16,9 @@ export interface MapNode {
   hubs: string[];
   here: boolean;
   online: boolean | null;
-  hold: "mine" | "others" | "assist";
+  /** Whose it is to the account: its own, another's it works on, one
+   *  whose agent assists it, or a visitor's it only sees. */
+  hold: "mine" | "others" | "assist" | "visitor";
   /** Its agents may reach the account's machines. */
   reaching: boolean;
   /** How many agents are at work or waiting on it now, whosever they
@@ -62,4 +64,8 @@ export interface MapPerson {
   /** Their box's name, as a machine of theirs is grouped. */
   label: string;
   locked: boolean;
+  /** A visitor, whose machines are their own alone; one asked to become a
+   *  member who has not agreed yet. */
+  visitor?: boolean;
+  promotion?: boolean;
 }

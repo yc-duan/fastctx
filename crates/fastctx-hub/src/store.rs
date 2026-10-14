@@ -86,11 +86,69 @@ pub struct TokenRecord {
     pub name: Option<MachineName>,
     pub kind: Kind,
     pub expires: Timestamp,
+    /// The computers that use it become managed machines of the account
+    /// (`fastctx_net::directory::Member::managed`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub managed: bool,
+    /// How many devices may use it, any number at zero; a record from
+    /// before codes for several devices says none and is for one.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub uses: u32,
+    /// What its maker called it, as 「机房 A」.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Taken back: no device comes in by it any more.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub revoked: bool,
     pub made_by: MachineName,
     pub made_at: Timestamp,
-    /// The key of the device that used it, which may use it again to the
-    /// same end, as when its first try was cut off.
+    /// The key of the first device that used it, which may use it again to
+    /// the same end, as when its first try was cut off.
     pub used_by: Option<PublicKey>,
+    /// Every device that used it, the first among them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub used: Vec<PublicKey>,
+}
+
+fn one() -> u32 {
+    1
+}
+
+fn is_one(uses: &u32) -> bool {
+    *uses == 1
+}
+
+impl TokenRecord {
+    /// Whether `key` used it already.
+    pub fn used_by(&self, key: &PublicKey) -> bool {
+        self.used_by.as_ref() == Some(key) || self.used.contains(key)
+    }
+
+    /// How many devices used it.
+    pub fn used_count(&self) -> u32 {
+        let mut count = self.used.len();
+        if self.used_by.is_some_and(|first| !self.used.contains(&first)) {
+            count += 1;
+        }
+        u32::try_from(count).unwrap_or(u32::MAX)
+    }
+
+    /// Why a device that did not use it yet may not, if it may not.
+    pub fn closed(&self, now: Timestamp) -> Option<&'static str> {
+        if self.revoked {
+            Some("the code was revoked")
+        } else if self.expires <= now {
+            Some("the code has expired")
+        } else if self.uses != 0 && self.used_count() >= self.uses {
+            Some(if self.uses == 1 {
+                "the token was used already"
+            } else {
+                "the code has been used as many times as it may"
+            })
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -129,6 +187,10 @@ pub struct Letters {
     /// conversation when told, and reads the records of that.
     #[serde(default)]
     pub forgets: bool,
+    /// The member's last session said it reads visitors among the
+    /// accounts (`fastctx_net::wire::Intent::Session`).
+    #[serde(default)]
+    pub roles: bool,
 }
 
 pub struct Store {
@@ -376,6 +438,7 @@ impl Store {
                 any_names: false,
                 renames: false,
                 forgets: false,
+                roles: false,
             };
             self.letters.insert(name.clone(), fresh);
         }

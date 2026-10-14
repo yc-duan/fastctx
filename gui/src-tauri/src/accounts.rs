@@ -80,6 +80,16 @@ pub(crate) async fn login(
     logged_in(&shell, joined?).await
 }
 
+/// What a token lets this computer into, before it is used: whose, which
+/// network, whether as a managed machine (`world-network.md`, 受管机器).
+#[fastctx_gui_command::command]
+pub(crate) async fn peek_token(
+    shell: tauri::State<'_, Shell>,
+    token: String,
+) -> Result<Option<fastctx_types::accounts::TokenPeek>, String> {
+    shell.world().peek_token(token.trim().to_string()).await.map_err(|error| error.to_string())
+}
+
 /// Logs in with a one-time token another device made.
 #[fastctx_gui_command::command]
 pub(crate) async fn login_token(
@@ -165,13 +175,20 @@ pub(crate) async fn server_command(
     account_name: String,
     name: Option<String>,
     hours: u32,
+    managed: Option<bool>,
 ) -> Result<String, String> {
     let expires = jiff::Timestamp::now()
         .checked_add(jiff::SignedDuration::from_hours(i64::from(hours)))
         .map_err(|error| error.to_string())?;
     shell
         .world()
-        .server_command(hub(hub_name)?, account(account_name)?, crate::machine(name)?, expires)
+        .server_command(
+            hub(hub_name)?,
+            account(account_name)?,
+            crate::machine(name)?,
+            expires,
+            managed.unwrap_or(false),
+        )
         .await
         .map_err(|error| error.to_string())
 }

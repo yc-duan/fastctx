@@ -4,14 +4,18 @@
 // as its server and the person its administrator. A phone scans the code a
 // computer shows, or logs in with an account and password. A computer that
 // logs in joins as one of the account's machines; a phone only logs in.
-// Once in, the page only confirms it; on a World just made another device
-// can be added at once.
+// A computer may join by a code pasted instead (`world-network.md`, 受管机器):
+// what the code lets it into is asked of its server first and shown on a
+// card, and a managed machine's card says when this Fastctx was used too
+// much to become one. Once in, the page only confirms it; on a World just
+// made another device can be added at once.
 
 import { escape } from "../conversation/prose";
 import type { KeptNow, LoggedIn, NameProblem, Setup } from "../world/bridge";
-import type { Login } from "../world/accounts";
+import type { Login, TokenPeek } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
 import type { LoginWords } from "./account-words";
+import { managedMachine } from "./managed-art";
 import { newPasswordFields, passwordReady, sayPassword } from "./new-password";
 import { plainly } from "./problem";
 import { loginLabel } from "./reach";
@@ -31,8 +35,9 @@ export interface LoginOptions {
   store: Store;
   words: LoginWords;
   /** Asked for from the sidebar's networks: joining one, or making a new
-   *  one (here or on a server); with neither, every way is offered. */
-  way?: "join" | "new";
+   *  one (here or on a server); with neither, every way is offered. By a
+   *  code, when a managed machine comes back to a network. */
+  way?: "join" | "new" | "code";
   head(title: string, actions?: string): string;
   /** This interface runs on a phone: it logs in as a device, and nothing
    *  is set up on it. */
@@ -41,8 +46,15 @@ export interface LoginOptions {
   setup?: (() => Promise<Setup>) | undefined;
   place?: (() => Promise<string>) | undefined;
   login(hub: string, account: string, password: string, register: boolean, name: string | null): Promise<LoggedIn>;
-  /** Logs a phone in with the code it scanned. */
+  /** Logs a phone in with the code it scanned, or a computer with the code
+   *  pasted. */
   loginToken(token: string, name: string | null): Promise<LoggedIn>;
+  /** What a pasted code lets this computer into, asked of its server; a
+   *  computer that cannot ask has no way in by a code. */
+  peekToken?: ((token: string) => Promise<TokenPeek | null>) | undefined;
+  /** Opens the removal of Fastctx from this computer, on taking
+   *  everything. */
+  remove?: (() => void) | undefined;
   /** Opening an account, where this interface can: a computer can, a
    *  phone logs in only. */
   openAccount?: ((hub: string, account: string, password: string, register: boolean, name: string | null) => Promise<LoggedIn>) | undefined;
@@ -71,7 +83,7 @@ export interface LoginOptions {
   enter(): void;
 }
 
-type Step = "choose" | "password" | "open" | "scan" | "create" | "remote" | "done";
+type Step = "choose" | "password" | "code" | "confirm" | "open" | "scan" | "create" | "remote" | "done";
 
 const accountRule = "[a-z][a-z0-9\\-]{0,63}";
 /** The port a server made here listens on unless told otherwise. */
@@ -101,7 +113,7 @@ export class LoginPage implements Page {
   private created = false;
   private busy = false;
   /** What was typed, kept when moving between the ways in. */
-  private typed = { hub: "", account: "", world: "", port: String(hubPort), extra: "" };
+  private typed = { hub: "", account: "", world: "", port: String(hubPort), extra: "", code: "", name: "" };
   /** This computer's addresses, once asked, and those chosen. */
   private addresses: HereAddress[] | null = null;
   private chosen = new Set<string>();
@@ -110,11 +122,24 @@ export class LoginPage implements Page {
   private remote: RemoteWorld | null = null;
   /** The name a phone is offered, made from what it calls itself. */
   private suggested = "";
+  /** What the code pasted lets this computer into, as its server said;
+   *  null when it said nothing of it. */
+  private peeked: TokenPeek | null = null;
 
   constructor(private readonly options: LoginOptions) {
     const { words } = options;
     this.title = words.title;
-    this.step = options.device ? (options.scan ? "scan" : "password") : options.way === "join" ? "password" : options.way === "new" || !this.loggedIn() ? "choose" : "password";
+    this.step = options.device
+      ? options.scan
+        ? "scan"
+        : "password"
+      : options.way === "code" && options.peekToken
+        ? "code"
+        : options.way === "join"
+          ? "password"
+          : options.way === "new" || !this.loggedIn()
+            ? "choose"
+            : "password";
     this.element = document.createElement("div");
     this.element.className = "welcome-page login-page";
     this.element.innerHTML = `
@@ -139,6 +164,13 @@ export class LoginPage implements Page {
       event.preventDefault();
       void this.submit();
     });
+    // A code is one line however it wraps: Enter goes on.
+    this.element.addEventListener("keydown", (event) => {
+      const field = event.target as HTMLElement;
+      if (event.key !== "Enter" || event.shiftKey || event.isComposing || !field.matches("[name=code]")) return;
+      event.preventDefault();
+      field.closest("form")?.requestSubmit();
+    });
     this.draw();
     void this.refreshSetup();
     if (options.device && options.deviceName) {
@@ -159,7 +191,7 @@ export class LoginPage implements Page {
       if (said === shown) return;
       shown = said;
       this.drawHere();
-      if (this.step === "password" || this.step === "open" || this.step === "create" || this.step === "scan") this.drawName();
+      if (this.step === "password" || this.step === "code" || this.step === "open" || this.step === "create" || this.step === "scan") this.drawName();
     });
   }
 
@@ -211,6 +243,8 @@ export class LoginPage implements Page {
     this.typed.world = value("world")?.value ?? this.typed.world;
     this.typed.port = value("port")?.value ?? this.typed.port;
     this.typed.extra = value("extra")?.value ?? this.typed.extra;
+    this.typed.code = value("code")?.value ?? this.typed.code;
+    this.typed.name = value("name")?.value ?? this.typed.name;
   }
 
   private loggedIn(): boolean {
@@ -224,6 +258,13 @@ export class LoginPage implements Page {
       <footer class="welcome-foot"><span class="login-ways">${ways}</span><button class="sheet-go" type="submit"${title ? ` title="${escape(title)}"` : ""}>${escape(go)}</button></footer>`;
     const way = (to: Step, label: string) => `<button class="text-button login-way" type="button" data-way="${to}">${escape(label)}</button>`;
     const newPassword = (pair: boolean) => newPasswordFields(words, { pair });
+    // A computer joins with an account and its password, or by a code.
+    const tabs = (on: "password" | "code") =>
+      this.options.device || !this.options.peekToken
+        ? ""
+        : `<div class="segmented login-tabs" role="tablist">${(["password", "code"] as const)
+            .map((tab) => `<button class="segment${tab === on ? " chosen" : ""}" type="button" role="tab" aria-selected="${tab === on}" data-way="${tab}">${escape(tab === "password" ? words.byPassword : words.byCode)}</button>`)
+            .join("")}</div>`;
     switch (this.step) {
       case "choose":
         this.body.innerHTML = `
@@ -251,6 +292,7 @@ export class LoginPage implements Page {
         this.body.innerHTML = `
           <form class="login-form welcome-form" autocomplete="on">
             <h2 class="welcome-form-title">${escape(opening ? words.signUp : this.loggedIn() ? words.another : words.join)}</h2>
+            ${opening ? "" : tabs("password")}
             <label class="field"><span class="field-label">${escape(words.hub)}</span>
               <input name="hub" class="mono" required autocomplete="url" spellcheck="false" autocapitalize="off" placeholder="192.168.1.10:7443" value="${escape(this.typed.hub)}"></label>
             <label class="field"><span class="field-label">${escape(words.account)}</span>
@@ -267,6 +309,21 @@ export class LoginPage implements Page {
         this.drawName();
         break;
       }
+      case "code":
+        this.body.innerHTML = `
+          <form class="code-form welcome-form" autocomplete="off">
+            <h2 class="welcome-form-title">${escape(this.loggedIn() ? words.another : words.join)}</h2>
+            ${tabs("code")}
+            <label class="field"><span class="field-label">${escape(words.code)}</span>
+              <textarea name="code" class="mono code-input" rows="3" required spellcheck="false" autocapitalize="off" placeholder="FX5…">${escape(this.typed.code)}</textarea></label>
+            <div class="login-name"></div>
+            ${foot(this.backWay(), words.next)}
+          </form>`;
+        this.drawName();
+        break;
+      case "confirm":
+        this.drawConfirm();
+        break;
       case "scan":
         this.body.innerHTML = `
           <div class="welcome-form scan-form">
@@ -389,7 +446,45 @@ export class LoginPage implements Page {
     const phone = this.options.device;
     const shown = phone ? "" : (world?.here ?? "");
     slot.innerHTML = `<label class="field"><span class="field-label">${escape(phone ? words.phoneName : words.name)}</span>
-      <input name="name" class="mono" autocomplete="off" spellcheck="false" autocapitalize="off"${phone ? " required" : ""} placeholder="${escape(shown)}" value="${escape(typed || (phone ? this.suggested : ""))}"></label>`;
+      <input name="name" class="mono" autocomplete="off" spellcheck="false" autocapitalize="off"${phone ? " required" : ""} placeholder="${escape(shown)}" value="${escape(typed || this.typed.name || (phone ? this.suggested : ""))}"></label>`;
+  }
+
+  /** What the code pasted lets this computer into, before it is used: whose
+   *  machine it becomes and on which network; for a managed machine, what
+   *  the owner's agents do here and that it uses nothing itself, or why
+   *  this Fastctx cannot become one. */
+  private drawConfirm(): void {
+    const { words } = this.options;
+    const peeked = this.peeked;
+    const facts = peeked
+      ? `<dl class="facts code-facts">
+          <dt>${escape(words.codeOwner)}</dt><dd>${escape(peeked.account)}</dd>
+          <dt>${escape(words.codeNetwork)}</dt><dd>${escape(peeked.hub)}</dd>
+          ${peeked.label ? `<dt>${escape(words.code)}</dt><dd>${escape(peeked.label)}</dd>` : ""}
+        </dl>`
+      : "";
+    const refused = peeked?.refused;
+    const card = peeked?.managed
+      ? `<div class="code-card managed">
+          <div class="code-card-art">${managedMachine("managed-art code-art")}</div>
+          <h2 class="code-card-title">${escape(words.managedTitle)}</h2>
+          ${facts}
+          <ul class="code-card-what"><li>${escape(words.managedCan(peeked.account))}</li><li>${escape(words.managedNot)}</li></ul>
+        </div>`
+      : `<div class="code-card">
+          <h2 class="code-card-title">${escape(peeked ? words.codeAs(peeked.account) : words.codeUnknown)}</h2>
+          ${facts}
+        </div>`;
+    const unfit = refused
+      ? `<div class="welcome-slip code-unfit" role="alert"><span><b>${escape(words.fresh)}</b>${escape(words.unfit[refused.why])}</span>${this.options.remove ? `<button class="text-button remove-first" type="button">${escape(words.removeFirst)}</button>` : ""}</div>`
+      : "";
+    this.body.innerHTML = `
+      <form class="code-confirm welcome-form">
+        ${card}
+        ${unfit}
+        <p class="sheet-note" role="alert" hidden></p>
+        <footer class="welcome-foot"><span class="login-ways"><button class="text-button login-way" type="button" data-way="code">${escape(words.back)}</button></span><button class="sheet-go" type="submit"${refused ? " disabled" : ""}>${escape(words.codeGo)}</button></footer>
+      </form>`;
   }
 
   /** What is left for the person once in: a startup service that did not
@@ -489,6 +584,7 @@ export class LoginPage implements Page {
       return this.drawAddresses();
     }
     if (target.closest(".enter")) return this.options.enter();
+    if (target.closest(".remove-first")) return this.options.remove?.();
     if (target.closest(".invite-next") && this.done && this.options.invite) {
       const login = loginsOf(this.options.store.world.peek()?.accounts).find((one) => one.hubName === this.done!.hub && one.account === this.done!.account);
       if (login) this.options.invite(login);
@@ -533,15 +629,49 @@ export class LoginPage implements Page {
     }
   }
 
+  /** Asks the code's server what it lets this computer into, and shows it
+   *  on a card before the code is used. */
+  private async peek(go: HTMLButtonElement, label: string, name: string | null): Promise<void> {
+    const { words } = this.options;
+    const code = this.typed.code.replace(/\s+/g, "");
+    const peek = this.options.peekToken;
+    if (!code || !peek) return;
+    this.typed.code = code;
+    const check = this.options.nameProblem;
+    this.busy = true;
+    go.disabled = true;
+    go.textContent = words.peeking;
+    this.note("");
+    try {
+      const problem = name && check ? await check("machine", name) : null;
+      if (problem) {
+        this.note(words.nameSaid(problem));
+        return;
+      }
+      this.peeked = await peek(code);
+      this.busy = false;
+      this.go("confirm");
+    } catch (error) {
+      this.problem(error);
+    } finally {
+      this.busy = false;
+      if (this.step === "code") {
+        go.disabled = false;
+        go.textContent = label;
+      }
+    }
+  }
+
   private async submit(): Promise<void> {
     if (this.busy || this.step === "done" || this.step === "choose" || this.step === "scan") return;
     const { words } = this.options;
     const field = (name: string) => this.body.querySelector<HTMLInputElement>(`[name="${name}"]`);
-    const name = field("name")?.value.trim() || null;
     const go = this.body.querySelector<HTMLButtonElement>(".sheet-go")!;
     const label = go.textContent ?? "";
     let act: () => Promise<LoggedIn>;
     this.keep();
+    const name = (this.step === "confirm" ? this.typed.name : field("name")?.value)?.trim() || null;
+    if (this.step === "code") return this.peek(go, label, name);
     // A name is checked by the World's rule before anything is sent; the
     // page takes nothing else meanwhile. Creating a World asks for two
     // names, so there the note says which field it is about.
@@ -557,10 +687,14 @@ export class LoginPage implements Page {
       field(kind === "hub" ? "world" : "name")?.focus();
       return false;
     };
-    if (!(await named("machine", name))) return;
+    if (this.step !== "confirm" && !(await named("machine", name))) return;
     // A new password must pass before anything is sent.
     const fresh = (account: string): boolean => passwordReady(this.body, words, account);
-    if (this.step === "create") {
+    if (this.step === "confirm") {
+      if (this.peeked?.refused) return;
+      const code = this.typed.code.trim();
+      act = () => this.options.loginToken(code, name);
+    } else if (this.step === "create") {
       const create = this.options.create;
       const world = field("world")?.value.trim() ?? "";
       const account = field("account")?.value.trim() ?? "";
@@ -585,6 +719,7 @@ export class LoginPage implements Page {
       } else act = () => this.options.login(hub, account, password, register, name);
     }
     const creating = this.step === "create";
+    const managed = this.step === "confirm" && !!this.peeked?.managed;
     this.busy = true;
     go.disabled = true;
     go.textContent = creating ? words.creating : words.going;
@@ -594,6 +729,9 @@ export class LoginPage implements Page {
       this.created = creating;
       this.busy = false;
       await this.options.store.refresh();
+      // A managed machine has nothing more to show here: its one page says
+      // what it is.
+      if (managed) return this.options.enter();
       await this.arrived();
     } catch (error) {
       this.busy = false;

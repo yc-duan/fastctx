@@ -92,6 +92,7 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
         locked: false,
         opened: Timestamp::now(),
         collab: None,
+        promotion: false,
     });
     book.passwords.insert(new.admin.clone(), Bytes(crate::password_record(&secrets, &new.admin, &new.password)?));
     let mut report = Report::default();
@@ -119,6 +120,8 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
             kind: if machine { Kind::Computer } else { Kind::Phone },
             logins: BTreeSet::from([new.admin.clone()]),
             home: machine.then(|| new.admin.clone()),
+            managed: false,
+            code: None,
             direct: Vec::new(),
             added: admitted.joined_at,
             online: false,

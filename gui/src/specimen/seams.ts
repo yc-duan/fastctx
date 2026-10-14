@@ -7,6 +7,7 @@ import type { Removing } from "../app/removal";
 import type { PhoneSeam } from "../app/phone";
 import type { RenewalStatus } from "../world/renewal";
 import type { RemovalItem, RemovalPlan, Setup } from "../world/bridge";
+import type { TokenPeek } from "../world/accounts";
 import type { FileRange } from "../world/file-read";
 import type { TextRead } from "../app/reader";
 import type { Offers } from "../world/control";
@@ -116,6 +117,23 @@ export async function specimenFiles(query: string) {
 
 /** A specimen computer, upgraded from an old fastctx: it changes nothing
  *  anywhere, only how the settings show it. */
+/** What a code lets this computer into, as a specimen's server says: one
+ *  with USED in it meets a Fastctx used before, one with PLAIN logs in to
+ *  an account, any other makes this computer a managed machine. */
+export async function specimenPeek(token: string): Promise<TokenPeek | null> {
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  if (!token.startsWith("FX5")) throw new Error("not a token: a code starts with FX5");
+  const plain = token.includes("PLAIN");
+  return {
+    hub: "home",
+    account: "me",
+    managed: !plain,
+    ...(plain ? {} : { label: "机房 A" }),
+    expires: new Date(Date.now() + 6 * 86_400_000).toISOString(),
+    ...(token.includes("USED") ? { refused: { why: "conversations" as const } } : {}),
+  };
+}
+
 export function specimenComputer() {
   let kept = false;
   let days = 7;

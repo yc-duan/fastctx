@@ -146,6 +146,12 @@ pub enum Intent {
         /// the session on a frame they cannot read.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         forgets: bool,
+        /// The member reads visitors among the accounts it is sent
+        /// (`crate::directory::Level::Visitor`). Earlier releases do not say
+        /// so, and could not read the view that names one: they are sent
+        /// visitors as members.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        roles: bool,
     },
     /// A password login to `account`: the first OPAQUE message. The hub
     /// answers `Down::LoginResponse`; the device finishes with
@@ -154,6 +160,11 @@ pub enum Intent {
     /// A login with an enrollment token: `token` is the token's public key,
     /// `proof` its signature of the TLS exporter.
     Token { token: PublicKey, proof: Signature, member: Joining },
+    /// What the token `token` lets a device into, without using it: the
+    /// hub answers `Down::TokenInfo` and closes. Sent only to a hub that
+    /// says it registers managed machines; an earlier hub refuses the
+    /// connection, which the asking device takes as that.
+    Peek { token: PublicKey, proof: Signature },
     /// Opening `account` on a hub that lets anyone: the first OPAQUE
     /// registration message. The hub answers `Down::RegisterResponse`.
     Register { account: AccountName, request: Bytes },
@@ -243,6 +254,17 @@ pub enum Down {
     /// The hub's half of a password login.
     LoginResponse {
         response: Bytes,
+    },
+    /// What a token lets a device into, asked before it is used
+    /// (`Intent::Peek`): whose, and whether as a managed machine.
+    TokenInfo {
+        hub: HubId,
+        hub_name: HubName,
+        account: AccountName,
+        managed: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+        expires: Timestamp,
     },
     /// The hub's half of opening an account, or of setting a password.
     RegisterResponse {
@@ -534,14 +556,40 @@ pub enum Change {
     },
     /// The asking member logs out of the account.
     Logout,
-    /// A one-time enrollment token for the account (`crate::token`),
-    /// valid until `expires`; `register` makes the computer that uses it a
-    /// machine of the account.
+    /// An enrollment token for the account (`crate::token`), valid until
+    /// `expires`; `register` makes the computer that uses it a machine of
+    /// the account, and `managed` a managed machine of it
+    /// (`crate::directory::Member::managed`). `uses` is how many computers
+    /// may use it, one when none, any number at zero; `label` names it.
+    /// Sent with any of the three only to a hub whose view says it
+    /// registers managed machines: an earlier hub would make a one-time
+    /// token for a full login.
     Token {
         register: bool,
         name: Option<MachineName>,
         kind: Kind,
         expires: Timestamp,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        managed: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uses: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
+    /// No device comes in by the token whose key is `token` any more: the
+    /// account that made it, or the super administrator, takes it back.
+    RevokeToken {
+        token: PublicKey,
+    },
+    /// The super administrator makes `name` a visitor at once, or a member
+    /// once the account itself agrees.
+    SetRole {
+        name: AccountName,
+        visitor: bool,
+    },
+    /// The asking account agrees to become a member, or does not.
+    AcceptRole {
+        accept: bool,
     },
     /// Sets the password of `target`, the account itself or, for the super
     /// administrator, another: the first OPAQUE registration message.
@@ -554,9 +602,12 @@ pub enum Change {
         target: AccountName,
         upload: Bytes,
     },
-    /// Opens a member's account; its password is set next.
+    /// Opens an account, a visitor's when `visitor`; its password is set
+    /// next. Sent with `visitor` only to a hub whose view has roles.
     OpenAccount {
         name: AccountName,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        visitor: bool,
     },
     SetAccount {
         name: AccountName,

@@ -24,16 +24,20 @@ export type MachineLogAction =
   | { change: "remove"; name: MachineName; reason: string }
   | { change: "rename"; machine: MachineName; to: MachineName }
   | { change: "logout" }
-  | { change: "token"; register: boolean; name: MachineName | null; kind: MemberKind; expires: Timestamp }
+  | { change: "token"; register: boolean; name: MachineName | null; kind: MemberKind; expires: Timestamp; managed?: boolean; label?: string }
+  | { change: "revoke_token"; label?: string }
   | { change: "password_start" | "password_finish"; target: AccountName }
-  | { change: "open_account" | "delete_account"; name: AccountName }
+  | { change: "open_account"; name: AccountName; visitor?: boolean }
+  | { change: "delete_account"; name: AccountName }
+  | { change: "set_role"; name: AccountName; visitor: boolean }
+  | { change: "accept_role"; accept: boolean }
   | { change: "set_account"; name: AccountName; locked: boolean }
   | { change: "transfer"; to: AccountName }
   | { change: "settings"; self_registration: boolean }
   | { change: "open_project"; town: string; name: string }
   | { change: "share_project"; town: string; name: string | null; with: AccountName; shared: boolean }
   | { change: "move_project"; town: string; name: string | null; to: AccountName }
-  | { change: "joined"; name: MachineName; kind: MemberKind; registered: boolean; via: "password" | "token" }
+  | { change: "joined"; name: MachineName; kind: MemberKind; registered: boolean; via: "password" | "token"; managed?: boolean }
   | { change: "allow_acting"; machine: MachineName; agent: string; home: string | null }
   | { change: "acting_stopped"; machine: MachineName; account: AccountName }
   | { change: "left"; name: MachineName; account: AccountName; kind: MemberKind; unregistered: boolean; reason: string }

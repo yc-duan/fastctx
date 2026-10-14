@@ -120,9 +120,10 @@ impl History {
             Action::PasswordStart { target } | Action::PasswordFinish { target } => {
                 accounts.insert(target.clone());
             }
-            Action::OpenAccount { name } | Action::SetAccount { name, .. } => {
+            Action::OpenAccount { name, .. } | Action::SetAccount { name, .. } | Action::SetRole { name, .. } => {
                 accounts.insert(name.clone());
             }
+            Action::AcceptRole { .. } | Action::RevokeToken { .. } => {}
             Action::DeleteAccount { name } => {
                 accounts.insert(name.clone());
                 names.extend(
@@ -320,12 +321,22 @@ pub(crate) fn action(change: &Change, book: &Book) -> Action {
         Change::Remove { name, reason } => Action::Remove { name: name.clone(), reason: reason.clone() },
         Change::Rename { machine, to } => Action::Rename { machine: machine.clone(), to: to.clone() },
         Change::Logout => Action::Logout,
-        Change::Token { register, name, kind, expires } => {
-            Action::Token { register: *register, name: name.clone(), kind: *kind, expires: *expires }
-        }
+        Change::Token { register, name, kind, expires, managed, label, .. } => Action::Token {
+            register: *register,
+            name: name.clone(),
+            kind: *kind,
+            expires: *expires,
+            managed: *managed,
+            label: label.clone(),
+        },
+        Change::RevokeToken { token } => Action::RevokeToken {
+            label: book.tokens.iter().find(|record| record.key == *token).and_then(|record| record.label.clone()),
+        },
+        Change::SetRole { name, visitor } => Action::SetRole { name: name.clone(), visitor: *visitor },
+        Change::AcceptRole { accept } => Action::AcceptRole { accept: *accept },
         Change::PasswordStart { target, .. } => Action::PasswordStart { target: target.clone() },
         Change::PasswordFinish { target, .. } => Action::PasswordFinish { target: target.clone() },
-        Change::OpenAccount { name } => Action::OpenAccount { name: name.clone() },
+        Change::OpenAccount { name, visitor } => Action::OpenAccount { name: name.clone(), visitor: *visitor },
         Change::SetAccount { name, locked } => Action::SetAccount { name: name.clone(), locked: *locked },
         Change::Transfer { to } => Action::Transfer { to: to.clone() },
         Change::DeleteAccount { name } => Action::DeleteAccount { name: name.clone() },

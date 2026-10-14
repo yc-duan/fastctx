@@ -26,6 +26,10 @@ export interface MapWords {
   reachingWhat: string;
   /** The names a machine had, each still naming it. */
   formerly(names: string[]): string;
+  visitorMachine: string;
+  visitorWhat: string;
+  /** Under a managed machine's name. */
+  managed: string;
   hubOnline: string;
   hubConnecting: string;
   hubOff: string;
@@ -61,10 +65,12 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
     // Written with its hub where another hub has a computer of its name.
     const suffix = machine.written.startsWith(machine.name) ? machine.written.slice(machine.name.length) : "";
     const hubLink = machine.here ? world.accounts.hubs.map((hub) => hub.link).find((link) => link.kind === "online") : undefined;
+    // A managed machine says so under its name.
+    const said = owner ? words.ownedBy(owner) : facts ? osName(facts.os) : "";
     nodes.push({
       key: `m:${machine.written}`,
       name: machine.written,
-      sub: owner ? words.ownedBy(owner) : facts ? osName(facts.os) : "",
+      sub: [said, member?.managed ? words.managed : ""].filter(Boolean).join(" · "),
       hubs: machine.on.map((on) => on.hub).filter((hub) => hubs.some((one) => one.id === hub)),
       here: machine.here,
       online: machine.here ? true : machine.online,
@@ -78,6 +84,28 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
       hubMs: (hubLink?.kind === "online" ? hubLink.ms : member?.paths?.hub_ms) ?? undefined,
       group: owner ? { key: `of:${owner}`, label: words.ownedBy(owner) } : { key: "mine", label: words.mineGroup },
     });
+  }
+  // A visitor's machines, for the network's administrator alone: their
+  // names and whether they are online, nothing to do on them.
+  for (const hub of world.accounts.hubs) {
+    if (!logins.some((login) => login.hub === hub.hub && isSuper(world, login))) continue;
+    const visitors = new Set(hub.accounts.filter((account) => account.level === "visitor").map((account) => account.name));
+    for (const member of hub.members) {
+      if (member.kind !== "computer" || !member.home || !visitors.has(member.home)) continue;
+      nodes.push({
+        key: `visitor:${member.name}`,
+        name: member.name,
+        sub: words.visitorMachine,
+        hubs: [hub.hub],
+        here: false,
+        online: member.online,
+        hold: "visitor",
+        reaching: false,
+        busy: 0,
+        title: words.visitorWhat,
+        group: { key: `of:${member.home}`, label: words.ownedBy(member.home) },
+      });
+    }
   }
   const assisting = new Set<string>();
   for (const one of assistantsOf(world)) {
@@ -109,7 +137,14 @@ function peopleOf(world: WorldNow, words: MapWords): MapPerson[] {
     if (!admin) return [];
     return hub.accounts
       .filter((account) => !logins.some((login) => login.hub === hub.hub && login.account === account.name))
-      .map((account) => ({ hub: hub.hub, account: account.name, label: words.ownedBy(account.name), locked: account.locked }));
+      .map((account) => ({
+        hub: hub.hub,
+        account: account.name,
+        label: words.ownedBy(account.name),
+        locked: account.locked,
+        visitor: account.level === "visitor",
+        promotion: !!account.promotion,
+      }));
   });
 }
 

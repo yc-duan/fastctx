@@ -752,6 +752,8 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .map(|path| Reply::ClaudeSessionDirectory { path })
         }
         Call::Arrive { host, hints } => {
+            // A managed machine takes no session of its own agents.
+            crate::managed::refuse(node)?;
             if host.agent.as_str() == "claude" || hints.tool_use_id.is_some() {
                 let id = hints.tool_use_id.as_deref().filter(|id| !id.is_empty()).ok_or_else(|| {
                     Failure::new("Claude did not supply a tool use id; its session cannot be identified")
@@ -859,6 +861,8 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::ClaudeConsent { machine, accept, home } => {
             users_voice(node, peer)?;
+            crate::managed::refuse(node)?;
+
             crate::consent::call(node, machine.clone(), accept, home)
                 .await
                 .map(|(accepted, changed)| Reply::ClaudeConsent { machine, accepted, changed })
@@ -873,36 +877,48 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::ScanAgents { machine, stop, limits } => {
             users_voice(node, peer)?;
+            crate::managed::refuse(node)?;
+
             crate::logins::remote::scan(node, machine, stop, limits)
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }
         Call::AddAgentLogin { machine, agent, dir, limits } => {
             users_voice(node, peer)?;
+            crate::managed::refuse(node)?;
+
             crate::logins::remote::add(node, machine, agent, dir, limits)
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }
         Call::AgentFolder { machine, dir, change } => {
             users_voice(node, peer)?;
+            crate::managed::refuse(node)?;
+
             crate::logins::remote::folder(node, machine, dir, change)
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }
         Call::SetAgentTitle { machine, agent, dir, on } => {
             users_voice(node, peer)?;
+            crate::managed::refuse(node)?;
+
             crate::logins::remote::set_title(node, machine, agent, dir, on)
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }
         Call::PreviewAgentChange { machine, agent, dir, into } => {
             users_voice(node, peer)?;
+            crate::managed::refuse(node)?;
+
             crate::logins::remote::preview(node, machine, agent, dir, into)
                 .await
                 .map(|preview| Reply::AgentChangePreview(Box::new(preview)))
         }
         Call::ChangeAgentLogin { machine, agent, dir, into, raise_output_limit } => {
             users_voice(node, peer)?;
+            crate::managed::refuse(node)?;
+
             crate::logins::remote::change(node, machine, agent, dir, into, raise_output_limit)
                 .await
                 .map(|change| Reply::AgentLoginChanged(Box::new(change)))
@@ -935,6 +951,8 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::Open { agent, town, node: target, text, model, reasoning_effort, attachments, choices } => {
             users_voice(node, peer)?;
+            crate::managed::refuse(node)?;
+
             let options = fastctx_types::agents::SessionOptions { model, reasoning_effort };
             crate::talk::open(node, agent, town, target, text, options, attachments, choices)
                 .await
@@ -1058,6 +1076,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             crate::world::login_with_token(node, &token, name).await
         }
+        Call::PeekToken { token } => {
+            users_voice(node, peer)?;
+            crate::world::peek_token(node, &token).await.map(|peeked| Reply::TokenPeek { peeked })
+        }
         Call::OpenAccount { hub, account, password, register, name } => {
             users_voice(node, peer)?;
             crate::world::open_account(node, hub, account, password, register, name).await
@@ -1082,9 +1104,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .map(Reply::MachineLog)
                 .map_err(Failure::new)
         }
-        Call::ServerCommand { hub, account, name, expires } => {
+        Call::ServerCommand { hub, account, name, expires, managed } => {
             users_voice(node, peer)?;
-            crate::server_invitation::command(node, hub.as_ref(), &account, name, expires)
+            crate::server_invitation::command(node, hub.as_ref(), &account, name, expires, managed)
                 .await
                 .map(|command| Reply::ServerInvitation { command })
         }

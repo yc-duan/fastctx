@@ -1,6 +1,7 @@
 // The machines a login may use (`world-gui.md`, 账号、机器、共享与协助),
 // drawn: the account's World as a hand-drawn map that moves under the hand
-// (`machine-map.ts`). Choosing a hub or a machine floats its actions beside
+// (`machine-map.ts`), or set out as a list (`machine-list.ts`), as chosen in
+// the page's head and kept on this device. Choosing a hub or a machine floats its actions beside
 // it, small icons that say what they do when pointed at; the right button,
 // or a long press, lists them with their names. What is known of the one
 // chosen stands in a panel that opens only when asked for. Beside each hub
@@ -36,13 +37,14 @@ import { HubMoving, type HubMovingOptions } from "./hub-moving";
 import { GiveSheet } from "./machine-sheets";
 import { MachineLog, type ReadLog } from "./machine-log";
 import { foldedOf, MachineMap, MAP_ORDER, personKey } from "./machine-map";
+import { isManaged, machineList } from "./machine-list";
 import { MapPeople } from "./map-people";
 import type { PeopleWords } from "./people-words";
 import { RING } from "./map-layout";
 import { mapOf } from "./map-of";
 import type { MapNode } from "./map-nodes";
 import { link, talkLink } from "./places";
-import { assistantsOf, groupsOf, isComputer, isSuper, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, superOf, type Assistant, type Machine } from "./reach";
+import { assistantsOf, groupsOf, isComputer, isSuper, isVisitor, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, superOf, type Assistant, type Machine } from "./reach";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import { jobsOf, residentsOf, type Store } from "./store";
@@ -108,6 +110,19 @@ const ARRIVED_MS = 6_000;
 /** The port offered first for direct connections: the one after the hub's
  *  own, 7443. */
 const DIRECT_PORT = 7444;
+
+/** Where this device keeps whether the machines show as a drawing or a list. */
+const VIEW_KEY = "machines.view";
+
+type View = "map" | "list";
+
+function keptView(): View {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "map";
+  } catch {
+    return "map";
+  }
+}
 
 export class MachinesPage implements Page {
   readonly element: HTMLElement;
@@ -185,6 +200,11 @@ export class MachinesPage implements Page {
   private readonly intro: HTMLElement;
   private readonly layout: HTMLElement;
   private film: Film | null = null;
+  /** The machines as a drawing or as a list, and the list as last drawn. */
+  private view: View;
+  private readonly views: HTMLElement;
+  private readonly list: HTMLElement;
+  private listed = "";
 
   constructor(private readonly options: MachinesOptions) {
     const { words } = options;
@@ -219,10 +239,12 @@ export class MachinesPage implements Page {
     this.element.innerHTML = `
       ${options.head(
         `<h1 class="page-title">${escape(words.title)}</h1>`,
-        `<button class="text-button add-device" type="button" hidden>${glyph("plus", 16)}<span>${escape(words.add)}</span></button>`,
+        `<div class="ml-views" role="radiogroup" aria-label="${escape(words.views)}" hidden>${(["map", "list"] as View[])
+          .map((view) => `<button class="ml-view" type="button" role="radio" data-view="${view}" title="${escape(view === "map" ? words.viewMap : words.viewList)}">${glyph(view === "map" ? "tree" : "rows", 16)}<span>${escape(view === "map" ? words.viewMap : words.viewList)}</span></button>`)
+          .join("")}</div><button class="text-button add-device" type="button" hidden>${glyph("plus", 16)}<span>${escape(words.add)}</span></button>`,
       )}
       <div class="machines-intro" hidden><div class="machines-film"></div><p class="machines-hub-is">${escape(words.hubIs)}</p><div class="machines-ways"><a class="sheet-go" href="${link({ kind: "login", way: "new" })}">${escape(words.newNetwork)}</a><a class="text-button quiet-button" href="${link({ kind: "login", way: "join" })}">${escape(words.joinNetwork)}</a></div></div>
-      <div class="machines-layout"><div class="machines-canvas"><div class="map-undo" role="status" hidden></div><div class="map-choose" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div><form class="map-card" tabindex="-1" hidden></form></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
+      <div class="machines-layout"><div class="machines-canvas"><div class="ml-list scroller" role="list" hidden></div><div class="map-undo" role="status" hidden></div><div class="map-choose" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div><form class="map-card" tabindex="-1" hidden></form></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
     this.panel = this.element.querySelector<HTMLElement>(".machine-panel")!;
     this.intro = this.element.querySelector<HTMLElement>(".machines-intro")!;
     this.layout = this.element.querySelector<HTMLElement>(".machines-layout")!;
@@ -232,6 +254,22 @@ export class MachinesPage implements Page {
     this.undoBar = this.element.querySelector<HTMLElement>(".map-undo")!;
     this.chooseBar = this.element.querySelector<HTMLElement>(".map-choose")!;
     this.card = this.element.querySelector<HTMLElement>(".map-card")!;
+    this.list = this.element.querySelector<HTMLElement>(".ml-list")!;
+    this.views = this.element.querySelector<HTMLElement>(".ml-views")!;
+    // A machine named in the address is shown on the drawing.
+    this.view = options.focus ? "map" : keptView();
+    this.views.addEventListener("click", (event) => {
+      const view = (event.target as HTMLElement).closest<HTMLElement>("[data-view]")?.dataset.view as View | undefined;
+      if (view) this.show(view);
+    });
+    this.list.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement;
+      const open = target.closest<HTMLElement>("[data-ml-open]")?.dataset.mlOpen;
+      if (open) return this.details(open);
+      const hub = target.closest<HTMLElement>("[data-ml-add]")?.dataset.mlAdd;
+      const login = hub ? this.hubLogin(hub) : null;
+      if (login) this.invite(login);
+    });
     // The film of what a network is for, over the drawing, once in one:
     // the last word of the line of hints under it.
     const again = document.createElement("button");
@@ -459,7 +497,25 @@ export class MachinesPage implements Page {
     this.map.glide(box.width / 2 - at[0], room / 2 - at[1]);
   }
 
-  /** The hub or machine chosen on the drawing: its actions float beside it. */
+  /** Shows the machines as a drawing or a list, and keeps the choice on
+   *  this device. What was chosen on one is let go on the other. */
+  private show(view: View): void {
+    if (view === this.view) return;
+    this.view = view;
+    try {
+      localStorage.setItem(VIEW_KEY, view);
+    } catch {
+      // Kept for this visit only.
+    }
+    this.selected = null;
+    this.detailsOpen = false;
+    this.framed = [];
+    this.closeMenu();
+    this.closeCard();
+    this.redraw();
+    if (view === "map") requestAnimationFrame(() => this.map.refresh());
+  }
+
   /** Shows the film and the ways into a network while this computer is in
    *  none, the drawing once it is in one. */
   private alone(alone: boolean): void {
@@ -667,6 +723,7 @@ export class MachinesPage implements Page {
   private redraw(): void {
     this.drawn = "";
     this.floated = "";
+    this.listed = "";
     this.draw(this.options.store.world.peek(), this.options.store.clock.peek());
   }
 
@@ -709,7 +766,27 @@ export class MachinesPage implements Page {
     // ways into one; the drawing waits until there is one.
     const alone = !loginsOf(world.accounts).length && isComputer(world);
     this.alone(alone);
-    const acts = narrow && this.selected ? this.sheetActs(this.selected, world) : "";
+    const listing = !alone && this.view === "list";
+    this.views.hidden = alone;
+    for (const button of this.views.querySelectorAll<HTMLElement>("[data-view]")) {
+      const chosen = button.dataset.view === this.view;
+      button.classList.toggle("chosen", chosen);
+      button.setAttribute("aria-checked", String(chosen));
+    }
+    this.canvas.classList.toggle("listing", listing);
+    this.list.hidden = !listing;
+    if (listing) {
+      const adds = world.accounts.hubs.filter((hub) => this.hubLogin(hub.hub)).map((hub) => hub.hub);
+      const html = machineList({ world, now, selected: open ? this.selected : null, adds, when: this.options.when }, words);
+      if (html !== this.listed) {
+        this.listed = html;
+        redrawKeepingFocus(this.list, () => {
+          this.list.innerHTML = html;
+        });
+      }
+    }
+    // Beside the list nothing floats: the actions are a row in the details.
+    const acts = (narrow || listing) && this.selected ? this.sheetActs(this.selected, world) : "";
     const grip = narrow
       ? `<button class="sheet-grip" type="button" data-act="grow" aria-expanded="${this.grown}" aria-label="${escape(this.grown ? words.closeDetails : words.details)}"></button>`
       : "";
@@ -864,10 +941,18 @@ export class MachinesPage implements Page {
     const rename: Act[] = renamerOf(spot.machine, world, this.options.change, this.options.renaming.here)
       ? [{ act: "rename", label: this.options.renaming.words.rename, icon: "edit" }]
       : [];
+    // A managed machine has no agents of anyone's on it; a visitor shares
+    // none of its machines.
+    const managed = isManaged(world, spot.machine.name);
+    const shares = owners.length > 0 && !owners.some((login) => isVisitor(world, login));
     return [
-      { act: "talk", label: words.talk, icon: "plus" },
-      { act: "agents", label: words.hosts, icon: "agents" },
-      ...(owners.length ? [{ act: "share", label: words.share, icon: "colleague" as const }] : []),
+      ...(managed
+        ? []
+        : [
+            { act: "talk", label: words.talk, icon: "plus" as const },
+            { act: "agents", label: words.hosts, icon: "agents" as const },
+          ]),
+      ...(shares ? [{ act: "share", label: words.share, icon: "colleague" as const }] : []),
       ...direct,
       ...rename,
       details,
@@ -937,6 +1022,8 @@ export class MachinesPage implements Page {
       else if (act === "move") {
         const top = this.superLogin(spot.hub, world);
         if (!top) return;
+        // The server's new place is chosen on the drawing.
+        this.show("map");
         this.selected = null;
         this.whyNot = null;
         this.moving.choose(top, spot.hub).catch((error: unknown) => {
@@ -1203,7 +1290,7 @@ export class MachinesPage implements Page {
    *  drawing keep clear of them. */
   private float(): void {
     const world = this.options.store.world.peek();
-    const key = this.menuFor || this.cardFor || this.narrow() ? null : this.selected;
+    const key = this.menuFor || this.cardFor || this.narrow() || this.view === "list" ? null : this.selected;
     const at = key ? this.map.screenOf(key) : null;
     if (!world || !key || !at) {
       if (!this.acts.hidden) {

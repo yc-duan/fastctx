@@ -8,7 +8,6 @@ import { redrawKeepingFocus } from "./focus";
 import { chooseMotion, chosenMotion, motions, type Motion } from "../motion";
 import { chooseSize, chooseTheme, chosenSize, chosenTheme, textSizes, themes, type Theme } from "../theme";
 import type { KeptNow, Legacy, Setup, WorldNow } from "../world/bridge";
-import { Sheet } from "./confirm";
 import { RenewalRow, type Renewing } from "./renewal";
 import { AppUpdateRow, type Updating } from "./app-update";
 import { PhoneRow, type PhoneSeam } from "./phone";
@@ -19,7 +18,8 @@ import { bytesSaid } from "./data-page";
 import { effect } from "./signals";
 import type { Store } from "./store";
 import type { SettingsWords } from "./words";
-import { RemovalSection, type Removing } from "./removal";
+import type { Removing } from "./removal";
+import { RemovalSheet } from "./removal-sheet";
 import type { RemovalWords } from "./removal-words";
 import { loginsOf } from "../world/accounts";
 import type { NameProblem } from "../world/bridge";
@@ -46,6 +46,8 @@ export interface SettingsOptions {
     setup(): Promise<Setup>;
     keep(): Promise<KeptNow>;
     removing: Removing;
+    /** The dialog that takes fastctx off, where another page opens it too. */
+    removal?: RemovalSheet | undefined;
     /** Which World it runs, and putting a new one in place. */
     renewing: Renewing;
     /** The app's own version, and a newer one from its releases. */
@@ -140,16 +142,8 @@ export class SettingsPage implements Page {
     if (computer) {
       // Uninstalling is a dialog of its own: the two ways, what each takes
       // and leaves, and its steps ticked off, over the settings.
-      let sheet: Sheet | null = null;
-      this.element.querySelector("[data-uninstall]")!.addEventListener("click", () => {
-        if (!sheet) {
-          const opened = new Sheet("removal-sheet");
-          opened.body.innerHTML = `${opened.head(options.removalWords.title, options.removalWords.cancel)}<div class="removal"></div>`;
-          new RemovalSection(opened.body.querySelector<HTMLElement>(".removal")!, options.removalWords, computer.removing, (on) => (opened.busy = on));
-          sheet = opened;
-        }
-        sheet.show();
-      });
+      const sheet = computer.removal ?? new RemovalSheet(options.removalWords, computer.removing);
+      this.element.querySelector("[data-uninstall]")!.addEventListener("click", () => sheet.open());
     }
     this.service.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-service]");

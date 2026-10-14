@@ -40,9 +40,20 @@ pub struct Member {
     /// The accounts logged in on it.
     pub logins: BTreeSet<AccountName>,
     /// The account it is registered as a machine under; that account is
-    /// among its logins.
+    /// among its logins, unless it is a managed machine (`managed`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<AccountName>,
+    /// A managed machine (`world-network.md`, 受管机器): registered under
+    /// `home` by a code, logged in to no account, and never logged in to:
+    /// the agents of those who may work on it run commands there; it acts
+    /// for no one, no conversation lives on it, its own agents work for no
+    /// one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub managed: bool,
+    /// The token it came in by, when one did: those of one code are told to
+    /// their owner together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<PublicKey>,
     /// Where other machines connect to it directly, when the hub's super
     /// administrator allowed that and the hub reached it there
     /// (`world-network.md`, 直连). Its node listens at their ports.
@@ -168,6 +179,10 @@ pub struct Account {
     pub opened: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collab: Option<fastctx_types::collab::Collab>,
+    /// A visitor the super administrator made a member, until it agrees
+    /// (`world-network.md`, 超级管理员管什么).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub promotion: bool,
 }
 
 impl Account {
@@ -272,6 +287,12 @@ impl Directory {
         self.account(account).is_some_and(Account::is_super)
     }
 
+    /// Whether `account` is a visitor: its machines are its alone, and it
+    /// gives nothing of them to anyone (`world-network.md`, 一个中枢，几个账号).
+    pub fn is_visitor(&self, account: &AccountName) -> bool {
+        self.account(account).is_some_and(|found| found.level == Level::Visitor)
+    }
+
     /// The hub's super administrator.
     pub fn super_account(&self) -> Option<&Account> {
         self.accounts.iter().find(|account| account.level == Level::Super)
@@ -310,11 +331,20 @@ impl Directory {
     /// is no machine.
     pub fn rights(&self, account: &AccountName, machine: &MachineName) -> Rights {
         let Some(member) = self.member(machine) else { return Rights::NONE };
-        if !member.is_machine() {
-            return Rights::NONE;
+        let Some(owner) = member.home.as_ref() else { return Rights::NONE };
+        // A visitor's machines are its alone: nobody else is given them,
+        // the super administrator included.
+        let visitors = self.is_visitor(owner);
+        let whole = owner == account || (!visitors && (self.is_super(account) || self.shared(account, &member.name)));
+        // A managed machine is worked on, and its agents work for no one.
+        if member.managed {
+            return Rights { hands: whole, agents: false };
         }
-        if member.home.as_ref() == Some(account) || self.is_super(account) || self.shared(account, &member.name) {
+        if whole {
             return Rights::ALL;
+        }
+        if visitors {
+            return Rights::NONE;
         }
         Rights { hands: false, agents: self.assisting(account, &member.name).next().is_some() }
     }
@@ -329,14 +359,22 @@ impl Directory {
         agent: &AgentName,
         home: Option<&Path>,
     ) -> bool {
-        self.rights(account, machine).hands || self.assisting(account, machine).any(|assist| assist.is(agent, home))
+        let Some(member) = self.member(machine) else { return false };
+        if member.managed {
+            return false;
+        }
+        // A visitor's agents assist no one.
+        let visitors = member.home.as_ref().is_some_and(|owner| self.is_visitor(owner));
+        self.rights(account, machine).hands
+            || (!visitors && self.assisting(account, machine).any(|assist| assist.is(agent, home)))
     }
 
     /// Whether `member` may act for `account`: the account is logged in on
     /// it, or used an agent there and may still use the agents there. An
     /// assistance past its deadline ends that from the same moment as the
     /// assistance, before the hub drops the record of the use
-    /// (`settle_acting`).
+    /// (`settle_acting`). A managed machine acts for no one: no agent of
+    /// its is used, so `rights` gives none there.
     pub fn may_act_for(&self, account: &AccountName, member: &MachineName) -> bool {
         let member = self.canonical(member);
         self.logged_in(member, account)
@@ -549,6 +587,21 @@ pub struct View {
     /// it, and would end the session of a member that asked.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub forgets: bool,
+    /// Whether this hub registers managed machines (`Member::managed`) by
+    /// tokens for them, and takes back a token (`Change::RevokeToken`).
+    /// Earlier hubs omit it: they would make a token for a full login, and
+    /// end the session of a member that revoked one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub managed: bool,
+    /// Whether this hub has visitors (`Level::Visitor`) and takes the
+    /// changes of a role (`Change::SetRole`, `Change::AcceptRole`). Earlier
+    /// hubs omit it, and would end the session of a member that sent one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub roles: bool,
+    /// The tokens the accounts logged in on this member made that still
+    /// let devices in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tokens: Vec<fastctx_types::accounts::TokenSeen>,
     /// Where this member reaches the hub now, given by a hub that was moved
     /// to where it runs (`crate::moving`); a hub never moved gives none, and
     /// the member keeps the addresses it logged in with.
@@ -579,6 +632,9 @@ impl View {
             renames: false,
             afoot: false,
             forgets: false,
+            managed: false,
+            roles: false,
+            tokens: Vec::new(),
             hub_addresses: Vec::new(),
             hub_moves: Vec::new(),
             directory: Directory::default(),

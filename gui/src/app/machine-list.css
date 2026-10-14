@@ -1,0 +1,440 @@
+/* The machines as a list: a quiet column of rows on the paper, grouped
+   under small names each followed by a hand-drawn line. A row has the same
+   columns down the whole list; it is not boxed, only washed when pointed at
+   or when its details are open. The choice between drawing and list sits in
+   the page's head as one small segmented fill. */
+
+.ml-views {
+  display: flex;
+  gap: 2px;
+  margin-right: var(--space-3);
+  padding: 2px;
+  border-radius: var(--radius-full);
+  background: var(--fill);
+}
+
+.ml-views[hidden] {
+  display: none;
+}
+
+.ml-view {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 12px 0 10px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--size-small);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.ml-view:hover {
+  color: var(--text-2);
+}
+
+.ml-view.chosen {
+  background: var(--accent-wash);
+  color: var(--text);
+}
+
+.ml-view .glyph {
+  flex: none;
+}
+
+/* While the list shows, the drawing and what belongs to it step aside; the
+   undo strip, the cards and the details stay, over the list. */
+.machines-canvas.listing > .machine-map,
+.machines-canvas.listing > .map-acts,
+.machines-canvas.listing > .map-log-open,
+.machines-canvas.listing > .map-log {
+  display: none;
+}
+
+.ml-list {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-2) var(--space-8);
+  container: ml / inline-size;
+}
+
+.ml-list[hidden] {
+  display: none;
+}
+
+.ml-hubs,
+.ml-group {
+  max-width: 1080px;
+}
+
+.ml-group {
+  margin-top: var(--space-6);
+}
+
+.ml-group-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-1);
+  padding: 0 var(--space-3);
+  font-family: var(--font-reading);
+  font-weight: 400;
+  font-size: var(--size-small);
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+}
+
+.ml-group-sub {
+  flex: none;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.ml-group-head::after {
+  content: "";
+  flex: 1;
+  height: 8px;
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+}
+
+/* A row: the mark, the name with its tags, what it is, how it reaches the
+   hub, whom it is shared with, the agents at work on it, and the way in. */
+.ml-row {
+  display: grid;
+  grid-template-columns: 18px minmax(140px, 1.4fr) minmax(110px, 0.9fr) minmax(120px, 1fr) minmax(0, 1fr) 64px 16px;
+  align-items: center;
+  column-gap: var(--space-3);
+  width: 100%;
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-m);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--size-small);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.ml-row:hover,
+.ml-row:focus-visible {
+  outline: 0;
+  background: var(--fill);
+}
+
+.ml-row.chosen {
+  background: var(--accent-wash);
+}
+
+.ml-mark {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.ml-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--text-3);
+}
+
+.ml-row.online .ml-dot {
+  background: var(--alive);
+}
+
+.ml-row.offline .ml-dot {
+  background: none;
+  box-shadow: inset 0 0 0 1.2px var(--text-3);
+}
+
+/* An assisting agent's machine is not the account's: its dot is the clay
+   ring the drawing gives it. */
+.ml-row.assist .ml-dot {
+  background: none;
+  box-shadow: inset 0 0 0 1.4px var(--pen-clay);
+}
+
+.ml-knot {
+  width: 15px;
+  height: 15px;
+  color: var(--text-2);
+}
+
+.ml-hub.offline .ml-knot {
+  color: var(--text-3);
+}
+
+.ml-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--size-ui);
+  color: var(--text-strong);
+}
+
+.ml-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ml-name .tag {
+  flex: none;
+}
+
+.ml-row.offline .ml-name {
+  color: var(--text-3);
+}
+
+.ml-direct {
+  display: inline-grid;
+  flex: none;
+  color: var(--text-3);
+}
+
+.ml-system,
+.ml-link,
+.ml-given {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+
+.ml-system > span,
+.ml-given > span,
+.ml-link {
+  text-overflow: ellipsis;
+}
+
+.ml-given > span {
+  overflow: hidden;
+}
+
+.ml-system .glyph,
+.ml-given .glyph {
+  flex: none;
+}
+
+.ml-system .glyph + span + .glyph {
+  margin-left: var(--space-2);
+}
+
+.ml-ms {
+  font-variant-numeric: tabular-nums;
+}
+
+.ml-busy {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ml-busy-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.ml-busy-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--pen-clay);
+}
+
+.ml-go {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  opacity: 0;
+  transform: rotate(-90deg);
+  transition: opacity var(--hover) ease;
+}
+
+.ml-row:hover .ml-go,
+.ml-row:focus-visible .ml-go {
+  opacity: 1;
+}
+
+.ml-add {
+  color: var(--text-3);
+}
+
+.ml-add .ml-name {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.ml-add:hover .ml-name {
+  color: var(--text-2);
+}
+
+/* Narrower: whom it is shared with gives way first. */
+@container ml (max-width: 760px) {
+  .ml-row {
+    grid-template-columns: 18px minmax(120px, 1.4fr) minmax(90px, 0.9fr) minmax(100px, 1fr) 48px 16px;
+  }
+
+  .ml-given {
+    display: none;
+  }
+}
+
+/* A phone: two lines a row, the name and the agents at work over what it is
+   and how it reaches the hub; the way in always shown. */
+@container ml (max-width: 520px) {
+  .ml-row {
+    grid-template-columns: 18px minmax(0, 1fr) auto 16px;
+    grid-template-areas:
+      "mark name busy go"
+      ". about about go";
+    row-gap: 2px;
+    min-height: 56px;
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .ml-mark {
+    grid-area: mark;
+  }
+
+  .ml-name {
+    grid-area: name;
+    font-size: var(--body-size);
+  }
+
+  .ml-system {
+    grid-area: about;
+  }
+
+  .ml-link {
+    grid-area: about;
+    justify-self: end;
+  }
+
+  .ml-busy {
+    grid-area: busy;
+  }
+
+  .ml-go {
+    grid-area: go;
+    opacity: 1;
+  }
+
+  .ml-add {
+    min-height: 48px;
+    grid-template-areas: "mark name busy go";
+  }
+}
+
+/* On a phone the head keeps the two marks without their names. */
+@media (max-width: 760px) {
+  .ml-view span {
+    display: none;
+  }
+
+  .ml-view {
+    min-height: 36px;
+    padding: 0 10px;
+  }
+
+  .ml-views {
+    margin-right: var(--space-1);
+  }
+}
+
+/* Beside the list nothing floats over a drawing: on a wide page the
+   details carry the actions themselves, a row of small fills, a setting
+   with its switch and what cannot be taken back each a row of their own. */
+@container machines (min-width: 861px) {
+  .machines-canvas.listing + .machine-panel .sheet-acts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: var(--space-3) 0 var(--space-2);
+  }
+
+  .machines-canvas.listing + .machine-panel .sheet-act {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 30px;
+    padding: 0 12px 0 9px;
+    border: 0;
+    border-radius: var(--radius-full);
+    background: var(--fill);
+    color: var(--text-2);
+    font: inherit;
+    font-size: var(--size-small);
+    white-space: nowrap;
+    transition: color var(--hover) ease, background-color var(--hover) ease;
+  }
+
+  .machines-canvas.listing + .machine-panel .sheet-act:hover {
+    background: var(--fill-strong);
+    color: var(--text);
+  }
+
+  .machines-canvas.listing + .machine-panel .sheet-act .glyph {
+    width: calc(15px * var(--icon-scale, 1));
+    height: calc(15px * var(--icon-scale, 1));
+  }
+
+  .machines-canvas.listing + .machine-panel .sheet-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 0 0 var(--space-3);
+  }
+
+  .machines-canvas.listing + .machine-panel .sheet-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: 36px;
+    padding: 0 var(--space-3);
+    border: 0;
+    border-radius: var(--radius-m);
+    background: var(--fill);
+    color: var(--text-2);
+    font: inherit;
+    font-size: var(--size-small);
+    text-align: left;
+  }
+
+  .machines-canvas.listing + .machine-panel .sheet-row:hover {
+    background: var(--fill-strong);
+  }
+
+  .machines-canvas.listing + .machine-panel .sheet-row .glyph {
+    width: calc(15px * var(--icon-scale, 1));
+    height: calc(15px * var(--icon-scale, 1));
+    color: var(--text-3);
+  }
+
+  .machines-canvas.listing + .machine-panel .sheet-row-label {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .machines-canvas.listing + .machine-panel .sheet-row.danger,
+  .machines-canvas.listing + .machine-panel .sheet-row.danger .glyph {
+    color: var(--wrong);
+  }
+}

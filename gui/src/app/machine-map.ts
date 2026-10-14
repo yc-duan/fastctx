@@ -404,9 +404,10 @@ export class MachineMap {
         const point = this.pointOf(addKey(hub));
         return point ? [{ key: addKey(hub), kind: "machine", point, radius: RING, label: scene.waiting.has(hub) ? words.waitingJoin : words.addMachine }] : [];
       }),
+      // A visitor's machine is only seen: nothing to press.
       ...scene.nodes.flatMap((node): CanvasItem[] => {
         const point = placement.machines.get(node.key);
-        return point ? [{ key: node.key, kind: "machine", point, radius: RING, label: node.name, sub: node.sub }] : [];
+        return point && node.hold !== "visitor" ? [{ key: node.key, kind: "machine", point, radius: RING, label: node.name, sub: node.sub }] : [];
       }),
     ];
     // Narrow, the drawing is fitted to the width and read from the top,
@@ -451,7 +452,7 @@ export class MachineMap {
       scene.nodes.map((node) => [node.key, node.name, node.sub, node.online, node.hold, node.reaching, node.here, near ? node.busy : null, node.directAt, node.through]),
       [...scene.opening],
       [...placement.machines],
-      placement.groups.map((group) => [group.key, group.folded, group.box, group.count, group.online, group.person?.locked]),
+      placement.groups.map((group) => [group.key, group.folded, group.box, group.count, group.online, group.person?.locked, group.person?.visitor, group.person?.promotion]),
     ]);
     if (key === this.composed) return;
     this.composed = key;
@@ -529,6 +530,9 @@ export class MachineMap {
       // works on, clay and broken where an agent alone assists.
       if (node.hold === "assist") {
         for (const d of ticks(ringPoints(point, RING, 64), 9, 5.5, 2, random)) add(d, around(point, RING + 4), online ? "marker" : "dry", online ? clay : graphite, online ? 1 : 0.5);
+      } else if (node.hold === "visitor") {
+        // A visitor's: a faint ring, only seen.
+        add(circle(point, RING, 1.8, random), around(point, RING + 4), "dry", graphite, online ? 0.38 : 0.22);
       } else if (online) {
         add(circle(point, RING, 2, random), around(point, RING + 4), "marker", graphite, 0.9);
         add(circle(point, RING + 1.2, 1, random), around(point, RING + 4), "marker", graphite, 0.45);
@@ -572,10 +576,11 @@ export class MachineMap {
         if (group.kind === "adding") return "";
         const tone = group.kind === "mine" ? "mine" : group.kind.startsWith("assist:") ? "assist" : "others";
         const locked = group.person?.locked ? " locked" : "";
+        const visitor = group.person?.visitor ? " visitor" : "";
         const strip = height <= TITLE
           ? `<rect class="box-title" x="${x}" y="${y}" width="${width}" height="${TITLE}" rx="7"/>`
           : `<rect class="box-body" x="${x}" y="${y}" width="${width}" height="${height}" rx="7"/><path class="box-title" d="M${x} ${y + TITLE}V${y + 7}Q${x} ${y} ${x + 7} ${y}H${x + width - 7}Q${x + width} ${y} ${x + width} ${y + 7}V${y + TITLE}Z"/>`;
-        return `<g class="box ${tone}${locked}">${strip}</g>`;
+        return `<g class="box ${tone}${locked}${visitor}">${strip}</g>`;
       })
       .join("");
 
@@ -606,7 +611,12 @@ export class MachineMap {
         text.push(`<path class="box-arrow" d="${d}"/>`);
       }
       const locked = group.person?.locked ? " locked" : "";
-      text.push(`<text class="box-name${locked}" x="${folds ? arrowAt + 12 : x + TRUNK + 14}" y="${middle + 5}"><tspan>${escapeText(group.label)}</tspan><tspan class="box-count" dx="10">${escapeText(this.countOf(group))}</tspan></text>`);
+      // A visitor's box says so, and so does one asked to become a member.
+      const people = this.options.people;
+      const role = !people ? "" : group.person?.promotion ? people.waitingTag : group.person?.visitor ? people.visitorTag : "";
+      text.push(
+        `<text class="box-name${locked}" x="${folds ? arrowAt + 12 : x + TRUNK + 14}" y="${middle + 5}"><tspan>${escapeText(group.label)}</tspan>${role ? `<tspan class="box-role" dx="8">${escapeText(role)}</tspan>` : ""}<tspan class="box-count" dx="10">${escapeText(this.countOf(group))}</tspan></text>`,
+      );
       if (group.person && this.options.people) {
         // A small lock while the person is locked, then the "⋯".
         const end = x + width - MORE / 2;
@@ -630,7 +640,7 @@ export class MachineMap {
       const point = placement.machines.get(node.key);
       if (!point) continue;
       const through = node.through ? words.viaShort(node.through) : "";
-      nameAt(node.key, point, node.name, [node.sub, through].filter(Boolean).join(" · "), node.online === false);
+      nameAt(node.key, point, node.name, [node.sub, through].filter(Boolean).join(" · "), node.online === false || node.hold === "visitor");
     }
     this.names.innerHTML = text.join("");
   }

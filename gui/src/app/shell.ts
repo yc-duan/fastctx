@@ -104,6 +104,7 @@ export class Shell {
       if ((event.target as HTMLElement).closest("a")) this.closeDrawer();
     });
     addEventListener("keydown", (event) => {
+      if (this.element.classList.contains("alone")) return;
       const mod = event.ctrlKey || event.metaKey;
       if (mod && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "b") {
         event.preventDefault();
@@ -137,6 +138,15 @@ export class Shell {
   toggleSidebar(): void {
     if (narrow.matches) this.drawer(!this.element.classList.contains("drawer-open"));
     else this.fold(!this.element.classList.contains("folded"));
+  }
+
+  /** Shows the page alone, with no sidebar and no way to it: a managed
+   *  machine's one page (`world-gui.md`, 受管机器上的界面). */
+  alone(on: boolean): void {
+    if (this.element.classList.contains("alone") === on) return;
+    this.element.classList.toggle("alone", on);
+    if (on) this.closeDrawer();
+    this.reach();
   }
 
   /** Names the page shown, once it knows its own name. */
@@ -175,7 +185,7 @@ export class Shell {
    *  under an open drawer. */
   private reach(): void {
     const drawerOpen = this.element.classList.contains("drawer-open");
-    const shown = narrow.matches ? drawerOpen : !this.element.classList.contains("folded");
+    const shown = !this.element.classList.contains("alone") && (narrow.matches ? drawerOpen : !this.element.classList.contains("folded"));
     this.element.querySelector<HTMLElement>(".sidebar-frame")!.inert = !shown;
     this.main.inert = narrow.matches && drawerOpen;
   }

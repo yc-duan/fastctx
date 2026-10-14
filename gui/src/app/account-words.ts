@@ -10,6 +10,7 @@ import { wholeDollars } from "../world/money";
 import type { PasswordProblem } from "./password";
 import { enProblems, failure, zhProblems, type ProblemWords } from "./problem";
 import type { MachineLogAction } from "../world/machine-log";
+import type { Unfit } from "../world/accounts";
 import type { NetworkWords } from "../film/network";
 import { agentName } from "../world/names";
 import { enNameSaid, zhNameSaid, type NameSaid } from "./name-words";
@@ -81,6 +82,25 @@ export interface LoginWords {
   /** On a phone: read the code a computer shows with the camera. */
   scan: string;
   withPassword: string;
+  /** A computer joins with an account and its password, or by a code
+   *  (`world-network.md`, 受管机器): the two tabs, the code's field, and the
+   *  card of what it lets this computer into before it is used. */
+  byPassword: string;
+  byCode: string;
+  code: string;
+  peeking: string;
+  codeOwner: string;
+  codeNetwork: string;
+  managedTitle: string;
+  managedCan(account: string): string;
+  managedNot: string;
+  codeAs(account: string): string;
+  codeUnknown: string;
+  codeGo: string;
+  /** Why this Fastctx cannot become a managed machine, and the way out. */
+  fresh: string;
+  unfit: Record<Unfit["why"], string>;
+  removeFirst: string;
   scanFailed: string;
   alone: string;
   aloneWhat: string;
@@ -192,6 +212,26 @@ export const zhLogin: LoginWords = {
   signUpGo: "注册并登录",
   scan: "扫码登录",
   withPassword: "使用账号密码登录",
+  byPassword: "账号密码",
+  byCode: "入网码",
+  code: "入网码",
+  peeking: "正在查看…",
+  codeOwner: "主人",
+  codeNetwork: "网络",
+  managedTitle: "这台电脑将成为受管机器",
+  managedCan: (account) => `${account} 那边的智能体能在这个系统账户里跑命令、读写文件`,
+  managedNot: "这台电脑自己什么都用不了：没有工作台，也没有网络和账号的管理",
+  codeAs: (account) => `以 ${account} 登录`,
+  codeUnknown: "用这个入网码加入",
+  codeGo: "加入",
+  fresh: "受管机器要从全新的 Fastctx 开始。",
+  unfit: {
+    network: "这台电脑已经在别的网络里。",
+    conversations: "这里的 Fastctx 有过对话。",
+    integrated: "这台电脑上的智能体接入了 Fastctx。",
+    unknown: "查不清这台电脑上的智能体有没有接入 Fastctx。",
+  },
+  removeFirst: "先彻底移除",
   scanFailed: "无法扫描",
   alone: "暂不加入",
   aloneWhat: "这台电脑可以单独使用，之后随时加入或新建网络",
@@ -281,6 +321,26 @@ export const enLogin: LoginWords = {
   signUpGo: "Sign up and log in",
   scan: "Scan to log in",
   withPassword: "Use account and password",
+  byPassword: "Password",
+  byCode: "Code",
+  code: "Code",
+  peeking: "Checking…",
+  codeOwner: "Owner",
+  codeNetwork: "Network",
+  managedTitle: "This computer becomes a managed machine",
+  managedCan: (account) => `Agents on ${account}'s side run commands and read and write files in this system account`,
+  managedNot: "This computer uses nothing itself: no workbench, no managing networks or accounts",
+  codeAs: (account) => `Log in as ${account}`,
+  codeUnknown: "Join with this code",
+  codeGo: "Join",
+  fresh: "A managed machine starts from a Fastctx never used. ",
+  unfit: {
+    network: "This computer is on another network.",
+    conversations: "This Fastctx has had conversations.",
+    integrated: "Agents on this computer have Fastctx in them.",
+    unknown: "Whether agents on this computer have Fastctx in them is not known.",
+  },
+  removeFirst: "Remove everything first",
   scanFailed: "Couldn't scan",
   alone: "Not now",
   aloneWhat: "Use this computer on its own and join or create a network any time",
@@ -457,6 +517,25 @@ export interface MachinesWords {
   assistGroup(owner: string): string;
   /** Under a group's name on the drawing: how many, how many online. */
   groupSub(count: number, online: number): string;
+  /** The page's two ways of showing the machines, and what the choice is. */
+  viewMap: string;
+  viewList: string;
+  views: string;
+  /** On the list: the hub's row, a line's round trip, how many agents are
+   *  at work on a machine, and a read-only device with what it is. */
+  listHub: string;
+  listMs(ms: number): string;
+  busy(n: number): string;
+  /** A managed machine (`world-network.md`, 受管机器): its tag, and what it
+   *  is behind a pointer's rest. */
+  managed: string;
+  managedWhat: string;
+  /** A visitor's machine, as the network's administrator sees it: under its
+   *  name, and behind a pointer's rest. */
+  visitorMachine: string;
+  visitorWhat: string;
+  /** After the name of a visitor's group of machines. */
+  visitor: string;
   /** A machine's direct links, in its details. */
   directRow: string;
   directUp(peer: string, ms: number | undefined): string;
@@ -657,6 +736,17 @@ export const zhMachines: MachinesWords = {
   mineGroup: "我的",
   assistGroup: (owner) => `来自 ${owner}`,
   groupSub: (count, online) => `${count} 台 · ${online} 在线`,
+  viewMap: "图",
+  viewList: "列表",
+  views: "显示方式",
+  listHub: "中枢服务器",
+  listMs: (ms) => `${ms} ms`,
+  busy: (n) => `${n} 个智能体在进行`,
+  managed: "受管",
+  managedWhat: "受管机器：不登录任何账号，你的智能体在上面干活",
+  visitorMachine: "访客的机器",
+  visitorWhat: "访客的机器只归访客自己：你看得到它在不在，用不了它",
+  visitor: "访客",
   directRow: "直连",
   directUp: (peer, ms) => `${peer}${ms !== undefined ? ` ${ms} ms` : ""}`,
   directDown: (peer, why) => `${peer} 断了${why ? `：${why}` : ""}`,
@@ -760,8 +850,12 @@ export const zhMachines: MachinesWords = {
       case "rename":
         return `把 ${a.machine} 改名为 ${a.to}`;
       case "token":
+        if (a.managed) return `生成受管机器的入网码${a.label ? ` · ${a.label}` : ""}`;
         return a.register ? `生成加入命令${a.name ? ` · ${a.name}` : ""}` : "生成登录二维码";
+      case "revoke_token":
+        return `作废入网码${a.label ? ` · ${a.label}` : ""}`;
       case "joined":
+        if (a.managed) return `${a.name} 作为受管机器加入`;
         return a.registered ? `${a.name} 加入` : `${a.name} 登录`;
       case "left":
         return `${a.name} 离开`;
@@ -890,6 +984,17 @@ export const enMachines: MachinesWords = {
   mineGroup: "Mine",
   assistGroup: (owner) => `From ${owner}`,
   groupSub: (count, online) => `${count} · ${online} online`,
+  viewMap: "Map",
+  viewList: "List",
+  views: "Show as",
+  listHub: "Hub",
+  listMs: (ms) => `${ms} ms`,
+  busy: (n) => `${n} agent${n === 1 ? "" : "s"} at work`,
+  managed: "Managed",
+  managedWhat: "Managed machine: logged in to no account, your agents work on it",
+  visitorMachine: "a visitor's",
+  visitorWhat: "A visitor's machine is the visitor's alone: you see whether it is there, and cannot use it",
+  visitor: "visitor",
   directRow: "Direct",
   directUp: (peer, ms) => `${peer}${ms !== undefined ? ` ${ms} ms` : ""}`,
   directDown: (peer, why) => `${peer} down${why ? `: ${why}` : ""}`,
@@ -993,8 +1098,12 @@ export const enMachines: MachinesWords = {
       case "rename":
         return `Renamed ${a.machine} to ${a.to}`;
       case "token":
+        if (a.managed) return `Made a code for managed machines${a.label ? ` · ${a.label}` : ""}`;
         return a.register ? `Made a join command${a.name ? ` · ${a.name}` : ""}` : "Made a sign-in QR code";
+      case "revoke_token":
+        return `Revoked a code${a.label ? ` · ${a.label}` : ""}`;
       case "joined":
+        if (a.managed) return `${a.name} joined as a managed machine`;
         return a.registered ? `${a.name} joined` : `${a.name} signed in`;
       case "left":
         return `${a.name} left`;
@@ -1143,7 +1252,7 @@ export const enAccess: AccessWords = {
 /** The sheet that adds another device to an account. */
 export interface TokenWords {
   title: string;
-  kinds: Record<"computer" | "phone" | "server", string>;
+  kinds: Record<"computer" | "phone" | "server" | "managed", string>;
   /** A Linux host joins over SSH from here, or by the line it runs. */
   ways: Record<"ssh" | "line", string>;
   /** A server added over SSH. */
@@ -1166,11 +1275,32 @@ export interface TokenWords {
   again: string;
   close: string;
   problems: ProblemWords;
+  /** A code for managed machines (`world-network.md`, 受管机器): its name,
+   *  how many computers it lets in, for how many days, and once made, how
+   *  long and for how many, the three steps of using it, and the line. */
+  label: string;
+  labelHint: string;
+  uses: string;
+  usesOne: string;
+  usesAny: string;
+  usesSome: string;
+  unit: string;
+  usesSaid(most: number): string;
+  days(n: number): string;
+  makeManaged: string;
+  codeUntil(at: string, uses: number): string;
+  steps: [string, string, string];
+  line: string;
+  /** A Linux host as a managed machine: the switch, what it means behind a
+   *  pointer's rest, and why it cannot be had. */
+  managed: string;
+  managedWhat: string;
+  managedOld: string;
 }
 
 export const zhToken: TokenWords = {
   title: "添加设备",
-  kinds: { computer: "电脑", phone: "手机", server: "Linux 主机" },
+  kinds: { computer: "电脑", phone: "手机", server: "Linux 主机", managed: "受管机器" },
   ways: { ssh: "经 SSH", line: "一行命令" },
   added: (machine) => `${machine} 已加入`,
   hub: "中枢服务器地址",
@@ -1191,11 +1321,27 @@ export const zhToken: TokenWords = {
   again: "重新生成",
   close: "关闭",
   problems: zhProblems,
+  label: "名字",
+  labelHint: "如：机房 A",
+  uses: "能进几台",
+  usesOne: "1 台",
+  usesAny: "不限",
+  usesSome: "自定",
+  unit: "台",
+  usesSaid: (most) => `填 1 到 ${most} 之间的台数`,
+  days: (n) => `${n} 天`,
+  makeManaged: "生成入网码",
+  codeUntil: (at, uses) => `${at} 前有效 · ${uses === 0 ? "不限台数" : uses === 1 ? "只能进 1 台" : `能进 ${uses} 台`}`,
+  steps: ["换到使用者不登录的系统账户", "装好 Fastctx，打开", "在「加入网络」里粘贴"],
+  line: "或在那个账户的终端里运行",
+  managed: "受管机器",
+  managedWhat: "它不登录任何账号，只归你：你的智能体在上面干活，它自己什么都用不了",
+  managedOld: "中枢服务器的 Fastctx 版本太旧，先更新它",
 };
 
 export const enToken: TokenWords = {
   title: "Add a device",
-  kinds: { computer: "Computer", phone: "Phone", server: "Linux host" },
+  kinds: { computer: "Computer", phone: "Phone", server: "Linux host", managed: "Managed" },
   ways: { ssh: "Over SSH", line: "One command" },
   added: (machine) => `${machine} joined`,
   hub: "Hub address",
@@ -1216,4 +1362,20 @@ export const enToken: TokenWords = {
   again: "Create again",
   close: "Close",
   problems: enProblems,
+  label: "Name",
+  labelHint: "e.g. Lab A",
+  uses: "How many computers",
+  usesOne: "One",
+  usesAny: "Any",
+  usesSome: "Custom",
+  unit: "",
+  usesSaid: (most) => `Give a number from 1 to ${most}`,
+  days: (n) => `${n} day${n === 1 ? "" : "s"}`,
+  makeManaged: "Create code",
+  codeUntil: (at, uses) => `Valid until ${at} · ${uses === 0 ? "any number of computers" : uses === 1 ? "one computer" : `${uses} computers`}`,
+  steps: ["Sign in as a system account no one at it uses", "Install Fastctx and open it", "Paste it in Join a network"],
+  line: "Or run in that account's terminal",
+  managed: "Managed machine",
+  managedWhat: "Logged in to no account, it is yours alone: your agents work on it, and it uses nothing itself",
+  managedOld: "The hub runs an older Fastctx; update it first",
 };

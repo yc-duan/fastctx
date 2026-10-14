@@ -1,6 +1,7 @@
 //! The one line that installs fastctx on a Linux server and registers it as
-//! a machine of an account (`world-network.md`, 登录与入网): a token is made
-//! only after the offered archives and bootstrap inputs have been checked.
+//! a machine of an account (`world-network.md`, 登录与入网), or as a managed
+//! machine of it (受管机器): a token is made only after the offered archives
+//! and bootstrap inputs have been checked.
 
 use std::sync::Arc;
 
@@ -18,6 +19,7 @@ pub async fn command(
     account: &AccountName,
     name: Option<MachineName>,
     expires: Timestamp,
+    managed: bool,
 ) -> Result<String, Failure> {
     let link = crate::world::hub_link(node, hub)?;
     let version = env!("CARGO_PKG_VERSION");
@@ -40,7 +42,15 @@ pub async fn command(
     let source = Source::Hub { release_directory: &directory, spki_sha256: &pin };
     // Every input of the line is checked before a token is spent on it.
     line(kernel, "token", source).map_err(|error| Failure::new(error.to_string()))?;
-    let change = AccountChange::Token { register: true, name, kind: MemberKind::Computer, expires };
+    let change = AccountChange::Token {
+        register: true,
+        name,
+        kind: MemberKind::Computer,
+        expires,
+        managed,
+        uses: None,
+        label: None,
+    };
     let token = link
         .account_change(account, change)
         .await

@@ -158,6 +158,14 @@ impl fmt::Display for PublicKey {
     }
 }
 
+impl std::str::FromStr for PublicKey {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, String> {
+        decode_array::<32>(text).map(PublicKey).map_err(|error| format!("the key {error}"))
+    }
+}
+
 impl fmt::Debug for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "PublicKey({self})")

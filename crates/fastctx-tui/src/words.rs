@@ -1262,6 +1262,10 @@ impl Words {
         self.pick("管理员", "administrator")
     }
 
+    pub fn level_visitor(&self) -> &'static str {
+        self.pick("访客", "visitor")
+    }
+
     /// After a member's logins: who administers the hub, and so may use
     /// every machine of theirs.
     pub fn admin_is(&self, admin: &str) -> String {
@@ -1269,6 +1273,47 @@ impl Words {
             Lang::Zh => format!(" · 管理员 {admin}（可访问你的所有机器）"),
             Lang::En => format!(" · administrator {admin} (can access all your machines)"),
         }
+    }
+
+    /// After a visitor's logins: who administers the hub, who only sees
+    /// which machines there are (`world-network.md`, 一个中枢，几个账号).
+    pub fn admin_sees(&self, admin: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!(" · 管理员 {admin}（只看得到你有哪几台机器）"),
+            Lang::En => format!(" · administrator {admin} (only sees which machines you have)"),
+        }
+    }
+
+    /// A managed machine's one screen (`world-gui.md`, 受管机器上的界面).
+    pub fn managed_title(&self) -> &'static str {
+        self.pick("受管机器", "Managed machine")
+    }
+
+    pub fn managed_whose(&self, owner: &str, machine: &str, hub: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("{owner} 的 {machine} · 在 {hub}"),
+            Lang::En => format!("{owner}'s {machine} · on {hub}"),
+        }
+    }
+
+    pub fn managed_online(&self, ms: Option<u32>) -> String {
+        match (self.lang, ms) {
+            (Lang::Zh, Some(ms)) => format!("已连接 · {ms} 毫秒"),
+            (Lang::Zh, None) => "已连接".to_string(),
+            (Lang::En, Some(ms)) => format!("Connected · {ms} ms"),
+            (Lang::En, None) => "Connected".to_string(),
+        }
+    }
+
+    pub fn managed_away(&self, since: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("断开 · 从 {since} 起"),
+            Lang::En => format!("Disconnected since {since}"),
+        }
+    }
+
+    pub fn managed_removed(&self) -> &'static str {
+        self.pick("已被移出网络", "Taken off the network")
     }
 
     pub fn owner_and_rights(&self, owner: Option<&str>, rights: &str) -> String {

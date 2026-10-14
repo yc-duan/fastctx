@@ -66,14 +66,19 @@ export interface Paths {
   links?: LinkSeen[];
 }
 
-/** What an account is on its hub: the one super administrator, or a member. */
-export type Level = "super" | "member";
+/** What an account is on its hub (`world-network.md`, 一个中枢，几个账号):
+ *  the one super administrator; a member, whose machines the super
+ *  administrator may use; or a visitor, whose machines are its alone. */
+export type Level = "super" | "member" | "visitor";
 
 export interface AccountSeen {
   name: AccountName;
   level: Level;
   locked: boolean;
   opened: Timestamp;
+  /** Made a member by the super administrator, waiting for the account to
+   *  agree. */
+  promotion?: boolean;
 }
 
 export interface MemberSeen {
@@ -100,6 +105,11 @@ export interface MemberSeen {
   paths?: Paths;
   /** The start of its key, to tell two devices of one name apart. */
   key: string;
+  /** A managed machine: registered under `home`, logged in to nothing
+   *  (`world-network.md`, 受管机器). */
+  managed?: boolean;
+  /** The code it came in by, when one did. */
+  code?: string;
 }
 
 /** A machine shared with an account: working on it and every agent there. */
@@ -159,7 +169,41 @@ export interface Arrival {
   name: MachineName;
   device: boolean;
   noticed_at: Timestamp;
+  /** The code a managed machine came in by: those of one code are told
+   *  together. */
+  code?: string;
 }
+
+/** A code that still lets devices in, as the account that made it sees it. */
+export interface TokenSeen {
+  /** Its key, by which it is revoked. */
+  key: string;
+  account: AccountName;
+  label?: string;
+  kind: MemberKind;
+  managed?: boolean;
+  /** How many computers may use it: any number at zero. */
+  uses: number;
+  /** How many have. */
+  used: number;
+  expires: Timestamp;
+}
+
+/** What a code lets this computer into, as its hub told before it is used. */
+export interface TokenPeek {
+  hub: HubName;
+  account: AccountName;
+  /** It makes this computer a managed machine of `account`. */
+  managed: boolean;
+  label?: string;
+  expires: Timestamp;
+  /** Why this computer may not come in by it, when it may not. */
+  refused?: Unfit;
+}
+
+/** Why this World may not become a managed machine: it starts from one
+ *  never used, on no other network. */
+export type Unfit = { why: "network" } | { why: "conversations" } | { why: "integrated" } | { why: "unknown"; detail: string };
 
 export interface HubAccounts {
   hub: HubId;
@@ -172,6 +216,10 @@ export interface HubAccounts {
   me?: MachineName;
   /** Whether the hub renames machines. */
   renames?: boolean;
+  /** Whether the hub registers managed machines (`world-network.md`, 受管机器). */
+  managed?: boolean;
+  /** Whether the hub has visitors (`world-network.md`, 一个中枢，几个账号). */
+  roles?: boolean;
   logins: AccountName[];
   home: AccountName | null;
   self_registration: boolean;
@@ -187,6 +235,8 @@ export interface HubAccounts {
   /** This computer's direct links with the machines there, as it holds
    *  them now. */
   links?: LinkSeen[];
+  /** The codes this computer's logins there made that still let devices in. */
+  tokens?: TokenSeen[];
 }
 
 export interface AccountsReply {
@@ -210,9 +260,17 @@ export type AccountChange =
    *  any; its names before keep naming it. */
   | { change: "rename"; machine: MachineName; to: MachineName }
   | { change: "logout" }
-  | { change: "token"; register: boolean; name: MachineName | null; kind: MemberKind; expires: Timestamp }
+  /** A code for another device; `managed` makes the computers that use it
+   *  managed machines, `uses` of them at most (any number at zero, one when
+   *  absent). */
+  | { change: "token"; register: boolean; name: MachineName | null; kind: MemberKind; expires: Timestamp; managed?: boolean; uses?: number; label?: string }
+  | { change: "revoke_token"; token: string }
   | { change: "set_password"; target: AccountName; password: string }
-  | { change: "open_account"; name: AccountName; password: string }
+  | { change: "open_account"; name: AccountName; password: string; visitor?: boolean }
+  /** The super administrator makes `name` a visitor at once, or a member
+   *  once the account agrees. */
+  | { change: "set_role"; name: AccountName; visitor: boolean }
+  | { change: "accept_role"; accept: boolean }
   | { change: "set_account"; name: AccountName; locked: boolean }
   | { change: "transfer"; to: AccountName }
   | { change: "delete_account"; name: AccountName }

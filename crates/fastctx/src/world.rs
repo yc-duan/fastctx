@@ -48,12 +48,23 @@ pub struct TokenArgs {
     /// is printed instead.
     #[arg(long = "for", default_value = "computer", value_parser = ["phone", "computer", "server"])]
     used_by: String,
-    /// How many hours it stays valid.
+    /// How many hours it stays valid: 1, 24 or 72; a code for managed
+    /// machines, 168 or 720 too.
     #[arg(long, default_value_t = 1, value_parser = hours)]
     hours: u32,
     /// For a server: the name it takes.
     #[arg(long)]
     name: Option<MachineName>,
+    /// For a computer or server: the computers that use it join as managed
+    /// machines of the account, logged in to none.
+    #[arg(long)]
+    managed: bool,
+    /// How many computers may use it; 0 for any number. One when not given.
+    #[arg(long)]
+    uses: Option<u32>,
+    /// A name for it, as 「机房 A」.
+    #[arg(long)]
+    label: Option<String>,
 }
 
 #[derive(Args)]
@@ -289,10 +300,14 @@ pub fn logout(args: LogoutArgs) -> anyhow::Result<()> {
 }
 
 pub fn token(args: TokenArgs) -> anyhow::Result<()> {
+    if args.hours > 72 && !args.managed {
+        anyhow::bail!("only a code for managed machines stays valid longer than 72 hours");
+    }
     let expires = Timestamp::now() + SignedDuration::from_hours(i64::from(args.hours));
     let until = expires.to_zoned(jiff::tz::TimeZone::system()).strftime("%Y-%m-%d %H:%M %Z");
     if args.used_by == "server" {
-        match call(Call::ServerCommand { hub: args.hub, account: args.account, name: args.name, expires })? {
+        let managed = args.managed;
+        match call(Call::ServerCommand { hub: args.hub, account: args.account, name: args.name, expires, managed })? {
             Reply::ServerInvitation { command } => {
                 println!("{command}");
                 eprintln!(
@@ -307,13 +322,32 @@ pub fn token(args: TokenArgs) -> anyhow::Result<()> {
     let token = change(
         args.hub,
         args.account,
-        AccountChange::Token { register: kind == MemberKind::Computer, name: None, kind, expires },
+        AccountChange::Token {
+            register: kind == MemberKind::Computer,
+            name: None,
+            kind,
+            expires,
+            managed: args.managed && kind == MemberKind::Computer,
+            uses: args.uses,
+            label: args.label.clone(),
+        },
     )?
     .ok_or_else(|| anyhow::anyhow!("the hub made no token"))?;
     println!("{token}");
-    eprintln!(
-        "On the other device, run `fastctx login --token <token>`, or scan it in the World app. It works once, until {until}."
-    );
+    let how_many = match args.uses.unwrap_or(1) {
+        0 => "any number of computers".to_string(),
+        1 => "once".to_string(),
+        uses => format!("for {uses} computers"),
+    };
+    if args.managed && kind == MemberKind::Computer {
+        eprintln!(
+            "On each computer, in a system account no one at it signs in to, run `fastctx login --token <code>`, or paste it in Join a network in Fastctx. It works {how_many}, until {until}."
+        );
+    } else {
+        eprintln!(
+            "On the other device, run `fastctx login --token <token>`, or scan it in the Fastctx app. It works {how_many}, until {until}."
+        );
+    }
     Ok(())
 }
 
@@ -721,11 +755,12 @@ fn account_or_owner(
     }
 }
 
-/// A token stays valid an hour, a day or three.
+/// A token stays valid an hour, a day or three; a code for managed
+/// machines, a week or thirty days too.
 fn hours(text: &str) -> Result<u32, String> {
     match text {
-        "1" | "24" | "72" => Ok(text.parse().expect("listed")),
-        _ => Err("a token stays valid 1, 24 or 72 hours".to_string()),
+        "1" | "24" | "72" | "168" | "720" => Ok(text.parse().expect("listed")),
+        _ => Err("a token stays valid 1, 24 or 72 hours; a code for managed machines 168 or 720 too".to_string()),
     }
 }
 
@@ -790,6 +825,15 @@ fn round_trip(ms: Option<u32>) -> String {
 fn hub_nodes(hub: &HubNodes, now: Timestamp) -> String {
     let resident = std::env::var_os("FASTCTX_RESIDENT").is_some();
     let logins = hub.logins.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+    // A managed machine works for no account: agents elsewhere run
+    // commands on it, and it reaches no other machine.
+    if let (true, Some(home)) = (hub.logins.is_empty(), &hub.home) {
+        return format!(
+            "\n--- hub {} ({}) · a managed machine of {home}: agents on other machines work here, and this computer reaches no other machine\n",
+            hub.name,
+            link(&hub.link, now)
+        );
+    }
     let home = hub.home.as_ref().map(|home| format!("; registered under {home}")).unwrap_or_default();
     // A session's are the accounts it works for, logged in here or not.
     let accounts = if resident { format!("working for {logins}") } else { format!("logged in to {logins}") };
@@ -878,8 +922,13 @@ fn render_accounts(reply: &AccountsReply, now: Timestamp) -> String {
         }
         for account in &hub.accounts {
             let mut marks = Vec::new();
-            if account.level == fastctx_types::accounts::Level::Super {
-                marks.push("super administrator");
+            match account.level {
+                fastctx_types::accounts::Level::Super => marks.push("super administrator"),
+                fastctx_types::accounts::Level::Visitor => marks.push("visitor"),
+                fastctx_types::accounts::Level::Member => {}
+            }
+            if account.promotion {
+                marks.push("asked to become a member");
             }
             if account.locked {
                 marks.push("locked");
@@ -887,7 +936,8 @@ fn render_accounts(reply: &AccountsReply, now: Timestamp) -> String {
             let marks = if marks.is_empty() { String::new() } else { format!(" ({})", marks.join(", ")) };
             text.push_str(&format!("account {}{marks}\n", account.name));
             for member in hub.members.iter().filter(|member| member.home.as_ref() == Some(&account.name)) {
-                text.push_str(&format!("  machine {} [{}]\n", member.name, member.key));
+                let managed = if member.managed { " (managed)" } else { "" };
+                text.push_str(&format!("  machine {} [{}]{managed}\n", member.name, member.key));
             }
             for member in hub
                 .members

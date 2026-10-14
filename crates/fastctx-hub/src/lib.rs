@@ -105,13 +105,14 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
         locked: false,
         opened: Timestamp::now(),
         collab: None,
+        promotion: false,
     });
     book.passwords.insert(new.admin.clone(), Bytes(record));
     book.machine_log.push(
         &book.directory,
         &[],
         fastctx_types::machine_log::Actor { account: None, authenticated: false, member: None, peer: None },
-        fastctx_types::machine_log::Action::OpenAccount { name: new.admin },
+        fastctx_types::machine_log::Action::OpenAccount { name: new.admin, visitor: false },
         fastctx_types::machine_log::Outcome::Done,
     )?;
     let hub = HubFile {
@@ -565,9 +566,10 @@ async fn intended(
                 renames,
                 afoot,
                 forgets,
+                roles,
             },
         ) => {
-            let said = control::Said { through, direct, interfaces, any_names, dialed, renames, afoot, forgets };
+            let said = control::Said { through, direct, interfaces, any_names, dialed, renames, afoot, forgets, roles };
             control::session(hub, socket, peer, binding, key, proof, letters, said).await;
         }
         (wire::CONTROL_PATH, Intent::Login { account, request }) => {
@@ -575,6 +577,9 @@ async fn intended(
         }
         (wire::CONTROL_PATH, Intent::Token { token, proof, member }) => {
             login::with_token(hub, socket, peer, binding, token, proof, member).await;
+        }
+        (wire::CONTROL_PATH, Intent::Peek { token, proof }) => {
+            login::peek(hub, socket, peer, binding, token, proof).await;
         }
         (wire::CONTROL_PATH, Intent::Register { account, request }) => {
             login::open_account(hub, socket, peer, account, request).await;

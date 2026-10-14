@@ -10,6 +10,7 @@ import type { Login as AccountLogin } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import type { Timestamp } from "../world/wire";
+import { isManaged } from "./machine-list";
 import { assistantsOf, machinesOf, ownerOf, owns } from "./reach";
 
 export type Hold = "mine" | "shared" | "others" | "assist";
@@ -44,6 +45,9 @@ export function pickables(world: WorldNow | null): Pickable[] {
   const logins = loginsOf(world?.accounts);
   const picked: Pickable[] = [];
   for (const machine of machinesOf(world)) {
+    // A managed machine's agents work for no one: the page has nothing of
+    // it (`world-network.md`, 受管机器).
+    if (world && isManaged(world, machine.name)) continue;
     const ownerLogin = machine.here
       ? (logins.find((login) => world?.nodes.hubs.some((hub) => hub.hub === login.hub && hub.home === login.account)) ?? null)
       : (logins.find((login) => owns(machine, login)) ?? null);

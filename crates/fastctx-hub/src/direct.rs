@@ -121,6 +121,11 @@ async fn allow(
         if !member.is_machine() {
             return Err(format!("{machine} is a device, not a machine; only machines take direct connections"));
         }
+        // A visitor's machines are its alone, the administrator's reach
+        // stops there; one that takes them already may still be stopped.
+        if !at.is_empty() && member.home.as_ref().is_some_and(|owner| directory.is_visitor(owner)) {
+            return Err(format!("{machine} is a visitor's machine, which only its owner uses"));
+        }
         member.key
     };
     if at.is_empty() {

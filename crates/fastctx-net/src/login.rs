@@ -69,6 +69,17 @@ pub struct Device<'a> {
     pub register: bool,
 }
 
+/// What a token lets a device into, as its hub told before it is used.
+#[derive(Clone, Debug)]
+pub struct Peeked {
+    pub hub: HubId,
+    pub hub_name: HubName,
+    pub account: AccountName,
+    pub managed: bool,
+    pub label: Option<String>,
+    pub expires: jiff::Timestamp,
+}
+
 impl Device<'_> {
     fn joining(&self, binding: &[u8; 32]) -> Joining {
         Joining {
@@ -141,6 +152,29 @@ pub async fn with_token(token: &Token, device: Device<'_>) -> Result<Joined, Str
 
 /// Opens `account` with `password` on a hub that lets anyone, reached at
 /// `hub`. The device then logs in to it like any other.
+/// What `token` lets this device into, asked of its hub without using it. A
+/// hub from before managed machines refuses the asking connection; that is
+/// said as `Ok(None)`, as such a hub makes no token for one.
+pub async fn peek(token: &Token) -> Result<Option<Peeked>, String> {
+    let dialed = dial::dial(&token.addresses, Some(token.cert), wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME).await?;
+    let (mut socket, binding) = (dialed.socket, dialed.binding);
+    let key = token.secret.key();
+    hello(&mut socket, Intent::Peek { token: key.public(), proof: key.sign(Domain::Session, &binding) }).await?;
+    let answer = next(&mut socket).await;
+    let _ = futures_util::SinkExt::close(&mut socket).await;
+    match answer {
+        Ok(Down::TokenInfo { hub, hub_name, account, managed, label, expires }) => {
+            if hub != token.hub {
+                return Err(format!("the hub is {hub}, not {} the token names", token.hub));
+            }
+            Ok(Some(Peeked { hub, hub_name, account, managed, label, expires }))
+        }
+        Ok(Down::Refused { reason: crate::wire::Refusal::Login { reason } }) => Err(reason),
+        Ok(Down::Refused { .. }) | Err(_) => Ok(None),
+        Ok(_) => Err("the hub answered with something else than what the token is for".to_string()),
+    }
+}
+
 pub async fn open_account(hub: &[SocketAddr], account: &AccountName, password: &str) -> Result<(), String> {
     fastctx_types::password::check(account.as_str(), password)?;
     let dialed = dial::dial(hub, None, wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME).await?;

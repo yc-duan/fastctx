@@ -5,6 +5,9 @@
 // screen runs one line holding such a login, so no password ends up in
 // its shell's history. Neither is shown again. From a computer a Linux host
 // is added over SSH as well, as a World is made on one (`remote-world.ts`).
+// A managed machine (受管机器) comes in by a code pasted on it: named, for
+// as many computers and as long as the owner says, and shown with the three
+// steps of using it and the line that does the same.
 
 import qrcode from "qrcode-generator";
 import { glyph } from "../conversation/glyphs";
@@ -13,10 +16,11 @@ import type { Login } from "../world/accounts";
 import type { NameProblem } from "../world/bridge";
 import type { LoginWords, TokenWords } from "./account-words";
 import { Sheet } from "./confirm";
+import { managedSteps } from "./managed-art";
 import { plainly } from "./problem";
 import { RemoteWorld, type RemoteSeams } from "./remote-world";
 
-export type TokenKind = "computer" | "phone" | "server";
+export type TokenKind = "computer" | "phone" | "server" | "managed";
 
 export interface TokensOptions {
   words: TokenWords;
@@ -24,18 +28,28 @@ export interface TokensOptions {
   addresses(login: Login): string[];
   /** A one-time login to `login` for a phone. */
   token(login: Login, kind: "phone", register: boolean, name: string | null, hours: number): Promise<string>;
-  /** The line a Linux host runs, registering it as `login`'s machine. */
-  server(login: Login, name: string | null, hours: number): Promise<string>;
+  /** A code that makes the computers using it managed machines of
+   *  `login`'s account: `uses` of them at most, any number at zero. */
+  managed(login: Login, label: string | null, uses: number, hours: number): Promise<string>;
+  /** The line a Linux host runs, registering it as `login`'s machine, or
+   *  as a managed machine of it. */
+  server(login: Login, name: string | null, hours: number, managed: boolean): Promise<string>;
+  /** Whether `login`'s hub registers managed machines. */
+  manages(login: Login): boolean;
   /** A moment as the interface says it. */
   when(at: Date): string;
   /** What is wrong with a machine name as typed, where the shell can say. */
   nameProblem?: ((kind: "machine", text: string) => Promise<NameProblem | null>) | undefined;
   /** Adding a Linux host over SSH, where this device can: a code that
    *  registers it as `login`'s machine `machine`, made once it is reached. */
-  remote?: { seams: RemoteSeams; words: LoginWords; token(login: Login, machine: string): Promise<string>; added(): void } | undefined;
+  remote?: { seams: RemoteSeams; words: LoginWords; token(login: Login, machine: string, managed: boolean): Promise<string>; added(): void } | undefined;
 }
 
 const validity = [1, 24, 72];
+/** How many days a code for managed machines stays valid. */
+const days = [1, 7, 30];
+/** At most this many computers by one code, short of any number. */
+const MOST = 9999;
 
 /** A QR code as an SVG of dark squares on light, whatever the theme:
  *  scanners read dark on light, and the code is never drawn by a pen. */
@@ -65,6 +79,12 @@ export class Tokens {
   private way: "ssh" | "line" = "ssh";
   private ssh: RemoteWorld | null = null;
   private hours = 1;
+  /** How many computers a code for managed machines lets in, and for how
+   *  many days. */
+  private uses: "one" | "any" | "some" = "one";
+  private days = 7;
+  /** Whether a Linux host comes in as a managed machine. */
+  private managed = false;
   /** Whether a way in was given this time the sheet was open. */
   private given = false;
   private closed: ((given: boolean) => void) | null = null;
@@ -84,8 +104,18 @@ export class Tokens {
       const target = event.target as HTMLElement;
       const kind = target.closest<HTMLButtonElement>("[data-kind]");
       if (kind) {
+        if (kind.disabled) return;
         this.kind = kind.dataset.kind as TokenKind;
         this.draw();
+        return;
+      }
+      // Turned on or off in place: what was typed in the form stays.
+      const managed = target.closest<HTMLButtonElement>("[data-managed]");
+      if (managed) {
+        if (this.login && options.manages(this.login)) {
+          this.managed = !this.managed;
+          managed.setAttribute("aria-checked", String(this.managed));
+        }
         return;
       }
       const way = target.closest<HTMLButtonElement>("[data-server-way]");
@@ -103,11 +133,19 @@ export class Tokens {
       const hours = target.closest<HTMLButtonElement>("[data-hours]");
       if (hours) {
         this.hours = Number(hours.dataset.hours);
-        for (const button of body.querySelectorAll<HTMLButtonElement>("[data-hours]")) {
-          const chosen = Number(button.dataset.hours) === this.hours;
-          button.classList.toggle("chosen", chosen);
-          button.setAttribute("aria-checked", String(chosen));
-        }
+        this.choose("[data-hours]", (button) => Number(button.dataset.hours) === this.hours);
+        return;
+      }
+      const day = target.closest<HTMLButtonElement>("[data-days]");
+      if (day) {
+        this.days = Number(day.dataset.days);
+        this.choose("[data-days]", (button) => Number(button.dataset.days) === this.days);
+        return;
+      }
+      const uses = target.closest<HTMLElement>("[data-uses]");
+      if (uses) {
+        this.chooseUses(uses.dataset.uses as "one" | "any" | "some");
+        if (this.uses === "some" && !target.closest("input")) body.querySelector<HTMLInputElement>("[name=count]")?.focus();
         return;
       }
       const copy = target.closest<HTMLElement>(".copy-code");
@@ -119,6 +157,10 @@ export class Tokens {
         return;
       }
       if (target.closest(".make-again")) this.draw();
+    });
+    // Typing a number is choosing it.
+    body.addEventListener("focusin", (event) => {
+      if ((event.target as HTMLElement).matches("[name=count]")) this.chooseUses("some");
     });
     body.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -133,8 +175,11 @@ export class Tokens {
   open(login: Login, kind: TokenKind = "computer"): Promise<boolean> {
     this.closed?.(this.given);
     this.login = login;
-    this.kind = kind;
+    this.kind = kind === "managed" && !this.options.manages(login) ? "computer" : kind;
     this.way = "ssh";
+    this.managed = false;
+    this.uses = "one";
+    this.days = 7;
     this.given = false;
     this.draw();
     this.sheet.show();
@@ -144,6 +189,20 @@ export class Tokens {
     });
   }
 
+  /** Marks the one of `selector` that `chosen` picks, in place. */
+  private choose(selector: string, chosen: (button: HTMLElement) => boolean): void {
+    for (const button of this.sheet.body.querySelectorAll<HTMLElement>(selector)) {
+      const is = chosen(button);
+      button.classList.toggle("chosen", is);
+      button.setAttribute("aria-checked", String(is));
+    }
+  }
+
+  private chooseUses(uses: "one" | "any" | "some"): void {
+    this.uses = uses;
+    this.choose("[data-uses]", (button) => button.dataset.uses === uses);
+  }
+
   private copy(text: string): string {
     return `<button class="text-button copy-code" type="button" data-copy="${escape(text)}">${glyph("copy", 16)}<span>${escape(this.options.words.copy)}</span></button>`;
   }
@@ -151,19 +210,26 @@ export class Tokens {
   private draw(): void {
     const { words } = this.options;
     const login = this.login!;
-    const choices = (label: string, attribute: string, items: string[], chosen: string, title: (item: string) => string) =>
+    const choices = (label: string, attribute: string, items: string[], chosen: string, title: (item: string) => string, off: (item: string) => string = () => "") =>
       `<div class="choice-options" role="radiogroup" aria-label="${escape(label)}">${items
-        .map(
-          (item) =>
-            `<button type="button" class="choice${item === chosen ? " chosen" : ""}" role="radio" aria-checked="${item === chosen}" ${attribute}="${escape(item)}">${escape(title(item))}</button>`,
-        )
+        .map((item) => {
+          const why = off(item);
+          return `<button type="button" class="choice${item === chosen ? " chosen" : ""}" role="radio" aria-checked="${item === chosen}" ${attribute}="${escape(item)}"${why ? ` disabled title="${escape(why)}"` : ""}>${escape(title(item))}</button>`;
+        })
         .join("")}</div>`;
-    const kinds: TokenKind[] = ["computer", "phone", "server"];
+    const kinds: TokenKind[] = ["computer", "phone", "server", "managed"];
+    const manages = this.options.manages(login);
+    if (!manages) this.managed = false;
     this.ssh?.leave();
     this.ssh = null;
     const remote = this.options.remote;
     const ssh = this.kind === "server" && !!remote && this.way === "ssh";
     const ways = this.kind === "server" && remote ? choices(words.title, "data-server-way", ["ssh", "line"], this.way, (way) => words.ways[way as "ssh" | "line"]) : "";
+    // A Linux host may come in as a managed machine, over SSH or by its line.
+    const managed =
+      this.kind === "server"
+        ? `<button class="device-managed" type="button" role="switch" aria-checked="${this.managed}" data-managed title="${escape(manages ? words.managedWhat : words.managedOld)}"${manages ? "" : " disabled"}>${glyph("shield", 16)}<span class="device-managed-label">${escape(words.managed)}</span><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span></button>`
+        : "";
     let body: string;
     if (ssh) body = `<div class="device-remote"></div>`;
     else if (this.kind === "computer") {
@@ -173,6 +239,22 @@ export class Tokens {
           <dt>${escape(words.hub)}</dt><dd><span class="mono">${escape(address || "—")}</span>${address ? this.copy(this.options.addresses(login)[0]!) : ""}</dd>
           <dt>${escape(words.account)}</dt><dd><span class="mono">${escape(login.account)}</span></dd>
         </dl>`;
+    } else if (this.kind === "managed") {
+      const uses = (["one", "any"] as const)
+        .map(
+          (uses) =>
+            `<button type="button" class="choice${this.uses === uses ? " chosen" : ""}" role="radio" aria-checked="${this.uses === uses}" data-uses="${uses}">${escape(uses === "one" ? words.usesOne : words.usesAny)}</button>`,
+        )
+        .join("");
+      body = `
+        <label class="field"><span class="field-label">${escape(words.label)}</span>
+          <input name="label" maxlength="40" autocomplete="off" spellcheck="false" placeholder="${escape(words.labelHint)}"></label>
+        <div class="field"><span class="field-label">${escape(words.uses)}</span>
+          <div class="choice-options" role="radiogroup" aria-label="${escape(words.uses)}">${uses}<label class="choice choice-count${this.uses === "some" ? " chosen" : ""}" role="radio" aria-checked="${this.uses === "some"}" data-uses="some"><input name="count" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="${escape(words.usesSome)}" aria-label="${escape(words.usesSome)}">${words.unit ? `<span>${escape(words.unit)}</span>` : ""}</label></div></div>
+        <div class="field"><span class="field-label">${escape(words.valid)}</span>
+          ${choices(words.valid, "data-days", days.map(String), String(this.days), (n) => words.days(Number(n)))}</div>
+        <p class="sheet-note" role="alert" hidden></p>
+        <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(words.makeManaged)}</button></footer>`;
     } else {
       body = `
         ${
@@ -188,8 +270,9 @@ export class Tokens {
     }
     this.sheet.body.innerHTML = `
       ${this.sheet.head(words.title, words.close)}
-      ${choices(words.title, "data-kind", kinds, this.kind, (kind) => words.kinds[kind as TokenKind])}
+      ${choices(words.title, "data-kind", kinds, this.kind, (kind) => words.kinds[kind as TokenKind], (kind) => (kind === "managed" && !manages ? words.managedOld : ""))}
       ${ways}
+      ${managed}
       <div class="device-body">${body}</div>`;
     const place = this.sheet.body.querySelector<HTMLElement>(".device-remote");
     if (ssh && remote && place) {
@@ -199,7 +282,7 @@ export class Tokens {
         name: () => null,
         back: words.ways.line,
         adding: {
-          token: (machine) => remote.token(login, machine),
+          token: (machine) => remote.token(login, machine, this.managed),
           added: (machine) => {
             this.given = true;
             this.ssh?.leave();
@@ -212,6 +295,23 @@ export class Tokens {
     }
   }
 
+  /** How many computers the form asks a code to let in: any number at
+   *  zero; null, with the note said, when the number typed is none. */
+  private usesAsked(note: HTMLElement): number | null {
+    if (this.uses === "one") return 1;
+    if (this.uses === "any") return 0;
+    const typed = this.sheet.body.querySelector<HTMLInputElement>("[name=count]")?.value.trim() ?? "";
+    const count = /^[0-9]+$/.test(typed) ? Number(typed) : NaN;
+    if (!Number.isInteger(count) || count < 1 || count > MOST) {
+      note.textContent = this.options.words.usesSaid(MOST);
+      note.title = "";
+      note.hidden = false;
+      this.sheet.body.querySelector<HTMLInputElement>("[name=count]")?.focus();
+      return null;
+    }
+    return count;
+  }
+
   private async make(): Promise<void> {
     const { words } = this.options;
     const { sheet } = this;
@@ -220,9 +320,13 @@ export class Tokens {
     const go = sheet.body.querySelector<HTMLButtonElement>(".sheet-go");
     const note = sheet.body.querySelector<HTMLElement>(".sheet-note");
     if (!go || !note) return;
-    const name = sheet.body.querySelector<HTMLInputElement>("[name=name]")?.value.trim() || null;
     const kind = this.kind;
-    const hours = kind === "phone" ? 1 : this.hours;
+    const label = go.textContent ?? "";
+    const name = sheet.body.querySelector<HTMLInputElement>("[name=name]")?.value.trim() || null;
+    const codeName = sheet.body.querySelector<HTMLInputElement>("[name=label]")?.value.trim() || null;
+    const uses = kind === "managed" ? this.usesAsked(note) : 1;
+    if (uses === null) return;
+    const hours = kind === "phone" ? 1 : kind === "managed" ? this.days * 24 : this.hours;
     sheet.busy = true;
     const check = this.options.nameProblem;
     const problem = name && check ? await check("machine", name).finally(() => (sheet.busy = false)) : null;
@@ -236,14 +340,22 @@ export class Tokens {
     go.disabled = true;
     go.textContent = words.making;
     try {
-      const made = kind === "server" ? await this.options.server(login, name, hours) : await this.options.token(login, "phone", false, null, hours);
+      const made =
+        kind === "server"
+          ? await this.options.server(login, name, hours, this.managed)
+          : kind === "managed"
+            ? await this.options.managed(login, codeName, uses, hours)
+            : await this.options.token(login, "phone", false, null, hours);
       this.given = true;
-      const until = words.until(this.options.when(new Date(Date.now() + hours * 3_600_000)));
-      const shown =
-        kind === "phone"
-          ? `<div class="invitation"><div class="qr-frame">${qrSvg(made, words.qr)}</div><p class="field-hint">${escape(until)}</p></div>`
-          : `<div class="invitation invitation-wide"><p class="field-label">${escape(words.command)}</p><p class="invite-code mono">${escape(made)}</p><p class="field-hint">${escape(until)}</p>${this.copy(made)}</div>`;
-      sheet.body.querySelector(".device-body")!.innerHTML = `${shown}
+      const at = this.options.when(new Date(Date.now() + hours * 3_600_000));
+      sheet.body.querySelector(".device-body")!.innerHTML =
+        kind === "managed"
+          ? this.managedCode(made, codeName, words.codeUntil(at, uses))
+          : `${
+              kind === "phone"
+                ? `<div class="invitation"><div class="qr-frame">${qrSvg(made, words.qr)}</div><p class="field-hint">${escape(words.until(at))}</p></div>`
+                : `<div class="invitation invitation-wide"><p class="field-label">${escape(words.command)}</p><p class="invite-code mono">${escape(made)}</p><p class="field-hint">${escape(words.until(at))}</p>${this.copy(made)}</div>`
+            }
         <footer class="sheet-foot"><span></span><button class="text-button make-again" type="button">${escape(words.again)}</button></footer>`;
     } catch (error) {
       const { text, detail } = plainly(error, words.problems);
@@ -251,9 +363,25 @@ export class Tokens {
       note.title = detail;
       note.hidden = false;
       go.disabled = false;
-      go.textContent = kind === "phone" ? words.makeCode : words.makeCommand;
+      go.textContent = label;
     } finally {
       sheet.busy = false;
     }
+  }
+
+  /** A code for managed machines, made: the code to copy, how long and for
+   *  how many it lets computers in, the three steps of using it, and the
+   *  line that does the same, for a tool that runs one on many computers. */
+  private managedCode(code: string, name: string | null, until: string): string {
+    const { words } = this.options;
+    const art = managedSteps();
+    const line = `fastctx login --token ${code}`;
+    return `<div class="managed-code">
+        ${name ? `<p class="managed-code-name">${escape(name)}</p>` : ""}
+        <div class="managed-code-box"><p class="invite-code mono">${escape(code)}</p>${this.copy(code)}</div>
+        <p class="field-hint">${escape(until)}</p>
+        <ol class="managed-steps">${words.steps.map((step, index) => `<li class="managed-step">${art[index]}<span><b>${index + 1}</b>${escape(step)}</span></li>`).join("")}</ol>
+        <div class="managed-line"><span class="field-label">${escape(words.line)}</span><code class="mono" title="${escape(line)}">${escape(line)}</code>${this.copy(line)}</div>
+      </div>`;
   }
 }

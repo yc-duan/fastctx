@@ -242,9 +242,14 @@ export function assistantOf(world: WorldNow | null, resident: ResidentNow): Assi
 }
 
 /** The logins that may open a conversation with an agent on `machine`, a
- *  machine they may work on: there every agent is theirs to use. */
+ *  machine they may work on: there every agent is theirs to use. On a
+ *  managed machine, worked on with no agent of its own, none may
+ *  (`world-network.md`, 受管机器). */
 export function openersOn(world: WorldNow | null, machine: Machine): Login[] {
-  return loginsOf(world?.accounts).filter((login) => rightsOn(machine, login).hands);
+  return loginsOf(world?.accounts).filter((login) => {
+    const rights = rightsOn(machine, login);
+    return rights.hands && rights.agents;
+  });
 }
 
 /** Where a conversation living on `lives` and working for `login` may
@@ -315,6 +320,14 @@ export function isSuper(world: WorldNow | null, login: Login): boolean {
   const hub = world?.accounts.hubs.find((hub) => hub.hub === login.hub);
   const me = hub?.accounts.find((account) => account.name === login.account);
   return me?.level === "super" && !me.locked;
+}
+
+/** Whether `login` is a visitor on its hub (`world-network.md`, 一个中枢，
+ *  几个账号): its machines are its alone, and it shares none of them and
+ *  lets none of its agents assist anyone. */
+export function isVisitor(world: WorldNow | null, login: Login): boolean {
+  const hub = world?.accounts.hubs.find((hub) => hub.hub === login.hub);
+  return hub?.accounts.find((account) => account.name === login.account)?.level === "visitor";
 }
 
 /** The hub's super administrator, as `login` sees it. */

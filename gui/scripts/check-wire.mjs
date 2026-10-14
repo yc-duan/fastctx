@@ -42,7 +42,7 @@ import type { Writer, JobOwner, MapView } from "../src/world/world";
 import type { Address } from "../src/world/wire";
 import type { RunFacts, DiffLine, JobFacts, ProjectedLines, LinePart, LineOpenError } from "../src/world/run-facts";
 import type { RenewalStatus, MaintenanceRequest, MaintenanceResponse, VersionRefusal } from "../src/world/renewal";
-import type { AccountChange, AccountsReply } from "../src/world/accounts";
+import type { AccountChange, AccountsReply, TokenPeek } from "../src/world/accounts";
 import type { ConnectionState } from "../src/world/device";
 import type { Choices } from "../src/world/bridge";
 import type { ComposerSnapshot, ComposerMutation, ComposerUpdated } from "../src/world/composer";
@@ -55,7 +55,7 @@ export const fixture = ${json.trimEnd()} satisfies {
   // Accounts as the interface reads and changes them, the device's
   // standing, and what the user chose for a new conversation.
   run_facts: { calls: RunFacts[]; diff: DiffLine[]; updates: JobFacts[]; projected_reads: ProjectedLines[]; parts: LinePart[]; open_errors: LineOpenError[] };
-  accounts: { replies: AccountsReply[]; changes: AccountChange[]; connections: ConnectionState[]; choices: Choices[] };
+  accounts: { replies: AccountsReply[]; changes: AccountChange[]; connections: ConnectionState[]; choices: Choices[]; peeks: (TokenPeek | null)[] };
   session: {
     events: SessionEvent[];
     watched: Watched[];

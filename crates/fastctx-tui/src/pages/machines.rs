@@ -518,16 +518,23 @@ fn hub_rows(
         .iter()
         .map(|login| match level(login) {
             Some(Level::Super) => format!("{login}{}", words.aside(words.level_super())),
+            Some(Level::Visitor) => format!("{login}{}", words.aside(words.level_visitor())),
             _ => login.to_string(),
         })
         .collect::<Vec<_>>()
         .join(", ");
     let mut said = words.logins_line(&logins, hub.home.as_ref().map(|home| home.as_str()));
     // A member is told who the administrator is: that account may use every
-    // machine of theirs (`world-network.md`, 账号的两级).
+    // machine of theirs; a visitor, that it only sees which there are
+    // (`world-network.md`, 一个中枢，几个账号).
     let admin = seen.and_then(|seen| seen.accounts.iter().find(|one| one.level == Level::Super));
     if let Some(admin) = admin.filter(|admin| !hub.logins.contains(&admin.name)) {
-        said.push_str(&words.admin_is(admin.name.as_str()));
+        let visitors = hub.logins.iter().all(|login| level(login) == Some(Level::Visitor));
+        said.push_str(&if visitors {
+            words.admin_sees(admin.name.as_str())
+        } else {
+            words.admin_is(admin.name.as_str())
+        });
     }
     for line in text::wrap_plain(&said, look.text(Role::Faint), width) {
         rows.push(Row::new(line));

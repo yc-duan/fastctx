@@ -61,6 +61,7 @@ async fn open(world: &WorldDir, directory: &Path) -> anyhow::Result<Option<dial:
         renames: false,
         afoot: false,
         forgets: false,
+        roles: true,
         dialed: Some(connection.address),
         any_names: true,
     };
@@ -112,7 +113,11 @@ pub(crate) async fn logout(world: &WorldDir, directory: &Path, account: Option<&
     let Some(wire::Told::Directory { view }) = ask(&mut socket, 1, wire::Question::Directory).await? else {
         bail!("the hub did not provide this machine's logins");
     };
-    let logins = view.me().context("the hub omitted this member")?.logins.clone();
+    let me = view.me().context("the hub omitted this member")?;
+    // A managed machine is logged in to nothing: it leaves the account it
+    // serves (`world-network.md`, 受管机器).
+    let managed = me.managed;
+    let logins = if managed { me.home.iter().cloned().collect() } else { me.logins.clone() };
     let accounts: Vec<_> = match account {
         Some(account) => logins.into_iter().filter(|login| login == account).collect(),
         None => logins.into_iter().collect(),
@@ -136,7 +141,7 @@ pub(crate) async fn logout(world: &WorldDir, directory: &Path, account: Option<&
                     Ok(Some(mut confirmation)) => {
                         if let Some(wire::Told::Directory { view }) =
                             ask(&mut confirmation, 1, wire::Question::Directory).await?
-                            && view.me().is_none_or(|me| !me.logins.contains(account))
+                            && view.me().is_none_or(|me| !managed && !me.logins.contains(account))
                         {
                             socket = confirmation;
                             continue;

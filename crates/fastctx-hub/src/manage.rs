@@ -69,10 +69,7 @@ fn made(
             .map_err(|error| format!("the hub could not end an assistance past its deadline: {error}"))?;
         let before = store.book.clone();
         let action = crate::machine_log::action(&change, &before);
-        let authenticated = match &change {
-            Change::OpenProject { .. } => before.directory.may_act_for(account, asker),
-            _ => before.directory.logged_in(asker, account),
-        };
+        let authenticated = may_change(&before.directory, &change, asker, account);
         let actor = Actor { account: Some(account.clone()), authenticated, member: Some(asker.clone()), peer: None };
         let before_hub = store.hub.clone();
         let result = (|| {
@@ -81,11 +78,7 @@ fn made(
             if found.locked {
                 return Err(format!("the account {account} is locked"));
             }
-            let allowed = match &change {
-                Change::OpenProject { .. } => directory.may_act_for(account, asker),
-                _ => directory.logged_in(asker, account),
-            };
-            if !allowed {
+            if !may_change(directory, &change, asker, account) {
                 return Err(format!("{asker} is not logged in to the account {account}"));
             }
             let super_ = found.level == Level::Super;
@@ -174,6 +167,10 @@ fn apply(
             let directory = &mut store.book.directory;
             let owner = own_machine(directory, account, super_, &machine)?;
             other_account(directory, &owner, &to, &machine)?;
+            // A visitor's machines are its alone (`world-network.md`, 一个中枢，几个账号).
+            if shared && directory.is_visitor(&owner) {
+                return Err(format!("{machine} is a visitor's machine, and a visitor shares no machine"));
+            }
             let share = Share { machine, account: to };
             directory.shares.retain(|existing| *existing != share);
             if shared {
@@ -185,6 +182,12 @@ fn apply(
             let directory = &mut store.book.directory;
             let owner = own_machine(directory, account, super_, &machine)?;
             other_account(directory, &owner, &to, &machine)?;
+            if assisting && directory.member(&machine).is_some_and(|member| member.managed) {
+                return Err(format!("{machine} is a managed machine: its agents work for no one"));
+            }
+            if assisting && directory.is_visitor(&owner) {
+                return Err(format!("{machine} is a visitor's machine, and a visitor's agents assist no one"));
+            }
             if assisting && until.is_some_and(|until| until <= Timestamp::now()) {
                 return Err("the assistance's deadline has already passed".to_string());
             }
@@ -242,9 +245,20 @@ fn apply(
             log_out(store, asker, account, None, "logged out", ended)?;
             Ok(Told::Done)
         }
-        Change::Token { register, name, kind, expires } => {
+        Change::Token { register, name, kind, expires, managed, uses, label } => {
             if expires <= Timestamp::now() {
                 return Err("the token would have expired already".to_string());
+            }
+            if managed && !(register && kind.is_computer()) {
+                return Err("a token for managed machines registers computers".to_string());
+            }
+            let uses = uses.unwrap_or(1);
+            if uses != 1 && name.is_some() {
+                return Err("a token for several computers names none of them: each takes its own name".to_string());
+            }
+            let label = label.map(|label| label.trim().to_string()).filter(|label| !label.is_empty());
+            if label.as_ref().is_some_and(|label| label.chars().count() > 40) {
+                return Err("a code's name is at most 40 characters".to_string());
             }
             if let Some(name) = &name {
                 if let Some(taken) = crate::login::name_taken(&store.book.directory, name, None) {
@@ -262,9 +276,14 @@ fn apply(
                 name,
                 kind,
                 expires,
+                managed,
+                uses,
+                label,
+                revoked: false,
                 made_by: asker.clone(),
                 made_at: Timestamp::now(),
                 used_by: None,
+                used: Vec::new(),
             });
             let token = Token { addresses: store.hub.public.clone(), cert: hub.pin, hub: store.hub.id.clone(), secret };
             Ok(Told::Token { text: token.to_text() })
@@ -289,18 +308,44 @@ fn apply(
             store.book.passwords.insert(target, Bytes(record));
             Ok(Told::Done)
         }
-        Change::OpenAccount { name } => {
+        Change::OpenAccount { name, visitor } => {
             need_super()?;
             if store.book.directory.account(&name).is_some() {
                 return Err(format!("the account {name} exists already"));
             }
             store.book.directory.accounts.push(Account {
                 name,
-                level: Level::Member,
+                level: if visitor { Level::Visitor } else { Level::Member },
                 locked: false,
                 opened: Timestamp::now(),
                 collab: None,
+                promotion: false,
             });
+            Ok(Told::Done)
+        }
+        Change::SetRole { name, visitor } => {
+            need_super()?;
+            set_role(store, &name, visitor)?;
+            Ok(Told::Done)
+        }
+        Change::AcceptRole { accept } => {
+            let found = store.book.directory.accounts.iter_mut().find(|found| found.name == *account).expect("checked");
+            if !found.promotion {
+                return Err(format!("the account {account} was not made a member"));
+            }
+            found.promotion = false;
+            if accept {
+                found.level = Level::Member;
+            }
+            Ok(Told::Done)
+        }
+        Change::RevokeToken { token } => {
+            let record = store.book.tokens.iter_mut().find(|record| record.key == token);
+            let record = record.ok_or("the hub knows no such token")?;
+            if record.account != *account && !super_ {
+                return Err(format!("the token was made for the account {}", record.account));
+            }
+            record.revoked = true;
             Ok(Told::Done)
         }
         Change::SetAccount { name, locked } => {
@@ -325,6 +370,9 @@ fn apply(
             let target = directory.account(&to).ok_or_else(|| format!("there is no account {to}"))?;
             if target.locked {
                 return Err(format!("the account {to} is locked"));
+            }
+            if target.level == Level::Visitor {
+                return Err(format!("{to} is a visitor; only a member becomes the super administrator"));
             }
             for found in &mut directory.accounts {
                 if found.name == to {
@@ -393,6 +441,65 @@ fn apply(
     }
 }
 
+/// Whether `asker` may log out of `account`: it is logged in to it, or it
+/// is a read-only device of it, which leaves the account it serves so.
+fn leaves(directory: &fastctx_net::directory::Directory, asker: &MachineName, account: &AccountName) -> bool {
+    directory.logged_in(asker, account)
+        || directory.member(asker).is_some_and(|member| member.managed && member.home.as_ref() == Some(account))
+}
+
+/// Whether `asker` may make a change as `account`: a device logged in to
+/// it; a machine acting for it opens projects for it; a managed machine
+/// leaves the account it serves.
+fn may_change(
+    directory: &fastctx_net::directory::Directory,
+    change: &Change,
+    asker: &MachineName,
+    account: &AccountName,
+) -> bool {
+    match change {
+        Change::OpenProject { .. } => directory.may_act_for(account, asker),
+        Change::Logout => leaves(directory, asker, account),
+        _ => directory.logged_in(asker, account),
+    }
+}
+
+/// Makes `name` a visitor, at once: what it shared and let assist is
+/// taken back, as a visitor gives nothing of its machines. Or offers to
+/// make it a member, which it becomes once it agrees: a member's machines
+/// are the super administrator's to use, and that is not put on anyone
+/// unasked (`world-network.md`, 超级管理员管什么).
+fn set_role(store: &mut Store, name: &AccountName, visitor: bool) -> Result<(), String> {
+    let directory = &mut store.book.directory;
+    let found = directory.accounts.iter_mut().find(|found| found.name == *name);
+    let found = found.ok_or_else(|| format!("there is no account {name}"))?;
+    match (found.level, visitor) {
+        (Level::Super, _) => Err(format!("{name} is the hub's super administrator; hand that to a member first")),
+        (Level::Visitor, true) => {
+            found.promotion = false;
+            Ok(())
+        }
+        (Level::Member, false) => Err(format!("{name} is a member already")),
+        (Level::Visitor, false) => {
+            found.promotion = true;
+            Ok(())
+        }
+        (Level::Member, true) => {
+            found.level = Level::Visitor;
+            found.promotion = false;
+            let machines: Vec<MachineName> = directory
+                .members
+                .iter()
+                .filter(|member| member.home.as_ref() == Some(name))
+                .map(|member| member.name.clone())
+                .collect();
+            directory.shares.retain(|share| !machines.contains(&share.machine));
+            directory.assists.retain(|assist| !machines.contains(&assist.machine));
+            Ok(())
+        }
+    }
+}
+
 /// Checks `machine` is one of `account`'s machines, or that the super
 /// administrator asks; the account it is registered under.
 fn own_machine(
@@ -405,7 +512,8 @@ fn own_machine(
     let Some(owner) = member.home.clone() else {
         return Err(format!("{machine} is not registered as a machine"));
     };
-    if owner != *account && !super_ {
+    // The super administrator's reach stops at a visitor's machines.
+    if owner != *account && (!super_ || directory.is_visitor(&owner)) {
         return Err(format!("{machine} is not one of the account {account}'s machines"));
     }
     Ok(owner)

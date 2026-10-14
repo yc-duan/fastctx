@@ -30,9 +30,10 @@ import { GiveSheet } from "./machine-sheets";
 import { linkSaid, linkWhy } from "./machines";
 import { formerNames, mapOf } from "./map-of";
 import type { NameSaid } from "./name-words";
+import { isManaged } from "./machine-list";
 import { link, talkLink, type Place } from "./places";
 import { detailOf } from "./problem";
-import { assistantsOn, groupsOf, inNoNetwork, isSuper, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, type Machine } from "./reach";
+import { assistantsOn, groupsOf, inNoNetwork, isSuper, isVisitor, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, type Machine } from "./reach";
 import { RenameField, renamerOf, type Renamer } from "./rename";
 import type { Page } from "./shell";
 import { effect } from "./signals";
@@ -338,6 +339,7 @@ export class MachinePage implements Page {
       owner && !machine.here ? tag(machines.yours, "tag-own") : "",
       ownerName ? tag(bySuper ? machines.superInShort(ownerName) : machines.sharedInShort(ownerName), "", bySuper ? machines.superIn(ownerName) : machines.sharedIn(ownerName)) : "",
       reaching ? tag(machines.reaching, "tag-reach", machines.reachingWhat) : "",
+      isManaged(world, machine.name) ? tag(machines.managed, "", machines.managedWhat) : "",
     ].join("");
     const state = this.stateOf(machine);
     const former = formerNames(world, machine);
@@ -362,13 +364,16 @@ export class MachinePage implements Page {
     const owner = this.ownerLogin(machine, world);
     const button = (act: string, icon: Parameters<typeof glyph>[0], label: string) =>
       `<button class="text-button quiet-button mp-act" type="button" data-act="${act}" title="${escape(label)}">${glyph(icon, 15)}<span>${escape(label)}</span></button>`;
+    // No one's agents live on a managed machine (`world-network.md`, 受管
+    // 机器); a visitor shares none of its machines.
+    const managed = isManaged(world, machine.name);
     this.put(
       "acts",
       this.acts,
       [
-        button("talk", "plus", machines.talk),
-        `<a class="text-button quiet-button mp-act" href="${link({ kind: "agents", machine: machine.written })}" title="${escape(machines.hosts)}">${glyph("agents", 15)}<span>${escape(machines.hosts)}</span></a>`,
-        owner ? button("share", "colleague", machines.share) : "",
+        managed ? "" : button("talk", "plus", machines.talk),
+        managed ? "" : `<a class="text-button quiet-button mp-act" href="${link({ kind: "agents", machine: machine.written })}" title="${escape(machines.hosts)}">${glyph("agents", 15)}<span>${escape(machines.hosts)}</span></a>`,
+        owner && !isVisitor(world, owner) ? button("share", "colleague", machines.share) : "",
         `<a class="icon-button mp-act-map" href="${link({ kind: "machines", focus: machine.written })}" aria-label="${escape(words.onMap)}" title="${escape(words.onMap)}">${glyph("machine", 17)}</a>`,
       ].join(""),
     );
@@ -800,7 +805,7 @@ export class MachinePage implements Page {
     const now = this.options.store.clock.peek();
     const chip = (label: string, take: string) =>
       `<span class="chip">${escape(label)}<button class="chip-x" type="button" ${take} aria-label="${escape(machines.takeBack(label))}" title="${escape(machines.takeBack(label))}">${glyph("close", 12)}</button></span>`;
-    const shared = owner
+    const shared = owner && !isVisitor(world, owner)
       ? `<div class="given-row"><span class="given-label">${escape(machines.sharedTo)}</span>${sharedWith(world, owner, machine.name)
           .map((to) => chip(to, `data-act="unshare" data-to="${escape(to)}"`))
           .join("")}<button class="text-button quiet-button" type="button" data-act="share">${glyph("plus", 13)}<span>${escape(machines.share)}</span></button></div>`

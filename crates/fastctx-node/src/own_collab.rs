@@ -164,6 +164,10 @@ fn merge(node: &Node, account: Option<Collab>, own: Collab) -> Result<(Collab, S
 /// under at `hub`, when it keeps any; each step is logged. Run when it
 /// logs in and each time its link connects, until they are carried.
 pub(crate) async fn carry(node: &Arc<Node>, hub: &HubId) {
+    // A managed machine is logged in to no account to carry it to.
+    if crate::managed::is_managed(node) {
+        return;
+    }
     let _carrying = node.own_collab.carrying.lock().await;
     let path = node.world.own_collab();
     let own = match read_at(&path) {

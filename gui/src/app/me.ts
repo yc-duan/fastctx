@@ -3,14 +3,17 @@
 // theirs others may use — the machines shared and the logins assisting, each
 // taken back with its cross and for a moment given back; the machines of
 // others whose agents may reach theirs; the phones logged in to the account;
-// and leaving the network. A device that came into the account lately is
-// said first, with "that wasn't me". Whatever has nothing in it is not
-// drawn. Other people are the boxes on the machines page's drawing.
+// the codes that let managed machines in; and leaving the network. A device
+// that came into the account lately is said first, with "that wasn't me",
+// and managed machines that came in by one code are said together; a
+// visitor asked to become a member is asked first of all. Whatever has
+// nothing in it is not drawn. Other people are the boxes on the machines
+// page's drawing.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { circle, seeded } from "../pen/shapes";
-import { loginsOf, type AccountChange, type Arrival, type AssistSeen, type HubAccounts, type Login, type MemberSeen } from "../world/accounts";
+import { loginsOf, type AccountChange, type Arrival, type AssistSeen, type HubAccounts, type Login, type MemberSeen, type TokenSeen } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import { wholeDollars } from "../world/money";
 import { agentName } from "../world/names";
@@ -130,7 +133,54 @@ export class MePage implements Page {
       }
       case "leave":
         return this.leaveNetwork(login);
+      case "accept":
+      case "decline": {
+        const accept = button.dataset.act === "accept";
+        return void this.quietly(button, login, { change: "accept_role", accept }).then(() => this.options.say(accept ? words.accepted : words.declined));
+      }
+      case "revoke": {
+        const token = this.hubOf(login)?.tokens?.find((one) => one.key === button.dataset.key);
+        if (!token) return;
+        return confirm.ask({
+          title: words.revokeTitle(token.label ?? words.codeUnnamed),
+          what: words.revokeWhat,
+          go: words.revokeGo,
+          act: () => change(login, { change: "revoke_token", token: token.key }),
+          done: refresh,
+        });
+      }
+      case "seen-code":
+        return void this.byCode(login, button.dataset.code ?? "").reduce(
+          (done, arrival) => done.then(() => change(login, { change: "seen", name: arrival.name })),
+          Promise.resolve(),
+        ).then(refresh, (error: unknown) => this.options.say(words.failed(error instanceof Error ? error.message : String(error))));
+      case "not-me-code": {
+        const code = button.dataset.code ?? "";
+        const came = this.byCode(login, code);
+        const token = this.hubOf(login)?.tokens?.find((one) => one.key === code);
+        const named = token?.label ?? words.someCode;
+        return confirm.ask({
+          title: words.notMeCodeTitle(named, came.length),
+          what: words.notMeCodeWhat(came.length),
+          go: words.notMeCodeGo,
+          act: async () => {
+            // A code already closed has nothing left to revoke.
+            if (token) await change(login, { change: "revoke_token", token: token.key });
+            for (const arrival of came) {
+              await change(login, { change: "remove", name: arrival.name, reason: "not me" });
+              await change(login, { change: "seen", name: arrival.name });
+            }
+          },
+          done: refresh,
+        });
+      }
     }
+  }
+
+  /** The managed machines that came into `login`'s account by `code`, not
+   *  yet shown. */
+  private byCode(login: Login, code: string): Arrival[] {
+    return (this.hubOf(login)?.arrivals ?? []).filter((arrival) => arrival.account === login.account && arrival.code === code);
   }
 
   /** Takes back a share or an assistance: gone from the page at once, and
@@ -261,12 +311,16 @@ export class MePage implements Page {
     if (!hub) return "";
     const computer = isComputer(world);
     const { words } = this.options;
+    const me = hub.accounts.find((account) => account.name === login.account);
     return `<section class="me-login" data-hub="${escape(login.hub)}" data-account="${escape(login.account)}">
+      ${me?.promotion ? this.promotion(login, world) : ""}
       ${this.card(login, hub, world)}
-      ${this.arrivals(hub.arrivals.filter((arrival) => arrival.account === login.account), world, now)}
+      ${me?.level === "visitor" ? `<p class="me-note">${escape(words.visitorGives)}</p>` : ""}
+      ${this.arrivals(hub.arrivals.filter((arrival) => arrival.account === login.account), hub, world, now)}
       ${this.given(login, hub, world, now)}
       ${this.reaching(login, hub, now)}
       ${this.devices(login, hub, world, now)}
+      ${this.codes(login, hub, now)}
       <div class="me-leave"><button class="text-button danger-text" type="button" data-act="leave">${glyph("logout", 16)}<span>${escape(computer ? words.leave : words.logout)}</span></button></div>
     </section>`;
   }
@@ -281,9 +335,10 @@ export class MePage implements Page {
     // pointer resting on it.
     const state = hub.link.kind === "online" ? machines.hubOnline : hub.link.kind === "connecting" ? machines.hubConnecting : machines.hubOff;
     const facts = [
-      me ? `<span>${escape(words.level[me.level])}</span>` : "",
+      me ? `<span${me.level === "visitor" ? ` title="${escape(words.visitorNote)}"` : ""}>${escape(words.level[me.level])}</span>` : "",
       `<span>${escape(hub.name)}</span>`,
-      admin && admin !== login.account ? `<span class="me-admin" title="${escape(words.superNote(admin))}">${glyph("shield", 13)}${escape(words.adminIs(admin))}</span>` : "",
+      // The administrator may use a member's machines, never a visitor's.
+      admin && admin !== login.account ? `<span class="me-admin"${me?.level === "visitor" ? "" : ` title="${escape(words.superNote(admin))}"`}>${glyph("shield", 13)}${escape(words.adminIs(admin))}</span>` : "",
       hub.link.kind === "alone" ? "" : `<span class="me-link ${hub.link.kind}" title="${escape(linkSaid(hub.link, machines))}"><i aria-hidden="true"></i>${escape(state)}</span>`,
     ].filter(Boolean);
     return `<header class="me-card">
@@ -293,11 +348,50 @@ export class MePage implements Page {
     </header>`;
   }
 
-  private arrivals(arrivals: Arrival[], world: WorldNow, now: Date): string {
-    if (!arrivals.length) return "";
+  /** The administrator asks a visitor to become a member: what it means,
+   *  and the two answers, first on the page. */
+  private promotion(login: Login, world: WorldNow): string {
+    const { words } = this.options;
+    const admin = superOf(world, login) ?? "";
+    return `<div class="me-promotion" role="alert">
+      <div class="me-promotion-text"><b>${escape(words.promotionTitle(admin))}</b><span>${escape(words.promotionWhat)}</span></div>
+      <div class="me-promotion-acts"><button class="text-button quiet-button" type="button" data-act="decline">${escape(words.decline)}</button><button class="sheet-go" type="button" data-act="accept">${escape(words.accept)}</button></div>
+    </div>`;
+  }
+
+  /** The codes for managed machines this account made that still let them
+   *  in: each with how many came in, until when, and a way to revoke it. */
+  private codes(login: Login, hub: HubAccounts, now: Date): string {
+    const { words, when } = this.options;
+    const codes = (hub.tokens ?? []).filter((token: TokenSeen) => token.account === login.account && token.managed);
+    if (!codes.length) return "";
+    const rows = codes.map((token) =>
+      row(
+        glyph("key", 16),
+        escape(token.label ?? words.codeUnnamed),
+        escape([words.codeUsed(token.used, token.uses), words.codeUntil(when(new Date(token.expires), now))].join(" · ")),
+        "",
+        `<button class="text-button quiet-button" type="button" data-act="revoke" data-key="${escape(token.key)}">${escape(words.revoke)}</button>`,
+      ),
+    );
+    return part(words.codes, "", `<ul class="me-rows">${rows.join("")}</ul>`);
+  }
+
+  private arrivals(all: Arrival[], hub: HubAccounts, world: WorldNow, now: Date): string {
+    if (!all.length) return "";
     const { words, when } = this.options;
     const facts = factsByMachine(world);
-    return `<ul class="me-arrivals" aria-live="polite">${arrivals
+    // Managed machines that came in by one code are one line: a code given
+    // out lets a batch in.
+    const codes = [...new Set(all.flatMap((arrival) => (arrival.code ? [arrival.code] : [])))];
+    const batches = codes.map((code) => {
+      const came = all.filter((arrival) => arrival.code === code);
+      const last = came.reduce((late, arrival) => (arrival.noticed_at > late ? arrival.noticed_at : late), came[0]!.noticed_at);
+      const named = hub.tokens?.find((token) => token.key === code)?.label ?? words.someCode;
+      return `<li class="me-arrival">${glyph("machine", 16)}<span class="me-arrival-text" title="${escape(came.map((arrival) => arrival.name).join(words.separator))}">${escape(words.arrivedByCode(named, came.length, when(new Date(last), now)))}</span><span class="me-arrival-acts"><button class="text-button quiet-button" type="button" data-act="seen-code" data-code="${escape(code)}">${escape(words.me)}</button><button class="text-button quiet-button danger" type="button" data-act="not-me-code" data-code="${escape(code)}">${escape(words.notMe)}</button></span></li>`;
+    });
+    const arrivals = all.filter((arrival) => !arrival.code);
+    return `<ul class="me-arrivals" aria-live="polite">${batches.join("")}${arrivals
       .map((arrival) => {
         const form = arrival.device ? undefined : facts.get(arrival.name)?.form;
         const kind = form ? words.forms[form] : words.kinds[arrival.device ? "phone" : "computer"];

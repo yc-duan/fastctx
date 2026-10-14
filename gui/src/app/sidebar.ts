@@ -290,7 +290,8 @@ export class Sidebar {
    *  device came into their account; and the settings. */
   private drawFoot(world: WorldNow | null, place: Place): void {
     const { words } = this.options;
-    const arrivals = (world?.accounts.hubs ?? []).reduce((n, hub) => n + hub.arrivals.length, 0);
+    // Managed machines that came in by one code are one thing to see.
+    const arrivals = (world?.accounts.hubs ?? []).reduce((n, hub) => n + new Set(hub.arrivals.map((arrival) => arrival.code ?? `${arrival.account}\n${arrival.name}`)).size, 0);
     const [me] = loginsOf(world?.accounts);
     const account = me
       ? `<a class="place account-place${place.kind === "account" ? " current" : ""}" href="${link({ kind: "account" })}" title="${escape(words.account)}">${glyph("person", 18)}<span class="place-name">${escape(me.account)}</span>${arrivals ? `<span class="count waiting"><span class="spoken">${escape(words.arrivals(arrivals))}</span>${arrivals}</span>` : ""}</a>`

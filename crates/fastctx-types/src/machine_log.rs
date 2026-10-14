@@ -96,6 +96,15 @@ pub enum Action {
         name: Option<MachineName>,
         kind: MemberKind,
         expires: Timestamp,
+        /// For managed machines (`world-network.md`, 受管机器).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        managed: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
+    RevokeToken {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
     },
     PasswordStart {
         target: AccountName,
@@ -105,6 +114,15 @@ pub enum Action {
     },
     OpenAccount {
         name: AccountName,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        visitor: bool,
+    },
+    SetRole {
+        name: AccountName,
+        visitor: bool,
+    },
+    AcceptRole {
+        accept: bool,
     },
     SetAccount {
         name: AccountName,
@@ -143,6 +161,9 @@ pub enum Action {
         kind: MemberKind,
         registered: bool,
         via: LoginMethod,
+        /// As a managed machine: registered, logged in to none.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        managed: bool,
     },
     /// First use of another machine's agent allows it to act for the account.
     AllowActing {

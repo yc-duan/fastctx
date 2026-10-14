@@ -5,7 +5,7 @@
 
 import type { Address } from "../world/events";
 import type { AccountChange, HubAccounts, MemberSeen, Paths, Reach } from "../world/accounts";
-import type { About, Action, HubNodes, MachineFacts, Node, ProjectRecord, ResidentNow } from "../world/world";
+import type { About, Action, HubNodes, LinkState, MachineFacts, Node, ProjectRecord, ResidentNow } from "../world/world";
 import type { Away, WorldState } from "../home/model";
 import type { AgentFacts, WorldAgents } from "../world/agents";
 import type { WorldNow } from "../world/bridge";
@@ -78,6 +78,8 @@ function record(name: string, what: string, machines: string[]): ProjectRecord {
 }
 
 const HOME = "w-5be1fcee3751dc7a";
+/** The key of the code 「机房 A」, by which two managed machines came in. */
+const LAB_CODE = "k7Qp2mVx9TfR4sLw8NcB3hJd6YgZ1aEu5oKi0nWq";
 const ACME = "w-9a07c2d4e1b36f58";
 
 function node(name: string, online: boolean | null, since: string, owner: string, os: string, home: string, rights: [string, boolean, boolean], through: string | null = null): Node {
@@ -112,9 +114,11 @@ function many(): Node[] {
 
 /** The hubs this desktop is logged in to, as `nodes` and `accounts` see
  *  them: its own, where it is the super administrator, has shared lab with
- *  ada and lets a Codex login of this computer's assist ada, and once used
- *  an agent on bo's gpu; and with `two`, a second one at work, where it is a
- *  member that ops shared build with and whom the Claude on render assists. */
+ *  ada and lets a Codex login of this computer's assist ada, once used an
+ *  agent on bo's gpu, keeps two managed machines that came in by the code
+ *  「机房 A」, and has cy as a visitor, whose mac it sees only by name;
+ *  and with `two`, a second one at work, where it is a member that ops
+ *  shared build with and whom the Claude on render assists. */
 function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
   const link = { kind: "online" as const, since: at("01:10:02"), hub: "203.0.113.10:7443", route: { kind: "card" as const, name: "Ethernet" } };
   const nodes: HubNodes[] = [
@@ -130,6 +134,8 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         node("server", true, "00:00:00", "me", "linux", "/root", ["me", true, true]),
         node("studio", false, "12:52:00", "me", "windows", "C:/Users/me", ["me", true, true]),
         node("gpu", true, "03:30:00", "bo", "linux", "/home/bo", ["me", true, true], "la"),
+        node("lab-a-01", true, "11:02:00", "me", "windows", "C:/Users/lab", ["me", true, false]),
+        node("lab-a-02", false, "12:31:00", "me", "windows", "C:/Users/lab", ["me", true, false]),
         ...many(),
       ],
     },
@@ -163,10 +169,13 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
     addresses: ["192.168.1.20:7443"],
       me: "desktop",
       renames: true,
+      managed: true,
+      roles: true,
       accounts: [
         { name: "me", level: "super", locked: false, opened: at("00:00:00") },
         { name: "ada", level: "member", locked: false, opened: at("00:05:00") },
         { name: "bo", level: "member", locked: false, opened: at("00:06:00") },
+        { name: "cy", level: "visitor", locked: false, opened: at("09:12:00") },
       ],
       members: [
         member("desktop", "computer", ["me"], "me", "00:10:00", true, "5be1fcee", ["192.168.1.20:7444"]),
@@ -176,7 +185,11 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         member("studio", "computer", ["me"], "me", "00:40:00", false, "9e8d7c6b"),
         member("pixel", "phone", ["me"], null, "13:20:00", true, "4f2a91aa"),
         member("gpu", "computer", ["bo"], "bo", "03:30:00", true, "be3f0a77"),
+        { ...member("lab-a-01", "computer", [], "me", "11:02:00", true, "31d0c8e5"), managed: true, code: LAB_CODE },
+        { ...member("lab-a-02", "computer", [], "me", "12:31:00", false, "8a4b2f60"), managed: true, code: LAB_CODE },
+        member("cy-mac", "computer", ["cy"], "cy", "09:20:00", true, "e7c13d52"),
       ],
+      tokens: [{ key: LAB_CODE, account: "me", label: "机房 A", kind: "computer", managed: true, uses: 40, used: 2, expires: daysAhead(6) }],
       shares: [{ machine: "lab", account: "ada" }],
       assists: [
         { machine: "desktop", account: "ada", agent: "codex", home: "C:\\Users\\me\\.codex-work", until: daysAhead(3) },
@@ -189,7 +202,11 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         { name: "mark50", owner: "me", granted: ["ada"] },
         ...(two ? [] : [{ name: "ingest", owner: "me", granted: [] }]),
       ],
-      arrivals: [{ hub: HOME, account: "me", name: "pixel", device: true, noticed_at: at("13:20:00") }],
+      arrivals: [
+        { hub: HOME, account: "me", name: "pixel", device: true, noticed_at: at("13:20:00") },
+        { hub: HOME, account: "me", name: "lab-a-01", device: false, noticed_at: at("11:02:00"), code: LAB_CODE },
+        { hub: HOME, account: "me", name: "lab-a-02", device: false, noticed_at: at("12:31:00"), code: LAB_CODE },
+      ],
     },
   ];
   if (two) {
@@ -396,6 +413,52 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
     },
   };
   return { world, now: new Date(at("13:40:00")), lastVisit: new Date(at("04:30:00")) };
+}
+
+/** This desktop as a managed machine of me on home (`world-network.md`,
+ *  受管机器): logged in to nothing, seeing only itself; taken off the
+ *  network when `removed`. */
+export function specimenAsManaged(world: WorldNow, removed = false): WorldNow {
+  const home = world.accounts.hubs.find((hub) => hub.hub === HOME);
+  if (!home) return world;
+  const me = home.members.find((member) => member.name === world.here);
+  const link: LinkState = removed ? { kind: "stopped", reason: "removed by me" } : home.link;
+  const hub: HubAccounts = {
+    ...home,
+    link,
+    logins: [],
+    home: "me",
+    accounts: home.accounts.filter((account) => account.name === "me"),
+    members: me ? [{ ...me, logins: [], managed: true, code: LAB_CODE }] : [],
+    shares: [],
+    assists: [],
+    plans: [],
+    acting: [],
+    projects: [],
+    arrivals: [],
+    tokens: [],
+  };
+  return { ...world, accounts: { ...world.accounts, hubs: [hub] }, nodes: { ...world.nodes, hubs: [] } };
+}
+
+/** This desktop's account on home as a visitor whom ada, the administrator
+ *  now, asked to become a member (`world-network.md`, 一个中枢，几个账号). */
+export function specimenAsVisitor(world: WorldNow): WorldNow {
+  const hubs = world.accounts.hubs.map((hub) =>
+    hub.hub !== HOME
+      ? hub
+      : {
+          ...hub,
+          accounts: hub.accounts.map((account) =>
+            account.name === "me" ? { ...account, level: "visitor" as const, promotion: true } : account.name === "ada" ? { ...account, level: "super" as const } : account,
+          ),
+          shares: [],
+          assists: [],
+          tokens: [],
+          arrivals: hub.arrivals.filter((arrival) => !arrival.code),
+        },
+  );
+  return { ...world, accounts: { ...world.accounts, hubs } };
 }
 
 /** The same morning as the shell answers it: what `world_now` returns. */

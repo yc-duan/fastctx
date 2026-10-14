@@ -514,6 +514,12 @@ pub enum Call {
         register: bool,
         name: Option<MachineName>,
     },
+    /// What the token `token` lets this computer into, asked of its hub
+    /// before it is used: whose, which network, whether as a managed
+    /// machine; and whether this computer may come in that way.
+    PeekToken {
+        token: String,
+    },
     /// Logs this computer in with an enrollment token.
     LoginWithToken {
         token: String,
@@ -551,6 +557,10 @@ pub enum Call {
         account: crate::AccountName,
         name: Option<MachineName>,
         expires: Timestamp,
+        /// The server becomes a managed machine of the account
+        /// (`world-network.md`, 受管机器).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        managed: bool,
     },
     /// Moving the hub named `hub`, or the one hub, as `account`, its super
     /// administrator (`crate::hub_move`).
@@ -740,6 +750,13 @@ pub enum Reply {
         hub: crate::HubName,
         name: MachineName,
         account: crate::AccountName,
+    },
+    /// What a token lets this computer into; none from a hub that says
+    /// nothing of a token before it is used (its tokens are never for
+    /// managed machines).
+    TokenPeek {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        peeked: Option<crate::accounts::TokenPeek>,
     },
     /// An account change was made; a token, when it made one.
     Changed {

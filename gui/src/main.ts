@@ -24,10 +24,12 @@ import "./app/me.css";
 import "./app/when.css";
 import "./app/assist.css";
 import "./app/machines.css";
+import "./app/machine-list.css";
 import "./app/machine-page.css";
 import "./app/agents.css";
 import "./app/features.css";
 import "./app/removal.css";
+import "./app/managed.css";
 import "./app/data-page.css";
 import "./app.css";
 import "./conversation/talk-usage.css";
@@ -59,6 +61,9 @@ import { untilAnswered, whyOf } from "./world/again";
 import { enFeatures, zhFeatures } from "./app/features-words";
 import { accountOf, enHomes, homeChoice, homeLabel, homesOf, installed, loggedOut, zhHomes } from "./app/agent-homes";
 import { Tokens } from "./app/tokens";
+import { ManagedPage, managedOf } from "./app/managed-page";
+import { enManaged, zhManaged } from "./app/managed-words";
+import { RemovalSheet } from "./app/removal-sheet";
 import { NewTalk } from "./app/new-talk";
 import { enModelPanel, zhModelPanel } from "./conversation/model-panel";
 import "./app/new-talk.css";
@@ -144,13 +149,13 @@ import { markdownOf } from "./conversation/export";
 import { specimens, type Specimen } from "./specimen/sessions";
 import { answering, playLater, playTimed, streamSpecimen } from "./specimen/streams";
 import { specimenAgentRecord } from "./specimen/agents";
-import { specimenAgents, specimenChange, specimenNow, specimenRenameHere } from "./specimen/world";
+import { specimenAgents, specimenAsManaged, specimenAsVisitor, specimenChange, specimenNow, specimenRenameHere } from "./specimen/world";
 import { specimenHubMove } from "./specimen/hub-move";
 import { specimenRemote } from "./specimen/remote";
 import { specimenNameProblem } from "./specimen/names";
 import { specimenMachineLog } from "./specimen/machine-log";
 import type { RemoteSeams } from "./app/remote-world";
-import { specimenClaudeOffers, specimenComputer, specimenFiles, specimenOffers, specimenOutput, specimenPhone, specimenPicture, specimenRead, specimenUpload } from "./specimen/seams";
+import { specimenClaudeOffers, specimenComputer, specimenFiles, specimenOffers, specimenOutput, specimenPeek, specimenPhone, specimenPicture, specimenRead, specimenUpload } from "./specimen/seams";
 import { RemoteLines } from "./world/remote-lines";
 import { specimenLines } from "./specimen/run-facts";
 import { applyTheme, chooseTheme, currentTheme, themes } from "./theme";
@@ -225,6 +230,7 @@ import {
   type WorldNow,
   login,
   loginToken,
+  peekToken,
   nameProblem,
   openAccount,
   createWorld,
@@ -266,6 +272,11 @@ const shellWords = english ? enShell : zhShell;
 document.documentElement.lang = english ? "en" : "zh-CN";
 
 const specimen = specimenNow(params.get("accounts") === "2");
+// `?managed`: this computer as a managed machine; `?managed=removed`, one
+// its owner took off the network.
+if (params.has("managed")) specimen.world = specimenAsManaged(specimen.world, params.get("managed") === "removed");
+// `?visitor`: this computer's account a visitor asked to become a member.
+if (params.has("visitor")) specimen.world = specimenAsVisitor(specimen.world);
 // `?accounts=0`: a computer in no World yet, as on its first open.
 if (params.get("accounts") === "0") {
   specimen.world.accounts.hubs = [];
@@ -575,8 +586,23 @@ const tokens = new Tokens({
           expires: new Date(Date.now() + hours * 3_600_000).toISOString(),
         }).then((token) => token ?? Promise.reject(new Error("the hub made no token")))
       : Promise.resolve(`FX5${"0SPECIMEN0NOT0A0REAL0TOKEN".repeat(4)}${hours}`),
-  server: (login, name, hours) =>
-    live ? serverCommand(login.hubName, login.account, name, hours) : Promise.resolve("echo 'Specimen: no real token or download'"),
+  // A code for managed machines; the specimen's lets nobody in either.
+  managed: (login, label, uses, hours) =>
+    live
+      ? accountChange(login.hubName, login.account, {
+          change: "token",
+          register: true,
+          name: null,
+          kind: "computer",
+          expires: new Date(Date.now() + hours * 3_600_000).toISOString(),
+          managed: true,
+          ...(uses === 1 ? {} : { uses }),
+          ...(label ? { label } : {}),
+        }).then((token) => token ?? Promise.reject(new Error("the hub made no token")))
+      : Promise.resolve(`FX5${"0SPECIMEN0NOT0A0REAL0CODE".repeat(5)}`),
+  server: (login, name, hours, managed) =>
+    live ? serverCommand(login.hubName, login.account, name, hours, managed) : Promise.resolve("echo 'Specimen: no real token or download'"),
+  manages: (login) => !live || !!store.world.peek()?.accounts.hubs.find((hub) => hub.hub === login.hub)?.managed,
   when: (at) => when(at, new Date()),
   nameProblem: live ? nameProblem : specimenNameProblem,
   // Over SSH only from a computer: a phone carries no Linux program.
@@ -586,15 +612,21 @@ const tokens = new Tokens({
       : {
           seams: live ? remoteSeams : specimenRemote(),
           words: english ? enLogin : zhLogin,
-          token: (login, machine) =>
+          token: (login, machine, managed) =>
             live
-              ? accountChange(login.hubName, login.account, { change: "token", register: true, name: machine, kind: "computer", expires: new Date(Date.now() + 3_600_000).toISOString() }).then(
+              ? accountChange(login.hubName, login.account, { change: "token", register: true, name: machine, kind: "computer", expires: new Date(Date.now() + 3_600_000).toISOString(), ...(managed ? { managed: true } : {}) }).then(
                   (token) => token ?? Promise.reject(new Error("the hub made no token")),
                 )
               : Promise.resolve("FX5SPECIMEN"),
           added: () => void store.refresh(),
         },
 });
+
+/** Taking fastctx off this computer, from wherever it is asked for. */
+const removal = (() => {
+  const removing = live ? (onComputer() ? { plan: removalPlan, run: removeHere, finish: removeApp } : undefined) : specimenComputer().removing;
+  return removing ? new RemovalSheet(english ? enRemoval : zhRemoval, removing) : undefined;
+})();
 
 const journalForm = new JournalForm({
   words: projectWords,
@@ -1682,8 +1714,13 @@ function show(next: Place): void {
   const onlyWayIn = next.kind === "login" && asDevice && !loginsOf(store.world.peek()?.accounts).length;
   backName = !inner(next) || onlyWayIn ? null : came ? came.title : placeName(parent);
   place = next;
+  // A managed machine has one page, with nothing beside it (`world-gui.md`,
+  // 受管机器上的界面).
+  const managed = !!managedOf(store.world.peek()?.accounts);
+  shell.alone(managed);
   let page: Page;
-  switch (next.kind) {
+  if (managed) page = managedPage();
+  else switch (next.kind) {
     case "home":
       page = home();
       break;
@@ -1867,7 +1904,9 @@ function show(next: Place): void {
         setup: asDevice ? undefined : () => (live ? setupState() : Promise.reject(new Error("specimen"))),
         place: asDevice ? undefined : () => (live ? placeFastctx() : notLive()),
         login: (hub, account, password, register, name) => (live ? login(hub, account, password, register, name) : notLive()),
-        loginToken: (token, name) => (live ? loginToken(token, name) : notLive()),
+        loginToken: (token, name) => (live ? loginToken(token, name) : specimenJoin(token)),
+        peekToken: asDevice ? undefined : (token) => (live ? peekToken(token) : specimenPeek(token)),
+        remove: asDevice || !removal ? undefined : () => removal.open(true),
         openAccount: asDevice ? undefined : (hub, account, password, register, name) => (live ? openAccount(hub, account, password, register, name) : notLive()),
         addresses: asDevice ? undefined : () => (live ? hereAddresses() : Promise.resolve(specimenAddresses)),
         // A specimen pretends, so the page after it can be looked at.
@@ -1977,6 +2016,7 @@ function show(next: Place): void {
                 setup: setupState,
                 keep: keepHere,
                 removing: { plan: removalPlan, run: removeHere, finish: removeApp },
+                removal,
                 dataSize: async () => {
                   const reply = await data({ do: "list" });
                   return reply.data === "listed" ? totalOf(reply) : 0;
@@ -1994,13 +2034,59 @@ function show(next: Place): void {
                 updating,
               }
             : undefined
-          : specimenComputer(),
+          : { ...specimenComputer(), removal },
       });
       break;
   }
   shell.show(next, page);
   shownPage = page;
   setPageBack(!inner(next) ? null : came ? () => history.back() : () => { location.hash = link(parent); });
+}
+
+/** The one page of a managed machine. */
+function managedPage(): Page {
+  return new ManagedPage({
+    store,
+    words: english ? enManaged : zhManaged,
+    when: (at, now) => when(at, now),
+    leave: async (hub, owner) => {
+      if (live) await accountChange(hub.name, owner, { change: "logout" });
+      else specimenLeaveManaged();
+    },
+    // Joining again starts from this computer off the network it was
+    // taken off: its link there ended, and a code brings it in anew.
+    rejoin: () => {
+      const found = managedOf(store.world.peek()?.accounts);
+      const leaving = found ? (live ? accountChange(found.hub.name, found.me.home ?? "", { change: "logout" }) : Promise.resolve(specimenLeaveManaged())) : Promise.resolve();
+      void leaving
+        .catch((error: unknown) => console.error("leaving the network this computer was taken off", error))
+        .then(() => store.refresh())
+        .then(() => {
+          location.hash = link({ kind: "login", way: "code" });
+        });
+    },
+    remove: removal ? () => removal.open() : undefined,
+    confirm: accountConfirm,
+  });
+}
+
+/** In the specimen, a computer that leaves the network it was a managed
+ *  machine on is in none after. */
+function specimenLeaveManaged(): void {
+  const world = store.world.peek();
+  if (!world) return;
+  const hubs = world.accounts.hubs.filter((hub) => !managedOf({ ...world.accounts, hubs: [hub] }));
+  store.world.set({ ...world, accounts: { ...world.accounts, hubs } });
+}
+
+/** In the specimen, joining by a code for managed machines makes this
+ *  computer one, so the page after it can be looked at. */
+async function specimenJoin(token: string) {
+  const peeked = await specimenPeek(token);
+  const world = store.world.peek();
+  if (!peeked?.managed || peeked.refused || !world) return notLive();
+  store.world.set(specimenAsManaged(world));
+  return { hub: peeked.hub, name: world.here, account: peeked.account, kept: { kind: "installed" as const } };
 }
 
 /** In a plain browser, `?s=` names what to look at when the address does
@@ -2182,6 +2268,15 @@ applyTheme(() => {
   openPage?.contextChanged();
 });
 show(specimenPlace() ?? placeOf(location.hash));
+// Becoming a managed machine, or no longer being one, changes the whole
+// window (`world-gui.md`, 受管机器上的界面).
+let shownAlone = !!managedOf(store.world.peek()?.accounts);
+effect(() => {
+  const alone = !!managedOf(store.world.get()?.accounts);
+  if (alone === shownAlone) return;
+  shownAlone = alone;
+  show(place);
+});
 // A device logged in nowhere has nothing to show but the way in.
 if (live) {
   void connectionState().then((state) => {

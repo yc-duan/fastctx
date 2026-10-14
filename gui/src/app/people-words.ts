@@ -20,6 +20,24 @@ export interface PeopleWords {
   unlock: string;
   makeAdmin: string;
   removePerson: string;
+  /** What a person is (`world-network.md`, 一个中枢，几个账号): the two
+   *  choices when adding one, each with what it means; making one a
+   *  visitor at once, or asking them to become a member; and the tags on
+   *  a box. */
+  roleMember: string;
+  roleMemberWhat: string;
+  roleVisitor: string;
+  roleVisitorWhat: string;
+  makeVisitor: string;
+  makeMember: string;
+  cancelMember: string;
+  visitorTitle(account: string): string;
+  visitorWhat: string;
+  visitorGo: string;
+  memberAsked(account: string): string;
+  memberCancelled(account: string): string;
+  visitorTag: string;
+  waitingTag: string;
   addTitle: string;
   name: string;
   nameHint: string;
@@ -73,6 +91,20 @@ export const zhPeople: PeopleWords = {
   unlock: "解锁",
   makeAdmin: "交出管理员",
   removePerson: "移除这个人",
+  roleMember: "成员",
+  roleMemberWhat: "你用得了这个人的每台机器",
+  roleVisitor: "访客",
+  roleVisitorWhat: "机器只归这个人自己，你只看得到有哪几台",
+  makeVisitor: "改成访客",
+  makeMember: "改成成员",
+  cancelMember: "撤回改成成员",
+  visitorTitle: (account) => `把 ${account} 改成访客？`,
+  visitorWhat: "当场生效：这个人的机器你不再用得了，只看得到有哪几台；这个人给出的共享与协助随之收回。",
+  visitorGo: "改成访客",
+  memberAsked: (account) => `等 ${account} 同意`,
+  memberCancelled: (account) => `${account} 照旧是访客`,
+  visitorTag: "访客",
+  waitingTag: "等待同意",
   addTitle: "加一个人",
   name: "名字",
   nameHint: "小写字母开头，可含数字和连字符",
@@ -110,7 +142,7 @@ export const zhPeople: PeopleWords = {
   signUp: "开放注册",
   signUpState: (on) => (on ? "开放注册：开" : "开放注册：关"),
   signUpTitle: "开放注册？",
-  signUpWhat: "能连上这台中枢服务器的任何人都能自己注册一个成员账号；中枢服务器在公网上时，陌生人也能注册。",
+  signUpWhat: "能连上这台中枢服务器的任何人都能自己注册一个访客账号；中枢服务器在公网上时，陌生人也能注册。",
   signUpGo: "开放",
   signUpOpened: "已开放注册",
   signUpClosed: "已关闭注册",
@@ -129,6 +161,20 @@ export const enPeople: PeopleWords = {
   unlock: "Unlock",
   makeAdmin: "Hand over admin",
   removePerson: "Remove this person",
+  roleMember: "Member",
+  roleMemberWhat: "You can use every machine of theirs",
+  roleVisitor: "Visitor",
+  roleVisitorWhat: "Their machines are theirs alone; you only see which there are",
+  makeVisitor: "Make a visitor",
+  makeMember: "Make a member",
+  cancelMember: "Keep as a visitor",
+  visitorTitle: (account) => `Make ${account} a visitor?`,
+  visitorWhat: "At once: you can no longer use their machines, only see which there are; what they shared and let assist is taken back.",
+  visitorGo: "Make a visitor",
+  memberAsked: (account) => `Waiting for ${account} to agree`,
+  memberCancelled: (account) => `${account} stays a visitor`,
+  visitorTag: "visitor",
+  waitingTag: "waiting to agree",
   addTitle: "Add a person",
   name: "Name",
   nameHint: "Starts with a lowercase letter; digits and hyphens allowed",
@@ -166,7 +212,7 @@ export const enPeople: PeopleWords = {
   signUp: "Open sign-up",
   signUpState: (on) => (on ? "Open sign-up: on" : "Open sign-up: off"),
   signUpTitle: "Open sign-up?",
-  signUpWhat: "Anyone who can reach this hub will be able to create a member account; if the hub is on the internet, strangers can too.",
+  signUpWhat: "Anyone who can reach this hub will be able to create a visitor account; if the hub is on the internet, strangers can too.",
   signUpGo: "Open",
   signUpOpened: "Sign-up opened",
   signUpClosed: "Sign-up closed",

@@ -90,10 +90,7 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
     }
     let view = link.view();
     view.admits(&caller.machine, &caller.account, &here, call.purpose()).map_err(refuse)?;
-    // Which logins this machine lists, and what is put into them, is its
-    // owner's alone (`world-agent-logins.md`): shared or administered, the
-    // machine is not another account's to scan or change.
-    if matches!(
+    let agents_here = matches!(
         call,
         RemoteCall::ScanAgents { .. }
             | RemoteCall::AddAgentLogin { .. }
@@ -101,8 +98,16 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
             | RemoteCall::SetAgentTitle { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }
-    ) && view.member(&here).and_then(|member| member.home.as_ref()) != Some(&caller.account)
-    {
+    );
+    // A managed machine's agents work for no one: nobody scans them or puts
+    // the World's tools in them, its owner neither (`world-network.md`, 受管机器).
+    if (agents_here || matches!(call, RemoteCall::ClaudeConsent { .. })) && view.me().is_some_and(|me| me.managed) {
+        return Err(refuse(format!("{here} is a managed machine, whose agents work for no one")));
+    }
+    // Which logins this machine lists, and what is put into them, is its
+    // owner's alone (`world-agent-logins.md`): shared or administered, the
+    // machine is not another account's to scan or change.
+    if agents_here && view.member(&here).and_then(|member| member.home.as_ref()) != Some(&caller.account) {
         return Err(refuse(format!(
             "only {here}'s owner scans it or changes its agents, not the account {}",
             caller.account

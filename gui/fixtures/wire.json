@@ -3,7 +3,7 @@
     {
       "records": [
         {
-          "id": 30,
+          "id": 35,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -20,7 +20,7 @@
           }
         },
         {
-          "id": 29,
+          "id": 34,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -39,7 +39,7 @@
           }
         },
         {
-          "id": 28,
+          "id": 33,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -61,7 +61,7 @@
           }
         },
         {
-          "id": 27,
+          "id": 32,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -84,7 +84,7 @@
           }
         },
         {
-          "id": 26,
+          "id": 31,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -104,7 +104,7 @@
           }
         },
         {
-          "id": 25,
+          "id": 30,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -124,7 +124,7 @@
           }
         },
         {
-          "id": 24,
+          "id": 29,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -141,7 +141,7 @@
           }
         },
         {
-          "id": 23,
+          "id": 28,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -166,7 +166,7 @@
           }
         },
         {
-          "id": 22,
+          "id": 27,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -184,7 +184,7 @@
           }
         },
         {
-          "id": 21,
+          "id": 26,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -204,7 +204,7 @@
           }
         },
         {
-          "id": 20,
+          "id": 25,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -222,7 +222,7 @@
           }
         },
         {
-          "id": 19,
+          "id": 24,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": null,
@@ -240,7 +240,7 @@
           }
         },
         {
-          "id": 18,
+          "id": 23,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -258,7 +258,7 @@
           }
         },
         {
-          "id": 17,
+          "id": 22,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -274,7 +274,7 @@
           }
         },
         {
-          "id": 16,
+          "id": 21,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -294,7 +294,81 @@
           }
         },
         {
-          "id": 15,
+          "id": 20,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "token",
+            "register": true,
+            "name": null,
+            "kind": "computer",
+            "expires": "2026-10-10T12:00:00Z",
+            "managed": true,
+            "label": "机房 A"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 19,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "revoke_token",
+            "label": "机房 A"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 18,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "set_role",
+            "name": "bo",
+            "visitor": true
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 17,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "accept_role",
+            "accept": true
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 16,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -311,7 +385,7 @@
           }
         },
         {
-          "id": 14,
+          "id": 15,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -328,7 +402,7 @@
           }
         },
         {
-          "id": 13,
+          "id": 14,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -345,7 +419,7 @@
           }
         },
         {
-          "id": 12,
+          "id": 13,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -363,7 +437,7 @@
           }
         },
         {
-          "id": 11,
+          "id": 12,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -380,7 +454,7 @@
           }
         },
         {
-          "id": 10,
+          "id": 11,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -397,7 +471,7 @@
           }
         },
         {
-          "id": 9,
+          "id": 10,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -414,7 +488,7 @@
           }
         },
         {
-          "id": 8,
+          "id": 9,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -432,7 +506,7 @@
           }
         },
         {
-          "id": 7,
+          "id": 8,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -452,7 +526,7 @@
           }
         },
         {
-          "id": 6,
+          "id": 7,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -471,7 +545,7 @@
           }
         },
         {
-          "id": 5,
+          "id": 6,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -491,7 +565,7 @@
           }
         },
         {
-          "id": 4,
+          "id": 5,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -505,6 +579,27 @@
             "kind": "web",
             "registered": false,
             "via": "token"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 4,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "joined",
+            "name": "laptop",
+            "kind": "computer",
+            "registered": true,
+            "via": "token",
+            "managed": true
           },
           "outcome": {
             "kind": "done"
@@ -1530,6 +1625,8 @@
             },
             "me": "desktop",
             "renames": true,
+            "managed": true,
+            "roles": true,
             "logins": [
               "ada"
             ],
@@ -1547,6 +1644,13 @@
                 "level": "member",
                 "locked": false,
                 "opened": "2026-10-09T08:30:00Z"
+              },
+              {
+                "name": "cy",
+                "level": "visitor",
+                "locked": false,
+                "opened": "2026-10-09T08:30:00Z",
+                "promotion": true
               }
             ],
             "members": [
@@ -1625,6 +1729,19 @@
                 "since": null,
                 "through": null,
                 "key": "4f2a91aa"
+              },
+              {
+                "name": "lab-a-01",
+                "kind": "computer",
+                "logins": [],
+                "home": "ada",
+                "added": "2026-10-09T08:30:00Z",
+                "online": true,
+                "since": "2026-10-09T08:30:00Z",
+                "through": null,
+                "key": "9d3e0c71",
+                "managed": true,
+                "code": "Zm9yLXRoZS1maXh0dXJlLW9ubHktbm90LWEta2V5"
               }
             ],
             "shares": [
@@ -1689,6 +1806,18 @@
                 "up": true,
                 "ms": 41,
                 "since": "2026-10-09T08:30:00Z"
+              }
+            ],
+            "tokens": [
+              {
+                "key": "Zm9yLXRoZS1maXh0dXJlLW9ubHktbm90LWEta2V5",
+                "account": "ada",
+                "label": "机房 A",
+                "kind": "computer",
+                "managed": true,
+                "uses": 40,
+                "used": 12,
+                "expires": "2026-10-09T08:30:00Z"
               }
             ]
           }
@@ -1776,6 +1905,29 @@
         "expires": "2026-10-09T08:30:00Z"
       },
       {
+        "change": "token",
+        "register": true,
+        "name": "rack",
+        "kind": "computer",
+        "expires": "2026-10-09T08:30:00Z",
+        "managed": true,
+        "uses": 40,
+        "label": "机房 A"
+      },
+      {
+        "change": "revoke_token",
+        "token": "Zm9yLXRoZS1maXh0dXJlLW9ubHktbm90LWEta2V5"
+      },
+      {
+        "change": "set_role",
+        "name": "cy",
+        "visitor": false
+      },
+      {
+        "change": "accept_role",
+        "accept": true
+      },
+      {
         "change": "set_password",
         "target": "ada",
         "password": "fixture"
@@ -1784,6 +1936,12 @@
         "change": "open_account",
         "name": "bo",
         "password": "fixture"
+      },
+      {
+        "change": "open_account",
+        "name": "cy",
+        "password": "fixture",
+        "visitor": true
       },
       {
         "change": "set_account",
@@ -1882,6 +2040,41 @@
       {
         "files_on": "laptop"
       }
+    ],
+    "peeks": [
+      {
+        "hub": "home",
+        "account": "ada",
+        "managed": true,
+        "label": "机房 A",
+        "expires": "2026-10-09T08:30:00Z"
+      },
+      {
+        "hub": "home",
+        "account": "ada",
+        "managed": true,
+        "expires": "2026-10-09T08:30:00Z",
+        "refused": {
+          "why": "conversations"
+        }
+      },
+      {
+        "hub": "home",
+        "account": "ada",
+        "managed": true,
+        "expires": "2026-10-09T08:30:00Z",
+        "refused": {
+          "why": "unknown",
+          "detail": "access denied"
+        }
+      },
+      {
+        "hub": "home",
+        "account": "ada",
+        "managed": false,
+        "expires": "2026-10-09T08:30:00Z"
+      },
+      null
     ]
   },
   "pages": {

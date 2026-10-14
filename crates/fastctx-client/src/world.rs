@@ -657,6 +657,15 @@ impl World {
         logged_in(self.ask(Call::Login { hub, account, password, register, name }).await?)
     }
 
+    /// What `token` lets this computer into, asked of its hub before it is
+    /// used; none from a hub that says nothing of a token before.
+    pub async fn peek_token(&self, token: String) -> Result<Option<fastctx_types::accounts::TokenPeek>, Error> {
+        match self.ask(Call::PeekToken { token }).await? {
+            Reply::TokenPeek { peeked } => Ok(peeked),
+            other => Err(unexpected(other)),
+        }
+    }
+
     /// Logs this computer in with an enrollment token.
     pub async fn login_with_token(
         &self,
@@ -762,8 +771,9 @@ impl World {
         account: AccountName,
         name: Option<MachineName>,
         expires: Timestamp,
+        managed: bool,
     ) -> Result<String, Error> {
-        match self.ask(Call::ServerCommand { hub, account, name, expires }).await? {
+        match self.ask(Call::ServerCommand { hub, account, name, expires, managed }).await? {
             Reply::ServerInvitation { command } => Ok(command),
             other => Err(unexpected(other)),
         }

@@ -67,6 +67,11 @@ export class RemovalSection {
     this.draw();
   }
 
+  /** Goes to one of the two ways, as if it were pressed. */
+  choose(everything: boolean): void {
+    this.act(everything ? "erase" : "keep", this.host);
+  }
+
   private nameTyped(state: Extract<State, { at: "plan" }>): boolean {
     return !(state.plan.everything && state.plan.hub) || state.typed.trim() === state.plan.hub.name;
   }

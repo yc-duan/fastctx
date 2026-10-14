@@ -33,17 +33,25 @@ impl MemberKind {
     }
 }
 
-/// What an account is on its hub (`world-network.md`, 账号只有两级).
+/// What an account is on its hub (`world-network.md`, 一个中枢，几个账号).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Level {
     /// The hub's first account, and its controller: it may do everything,
-    /// on every machine. A hub has one, who may hand it to another account.
+    /// on every member's machine. A hub has one, who may hand it to a
+    /// member.
     Super,
     /// Registers its own computers as machines, shares them, lets their
-    /// agents' logins assist other accounts, and opens projects.
+    /// agents' logins assist other accounts, and opens projects; the super
+    /// administrator may use its machines.
     #[default]
     Member,
+    /// Registers its own computers as machines that are its alone: nobody
+    /// else may use them, the super administrator included, who only sees
+    /// which there are. It shares none and lends no agent; what others
+    /// share with it, and the agents assisting it, it uses. Sent only to a
+    /// device that says it reads it (`Intent::Session.roles`).
+    Visitor,
 }
 
 /// A relay a machine connected through before direct connections replaced
@@ -163,19 +171,48 @@ pub enum AccountChange {
         to: MachineName,
     },
     Logout,
+    /// A token for another device; `managed` makes the computers that use
+    /// it managed machines of the account (`world-network.md`, 受管机器),
+    /// which only a hub that says so registers. `uses` is how many
+    /// computers may use it: one when none, any number at zero. `label`
+    /// names a code that is kept a while, as 「机房 A」.
     Token {
         register: bool,
         name: Option<MachineName>,
         kind: MemberKind,
         expires: Timestamp,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        managed: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uses: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
+    /// No device comes in with the token whose key is `token` any more;
+    /// those that came in stay.
+    RevokeToken {
+        token: String,
     },
     SetPassword {
         target: AccountName,
         password: String,
     },
+    /// Opens an account, a visitor's when `visitor`.
     OpenAccount {
         name: AccountName,
         password: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        visitor: bool,
+    },
+    /// The super administrator makes `name` a visitor, at once, or a
+    /// member, once the account itself agrees (`AcceptRole`).
+    SetRole {
+        name: AccountName,
+        visitor: bool,
+    },
+    /// The account agrees to become a member, or does not.
+    AcceptRole {
+        accept: bool,
     },
     SetAccount {
         name: AccountName,
@@ -235,6 +272,13 @@ pub struct HubAccounts {
     /// Whether the hub renames machines.
     #[serde(default)]
     pub renames: bool,
+    /// Whether the hub registers managed machines (`world-network.md`,
+    /// 受管机器).
+    #[serde(default)]
+    pub managed: bool,
+    /// Whether the hub has visitors (`world-network.md`, 一个中枢，几个账号).
+    #[serde(default)]
+    pub roles: bool,
     /// The accounts this computer is logged in to there.
     pub logins: Vec<AccountName>,
     /// The account this computer is registered under there, as a machine.
@@ -261,6 +305,10 @@ pub struct HubAccounts {
     /// them now.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<LinkSeen>,
+    /// The tokens this computer's logins there made that still let devices
+    /// in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tokens: Vec<TokenSeen>,
 }
 
 /// A device that logged in to an account, or a machine registered under
@@ -272,6 +320,74 @@ pub struct Arrival {
     pub name: MachineName,
     pub device: bool,
     pub noticed_at: Timestamp,
+    /// The token a managed machine came in by: those of one code are told
+    /// together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+}
+
+/// What a token lets a computer into, as its hub told before it is used.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenPeek {
+    pub hub: HubName,
+    pub account: AccountName,
+    /// It makes this computer a managed machine of `account`.
+    pub managed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub expires: Timestamp,
+    /// Why this computer may not come in by it, when it may not: a managed
+    /// machine starts from a World never used, on no other network.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused: Option<Unfit>,
+}
+
+/// Why a World may not become a managed machine (`world-network.md`,
+/// 受管机器): it starts from one never used, on no other network.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "why", rename_all = "snake_case")]
+pub enum Unfit {
+    /// This computer is on another network.
+    Network,
+    /// Its World has conversations.
+    Conversations,
+    /// An agent on this computer has the World's tools in it.
+    Integrated,
+    /// Whether an agent here has the World's tools is not known.
+    Unknown { detail: String },
+}
+
+impl std::fmt::Display for Unfit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Unfit::Network => f.write_str("this computer is on another network: a managed machine is on one network only"),
+            Unfit::Conversations => f.write_str(
+                "this computer's Fastctx has conversations: a managed machine starts from a Fastctx never used; remove Fastctx with everything first",
+            ),
+            Unfit::Integrated => f.write_str(
+                "agents on this computer have Fastctx's tools in them: a managed machine starts from a Fastctx never used; remove Fastctx with everything first",
+            ),
+            Unfit::Unknown { detail } => write!(f, "whether agents on this computer have Fastctx's tools in them is not known: {detail}"),
+        }
+    }
+}
+
+/// A token that still lets devices in, as the account that made it sees it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenSeen {
+    /// Its key, by which it is revoked.
+    pub key: String,
+    pub account: AccountName,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub kind: MemberKind,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub managed: bool,
+    /// How many computers may use it: any number at zero.
+    pub uses: u32,
+    /// How many have.
+    pub used: u32,
+    pub expires: Timestamp,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -280,6 +396,10 @@ pub struct AccountSeen {
     pub level: Level,
     pub locked: bool,
     pub opened: Timestamp,
+    /// Made a member by the super administrator, waiting for the account
+    /// to agree.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub promotion: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -311,6 +431,13 @@ pub struct MemberSeen {
     pub paths: Option<Paths>,
     /// The start of its key, to tell two devices of one name apart.
     pub key: String,
+    /// A managed machine: registered under `home`, logged in to nothing
+    /// (`world-network.md`, 受管机器).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub managed: bool,
+    /// The token it came in by, when one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }
 
 /// A machine shared with an account.

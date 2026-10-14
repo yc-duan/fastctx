@@ -204,6 +204,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             renames: true,
             afoot: true,
             forgets: true,
+            roles: true,
         },
     };
     match tokio::time::timeout(SILENCE, dial::send(&mut socket, &hello)).await {
@@ -459,6 +460,7 @@ async fn connected(
             Down::Refused { reason } => break refused(reason),
             Down::Welcome { .. }
             | Down::LoginResponse { .. }
+            | Down::TokenInfo { .. }
             | Down::RegisterResponse { .. }
             | Down::LoggedIn { .. }
             | Down::Registered
