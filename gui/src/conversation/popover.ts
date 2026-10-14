@@ -58,7 +58,11 @@ export class Popover {
       return;
     }
     this.leaving = true;
+    const before = getComputedStyle(this.panel).animationName;
     this.panel.classList.add("popover-leaving");
+    // A panel drawn with no way of leaving goes at once rather than never.
+    const after = getComputedStyle(this.panel).animationName;
+    if (after === "none" || after === before) this.settle();
   }
 
   toggle(): void {

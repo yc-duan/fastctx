@@ -332,7 +332,8 @@
   color: var(--accent);
 }
 
-.talk-menu-town[aria-checked="true"] {
+.talk-menu-town[aria-checked="true"],
+.talk-menu-choice[aria-checked="true"] {
   color: var(--text-strong);
 }
 
@@ -392,6 +393,40 @@
 
 @keyframes talk-menu-shade-in {
   from {
+    opacity: 0;
+  }
+}
+
+/* Put away, it fades where it stands, or sinks back down as a sheet. */
+.talk-menu.leaving {
+  pointer-events: none;
+  animation: talk-menu-leave 0.14s ease both;
+}
+
+.talk-menu.as-sheet.leaving {
+  animation: talk-menu-sink var(--fold) var(--fold-easing) both;
+}
+
+.talk-menu-shade.leaving {
+  pointer-events: none;
+  animation: talk-menu-shade-out var(--fold) ease both;
+}
+
+@keyframes talk-menu-leave {
+  to {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@keyframes talk-menu-sink {
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes talk-menu-shade-out {
+  to {
     opacity: 0;
   }
 }

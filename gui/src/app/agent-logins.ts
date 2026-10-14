@@ -23,6 +23,7 @@ import type { Folders } from "../world/focus";
 import type { AgentLogins, ChangePreview, FolderChange, Login, LoginChange, MachineLogins, WorldLogins } from "../world/logins";
 import type { UsageReport } from "../world/usage";
 import type { AccessWords } from "./account-words";
+import { ActsMenu, type MenuEntry } from "./acts-menu";
 import { AgentChangeSheet, type AgentChangeTarget, type AgentChangeWords } from "./agent-change";
 import { foldersSection, foundOf, freshness, searching } from "./agent-folders";
 import { dirName, loginRow, planName, programLine } from "./agent-login-row";
@@ -95,6 +96,13 @@ const FRESH_MS = 2400;
  *  it was last read; it is the machine's own ledger, no model is asked. */
 const USAGE_STALE_MS = 60_000;
 
+/** One menu for the rows' 「⋯」, however often the page is opened. */
+let shared: ActsMenu | null = null;
+function rowsMenu(): ActsMenu {
+  shared ??= new ActsMenu();
+  return shared;
+}
+
 export class AgentLoginsPage implements Page {
   readonly element: HTMLElement;
   readonly title: string;
@@ -123,7 +131,7 @@ export class AgentLoginsPage implements Page {
   private taking = new Set<string>();
   /** Rows just added, shown as new for a moment, each with when. */
   private fresh = new Map<string, number>();
-  private menu: { element: HTMLElement; popover: Popover } | null = null;
+  private readonly menu = rowsMenu();
   private machines: { element: HTMLElement; popover: Popover } | null = null;
   private pickDrawn = "";
   private drawn = "";
@@ -191,6 +199,7 @@ export class AgentLoginsPage implements Page {
     this.stop();
     clearTimeout(this.following);
     this.machines?.element.remove();
+    this.menu.close();
   }
 
   /** Reads the machine shown once the World knows it, unless its record
@@ -594,8 +603,9 @@ export class AgentLoginsPage implements Page {
     }
   }
 
-  /** The row's 「⋯」: remove, assist others, read the limits again, the
-   *  directory, and on a token login the plan the administrator shows. */
+  /** The row's 「⋯」: assist others, read the limits again, copy where its
+   *  directory is, on a token login the plan the administrator shows, and
+   *  last, apart from the rest, removing it. */
   private openMenu(anchor: HTMLElement, machineName: string, dir: string): void {
     const { words, store } = this.options;
     const found = this.find(machineName, dir);
@@ -605,30 +615,23 @@ export class AgentLoginsPage implements Page {
     const identity = login.identity?.who.kind === "known" ? login.identity.who.value : null;
     const owner = found.machine.ownerLogin;
     const admin = !!owner && !!this.hubOf(owner, world)?.accounts.some((account) => account.level === "super" && account.name === owner.account);
-    const plans: (PlanLabel | null)[] = ["max", "pro", "free", null];
-    this.menu?.element.remove();
-    const element = document.createElement("div");
-    element.className = "map-menu logins-menu";
-    element.setAttribute("role", "menu");
-    element.innerHTML = [
-      found.machine.mine ? `<button class="map-menu-item danger" type="button" role="menuitem" data-menu="remove">${glyph("archive", 16)}<span>${escape(words.remove)}</span></button>` : "",
-      owner ? `<button class="map-menu-item" type="button" role="menuitem" data-menu="assist">${glyph("person", 16)}<span>${escape(words.assist)}</span></button>` : "",
-      this.options.workbench.peek() ? `<button class="map-menu-item" type="button" role="menuitem" data-menu="limits">${glyph("reread", 16)}<span>${escape(words.rereadLimits)}</span></button>` : "",
-      `<button class="map-menu-item" type="button" role="menuitem" data-menu="copy" title="${escape(login.dir)}">${glyph("folder", 16)}<span>${escape(words.copyDir)}</span></button>`,
-      identity?.method === "oauth_token" && admin
-        ? `<div class="logins-menu-plan"><span>${escape(words.plan)}</span>${plans.map((plan) => `<button class="choice" type="button" data-menu="plan" data-plan="${plan ?? ""}">${escape(plan ? planName(plan) : words.planNone)}</button>`).join("")}</div>`
-        : "",
-    ].join("");
-    anchor.closest(".logins-row")!.append(element);
-    const popover = new Popover(element, anchor, () => element.remove());
-    this.menu = { element, popover };
-    popover.show();
-    element.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const item = (event.target as HTMLElement).closest<HTMLElement>("[data-menu]");
-      if (!item) return;
-      popover.hide();
-      void this.menuAct(item.dataset.menu!, item.dataset.plan ?? "", machineName, dir);
+    const entries: MenuEntry[] = [];
+    if (owner) entries.push({ act: "assist", icon: "person", label: words.assist });
+    if (this.options.workbench.peek()) entries.push({ act: "limits", icon: "reread", label: words.rereadLimits });
+    entries.push({ act: "copy", icon: "folder", label: words.copyDir });
+    if (identity?.method === "oauth_token" && admin) {
+      const current = this.planOf(found.machine, login, world);
+      const plans: (PlanLabel | null)[] = ["max", "pro", "free", null];
+      entries.push(
+        { rule: true },
+        { note: words.plan },
+        ...plans.map((plan) => ({ act: `plan:${plan ?? ""}`, label: plan ? planName(plan) : words.planNone, checked: current === plan })),
+      );
+    }
+    if (found.machine.mine) entries.push({ rule: true }, { act: "remove", icon: "archive", label: words.remove, danger: true });
+    this.menu.open(anchor, identity?.email ?? dirName(login.dir), entries, (act) => {
+      if (act.startsWith("plan:")) void this.menuAct("plan", act.slice("plan:".length), machineName, dir);
+      else void this.menuAct(act, "", machineName, dir);
     });
   }
 

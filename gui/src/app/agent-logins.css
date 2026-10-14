@@ -765,23 +765,6 @@
   }
 }
 
-.logins-menu {
-  position: absolute;
-  top: calc(50% + 18px);
-  right: var(--space-3);
-  z-index: 10;
-}
-
-.logins-menu-plan {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  padding: var(--space-2);
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
 /* The change card. It fits the screen whole; only its opened details
    scroll, in their own place, its head and foot staying put. */
 .agent-change-sheet .sheet-body {

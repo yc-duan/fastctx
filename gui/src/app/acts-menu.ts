@@ -1,7 +1,8 @@
 // A short menu of what can be done to one thing, opened by its "⋯": beside
 // the button on a computer, rising from below on a narrow screen, drawn as
-// a conversation's "⋯" is (`talk-menu.css`). A press outside, Escape or the
-// system back closes it.
+// a conversation's "⋯" is (`talk-menu.css`). Its button pressed again, a
+// press outside, Escape, the system back, the page scrolling or the window
+// resizing closes it.
 
 import { glyph, type GlyphName } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -9,10 +10,15 @@ import { layerOpened, type Layer } from "./back";
 
 export interface MenuAct {
   act: string;
-  icon: GlyphName;
+  icon?: GlyphName;
   label: string;
   danger?: boolean;
+  /** One of a set to choose from: marked when it is the one chosen. */
+  checked?: boolean;
 }
+
+/** An act, a rule between groups, or a quiet label over a group. */
+export type MenuEntry = MenuAct | { rule: true } | { note: string };
 
 const narrow = matchMedia("(max-width: 760px)");
 
@@ -21,7 +27,8 @@ export class ActsMenu {
   private readonly shade: HTMLElement;
   private anchor: HTMLElement | null = null;
   private chosen: ((act: string) => void) | null = null;
-  private readonly layer: Layer = { isOpen: () => !this.element.hidden, close: () => this.close() };
+  private shown = false;
+  private readonly layer: Layer = { isOpen: () => this.shown, close: () => this.close() };
 
   constructor() {
     this.shade = document.createElement("div");
@@ -46,37 +53,47 @@ export class ActsMenu {
         this.close();
       }
     });
+    this.element.addEventListener("animationend", (event) => {
+      if (event.target === this.element && !this.shown) this.settle();
+    });
     document.addEventListener(
       "pointerdown",
       (event) => {
-        if (this.element.hidden) return;
+        if (!this.shown) return;
         const path = event.composedPath();
-        if (path.includes(this.element) || (this.anchor && path.includes(this.anchor))) return;
+        // Its own button is left to the press's click, which closes it.
+        if (path.includes(this.element) || path.some((node) => node instanceof HTMLElement && this.isAnchor(node))) return;
         this.close();
+      },
+      true,
+    );
+    // Beside a button that moved, it would point at nothing.
+    addEventListener("resize", () => this.close());
+    document.addEventListener(
+      "scroll",
+      (event) => {
+        if (this.shown && !this.element.contains(event.target as Node)) this.close();
       },
       true,
     );
   }
 
-  /** Opens beside `anchor` with `acts`, headed by `title` on a narrow
-   *  screen; pressed again, it closes. */
-  open(anchor: HTMLElement, title: string, acts: MenuAct[], chosen: (act: string) => void): void {
-    if (!this.element.hidden && this.anchor === anchor) return this.close();
+  /** Opens beside `anchor` with `entries`, headed by `title` on a narrow
+   *  screen; pressed again, it closes. A button the page draws anew while
+   *  the menu is open is known for the same by its `data-menu-key`. */
+  open(anchor: HTMLElement, title: string, entries: MenuEntry[], chosen: (act: string) => void): void {
+    if (this.shown && this.isAnchor(anchor)) return this.close();
     this.anchor = anchor;
     this.chosen = chosen;
     const sheet = narrow.matches;
     const head = sheet ? `<div class="talk-menu-head"><span class="talk-menu-name">${escape(title)}</span></div>` : "";
-    this.element.innerHTML =
-      head +
-      acts
-        .map(
-          (act) =>
-            `<button class="talk-menu-item${act.danger ? " danger" : ""}" type="button" role="menuitem" data-act="${escape(act.act)}">${glyph(act.icon, 16)}<span class="talk-menu-label">${escape(act.label)}</span></button>`,
-        )
-        .join("");
+    this.element.innerHTML = head + entries.map(entry).join("");
+    this.element.classList.remove("leaving");
+    this.shade.classList.remove("leaving");
     this.element.classList.toggle("as-sheet", sheet);
     this.shade.hidden = !sheet;
     this.element.hidden = false;
+    this.shown = true;
     anchor.setAttribute("aria-expanded", "true");
     if (!sheet) this.place(anchor);
     layerOpened(this.layer);
@@ -84,16 +101,37 @@ export class ActsMenu {
   }
 
   close(): void {
-    if (this.element.hidden) return;
-    this.element.hidden = true;
-    this.shade.hidden = true;
+    if (!this.shown) return;
+    this.shown = false;
     this.anchor?.setAttribute("aria-expanded", "false");
     if (this.element.contains(document.activeElement)) this.anchor?.focus({ preventScroll: true });
     this.anchor = null;
     this.chosen = null;
+    const before = getComputedStyle(this.element).animationName;
+    this.element.classList.add("leaving");
+    this.shade.classList.add("leaving");
+    // Where motion is off it goes at once.
+    const after = getComputedStyle(this.element).animationName;
+    if (after === "none" || after === before) this.settle();
   }
 
-  /** Under the button, its right edge on the button's, in the window. */
+  private settle(): void {
+    this.element.hidden = true;
+    this.shade.hidden = true;
+    this.element.classList.remove("leaving");
+    this.shade.classList.remove("leaving");
+  }
+
+  private isAnchor(node: HTMLElement): boolean {
+    const anchor = this.anchor;
+    if (!anchor) return false;
+    if (node === anchor) return true;
+    const key = anchor.dataset.menuKey;
+    return !!key && node.dataset.menuKey === key;
+  }
+
+  /** Under the button, its right edge on the button's, in the window;
+   *  above it where the window ends first. */
   private place(anchor: HTMLElement): void {
     const box = anchor.getBoundingClientRect();
     const width = this.element.offsetWidth;
@@ -104,4 +142,17 @@ export class ActsMenu {
     this.element.style.left = `${Math.round(left)}px`;
     this.element.style.top = `${Math.round(top)}px`;
   }
+}
+
+function entry(item: MenuEntry): string {
+  if ("rule" in item) return `<hr class="talk-menu-rule">`;
+  if ("note" in item) return `<p class="talk-menu-note">${escape(item.note)}</p>`;
+  const choice = item.checked !== undefined;
+  const lead = choice
+    ? `<span class="talk-menu-check">${item.checked ? glyph("check", 16) : ""}</span>`
+    : item.icon
+      ? glyph(item.icon, 16)
+      : "";
+  const role = choice ? `role="menuitemradio" aria-checked="${item.checked}"` : `role="menuitem"`;
+  return `<button class="talk-menu-item${item.danger ? " danger" : ""}${choice ? " talk-menu-choice" : ""}" type="button" ${role} data-act="${escape(item.act)}">${lead}<span class="talk-menu-label">${escape(item.label)}</span></button>`;
 }

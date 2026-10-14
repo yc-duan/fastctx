@@ -66,7 +66,7 @@ export function loginRow(facts: RowFacts, { words, access, usage: usageWords, wh
   const name = workbench
     ? `<a class="logins-row-who-name" href="${href}" title="${escape(`${words.openUsage}\n${login.dir}`)}">${escape(who)}</a>`
     : `<span class="logins-row-who-name" title="${escape(login.dir)}">${escape(who)}</span>`;
-  const more = `<button class="icon-button logins-more" type="button" data-act="menu" ${at} aria-label="${escape(words.more)}" title="${escape(words.more)}">${glyph("more", 16)}</button>`;
+  const more = `<button class="icon-button logins-more" type="button" data-act="menu" ${at} data-menu-key="${escape(JSON.stringify([machine, login.dir]))}" aria-haspopup="menu" aria-label="${escape(words.more)}" title="${escape(words.more)}">${glyph("more", 16)}</button>`;
   const head = `<div class="logins-row-who"><div class="logins-row-name"><span class="logins-slip-mark" title="${escape(facts.versions)}">${glyph(agent, 18)}</span>${name}${tags}</div>${sub}</div>`;
   const note = facts.note ? `<p class="feature-note logins-row-note" title="${escape(facts.note.detail)}">${escape(facts.note.text)}</p>` : "";
   if (!workbench) return `<li class="logins-row plain${changing ? " changing" : ""}${facts.fresh}>${head}${more}${note}</li>`;
