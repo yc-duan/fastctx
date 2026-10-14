@@ -1027,13 +1027,13 @@ export interface ComposerWords {
     window(name: string): string;
     used(percent: string): string;
     resets(at: Date): string;
+    /** How long until a window resets, under its ring. */
+    resetsIn(ms: number): string;
     /** What Claude Code reckons the conversation has cost so far. */
     cost(usd: number): string;
     /** How that figure is reckoned, said where the pointer rests. */
     costWhy: string;
     none: string;
-    /** A part of the context, by the name the host's /context gives it. */
-    part(name: string): string;
     /** How much of the last request's prompt the provider's cache served. */
     hit: string;
     /** How long the provider keeps the cache the last request left, where
@@ -1227,20 +1227,10 @@ export const zhComposer: ComposerWords = {
     },
     used: (percent) => `已用 ${percent}%`,
     resets: (at) => `${at.getMonth() + 1}月${at.getDate()}日 ${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")} 重置`,
+    resetsIn: (ms) => `${zhLeft(ms)}后重置`,
     cost: (usd) => (underCent(usd) ? "本次对话 不到 $0.01" : `本次对话 约 ${dollars(usd)}`),
     costWhy: "按 API 标价折算。订阅登录并没有花这笔钱；按 Esc 打断的那次请求 Claude Code 不记，所以只会偏少。",
     none: "暂无用量数据",
-    part: (name) =>
-      ({
-        "System prompt": "系统提示",
-        "System tools": "系统工具",
-        "MCP tools": "MCP 工具",
-        "MCP server instructions": "MCP 说明",
-        "Custom agents": "自定义智能体",
-        "Memory files": "记忆文件",
-        Skills: "技能",
-        Messages: "消息",
-      })[name] ?? name,
     hit: "缓存命中",
     warm: "缓存还热",
     cold: "已冷",
@@ -1435,10 +1425,10 @@ export const enComposer: ComposerWords = {
     },
     used: (percent) => `${percent}% used`,
     resets: (at) => `Resets ${at.toLocaleString("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })}`,
+    resetsIn: (ms) => `resets in ${enLeft(ms)}`,
     cost: (usd) => (underCent(usd) ? "This conversation under $0.01" : `This conversation about ${dollars(usd)}`),
     costWhy: "Reckoned at the API's list prices. A subscription login is not charged this; a request stopped with Esc is not counted, so it can only read low.",
     none: "No usage data",
-    part: (name) => name,
     hit: "Cache hit",
     warm: "Cache warm",
     cold: "Cold",
@@ -1465,6 +1455,25 @@ export const enComposer: ComposerWords = {
     stretch: "Choose a stretch",
   },
 };
+
+/** How long until something, as a ring's line says it: minutes, hours, days. */
+function zhLeft(ms: number): string {
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  if (minutes < 60) return `${minutes} 分钟`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} 小时`;
+  const days = Math.floor(hours / 24);
+  return hours % 24 ? `${days} 天 ${hours % 24} 小时` : `${days} 天`;
+}
+
+function enLeft(ms: number): string {
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} h`;
+  const days = Math.floor(hours / 24);
+  return hours % 24 ? `${days} d ${hours % 24} h` : `${days} d`;
+}
 
 function zhSpan(ms: number): string {
   const minutes = Math.round(ms / 60_000);

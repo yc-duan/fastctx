@@ -1,19 +1,21 @@
-// What a conversation has used, over its input (`world-gui.md`, 对话): at the
-// top the three figures of the input's row, said once each and large — how
-// much of the last prompt the cache served, how much the conversation
-// holds, how long the cache stays; under them how the cache served each
-// request (`hit-chart.ts`), and what the prompts and answers of the stretch
-// shown were made of; then the context in its parts where the host breaks
-// it down, the account's limits, and what the conversation has cost. All
-// of it is what the conversation already holds or its host last pushed.
+// What a conversation has used, over its input (`world-gui.md`, 对话), set
+// out as one page of a notebook. At the top the three figures of the
+// input's row, in its order and with its marks, said once each and large.
+// Under them how the cache served each request, with the whole conversation
+// small beneath to choose a stretch from (`hit-chart.ts`), and what that
+// stretch's prompts and answers were made of, one bar of marker. At the foot
+// the account's windows as rings, and what the conversation has cost. All of
+// it is what the conversation already holds or its host last pushed.
 
 import type { ComposerWords } from "../app/words";
+import { parts, ring } from "../app/usage/draw";
 import type { Usage } from "../world/control";
+import { glyph, type GlyphName } from "./glyphs";
 import { HitChart } from "./hit-chart";
 import { escape } from "./prose";
 import { contextOf, hitOf, warmUntil, type ModelRequest } from "./requests";
 import { percentFine, tokensShort } from "./usage-badge";
-import { usageDetail } from "./usage-detail";
+import { inkMark } from "./usage-ink";
 
 type Words = ComposerWords["usage"];
 
@@ -24,6 +26,17 @@ export interface UsageNow {
 }
 
 const KINDS = ["read", "write", "fresh", "output"] as const;
+
+/** The inks the account's usage page names the same parts with. */
+const INKS: Record<(typeof KINDS)[number], string> = {
+  read: "var(--pen-graphite)",
+  write: "var(--pen-sky)",
+  fresh: "var(--pen-sage)",
+  output: "var(--pen-clay)",
+};
+
+/** The width the bars are drawn at; they stretch to the pop-up's own. */
+const BAR = 448;
 
 export class UsagePop {
   private readonly chart: HitChart;
@@ -39,52 +52,38 @@ export class UsagePop {
   fill(now: UsageNow): boolean {
     const { words } = this;
     const { context, usage, requests } = now;
-    const detail = usageDetail(usage?.raw);
     const used = context ?? usage?.context ?? null;
     const latest = requests[requests.length - 1] ?? null;
-    const figures: string[] = [];
-    if (latest && contextOf(latest)) figures.push(figure(percentFine(hitOf(latest)), words.hit));
     const holds = used?.used ?? (latest ? contextOf(latest) : 0);
-    if (holds) figures.push(figure(tokensShort(holds), used?.window ? `${words.context} · ${Math.round((holds / used.window) * 100)}%` : words.context, used?.window ? words.contextUsed(holds, used.window) : ""));
+    const figures: string[] = [];
+    if (holds) {
+      const share = used?.window ? ` · ${Math.round((holds / used.window) * 100)}%` : "";
+      figures.push(figure("context", tokensShort(holds), `${words.context}${share}`, words.contextTitle(holds, used?.window ?? null)));
+    }
+    if (latest && contextOf(latest)) {
+      const hit = percentFine(hitOf(latest));
+      figures.push(figure("cache", hit, words.hit, words.hitTitle(hit)));
+    }
     const warm = warmUntil(requests);
     if (warm) {
       const left = warm.until - Date.now();
-      figures.push(left > 0 ? figure(words.left(left), words.warm, words.warmTitle(words.left(left), words.ttl(warm.ttl)), "", words.ttl(warm.ttl)) : figure(words.cold, words.ttl(warm.ttl), words.coldTitle, "cold"));
-    }
-    const rows: string[] = [];
-    // Where the host breaks the context down, the bar is drawn in its
-    // parts, each a shade of the same ink, named beneath.
-    const window = used?.window ?? 0;
-    const parts = window ? detail.parts : [];
-    if (parts.length) {
-      const tone = (at: number) => Math.round(100 - (at * 75) / Math.max(1, parts.length - 1));
-      rows.push(
-        `<div class="usage-row"><span class="usage-name">${escape(words.context)}</span><span class="usage-bar usage-stack">${parts.map((part, at) => `<span style="width:${Math.min(100, (part.tokens / window) * 100).toFixed(2)}%;--tone:${tone(at)}%"></span>`).join("")}</span><span class="usage-parts">${parts.map((part, at) => `<span class="usage-part"><i style="--tone:${tone(at)}%"></i><span>${escape(words.part(part.name))}</span><span>${part.tokens.toLocaleString()}</span></span>`).join("")}</span></div>`,
-      );
-    } else if (used && !figures.length) {
-      rows.push(`<div class="usage-row"><span class="usage-name">${escape(words.context)}</span><span class="usage-fact">${escape(words.contextUsed(used.used, used.window))}</span></div>`);
-    }
-    if (usage?.limits.length) {
-      const minutes = usage.limits_at ? Math.max(0, Math.floor((Date.now() - new Date(usage.limits_at).getTime()) / 60000)) : null;
-      rows.push(
-        `<div class="usage-row talk-usage-limits">${minutes !== null ? `<span class="usage-name">${escape(words.limits)}<span class="talk-usage-asof">${escape(words.asOf(minutes))}</span></span>` : ""}${usage.limits
-          .map((limit) => {
-            const percent = limit.used_percent;
-            return `<span class="talk-usage-limit"><span class="talk-usage-limit-name">${escape(words.window(limit.name))}</span><span class="usage-bar"><span style="width:${Math.min(100, Number(percent ?? 0))}%"></span></span><span class="usage-fact">${percent !== null ? escape(words.used(String(percent))) : ""}${limit.resets_at ? ` · ${escape(words.resets(new Date(limit.resets_at)))}` : ""}</span></span>`;
-          })
-          .join("")}</div>`,
+      figures.push(
+        left > 0
+          ? figure("clock", words.left(left), words.warm, words.warmTitle(words.left(left), words.ttl(warm.ttl)))
+          : figure("clock", words.cold, words.ttl(warm.ttl), words.coldTitle, "cold"),
       );
     }
-    if (usage?.cost_usd !== null && usage?.cost_usd !== undefined) {
-      rows.push(`<div class="usage-row" title="${escape(words.costWhy)}"><span class="usage-fact">${escape(words.cost(Number(usage.cost_usd)))}</span></div>`);
-    }
-    if (!figures.length && !rows.length) {
+    const sections: string[] = [];
+    if (requests.length) sections.push(`<div class="talk-usage-chart"></div><div class="talk-usage-spend"></div>`);
+    const foot = [this.limits(usage), cost(usage, words)].join("");
+    if (foot) sections.push(`<div class="talk-usage-foot">${foot}</div>`);
+    if (!figures.length && !sections.length) {
       this.pop.innerHTML = `<div class="usage-title">${escape(words.title)}</div><div class="menu-empty">${escape(words.none)}</div>`;
       return true;
     }
-    const charted = requests.length > 1;
-    this.pop.innerHTML = `${figures.length ? `<div class="talk-usage-figures">${figures.join("")}</div>` : `<div class="usage-title">${escape(words.title)}</div>`}${charted ? `<div class="talk-usage-chart"></div><div class="talk-usage-spend"></div>` : ""}${rows.join("")}`;
-    if (charted) {
+    const head = figures.length ? `<div class="talk-usage-figures">${figures.join("")}</div>` : `<div class="usage-title">${escape(words.title)}</div>`;
+    this.pop.innerHTML = head + sections.map((section) => `<div class="talk-usage-rule" aria-hidden="true"></div>${section}`).join("");
+    if (requests.length) {
       this.pop.querySelector(".talk-usage-chart")!.replaceWith(this.chart.element);
       this.chart.update(requests);
       this.drawSpend(this.chart.visible());
@@ -95,27 +94,55 @@ export class UsagePop {
   }
 
   /** What the prompts and answers of the stretch shown were made of: one
-   *  bar in four inks, each named with how much. */
+   *  bar of marker, its inks named under it with how much. */
   private drawSpend(requests: readonly ModelRequest[]): void {
     const box = this.pop.querySelector<HTMLElement>(".talk-usage-spend");
     if (!box) return;
     const { words } = this;
     const sums = { read: 0, write: 0, fresh: 0, output: 0 };
     for (const request of requests) for (const kind of KINDS) sums[kind] += request[kind];
-    const total = KINDS.reduce((sum, kind) => sum + sums[kind], 0);
+    const shown = KINDS.filter((kind) => sums[kind]);
     const span = requests.length > 1 ? requests[requests.length - 1]!.at - requests[0]!.at : 0;
-    // A part too small to see is drawn a hair wide, so a named part is
-    // never missing from its bar.
-    const width = (n: number) => (total ? Math.max(n ? 0.4 : 0, (n / total) * 100) : 0);
-    box.innerHTML = `<span class="talk-usage-stretch">${escape(words.requests(requests.length, words.span(span)))}</span>
-      <span class="talk-usage-mix">${KINDS.map((kind) => (sums[kind] ? `<span class="${kind}" style="width:${width(sums[kind]).toFixed(2)}%"></span>` : "")).join("")}</span>
-      <span class="talk-usage-keys">${KINDS.filter((kind) => sums[kind])
-        .map((kind) => `<span class="talk-usage-key"><i class="${kind}"></i>${escape(words.kinds[kind])}<b>${tokensShort(sums[kind])}</b></span>`)
-        .join("")}</span>`;
+    const bar = shown.length
+      ? parts(
+          shown.map((kind) => ({ value: sums[kind], ink: INKS[kind], said: `${words.kinds[kind]} ${sums[kind].toLocaleString()}` })),
+          `talk:${requests.length}:${requests[0]?.at ?? 0}`,
+          BAR,
+        )
+      : "";
+    box.innerHTML = `<div class="talk-usage-stretch">${escape(words.requests(requests.length, words.span(span)))}</div>${bar}<div class="talk-usage-keys">${shown
+      .map((kind) => `<span class="talk-usage-key">${inkMark(INKS[kind], kind)}<span>${escape(words.kinds[kind])}</span><b>${tokensShort(sums[kind])}</b></span>`)
+      .join("")}</div>`;
+  }
+
+  /** The account's windows, a ring each: how much is used, and when it
+   *  resets; how long ago the host said so where the pointer rests. */
+  private limits(usage: Usage | null): string {
+    if (!usage?.limits.length) return "";
+    const { words } = this;
+    const minutes = usage.limits_at ? Math.max(0, Math.floor((Date.now() - new Date(usage.limits_at).getTime()) / 60000)) : null;
+    const asOf = minutes === null ? "" : words.asOf(minutes);
+    return usage.limits
+      .map((limit) => {
+        const percent = limit.used_percent === null ? null : Number(limit.used_percent);
+        const share = percent === null ? null : percent / 100;
+        const resets = limit.resets_at ? new Date(limit.resets_at) : null;
+        const reset = resets ? words.resetsIn(Math.max(0, resets.getTime() - Date.now())) : "";
+        const said = [words.window(limit.name), percent === null ? "" : words.used(String(percent)), resets ? words.resets(resets) : "", asOf].filter(Boolean).join(" · ");
+        return `<span class="talk-usage-ring" title="${escape(said)}"><span class="talk-usage-ring-face">${ring(share, `talk:${limit.name}`, 44)}<span class="talk-usage-ring-num"><span>${percent === null ? "–" : `${Math.round(percent)}<small>%</small>`}</span></span></span><span class="talk-usage-ring-text"><span class="talk-usage-ring-name">${escape(words.window(limit.name))}</span><span class="talk-usage-ring-when">${escape(reset)}</span></span></span>`;
+      })
+      .join("");
   }
 }
 
-/** One of the figures at the top: large, with what it is under it. */
-function figure(value: string, label: string, title = "", state = "", more = ""): string {
-  return `<div class="talk-usage-figure${state ? ` ${state}` : ""}"${title ? ` title="${escape(title)}"` : ""}><span class="talk-usage-big">${escape(value)}</span><span class="talk-usage-label">${escape(label)}${more ? `<span class="talk-usage-label-more"> · ${escape(more)}</span>` : ""}</span></div>`;
+/** What the conversation has cost, as its host reckons it. */
+function cost(usage: Usage | null, words: Words): string {
+  if (usage?.cost_usd === null || usage?.cost_usd === undefined) return "";
+  return `<span class="talk-usage-cost" title="${escape(words.costWhy)}">${escape(words.cost(Number(usage.cost_usd)))}</span>`;
+}
+
+/** One of the figures at the top: large, with its mark from the input's
+ *  row and what it is under it. */
+function figure(mark: GlyphName, value: string, label: string, title = "", state = ""): string {
+  return `<div class="talk-usage-figure${state ? ` ${state}` : ""}"${title ? ` title="${escape(title)}"` : ""}><span class="talk-usage-big">${escape(value)}</span><span class="talk-usage-label">${glyph(mark, 14)}<span>${escape(label)}</span></span></div>`;
 }
