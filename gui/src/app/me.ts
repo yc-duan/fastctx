@@ -363,7 +363,9 @@ export class MePage implements Page {
    *  in: each with how many came in, until when, and a way to revoke it. */
   private codes(login: Login, hub: HubAccounts, now: Date): string {
     const { words, when } = this.options;
-    const codes = (hub.tokens ?? []).filter((token: TokenSeen) => token.account === login.account && token.managed);
+    // A code past its day is gone, though the server tells of it only with
+    // its next change.
+    const codes = (hub.tokens ?? []).filter((token: TokenSeen) => token.account === login.account && token.managed && new Date(token.expires) > now);
     if (!codes.length) return "";
     const rows = codes.map((token) =>
       row(
