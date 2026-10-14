@@ -26,18 +26,21 @@ import type { Details } from "./details";
 import { FileLinks } from "./file-links";
 import { JobsPanel, type Job, type OutputLines } from "./jobs-panel";
 import { AgentsPanel } from "./agents-panel";
-import type { AgentActivity } from "../world/events";
+import type { AgentActivity, Tool } from "../world/events";
 import { Pictures, type PictureSeams } from "./pictures";
 import type { HeldRead } from "../world/reads";
 import { glyph } from "./glyphs";
 import type { Conversation, Held } from "./conversation";
-import type { Gap } from "./model";
+import type { Entry, Gap } from "./model";
 import { escape, render } from "./prose";
 import { shownOf, skillsHtml } from "./said";
 import { Finder } from "./find";
 import { FarFind } from "./find-far";
 import { UsageBadge, ring } from "./usage-badge";
 import { UsagePop } from "./usage-pop";
+import { ContextSheet } from "./context-sheet";
+import type { CallSpan } from "./context-steps";
+import { headline } from "./tool";
 import { ConversationView, modelName } from "./view";
 import { departureOf } from "./flight";
 import { detailOf } from "../app/problem";
@@ -179,6 +182,7 @@ export class ConversationPage {
    *  it; where the host offers no controls, the context's share alone. */
   private badge: UsageBadge | null = null;
   private usagePop: UsagePop | null = null;
+  private steps: ContextSheet | null = null;
   /** What the open pop-up was last drawn from. */
   private usageDrawn = "";
   private input: HTMLTextAreaElement;
@@ -332,7 +336,7 @@ export class ConversationPage {
     this.context = this.element.querySelector<HTMLElement>(".composer-context")!;
     if (options.controls) {
       this.badge = new UsageBadge(this.context, options.controls.words.usage);
-      this.usagePop = new UsagePop(this.element.querySelector<HTMLElement>(".usage-pop")!, options.controls.words.usage);
+      this.usagePop = new UsagePop(this.element.querySelector<HTMLElement>(".usage-pop")!, options.controls.words.usage, () => this.openSteps());
     }
     this.input = this.element.querySelector("textarea")!;
     this.action = this.element.querySelector<HTMLButtonElement>(".composer-action")!;
@@ -1254,6 +1258,37 @@ export class ConversationPage {
     });
   }
 
+  /** Each step's context on a page of its own, over the conversation: what
+   *  the page holds of its requests and its calls (`context-sheet.ts`). A
+   *  call's row brings it into view, opened. */
+  private openSteps(): void {
+    const controls = this.options.controls;
+    if (!controls) return;
+    const pop = this.element.querySelector<HTMLElement>(".usage-pop")!;
+    if (!pop.hidden) this.toggleUsage();
+    this.steps ??= new ContextSheet(controls.words.usage, (key) => void this.view.openRow(key));
+    const { conversation, words } = this.options;
+    const calls: CallSpan[] = [];
+    const tools = new Map<string, Extract<Entry, { kind: "tool" }>>();
+    for (const part of conversation.held()) {
+      for (const entry of part.fold.entries) {
+        if (entry.kind !== "tool") continue;
+        tools.set(entry.key, entry);
+        calls.push({ key: entry.key, item: entry.item, turn: entry.turn, ended: entry.ended?.at ?? null, size: returnedSize(entry.tool) });
+      }
+    }
+    this.steps.show({
+      requests: conversation.requests,
+      calls,
+      named: (key) => {
+        const entry = tools.get(key);
+        if (!entry) return null;
+        const line = headline(entry.tool, entry.ended, words, () => null, true);
+        return { glyph: line.glyph, action: line.action, object: line.object };
+      },
+    });
+  }
+
   /** Draws the usage pop-up from what the page holds. */
   private fillUsage(): boolean {
     if (!this.usagePop) return false;
@@ -1857,3 +1892,8 @@ function lasted(ms: number, words: Words): string {
   return minutes < 60 ? words.minutes(minutes) : words.hours(Math.floor(minutes / 60), minutes % 60);
 }
 
+/** What a call returned to the model, in characters: its text, and about a
+ *  page's worth for each picture. */
+function returnedSize(tool: Tool): number {
+  return tool.output.reduce((size, part) => size + (part.type === "text" ? part.text.length : 1_600), 0);
+}

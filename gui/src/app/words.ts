@@ -1059,6 +1059,23 @@ export interface ComposerWords {
     latest: string;
     readout(time: string, hit: string, context: string): string;
     stretch: string;
+    /** Each step's context (`context-sheet.ts`): the way in, the page's
+     *  title and figures, what grew it, a step as the pointer reads it,
+     *  and the calls that took the most room. */
+    steps: string;
+    close: string;
+    stepsNow: string;
+    start: string;
+    afterCompact: string;
+    causes: { call: string; answer: string; other: string };
+    compactions(n: number): string;
+    compacted: string;
+    stepSaid(step: number, context: string, grew: string): string;
+    step(step: number): string;
+    heaviest: string;
+    heaviestWhy: string;
+    allSteps: string;
+    noCalls: string;
   };
 }
 
@@ -1257,6 +1274,20 @@ export const zhComposer: ComposerWords = {
     latest: "最近",
     readout: (time, hit, context) => `${time} · 命中 ${hit} · 上下文 ${context}`,
     stretch: "选一段",
+    steps: "每一步的上下文",
+    close: "关闭",
+    stepsNow: "现在",
+    start: "开头",
+    afterCompact: "压缩后留下的",
+    causes: { call: "工具返回", answer: "回答", other: "其他" },
+    compactions: () => "次压缩",
+    compacted: "压缩",
+    stepSaid: (step, context, grew) => [`第 ${step} 步`, `上下文 ${context}`, grew].filter(Boolean).join(" · "),
+    step: (step) => `第 ${step} 步`,
+    heaviest: "最占地方的工具调用",
+    heaviestWhy: "一步里几次调用各占多少，按各自返回了多少来分",
+    allSteps: "全部",
+    noCalls: "这一步没有工具调用",
   },
 };
 
@@ -1455,6 +1486,20 @@ export const enComposer: ComposerWords = {
     latest: "latest",
     readout: (time, hit, context) => `${time} · ${hit} hit · ${context} context`,
     stretch: "Choose a stretch",
+    steps: "Context, step by step",
+    close: "Close",
+    stepsNow: "now",
+    start: "to begin with",
+    afterCompact: "left by compaction",
+    causes: { call: "tool results", answer: "answers", other: "other" },
+    compactions: (n) => `compaction${n === 1 ? "" : "s"}`,
+    compacted: "compacted",
+    stepSaid: (step, context, grew) => [`step ${step}`, `context ${context}`, grew].filter(Boolean).join(" · "),
+    step: (step) => `step ${step}`,
+    heaviest: "Calls that took the most room",
+    heaviestWhy: "Within a step, its calls share what it added by how much each returned",
+    allSteps: "All",
+    noCalls: "No tool calls in this step",
   },
 };
 

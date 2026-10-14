@@ -3,9 +3,10 @@
 // input's row, in its order and with its marks, said once each and large.
 // Under them how the cache served each request, with the whole conversation
 // small beneath to choose a stretch from (`hit-chart.ts`), and what that
-// stretch's prompts and answers were made of, one bar of marker. At the foot
-// the account's windows as rings, and what the conversation has cost. All of
-// it is what the conversation already holds or its host last pushed.
+// stretch's prompts and answers were made of, one bar of marker, and the way
+// to each step's context on a page of its own (`context-sheet.ts`). At the
+// foot the account's windows as rings, and what the conversation has cost.
+// All of it is what the conversation already holds or its host last pushed.
 
 import type { ComposerWords } from "../app/words";
 import { parts, ring } from "../app/usage/draw";
@@ -44,8 +45,13 @@ export class UsagePop {
   constructor(
     private readonly pop: HTMLElement,
     private readonly words: Words,
+    /** Opens each step's context, where the page can. */
+    private readonly steps?: () => void,
   ) {
     this.chart = new HitChart(words, (requests) => this.drawSpend(requests));
+    pop.addEventListener("click", (event) => {
+      if ((event.target as HTMLElement).closest("[data-steps]")) this.steps?.();
+    });
   }
 
   /** Draws it all; false where there is nothing to say. */
@@ -74,7 +80,13 @@ export class UsagePop {
       );
     }
     const sections: string[] = [];
-    if (requests.length) sections.push(`<div class="talk-usage-chart"></div><div class="talk-usage-spend"></div>`);
+    // Each step's context is worth a page once there are steps between
+    // requests.
+    const steps =
+      this.steps && requests.length > 1
+        ? `<button class="text-button talk-usage-steps" type="button" data-steps>${glyph("context", 15)}<span>${escape(words.steps)}</span>${glyph("chevron", 12)}</button>`
+        : "";
+    if (requests.length) sections.push(`<div class="talk-usage-chart"></div><div class="talk-usage-spend"></div>${steps}`);
     const foot = [this.limits(usage), cost(usage, words)].join("");
     if (foot) sections.push(`<div class="talk-usage-foot">${foot}</div>`);
     if (!figures.length && !sections.length) {

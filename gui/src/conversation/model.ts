@@ -586,12 +586,12 @@ export class Fold {
         }
         if (change.kind === "message_usage") {
           if (change.model) this.answeredBy = change.model;
-          this.requests.claude(at, change.response, change.usage);
+          this.requests.claude(at, change.response, change.usage, event.turn, change.items);
           this.claudeThought(event.turn, change.items, change.response, change.usage);
           return;
         }
         if (change.kind === "usage") {
-          this.requests.codex(at, change.usage);
+          this.requests.codex(at, change.usage, event.turn);
           this.codexThought(event.turn, change.usage);
           return;
         }

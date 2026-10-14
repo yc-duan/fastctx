@@ -19,6 +19,12 @@ export interface ModelRequest {
   /** How long what it wrote stays in the cache, where the host says;
    *  reading what is there keeps it as long again. */
   ttl: number | null;
+  /** The turn it was made in, where the host says. */
+  turn: string | null;
+  /** What its answer holds, where the host says: Claude Code names each
+   *  block, a tool call by the call's id, so the calls a request made are
+   *  known; Codex names none, and its calls are placed by time. */
+  items: string[];
 }
 
 /** The context a request was answered over, and the share the cache
@@ -38,7 +44,7 @@ export class Requests {
 
   /** A row of Claude Code's session file: every row of one response says
    *  the response's usage again, the last most whole. */
-  claude(at: number, response: string | null, usage: JsonValue): void {
+  claude(at: number, response: string | null, usage: JsonValue, turn: string | null = null, items: readonly string[] = []): void {
     const read = count(usage, "cache_read_input_tokens");
     const write = count(usage, "cache_creation_input_tokens");
     const fresh = count(usage, "input_tokens");
@@ -47,13 +53,17 @@ export class Requests {
     const hour = count(buckets, "ephemeral_1h_input_tokens") ?? 0;
     const five = count(buckets, "ephemeral_5m_input_tokens") ?? 0;
     const ttl = hour > 0 ? 60 * MINUTE : five > 0 ? 5 * MINUTE : null;
-    this.byKey.set(`claude:${response ?? at}`, { at, fresh, read, write, output: count(usage, "output_tokens") ?? 0, ttl });
+    const key = `claude:${response ?? at}`;
+    // Each row of a response is one block of its answer: the blocks add up.
+    const known = this.byKey.get(key)?.items ?? [];
+    const held = [...known, ...items.filter((item) => !known.includes(item))];
+    this.byKey.set(key, { at, fresh, read, write, output: count(usage, "output_tokens") ?? 0, ttl, turn, items: held });
     this.version += 1;
   }
 
   /** Codex's usage after a response: `last` is that response's own; a
    *  total told again, as on joining a thread, is the same response. */
-  codex(at: number, usage: JsonValue): void {
+  codex(at: number, usage: JsonValue, turn: string | null = null): void {
     const total = count(field(usage, "total"), "totalTokens");
     const last = field(usage, "last");
     const input = count(last, "inputTokens");
@@ -63,7 +73,7 @@ export class Requests {
     if (this.byKey.has(key)) return;
     // Codex counts what the cache served, and any it wrote, within its input.
     const write = count(last, "cacheWriteInputTokens") ?? 0;
-    this.byKey.set(key, { at, fresh: Math.max(0, input - cached - write), read: cached, write, output: count(last, "outputTokens") ?? 0, ttl: null });
+    this.byKey.set(key, { at, fresh: Math.max(0, input - cached - write), read: cached, write, output: count(last, "outputTokens") ?? 0, ttl: null, turn, items: [] });
     this.version += 1;
   }
 

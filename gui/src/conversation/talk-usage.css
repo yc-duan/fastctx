@@ -363,3 +363,21 @@
     margin-left: 0;
   }
 }
+
+/* The way to each step's context, quiet under the stretch's bar. */
+.talk-usage-steps {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: var(--space-2) 0 0 calc(-1 * var(--space-2));
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.talk-usage-steps:hover {
+  color: var(--text-strong);
+}
+
+.talk-usage-steps .glyph:last-child {
+  transform: rotate(-90deg);
+}

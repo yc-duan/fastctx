@@ -2031,3 +2031,26 @@ a.bubble-file:hover {
 :root[data-reduced] .file-menu.as-sheet {
   animation: none;
 }
+
+/* On a phone the conversation reads a size under the composer, with more
+   room at its sides: more of it fits a screen, and the composer keeps the
+   size that keeps browsers from zooming into it. Which device the user's
+   own words came from is for a wider screen. */
+@media (max-width: 600px) {
+  .transcript {
+    --body-size: 15px;
+    --size-small: calc(var(--body-size) - 2px);
+    --size-ui: calc(var(--body-size) - 1px);
+    --size-code: calc(var(--body-size) * 0.88);
+    --size-h1: calc(var(--body-size) * 1.154);
+    --size-h2: calc(var(--body-size) * 1.154);
+    --size-h3: calc(var(--body-size) * 1.077);
+    --leading-prose: 1.62;
+    --gutter: 22px;
+    font-size: var(--body-size);
+  }
+
+  .bubble-from {
+    display: none;
+  }
+}

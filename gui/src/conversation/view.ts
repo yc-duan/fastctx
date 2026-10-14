@@ -186,9 +186,9 @@ function focusSaid(focus: Focus, words: Words): string {
   return items.length ? words.focusChanged(items.join(words.listSeparator)) : words.focusCleared;
 }
 
-
 /** The menu the user's words raise when held on a touch screen. */
 const heldMenu = new ActsMenu();
+
 export class ConversationView {
   private openRows = new Set<string>();
   private openStretches = new Set<string>();
@@ -672,11 +672,16 @@ export class ConversationView {
       run = this.conversation.agent(run.parent);
       entry = run?.call ? this.conversation.call(run.call) : null;
     }
-    if (!entry) return false;
-    const group = this.blocks.find((block) => block.kind === "activity-group" && block.members.includes(entry));
+    return !!entry && this.openRow(entry.key);
+  }
+
+  /** Brings a tool call's row into view, opened, by its key; false where
+   *  the conversation does not hold that row. */
+  openRow(key: string): boolean {
+    const group = this.blocks.find((block) => block.kind === "activity-group" && block.members.some((member) => member.key === key));
     if (!group) return false;
-    const slot = this.reveal(group.key, entry.key, true);
-    const row = slot?.stretch?.drawn.get(entry.key)?.element;
+    const slot = this.reveal(group.key, key, true);
+    const row = slot?.stretch?.drawn.get(key)?.element;
     if (!row) return false;
     this.context.reading();
     const scroller = this.context.scroller;

@@ -127,6 +127,23 @@
   }
 }
 
+/* On a phone the way down keeps to the right edge, where the words of a
+   reply rarely reach, rather than over the middle of them. */
+@media (max-width: 600px) {
+  .to-latest {
+    left: auto;
+    right: var(--space-2);
+    width: 38px;
+    height: 38px;
+    transform: none;
+    animation-name: to-latest-in-side;
+  }
+}
+
+@keyframes to-latest-in-side {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
 /* The conversation fades out beneath the composer rather than being cut. */
 .composer-dock::before {
   content: "";

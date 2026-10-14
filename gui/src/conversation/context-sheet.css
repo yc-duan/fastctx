@@ -1,0 +1,314 @@
+/* Each step's context (`context-sheet.ts`): a large page over the
+   conversation, its figures in a row, the drawing of the context filling
+   up, the inks named under it, and the rows of what took the most room. */
+
+.context-sheet .sheet-body {
+  width: min(1000px, 100vw - 48px);
+  max-height: 88dvh;
+  overflow-y: auto;
+}
+
+/* The figures: how large the context is now, and what made it. */
+.ctx-figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-6);
+  margin: var(--space-1) 0 var(--space-4);
+}
+
+.ctx-figure {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.ctx-figure i {
+  align-self: center;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.ctx-figure b {
+  font-family: var(--font-emphasis);
+  font-size: var(--size-h3);
+  font-weight: 400;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The drawing, drawn at the width it is given. */
+.ctx-chart {
+  position: relative;
+  cursor: crosshair;
+}
+
+.ctx-paper {
+  width: 100%;
+}
+
+.ctx-svg {
+  display: block;
+  overflow: visible;
+}
+
+.ctx-grid {
+  stroke: var(--text-3);
+  stroke-width: 1;
+  stroke-dasharray: 1 5;
+  stroke-linecap: round;
+  opacity: 0.55;
+}
+
+.ctx-scale,
+.ctx-axis {
+  fill: var(--text-3);
+  font-family: var(--font-reading);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ctx-wash {
+  fill: color-mix(in srgb, var(--pen-graphite) 13%, transparent);
+}
+
+.ctx-edge {
+  fill: var(--pen-graphite);
+  opacity: 0.9;
+}
+
+.ctx-now {
+  fill: var(--pen-clay);
+}
+
+.ctx-band {
+  fill: color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+.ctx-chosen {
+  fill: var(--accent-wash);
+}
+
+.ctx-compact {
+  fill: var(--pen-clay);
+  opacity: 0.85;
+}
+
+.ctx-compact-said {
+  fill: var(--pen-clay);
+  font-family: var(--font-reading);
+  font-size: 11px;
+}
+
+/* What a step added, beside the pointer: a solid card over the drawing. */
+.ctx-tip {
+  position: absolute;
+  top: var(--space-2);
+  z-index: 1;
+  min-width: 200px;
+  max-width: min(320px, 80vw);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+}
+
+.ctx-tip[hidden] {
+  display: none;
+}
+
+.ctx-tip-head {
+  margin: 0 0 4px;
+  font-size: var(--size-small);
+  font-weight: 600;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.ctx-tip-row {
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 0;
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.ctx-tip-row i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.ctx-tip-row span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ctx-tip-row b {
+  font-weight: 500;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The inks, named once under the drawing. */
+.ctx-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: var(--space-2) 0 0 46px;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.ctx-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ctx-key i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+/* The rows: what it was, which step, a bar of its share, and how much. */
+.ctx-list {
+  margin-top: var(--space-6);
+}
+
+.ctx-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.ctx-list-head .picker-title {
+  flex: 1;
+  margin-bottom: var(--space-2);
+}
+
+.ctx-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ctx-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto minmax(80px, 160px) 64px;
+  align-items: center;
+  column-gap: var(--space-3);
+  min-height: 42px;
+  padding: 6px var(--space-3) 6px var(--space-4);
+  border: 0;
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--size-ui);
+  text-align: left;
+}
+
+button.ctx-row {
+  cursor: pointer;
+  transition: background-color var(--hover) ease;
+}
+
+button.ctx-row:hover {
+  background: var(--fill-strong);
+}
+
+.ctx-row-mark {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.ctx-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.ctx-row-what {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ctx-row-what b {
+  font-weight: 500;
+  color: var(--text-strong);
+}
+
+.ctx-row-what span {
+  color: var(--text-2);
+}
+
+.ctx-row-step {
+  font-size: var(--size-small);
+  color: var(--text-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.ctx-row-ink svg {
+  display: block;
+  width: 100%;
+  height: 10px;
+}
+
+.ctx-row-tokens {
+  text-align: right;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.ctx-none {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  font-size: var(--size-ui);
+  color: var(--text-3);
+}
+
+/* On a phone the page is the whole width, and a row keeps what it was and
+   how much, its step under its name. */
+@media (max-width: 760px) {
+  .context-sheet .sheet-body {
+    width: 100%;
+    max-height: 94dvh;
+  }
+
+  .ctx-keys {
+    margin-left: 0;
+  }
+
+  .ctx-row {
+    grid-template-columns: 20px minmax(0, 1fr) 56px;
+    row-gap: 2px;
+  }
+
+  .ctx-row-step {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .ctx-row-ink {
+    display: none;
+  }
+
+  .ctx-row-tokens {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+  }
+}

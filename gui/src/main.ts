@@ -33,6 +33,7 @@ import "./app/managed.css";
 import "./app/data-page.css";
 import "./app.css";
 import "./conversation/talk-usage.css";
+import "./conversation/context-sheet.css";
 import "./home/home.css";
 import "./home/front.css";
 import "./project/project.css";
@@ -1119,7 +1120,7 @@ function specimenTalk(address: Address): KeepablePage {
   const name = address.resident;
   const sample: Specimen & { later?: SessionEvent[]; rate?: number; timed?: boolean } = name.startsWith("stream")
     ? streamSpecimen(params)
-    : (specimens[name === "codex-a51c" ? "asking" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
+    : (specimens[name === "codex-a51c" ? "asking" : name === "claude-5teps" ? "steps" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
   const conversation = new Conversation();
   conversation.thoughtWords = sample.agent !== "codex";
   // A specimen keeps its whole history as a shell would, and its page holds
@@ -2126,6 +2127,8 @@ function specimenPlace(): Place | null {
       return { kind: "talk", address: { resident: "codex-a51c", machine: "laptop" } };
     case "stream":
       return { kind: "talk", address: { resident: "stream-1", machine: "laptop" } };
+    case "steps":
+      return { kind: "talk", address: { resident: "claude-5teps", machine: "laptop" } };
     case "decision":
       return { kind: "file", machine: "desktop", path: "D:/work/mark50/specs/控制环.md", tail: false };
     case "log":
