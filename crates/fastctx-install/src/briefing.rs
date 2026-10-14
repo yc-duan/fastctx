@@ -21,14 +21,14 @@
 /// first-line pragma raises it, no setting can. A rule in the run tool's
 /// description alone was not followed (0 of 3 with gpt-6-luna at low
 /// effort, 2026-10-09), nor one that applied only to scripts calling `run`
-/// (0 of 4); this unconditional one was (4 of 4). 100,000 holds a whole
+/// (0 of 4); this unconditional one was (4 of 4). 60,000 holds a whole
 /// answer of the World's budget with what a script adds around it.
 pub const CODEX_EXEC: &str = "
 ## fastctx in Codex
 
 You must begin every `exec` script with this exact first line, every time:
 
-    // @exec: {\"max_output_tokens\": 100000}
+    // @exec: {\"max_output_tokens\": 60000}
 
 fastctx answers are long, and without that line you see only their first part. Put any other setting, such as `yield_time_ms`, into that same line.
 ";

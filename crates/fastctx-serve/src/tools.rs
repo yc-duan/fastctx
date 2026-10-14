@@ -207,12 +207,12 @@ const RUN_SHELL_REST: &str = "\
 /// the model sees only what the script prints, cut at the script's
 /// `max_output_tokens` (10,000 by default, counted as UTF-8 bytes / 4). Only
 /// the script's first-line pragma raises it: no setting or tool definition
-/// can. 100,000 holds an answer of `window::BUDGET` units with what a script
+/// can. 60,000 holds an answer of `window::BUDGET` units with what a script
 /// adds around it; what it prints is recorded under the global tool output
 /// limit that apply writes for the same budget (`world-view.md`). It leads
 /// the description: a model writing the script reads the tool from its top.
 const RUN_EXEC: &str = "\
-You must begin every `exec` script that calls this tool with `// @exec: {\"max_output_tokens\": 100000}`, putting any other setting, such as `yield_time_ms`, on that same line: its answers are often long, and a script shows you only what it prints, no more than its `max_output_tokens`.
+You must begin every `exec` script that calls this tool with `// @exec: {\"max_output_tokens\": 60000}`, putting any other setting, such as `yield_time_ms`, on that same line: its answers are often long, and a script shows you only what it prints, no more than its `max_output_tokens`.
 
 ";
 

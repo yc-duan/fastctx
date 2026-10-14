@@ -108,10 +108,10 @@ pub const TOOL_TIMEOUT: Duration = Duration::from_secs(660);
 ///   These are alternative paths: the 13-token MCP header is not added again.
 /// - `protocol/src/protocol.rs` applies the allowance as
 ///   `(limit as f64 * 1.2).ceil()`. Set limit = ceil(5 * (budget + 49) / 6),
-///   rounding upwards rather than discarding a fraction. For 80,000 units
-///   this is 66,708, whose allowance is 80,050 tokens, covering 80,049.
+///   rounding upwards rather than discarding a fraction. For 50,000 units
+///   this is 41,708, whose allowance is 50,050 tokens, covering 50,049.
 ///   A byte-mode root policy gets four bytes per configured token before the
-///   allowance: ceil(66,708 * 4 * 1.2) = 320,199 covers 320,000 + 195 bytes.
+///   allowance: ceil(41,708 * 4 * 1.2) = 200,199 covers 200,000 + 195 bytes.
 ///   Direct MCP history reuses its already computed allowance from metadata;
 ///   Code Mode history uses the root policy. Neither adds another header.
 ///

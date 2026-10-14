@@ -47,10 +47,10 @@ pub const PLUGIN: &str = "fastctx-world";
 pub const WORLD_TOOLS: &str = "mcp__plugin_fastctx-world_fastctx__*";
 
 /// Claude Code's limit on a tool answer, in tokens, set past the World's own
-/// (`world-view.md`, 一次给多少): the World gives at most 150,000
-/// characters, and every model is assumed to have a window of at least
-/// 200,000 tokens, which is where this limit stops mattering.
-pub const MAX_MCP_OUTPUT_TOKENS: u64 = 200_000;
+/// (`world-view.md`, 一次给多少): Claude Code estimates an answer as its
+/// UTF-16 length over four, which for the World's at most 50,000 units is
+/// at most 50,000, and passes an answer within half its limit as it is.
+pub const MAX_MCP_OUTPUT_TOKENS: u64 = 100_000;
 
 /// Claude Code's limit on an MCP tool's description, in characters, set to
 /// what it allows a tool loaded through its tool search. By default it keeps

@@ -19,7 +19,7 @@ use super::terminal::{Line, Lines, Part, VIEW_MARK};
 /// What the complete answer may hold, head notes and delivered words
 /// included, in the units Codex counts a tool's output in: each text block
 /// costs its UTF-8 bytes divided by four, rounded up (`world-view.md`).
-pub const BUDGET: usize = 80_000;
+pub const BUDGET: usize = 50_000;
 /// What an image costs against the budget: the larger of the two hosts'
 /// costs, Claude Code's for an image it scales to 2000x2000.
 pub const IMAGE_COST: usize = 5_200;
@@ -40,17 +40,18 @@ pub const fn bytes(units: usize) -> usize {
 /// is about the most an answer can carry and still be read (`world-view.md`).
 pub const IMAGE_BYTES: usize = 400 * 1024 * 1024;
 
-/// Characters of a program's output shown whole in one answer, an image
-/// counted as `IMAGE_COST`: what Claude Code's own shell tool shows by
-/// default, so either model reads it as it reads its host's shell.
-pub const OUTPUT_WINDOW: usize = 30_000;
+/// Units of a program's output shown whole in one answer, an image counted
+/// as `IMAGE_COST`: between what the hosts' own shells show (Claude Code's
+/// 30,000 characters, Codex's 10,000 tokens), and the same window a file
+/// gets before its content is known (`world-run.md`, 输出).
+pub const OUTPUT_WINDOW: usize = 10_000;
 
-/// Characters of text shown of the start, and of the end, of a program's
-/// output that does not fit its window. Such output is nearly always a long
-/// log, read for how it began and how it ended; the answer identifies the
+/// Units of text shown of the start, and of the end, of a program's output
+/// that does not fit its window. Such output is nearly always a long log,
+/// read for how it began and how it ended; the answer identifies the
 /// omitted lines and the file holding the complete output.
 pub const OUTPUT_HEAD: usize = 2_000;
-pub const OUTPUT_TAIL: usize = 2_000;
+pub const OUTPUT_TAIL: usize = 1_000;
 
 /// Units `run`'s own notes can take beside a view's output: the first line,
 /// a machine name of at most 32 characters with the facts of how the script
@@ -120,9 +121,19 @@ fn snapshot(log: &Path, through: Option<u64>) -> io::Result<OutputWindow> {
             view_left = view_left.saturating_sub(entry.bytes);
             portions
         } else {
-            chosen.get(id)?
+            // The selection measured the start and the end of a line in
+            // bytes; the line itself says how many characters fit them.
+            let mut portions = Vec::new();
+            for portion in chosen.get(id)? {
+                portions.push(match portion {
+                    Portion::Start(room) => Portion::Start(chars_within(&line, room)?),
+                    Portion::End(room) => Portion::End(chars_within_end(&line, room)?),
+                    Portion::Whole => Portion::Whole,
+                });
+            }
+            portions
         };
-        if portions.is_empty() && entry.chars > 0 {
+        if portions.is_empty() && entry.bytes > 0 {
             let range = omitted.get_or_insert((line.number, line.through));
             range.1 = line.through;
         } else {
@@ -172,6 +183,9 @@ fn holds_view_mark(mut file: impl io::Read) -> io::Result<bool> {
     }
 }
 
+/// What of a line an answer shows. In the selection, a start or an end is
+/// the bytes of text it may take; once the line is read again, the
+/// characters that fit them.
 #[derive(Clone)]
 enum Portion {
     Whole,
@@ -181,16 +195,16 @@ enum Portion {
     End(usize),
 }
 
-/// One line of the output as the selection weighs it.
+/// One line of the output as the selection weighs it, in bytes, which the
+/// units are counted from (`units`).
 #[derive(Clone, Copy)]
 struct Entry {
     id: u64,
-    /// Against the window: characters, each image at `IMAGE_COST`.
-    chars: usize,
-    /// Against the start and end of output that does not fit: characters of
-    /// text alone, so an image a program drew there is still shown.
+    /// Against the start and end of output that does not fit: bytes of text
+    /// alone, so an image a program drew there is still shown.
     text: usize,
-    /// Against the answer: bytes of text, each image at `bytes(IMAGE_COST)`.
+    /// Against the window and the answer: bytes of text, each image at
+    /// `bytes(IMAGE_COST)`.
     bytes: usize,
 }
 
@@ -198,19 +212,18 @@ impl Entry {
     fn of(id: u64, line: &Line) -> io::Result<Self> {
         let newline = usize::from(line.newline);
         if let Some(text) = line.parts.text() {
-            let characters = line.characters + newline;
-            return Ok(Self { id, chars: characters, text: characters, bytes: text.len() + newline });
+            let size = text.len() + newline;
+            return Ok(Self { id, text: size, bytes: size });
         }
-        let mut entry = Self { id, chars: newline, text: newline, bytes: newline };
+        let mut entry = Self { id, text: newline, bytes: newline };
         for part in line.parts.iter() {
             let part = part?;
-            let (chars, text, size) = match &part {
-                Part::Text(text) => (text.chars().count(), text.chars().count(), text.len()),
-                Part::Spaces(count) => (*count, *count, *count),
-                Part::Image(_) => (IMAGE_COST, 0, bytes(IMAGE_COST)),
-                Part::Unreadable(reason) => (reason.chars().count(), reason.chars().count(), reason.len()),
+            let (text, size) = match &part {
+                Part::Text(text) => (text.len(), text.len()),
+                Part::Spaces(count) => (*count, *count),
+                Part::Image(_) => (0, bytes(IMAGE_COST)),
+                Part::Unreadable(reason) => (reason.len(), reason.len()),
             };
-            entry.chars = entry.chars.saturating_add(chars);
             entry.text = entry.text.saturating_add(text);
             entry.bytes = entry.bytes.saturating_add(size);
         }
@@ -219,32 +232,32 @@ impl Entry {
 }
 
 impl Entry {
-    fn record(self) -> [u64; 4] {
-        [self.id, self.chars as u64, self.text as u64, self.bytes as u64]
+    fn record(self) -> [u64; 3] {
+        [self.id, self.text as u64, self.bytes as u64]
     }
-    fn read(record: [u64; 4]) -> Self {
-        Self { id: record[0], chars: record[1] as usize, text: record[2] as usize, bytes: record[3] as usize }
+    fn read(record: [u64; 3]) -> Self {
+        Self { id: record[0], text: record[1] as usize, bytes: record[2] as usize }
     }
 }
 
 #[derive(Default)]
 struct Selection {
-    lines: Queue<4>,
-    chars: usize,
+    lines: Queue<3>,
+    bytes: usize,
     overflowed: bool,
-    head: Queue<4>,
+    head: Queue<3>,
     first_cut: Option<Entry>,
-    tail: Queue<4>,
+    tail: Queue<3>,
     tail_text: usize,
 }
 impl Selection {
     fn push(&mut self, entry: Entry) -> io::Result<()> {
-        if entry.chars == 0 {
+        if entry.bytes == 0 {
             return Ok(());
         }
         if !self.overflowed {
-            if entry.chars <= OUTPUT_WINDOW - self.chars {
-                self.chars += entry.chars;
+            if entry.bytes <= bytes(OUTPUT_WINDOW) - self.bytes {
+                self.bytes += entry.bytes;
                 return self.lines.push(entry.record());
             }
             self.overflowed = true;
@@ -252,7 +265,7 @@ impl Selection {
             earlier.push(entry.record())?;
             let mut head_text = 0;
             while let Some(next) = earlier.front()?.map(Entry::read) {
-                if next.text > OUTPUT_HEAD - head_text {
+                if next.text > bytes(OUTPUT_HEAD) - head_text {
                     break;
                 }
                 head_text += next.text;
@@ -271,7 +284,7 @@ impl Selection {
     fn push_tail(&mut self, entry: Entry) -> io::Result<()> {
         self.tail_text = self.tail_text.saturating_add(entry.text);
         self.tail.push(entry.record())?;
-        while self.tail.len() > 1 && self.tail_text > OUTPUT_TAIL {
+        while self.tail.len() > 1 && self.tail_text > bytes(OUTPUT_TAIL) {
             self.tail_text -= Entry::read(self.tail.pop()?.expect("nonempty")).text;
         }
         Ok(())
@@ -293,21 +306,21 @@ impl Selection {
         while let Some(entry) = self.head.pop()?.map(Entry::read) {
             show(entry.id, Portion::Whole, entry.bytes)?;
         }
-        let lone = if self.tail.len() == 1 && self.tail_text > OUTPUT_TAIL {
+        let lone = if self.tail.len() == 1 && self.tail_text > bytes(OUTPUT_TAIL) {
             self.tail.front()?.map(Entry::read)
         } else {
             None
         };
         match (self.first_cut, lone) {
-            (Some(first), Some(last)) if first.id == last.id && first.text <= OUTPUT_HEAD + OUTPUT_TAIL => {
+            (Some(first), Some(last)) if first.id == last.id && first.text <= bytes(OUTPUT_HEAD + OUTPUT_TAIL) => {
                 show(first.id, Portion::Whole, first.bytes)?;
                 return Ok((chosen, used));
             }
-            (Some(first), _) => show(first.id, Portion::Start(OUTPUT_HEAD), bytes(OUTPUT_HEAD))?,
+            (Some(first), _) => show(first.id, Portion::Start(bytes(OUTPUT_HEAD)), bytes(OUTPUT_HEAD))?,
             (None, _) => {}
         }
         match lone {
-            Some(last) => show(last.id, Portion::End(OUTPUT_TAIL), bytes(OUTPUT_TAIL))?,
+            Some(last) => show(last.id, Portion::End(bytes(OUTPUT_TAIL)), bytes(OUTPUT_TAIL))?,
             None => {
                 while let Some(entry) = self.tail.pop()?.map(Entry::read) {
                     if self.first_cut.is_none_or(|first| first.id != entry.id) {
@@ -372,6 +385,42 @@ fn chars_within(line: &Line, mut room: usize) -> io::Result<usize> {
                 if fitting < *count {
                     return Ok(chars);
                 }
+            }
+            _ => {}
+        }
+    }
+    Ok(chars)
+}
+
+/// How many of a line's last characters of text fit in `room` bytes.
+fn chars_within_end(line: &Line, room: usize) -> io::Result<usize> {
+    let mut total = 0usize;
+    for part in line.parts.iter() {
+        total = total.saturating_add(match part? {
+            Part::Text(text) => text.len(),
+            Part::Spaces(count) => count,
+            _ => 0,
+        });
+    }
+    // Read from the start: what lies before the last `room` bytes is passed
+    // over, a character across that boundary with it.
+    let mut skip = total.saturating_sub(room);
+    let mut chars = 0;
+    for part in line.parts.iter() {
+        match part? {
+            Part::Text(text) => {
+                for c in text.chars() {
+                    if skip > 0 {
+                        skip = skip.saturating_sub(c.len_utf8());
+                    } else {
+                        chars += 1;
+                    }
+                }
+            }
+            Part::Spaces(count) => {
+                let passed = count.min(skip);
+                skip -= passed;
+                chars += count - passed;
             }
             _ => {}
         }
