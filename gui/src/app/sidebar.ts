@@ -242,16 +242,28 @@ export class Sidebar {
   }
 
   /** The network shown, by name: its server's, or this computer's own while
-   *  it is in none. */
+   *  it is in none. In none, the name is only a name, opening nothing: the
+   *  network begins on the machines page (`world-gui.md`, 界面的结构). */
   private drawSwitcher(): void {
     const { store, words } = this.options;
     const whole = store.whole.peek();
+    const networks = networksOf(whole);
     const shown = shownNetwork(whole);
-    const network = networksOf(whole).find((one) => one.hub === shown);
+    const network = networks.find((one) => one.hub === shown);
     const name = network?.name ?? (whole && isComputer(whole) ? whole.here : words.app);
     const label = this.switcher.querySelector(".network-name")!;
     if (label.textContent !== name) label.textContent = name;
-    this.switcher.title = words.networks;
+    const alone = networks.length === 0;
+    this.switcher.disabled = alone;
+    this.switcher.classList.toggle("alone", alone);
+    if (alone) {
+      this.popover.hide();
+      this.switcher.removeAttribute("aria-haspopup");
+      this.switcher.removeAttribute("title");
+    } else {
+      this.switcher.setAttribute("aria-haspopup", "menu");
+      this.switcher.title = words.networks;
+    }
   }
 
   /** Every network this device is in, the one shown checked; then the

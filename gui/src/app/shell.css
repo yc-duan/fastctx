@@ -840,6 +840,17 @@ html.framed .page-head {
   transform: rotate(180deg);
 }
 
+/* In no network the name is only a name. */
+.network-switch.alone,
+.network-switch.alone:hover {
+  background: none;
+  cursor: default;
+}
+
+.network-switch.alone .glyph {
+  display: none;
+}
+
 .network-pop {
   position: absolute;
   top: calc(100% + 2px);
