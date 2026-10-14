@@ -240,6 +240,8 @@ pub(crate) struct Inner {
     /// The session on now is to be asked at once whether the hub still
     /// hears it (`session::run`).
     check: Notify,
+    /// How many of those checks the hub answered.
+    checks: watch::Sender<u64>,
     /// Woken when the ways to the hub this machine should connect by changed.
     rerouted: Notify,
     /// Counts the changes of this machine's network the link noticed; the
@@ -363,6 +365,7 @@ impl Link {
             outbox_changed: Notify::new(),
             reconnect: Notify::new(),
             check: Notify::new(),
+            checks: watch::channel(0).0,
             rerouted: Notify::new(),
             network: watch::channel(0).0,
             hub_ms: Mutex::new(None),
@@ -381,10 +384,20 @@ impl Link {
         Ok(Self { inner })
     }
 
-    /// Invalidates the current connection or dial and skips the retry delay.
-    /// A stopped or removed membership is never restarted by this signal.
+    /// The application's network changed or it came back to the front: a
+    /// session that is on is asked at once whether the hub still hears it,
+    /// and kept when it does (`checks` counts the answers); otherwise this
+    /// machine dials again at once, skipping the retry delay. A stopped or
+    /// removed membership is never restarted by this signal.
     pub fn reconnect(&self) {
         self.inner.reconnect.notify_one();
+    }
+
+    /// How many checks the hub has answered, as it changes. One asked after
+    /// `reconnect` and answered means the session on held; one unanswered
+    /// ends the session, and `subscribe` says so.
+    pub fn checks(&self) -> watch::Receiver<u64> {
+        self.inner.checks.subscribe()
     }
 
     /// Connection changes, including removal. The initial value is the

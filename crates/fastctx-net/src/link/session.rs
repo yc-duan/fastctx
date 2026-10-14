@@ -140,6 +140,14 @@ fn reconnect(inner: &Inner, reason: &str) {
     inner.network.send_modify(|changes| *changes = changes.wrapping_add(1));
 }
 
+/// The hub was heard: a check asked of it is answered, and counted, so
+/// whoever asked for it knows the session on is still heard (`Link::checks`).
+fn answered(inner: &Inner, checking: &mut Option<Instant>) {
+    if checking.take().is_some() {
+        inner.checks.send_modify(|answered| *answered = answered.wrapping_add(1));
+    }
+}
+
 /// A session the hub welcomed, by one way.
 struct Opened {
     socket: HubSocket,
@@ -386,12 +394,12 @@ async fn connected(
             },
             Some(Ok(_)) => {
                 heard = Instant::now();
-                checking = None;
+                answered(inner, &mut checking);
                 continue;
             }
         };
         heard = Instant::now();
-        checking = None;
+        answered(inner, &mut checking);
         match frame {
             Down::Pong { n } => {
                 if n > last_ping {

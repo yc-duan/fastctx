@@ -27,4 +27,20 @@ impl Device {
         };
         Ok((session.link.hub_name(), session.link.subscribe()))
     }
+
+    /// How many checks each hub has answered (`Link::checks`): a native
+    /// application that asks for one on coming back to the front knows by
+    /// the count when a link it kept was heard again.
+    pub fn checks(&self) -> Vec<(fastctx_types::HubName, u64)> {
+        self.sessions().iter().map(|session| (session.link.hub_name(), *session.link.checks().borrow())).collect()
+    }
+
+    /// The same count for the link that reaches `machine`, as it changes.
+    pub fn machine_checks(&self, machine: Option<&MachineName>) -> Result<tokio::sync::watch::Receiver<u64>, Error> {
+        let session = match machine {
+            Some(machine) => self.reaching(machine)?,
+            None => self.on_hub(None)?,
+        };
+        Ok(session.link.checks())
+    }
 }
