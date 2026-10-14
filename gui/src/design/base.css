@@ -1,8 +1,8 @@
 /* The page, and what an agent writes as it reads. Values come from the
    tokens; the reading itself follows incipit's typesetting, measured there
    on real conversations: paragraph rhythm at 1.68, headings parted by face
-   and space, book-style tables, code in the code face, formulas at the
-   classical TeX scale. */
+   and space, book-style tables, fenced code in the code face and inline
+   code among the words in theirs, formulas at the classical TeX scale. */
 
 *,
 *::before,
@@ -45,8 +45,9 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Code is in the World's code face wherever it appears; the browser's own
-   monospace (a Song face on Chinese systems) never shows. */
+/* Code is in the World's code face wherever it appears, save inline code
+   in prose, which is among the words (`.prose :not(pre) > code`); the
+   browser's own monospace (a Song face on Chinese systems) never shows. */
 code,
 kbd,
 samp,
@@ -242,11 +243,17 @@ select:focus-visible,
   background-color: var(--accent-wash);
 }
 
-/* Inline code reads in the code face, a little smaller so it sits level
-   with the words around it; a name in a sentence, not a chip. */
+/* Inline code is one of the words, in the words' own face: the prose has a
+   single face, and only fenced code and what a tool shows are in the code
+   face. A faint solid wash behind it says it is a name to type as written. */
 .prose :not(pre) > code {
-  font-size: 0.9em;
-  padding: 0 0.08em;
+  font-family: inherit;
+  font-variation-settings: normal;
+  padding: 0.04em 0.28em;
+  border-radius: 4px;
+  background: var(--fill);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 
 /* Fenced code: a solid surface, wrapped rather than scrolled, so a phone

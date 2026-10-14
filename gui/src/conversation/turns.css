@@ -409,7 +409,7 @@
   color: var(--text-2);
 }
 
-.notice-box .prose :is(code, pre) {
+.notice-box .prose pre {
   font-style: normal;
 }
 
