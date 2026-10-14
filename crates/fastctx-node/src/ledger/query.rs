@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use fastctx_types::TownName;
+use fastctx_types::access::Acting;
 use fastctx_types::ipc::Failure;
 use fastctx_types::project::{Record, TownSummary};
 
@@ -74,6 +75,60 @@ pub(crate) async fn available(node: &Node, town: Option<&TownName>) -> Result<BT
 pub async fn list(node: &Arc<Node>) -> Result<Vec<TownSummary>, Failure> {
     let towns = query(node, None).await.map_err(Failure::new)?;
     summaries(node, towns).await
+}
+
+/// The projects whoever acts as `acting` may use: a hub's, where one of
+/// the accounts it works for there may use it; this computer's own, kept on
+/// no hub, only for whoever works for this computer's logins
+/// (`world-network.md`, 一个居民替谁干活).
+pub async fn list_for(node: &Arc<Node>, acting: &Acting) -> Result<Vec<TownSummary>, Failure> {
+    let towns = list(node).await?;
+    let world = node.world.clone();
+    let names: Vec<TownName> = towns.iter().map(|summary| summary.town.clone()).collect();
+    let places = tokio::task::spawn_blocking(move || {
+        names.iter().map(|town| super::names::place(&world, town)).collect::<std::io::Result<Vec<_>>>()
+    })
+    .await
+    .map_err(|error| Failure::new(format!("reading the projects: {error}")))?
+    .map_err(|error| Failure::new(format!("reading the projects: {error}")))?;
+    Ok(towns
+        .into_iter()
+        .zip(places)
+        .filter(|(_, place)| place.as_ref().is_some_and(|place| sees(node, acting, place)))
+        .map(|(summary, _)| summary)
+        .collect())
+}
+
+/// Whether whoever acts as `acting` may use the project `town`, taken from
+/// its hub first when this computer keeps nothing of it yet.
+pub async fn usable(node: &Arc<Node>, acting: &Acting, town: &TownName) -> Result<bool, Failure> {
+    query(node, Some(town)).await.map_err(Failure::new)?;
+    let (world, name) = (node.world.clone(), town.clone());
+    let place = tokio::task::spawn_blocking(move || super::names::place(&world, &name))
+        .await
+        .map_err(|error| Failure::new(format!("reading the project {town}: {error}")))?
+        .map_err(|error| Failure::new(format!("reading the project {town}: {error}")))?;
+    Ok(place.is_some_and(|place| sees(node, acting, &place)))
+}
+
+/// Whether one of the accounts `acting` works for may use the project at
+/// `place`. A project kept on no hub is this computer's own, so its
+/// owner's: whoever works for the account it is registered under.
+fn sees(node: &Node, acting: &Acting, place: &super::names::Place) -> bool {
+    if let Some(link) = node.link_of(&place.hub) {
+        let view = link.view();
+        return node.accounts_on(&link, acting).iter().any(|account| view.in_project(account, &place.town));
+    }
+    match acting {
+        Acting::Here => true,
+        Acting::Accounts { accounts } => {
+            node.links().is_empty()
+                || accounts.iter().any(|account| {
+                    node.link_of(&account.hub)
+                        .is_some_and(|link| link.view().me().and_then(|me| me.home.as_ref()) == Some(&account.account))
+                })
+        }
+    }
 }
 
 /// The projects kept here, asking no hub: what an interface lists

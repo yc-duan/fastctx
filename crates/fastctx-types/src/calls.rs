@@ -803,6 +803,18 @@ pub enum ProjectCall {
     },
 }
 
+impl ProjectCall {
+    /// The existing town the call names; `None` means the caller's, all of
+    /// them, or a new one.
+    pub fn town(&self) -> Option<&TownName> {
+        match self {
+            ProjectCall::New { .. } | ProjectCall::List => None,
+            ProjectCall::Edit { town, .. } | ProjectCall::Show { town } | ProjectCall::Map { town } => town.as_ref(),
+            ProjectCall::Enter { town } => Some(town),
+        }
+    }
+}
+
 /// `fastctx journal`: a town's journals. Without a town, a call means the
 /// caller's.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -835,6 +847,18 @@ pub enum JournalCall {
     List {
         town: Option<TownName>,
     },
+}
+
+impl JournalCall {
+    /// The town the call names; `None` means the caller's.
+    pub fn town(&self) -> Option<&TownName> {
+        match self {
+            JournalCall::Add { town, .. }
+            | JournalCall::Describe { town, .. }
+            | JournalCall::Read { town, .. }
+            | JournalCall::List { town } => town.as_ref(),
+        }
+    }
 }
 
 /// A file to attach to an entry: on the machine the command runs on, or on

@@ -21,7 +21,10 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
             let town = caller.town_or(node, town)?;
             edit(node, caller, town, fields).await
         }
-        ProjectCall::List => crate::ledger::query::list(node).await.map(|towns| Reply::Towns { towns }),
+        ProjectCall::List => {
+            let acting = crate::around::acting_of(node, caller);
+            crate::ledger::query::list_for(node, &acting).await.map(|towns| Reply::Towns { towns })
+        }
         ProjectCall::Show { town } => {
             let town = caller.town_or(node, town)?;
             map::query(node, &town).await?;

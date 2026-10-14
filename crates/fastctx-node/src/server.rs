@@ -86,6 +86,12 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             return writer.drain().await;
         }
         if let Call::Watch { resident, machine, composer, held } = call {
+            // Watching a conversation anywhere is the user's, with this
+            // computer's logins.
+            if let Err(failure) = users_voice(node, &hello.peer) {
+                writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
+                continue;
+            }
             // A watch keeps the connection until one end leaves.
             let opening = tokio::select! {
                 result = crate::talk::watch(node, resident, machine, composer, held) => result,
@@ -153,6 +159,10 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             }
         }
         if let Call::WatchWorld = call {
+            if let Err(failure) = users_voice(node, &hello.peer) {
+                writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
+                return writer.drain().await;
+            }
             // An interface follows the World for as long as it is open: as
             // it is first, then after each change (`world-network.md`, 近况).
             let mut residents = node.residents.changes();
@@ -931,10 +941,8 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .map(|(resident, stopped)| Reply::Stopped { resident, stopped })
         }
         Call::Data(call) => {
-            // Only the user deletes conversations or changes what is kept.
-            if !matches!(call, fastctx_types::data::DataCall::List) {
-                users_voice(node, peer)?;
-            }
+            // What this machine keeps is the user's to read and change.
+            users_voice(node, peer)?;
             crate::data::answer(node, call).await.map(Reply::Data)
         }
         Call::Manage { resident, machine, action } => {
@@ -960,17 +968,26 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|updated| Reply::Composer(Box::new(updated)))
         }
+        // What an interface shows of a conversation anywhere, read with this
+        // computer's logins: the user's alone.
         Call::ItemDetail { resident, machine, turn, item } => {
+            users_voice(node, peer)?;
             crate::held_history::item_detail(node, resident, machine, turn, item)
                 .await
                 .map(|(resident, detail)| Reply::ItemDetail { resident, detail })
         }
-        Call::AgentActivity { resident, machine, agent } => crate::agent_activity::read(node, resident, machine, agent)
-            .await
-            .map(|(resident, activity)| Reply::AgentActivity { resident, activity: Box::new(activity) }),
-        Call::Offers { resident, machine } => crate::control::offers(node, resident, machine)
-            .await
-            .map(|(resident, offers)| Reply::Offers { resident, offers: Box::new(offers) }),
+        Call::AgentActivity { resident, machine, agent } => {
+            users_voice(node, peer)?;
+            crate::agent_activity::read(node, resident, machine, agent)
+                .await
+                .map(|(resident, activity)| Reply::AgentActivity { resident, activity: Box::new(activity) })
+        }
+        Call::Offers { resident, machine } => {
+            users_voice(node, peer)?;
+            crate::control::offers(node, resident, machine)
+                .await
+                .map(|(resident, offers)| Reply::Offers { resident, offers: Box::new(offers) })
+        }
         Call::Attach { resident } => {
             users_voice(node, peer)?;
             crate::attach::command(node, &resident).await.map(Reply::Attachable)
@@ -1011,14 +1028,17 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::Project(call) => {
             let caller = caller::of(node, peer)?;
+            named_town(node, &caller, call.town()).await?;
             crate::town::project::call(node, &caller, call).await
         }
         Call::Journal(call) => {
             let caller = caller::of(node, peer)?;
+            named_town(node, &caller, call.town()).await?;
             crate::town::journal::call(node, &caller, call).await
         }
         Call::Page(call) => {
             let caller = caller::of(node, peer)?;
+            named_town(node, &caller, call.town()).await?;
             crate::pages::call(node, &caller, &node.machine(), call).await
         }
         // Logins and accounts are the user's alone: a resident that could
@@ -1040,8 +1060,14 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             crate::world::change(node, hub.as_ref(), &account, change).await.map(|token| Reply::Changed { token })
         }
-        Call::Accounts => Ok(Reply::Accounts(crate::world::accounts(node))),
-        Call::RenameHere { to } => crate::world::rename_here(node, to).await.map(|()| Reply::Done),
+        Call::Accounts => {
+            users_voice(node, peer)?;
+            Ok(Reply::Accounts(crate::world::accounts(node)))
+        }
+        Call::RenameHere { to } => {
+            users_voice(node, peer)?;
+            crate::world::rename_here(node, to).await.map(|()| Reply::Done)
+        }
         Call::MachineLog { hub, account, before } => {
             users_voice(node, peer)?;
             crate::world::hub_link(node, Some(&hub))?
@@ -1115,9 +1141,15 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::WatchFeatures => Err(Failure::new("a features watch is answered as it goes, not at once")),
         Call::WatchWorld => Err(Failure::new("a World watch is answered as it goes, not at once")),
-        Call::WorldNow => crate::shown::now(node).await.map(|world| Reply::WorldNow(Box::new(world))),
+        Call::WorldNow => {
+            users_voice(node, peer)?;
+            crate::shown::now(node).await.map(|world| Reply::WorldNow(Box::new(world)))
+        }
         Call::Reopened { .. } => Err(Failure::new("a way opening is waited for on a connection of its own")),
-        Call::Nodes => nodes(node).await.map(Reply::Nodes),
+        Call::Nodes => {
+            let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
+            nodes(node, &acting).await.map(Reply::Nodes)
+        }
         Call::Machines { resident, login, thread } => {
             let resident =
                 resident.or_else(|| thread.as_deref().and_then(|thread| node.residents.resident_of_thread(thread)));
@@ -1160,6 +1192,19 @@ fn users_voice(node: &Node, peer: &Peer) -> Result<(), Failure> {
         Caller::Session(agent) => {
             Err(Failure::new(format!("a {agent} session's own shell runs this; only the user speaks as the user")))
         }
+    }
+}
+
+/// A resident names only the projects of the accounts it works for; any
+/// other is answered as one that is not there (`world-network.md`, 一个居民
+/// 替谁干活).
+async fn named_town(node: &Arc<Node>, caller: &Caller, town: Option<&TownName>) -> Result<(), Failure> {
+    let (Caller::Resident(_), Some(town)) = (caller, town) else { return Ok(()) };
+    let acting = crate::around::acting_of(node, caller);
+    if crate::ledger::query::usable(node, &acting, town).await? {
+        Ok(())
+    } else {
+        Err(crate::town::map::no_ledger(node, town))
     }
 }
 
@@ -1342,13 +1387,21 @@ async fn who(
             let asked = record.as_ref().map(|record| record.machines.clone());
             (WhoScope::Town { town: name.clone(), record: record.map(Box::new) }, asked)
         }
-        None => (WhoScope::World { towns: crate::ledger::query::list(node).await? }, None),
+        None => (WhoScope::World { towns: crate::ledger::query::list_for(node, acting).await? }, None),
     };
     let asks_for = |machine: &MachineName| asked.as_ref().is_none_or(|asked| asked.contains(machine));
     let mut machines = Vec::new();
     if asks_for(&here) {
         machines.push(match who_here(node, all, town.clone(), since).await {
-            Ok(reply) => MachineWho::Answered { reply },
+            Ok(mut reply) => {
+                // An agent assisting an account that may not work here sees
+                // only what works for the accounts it does (`world-network.md`,
+                // 共享机器与智能体协助).
+                if node.works_here(acting).is_err() {
+                    crate::who::only_for(node, acting, &mut reply);
+                }
+                MachineWho::Answered { reply }
+            }
             Err(error) => MachineWho::NoAnswer { machine: here.clone(), reason: error.message },
         });
     }
@@ -1410,22 +1463,29 @@ fn machines(
     Ok(Reply::Machines { here, others, collab })
 }
 
-/// `fastctx nodes`: this computer, and hub by hub the machines its logins
-/// may use, each asked what it is like when it is online.
-async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
+/// `fastctx nodes`: this computer, and hub by hub the machines whoever asks
+/// may work on from here, each asked what it is like when it is online, for
+/// one of the accounts it works for. A session sees what it can reach and
+/// no more: a hub where it works for no account goes unnamed, and so does
+/// this computer for an agent assisting an account that may not work on it
+/// (`world-network.md`, 一个居民替谁干活).
+async fn nodes(node: &Arc<Node>, acting: &fastctx_types::access::Acting) -> Result<NodesReply, Failure> {
     let here = node.machine();
     let links = node.links();
     let mut hubs = Vec::new();
     for link in links {
+        let logins = node.accounts_on(&link, acting);
+        if logins.is_empty() && !matches!(acting, fastctx_types::access::Acting::Here) {
+            continue;
+        }
         let refreshed = link.refresh().await;
         let view = link.view();
-        let logins: Vec<fastctx_types::AccountName> =
-            view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
         let mut asks = Vec::new();
         for machine in view.machines().filter(|machine| !view.is_me(&machine.name)) {
             let rights: Vec<_> =
                 logins.iter().map(|account| (account.clone(), view.rights(account, &machine.name))).collect();
-            let Some(account) = rights.iter().find(|(_, rights)| rights.hands).map(|(account, _)| account.clone())
+            let Some(account) =
+                view.account_for(&logins, &view.me, &machine.name, fastctx_types::access::Purpose::Hands)
             else {
                 continue;
             };
@@ -1466,7 +1526,8 @@ async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
             machines,
         });
     }
-    Ok(NodesReply { machine: here, facts: Some(crate::world::facts(node)), hubs })
+    let facts = node.works_here(acting).is_ok().then(|| crate::world::facts(node));
+    Ok(NodesReply { machine: here, facts, hubs })
 }
 
 async fn blocking<T: Send + 'static>(

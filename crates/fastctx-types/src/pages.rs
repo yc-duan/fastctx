@@ -159,6 +159,22 @@ pub enum PageCall {
     },
 }
 
+impl PageCall {
+    /// The town the call names; `None` means the caller's.
+    pub fn town(&self) -> Option<&TownName> {
+        match self {
+            PageCall::Publish { town, .. }
+            | PageCall::Read { town, .. }
+            | PageCall::List { town }
+            | PageCall::History { town, .. }
+            | PageCall::Withdraw { town, .. }
+            | PageCall::Restore { town, .. }
+            | PageCall::Consent { town, .. }
+            | PageCall::Act { town, .. } => town.as_ref(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum PageResult {

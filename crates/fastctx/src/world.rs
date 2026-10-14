@@ -791,7 +791,9 @@ fn hub_nodes(hub: &HubNodes, now: Timestamp) -> String {
     let resident = std::env::var_os("FASTCTX_RESIDENT").is_some();
     let logins = hub.logins.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
     let home = hub.home.as_ref().map(|home| format!("; registered under {home}")).unwrap_or_default();
-    let mut text = format!("\n--- hub {} ({}) · logged in to {logins}{home}\n", hub.name, link(&hub.link, now));
+    // A session's are the accounts it works for, logged in here or not.
+    let accounts = if resident { format!("working for {logins}") } else { format!("logged in to {logins}") };
+    let mut text = format!("\n--- hub {} ({}) · {accounts}{home}\n", hub.name, link(&hub.link, now));
     if hub.machines.is_empty() {
         text.push_str(&format!("no other machine is in {}: this computer is the only machine\n", hub.name));
     }
