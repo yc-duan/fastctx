@@ -118,6 +118,11 @@
   animation: removal-rise 0.28s cubic-bezier(0.33, 1, 0.68, 1);
 }
 
+/* Drawn again for a press within the step, it stays where it rose to. */
+.removal-plan.risen {
+  animation: none;
+}
+
 @keyframes removal-rise {
   from {
     opacity: 0;
@@ -242,6 +247,12 @@
 
 .removal-list li[data-result="failed"] .removal-what {
   color: var(--wrong);
+}
+
+/* A step still to come: every list of steps is listed whole from the start,
+   so it is ticked in place and never grows. */
+.removal-list li[data-state="ahead"] .removal-what {
+  color: var(--text-3);
 }
 
 .removal-what {

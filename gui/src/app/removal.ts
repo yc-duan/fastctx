@@ -9,6 +9,7 @@
 
 import { escape } from "../conversation/prose";
 import type { RemovalEvent, RemovalItem, RemovalPlan } from "../world/bridge";
+import { DrawnOnce } from "./drawn-once";
 import { progressSteps } from "./progress-steps";
 import { groupOf, type RemovalGroup, type RemovalWords } from "./removal-words";
 
@@ -38,10 +39,10 @@ export class RemovalSection {
    *  the pressed button it removes as a focusout without a related target,
    *  synchronously inside the rewrite; that is not the reader moving on. */
   private drawing = false;
-  /** The drawings already drawn in: the dialog is drawn again on every
-   *  change, and a drawing seen once stays drawn rather than being drawn in
-   *  anew each time. */
-  private readonly drawn = new Set<string>();
+  /** The dialog is drawn again on every change: its drawings are drawn in
+   *  once, and the second step's panel rises in once. */
+  private readonly drawn = new DrawnOnce();
+  private risen = false;
 
   constructor(
     private readonly host: HTMLElement,
@@ -194,7 +195,8 @@ export class RemovalSection {
     } finally {
       this.drawing = false;
     }
-    for (const drawing of this.host.querySelectorAll<SVGElement>("[data-drawing]")) this.drawn.add(drawing.dataset.drawing!);
+    this.drawn.seen(this.host);
+    this.risen = state.at === "plan";
     const name = this.host.querySelector<HTMLInputElement>("[data-removal-name]");
     if (name && state.at === "plan") name.value = state.typed;
   }
@@ -224,7 +226,7 @@ export class RemovalSection {
             </div>
             ${hub ? `<p class="removal-warn">${escape(words.hubWarn(plan.hub!.name))}</p>` : ""}
             ${plan.other ? `<p class="removal-note">${escape(words.other(plan.other.path, plan.other.version))}</p>` : ""}`;
-        return `${this.chosen(plan.everything)}<div class="removal-plan">
+        return `${this.chosen(plan.everything)}<div class="removal-plan${this.risen ? " risen" : ""}">
           ${overview}
           <button class="text-button removal-toggle" type="button" data-removal="list" aria-expanded="${state.open}">${escape(state.open ? words.hideList : words.list)}</button>
         </div>
@@ -265,7 +267,7 @@ export class RemovalSection {
   private way(everything: boolean): string {
     const { words } = this;
     const [act, title, what, more] = everything ? ["erase", words.erase, words.eraseWhat, words.eraseMore] : ["keep", words.keep, words.keepWhat, words.keepMore];
-    const drawing = this.drawnOnce(act, everything ? eraseMark() : keepMark());
+    const drawing = this.drawn.mark(act, everything ? eraseMark() : keepMark());
     return `<button class="welcome-way removal-way${everything ? " erase" : ""}" type="button" data-removal="${act}" title="${escape(more)}">${drawing}<span class="welcome-way-title">${escape(title)}</span><span class="welcome-way-what">${escape(what)}</span></button>`;
   }
 
@@ -273,14 +275,8 @@ export class RemovalSection {
   private chosen(everything: boolean): string {
     const { words } = this;
     const [title, what] = everything ? [words.erase, words.eraseWhat] : [words.keep, words.keepWhat];
-    const drawing = this.drawnOnce(everything ? "chosen-erase" : "chosen-keep", everything ? eraseMark() : keepMark());
+    const drawing = this.drawn.mark(everything ? "chosen-erase" : "chosen-keep", everything ? eraseMark() : keepMark());
     return `<div class="removal-chosen${everything ? " erase" : ""}">${drawing}<span class="removal-chosen-words"><span class="removal-chosen-title">${escape(title)}</span><span class="removal-chosen-what">${escape(what)}</span></span></div>`;
-  }
-
-  /** A drawing named `key`: drawn in the first time it shows, drawn already
-   *  every time after. */
-  private drawnOnce(key: string, svg: string): string {
-    return svg.replace('class="welcome-way-mark"', `class="welcome-way-mark${this.drawn.has(key) ? " drawn" : ""}" data-drawing="${key}"`);
   }
 
   /** Over the list being ticked: what is happening, and how far it is. */

@@ -722,7 +722,6 @@ export class MachinesPage implements Page {
 
   private redraw(): void {
     this.drawn = "";
-    this.floated = "";
     this.listed = "";
     this.draw(this.options.store.world.peek(), this.options.store.clock.peek());
   }

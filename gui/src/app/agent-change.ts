@@ -18,7 +18,7 @@ import { glyph } from "../conversation/glyphs";
 import { LongText, type LongTextWords } from "../conversation/long-text";
 import { escape } from "../conversation/prose";
 import { AnchorLayout } from "../longview";
-import type { ChangePreview, ChangeStep, LoginChange, OutputLimit } from "../world/logins";
+import type { ChangePreview, ChangeStep, LoginChange, OutputLimit, Step } from "../world/logins";
 import { previewDiff, shortPath } from "./change-diff";
 import { Sheet } from "./confirm";
 import { detailOf } from "./problem";
@@ -183,8 +183,8 @@ export interface AgentChangeSeams {
 
 type State =
   | { at: "asking"; preview: ChangePreview | null; problem: string | null; open: boolean; raise: boolean; files: Set<number> }
-  | { at: "running"; steps: ChangeStep[] }
-  | { at: "ended"; change: LoginChange | null; problem: string | null };
+  | { at: "running"; planned: Step[]; steps: ChangeStep[] }
+  | { at: "ended"; planned: Step[]; change: LoginChange | null; problem: string | null };
 
 /** How long between reads of a running change's steps: the node records
  *  each step as it is done, and a step usually takes a fraction of a
@@ -244,7 +244,8 @@ export class AgentChangeSheet {
     const target = this.target;
     if (!target || this.state.at !== "asking") return;
     const raise = this.state.raise;
-    this.state = { at: "running", steps: [] };
+    const planned = plannedSteps(target, this.state.preview);
+    this.state = { at: "running", planned, steps: [] };
     this.sheet.busy = true;
     this.draw();
     let following = true;
@@ -262,9 +263,9 @@ export class AgentChangeSheet {
     void follow();
     try {
       const change = await this.seams.change(target, raise);
-      this.state = { at: "ended", change, problem: change.end?.end === "failed" ? change.end.reason : null };
+      this.state = { at: "ended", planned, change, problem: change.end?.end === "failed" ? change.end.reason : null };
     } catch (error) {
-      this.state = { at: "ended", change: null, problem: detailOf(error) };
+      this.state = { at: "ended", planned, change: null, problem: detailOf(error) };
     } finally {
       following = false;
       this.sheet.busy = false;
@@ -326,12 +327,12 @@ export class AgentChangeSheet {
           <button class="${target.into ? "sheet-go" : "removal-button"}" type="button" data-change="go"${!preview && !state.problem ? " disabled" : ""}>${escape(target.into ? words.apply : words.remove)}</button>
         </div>`;
     }
-    if (state.at === "running") return `${head}<ol class="removal-list agent-change-steps">${this.steps(state.steps)}</ol>`;
+    if (state.at === "running") return `${head}<ol class="removal-list agent-change-steps">${this.steps(state.planned, state.steps)}</ol>`;
     const change = state.change;
     const done = change?.end?.end === "done";
     const kept = change?.end?.end === "done" ? (change.end.kept ?? []) : [];
     return `${head}
-      ${change ? `<ol class="removal-list agent-change-steps">${this.steps(change.steps)}</ol>` : ""}
+      ${change ? `<ol class="removal-list agent-change-steps">${this.steps(state.planned, change.steps)}</ol>` : ""}
       ${done ? `<p class="agent-change-stamp">${stampDrawing()}<span>${escape(target.into ? words.done : words.removedDone)}</span></p>` : ""}
       ${kept.length ? `<ul class="agent-change-kept">${kept.map((one) => `<li title="${escape(one.reason)}"><span>${escape(words.kept)}</span><code>${escape(one.location)}</code></li>`).join("")}</ul>` : ""}
       ${state.problem ? `<p class="removal-said removal-wrong" title="${escape(state.problem)}">${escape(words.failed(state.problem))}</p>` : ""}
@@ -391,30 +392,59 @@ export class AgentChangeSheet {
     });
   }
 
-  private steps(steps: ChangeStep[]): string {
+  /** Every step the change takes, listed before the first begins, each
+   *  with what the node has said of it so far. A step said takes the place
+   *  of the first one listed of its kind; one never listed goes last. */
+  private rows(planned: Step[], said: ChangeStep[]): string[] {
     const { words } = this;
-    return steps
-      .map((one) => {
-        const label =
-          one.step.step === "program"
-            ? words.steps.program
-            : one.step.step === "command"
-              ? words.steps.command(one.step.command)
-              : one.step.step === "files"
-                ? words.steps.files
-                : words.steps.check(one.step.scope);
-        const result = one.state.state === "done" ? "done" : one.state.state === "failed" ? "failed" : null;
-        const why = one.state.state === "failed" ? one.state.reason : "";
-        return `<li${result ? ` data-result="${result}"` : ""}${why ? ` title="${escape(why)}"` : ""}><span class="removal-mark" aria-hidden="true">${mark(result)}</span><span class="removal-what">${escape(label)}</span></li>`;
-      })
-      .join("");
+    const left = [...said];
+    const take = (kind: Step["step"]) => {
+      const at = left.findIndex((one) => one.step.step === kind);
+      return at < 0 ? null : left.splice(at, 1)[0]!;
+    };
+    const ones = [...planned.map((step) => take(step.step) ?? { step, state: null }), ...left];
+    const agent = this.target?.agent === "codex" ? "Codex" : "Claude Code";
+    return ones.map((one) => {
+      const { step } = one;
+      const label =
+        step.step === "program" ? words.steps.program : step.step === "command" ? words.steps.command(step.command) : step.step === "files" ? words.steps.files : words.steps.check(agent);
+      const state = one.state?.state ?? "ahead";
+      const result = state === "done" || state === "failed" ? state : null;
+      const title = one.state?.state === "failed" ? one.state.reason : step.step === "check" ? step.scope : "";
+      return `<li data-state="${state}"${result ? ` data-result="${result}"` : ""}${title ? ` title="${escape(title)}"` : ""}><span class="removal-mark" aria-hidden="true">${mark(result)}</span><span class="removal-what">${escape(label)}</span></li>`;
+    });
   }
 
+  private steps(planned: Step[], said: ChangeStep[]): string {
+    return this.rows(planned, said).join("");
+  }
+
+  /** The steps as the node said them last: only a row that changed is drawn
+   *  again, so a tick drawn once is not drawn in anew at every reading. */
   private drawSteps(): void {
     if (this.state.at !== "running") return;
     const list = this.sheet.body.querySelector<HTMLElement>(".agent-change-steps");
-    if (list) list.innerHTML = this.steps(this.state.steps);
+    if (!list) return;
+    this.rows(this.state.planned, this.state.steps).forEach((html, index) => {
+      const shown = list.children[index] as HTMLElement | undefined;
+      if (shown?.dataset.html === html) return;
+      const row = document.createElement("template");
+      row.innerHTML = html;
+      const item = row.content.firstElementChild as HTMLElement;
+      item.dataset.html = html;
+      if (shown) shown.replaceWith(item);
+      else list.append(item);
+    });
   }
+}
+
+/** The steps a change will take, in the order the node takes them: the
+ *  program, Claude Code's own commands, the files, and a check of the
+ *  agent's tools when it hooks up; the commands and the files when it is
+ *  taken out. */
+function plannedSteps(target: AgentChangeTarget, preview: ChangePreview | null): Step[] {
+  const commands: Step[] = (preview?.commands ?? []).map((command) => ({ step: "command", command }));
+  return target.into ? [{ step: "program" }, ...commands, { step: "files" }, { step: "check", scope: "" }] : [...commands, { step: "files" }];
 }
 
 /** The agent's own hands, struck through, and the World's run beside them:

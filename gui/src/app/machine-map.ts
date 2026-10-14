@@ -656,16 +656,16 @@ export class MachineMap {
     const key = JSON.stringify([scene.selected, scene.framed, [...scene.fresh], near, scene.nodes.map((node) => [node.key, node.online, node.busy > 0]), [...placement.machines], lit && [...lit]]);
     if (key === this.marked) return;
     this.marked = key;
-    const circles: string[] = [];
+    const circles: Ring[] = [];
     const chosen = scene.selected && !scene.selected.startsWith("group:") ? this.pointOf(scene.selected) : null;
-    if (chosen) circles.push(`<path class="chosen" d="${circle(chosen, scene.selected!.startsWith("hub:") ? KNOT + 9 : RING + 8, 3, seeded(`chosen:${scene.selected}`))}"/>`);
+    if (chosen) circles.push({ id: `chosen:${scene.selected}`, kind: "chosen", d: circle(chosen, scene.selected!.startsWith("hub:") ? KNOT + 9 : RING + 8, 3, seeded(`chosen:${scene.selected}`)) });
     for (const framed of scene.framed) {
       const point = this.pointOf(framed);
-      if (point && framed !== scene.selected) circles.push(`<path class="chosen" d="${circle(point, RING + 8, 3, seeded(`chosen:${framed}`))}"/>`);
+      if (point && framed !== scene.selected) circles.push({ id: `chosen:${framed}`, kind: "chosen", d: circle(point, RING + 8, 3, seeded(`chosen:${framed}`)) });
     }
     for (const fresh of scene.fresh) {
       const point = this.pointOf(fresh);
-      if (point && fresh !== scene.selected) circles.push(`<path class="arrived" d="${circle(point, RING + 8, 3, seeded(`arrived:${fresh}`))}"/>`);
+      if (point && fresh !== scene.selected) circles.push({ id: `arrived:${fresh}`, kind: "arrived", d: circle(point, RING + 8, 3, seeded(`arrived:${fresh}`)) });
     }
     // The machines that can take the server glow with a broken clay ring,
     // a small moon beside one that goes to sleep.
@@ -673,7 +673,7 @@ export class MachineMap {
     for (const [key, candidate] of lit ?? []) {
       const point = this.pointOf(key);
       if (!point) continue;
-      circles.push(`<path class="lit" d="${circle(point, RING + 8, 3, seeded(`lit:${key}`))}"/>`);
+      circles.push({ id: `lit:${key}`, kind: "lit", d: circle(point, RING + 8, 3, seeded(`lit:${key}`)) });
       if (candidate.sleeps) moons.push(`<path class="moon" d="${crescent([point[0] - (RING + 18) * 0.72, point[1] - (RING + 18) * 0.72], 7)}"/>`);
     }
     for (const name of this.names.querySelectorAll<SVGTextElement>(".machine-name")) {
@@ -688,7 +688,43 @@ export class MachineMap {
         flows.push(`<path class="flow" d="M${from[0].toFixed(1)} ${from[1].toFixed(1)}L${to[0].toFixed(1)} ${to[1].toFixed(1)}"/>`);
       }
     }
-    this.marks.innerHTML = `<g class="clay" filter="url(#pen-marker)">${circles.join("")}</g><g class="moons">${moons.join("")}</g><g class="flows">${flows.join("")}</g>`;
+    if (!this.marks.firstElementChild) this.marks.innerHTML = `<g class="clay" filter="url(#pen-marker)"></g><g class="moons"></g><g class="flows"></g>`;
+    const [clay, moon, flow] = [...this.marks.children] as SVGGElement[];
+    keepRings(clay!, circles);
+    for (const [layer, html] of [
+      [moon!, moons.join("")],
+      [flow!, flows.join("")],
+    ] as const) {
+      if (layer.dataset.drawn === html) continue;
+      layer.dataset.drawn = html;
+      layer.innerHTML = html;
+    }
+  }
+}
+
+/** A clay ring drawn live, by what it rings and why. */
+interface Ring {
+  id: string;
+  kind: "chosen" | "arrived" | "lit";
+  d: string;
+}
+
+/** The rings of `layer` made to be `rings`: one already there is only moved
+ *  where it must be, so the pen does not draw it in again when something
+ *  else on the map changes; one new is drawn in; one gone goes. */
+function keepRings(layer: SVGGElement, rings: Ring[]): void {
+  const shown = new Map([...layer.children].map((one) => [(one as SVGPathElement).dataset.ring!, one as SVGPathElement]));
+  const wanted = new Set(rings.map((ring) => ring.id));
+  for (const [id, element] of shown) if (!wanted.has(id)) element.remove();
+  for (const ring of rings) {
+    let element = shown.get(ring.id);
+    if (!element) {
+      element = document.createElementNS(SVG, "path");
+      element.dataset.ring = ring.id;
+      element.setAttribute("class", ring.kind);
+      layer.append(element);
+    }
+    if (element.getAttribute("d") !== ring.d) element.setAttribute("d", ring.d);
   }
 }
 

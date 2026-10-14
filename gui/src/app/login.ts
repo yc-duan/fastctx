@@ -19,6 +19,7 @@ import { managedMachine } from "./managed-art";
 import { newPasswordFields, passwordReady, sayPassword } from "./new-password";
 import { plainly } from "./problem";
 import { loginLabel } from "./reach";
+import { DrawnOnce } from "./drawn-once";
 import { RemoteWorld, type RemoteSeams } from "./remote-world";
 import type { Page } from "./shell";
 import { effect } from "./signals";
@@ -122,6 +123,10 @@ export class LoginPage implements Page {
   private remote: RemoteWorld | null = null;
   /** The name a phone is offered, made from what it calls itself. */
   private suggested = "";
+  /** The page is drawn again on every change: its drawings are drawn in
+   *  once, and the card of being in rises in once. */
+  private readonly drawn = new DrawnOnce();
+  private risen = false;
   /** What the code pasted lets this computer into, as its server said;
    *  null when it said nothing of it. */
   private peeked: TokenPeek | null = null;
@@ -269,15 +274,15 @@ export class LoginPage implements Page {
       case "choose":
         this.body.innerHTML = `
           <div class="welcome-ways">
-            ${this.options.way === "new" ? "" : `<button class="welcome-way" type="button" data-way="password">${joinMark()}<span class="welcome-way-title">${escape(words.join)}</span><span class="welcome-way-what">${escape(words.joinWhat)}</span></button>`}
+            ${this.options.way === "new" ? "" : `<button class="welcome-way" type="button" data-way="password">${this.drawn.mark("join", joinMark())}<span class="welcome-way-title">${escape(words.join)}</span><span class="welcome-way-what">${escape(words.joinWhat)}</span></button>`}
             ${
               this.options.create
-                ? `<button class="welcome-way" type="button" data-way="create">${createMark()}<span class="welcome-way-title">${escape(words.create)}</span><span class="welcome-way-what">${escape(words.createWhat)}</span></button>`
+                ? `<button class="welcome-way" type="button" data-way="create">${this.drawn.mark("create", createMark())}<span class="welcome-way-title">${escape(words.create)}</span><span class="welcome-way-what">${escape(words.createWhat)}</span></button>`
                 : ""
             }
             ${
               this.options.remote
-                ? `<button class="welcome-way" type="button" data-way="remote">${remoteMark()}<span class="welcome-way-title">${escape(words.remote)}</span><span class="welcome-way-what">${escape(words.remoteWhat)}</span></button>`
+                ? `<button class="welcome-way" type="button" data-way="remote">${this.drawn.mark("remote", remoteMark())}<span class="welcome-way-title">${escape(words.remote)}</span><span class="welcome-way-what">${escape(words.remoteWhat)}</span></button>`
                 : ""
             }
           </div>
@@ -328,7 +333,7 @@ export class LoginPage implements Page {
         this.body.innerHTML = `
           <div class="welcome-form scan-form">
             <div class="login-name"></div>
-            <button class="scan-code" type="button">${scanMark()}<span>${escape(words.scan)}</span></button>
+            <button class="scan-code" type="button">${this.drawn.mark("scan", scanMark())}<span>${escape(words.scan)}</span></button>
             <p class="sheet-note" role="alert" hidden></p>
             <footer class="welcome-foot"><span class="login-ways">${way("password", words.withPassword)}</span><span></span></footer>
           </div>`;
@@ -386,6 +391,7 @@ export class LoginPage implements Page {
         this.drawDone();
         break;
     }
+    this.drawn.seen(this.body);
     this.drawStrength();
   }
 
@@ -530,7 +536,7 @@ export class LoginPage implements Page {
     // A picture, not a place to work: the drawing is shown, never pointed
     // at or pressed (`world-gui.md`, 登录或新建成功之后).
     this.body.innerHTML = `
-      <div class="welcome-done">
+      <div class="welcome-done${this.risen ? " risen" : ""}">
         <div class="welcome-drawing" inert aria-hidden="true"></div>
         <h2 class="welcome-done-title">${escape(this.created ? words.created(done.hub) : words.joined(done.hub))}</h2>
         <p class="welcome-done-who">${escape(who)}</p>
@@ -538,6 +544,7 @@ export class LoginPage implements Page {
         <p class="sheet-note" role="alert" hidden></p>
         <div class="welcome-done-acts"><button class="sheet-go enter" type="button">${escape(words.enter)}</button>${this.created && this.options.invite ? `<button class="text-button invite-next" type="button">${escape(words.addDevice)}</button>` : ""}</div>
       </div>`;
+    this.risen = true;
     const drawing = this.options.drawing;
     if (drawing) {
       this.body.querySelector(".welcome-drawing")!.append(drawing.element);

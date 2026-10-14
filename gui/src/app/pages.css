@@ -1016,6 +1016,11 @@ a.details-job {
   animation: removal-rise 0.4s cubic-bezier(0.33, 1, 0.68, 1);
 }
 
+/* Drawn again for a press on it, it stays where it rose to. */
+.welcome-done.risen {
+  animation: none;
+}
+
 .welcome-drawing {
   position: relative;
   width: 100%;
@@ -1166,10 +1171,6 @@ a.details-job {
   margin: var(--space-2) 0 0;
 }
 
-/* A step still to come, listed from the start so the list never grows. */
-.remote-steps li[data-state="ahead"] .removal-what {
-  color: var(--text-3);
-}
 
 /* The server being added, above its steps. */
 .remote-host {
