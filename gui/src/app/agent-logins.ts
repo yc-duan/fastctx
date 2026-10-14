@@ -625,7 +625,7 @@ export class AgentLoginsPage implements Page {
     // Claude Code does its own. Only a login the World's tools are in hosts
     // World conversations, so only such a login shows it.
     if (this.agent === "codex" && found.machine.mine && login.integration === "in") {
-      entries.push({ rule: true }, { note: words.autoTitleWhy }, { act: "title", label: words.autoTitle, checked: !!login.auto_title });
+      entries.push({ rule: true }, { act: "title", icon: "edit", label: words.autoTitle, on: !!login.auto_title, hint: words.autoTitleWhy });
     }
     if (identity?.method === "oauth_token" && admin) {
       const current = this.planOf(found.machine, login, world);

@@ -15,6 +15,10 @@ export interface MenuAct {
   danger?: boolean;
   /** One of a set to choose from: marked when it is the one chosen. */
   checked?: boolean;
+  /** A setting turned on or off by the press: a switch at the row's end. */
+  on?: boolean;
+  /** What it does, said under a pointer's rest, never on the menu. */
+  hint?: string;
 }
 
 /** An act, a rule between groups, or a quiet label over a group. */
@@ -80,12 +84,14 @@ export class ActsMenu {
 
   /** Opens beside `anchor` with `entries`, headed by `title` on a narrow
    *  screen; pressed again, it closes. A button the page draws anew while
-   *  the menu is open is known for the same by its `data-menu-key`. */
-  open(anchor: HTMLElement, title: string, entries: MenuEntry[], chosen: (act: string) => void): void {
+   *  the menu is open is known for the same by its `data-menu-key`.
+   *  `beside` keeps it beside the anchor on a narrow screen too, for a
+   *  short menu held up from what the finger rests on. */
+  open(anchor: HTMLElement, title: string, entries: MenuEntry[], chosen: (act: string) => void, beside = false): void {
     if (this.shown && this.isAnchor(anchor)) return this.close();
     this.anchor = anchor;
     this.chosen = chosen;
-    const sheet = narrow.matches;
+    const sheet = narrow.matches && !beside;
     const head = sheet ? `<div class="talk-menu-head"><span class="talk-menu-name">${escape(title)}</span></div>` : "";
     this.element.innerHTML = head + entries.map(entry).join("");
     this.element.classList.remove("leaving");
@@ -148,11 +154,19 @@ function entry(item: MenuEntry): string {
   if ("rule" in item) return `<hr class="talk-menu-rule">`;
   if ("note" in item) return `<p class="talk-menu-note">${escape(item.note)}</p>`;
   const choice = item.checked !== undefined;
+  const toggle = item.on !== undefined;
   const lead = choice
     ? `<span class="talk-menu-check">${item.checked ? glyph("check", 16) : ""}</span>`
     : item.icon
       ? glyph(item.icon, 16)
       : "";
-  const role = choice ? `role="menuitemradio" aria-checked="${item.checked}"` : `role="menuitem"`;
-  return `<button class="talk-menu-item${item.danger ? " danger" : ""}${choice ? " talk-menu-choice" : ""}" type="button" ${role} data-act="${escape(item.act)}">${lead}<span class="talk-menu-label">${escape(item.label)}</span></button>`;
+  const role = choice
+    ? `role="menuitemradio" aria-checked="${item.checked}"`
+    : toggle
+      ? `role="menuitemcheckbox" aria-checked="${item.on}"`
+      : `role="menuitem"`;
+  const tail = toggle ? `<span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>` : "";
+  const hint = item.hint ? ` title="${escape(item.hint)}"` : "";
+  const kinds = `${item.danger ? " danger" : ""}${choice ? " talk-menu-choice" : ""}${toggle ? " talk-menu-toggle" : ""}`;
+  return `<button class="talk-menu-item${kinds}" type="button" ${role} data-act="${escape(item.act)}"${hint}>${lead}<span class="talk-menu-label">${escape(item.label)}</span>${tail}</button>`;
 }

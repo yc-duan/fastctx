@@ -337,6 +337,19 @@
   color: var(--text-strong);
 }
 
+/* A setting: its switch at the row's end, in the accent while on. */
+.talk-menu-toggle .switch-track {
+  margin-left: auto;
+}
+
+.talk-menu-toggle[aria-checked="true"] .switch-track {
+  background: var(--accent);
+}
+
+.talk-menu-toggle[aria-checked="true"] .switch-knob {
+  transform: translateX(13px);
+}
+
 /* On a narrow screen the menu rises from below, headed by its conversation,
    over a shade a tap on which only puts it away. */
 .talk-menu.as-sheet {
