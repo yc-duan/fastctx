@@ -177,6 +177,37 @@ pub fn collection_lock(root: &Path) -> PathBuf {
     directory(root).join("collection.lock")
 }
 
+/// How long a placement waits for a node to hand the World to the successor
+/// waiting for it.
+const HANDOVER: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Waits out a handover to a successor waiting for the World, the entry
+/// lock once it serves; none when no successor waits, or it does not serve
+/// within `HANDOVER`. The node serving now is asked to yield when it is not
+/// yielding already: whoever installed the service may not have reached it,
+/// and the two would wait for each other for good.
+fn handed_over(root: &Path, entry: &Path) -> anyhow::Result<Option<FileLock>> {
+    let world = fastctx_types::layout::WorldDir::under(root);
+    if !world.node_successor().try_exists()? {
+        return Ok(None);
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+    if let Ok(fastctx_client::renewal::Probe::Running(node)) = runtime.block_on(fastctx_client::renewal::probe(&world))
+        && !node.yielding
+    {
+        // Not answered, the successor still waits: the wait below says so.
+        let _ = runtime.block_on(fastctx_client::renewal::request(&world, fastctx_types::renewal::Action::Yield));
+    }
+    let began = std::time::Instant::now();
+    while began.elapsed() < HANDOVER {
+        if let Some(lock) = FileLock::try_acquire(entry)? {
+            return Ok(Some(lock));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    Ok(None)
+}
+
 /// Stores and checks the new program before publishing either the intent or
 /// the installed name. Repeating an unfinished placement retains its state.
 pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Result<Plan> {
@@ -199,8 +230,13 @@ pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Res
             })?
         }
     };
-    let _node_entry = FileLock::try_acquire(&directory(root).join("node-entry.lock"))?
-        .ok_or_else(|| anyhow::anyhow!("the node is completing its program handover; its plan was left unchanged"))?;
+    let entry = directory(root).join("node-entry.lock");
+    let _node_entry = match FileLock::try_acquire(&entry)? {
+        Some(lock) => lock,
+        None => handed_over(root, &entry)?.ok_or_else(|| {
+            anyhow::anyhow!("the node is completing its program handover; it was asked to finish it, and its plan was left unchanged")
+        })?,
+    };
     let _activation = FileLock::try_acquire(&directory(root).join("activation.lock"))?.ok_or_else(|| {
         anyhow::anyhow!("the World program is starting or being published; its plan was left unchanged")
     })?;

@@ -209,10 +209,16 @@ pub async fn keep(world: &World) -> Result<KeptNow, String> {
 }
 
 /// Completes the shared service handover after installation, including a
-/// node installed together with the hub during local network creation.
+/// node installed together with the hub during local network creation. A
+/// service already there may have a successor waiting too, for a node this
+/// interface started before it was installed.
 pub(crate) async fn finish_keep(world: &World, kept: Kept) -> Result<KeptNow, String> {
-    if kept == Kept::Installed {
+    // A service already there hands over only to a successor that waits.
+    let waits = world.dir().node_successor().try_exists().unwrap_or(false);
+    if kept == Kept::Installed || (kept == Kept::Already && waits) {
         yield_running(world.dir()).await?;
+    }
+    if kept == Kept::Installed {
         #[cfg(target_os = "linux")]
         tauri::async_runtime::spawn_blocking(|| {
             let places = crate::setup::places()?;
@@ -271,18 +277,43 @@ fn hand_over_running(places: &Places) -> Result<(), String> {
     tauri::async_runtime::block_on(yield_running(&world))
 }
 
+/// Asks the node serving now, one no service keeps, to hand the World to
+/// the service's; asked again once if the service's has not taken it by
+/// then, as a request that never reached it left both waiting for good.
 async fn yield_running(world: &WorldDir) -> Result<(), String> {
-    match fastctx_client::renewal::probe(world).await.map_err(|error| error.to_string())? {
-        fastctx_client::renewal::Probe::Absent => Ok(()),
-        fastctx_client::renewal::Probe::Running(_) => {
-            fastctx_client::renewal::request(world, fastctx_types::renewal::Action::Yield)
-                .await
-                .map_err(|error| error.to_string())
+    for _ in 0..2 {
+        match fastctx_client::renewal::probe(world).await.map_err(|error| error.to_string())? {
+            fastctx_client::renewal::Probe::Absent => return Ok(()),
+            fastctx_client::renewal::Probe::Running(node) if node.supervised => return Ok(()),
+            fastctx_client::renewal::Probe::Running(node) => {
+                if !node.yielding {
+                    fastctx_client::renewal::request(world, fastctx_types::renewal::Action::Yield)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+            fastctx_client::renewal::Probe::Legacy { .. } => {
+                return Err("the legacy node must exit before the service can take over".into());
+            }
         }
-        fastctx_client::renewal::Probe::Legacy { .. } => {
-            Err("the legacy node must exit before the service can take over".into())
+        if taken(world).await {
+            return Ok(());
         }
     }
+    Ok(())
+}
+
+/// Whether the service's node takes the World within a while: no successor
+/// waits for it any more.
+async fn taken(world: &WorldDir) -> bool {
+    let waiting = world.node_successor();
+    for _ in 0..80 {
+        if !waiting.try_exists().unwrap_or(true) {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    false
 }
 
 /// Removes the service that keeps this machine's node, with the same
