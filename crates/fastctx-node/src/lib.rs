@@ -39,6 +39,7 @@ mod desk;
 mod devices;
 mod facts;
 mod features;
+mod file_events;
 mod file_read;
 mod file_search;
 mod firewall;

@@ -177,8 +177,10 @@ async fn read_whole(
     let Some(kept) = kept else { return read_now(path, cuts).await };
     // Watched before it is read, so no change between the two goes unseen.
     let (changed, mut changes) = tokio::sync::mpsc::unbounded_channel();
-    let mut watcher = notify::recommended_watcher(move |_: notify::Result<notify::Event>| {
-        let _ = changed.send(());
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        if crate::file_events::may_change(&event) {
+            let _ = changed.send(());
+        }
     })
     .map_err(|error| format!("watching {}: {error}", path.display()))?;
     let folder = path.parent().ok_or_else(|| format!("{} has no folder", path.display()))?;

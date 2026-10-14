@@ -130,6 +130,9 @@ pub(crate) async fn open(
     let (events, event_rx) = tokio::sync::watch::channel(Ok(0u64));
     let notices = events.clone();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        if !crate::file_events::may_change(&event) {
+            return;
+        }
         notices.send_modify(|state| match event {
             Ok(_) => {
                 if let Ok(version) = state {

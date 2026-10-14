@@ -39,6 +39,7 @@ pub fn start(node: &Arc<Node>) -> io::Result<()> {
     let (changed, mut changes) = mpsc::unbounded_channel::<Option<TownName>>();
     let root = towns.clone();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
+        Ok(event) if !crate::file_events::changes(&event) => {}
         Ok(event) => {
             for path in event.paths {
                 // Only the ledger's own files: the node's own records of

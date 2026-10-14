@@ -50,6 +50,10 @@ fn wake(parent: &ProcessIdentity, session: &Path, root: &Path) -> io::Result<()>
             let _ = changes.send(Woken::Look);
             return;
         };
+        // The plugin reads these files when it looks: a read is no news.
+        if !crate::file_events::changes(&event) {
+            return;
+        }
         for path in &event.paths {
             let parent = path.parent();
             let woken = if *path == marker {
@@ -130,7 +134,9 @@ pub fn policy(world: &Path, session: &str, messages: Option<usize>, after_compac
     let (sender, receiver) = mpsc::channel();
     let changes = sender.clone();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        let _ = changes.send(event.map(|_| false).map_err(io::Error::other));
+        if crate::file_events::may_change(&event) {
+            let _ = changes.send(event.map(|_| false).map_err(io::Error::other));
+        }
     })
     .map_err(io::Error::other)?;
     notify::Watcher::watch(&mut watcher, &directory, notify::RecursiveMode::NonRecursive).map_err(io::Error::other)?;
@@ -273,7 +279,9 @@ fn wait(directory: &Path, question: Question) -> io::Result<Answer> {
     let (sender, receiver) = mpsc::channel();
     let changes = sender.clone();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        let _ = changes.send(event.map(|_| None).map_err(io::Error::other));
+        if crate::file_events::may_change(&event) {
+            let _ = changes.send(event.map(|_| None).map_err(io::Error::other));
+        }
     })
     .map_err(io::Error::other)?;
     notify::Watcher::watch(&mut watcher, directory, notify::RecursiveMode::Recursive).map_err(io::Error::other)?;

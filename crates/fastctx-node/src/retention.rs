@@ -63,8 +63,11 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         if let Some(node) = weak.upgrade() {
             match event {
+                // Only a change of the settings counts: the maintenance pass
+                // reads them (`file_events`).
                 Ok(event)
-                    if event.paths.iter().any(|path| path.file_name().is_some_and(|name| name == "retention.json")) =>
+                    if crate::file_events::changes(&event)
+                        && event.paths.iter().any(|path| path.file_name().is_some_and(|name| name == "retention.json")) =>
                 {
                     changed.notify_one()
                 }

@@ -11,7 +11,9 @@ pub(crate) async fn wait_for_image(node: &crate::Node, resident: &ResidentId, me
     let paths = paths(node, resident).map_err(|error| std::io::Error::other(error.message))?;
     let (changed, mut changes) = tokio::sync::mpsc::unbounded_channel();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        let _ = changed.send(event.map(|_| ()));
+        if crate::file_events::may_change(&event) {
+            let _ = changed.send(event.map(|_| ()));
+        }
     })
     .map_err(std::io::Error::other)?;
     for parent in paths.iter().filter_map(|path| path.parent()) {

@@ -46,8 +46,10 @@ pub(super) async fn finish(
         .ok_or_else(|| Failure::new("Claude has not identified its history file"))?;
     let registration = exchange::registration(&directory).map_err(failure)?;
     let (changed, mut changes) = tokio::sync::mpsc::channel(1);
-    let mut watcher = notify::recommended_watcher(move |_: notify::Result<notify::Event>| {
-        let _ = changed.try_send(());
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        if crate::file_events::may_change(&event) {
+            let _ = changed.try_send(());
+        }
     })
     .map_err(|error| Failure::new(error.to_string()))?;
     notify::Watcher::watch(

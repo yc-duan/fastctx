@@ -30,9 +30,15 @@ pub fn collect(root: &Path) -> anyhow::Result<()> {
             store::digest(&store::installed(root))? == plan.candidate.build.digest,
             "completed renewal differs from stable program"
         );
-        plan.candidate.path = store::installed(root);
-        plan.previous = None;
-        store::save(root, plan)?;
+        // Saved only when this changes it: a collection runs on every
+        // maintenance pass, and a save is a temporary file, a rename and two
+        // syncs.
+        let installed = store::installed(root);
+        if plan.candidate.path != installed || plan.previous.is_some() {
+            plan.candidate.path = installed;
+            plan.previous = None;
+            store::save(root, plan)?;
+        }
     }
     let images = renewal.join("images");
     for directory in entries(&images)? {

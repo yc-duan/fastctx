@@ -158,6 +158,7 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
     let homes = conversations.clone();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         match event {
+            Ok(event) if !crate::file_events::changes(&event) => {}
             Ok(event) => {
                 for path in event.paths {
                     // The session's directory: the first name under the root.
