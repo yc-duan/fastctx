@@ -529,12 +529,19 @@
   color: var(--text);
 }
 
+/* Received and sent: each takes one width on every row, the arrow at its
+   left, so the two line up down the card however long a name is. */
 .mp-net-rates {
+  flex: none;
   display: flex;
-  gap: var(--space-3);
+  gap: var(--space-4);
   margin-left: auto;
   font-size: var(--size-small);
   color: var(--text-2);
+}
+
+.mp-net-rates .mp-rate {
+  min-width: 6em;
 }
 
 .mp-net-off {
@@ -870,6 +877,15 @@
 @container machine-page (max-width: 900px) {
   .mp-columns {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Where four vitals no longer sit across one row, they go two by two
+   rather than leaving one stranded on a line of its own. Above this they
+   fit four across; below, the phone's two already hold. */
+@container machine-page (max-width: 1000px) {
+  .mp-vitals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
