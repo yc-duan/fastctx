@@ -2067,6 +2067,13 @@ function managedPage(): Page {
         });
     },
     remove: removal ? () => removal.open() : undefined,
+    // A managed machine no one signs in to is connected by its startup
+    // service alone; the specimen shows it missing with `?managed=unkept`.
+    service: live
+      ? onComputer()
+        ? { kept: async () => (await setupState()).service, keep: keepHere }
+        : undefined
+      : { kept: async () => params.get("managed") !== "unkept", keep: async () => ({ kind: "installed" as const }) },
     confirm: accountConfirm,
   });
 }

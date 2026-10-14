@@ -2,11 +2,14 @@
 // whole window, with no sidebar. A drawing of this computer, its one line to
 // the server and the lines of others' agents coming in; whose machine it is
 // and on which network; whether it is connected; and, quietly in a corner,
-// leaving the network and taking Fastctx off. Taken off the network by its
-// owner, it says so, and comes back by a code.
+// leaving the network and taking Fastctx off. A machine that no one signs
+// in to is connected by its startup service alone: one missing is said,
+// with the way to install it. Taken off the network by its owner, it says
+// so, and comes back by a code.
 
 import { escape } from "../conversation/prose";
 import { names, type AccountsReply, type HubAccounts, type MemberSeen } from "../world/accounts";
+import type { KeptNow } from "../world/bridge";
 import type { Confirm } from "./confirm";
 import { managedMachine } from "./managed-art";
 import type { ManagedWords } from "./managed-words";
@@ -36,6 +39,9 @@ export interface ManagedOptions {
   rejoin(): void;
   /** Taking Fastctx off this computer, where it can be. */
   remove?: (() => void) | undefined;
+  /** Whether the startup service is installed, and installing it, where
+   *  this computer can say. */
+  service?: { kept(): Promise<boolean>; keep(): Promise<KeptNow> } | undefined;
   confirm: Confirm;
 }
 
@@ -44,6 +50,9 @@ export class ManagedPage implements Page {
   readonly title: string;
   private readonly stop: () => void;
   private drawn = "";
+  /** The startup service as last read: kept, missing, being installed, or
+   *  to be installed by a command shown. */
+  private service: { kind: "kept" | "missing" | "keeping" } | { kind: "command"; command: string } = { kind: "kept" };
 
   constructor(private readonly options: ManagedOptions) {
     this.title = options.words.title;
@@ -51,6 +60,16 @@ export class ManagedPage implements Page {
     this.element.className = "managed-page";
     this.element.addEventListener("click", (event) => this.click(event));
     this.stop = effect(() => this.draw(options.store.world.get()?.accounts, options.store.clock.get()));
+    options.service?.kept().then(
+      (kept) => this.serviceIs(kept ? { kind: "kept" } : { kind: "missing" }),
+      (error: unknown) => console.error("reading whether the startup service is installed", error),
+    );
+  }
+
+  private serviceIs(service: ManagedPage["service"]): void {
+    this.service = service;
+    this.drawn = "";
+    this.draw(this.options.store.world.peek()?.accounts, this.options.store.clock.peek());
   }
 
   leave(): void {
@@ -71,7 +90,7 @@ export class ManagedPage implements Page {
         : link.kind === "connecting"
           ? { on: false, said: words.away(when(new Date(link.since), now)) }
           : null;
-    const said = JSON.stringify([removed, owner, me.name, hub.name, state, link.kind === "stopped" ? link.reason : ""]);
+    const said = JSON.stringify([removed, owner, me.name, hub.name, state, link.kind === "stopped" ? link.reason : "", this.service]);
     if (said === this.drawn) return;
     this.drawn = said;
     this.element.classList.toggle("removed", removed);
@@ -87,6 +106,7 @@ export class ManagedPage implements Page {
               ? `<p class="managed-link${state.on ? " on" : ""}"><span class="managed-dot" aria-hidden="true"></span>${escape(state.said)}</p>`
               : ""
         }
+        ${removed ? "" : this.serviceSlip()}
       </div>
       <div class="managed-corner">
         <button class="text-button" type="button" data-act="leave">${escape(words.leave)}</button>
@@ -94,11 +114,39 @@ export class ManagedPage implements Page {
       </div>`;
   }
 
+  /** The startup service missing: what that means here, and installing it. */
+  private serviceSlip(): string {
+    const { words } = this.options;
+    const service = this.service;
+    if (service.kind === "kept") return "";
+    if (service.kind === "command") {
+      return `<div class="managed-slip"><span>${escape(words.keepCommand)}</span><pre class="mono">${escape(service.command)}</pre></div>`;
+    }
+    const keeping = service.kind === "keeping";
+    return `<div class="managed-slip"><span>${escape(words.unkept)}</span><button class="text-button" type="button" data-act="keep"${keeping ? " disabled" : ""}>${escape(keeping ? words.keeping : words.keep)}</button></div>`;
+  }
+
   private click(event: Event): void {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-act]");
     if (!button) return;
     const { words, confirm, store } = this.options;
     switch (button.dataset.act) {
+      case "keep": {
+        const service = this.options.service;
+        if (!service || this.service.kind === "keeping") return;
+        this.serviceIs({ kind: "keeping" });
+        void service.keep().then(
+          (kept) =>
+            this.serviceIs(
+              kept.kind === "installed" || kept.kind === "already" ? { kind: "kept" } : kept.kind === "command" ? { kind: "command", command: kept.command } : { kind: "missing" },
+            ),
+          (error: unknown) => {
+            console.error("installing the startup service", error);
+            this.serviceIs({ kind: "missing" });
+          },
+        );
+        return;
+      }
       case "rejoin":
         return this.options.rejoin();
       case "remove":

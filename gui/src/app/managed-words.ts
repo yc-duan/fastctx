@@ -18,6 +18,12 @@ export interface ManagedWords {
   leaveWhat(hub: string): string;
   leaveGo: string;
   uninstall: string;
+  /** Without the startup service it is connected only while its system
+   *  account is signed in: said, with the way to install it. */
+  unkept: string;
+  keep: string;
+  keeping: string;
+  keepCommand: string;
 }
 
 export const zhManaged: ManagedWords = {
@@ -34,6 +40,10 @@ export const zhManaged: ManagedWords = {
   leaveWhat: (hub) => `这台电脑不再是 ${hub} 里的受管机器，变回一台全新的电脑。要回来，用入网码重新加入。`,
   leaveGo: "离开",
   uninstall: "卸载",
+  unkept: "开机服务没装上：没人登录这个系统账户时，这台就断开",
+  keep: "装上",
+  keeping: "正在装…",
+  keepCommand: "在这个账户的终端里运行：",
 };
 
 export const enManaged: ManagedWords = {
@@ -50,4 +60,8 @@ export const enManaged: ManagedWords = {
   leaveWhat: (hub) => `This computer stops being a managed machine on ${hub} and starts fresh. To come back, join again with a code.`,
   leaveGo: "Leave",
   uninstall: "Uninstall",
+  unkept: "The startup service isn't installed: while no one is signed in to this system account, this computer is disconnected",
+  keep: "Install",
+  keeping: "Installing…",
+  keepCommand: "Run in this account's terminal:",
 };
