@@ -36,6 +36,7 @@ import { AssistSheet, assistChange, assistancesIn, type Assistance } from "./ass
 import { HubMoving, type HubMovingOptions } from "./hub-moving";
 import { GiveSheet } from "./machine-sheets";
 import { MachineLog, type ReadLog } from "./machine-log";
+import { boxParts, chosenGroup, groupChange, groupForm, groupingOf, groupingTogether, groupMoreKey, groupMoreOf, groupNameOf, groupRenameForm, wireGroupForm, type Grouping } from "./machine-groups";
 import { foldedOf, MachineMap, MAP_ORDER, personKey } from "./machine-map";
 import { isManaged, machineList } from "./machine-list";
 import { MapPeople } from "./map-people";
@@ -79,6 +80,14 @@ export interface MachinesOptions {
     check(text: string): Promise<NameProblem | null>;
     here(to: string): Promise<void>;
   };
+}
+
+/** A group's box on the drawing: its name, its machines, and how each is
+ *  grouped from this device, in the same order. */
+interface GroupBox {
+  group: string;
+  machines: Machine[];
+  groupings: Grouping[];
 }
 
 /** One thing on the map, as the page knows it. */
@@ -446,6 +455,9 @@ export class MachinesPage implements Page {
       case "framed-share":
         this.shareFramed();
         return;
+      case "framed-group":
+        this.groupFramed();
+        return;
       case "framed-remove":
         this.removeFramed();
         return;
@@ -576,7 +588,7 @@ export class MachinesPage implements Page {
       this.people.add(key.slice("adding:".length), key);
       return;
     }
-    if (key?.startsWith("who:")) {
+    if (key?.startsWith("who:") || key?.startsWith("gm:")) {
       const at = this.map.screenOf(key);
       if (at) this.openMenu(key, [at[0] - 20, at[1] + 18], this.narrow());
       return;
@@ -906,6 +918,7 @@ export class MachinesPage implements Page {
       lit: this.moving.chosenHub ? this.litKeys(world) : null,
       people: this.people.shown(people),
       adding: this.people.hubs(world),
+      grouped: this.groupedBoxes(world, nodes),
     });
   }
 
@@ -914,6 +927,13 @@ export class MachinesPage implements Page {
     const { words } = this.options;
     const person = personOf(key);
     if (person) return this.people.acts(world, person.hub, person.account);
+    if (groupMoreOf(key))
+      return this.groupBox(key, world)
+        ? [
+            { act: "rename-group", label: words.groups.renameGroup, icon: "edit" },
+            { act: "end-group", label: words.groups.endGroup, icon: "unarchive" },
+          ]
+        : [];
     const spot = this.spots(world).get(key);
     if (!spot) return [];
     const details: Act = { act: "details", label: words.details, icon: "info" };
@@ -940,6 +960,8 @@ export class MachinesPage implements Page {
     const rename: Act[] = renamerOf(spot.machine, world, this.options.change, this.options.renaming.here)
       ? [{ act: "rename", label: this.options.renaming.words.rename, icon: "edit" }]
       : [];
+    // And they group it.
+    const group: Act[] = groupingOf(spot.machine, world) ? [{ act: "group", label: words.groups.group, icon: "folder" }] : [];
     // A managed machine has no agents of anyone's on it; a visitor shares
     // none of its machines.
     const managed = isManaged(world, spot.machine.name);
@@ -954,6 +976,7 @@ export class MachinesPage implements Page {
       ...(shares ? [{ act: "share", label: words.share, icon: "colleague" as const }] : []),
       ...direct,
       ...rename,
+      ...group,
       details,
       ...(owners.length && !spot.machine.here ? [{ act: "remove", label: words.remove, icon: "close" as const, danger: true }] : []),
     ];
@@ -1007,6 +1030,11 @@ export class MachinesPage implements Page {
     if (act === "fit") return this.map.fit();
     const person = personOf(key);
     if (person) return this.people.run(act, person.hub, person.account, key);
+    if (groupMoreOf(key)) {
+      if (act === "rename-group") this.renameGroupCard(key);
+      else if (act === "end-group") void this.endGroup(key);
+      return;
+    }
     const spot = this.spots(world).get(key);
     if (!spot) return;
     if (act === "details") {
@@ -1056,6 +1084,11 @@ export class MachinesPage implements Page {
       case "rename":
         this.renameCard(key, machine);
         return;
+      case "group": {
+        const grouping = groupingOf(machine, world);
+        if (grouping) this.groupCard(key, [machine], [grouping]);
+        return;
+      }
       case "direct": {
         const admin = this.adminOf(machine, world);
         const member = admin ? this.memberOf(machine, admin, world) : undefined;
@@ -1065,6 +1098,154 @@ export class MachinesPage implements Page {
         return;
       }
     }
+  }
+
+  /** Puts every framed machine in one group, from one card. */
+  private groupFramed(): void {
+    const world = this.options.store.world.peek();
+    if (!world || !this.framed.length) return;
+    const spots = this.spots(world);
+    const machines = this.framed.map((key) => spots.get(key)).flatMap((spot) => (spot?.kind === "machine" ? [spot.machine] : []));
+    const groupings = groupingTogether(machines, world);
+    if (groupings) this.groupCard(this.framed[0]!, machines, groupings);
+  }
+
+  /** The card that puts machines in a group, beside the ring of the one, or
+   *  the first of those framed together: one of their owner's groups, a new
+   *  one, or none. Put there, each is circled in its new box, and for a
+   *  moment the change can be undone from the drawing's corner. */
+  private groupCard(key: string, machines: Machine[], groupings: Grouping[]): void {
+    const words = this.options.words.groups;
+    const first = groupings[0];
+    if (!first) return;
+    const now = groupings.every((one) => one.now === first.now) ? first.now : undefined;
+    const title = machines.length === 1 ? words.groupTitle(machines[0]!.written) : words.groupMany(machines.length);
+    this.openCard(key, this.map.screenOf(key) ?? [0, 0], groupForm(words, title, first.groups, now), async () => {
+      const chosen = chosenGroup(this.card, words);
+      if ("wrong" in chosen) throw this.cardWrong(chosen.wrong);
+      const moving = machines.filter((_, at) => groupings[at]!.now !== chosen.group);
+      if (!moving.length) return;
+      const before = new Map(machines.map((machine, at) => [machine.name, groupings[at]!.now]));
+      for (const machine of moving) await this.options.change(first.login, groupChange(machine.name, chosen.group));
+      this.circle(moving);
+      this.offerUndo(machines.length === 1 ? words.movedOne(machines[0]!.written, chosen.group) : words.movedMany(moving.length, chosen.group), async () => {
+        for (const machine of moving) await this.options.change(first.login, groupChange(machine.name, before.get(machine.name) ?? null));
+      });
+    });
+    wireGroupForm(this.card);
+  }
+
+  /** The card that renames a group: its machines are in the group of the
+   *  new name, with any already in one of that name. */
+  private renameGroupCard(key: string): void {
+    const world = this.options.store.world.peek();
+    const box = world ? this.groupBox(key, world) : null;
+    if (!box) return;
+    const words = this.options.words.groups;
+    this.openCard(key, this.map.screenOf(key) ?? [0, 0], groupRenameForm(words, box.group), async () => {
+      const named = groupNameOf(this.card.querySelector<HTMLInputElement>("input[name=name]")?.value ?? "", words);
+      if ("wrong" in named) throw this.cardWrong(named.wrong);
+      if (named.name === box.group) return;
+      await this.renameGroups(box, named.name);
+      this.circle(box.machines);
+      this.offerUndo(words.renamedGroup(box.group, named.name), () => this.regroup(box));
+    });
+    this.card.querySelector<HTMLInputElement>("input[name=name]")?.select();
+  }
+
+  /** Ends a group at once: its machines stand in their owner's box again,
+   *  and for a moment the group can be given back from the drawing's
+   *  corner. Nothing about the machines changes, so nothing asks first. */
+  private async endGroup(key: string): Promise<void> {
+    const world = this.options.store.world.peek();
+    const box = world ? this.groupBox(key, world) : null;
+    if (!box) return;
+    try {
+      await this.renameGroups(box, null);
+      this.note = null;
+    } catch (error) {
+      this.note = { machine: "", text: this.options.access.failed(error instanceof Error ? error.message : String(error)) };
+      this.redraw();
+      return;
+    }
+    this.circle(box.machines);
+    this.offerUndo(this.options.words.groups.endedGroup(box.group), () => this.regroup(box));
+    await this.options.store.refresh();
+    this.redraw();
+  }
+
+  /** Renames a box's group for each owner it holds machines of, or ends it
+   *  where `to` is none. */
+  private async renameGroups(box: GroupBox, to: string | null): Promise<void> {
+    const done: Grouping[] = [];
+    for (const grouping of box.groupings) {
+      if (done.some((one) => sameLogin(one.login, grouping.login) && one.owner === grouping.owner)) continue;
+      done.push(grouping);
+      await this.options.change(grouping.login, { change: "rename_group", owner: grouping.owner, from: box.group, to });
+    }
+  }
+
+  /** Puts a box's machines back in its group, as they were before. */
+  private async regroup(box: GroupBox): Promise<void> {
+    for (const [at, machine] of box.machines.entries()) await this.options.change(box.groupings[at]!.login, groupChange(machine.name, box.group));
+  }
+
+  /** A group's box on the drawing, by its "⋯": its name, its machines and
+   *  how each is grouped from here; none unless this device may group
+   *  every one of them. */
+  private groupBox(key: string, world: WorldNow, nodes: MapNode[] = mapOf(world, this.options.words).nodes): GroupBox | null {
+    const box = groupMoreOf(key);
+    if (!box) return null;
+    const spots = this.spots(world);
+    const machines = nodes
+      .filter((node) => node.group?.key === box.kind && node.hubs.includes(box.hub))
+      .flatMap((node) => {
+        const spot = spots.get(node.key);
+        return spot?.kind === "machine" ? [spot.machine] : [];
+      });
+    const groupings = machines.map((machine) => groupingOf(machine, world, box.hub));
+    if (!machines.length || groupings.some((one) => !one)) return null;
+    return { group: box.group, machines, groupings: groupings as Grouping[] };
+  }
+
+  /** The boxes of groups whose "⋯" the drawing shows, by its keys for
+   *  boxes. */
+  private groupedBoxes(world: WorldNow, nodes: MapNode[]): Set<string> {
+    const asked = new Set<string>();
+    const boxes = new Set<string>();
+    for (const node of nodes) {
+      const kind = node.group?.key;
+      if (!kind || boxParts(kind).group === null) continue;
+      for (const hub of node.hubs) {
+        const key = `group:${hub}:${kind}`;
+        if (asked.has(key)) continue;
+        asked.add(key);
+        if (this.groupBox(groupMoreKey(hub, kind), world, nodes)) boxes.add(key);
+      }
+    }
+    return boxes;
+  }
+
+  /** Circles machines for a moment, as they stand somewhere new. */
+  private circle(machines: Machine[]): void {
+    for (const machine of machines) {
+      const key = `m:${machine.written}`;
+      this.fresh.add(key);
+      setTimeout(() => {
+        this.fresh.delete(key);
+        this.redraw();
+      }, ARRIVED_MS);
+    }
+  }
+
+  /** Says in the open card why it does not go, and keeps it open. */
+  private cardWrong(said: string): Error {
+    const wrong = this.card.querySelector<HTMLElement>(".map-card-wrong");
+    if (wrong) {
+      wrong.textContent = said;
+      wrong.hidden = false;
+    }
+    return new Error("kept open");
   }
 
   /** The login of the network's administrator among this device's, on a
@@ -1341,19 +1522,22 @@ export class MachinesPage implements Page {
     if (key?.startsWith("add:") || key?.startsWith("adding:")) return this.choose(key);
     // A person's strip, pressed with the right button, lists what their "⋯"
     // does.
-    const strip = key?.match(/^group:([^:]+):of:(.+)$/);
+    const strip = key?.match(/^group:([^:]+):of:([^/]+)$/);
     if (strip && this.people.acts(world, strip[1]!, strip[2]!).length) key = personKey(strip[1]!, strip[2]!);
+    // So does a group's.
+    const groupStrip = key?.match(/^group:([^:]+):(.+)$/);
+    if (groupStrip && boxParts(groupStrip[2]!).group !== null && this.groupBox(groupMoreKey(groupStrip[1]!, groupStrip[2]!), world)) key = groupMoreKey(groupStrip[1]!, groupStrip[2]!);
     const acts: Act[] = key ? this.actsOf(key, world) : [{ act: "fit", label: words.fit, icon: "expand" }];
     if (!acts.length) return;
-    // A person's menu stands for them alone: what was chosen on the drawing
-    // gives way, and a sheet says whose it is.
-    const person = key ? personOf(key) : null;
-    if (person) {
+    // A person's or a group's menu stands for them alone: what was chosen
+    // on the drawing gives way, and a sheet says whose or which it is.
+    const alone = key ? (personOf(key)?.account ?? groupMoreOf(key)?.group ?? null) : null;
+    if (alone !== null) {
       this.selected = null;
       this.detailsOpen = false;
     } else if (key) this.selected = key;
     this.menuFor = { key, at, sheet };
-    this.menu.innerHTML = (person && sheet ? `<p class="map-menu-head">${escape(person.account)}</p>` : "") + acts
+    this.menu.innerHTML = (alone !== null && sheet ? `<p class="map-menu-head">${escape(alone)}</p>` : "") + acts
       .map(
         (act) =>
           `<button class="map-menu-item${act.danger ? " danger" : ""}" type="button" role="menuitem" data-map-act="${act.act}" data-key="${escape(key ?? "")}">${glyph(act.icon, 16)}<span>${escape(act.label)}</span></button>`,
@@ -1426,7 +1610,12 @@ export class MachinesPage implements Page {
       .join("");
     return `<header class="panel-head"><h2 class="panel-title">${escape(words.framedTitle(machines.length))}</h2></header>
       <ul class="framed-list">${rows}</ul>
-      <div class="panel-acts">${owned ? `${this.button("framed-share", words.framedShare, "", glyph("colleague", 14))}${machines.some((machine) => machine.here) ? "" : this.button("framed-remove", words.framedRemove, " data-danger", glyph("close", 14))}` : ""}${this.button("framed-clear", words.framedClear)}</div>`;
+      <div class="panel-acts">${[
+        owned ? this.button("framed-share", words.framedShare, "", glyph("colleague", 14)) : "",
+        groupingTogether(machines, world) ? this.button("framed-group", words.groups.group, "", glyph("folder", 14)) : "",
+        owned && !machines.some((machine) => machine.here) ? this.button("framed-remove", words.framedRemove, " data-danger", glyph("close", 14)) : "",
+        this.button("framed-clear", words.framedClear),
+      ].join("")}</div>`;
   }
 
   /** The one login that owns every machine in `machines`, if one does. */

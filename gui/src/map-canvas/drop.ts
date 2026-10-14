@@ -6,22 +6,27 @@ export type ValidTarget = (handle: CanvasHandle, item: CanvasItem) => boolean;
 export function nearestItem(items: readonly CanvasItem[], screen: Point, project: (point: Point) => Point, scale: number): CanvasItem | null {
   let nearest: CanvasItem | null = null;
   let distance = Infinity;
+  let reached: CanvasItem | null = null;
+  let off = Infinity;
   for (const item of items) {
-    // A rectangle is hit anywhere inside it, at least a finger's height
-    // about its middle, as its button is drawn; it stands before any circle.
+    // A rectangle is hit where it is drawn, the first listed that holds the
+    // press; failing that, within a finger's height about its middle, the
+    // nearest middle where two reach that far, as two strips drawn small
+    // close together do. Either stands before any circle.
     if (item.box) {
       const [left, top] = project([item.box.x, item.box.y]);
       const [right, bottom] = project([item.box.x + item.box.width, item.box.y + item.box.height]);
-      const reach = Math.max(22, (bottom - top) / 2);
-      const middle = (top + bottom) / 2;
-      if (screen[0] >= left && screen[0] <= right && Math.abs(screen[1] - middle) <= reach) return item;
+      if (screen[0] < left || screen[0] > right) continue;
+      if (screen[1] >= top && screen[1] <= bottom) return item;
+      const away = Math.abs(screen[1] - (top + bottom) / 2);
+      if (away <= Math.max(22, (bottom - top) / 2) && away < off) { reached = item; off = away; }
       continue;
     }
     const p = project(item.point);
     const d = Math.hypot(screen[0] - p[0], screen[1] - p[1]);
     if (d <= Math.max(22, item.radius * scale) && d < distance) { nearest = item; distance = d; }
   }
-  return nearest;
+  return reached ?? nearest;
 }
 
 /** Validation belongs to the page. This same resolver serves pointer and keyboard

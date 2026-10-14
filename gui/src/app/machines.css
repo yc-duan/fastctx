@@ -1290,6 +1290,17 @@
   flex: 0 1 60%;
 }
 
+/* A machine's group: its owner's groups as solid pills, the one it is in
+   washed in clay, and a field below that names a new one. */
+.group-choices {
+  margin-top: var(--space-1);
+}
+
+.map-card .group-new,
+.map-card .group-rename {
+  margin-top: var(--space-1);
+}
+
 /* Machines framed together: each a row to open it by, solid, no lines. */
 .framed-list {
   display: flex;
@@ -1419,6 +1430,16 @@
   fill: color-mix(in srgb, var(--pen-clay) 9%, transparent);
 }
 
+/* A group's band across its owner's box: over the body's wash, lighter
+   than the title strip, so the box stays one with its groups in it. */
+.map-boxes .box-band {
+  fill: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.map-boxes .mine .box-band {
+  fill: color-mix(in srgb, var(--pen-clay) 9%, transparent);
+}
+
 /* A person who is locked: their box faint. */
 .map-boxes .locked {
   opacity: 0.45;
@@ -1450,6 +1471,10 @@
   font-weight: 400;
 }
 
+.map-names .box-name.band {
+  font-size: 13px;
+}
+
 .map-names .box-name.locked {
   fill: var(--text-3);
 }
@@ -1476,7 +1501,8 @@
 }
 
 /* The "⋯" is pressed over the strip that folds the box: it lies above it. */
-.machines-canvas .machine-map .canvas-object[data-item^="who:"] {
+.machines-canvas .machine-map .canvas-object[data-item^="who:"],
+.machines-canvas .machine-map .canvas-object[data-item^="gm:"] {
   z-index: 1;
 }
 

@@ -82,7 +82,7 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
       directAt: direct,
       through: machine.through ?? null,
       hubMs: (hubLink?.kind === "online" ? hubLink.ms : member?.paths?.hub_ms) ?? undefined,
-      group: owner ? { key: `of:${owner}`, label: words.ownedBy(owner) } : { key: "mine", label: words.mineGroup },
+      group: boxOf(owner ? { key: `of:${owner}`, label: words.ownedBy(owner) } : { key: "mine", label: words.mineGroup }, member?.group),
     });
   }
   // A visitor's machines, for the network's administrator alone: their
@@ -126,6 +126,12 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
     });
   }
   return { hubs, nodes, hubLabels, links: linksOf(world, nodes), people: peopleOf(world, words) };
+}
+
+/** The box a machine stands in: its owner's, or, put in one of the owner's
+ *  groups, that group's box inside the owner's (`world-network.md`, 机器的分组). */
+function boxOf(box: { key: string; label: string }, group: string | undefined): NonNullable<MapNode["group"]> {
+  return group ? { key: `${box.key}/${group}`, label: group, within: box } : box;
 }
 
 /** Everyone on a hub but the administrator looking, for the administrator

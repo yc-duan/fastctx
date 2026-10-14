@@ -2,7 +2,9 @@
 // World the drawing shows, set out as rows. The hub stands first; then the
 // machines grouped as the drawing groups them, the account's own first, this
 // computer first among them, then each other person's, then those whose
-// agents assist; under each group's name a hand-drawn line. A row says
+// agents assist; under each group's name a hand-drawn line. The machines an
+// owner put in groups (`world-network.md`, 机器的分组) follow the rest of
+// theirs, each group under its name. A row says
 // whether the machine is there, its name, what it is, how it reaches the
 // hub, whom it is shared with and how many agents are at work on it. A
 // machine's row goes to its own page; a hub's or an assisting agent's opens
@@ -15,6 +17,7 @@ import type { WorldNow } from "../world/bridge";
 import { loginsOf } from "../world/accounts";
 import { agentName, osName } from "../world/names";
 import type { MachinesWords } from "./account-words";
+import { compareBoxes } from "./machine-groups";
 import { mapOf } from "./map-of";
 import type { MapNode } from "./map-nodes";
 import { link } from "./places";
@@ -56,30 +59,42 @@ export function machineList(now: ListNow, words: MachinesWords): string {
     </button>`;
   });
   // Groups in the drawing's order: the account's own, each other person's
-  // as they first come, then those whose agents assist.
-  const groups: { key: string; label: string; nodes: MapNode[] }[] = [];
+  // as they first come, then those whose agents assist; inside each, its
+  // owner's groups by name.
+  const groups: { key: string; label: string; nodes: MapNode[]; inside: { key: string; label: string; nodes: MapNode[] }[] }[] = [];
   for (const node of nodes) {
     const group = node.group ?? { key: node.hold, label: node.hold };
-    let found = groups.find((one) => one.key === group.key);
-    if (!found) groups.push((found = { key: group.key, label: group.label, nodes: [] }));
-    found.nodes.push(node);
+    const owner = group.within ?? group;
+    let found = groups.find((one) => one.key === owner.key);
+    if (!found) groups.push((found = { key: owner.key, label: owner.label, nodes: [], inside: [] }));
+    if (!group.within) found.nodes.push(node);
+    else {
+      let band = found.inside.find((one) => one.key === group.key);
+      if (!band) found.inside.push((band = { key: group.key, label: group.label, nodes: [] }));
+      band.nodes.push(node);
+    }
   }
-  const rank = (key: string) => (key === "mine" ? 0 : key.startsWith("assist:") ? 2 : 1);
-  groups.sort((a, b) => rank(a.key) - rank(b.key));
-  if (now.adds.length && !groups.some((group) => group.key === "mine")) groups.unshift({ key: "mine", label: words.mineGroup, nodes: [] });
+  const rank = (owner: string) => (owner === "mine" ? 0 : owner.startsWith("assist:") ? 2 : 1);
+  groups.sort((a, b) => compareBoxes(a.key, b.key, rank));
+  for (const group of groups) group.inside.sort((a, b) => compareBoxes(a.key, b.key, rank));
+  if (now.adds.length && !groups.some((group) => group.key === "mine")) groups.unshift({ key: "mine", label: words.mineGroup, nodes: [], inside: [] });
+  // This computer first, then by name: the rows stay where they are as
+  // machines come and go.
+  const sorted = (nodes: MapNode[]) => [...nodes].sort((a, b) => Number(b.here) - Number(a.here) || a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const online = (nodes: MapNode[]) => nodes.filter((node) => node.online !== false).length;
+  const rows = (nodes: MapNode[]) => sorted(nodes).map((node) => row(node, machines.get(node.key) ?? null, now, words)).join("");
   const body = groups
     .map((group) => {
-      // This computer first, then by name: the rows stay where they are as
-      // machines come and go.
-      const sorted = [...group.nodes].sort((a, b) => Number(b.here) - Number(a.here) || a.name.localeCompare(b.name, undefined, { numeric: true }));
-      const online = sorted.filter((node) => node.online !== false).length;
-      const rows = sorted.map((node) => row(node, machines.get(node.key) ?? null, now, words)).join("");
-      const visitor = sorted.some((node) => node.hold === "visitor") ? `<span class="tag">${escape(words.visitor)}</span>` : "";
+      const all = [...group.nodes, ...group.inside.flatMap((band) => band.nodes)];
+      const visitor = all.some((node) => node.hold === "visitor") ? `<span class="tag">${escape(words.visitor)}</span>` : "";
       const add =
         group.key === "mine" && now.adds.length
           ? `<button class="ml-row ml-add" type="button" data-ml-add="${escape(now.adds[0]!)}"><span class="ml-mark" aria-hidden="true">${glyph("plus", 14)}</span><span class="ml-name">${escape(words.addMachine)}</span></button>`
           : "";
-      return `<section class="ml-group"><h2 class="ml-group-head"><span>${escape(group.label)}</span>${visitor}<span class="ml-group-sub">${escape(words.groupSub(sorted.length, online))}</span></h2>${rows}${add}</section>`;
+      const inside = group.inside
+        .map((band) => `<h3 class="ml-band-head"><span>${escape(band.label)}</span><span class="ml-group-sub">${escape(words.groupSub(band.nodes.length, online(band.nodes)))}</span></h3>${rows(band.nodes)}`)
+        .join("");
+      return `<section class="ml-group"><h2 class="ml-group-head"><span>${escape(group.label)}</span>${visitor}<span class="ml-group-sub">${escape(words.groupSub(all.length, online(all)))}</span></h2>${rows(group.nodes)}${add}${inside}</section>`;
     })
     .join("");
   return `<div class="ml-hubs">${hubRows.join("")}</div>${body}`;

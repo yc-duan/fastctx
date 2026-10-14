@@ -171,6 +171,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       renames: true,
       managed: true,
       roles: true,
+      groups: true,
       accounts: [
         { name: "me", level: "super", locked: false, opened: at("00:00:00") },
         { name: "ada", level: "member", locked: false, opened: at("00:05:00") },
@@ -182,11 +183,11 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         member("laptop", "computer", ["me"], "me", "00:20:00", true, "a1c3e9d2"),
         { ...member("lab", "computer", ["me"], "me", "00:30:00", true, "7d0e44b1"), was: ["lab-old"] },
         { ...member("server", "computer", ["me"], "me", "00:00:00", true, "c0ffee12", ["203.0.113.20:7444"]), was: ["izbp1abc0x2y3z"] },
-        member("studio", "computer", ["me"], "me", "00:40:00", false, "9e8d7c6b"),
+        { ...member("studio", "computer", ["me"], "me", "00:40:00", false, "9e8d7c6b"), group: "工作室" },
         member("pixel", "phone", ["me"], null, "13:20:00", true, "4f2a91aa"),
-        member("gpu", "computer", ["bo"], "bo", "03:30:00", true, "be3f0a77"),
-        { ...member("lab-a-01", "computer", [], "me", "11:02:00", true, "31d0c8e5"), managed: true, code: LAB_CODE },
-        { ...member("lab-a-02", "computer", [], "me", "12:31:00", false, "8a4b2f60"), managed: true, code: LAB_CODE },
+        { ...member("gpu", "computer", ["bo"], "bo", "03:30:00", true, "be3f0a77"), group: "训练" },
+        { ...member("lab-a-01", "computer", [], "me", "11:02:00", true, "31d0c8e5"), managed: true, code: LAB_CODE, group: "机房 A" },
+        { ...member("lab-a-02", "computer", [], "me", "12:31:00", false, "8a4b2f60"), managed: true, code: LAB_CODE, group: "机房 A" },
         member("cy-mac", "computer", ["cy"], "cy", "09:20:00", true, "e7c13d52"),
       ],
       tokens: [{ key: LAB_CODE, account: "me", label: "机房 A", kind: "computer", managed: true, uses: 40, used: 2, expires: daysAhead(6) }],
@@ -688,9 +689,22 @@ function peopleChanged(world: WorldNow, hub: string, made: AccountChange): World
       }));
     case "move_project":
       return change((one) => ({ ...one, projects: one.projects.map((project) => (project.name === made.town ? { ...project, owner: made.to, granted: project.granted.filter((to) => to !== made.to) } : project)) }));
+    case "group":
+      return change((one) => ({ ...one, members: one.members.map((member) => (member.name === made.machine ? inGroup(member, made.group) : member)) }));
+    case "rename_group":
+      return change((one) => {
+        if (!one.members.some((member) => member.home === made.owner && member.group === made.from)) throw new Error(`${made.owner} has no group ${made.from}`);
+        return { ...one, members: one.members.map((member) => (member.home === made.owner && member.group === made.from ? inGroup(member, made.to) : member)) };
+      });
     default:
       return null;
   }
+}
+
+/** A member in `group`, or in none. */
+function inGroup(member: MemberSeen, group: string | null): MemberSeen {
+  const { group: _, ...rest } = member;
+  return group ? { ...rest, group } : rest;
 }
 
 /** A machine on `hub` renamed `to` as its hub would: the name it had stays

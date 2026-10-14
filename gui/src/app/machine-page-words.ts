@@ -85,6 +85,8 @@ export interface MachinePageWords {
   version: string;
   /** Where it stands in each network it is in. */
   networks: string;
+  /** The group its owner put it in (`world-network.md`, 机器的分组). */
+  group: string;
 
   reading: string;
   failed: string;
@@ -176,6 +178,7 @@ export const zhMachinePage: MachinePageWords = {
   booted: "开机于",
   version: "Fastctx",
   networks: "网络",
+  group: "分组",
 
   reading: "读取中…",
   failed: "读取失败",
@@ -260,6 +263,7 @@ export const enMachinePage: MachinePageWords = {
   booted: "Started",
   version: "Fastctx",
   networks: "Networks",
+  group: "Group",
 
   reading: "Reading…",
   failed: "Couldn't read",

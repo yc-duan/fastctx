@@ -83,6 +83,16 @@
   color: var(--text-3);
 }
 
+/* A group of the owner's within a hold: its name, level with the
+   machines' names, in their weight. */
+.agents-pick-band {
+  display: block;
+  padding: 6px var(--space-3) 2px calc(var(--space-3) + 17px);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
 .agents-pick-item {
   display: flex;
   align-items: center;

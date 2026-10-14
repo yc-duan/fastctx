@@ -41,8 +41,10 @@ export interface MapNode {
    *  measured. */
   hubMs?: number | undefined;
   /** Whose it is, as the drawing groups machines round their hub: the
-   *  account's own, one other's, or one other's whose agent assists it. */
-  group?: { key: string; label: string } | undefined;
+   *  account's own, one other's, or one other's whose agent assists it; or,
+   *  put in one of its owner's groups, that group, `within` the owner's box
+   *  (`world-network.md`, 机器的分组). */
+  group?: { key: string; label: string; within?: { key: string; label: string } | undefined } | undefined;
 }
 
 /** A direct link between two machines on the drawing, by their keys. */

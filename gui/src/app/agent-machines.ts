@@ -1,13 +1,15 @@
 // The machines the agents page can show, one at a time (`world-gui.md`,
 // 智能体页): the head's machine is a menu of them, grouped as the user's
 // own, those shared with them, other members' that an administrator may
-// look at, and those whose agents assist them; each says whether it is
-// online. Which one was shown last is kept on this device.
+// look at, and those whose agents assist them, each group's machines their
+// owner put in groups (`world-network.md`, 机器的分组) after the rest under
+// the group's name; each says whether it is online. Which one was shown
+// last is kept on this device.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Login as AccountLogin } from "../world/accounts";
-import { loginsOf } from "../world/accounts";
+import { loginsOf, names } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import type { Timestamp } from "../world/wire";
 import { isManaged } from "./machine-list";
@@ -27,6 +29,8 @@ export interface Pickable {
   hold: Hold;
   /** Whose it is, where it is not the user's. */
   owner: string | null;
+  /** The group its owner put it in. */
+  group: string | null;
   /** The login of this device that owns it, which lets its agents assist
    *  others and sets their plans. */
   ownerLogin: AccountLogin | null;
@@ -53,6 +57,7 @@ export function pickables(world: WorldNow | null): Pickable[] {
       : (logins.find((login) => owns(machine, login)) ?? null);
     const shared = logins.some((login) => world?.accounts.hubs.some((hub) => hub.hub === login.hub && hub.shares.some((share) => share.machine === machine.name && share.account === login.account)));
     const hold: Hold = machine.here || ownerLogin ? "mine" : shared ? "shared" : "others";
+    const group = world?.accounts.hubs.flatMap((hub) => hub.members).find((member) => member.kind === "computer" && names(member, machine.name) && member.group)?.group ?? null;
     picked.push({
       name: machine.name,
       written: machine.written,
@@ -61,14 +66,17 @@ export function pickables(world: WorldNow | null): Pickable[] {
       since: machine.since,
       hold,
       owner: hold === "mine" ? null : (logins.map((login) => ownerOf(machine, login)).find(Boolean) ?? null),
+      group,
       ownerLogin,
     });
   }
   for (const assistant of assistantsOf(world)) {
     if (picked.some((one) => one.written === assistant.written)) continue;
-    picked.push({ name: assistant.machine, written: assistant.written, here: false, online: assistant.online, since: assistant.since, hold: "assist", owner: assistant.owner, ownerLogin: null });
+    picked.push({ name: assistant.machine, written: assistant.written, here: false, online: assistant.online, since: assistant.since, hold: "assist", owner: assistant.owner, group: null, ownerLogin: null });
   }
-  return picked.sort((a, b) => HOLDS.indexOf(a.hold) - HOLDS.indexOf(b.hold) || Number(b.here) - Number(a.here) || Number(b.online === true) - Number(a.online === true) || a.written.localeCompare(b.written));
+  // Within a hold, those in no group first, then each group by its name.
+  const grouped = (a: Pickable, b: Pickable) => Number(a.group !== null) - Number(b.group !== null) || (a.group ?? "").localeCompare(b.group ?? "");
+  return picked.sort((a, b) => HOLDS.indexOf(a.hold) - HOLDS.indexOf(b.hold) || grouped(a, b) || Number(b.here) - Number(a.here) || Number(b.online === true) - Number(a.online === true) || a.written.localeCompare(b.written));
 }
 
 /** The machine to show: the one named, else the one kept, else this
@@ -93,16 +101,18 @@ export function pickButton(machine: Pickable | null, words: MachinePickWords): s
 }
 
 /** The menu: a group for each hold, each machine with whether it is
- *  online and whose it is. */
+ *  online and whose it is, those in a group of their owner's under its
+ *  name. */
 export function pickMenu(machines: Pickable[], current: Pickable | null, words: MachinePickWords): string {
   return HOLDS.map((hold) => {
     const held = machines.filter((one) => one.hold === hold);
     if (!held.length) return "";
     const items = held
-      .map((machine) => {
+      .map((machine, at) => {
         const on = machine.written === current?.written;
         const dot = machine.online === true ? " online" : machine.online === false ? " offline" : "";
-        return `<button class="agents-pick-item${on ? " current" : ""}" type="button" role="menuitemradio" aria-checked="${on}" data-pick="${escape(machine.written)}">
+        const band = machine.group !== null && machine.group !== held[at - 1]?.group ? `<span class="agents-pick-band">${escape(machine.group)}</span>` : "";
+        return `${band}<button class="agents-pick-item${on ? " current" : ""}" type="button" role="menuitemradio" aria-checked="${on}" data-pick="${escape(machine.written)}">
           <span class="agents-pick-dot${dot}" aria-hidden="true"></span><span class="agents-pick-name">${escape(machine.written)}</span><span class="agents-pick-sub">${escape(sub(machine, words))}</span></button>`;
       })
       .join("");

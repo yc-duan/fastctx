@@ -743,6 +743,9 @@ export class MachinePage implements Page {
         })
       : machine.on.filter((on) => on.owner).map((on) => ({ line: `${on.hubName} · ${machines.registeredUnder(on.owner!)}`, why: "" }));
     if (networks.length) rows.push({ label: words.networks, lines: networks.map((one) => one.line), title: networks.map((one) => one.why).filter(Boolean).join("\n") });
+    // The group its owner put it in, on each hub that says so.
+    const grouped = [...new Set(world.accounts.hubs.flatMap((hub) => hub.members.filter((member) => member.kind === "computer" && names(member, machine.name) && member.group).map((member) => member.group!)))];
+    if (grouped.length) rows.push({ label: words.group, lines: grouped });
     const owner = this.ownerLogin(machine, world);
     const remove =
       owner && !machine.here

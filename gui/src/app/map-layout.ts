@@ -7,20 +7,26 @@
 // person has a box, a title strip alone while none of their machines has
 // come, and a dashed box after them adds another person. A box has a title
 // strip with the group's name, and its machines stand in a grid inside, one
-// to a row and a
-// new column every ten, their names to the right. The box lies under the
-// lines and does not break them: the line down from the bus runs on through
-// the title strip as the trunk of the first column, the other columns branch
-// from it under the strip, and a short twig reaches each machine. A box folds to its title
-// strip alone, as wide as it is open, so folding moves nothing but what lies below it. The account's own end with the dashed ring that adds a
-// machine, so one that comes stands where it waited. On a narrow screen, a
-// phone's, the boxes stand one under another instead, each its machines in
-// one column, joined from the left by a spine down from the hub, so the
+// to a row and a new column every ten, their names to the right. The
+// machines their owner put in groups (`world-network.md`, 机器的分组) stand
+// in the same box, each group in columns of its own to the right of the
+// rest, under a band with the group's name, their rows level with the
+// rest's. A box lies under the lines and does not break them: the line down
+// from the bus runs on through the title strip as the trunk of the first
+// column, the other columns, a group's through its band, branch from it
+// under the strip, and a short twig reaches each machine. A box, and a group
+// in it, folds to its strip or band alone, so folding moves nothing but what
+// lies below it. The account's own machines in no group end with the dashed
+// ring that adds a machine, so one that comes stands where it waited. On a
+// narrow screen, a phone's, the boxes stand one under another instead, each
+// its machines in one column and its groups under them, each under its band
+// across the box, joined from the left by a spine down from the hub, so the
 // drawing is read by moving down. Positions are computed,
 // never moved by hand; the order within a group is remembered on this
 // device, so machines keep their order while others come and go.
 
 import type { Bounds, Point } from "../map-canvas";
+import { compareBoxes } from "./machine-groups";
 import type { MapHub, MapLink, MapNode, MapPerson } from "./map-nodes";
 
 /** A machine's ring and a hub's knot, in the drawing's units. */
@@ -51,6 +57,13 @@ const ADDING = 150;
 /** Room between boxes, and between the trees of two hubs. */
 const BOX_GAP = 36;
 const HUB_GAP = 160;
+/** A group's band in its owner's box; on a wide screen, how far under the
+ *  box's strip the bands hang and how far under them the first rings stand;
+ *  the room left under a band with nothing under it. */
+export const BAND = 28;
+const BAND_TOP = 18;
+const BAND_UNDER = 14;
+const BAND_EDGE = 8;
 
 /** A group of machines under a hub, drawn as a box. */
 export interface GroupNode {
@@ -63,12 +76,17 @@ export interface GroupNode {
   count: number;
   online: number;
   folded: boolean;
-  /** The box; its title strip is its top. */
+  /** The box; its title strip is its top. A group's is its band and its
+   *  machines under it. */
   box: Bounds;
+  /** How tall its title strip, or a group's band, is. */
+  strip: number;
   /** Where the box is chosen: its title. */
   point: Point;
   /** The person whose box it is, for the network's administrator. */
   person?: MapPerson | undefined;
+  /** For a group: the key of its owner's box, which it stands in. */
+  within?: string | undefined;
 }
 
 /** A line of the tree, square at its corners: the hub's down to the
@@ -131,10 +149,51 @@ function firstOrder(a: MapNode, b: MapNode): number {
   return Number(b.here) - Number(a.here) || HOLD_RANK[a.hold] - HOLD_RANK[b.hold] || a.name.localeCompare(b.name);
 }
 
-/** The order of groups under a hub: the account's own, others', the box
- *  that adds a person, those assisting. */
-function groupRank(key: string): number {
-  return key === "mine" ? 0 : key.startsWith("of:") ? 1 : key === "adding" ? 2 : 3;
+/** The order of boxes under a hub: the account's own, others', the box
+ *  that adds a person, those assisting; inside each, its owner's groups by
+ *  name (`machine-groups.ts`). */
+function groupRank(owner: string): number {
+  return owner === "mine" ? 0 : owner.startsWith("of:") ? 1 : owner === "adding" ? 2 : 3;
+}
+
+/** Machines standing in columns under a strip or a band: them and the slot
+ *  of the dashed ring, how many to a column, and how many columns and how
+ *  tall with the room round them, none without machines. */
+interface Grid {
+  slots: (MapNode | null)[];
+  perColumn: number;
+  columns: number;
+  height: number;
+}
+
+/** A group in its owner's box: its band, and its machines under it unless
+ *  it is folded. */
+interface Band {
+  kind: string;
+  key: string;
+  label: string;
+  grid: Grid;
+  fold: boolean;
+  count: number;
+  online: number;
+}
+
+/** A box as it is sized before it is placed. */
+interface Block {
+  kind: string;
+  key: string;
+  label: string;
+  person?: MapPerson | undefined;
+  /** Its machines in no group, and its groups under them. */
+  grid: Grid;
+  bands: Band[];
+  fold: boolean;
+  /** Folded or empty: the title strip alone. */
+  strip: boolean;
+  width: number;
+  height: number;
+  count: number;
+  online: number;
 }
 
 /** Puts machines linked directly next to each other, keeping the order
@@ -208,33 +267,145 @@ export class MapLayout {
     for (const id of order) {
       const own = nodes.filter((node) => hubOf(node) === id);
       const persons = people.filter((person) => person.hub === id);
+      // Each box by whose it is; a group stands inside its owner's.
+      const ownerOf = (node: MapNode) => node.group?.within?.key ?? node.group?.key ?? "mine";
       const kinds = [
         ...new Set([
           "mine",
-          ...own.map((node) => node.group?.key ?? "mine"),
+          ...own.map(ownerOf),
           ...persons.map((person) => `of:${person.account}`),
           ...(adding.has(id) ? ["adding"] : []),
         ]),
-      ].sort((a, b) => groupRank(a) - groupRank(b) || a.localeCompare(b));
-      const blocks = kinds.map((kind) => {
-        const members = chained(own.filter((node) => (node.group?.key ?? "mine") === kind).sort(byOrder), links);
-        const person = persons.find((one) => kind === `of:${one.account}`);
-        const label = members[0]?.group?.label ?? person?.label ?? "";
-        // The dashed box that adds a person is a title strip alone.
-        if (kind === "adding") return { kind, key: `adding:${id}`, members, label, person, fold: false, strip: true, width: TRUNK + 20 + ADDING * grow, height: TITLE, perColumn: 1 };
+      ].sort((a, b) => compareBoxes(a, b, groupRank));
+      const gridOf = (slots: (MapNode | null)[]): Grid => {
+        const perColumn = narrow ? Math.max(1, slots.length) : rows;
+        const tall = Math.min(slots.length, perColumn);
+        return { slots, perColumn, columns: Math.max(1, Math.ceil(slots.length / perColumn)), height: slots.length ? PAD * 2 + (tall - 1) * ROW_AT + RING * 2 : 0 };
+      };
+      const widthOf = (grid: Grid) => TRUNK + TWIG + PAD + (grid.columns - 1) * COLUMN_AT + RING * 2 + NAME_AT;
+      const onlineOf = (nodes: MapNode[]) => nodes.filter((node) => node.online === true).length;
+      const blocks = kinds.map((kind): Block => {
         const key = `group:${id}:${kind}`;
-        const fold = folded.has(key) && members.length > 0;
-        // The account's own end with the dashed ring.
-        const cells = members.length + (ending(kind) ? 1 : 0);
-        const perColumn = narrow ? Math.max(1, cells) : rows;
-        const columns = Math.max(1, Math.ceil(cells / perColumn));
-        const tall = Math.min(cells, perColumn);
-        const width = TRUNK + TWIG + PAD + (columns - 1) * COLUMN_AT + RING * 2 + NAME_AT;
+        // The dashed box that adds a person is a title strip alone.
+        if (kind === "adding") {
+          const grid = gridOf([]);
+          return { kind, key: `adding:${id}`, label: "", grid, bands: [], fold: false, strip: true, width: TRUNK + 20 + ADDING * grow, height: TITLE, count: 0, online: 0 };
+        }
+        const loose = chained(own.filter((node) => (node.group?.key ?? "mine") === kind).sort(byOrder), links);
+        const person = persons.find((one) => kind === `of:${one.account}`);
+        const inside = own.filter((node) => node.group?.within?.key === kind);
+        const bands = [...new Set(inside.map((node) => node.group!.key))]
+          .sort((a, b) => compareBoxes(a, b, groupRank))
+          .map((group): Band => {
+            const members = chained(inside.filter((node) => node.group!.key === group).sort(byOrder), links);
+            const key = `group:${id}:${group}`;
+            const fold = folded.has(key);
+            return { kind: group, key, label: members[0]!.group!.label, grid: gridOf(fold ? [] : members), fold, count: members.length, online: onlineOf(members) };
+          });
+        // The account's own in no group end with the dashed ring.
+        const grid = gridOf([...loose, ...(ending(kind) ? [null] : [])]);
+        const all = [...loose, ...inside];
+        const fold = folded.has(key) && all.length > 0;
         // A person none of whose machines has come is the strip alone.
-        const strip = fold || cells === 0;
-        const height = strip ? TITLE : TITLE + PAD * 2 + (tall - 1) * ROW_AT + RING * 2;
-        return { kind, key, members, label, person, fold, strip, width, height, perColumn };
+        const strip = fold || (!grid.slots.length && !bands.length);
+        const size = (): { width: number; height: number } => {
+          if (narrow) {
+            // The groups under the rest, each under its band.
+            const below = bands.reduce((sum, band) => sum + BAND + band.grid.height, 0) + (bands.length && !grid.slots.length ? BAND_EDGE : 0) + (bands.length && !bands[bands.length - 1]!.grid.height ? BAND_EDGE : 0);
+            return { width: Math.max(widthOf(grid), ...bands.map((band) => widthOf(band.grid))), height: TITLE + grid.height + below };
+          }
+          // The groups to the right of the rest, the rows level.
+          const columns = (grid.slots.length ? grid.columns : 0) + bands.reduce((sum, band) => sum + band.grid.columns, 0);
+          const tallest = Math.max(0, ...[grid, ...bands.map((band) => band.grid)].map((one) => Math.min(one.slots.length, one.perColumn)));
+          const head = bands.length ? BAND_TOP + BAND + BAND_UNDER - PAD : 0;
+          return { width: TRUNK + TWIG + PAD + (Math.max(1, columns) - 1) * COLUMN_AT + RING * 2 + NAME_AT, height: TITLE + head + (tallest ? PAD * 2 + (tallest - 1) * ROW_AT + RING * 2 : BAND_EDGE - head + BAND_TOP + BAND) };
+        };
+        const { width, height } = strip ? { width: widthOf(grid), height: TITLE } : size();
+        return {
+          kind,
+          key,
+          label: loose[0]?.group?.label ?? inside[0]?.group?.within?.label ?? person?.label ?? "",
+          person,
+          grid,
+          bands: fold ? [] : bands,
+          fold,
+          strip,
+          width,
+          height,
+          count: all.length,
+          online: onlineOf(all),
+        };
       });
+      const twigs = (grid: Grid, drop: number, ringAt: (row: number) => number) =>
+        grid.slots.forEach((slot, index) => {
+          const trunk = drop + Math.floor(index / grid.perColumn) * COLUMN_AT;
+          const point: Point = [trunk + TWIG + RING, ringAt(index % grid.perColumn)];
+          branches.push({ points: [[trunk, point[1]], [trunk + TWIG - 3, point[1]]], hub: id, machine: slot?.key, out: !!slot && slot.online !== true });
+          if (slot) machines.set(slot.key, point);
+          else this.vacancies.set(id, point);
+        });
+      // On a wide screen: the machines in no group in the first columns,
+      // then each group's to the right under its band, every column
+      // hanging from the fork under the strip, the rows level.
+      const side = (block: Block, x: number, y: number, from: number) => {
+        const banded = block.bands.length > 0;
+        const fork = y + TITLE + (banded ? BAND_TOP / 2 : PAD * 0.55);
+        const bandTop = y + TITLE + BAND_TOP;
+        const first = banded ? bandTop + BAND + BAND_UNDER + RING : y + TITLE + PAD + RING;
+        const ringAt = (row: number) => first + row * ROW_AT;
+        const sections = [...(block.grid.slots.length ? [{ grid: block.grid, band: null }] : []), ...block.bands.map((band) => ({ grid: band.grid, band }))];
+        const trunks: number[] = [];
+        let column = 0;
+        for (const [at, { grid, band }] of sections.entries()) {
+          const left = x + column * COLUMN_AT;
+          if (band) {
+            const width = at === sections.length - 1 ? x + block.width - BAND_EDGE - left : grid.columns * COLUMN_AT - 12;
+            groups.push({ key: band.key, hub: id, kind: band.kind, label: band.label, count: band.count, online: band.online, folded: band.fold, box: { x: left, y: bandTop, width, height: y + block.height - bandTop - BAND_EDGE }, strip: BAND, point: [left + TRUNK + 50, bandTop + BAND / 2], within: block.key });
+          }
+          for (let one = 0; one < grid.columns; one += 1) {
+            const trunk = left + TRUNK + one * COLUMN_AT;
+            const tall = Math.min(grid.perColumn, grid.slots.length - one * grid.perColumn);
+            trunks.push(trunk);
+            branches.push({ points: [[trunk, column + one === 0 ? from : fork], [trunk, tall > 0 ? ringAt(tall - 1) : bandTop + BAND / 2]], hub: id });
+          }
+          twigs(grid, left + TRUNK, ringAt);
+          column += grid.columns;
+        }
+        if (trunks.length > 1) branches.push({ points: [[trunks[0]!, fork], [trunks[trunks.length - 1]!, fork]], hub: id });
+      };
+      // A box at `x`, `y`, its first trunk from `from` down; on a narrow
+      // screen its machines in no group under its strip, then each group's
+      // band and machines.
+      const place = (block: Block, x: number, y: number, from: number) => {
+        groups.push({ key: block.key, hub: id, kind: block.kind, label: block.label, count: block.count, online: block.online, folded: block.fold, box: { x, y, width: block.width, height: block.height }, strip: TITLE, point: [x + TRUNK + 50, y + TITLE / 2], person: block.person });
+        const drop = x + TRUNK;
+        // To a strip alone the line stops in the middle of it, broken to
+        // the box that adds a person.
+        if (block.strip) {
+          branches.push({ points: [[drop, from], [drop, y + TITLE / 2]], hub: id, out: block.kind === "adding" });
+          return;
+        }
+        if (!narrow) return side(block, x, y, from);
+        const regions: { grid: Grid; top: number }[] = [{ grid: block.grid, top: y + TITLE }];
+        let at = y + TITLE + (block.grid.slots.length ? block.grid.height : BAND_EDGE);
+        let end = y + TITLE / 2;
+        for (const band of block.bands) {
+          const height = BAND + band.grid.height;
+          groups.push({ key: band.key, hub: id, kind: band.kind, label: band.label, count: band.count, online: band.online, folded: band.fold, box: { x, y: at, width: block.width, height }, strip: BAND, point: [x + TRUNK + 50, at + BAND / 2], within: block.key });
+          end = at + BAND / 2;
+          regions.push({ grid: band.grid, top: at + BAND });
+          at += height;
+        }
+        // Each region's machines in their columns; the first column's trunk
+        // runs on through them all, to the last band or machine.
+        // One column each, the first's trunk running on through them all.
+        for (const { grid, top } of regions) {
+          const ringAt = (row: number) => top + PAD + RING + row * ROW_AT;
+          if (grid.slots.length) end = Math.max(end, ringAt(grid.slots.length - 1));
+          twigs(grid, drop, ringAt);
+        }
+        branches.push({ points: [[drop, from], [drop, end]], hub: id });
+      };
       if (narrow) {
         // The hub at the top left, a spine down its left, and each box to
         // its right, joined at the middle of its title strip.
@@ -243,22 +414,9 @@ export class MapLayout {
         let y = below + BUS_DROP;
         let join = y;
         for (const block of blocks) {
-          const box: Bounds = { x: SIDE, y, width: block.width, height: block.height };
-          const online = block.members.filter((node) => node.online === true).length;
-          groups.push({ key: block.key, hub: id, kind: block.kind, label: block.label, count: block.members.length, online, folded: block.fold, box, point: [SIDE + TRUNK + 50, y + TITLE / 2], person: block.person });
           join = y + TITLE / 2;
-          const trunk = SIDE + TRUNK;
-          branches.push({ points: [[0, join], [trunk, join]], hub: id, out: block.kind === "adding" });
-          if (!block.strip) {
-            const slots: (MapNode | null)[] = [...block.members, ...(ending(block.kind) ? [null] : [])];
-            branches.push({ points: [[trunk, join], [trunk, y + TITLE + PAD + RING + (slots.length - 1) * ROW_AT]], hub: id });
-            slots.forEach((slot, row) => {
-              const at: Point = [trunk + TWIG + RING, y + TITLE + PAD + RING + row * ROW_AT];
-              branches.push({ points: [[trunk, at[1]], [trunk + TWIG - 3, at[1]]], hub: id, machine: slot?.key, out: !!slot && slot.online !== true });
-              if (slot) machines.set(slot.key, at);
-              else this.vacancies.set(id, at);
-            });
-          }
+          branches.push({ points: [[0, join], [SIDE + TRUNK, join]], hub: id, out: block.kind === "adding" });
+          place(block, SIDE, y, join);
           y += block.height + BOX_GAP;
         }
         branches.push({ points: [[0, below + KNOT + 4], [0, join]], hub: id });
@@ -273,35 +431,9 @@ export class MapLayout {
       let x = left;
       const drops: number[] = [];
       for (const block of blocks) {
-        const box: Bounds = { x, y: top, width: block.width, height: block.height };
-        const online = block.members.filter((node) => node.online === true).length;
-        groups.push({ key: block.key, hub: id, kind: block.kind, label: block.label, count: block.members.length, online, folded: block.fold, box, point: [x + TRUNK + 50, top + TITLE / 2], person: block.person });
-        // The line from the bus comes down at the first trunk; to a strip
-        // alone it stops in the middle of it, broken to the box that adds a
-        // person.
-        const drop = x + TRUNK;
-        drops.push(drop);
-        if (block.strip) branches.push({ points: [[drop, busY], [drop, top + TITLE / 2]], hub: id, out: block.kind === "adding" });
-        else {
-          const slots: (MapNode | null)[] = [...block.members, ...(ending(block.kind) ? [null] : [])];
-          const columns = Math.ceil(slots.length / rows);
-          const fork = top + TITLE + PAD * 0.55;
-          for (let column = 0; column < columns; column += 1) {
-            const trunk = x + TRUNK + column * COLUMN_AT;
-            const last = Math.min(rows, slots.length - column * rows) - 1;
-            branches.push({ points: [[trunk, column ? fork : busY], [trunk, top + TITLE + PAD + RING + last * ROW_AT]], hub: id });
-          }
-          if (columns > 1) branches.push({ points: [[drop, fork], [x + TRUNK + (columns - 1) * COLUMN_AT, fork]], hub: id });
-          slots.forEach((slot, index) => {
-            const column = Math.floor(index / rows);
-            const row = index % rows;
-            const trunk = x + TRUNK + column * COLUMN_AT;
-            const at: Point = [trunk + TWIG + RING, top + TITLE + PAD + RING + row * ROW_AT];
-            branches.push({ points: [[trunk, at[1]], [trunk + TWIG - 3, at[1]]], hub: id, machine: slot?.key, out: !!slot && slot.online !== true });
-            if (slot) machines.set(slot.key, at);
-            else this.vacancies.set(id, at);
-          });
-        }
+        // The line from the bus comes down at the first trunk.
+        drops.push(x + TRUNK);
+        place(block, x, top, busY);
         x += block.width + BOX_GAP;
       }
       // The hub down to the bus, and the bus across the drops to the boxes.

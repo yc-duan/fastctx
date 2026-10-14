@@ -7,6 +7,7 @@
 // (`world-gui.md`, 用词).
 
 import { wholeDollars } from "../world/money";
+import type { GroupWords } from "./machine-groups";
 import type { PasswordProblem } from "./password";
 import { enProblems, failure, zhProblems, type ProblemWords } from "./problem";
 import type { MachineLogAction } from "../world/machine-log";
@@ -596,6 +597,8 @@ export interface MachinesWords {
    *  named by `ownedBy`. */
   mineGroup: string;
   assistGroup(owner: string): string;
+  /** What is done with the groups of machines (`world-network.md`, 机器的分组). */
+  groups: GroupWords;
   /** Under a group's name on the drawing: how many, how many online. */
   groupSub(count: number, online: number): string;
   /** The page's two ways of showing the machines, and what the choice is. */
@@ -816,6 +819,26 @@ export const zhMachines: MachinesWords = {
   takesDirect: "别的机器可以直接连到这台",
   mineGroup: "我的",
   assistGroup: (owner) => `来自 ${owner}`,
+  groups: {
+    group: "分组",
+    groupTitle: (machine) => `把 ${machine} 放进分组`,
+    groupMany: (count) => `把这 ${count} 台放进分组`,
+    noGroup: "不分组",
+    newGroup: "新建分组",
+    groupName: "组名",
+    groupGo: "好",
+    cancel: "取消",
+    more: (group) => `${group} · 更多`,
+    renameGroup: "改组名",
+    renameGroupTitle: (group) => `给「${group}」改个名字`,
+    endGroup: "解散分组",
+    movedOne: (machine, group) => (group ? `${machine} 进了「${group}」` : `${machine} 不在分组里了`),
+    movedMany: (count, group) => (group ? `${count} 台进了「${group}」` : `${count} 台不在分组里了`),
+    renamedGroup: (from, to) => `「${from}」改叫「${to}」了`,
+    endedGroup: (group) => `「${group}」解散了`,
+    groupNameLong: "组名最多 32 个字",
+    groupNameEmpty: "写一个组名",
+  },
   groupSub: (count, online) => `${count} 台 · ${online} 在线`,
   viewMap: "图",
   viewList: "列表",
@@ -930,6 +953,10 @@ export const zhMachines: MachinesWords = {
         return `移除 ${a.name}`;
       case "rename":
         return `把 ${a.machine} 改名为 ${a.to}`;
+      case "group":
+        return a.group ? `把 ${a.machine} 放进「${a.group}」` : `让 ${a.machine} 不再分组`;
+      case "rename_group":
+        return a.to ? `把 ${a.owner} 的「${a.from}」改叫「${a.to}」` : `解散 ${a.owner} 的「${a.from}」`;
       case "token":
         if (a.managed) return `生成受管机器的入网码${a.label ? ` · ${a.label}` : ""}`;
         return a.register ? `生成加入命令${a.name ? ` · ${a.name}` : ""}` : "生成登录二维码";
@@ -1064,6 +1091,26 @@ export const enMachines: MachinesWords = {
   takesDirect: "Other machines may connect to it directly",
   mineGroup: "Mine",
   assistGroup: (owner) => `From ${owner}`,
+  groups: {
+    group: "Group",
+    groupTitle: (machine) => `Put ${machine} in a group`,
+    groupMany: (count) => `Put these ${count} in a group`,
+    noGroup: "No group",
+    newGroup: "New group",
+    groupName: "Group name",
+    groupGo: "OK",
+    cancel: "Cancel",
+    more: (group) => `${group} · more`,
+    renameGroup: "Rename group",
+    renameGroupTitle: (group) => `Rename “${group}”`,
+    endGroup: "Ungroup",
+    movedOne: (machine, group) => (group ? `${machine} is in “${group}”` : `${machine} is in no group`),
+    movedMany: (count, group) => (group ? `${count} machines are in “${group}”` : `${count} machines are in no group`),
+    renamedGroup: (from, to) => `“${from}” is “${to}” now`,
+    endedGroup: (group) => `“${group}” is ungrouped`,
+    groupNameLong: "A group's name is at most 32 characters",
+    groupNameEmpty: "Give the group a name",
+  },
   groupSub: (count, online) => `${count} · ${online} online`,
   viewMap: "Map",
   viewList: "List",
@@ -1178,6 +1225,10 @@ export const enMachines: MachinesWords = {
         return `Removed ${a.name}`;
       case "rename":
         return `Renamed ${a.machine} to ${a.to}`;
+      case "group":
+        return a.group ? `Put ${a.machine} in “${a.group}”` : `Took ${a.machine} out of its group`;
+      case "rename_group":
+        return a.to ? `Renamed ${a.owner}'s “${a.from}” to “${a.to}”` : `Ungrouped ${a.owner}'s “${a.from}”`;
       case "token":
         if (a.managed) return `Made a code for managed machines${a.label ? ` · ${a.label}` : ""}`;
         return a.register ? `Made a join command${a.name ? ` · ${a.name}` : ""}` : "Made a sign-in QR code";
