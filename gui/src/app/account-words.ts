@@ -614,6 +614,13 @@ export interface MachinesWords {
    *  is behind a pointer's rest. */
   managed: string;
   managedWhat: string;
+  /** A phone signed in to the account, beside the machines: under its
+   *  name, behind a pointer's rest, since when, and taking it out. */
+  phone: string;
+  phoneWhat: string;
+  phoneSince(at: string): string;
+  removePhone: string;
+  removePhoneWhat(name: string): string;
   /** A visitor's machine, as the network's administrator sees it: under its
    *  name, and behind a pointer's rest. */
   visitorMachine: string;
@@ -848,6 +855,11 @@ export const zhMachines: MachinesWords = {
   busy: (n) => `${n} 个智能体在进行`,
   managed: "受管",
   managedWhat: "受管机器：不登录任何账号，你的智能体在上面干活",
+  phone: "手机",
+  phoneWhat: "手机只登录这个账号，上面不跑智能体",
+  phoneSince: (at) => `${at} 登录`,
+  removePhone: "移除",
+  removePhoneWhat: (name) => `${name} 将退出这个账号。`,
   visitorMachine: "访客的机器",
   visitorWhat: "访客的机器只归访客自己：你看得到它在不在，用不了它",
   visitor: "访客",
@@ -1123,6 +1135,11 @@ export const enMachines: MachinesWords = {
   busy: (n) => `${n} agent${n === 1 ? "" : "s"} at work`,
   managed: "Managed",
   managedWhat: "Managed machine: logged in to no account, your agents work on it",
+  phone: "Phone",
+  phoneWhat: "A phone only signs in to the account; no agent runs on it",
+  phoneSince: (at) => `signed in ${at}`,
+  removePhone: "Remove",
+  removePhoneWhat: (name) => `${name} will be signed out of this account.`,
   visitorMachine: "a visitor's",
   visitorWhat: "A visitor's machine is the visitor's alone: you see whether it is there, and cannot use it",
   visitor: "visitor",

@@ -1,18 +1,19 @@
 // The account's World as the drawing shows it (`machine-map.ts`): each hub
-// the account is on, each machine it may work on, and each machine of
-// another whose agent assists it, with what the drawing marks on it. The
-// front page and the machines page draw the same thing; a machine is keyed
-// `m:<name>`, one whose agent assists `assist:<name>`, a hub `hub:<id>`.
+// the account is on, each machine it may work on, the phones signed in to
+// it, and each machine of another whose agent assists it, with what the
+// drawing marks on it. The front page and the machines page draw the same
+// thing; a machine is keyed `m:<name>`, a phone `device:<hub>/<name>`, one
+// whose agent assists `assist:<name>`, a hub `hub:<id>`.
 // Between two machines, the direct link each holds with the other, as the
 // two say. Where the account is the network's administrator, every other
 // person there, whose box the machines page draws even with no machine in
 // it.
 
-import { loginsOf, type LinkSeen } from "../world/accounts";
+import { loginsOf, type HubAccounts, type LinkSeen, type Login, type MemberSeen } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
-import type { MapHub, MapLink, MapNode, MapPerson } from "./map-nodes";
+import { deviceKey, type MapHub, type MapLink, type MapNode, type MapPerson } from "./map-nodes";
 import { osName } from "../world/names";
-import { assistantsOf, isSuper, machineActsFor, machinesOf, ownerOf, owns } from "./reach";
+import { assistantsOf, isComputer, isSuper, machineActsFor, machinesOf, ownerOf, owns } from "./reach";
 
 export interface MapWords {
   ownedBy(account: string): string;
@@ -30,6 +31,9 @@ export interface MapWords {
   visitorWhat: string;
   /** Under a managed machine's name. */
   managed: string;
+  /** Under a phone's name, and what it is behind a pointer's rest. */
+  phone: string;
+  phoneWhat: string;
   hubOnline: string;
   hubConnecting: string;
   hubOff: string;
@@ -85,6 +89,26 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
       group: boxOf(owner ? { key: `of:${owner}`, label: words.ownedBy(owner) } : { key: "mine", label: words.mineGroup }, member?.group),
     });
   }
+  // The phones signed in to the account stand in its box after its
+  // machines: where a phone added from this page is seen to arrive.
+  for (const { hub, member } of phonesOf(world)) {
+    if (!hubs.some((one) => one.id === hub.hub)) continue;
+    nodes.push({
+      key: deviceKey(hub.hub, member.name),
+      name: member.name,
+      sub: words.phone,
+      hubs: [hub.hub],
+      here: member.name === world.accounts.machine && !isComputer(world),
+      online: member.online,
+      since: member.since ?? null,
+      hold: "mine",
+      reaching: false,
+      busy: 0,
+      title: [member.name, words.phoneWhat].join(" · "),
+      group: { key: "mine", label: words.mineGroup },
+      device: true,
+    });
+  }
   // A visitor's machines, for the network's administrator alone: their
   // names and whether they are online, nothing to do on them.
   for (const hub of world.accounts.hubs) {
@@ -126,6 +150,19 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
     });
   }
   return { hubs, nodes, hubLabels, links: linksOf(world, nodes), people: peopleOf(world, words) };
+}
+
+/** The phones signed in to the accounts this device is logged in to, hub
+ *  by hub, each with the login it is signed in under. */
+export function phonesOf(world: WorldNow): { hub: HubAccounts; member: MemberSeen; login: Login }[] {
+  const logins = loginsOf(world.accounts);
+  return world.accounts.hubs.flatMap((hub) =>
+    hub.members.flatMap((member) => {
+      if (member.kind !== "phone") return [];
+      const login = logins.find((one) => one.hub === hub.hub && member.logins.includes(one.account));
+      return login ? [{ hub, member, login }] : [];
+    }),
+  );
 }
 
 /** The box a machine stands in: its owner's, or, put in one of the owner's

@@ -42,8 +42,8 @@ import { isManaged, machineList } from "./machine-list";
 import { MapPeople } from "./map-people";
 import type { PeopleWords } from "./people-words";
 import { RING } from "./map-layout";
-import { mapOf } from "./map-of";
-import type { MapNode } from "./map-nodes";
+import { mapOf, phonesOf } from "./map-of";
+import { deviceKey, type MapNode } from "./map-nodes";
 import { link, talkLink } from "./places";
 import { assistantsOf, groupsOf, isComputer, isSuper, isVisitor, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, superOf, type Assistant, type Machine } from "./reach";
 import type { Page } from "./shell";
@@ -91,7 +91,11 @@ interface GroupBox {
 }
 
 /** One thing on the map, as the page knows it. */
-type Spot = { kind: "machine"; machine: Machine } | { kind: "assist"; assistants: Assistant[] } | { kind: "hub"; hub: HubAccounts };
+type Spot =
+  | { kind: "machine"; machine: Machine }
+  | { kind: "assist"; assistants: Assistant[] }
+  | { kind: "hub"; hub: HubAccounts }
+  | { kind: "device"; hub: HubAccounts; member: MemberSeen; login: Login; here: boolean };
 
 type GlyphName = Parameters<typeof glyph>[0];
 
@@ -693,6 +697,18 @@ export class MachinesPage implements Page {
     });
   }
 
+  /** Signs a phone out of the account, once asked. */
+  private removePhone(login: Login, name: string): void {
+    const { access, words } = this.options;
+    this.options.confirm.ask({
+      title: access.removeTitle(name),
+      what: words.removePhoneWhat(name),
+      go: access.removeGo,
+      act: () => this.options.change(login, { change: "remove", name, reason: access.reasonDefault }),
+      done: () => void this.options.store.refresh(),
+    });
+  }
+
   /** The assist sheet for `agent`'s login `home` on `machine`, given as
    *  `login`, with `editing`'s deadline open. */
   private assist(login: Login, machine: string, agent: string, home: string | null, editing: string | null): void {
@@ -749,6 +765,8 @@ export class MachinesPage implements Page {
       if (known?.kind === "assist") known.assistants.push(assistant);
       else spots.set(key, { kind: "assist", assistants: [assistant] });
     }
+    for (const { hub, member, login } of phonesOf(world))
+      spots.set(deviceKey(hub.hub, member.name), { kind: "device", hub, member, login, here: member.name === world.accounts.machine && !isComputer(world) });
     return spots;
   }
 
@@ -806,7 +824,7 @@ export class MachinesPage implements Page {
       : framed.length > 1
         ? this.framedPanel(framed, world)
       : spot && open
-        ? `${grip}<button class="icon-button panel-close" type="button" data-act="close-details" aria-label="${escape(words.closeDetails)}" title="${escape(words.closeDetails)}">${glyph("close", 16)}</button>${spot.kind === "hub" ? this.hubPanel(spot.hub, world, acts) : spot.kind === "assist" ? this.assistPanel(spot.assistants, world, now, acts) : this.machinePanel(spot.machine, world, now, acts)}`
+        ? `${grip}<button class="icon-button panel-close" type="button" data-act="close-details" aria-label="${escape(words.closeDetails)}" title="${escape(words.closeDetails)}">${glyph("close", 16)}</button>${spot.kind === "hub" ? this.hubPanel(spot.hub, world, acts) : spot.kind === "assist" ? this.assistPanel(spot.assistants, world, now, acts) : spot.kind === "device" ? this.phonePanel(spot.member, spot.here, now, acts) : this.machinePanel(spot.machine, world, now, acts)}`
         : "";
     if (html !== this.drawn) {
       this.drawn = html;
@@ -949,6 +967,8 @@ export class MachinesPage implements Page {
       ];
     }
     if (spot.kind === "assist") return [{ act: "talk", label: words.talk, icon: "plus" }, details];
+    // A phone is only signed in: nothing runs on it to work with.
+    if (spot.kind === "device") return [details, ...(spot.here ? [] : [{ act: "remove", label: words.removePhone, icon: "close" as const, danger: true }])];
     const owners = this.ownersOf(spot.machine, world);
     // Direct connections are the network's administrator's to allow: to a
     // computer, while it is online to be checked, and no longer at any time.
@@ -1064,6 +1084,10 @@ export class MachinesPage implements Page {
     }
     if (spot.kind === "assist") {
       if (act === "talk") this.options.talk(spot.assistants[0]!.written);
+      return;
+    }
+    if (spot.kind === "device") {
+      if (act === "remove") this.removePhone(spot.login, spot.member.name);
       return;
     }
     const machine = spot.machine;
@@ -1793,6 +1817,19 @@ export class MachinesPage implements Page {
         .join("")}
       ${this.present(first.machine, world, first.login)}
       ${this.agentsLink(first.written)}
+    </article>`;
+  }
+
+  /** A phone signed in to the account: whether it is there, and since
+   *  when it is signed in. */
+  private phonePanel(member: MemberSeen, here: boolean, now: Date, acts = ""): string {
+    const { words } = this.options;
+    const state = this.stateOf(member.online, member.since ?? null, here, now);
+    const tags = [this.tag(words.phone, "", words.phoneWhat), here ? this.tag(words.here) : ""];
+    return `<article class="panel-machine" data-device="${escape(member.name)}">
+      ${this.panelHead(member.name, tags, state)}
+      ${acts}
+      <p class="panel-said">${glyph("phone", 14)}<span>${escape(words.phoneSince(this.options.when(new Date(member.added), now)))}</span></p>
     </article>`;
   }
 

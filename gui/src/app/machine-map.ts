@@ -558,7 +558,16 @@ export class MachineMap {
       } else {
         add(circle(point, RING, 2.1, random), around(point, RING + 4), "dry", graphite, 0.5);
       }
-      if (node.here) add(blot(point, 3, random), around(point, 5), "marker", graphite, 0.9);
+      // A phone: its outline in the ring, a short stroke at its foot.
+      if (node.device) {
+        const faint = online ? 0.85 : 0.45;
+        add(outline(phoneLoop(point, 13, 21, 3.5), 1.6, random, { pressure: 0.2, taper: 0 }), around(point, 13), "marker", graphite, faint);
+        const foot: Point[] = [
+          [x - 2.6, y + 7],
+          [x + 2.6, y + 7],
+        ];
+        add(outline(foot, 1.4, random, { pressure: 0.2, taper: 0.3 }), spanning(foot, 3), "marker", graphite, faint);
+      } else if (node.here) add(blot(point, 3, random), around(point, 5), "marker", graphite, 0.9);
       // Others may connect to it directly: a dashed halo round its ring,
       // in pencil while the hub checks it.
       const opening = scene.opening.has(node.key);
@@ -788,6 +797,29 @@ function stripPoints(x: number, y: number, width: number, height: number, r: num
 }
 
 /** Points round a circle, for a ring drawn as broken strokes. */
+/** The edge of a phone standing at `centre`, `width` by `height`, its
+ *  corners rounded by `corner`: one loop from the middle of its top. */
+function phoneLoop(centre: Point, width: number, height: number, corner: number): Point[] {
+  const [x, y] = centre;
+  const left = x - width / 2;
+  const right = x + width / 2;
+  const top = y - height / 2;
+  const bottom = y + height / 2;
+  const points: Point[] = [[x, top]];
+  const arc = (cx: number, cy: number, from: number) => {
+    for (let step = 0; step <= 4; step++) {
+      const at = from + (step / 4) * (Math.PI / 2);
+      points.push([cx + Math.cos(at) * corner, cy + Math.sin(at) * corner]);
+    }
+  };
+  arc(right - corner, top + corner, -Math.PI / 2);
+  arc(right - corner, bottom - corner, 0);
+  arc(left + corner, bottom - corner, Math.PI / 2);
+  arc(left + corner, top + corner, Math.PI);
+  points.push([x + 1, top]);
+  return points;
+}
+
 function ringPoints(centre: Point, radius: number, count: number): Point[] {
   const points: Point[] = [];
   for (let index = 0; index <= count; index += 1) {

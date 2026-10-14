@@ -1,6 +1,7 @@
 // What the drawing of the machines shows (`map-of.ts` reads it from the
-// World): each hub, each machine with what is said of it, the direct links
-// between machines, and for the network's administrator every person.
+// World): each hub, each machine with what is said of it, the phones signed
+// in to the account, the direct links between machines, and for the
+// network's administrator every person.
 
 export interface MapHub {
   id: string;
@@ -45,7 +46,16 @@ export interface MapNode {
    *  put in one of its owner's groups, that group, `within` the owner's box
    *  (`world-network.md`, 机器的分组). */
   group?: { key: string; label: string; within?: { key: string; label: string } | undefined } | undefined;
+  /** A phone signed in to the account: a device that only logs in, where
+   *  no agent runs; drawn with a phone in its ring, nothing done to it but
+   *  taking it out of the account. */
+  device?: boolean;
+  /** For a device away, since when. */
+  since?: string | null;
 }
+
+/** The key of a phone signed in to the account, on `hub`. */
+export const deviceKey = (hub: string, name: string) => `device:${hub}/${name}`;
 
 /** A direct link between two machines on the drawing, by their keys. */
 export interface MapLink {

@@ -45,7 +45,7 @@ export function machineList(now: ListNow, words: MachinesWords): string {
   const hubRows = hubs.map((hub) => {
     const seen = world.accounts.hubs.find((one) => one.hub === hub.id);
     const ms = seen?.link.kind === "online" ? seen.link.ms : null;
-    const count = nodes.filter((node) => node.hubs.includes(hub.id) && node.hold !== "assist").length;
+    const count = nodes.filter((node) => node.hubs.includes(hub.id) && node.hold !== "assist" && !node.device).length;
     const state = [hubLabels.get(hub.id) ?? "", ms ? words.listMs(ms) : ""].filter(Boolean).join(" · ");
     const key = `hub:${hub.id}`;
     return `<button class="ml-row ml-hub${hub.online ? " online" : " offline"}${now.selected === key ? " chosen" : ""}" type="button" data-ml-open="${escape(key)}">
@@ -117,9 +117,11 @@ function row(node: MapNode, machine: Machine | null, now: ListNow, words: Machin
     ? agentsOn(world, node.name)
     : visitor
       ? `<span>${escape(words.visitorMachine)}</span>`
-      : facts
-      ? `${glyph(form, 14)}<span>${escape(osName(facts.os))}</span>`
-      : "";
+      : node.device
+        ? `${glyph("phone", 14)}<span>${escape(words.phone)}</span>`
+        : facts
+          ? `${glyph(form, 14)}<span>${escape(osName(facts.os))}</span>`
+          : "";
   const link_ = linkSaid(node, machine, now, words);
   const given = assist ? "" : givenSaid(world, machine, words);
   const busy = node.busy > 0 ? busyDots(node.busy, words) : "";
@@ -132,10 +134,10 @@ function row(node: MapNode, machine: Machine | null, now: ListNow, words: Machin
       <span class="ml-busy">${busy}</span>
       <span class="ml-go" aria-hidden="true">${glyph("chevron", 16)}</span>`;
   const kind = `ml-row ${state}${assist ? " assist" : ""}${visitor ? " visitor" : ""}${now.selected === node.key ? " chosen" : ""}`;
-  // A machine one may work on has its own page; an assisting agent's opens
-  // its details here; a visitor's is only seen.
+  // A machine one may work on has its own page; an assisting agent's and a
+  // phone open their details here; a visitor's is only seen.
   if (visitor) return `<div class="${kind}" title="${escape(title)}">${inner.replace(glyph("chevron", 16), "")}</div>`;
-  return assist
+  return assist || node.device
     ? `<button class="${kind}" type="button" data-ml-open="${escape(node.key)}" title="${escape(title)}">${inner}</button>`
     : `<a class="${kind}" href="${link({ kind: "machine", name: node.name })}" title="${escape(title)}">${inner}</a>`;
 }
@@ -144,7 +146,7 @@ function row(node: MapNode, machine: Machine | null, now: ListNow, words: Machin
  *  round trip of its line; since when it is away. */
 function linkSaid(node: MapNode, machine: Machine | null, now: ListNow, words: MachinesWords): string {
   if (node.online === false) {
-    const since = machine?.since ?? null;
+    const since = machine?.since ?? node.since ?? null;
     return escape(words.offline(since ? now.when(new Date(since), now.now) : null));
   }
   if (node.online === null) return escape(words.unknown);
