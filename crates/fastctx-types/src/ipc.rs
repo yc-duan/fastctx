@@ -140,6 +140,12 @@ pub enum FailureCode {
     /// asked again under the same id, it is done once
     /// (`world-network.md`, 断开不是结束).
     Unanswered,
+    /// The conversation asked about is not on the machine that was its
+    /// home: it was deleted there. Asking again will not find it.
+    Deleted,
+    /// A code of a newer version, which this one does not know.
+    #[serde(other)]
+    Unknown,
 }
 
 impl Failure {
@@ -174,5 +180,15 @@ impl Failure {
     /// Whether no answer came: worth asking again, as it was asked.
     pub fn is_unanswered(&self) -> bool {
         self.code == Some(FailureCode::Unanswered)
+    }
+
+    pub fn deleted(message: impl Into<String>) -> Self {
+        Self { message: message.into(), not_run: true, code: Some(FailureCode::Deleted) }
+    }
+
+    /// Whether the conversation asked about was deleted: nothing more will
+    /// come of it.
+    pub fn is_deleted(&self) -> bool {
+        self.code == Some(FailureCode::Deleted)
     }
 }

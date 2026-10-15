@@ -96,6 +96,21 @@ pub struct Unclaimed {
     starting: std::sync::Mutex<usize>,
 }
 
+/// Held while what a thread reported is applied (`drain`).
+pub(crate) fn working(node: &Node, thread: &str) -> crate::leases::Lease<String, tokio::sync::Mutex<()>> {
+    node.unclaimed.workers.get_or_insert_with(&thread.to_string(), Default::default)
+}
+
+/// Its conversation was deleted: what its thread reported and is still
+/// kept goes with it.
+pub(crate) fn deleted(node: &Node, thread: &str) {
+    let mut state = node.unclaimed.state.lock().expect("never poisoned");
+    state.queues.remove(thread);
+    if state.queues.is_empty() {
+        state.queues = HashMap::new();
+    }
+}
+
 /// A thread the World is starting or forking, until it is claimed or the
 /// start failed.
 pub struct Starting {
@@ -297,7 +312,7 @@ async fn drain(node: &Arc<Node>, thread: &str) {
     if node.residents.resident_of_thread(thread).is_none() {
         return;
     }
-    let worker = node.unclaimed.workers.get_or_insert_with(&thread.to_string(), Default::default);
+    let worker = working(node, thread);
     let _worker = worker.lock().await;
     if let Err(error) = restore(node, thread, &mut node.unclaimed.state.lock().expect("never poisoned")) {
         node.log.line(format_args!("restoring reports for {thread}: {error}"));
@@ -390,7 +405,8 @@ async fn drain(node: &Arc<Node>, thread: &str) {
             return;
         }
         let mut state = node.unclaimed.state.lock().expect("never poisoned");
-        let events = state.queues.get_mut(thread).expect("the worker owns its queue");
+        // Its conversation deleted meanwhile, its reports went with it.
+        let Some(events) = state.queues.get_mut(thread).filter(|events| !events.is_empty()) else { return };
         if durable(&events[0])
             && let Err(error) = save(node, thread, &events[1..])
         {
@@ -460,7 +476,12 @@ pub fn listen(node: Arc<Node>, mut events: mpsc::UnboundedReceiver<HostEvent>) {
         while let Some(event) = events.recv().await {
             let reports = match event {
                 HostEvent::Synchronized { thread, done } => {
-                    drain(&node, &thread).await;
+                    // In a task of its own: what goes wrong with one thread
+                    // stays with it, and listening goes on.
+                    let (draining, drained) = (node.clone(), thread.clone());
+                    if let Err(error) = tokio::spawn(async move { drain(&draining, &drained).await }).await {
+                        node.log.line(format_args!("applying what {thread} reported: {error}"));
+                    }
                     let applied = if node
                         .unclaimed
                         .state

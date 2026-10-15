@@ -97,17 +97,30 @@ pub async fn composer_watch(
     let world = shell.world();
     let resident = resident(resident_id)?;
     let machine = machine(machine_name)?;
-    let (composing, watch, composer) = open(&world, &resident, &machine).await?;
+    let (composing, watch, composer) = open(&world, &resident, &machine).await.map_err(|not| not.why)?;
     let id = shell.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     shell.follow(page, id, stream(world, resident, machine, composing, watch.clone(), pieces))?;
     Ok(Watching { id, watch, composer })
+}
+
+/// Why the shared input could not be opened: `deleted` when its
+/// conversation was deleted, and it is opened no more.
+struct NotOpened {
+    why: String,
+    deleted: bool,
+}
+
+impl From<String> for NotOpened {
+    fn from(why: String) -> Self {
+        Self { why, deleted: false }
+    }
 }
 
 async fn open(
     world: &World,
     resident: &ResidentId,
     machine: &Option<MachineName>,
-) -> Result<(Composing, String, Composer), String> {
+) -> Result<(Composing, String, Composer), NotOpened> {
     // A device waits for the link of the hub the resident's machine is on.
     let mut changes = world
         .device()
@@ -120,7 +133,7 @@ async fn open(
                 let status = connection.borrow_and_update().clone();
                 match status {
                     Status::Online { .. } => break,
-                    Status::Stopped { reason } => return Err(reason),
+                    Status::Stopped { reason } => return Err(reason.into()),
                     Status::Connecting { .. } => connection.changed().await.map_err(|error| error.to_string())?,
                 }
             }
@@ -135,7 +148,8 @@ async fn open(
             },
             read = world.watch_composer(resident.clone(), machine.clone(), name.clone()) => read,
         };
-        let (composing, composer) = read.map_err(|error| error.to_string())?;
+        let (composing, composer) =
+            read.map_err(|error| NotOpened { deleted: error.is_deleted(), why: error.to_string() })?;
         return Ok((composing, name, composer));
     }
 }
@@ -184,11 +198,12 @@ async fn stream(
             Some(ended) => {
                 drop(composing.take());
                 broken = true;
-                let why = match ended {
-                    Ok(_) => "the shared input's watch ended".to_string(),
-                    Err(error) => error.to_string(),
+                let (why, deleted) = match ended {
+                    Ok(_) => ("the shared input's watch ended".to_string(), false),
+                    Err(error) => (error.to_string(), error.is_deleted()),
                 };
-                if pieces.send(interrupted(again.broke(why))).is_err() {
+                // Its conversation deleted, there is nothing to open again.
+                if pieces.send(interrupted(again.broke(why))).is_err() || deleted {
                     return;
                 }
             }
@@ -219,9 +234,9 @@ async fn stream(
                     composing = Some(fresh);
                     break;
                 }
-                Err(why) => {
+                Err(not) => {
                     broken = true;
-                    if pieces.send(interrupted(again.broke(why))).is_err() {
+                    if pieces.send(interrupted(again.broke(not.why))).is_err() || not.deleted {
                         return;
                     }
                 }

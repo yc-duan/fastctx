@@ -24,7 +24,12 @@ pub(crate) async fn directory(
     process: Option<fastctx_types::ProcessIdentity>,
 ) -> Result<String, fastctx_types::ipc::Failure> {
     let _operation = node.data_operations.read().await;
-    let reading = node.claude.reading.get_or_insert_with(&session, Default::default);
+    if let Some(deleted) = node.residents.deleted_session(&session) {
+        return Err(fastctx_types::ipc::Failure::new(format!(
+            "the Claude session was {deleted}, a conversation deleted here"
+        )));
+    }
+    let reading = super::reading(node, &session);
     let _reading = reading.lock().await;
     let started_here = |id: &ResidentId| {
         node.residents.about(id).is_some_and(|(about, _)| about.world_started && about.host.agent.as_str() == "claude")
@@ -66,6 +71,7 @@ pub(crate) async fn directory(
             process,
             inbox_address: None,
             entrypoint: None,
+            cwd: cwd.clone(),
             model: None,
             version: None,
         };
@@ -124,6 +130,9 @@ pub(crate) async fn directory(
 /// Called with the node's births lock held for writing.
 /// A clear chain can arrive in any order, including only after a restart.
 pub(super) fn resident(node: &Node, registration: &Registration) -> io::Result<ResidentId> {
+    if let Some(deleted) = node.residents.deleted_session(&registration.session) {
+        return Err(io::Error::other(format!("it was {deleted}, a conversation deleted here")));
+    }
     let root = exchange::sessions(node.world.path());
     let mut chain = Vec::new();
     let mut seen = HashSet::new();
@@ -180,7 +189,12 @@ pub(super) fn resident(node: &Node, registration: &Registration) -> io::Result<R
             }
             candidates.insert(id);
         }
-        let previous = current.previous.clone().filter(|previous| previous != &current.session);
+        // What it continues may be a conversation deleted here: it begins
+        // anew then.
+        let previous = current
+            .previous
+            .clone()
+            .filter(|previous| previous != &current.session && node.residents.deleted_session(previous).is_none());
         chain.push(current);
         let Some(previous) = previous else { break };
         validate_session(&previous)?;

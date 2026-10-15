@@ -1199,8 +1199,12 @@ impl CodexHost {
                             return;
                         };
                         let Some(delta) = text("/delta") else { return };
-
-                        let summary = item["summary"].as_array_mut().expect("reasoning summary array");
+                        // Only a reasoning item has a summary, of a few parts:
+                        // what says otherwise is passed over, not followed.
+                        let Some(summary) = item.get_mut("summary").and_then(Value::as_array_mut) else { return };
+                        if index >= SUMMARY_PARTS {
+                            return;
+                        }
                         summary.resize(summary.len().max(index + 1), json!(""));
                         let part = summary[index].as_str().unwrap_or_default().to_string() + &delta;
                         summary[index] = json!(part);
@@ -1431,6 +1435,9 @@ impl CodexHost {
         }
     }
 }
+
+/// The most parts a reasoning summary is followed to.
+const SUMMARY_PARTS: usize = 256;
 
 /// Reads what the app-server says, until it stops.
 async fn pump(server: Arc<AppServer>, mut inbound: mpsc::UnboundedReceiver<Inbound>, host: Weak<CodexHost>) {

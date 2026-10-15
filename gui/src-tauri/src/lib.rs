@@ -237,11 +237,48 @@ enum Piece {
     Ended {
         error: Option<String>,
     },
+    /// The conversation was deleted: nothing more of it comes.
+    Deleted {
+        error: String,
+    },
 }
 
 impl Piece {
     fn interrupted(interruption: &fastctx_client::Interruption) -> Self {
         Piece::Interrupted { error: Some(interruption.why.clone()), since: epoch_ms(interruption.since) }
+    }
+
+    /// How a watch that failed for `error` is over.
+    fn failed(error: &fastctx_client::Error) -> Self {
+        match error.is_deleted() {
+            true => Piece::Deleted { error: error.to_string() },
+            false => Piece::Ended { error: Some(error.to_string()) },
+        }
+    }
+
+    /// Whether nothing comes after it.
+    fn last(&self) -> bool {
+        matches!(self, Piece::Ended { .. } | Piece::Deleted { .. })
+    }
+}
+
+/// Why a conversation could not be watched: `deleted` when it was deleted,
+/// so the page asks no more.
+#[derive(Serialize)]
+pub(crate) struct NotWatched {
+    message: String,
+    deleted: bool,
+}
+
+impl From<fastctx_client::Error> for NotWatched {
+    fn from(error: fastctx_client::Error) -> Self {
+        Self { deleted: error.is_deleted(), message: error.to_string() }
+    }
+}
+
+impl From<String> for NotWatched {
+    fn from(message: String) -> Self {
+        Self { message, deleted: false }
     }
 }
 
@@ -290,7 +327,7 @@ async fn watch(
     resident_id: String,
     machine_name: Option<String>,
     pieces: Channel<Piece>,
-) -> Result<Watch, String> {
+) -> Result<Watch, NotWatched> {
     let page = shell.page.load(Ordering::Relaxed);
     let world = shell.world();
     let resident = resident(resident_id)?;
@@ -301,8 +338,7 @@ async fn watch(
             Conversation::open(&world, Address { machine: machine.clone(), resident: resident.clone() }).await
         }
         None => Conversation::watch(&world, resident.clone(), None).await,
-    }
-    .map_err(|error| error.to_string())?;
+    }?;
     #[cfg(target_os = "android")]
     let (conversation, history) = android::watching::open(&world, resident.clone(), machine.clone(), false).await?;
     let id = shell.next.fetch_add(1, Ordering::Relaxed);
@@ -318,7 +354,7 @@ async fn watch(
             let update = match conversation.update().await {
                 Ok(update) => update,
                 Err(error) => {
-                    let _ = pieces.send(Piece::Ended { error: Some(error.to_string()) });
+                    let _ = pieces.send(Piece::failed(&error));
                     return;
                 }
             };
@@ -327,7 +363,7 @@ async fn watch(
                 Ok(None) => continue,
                 Err(error) => Piece::Ended { error: Some(error) },
             };
-            let ended = matches!(piece, Piece::Ended { .. });
+            let ended = piece.last();
             if pieces.send(piece).is_err() || ended {
                 return;
             }

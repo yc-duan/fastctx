@@ -103,7 +103,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                     tokio::select! {
                         piece = watched.recv() => match piece {
                             Some(Ok(piece)) => writer.send(&json(&NodeFrame::Watched { id, watched: piece })).await?,
-                            Some(Err(reason)) => break Err(Failure::new(reason)),
+                            Some(Err(failure)) => break Err(failure),
                             None => break Ok(Reply::Done),
                         },
                         // The client says nothing more on a watch; whatever

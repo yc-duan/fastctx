@@ -99,7 +99,7 @@ pub async fn watch(
     machine: Option<MachineName>,
     composer: Option<String>,
     held: Option<Held>,
-) -> Result<mpsc::UnboundedReceiver<Result<Watched, String>>, Failure> {
+) -> Result<mpsc::UnboundedReceiver<Result<Watched, Failure>>, Failure> {
     let machine = match machine {
         Some(machine) => machine,
         None => locate(node, &resident).await?,
@@ -180,10 +180,10 @@ pub async fn watch(
                 node.log.line(format_args!("{what} ended after {}: {machine} ended it", lasted(started)));
                 return;
             }
-            Ok(Err(failure)) => failure.message,
-            Err(failure) => failure.to_string(),
+            Ok(Err(failure)) => failure,
+            Err(failure) => Failure::new(failure.to_string()),
         };
-        node.log.line(format_args!("{what} ended after {}: {ended}", lasted(started)));
+        node.log.line(format_args!("{what} ended after {}: {}", lasted(started), ended.message));
         let _ = sender.send(Err(ended));
     });
     Ok(receiver)
@@ -279,10 +279,7 @@ pub(crate) fn subscribe(
 /// Starts watching a resident of this machine, then reads its history: what
 /// the World kept of it, merged with what its host keeps.
 pub(crate) async fn history_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRead, Failure> {
-    let (about, _) = node
-        .residents
-        .about(resident)
-        .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))?;
+    let (about, _) = node.residents.about(resident).ok_or_else(|| crate::forget::gone(node, resident))?;
     let mut events = node.watchers.watch(resident);
     let directory = node.world.conversation(resident);
     let recorded = |directory: &ConversationDir| {
@@ -551,6 +548,9 @@ pub async fn serve_watch(
             Ok(opened) => opened,
             Err(failure) => {
                 node.log.line(format_args!("{what} could not open: {}", failure.message));
+                // Closed rather than dropped, so the watcher waits for the
+                // answer that says why.
+                stream.close().await;
                 return Err(failure);
             }
         },
@@ -796,7 +796,7 @@ pub async fn stop(
 /// whose plugin is paired with the World, through its mod. A Codex session
 /// of the user's own belongs to the program it is open in.
 pub async fn stop_here(node: &Arc<Node>, resident: &ResidentId) -> Result<bool, Failure> {
-    node.residents.active(resident)?;
+    node.residents.stoppable(resident)?;
     let (about, _) = node
         .residents
         .about(resident)
@@ -830,7 +830,7 @@ async fn locate(node: &Arc<Node>, id: &ResidentId) -> Result<MachineName, Failur
         return Ok(node.machine());
     }
     if !node.connected_anywhere() {
-        return Err(Failure::new(format!("no resident {id} lives on {}", node.machine())));
+        return Err(crate::forget::gone(node, id));
     }
     crate::colleagues::find_for(node, &Acting::Here, id).await
 }

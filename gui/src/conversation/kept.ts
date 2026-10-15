@@ -24,6 +24,11 @@ export interface KeepablePage extends Page {
 export class KeptPages {
   /** By key, the one looked at last at the end. */
   private pages = new Map<string, KeepablePage>();
+  /** Those alive out of view. */
+  private away = new Set<string>();
+  /** Those whose conversation was deleted while in view: they end when
+   *  left. */
+  private ending = new Set<string>();
 
   /** The page for `key`, as it was left when it is alive, else made. The
    *  page handed back ends nothing when left: it is kept. */
@@ -33,6 +38,7 @@ export class KeptPages {
     if (page) this.pages.delete(key);
     else page = make();
     this.pages.set(key, page);
+    this.away.delete(key);
     const kept = page;
     if (again) queueMicrotask(() => kept.resume());
     this.trim(key);
@@ -40,7 +46,12 @@ export class KeptPages {
       element: kept.element,
       title: kept.title,
       leave: () => {
-        if (this.pages.get(key) === kept) kept.suspend();
+        if (this.pages.get(key) !== kept) return;
+        if (this.ending.has(key)) this.drop(key);
+        else {
+          kept.suspend();
+          this.away.add(key);
+        }
       },
     };
   }
@@ -48,18 +59,27 @@ export class KeptPages {
   /** Ends the page for `key`, so that it is made anew next time. */
   drop(key: string): void {
     const page = this.pages.get(key);
+    this.away.delete(key);
+    this.ending.delete(key);
     if (!page) return;
     this.pages.delete(key);
     page.leave();
   }
 
+  /** The conversation of `key` was deleted: its page stays alive no longer
+   *  than it is in view. */
+  gone(key: string): void {
+    if (!this.pages.has(key)) return;
+    if (this.away.has(key)) this.drop(key);
+    else this.ending.add(key);
+  }
+
   /** Ends the pages looked at longest ago beyond those kept. */
   private trim(current: string): void {
-    for (const [key, page] of this.pages) {
+    for (const [key] of this.pages) {
       if (this.pages.size <= KEPT + 1) return;
       if (key === current) continue;
-      this.pages.delete(key);
-      page.leave();
+      this.drop(key);
     }
   }
 }

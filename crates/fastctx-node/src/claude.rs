@@ -202,12 +202,26 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
                 if directory == sessions {
                     look_all(&node, &sessions).await;
                 } else {
-                    look(&node, &directory).await;
+                    look_alone(&node, directory).await;
                 }
             }
         }
     });
     Ok(())
+}
+
+/// Looks at one session's directory in a task of its own: whatever goes
+/// wrong with one session stays with it, and the watching goes on.
+async fn look_alone(node: &Arc<Node>, directory: PathBuf) {
+    let (looking, path) = (node.clone(), directory.clone());
+    if let Err(error) = tokio::spawn(async move { look(&looking, &path).await }).await {
+        node.log.line(format_args!("looking at the Claude session {}: {error}", directory.display()));
+    }
+}
+
+/// Held while what one session reported is read and applied.
+pub(crate) fn reading(node: &Node, session: &str) -> crate::leases::Lease<String, tokio::sync::Mutex<()>> {
+    node.claude.reading.get_or_insert_with(&session.to_string(), Default::default)
 }
 
 pub async fn replay(node: &Arc<Node>) {
@@ -276,7 +290,7 @@ async fn look_all(node: &Arc<Node>, sessions: &Path) {
         }
     };
     for directory in directories {
-        look(node, &directory).await;
+        look_alone(node, directory).await;
     }
 }
 
@@ -285,6 +299,11 @@ async fn look(node: &Arc<Node>, directory: &Path) {
     let Some(session) = directory.file_name().and_then(|name| name.to_str()).map(str::to_string) else {
         return;
     };
+    // A session of a conversation deleted here: what it still reports is
+    // dropped, and it is taken for nothing new.
+    if node.residents.deleted_session(&session).is_some() {
+        return;
+    }
     match exchange::registration(directory) {
         Ok(Some(registration)) if registration.session == session => hear(node, registration).await,
         Ok(Some(_)) => {
@@ -329,8 +348,12 @@ async fn look(node: &Arc<Node>, directory: &Path) {
         node.claude.changed.notify_waiters();
         return;
     }
-    let reading = node.claude.reading.get_or_insert_with(&session, Default::default);
+    let reading = reading(node, &session);
     let _reading = reading.lock().await;
+    // Its conversation may have been deleted while this waited.
+    if !node.residents.knows(&resident) || node.residents.deleted_session(&session).is_some() {
+        return;
+    }
     if let Err(error) = control::look(node, &resident, directory).await {
         node.log.line(format_args!("reading Claude controls for {session}: {error}"));
     }
@@ -354,7 +377,7 @@ async fn look(node: &Arc<Node>, directory: &Path) {
             for reported in report.events {
                 match reported {
                     exchange::Reported::Uncertain { ids, text } => {
-                        let speaking = node.residents.speaking(&resident).expect("known resident");
+                        let Some(speaking) = node.residents.speaking(&resident) else { return Ok(()) };
                         let _speaking = speaking.lock().await;
                         uncertain_inputs(node, &resident, &session, Some(&ids), text).await?;
                     }
@@ -503,6 +526,9 @@ async fn hear(node: &Arc<Node>, registration: exchange::Registration) {
         node.log.line(format_args!("registering a Claude session: {error}"));
         return;
     }
+    if node.residents.deleted_session(&registration.session).is_some() {
+        return;
+    }
     let session = registration.session.clone();
     let directory = exchange::sessions(node.world.path()).join(&session);
     if let Some(process) = &registration.process {
@@ -617,7 +643,7 @@ async fn taken(
         return Ok(());
     }
     let directory = node.world.conversation(resident);
-    let speaking = node.residents.speaking(resident).expect("known resident");
+    let Some(speaking) = node.residents.speaking(resident) else { return Ok(()) };
     let _speaking = speaking.lock().await;
     crate::delivery::remember_session(&directory, turn, session)?;
     let mut kept: Vec<Pending> = crate::inbox::pending(&directory)?
@@ -712,7 +738,11 @@ async fn ended_for_process(
     expected: Option<&fastctx_types::ProcessIdentity>,
     instance: Option<Option<String>>,
 ) -> std::io::Result<()> {
-    let speaking = node.residents.speaking(resident).expect("known resident");
+    // One whose conversation was deleted has no turn left to end.
+    let Some(speaking) = node.residents.speaking(resident) else {
+        control::ended(node, session);
+        return Ok(());
+    };
     let _speaking = speaking.lock().await;
     let registration =
         node.claude.state.lock().expect("never poisoned").sessions.get(session).map(|entry| entry.registration.clone());
@@ -857,12 +887,14 @@ async fn pair(node: &Arc<Node>, session: &str) {
     };
     let Ok(gate) = node.residents.management(&resident) else { return };
     let _reading = gate.read().await;
-    if node.residents.removed(&resident).is_some() {
+    // Removed, or deleted while this waited for the gate: its session is no
+    // one's to pair.
+    let speaking = node.residents.speaking(&resident).filter(|_| node.residents.removed(&resident).is_none());
+    let Some(speaking) = speaking else {
         node.claude.state.lock().expect("never poisoned").sessions.remove(session);
         node.claude.changed.notify_waiters();
         return;
-    }
-    let speaking = node.residents.speaking(&resident).expect("known resident");
+    };
     let guard = speaking.lock().await;
     let current = node.residents.about(&resident).and_then(|(about, _)| about.session);
     let newer = match current.as_deref() {
@@ -1052,7 +1084,7 @@ async fn failed_wake(
     id: &fastctx_types::NoticeId,
     error: Failure,
 ) -> Result<Landed, Failure> {
-    let speaking = node.residents.speaking(resident).expect("known resident");
+    let speaking = node.residents.speaking(resident).ok_or_else(|| Failure::new(format!("{resident} was deleted")))?;
     let _speaking = speaking.lock().await;
     if let Some(turn) = crate::delivery::input_turn(directory, id).map_err(|error| Failure::new(error.to_string()))? {
         node.log.line(format_args!("the Claude command failed after its turn was identified: {error}"));

@@ -22,6 +22,20 @@ pub fn user_home() -> io::Result<PathBuf> {
     imp::user_home()
 }
 
+/// The numeric id of the user this process runs as; none on Windows, which
+/// has no such id.
+pub fn user_id() -> Option<u32> {
+    #[cfg(unix)]
+    {
+        // SAFETY: getuid cannot fail.
+        Some(unsafe { libc::getuid() })
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
 fn absolute(what: &str, path: OsString) -> io::Result<PathBuf> {
     let path = crate::local_path(PathBuf::from(path))?;
     if path.is_absolute() {

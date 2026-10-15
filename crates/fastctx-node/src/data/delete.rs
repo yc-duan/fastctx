@@ -12,6 +12,13 @@
 //! closed first. The host's record goes first; when that fails nothing else
 //! does, so the conversation stays listed and can be deleted again.
 //!
+//! A conversation being deleted takes nothing new: no words, no turn, no
+//! command (`Residents::deleting`). Before its records go, what its Claude
+//! sessions reported and is being read is let finish, and a tombstone is
+//! written (`residents::Tombstone`): what they report afterwards is
+//! dropped, and a session of it never comes back as a new conversation. A
+//! node stopped after that finishes the deletion when it starts again.
+//!
 //! A guest room goes alone; the conversation's home on its own machine is
 //! not touched. One with a command still running here is not touched.
 
@@ -73,6 +80,7 @@ pub(crate) async fn delete_one(node: &Arc<Node>, name: &str) -> Result<u64, Stop
         remove_places(node, &measured).await?;
         return Ok(bytes);
     };
+    let _deleting = node.residents.deleting(id);
     let directory = node.world.conversation(id);
     let _draft = if directory.draft().exists() || directory.draft_lock().exists() {
         Some(
@@ -138,6 +146,18 @@ pub(crate) async fn delete_one(node: &Arc<Node>, name: &str) -> Result<u64, Stop
     node.residents
         .remove(&node.world, id)
         .map_err(|error| Stop::Failed(format!("recording deletion in progress: {error}")))?;
+    // Whatever its sessions reported and is being applied is applied to its
+    // end first, in the order applying takes these locks: a Claude session's
+    // reading, a Codex thread's worker, then speaking.
+    let reading: Vec<_> = measured
+        .sessions
+        .iter()
+        .flat_map(|session| [crate::claude::reading(node, session), crate::codex::working(node, session)])
+        .collect();
+    let mut _read = Vec::with_capacity(reading.len());
+    for session in &reading {
+        _read.push(session.lock().await);
+    }
     let speaking =
         node.residents.speaking(id).ok_or_else(|| Stop::Failed("its records are no longer registered".into()))?;
     let _speaking = speaking.lock().await;
@@ -155,13 +175,54 @@ pub(crate) async fn delete_one(node: &Arc<Node>, name: &str) -> Result<u64, Stop
             }
         }
     }
-    node.residents.forget(id);
+    node.residents
+        .forget(&node.world, id, measured.sessions.clone())
+        .map_err(|error| Stop::Failed(format!("recording its deletion: {error}")))?;
     crate::desk::removed(node, id);
-    crate::composer::removed(node, id);
+    crate::composer::deleted(node, id);
     crate::claude::removed(node, id);
+    for session in &measured.sessions {
+        crate::codex::deleted(node, session);
+    }
     remove_places(node, &measured).await?;
     node.tools_changed(Some(id));
     Ok(bytes)
+}
+
+/// Finishes the deletions a node stopped halfway: what is left of a
+/// conversation whose tombstone is written goes, with the directories of
+/// its Claude sessions, which may no longer say whose they are.
+pub(crate) async fn finish_interrupted(node: &Arc<Node>) {
+    let root = fastctx_hosts::claude::exchange::sessions(node.world.path());
+    for (id, tombstone) in node.residents.tombstones() {
+        let sessions: Vec<_> = tombstone
+            .sessions
+            .iter()
+            .filter(|session| crate::claude::pairing::validate_session(session).is_ok())
+            .map(|session| root.join(session))
+            .collect();
+        let left = std::fs::symlink_metadata(node.world.conversation(&id).path()).is_ok()
+            || sessions.iter().any(|session| std::fs::symlink_metadata(session).is_ok());
+        if !left {
+            continue;
+        }
+        match delete_one(node, id.as_str()).await {
+            Ok(_) | Err(Stop::Nothing(_)) => {}
+            Err(stop) => {
+                node.log.line(format_args!("finishing the deletion of {id}: {}", stop.why()));
+                continue;
+            }
+        }
+        let removed = tokio::task::spawn_blocking(move || {
+            sessions.iter().try_for_each(|session| fastctx_platform::owned_directory::delete(session))
+        })
+        .await;
+        match removed {
+            Ok(Ok(())) => node.log.line(format_args!("finished deleting {id}, which a stopped node left halfway")),
+            Ok(Err(error)) => node.log.line(format_args!("finishing the deletion of {id}: {error}")),
+            Err(error) => node.log.line(format_args!("finishing the deletion of {id}: {error}")),
+        }
+    }
 }
 
 async fn measure(node: &Arc<Node>, name: &str) -> Result<Measured, Stop> {
@@ -208,6 +269,7 @@ async fn host(node: &Arc<Node>, about: &About, measured: &Measured) -> Result<()
             .await
             .map_err(|error| Stop::Failed(error.to_string()))?
             .map_err(|error| Stop::Failed(format!("deleting Claude Code's record of it: {error}")))?;
+            claude_temp(node, measured).await;
             // Its sessions stood in its own directory before they stood in
             // their project's, and the World trusted that directory for it.
             if about.world_started {
@@ -224,6 +286,45 @@ async fn host(node: &Arc<Node>, about: &About, measured: &Measured) -> Result<()
         _ => {}
     }
     Ok(())
+}
+
+/// Deletes what Claude Code wrote to temporary files for the conversation's
+/// sessions (`fastctx_hosts::claude::temp`), and the directory of their
+/// working directory there once nothing else is in it. What cannot be
+/// deleted is told and left: Claude Code itself never deletes it.
+async fn claude_temp(node: &Arc<Node>, measured: &Measured) {
+    let env = match crate::claude::environment() {
+        Ok(env) => env,
+        Err(failure) => {
+            node.log.line(format_args!("finding Claude Code's temporary files: {}", failure.message));
+            return;
+        }
+    };
+    let root = fastctx_hosts::claude::exchange::sessions(node.world.path());
+    let (sessions, log) = (measured.sessions.clone(), node.log.clone());
+    let _ = tokio::task::spawn_blocking(move || {
+        for session in sessions {
+            let Ok(Some(registration)) = fastctx_hosts::claude::exchange::registration(&root.join(&session)) else {
+                continue;
+            };
+            let Some(directory) = registration
+                .cwd
+                .as_deref()
+                .and_then(|cwd| fastctx_hosts::claude::temp::session_directory(&env, cwd, &session))
+            else {
+                continue;
+            };
+            if let Err(error) = fastctx_platform::owned_directory::delete(&directory) {
+                log.line(format_args!("deleting Claude Code's temporary files {}: {error}", directory.display()));
+                continue;
+            }
+            // Empty now, unless another session ran in the same directory.
+            if let Some(parent) = directory.parent() {
+                let _ = std::fs::remove_dir(parent);
+            }
+        }
+    })
+    .await;
 }
 
 /// Deletes every place that holds something of the conversation here.

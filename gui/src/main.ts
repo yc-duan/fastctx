@@ -1591,7 +1591,18 @@ function liveTalk(address: Address): KeepablePage {
       page.lost(why);
       page.update();
     },
+    deleted: () => gone(),
   });
+  // Deleted, as its machine answers or the World lists it: nothing of it is
+  // watched any more, and its page is kept no longer than it is in view.
+  let deleted = false;
+  const gone = () => {
+    if (deleted) return;
+    deleted = true;
+    reading.close();
+    page.presence("deleted");
+    keptTalks.gone(talkKey(address));
+  };
   // Opened before the World first answered, as from a notification at
   // start: built again once it has, to name the agent and its project.
   // Otherwise the World's listing of it is followed in place, without
@@ -1611,7 +1622,9 @@ function liveTalk(address: Address): KeepablePage {
     : effect(() => {
         const now = store.world.get();
         talkActs.changed.get();
-        if (!left) page.presence(presenceOf(now, address, listedEver));
+        const presence = deleted ? "deleted" : presenceOf(now, address, listedEver);
+        if (!left) page.presence(presence);
+        if (!left && presence === "deleted") queueMicrotask(gone);
         const known = residentAt(now, address);
         const who = someoneOf(now, address);
         if (!known || !who || left) return;

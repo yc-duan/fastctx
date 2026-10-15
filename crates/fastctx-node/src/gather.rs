@@ -246,7 +246,7 @@ pub(crate) fn claude_room(world: &WorldDir, id: &ResidentId, session: &str) -> i
     struct Helper {
         process: fastctx_types::ProcessIdentity,
     }
-    for request in entries(&control.join("requests"))? {
+    for request in fastctx_hosts::claude::control::requests(&control)? {
         if let Some(helper) = read_optional::<Helper>(&request.join("request.json"))?
             && fastctx_platform::is_alive(&helper.process)?
         {

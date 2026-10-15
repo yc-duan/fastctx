@@ -35,6 +35,10 @@ impl Drop for Lease {
         self.node.composers.watches.lock().expect("composer watches").remove(&self.name);
         let (node, id, name, cell) = (self.node.clone(), self.id.clone(), self.name.clone(), self.cell.clone());
         tokio::spawn(async move {
+            // Deleted since it was watched: nothing of it is kept to edit.
+            if !node.residents.knows(&id) {
+                return;
+            }
             let mut cell = cell.lock().await;
             let Some(state) = cell.as_ref() else { return };
             let mut next = state.clone();

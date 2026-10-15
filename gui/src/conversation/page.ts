@@ -1699,6 +1699,13 @@ export class ConversationPage {
   presence(away: "removed" | "deleted" | null): void {
     if (this.away === away) return;
     this.away = away;
+    // Its shared input is no one's now.
+    if (away === "deleted") {
+      this.unbindShared?.();
+      this.unbindShared = null;
+      void this.session?.close();
+      this.session = null;
+    }
     this.element.querySelector<HTMLElement>(".composer")!.hidden = away !== null;
     const gone = this.element.querySelector<HTMLElement>(".composer-gone")!;
     gone.hidden = away === null;

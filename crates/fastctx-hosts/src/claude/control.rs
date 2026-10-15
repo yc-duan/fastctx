@@ -74,6 +74,26 @@ pub fn directory(world: &Path, session: &str) -> PathBuf {
     super::exchange::sessions(world).join(session).join("control")
 }
 
+/// The directories of the requests a session's helpers wrote under its
+/// control directory `control`. The mod makes `requests` by writing a file
+/// in it (`.created`), which is no request.
+pub fn requests(control: &Path) -> io::Result<Vec<PathBuf>> {
+    let entries = match std::fs::read_dir(control.join("requests")) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut requests = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            requests.push(entry.path());
+        }
+    }
+    requests.sort();
+    Ok(requests)
+}
+
 pub fn read<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<Option<T>> {
     match std::fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(io::Error::other),

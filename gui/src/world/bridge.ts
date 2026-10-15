@@ -60,6 +60,8 @@ export type Piece =
   /** One thing as it happened, the `at`th event of the conversation. */
   | { kind: "event"; at: number; event: SessionEvent }
   | { kind: "ended"; error: string | null }
+  /** The conversation was deleted: nothing more of it comes. */
+  | { kind: "deleted"; error: string }
   /** The part the page holds is now this, in place of all it held. */
   | { kind: "window"; window: Window }
   /** What came before arrived: what the page holds stays, moved along. */

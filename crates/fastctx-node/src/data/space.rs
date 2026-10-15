@@ -39,6 +39,9 @@ pub(super) struct Measured {
     pub places: Vec<PathBuf>,
     /// What its agent's program keeps of it.
     pub host_files: Vec<PathBuf>,
+    /// The sessions its agent's program knew it by: Claude Code's sessions,
+    /// or its Codex thread.
+    pub sessions: Vec<String>,
     pub host_record: HostRecord,
     pub claude_home: Option<PathBuf>,
     /// The jobs of it that still run here.
@@ -165,7 +168,10 @@ pub(super) fn conversations(node: &Node) -> io::Result<BTreeMap<String, Measured
         let Some(Kind::Home(id)) = Kind::of(name) else { continue };
         let directory = world.conversation(&id);
         // The plugin's directories for its Claude sessions are its own.
-        for (_, exchange) in claude.get(&id).into_iter().flatten() {
+        for (session, exchange) in claude.get(&id).into_iter().flatten() {
+            if !one.sessions.contains(session) {
+                one.sessions.push(session.clone());
+            }
             if !one.places.contains(exchange) {
                 one.places.push(exchange.clone());
             }
@@ -180,6 +186,7 @@ pub(super) fn conversations(node: &Node) -> io::Result<BTreeMap<String, Measured
         match about.host.agent.as_str() {
             "codex" => {
                 if let Some(thread) = &about.session {
+                    one.sessions.push(thread.clone());
                     let home = about.home.clone().unwrap_or_else(|| codex_default.clone());
                     if !rollouts.contains_key(&home) {
                         rollouts.insert(home.clone(), host::codex_rollouts(&home)?);

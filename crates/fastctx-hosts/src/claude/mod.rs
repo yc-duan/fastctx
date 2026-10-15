@@ -24,6 +24,7 @@ pub mod projects;
 pub mod startup;
 pub mod subagents;
 pub mod tail;
+pub mod temp;
 pub mod thoughts;
 pub mod titles;
 mod tools;

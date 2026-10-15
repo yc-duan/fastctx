@@ -41,6 +41,16 @@ pub fn removed(node: &Node, id: &ResidentId) {
     node.composers.failed.lock().expect("failed composer checkpoints").remove(id);
 }
 
+/// Forgets everything held in memory of the composer of `id`, whose
+/// conversation is deleted: its state, and the watches registered for it.
+pub fn deleted(node: &Node, id: &ResidentId) {
+    removed(node, id);
+    node.composers.watches.lock().expect("composer watches").retain(|_, watched| watched != id);
+    if let Some(cell) = node.composers.cells.get(id) {
+        tokio::spawn(async move { *cell.lock().await = None });
+    }
+}
+
 impl Composers {
     fn cell(&self, id: &ResidentId) -> Cell {
         self.cells.get_or_insert_with(id, Default::default)

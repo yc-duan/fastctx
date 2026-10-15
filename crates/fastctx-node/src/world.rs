@@ -660,7 +660,17 @@ impl fastctx_net::link::Node for Handler {
                 return Err(Failure::new("the node is stopping"));
             };
             let link = node.link_of(&hub).ok_or_else(|| Failure::new("the link that brought the call is gone"))?;
-            let asker = crate::admission::admit(&node, &link, &caller, &call)?;
+            let asker = match crate::admission::admit(&node, &link, &caller, &call) {
+                Ok(asker) => asker,
+                Err(refused) => {
+                    // Its data connection is closed, not dropped: the other
+                    // end then waits for this answer, which says why.
+                    if let Some(stream) = stream {
+                        stream.close().await;
+                    }
+                    return Err(refused);
+                }
+            };
             let from = caller.machine.clone();
             let acting = Acting::one(hub.clone(), caller.account.clone());
             let machine = node.machine();

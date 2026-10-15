@@ -292,6 +292,8 @@ impl Conversation {
                     watched
                 }
                 Some(Ok(None)) | None => return Ok(Update::Interrupted(self.broke("the watch ended".into()))),
+                // Deleted: there is nothing more to watch.
+                Some(Err(error)) if error.is_deleted() => return Err(error),
                 Some(Err(error)) => return Ok(Update::Interrupted(self.broke(error.to_string()))),
             };
             let watched = self.pending_from(watched);
@@ -475,6 +477,7 @@ impl Conversation {
                     return Err(Error::Unexpected("segments of a history no one asked for".into()));
                 }
                 Some(Ok(None)) | None => return Ok(Next::Interrupted(self.broke("the watch ended".into()))),
+                Some(Err(error)) if error.is_deleted() => return Err(error),
                 Some(Err(error)) => return Ok(Next::Interrupted(self.broke(error.to_string()))),
             }
         }

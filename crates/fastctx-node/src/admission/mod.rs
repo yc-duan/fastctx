@@ -145,6 +145,9 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
         _ => None,
     });
     if let Some(resident) = resident {
+        if !node.residents.knows(resident) {
+            return Err(crate::forget::gone(node, resident));
+        }
         let serves =
             node.residents.about(resident).is_some_and(|(about, _)| node.serves(&about.acting, &hub, &caller.account));
         if !serves {

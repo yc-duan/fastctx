@@ -1,6 +1,10 @@
 //! Removal is recorded in the conversation's own directory and survives
 //! host reconnects. Nothing moves: running jobs keep the paths they hold, and
 //! the records stay where they are until the user deletes the conversation.
+//!
+//! A deletion first marks the resident as being deleted, in memory: from
+//! then on it takes nothing new, while its turn and commands are stopped.
+//! When its records go, a tombstone stays (`tombstones`).
 
 use std::io;
 
@@ -22,11 +26,72 @@ pub(super) fn refused(id: &ResidentId) -> Failure {
     ))
 }
 
+/// Held while a deletion of a resident is under way.
+pub struct Deleting<'a> {
+    residents: &'a Residents,
+    id: ResidentId,
+}
+
+impl Drop for Deleting<'_> {
+    fn drop(&mut self) {
+        let mut state = self.residents.lock();
+        if let Some(count) = state.deleting.get_mut(&self.id) {
+            *count -= 1;
+            if *count == 0 {
+                state.deleting.remove(&self.id);
+            }
+        }
+    }
+}
+
 impl Residents {
+    /// Whether the resident `id` takes something new: words, a turn, a
+    /// command, a call of its session.
     pub fn active(&self, id: &ResidentId) -> Result<(), Failure> {
+        self.stoppable(id)?;
+        if self.lock().deleting.contains_key(id) {
+            return Err(Failure::new(format!("{id} is being deleted")));
+        }
+        Ok(())
+    }
+
+    /// Whether the turn of the resident `id` can be stopped: it lives here
+    /// and is not removed, though it may be being deleted.
+    pub fn stoppable(&self, id: &ResidentId) -> Result<(), Failure> {
         let mut state = self.lock();
-        let live = state.live.get(id).ok_or_else(|| Failure::new(format!("no resident {id} lives here")))?;
+        let Some(live) = state.live.get(id) else {
+            return Err(Failure::new(match state.tombstones.of(id) {
+                Some(_) => format!("{id} was deleted"),
+                None => format!("no resident {id} lives here"),
+            }));
+        };
         if live.removed.is_some() { Err(refused(id)) } else { Ok(()) }
+    }
+
+    /// Marks `id` as being deleted until what is returned is dropped.
+    pub fn deleting(&self, id: &ResidentId) -> Deleting<'_> {
+        *self.lock().deleting.entry(id.clone()).or_default() += 1;
+        Deleting { residents: self, id: id.clone() }
+    }
+
+    pub fn is_deleting(&self, id: &ResidentId) -> bool {
+        self.lock().deleting.contains_key(id)
+    }
+
+    /// When the conversation of `id` was deleted from this machine, if it
+    /// was lately.
+    pub fn deleted(&self, id: &ResidentId) -> Option<Timestamp> {
+        self.lock().tombstones.of(id).map(|tombstone| tombstone.at)
+    }
+
+    /// The deleted conversation the host session `session` was, if any.
+    pub fn deleted_session(&self, session: &str) -> Option<ResidentId> {
+        self.lock().tombstones.holding(session).cloned()
+    }
+
+    /// Every conversation deleted from this machine lately.
+    pub fn tombstones(&self) -> Vec<(ResidentId, super::Tombstone)> {
+        self.lock().tombstones.all().map(|(id, tombstone)| (id.clone(), tombstone.clone())).collect()
     }
 
     pub fn removed(&self, id: &ResidentId) -> Option<Timestamp> {
@@ -83,18 +148,24 @@ impl Residents {
         Ok(())
     }
 
-    /// Forgets a resident whose conversation was deleted from this machine:
-    /// it is no longer on record, and a session that comes back as it is a
-    /// new one.
-    pub fn forget(&self, id: &ResidentId) {
+    /// Forgets a resident whose conversation is being deleted from this
+    /// machine: it is no longer on record, and a tombstone says it was, with
+    /// the host sessions it had (`sessions`), before anything is forgotten.
+    pub fn forget(&self, world: &WorldDir, id: &ResidentId, mut sessions: Vec<String>) -> io::Result<()> {
         let mut state = self.lock();
-        let Some(live) = state.live.get(id) else { return };
+        let Some(live) = state.live.get(id) else { return Ok(()) };
         let session = live.about.session.clone();
         let inbox = live.inbox.clone();
         let asked_by = match &live.about.origin {
             fastctx_types::residents::Origin::Colleague { asked_by, .. } => Some(asked_by.clone()),
             fastctx_types::residents::Origin::User => None,
         };
+        if let Some(session) = &session
+            && !sessions.contains(session)
+        {
+            sessions.push(session.clone());
+        }
+        state.tombstones.bury(world, id, super::Tombstone { at: Timestamp::now(), sessions })?;
         if let Some(session) = &session {
             if state.threads.get::<ResidentId>(session).as_ref() == Some(id) {
                 state.threads.remove(session);
@@ -112,5 +183,6 @@ impl Residents {
             started.retain(|colleague| colleague != id);
         }
         state.live.remove(id);
+        Ok(())
     }
 }

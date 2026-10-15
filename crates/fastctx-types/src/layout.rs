@@ -170,6 +170,12 @@ impl WorldDir {
         self.root.join("conversations")
     }
 
+    /// What is remembered of the conversations deleted from this machine,
+    /// one file each, for as long as something may still ask for them.
+    pub fn deleted(&self) -> PathBuf {
+        self.root.join("deleted")
+    }
+
     /// Conversation book directories plus the older shared queue, while an
     /// upgrade still has records whose owner cannot be recovered.
     pub fn book_directories(&self, name: &str) -> std::io::Result<Vec<PathBuf>> {

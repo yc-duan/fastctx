@@ -67,7 +67,7 @@ pub(super) fn publish(
         }
         drop(_transition);
         // An uncommitted stop cannot be reconstructed from the checkpoint yet.
-        if node.residents.removed(id).is_none()
+        if node.residents.active(id).is_ok()
             && let Some(held) = node.composers.cells.get(id)
         {
             node.composers.failed.lock().expect("failed composer checkpoints").insert(id.clone(), held);

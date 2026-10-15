@@ -96,7 +96,11 @@ pub(crate) async fn tell_here_locked(
     {
         return Ok(Landed::Waiting { why: None, answered: false });
     }
-    let removed = node.residents.removed(to).is_some();
+    // What still comes for one removed or being deleted, as the end of a
+    // command its deletion stopped, is kept with its records and wakes it
+    // no more; words for it are refused.
+    let deleting = node.residents.is_deleting(to);
+    let removed = deleting || node.residents.removed(to).is_some();
     if !removed || matches!(delivery.notice, Notice::Words { .. } | Notice::Attached { .. }) {
         node.residents.active(to)?;
     }
@@ -141,12 +145,12 @@ pub(crate) async fn tell_here_locked(
             .map_err(|error| Failure::new(format!("keeping it: {error}")))?
     };
     if removed {
-        return Ok(Landed::Waiting {
-            why: Some(
-                "the resident was removed; this fact is preserved in its archived inbox and will not wake it".into(),
-            ),
-            answered: false,
-        });
+        let why = if deleting {
+            "the resident is being deleted, and this with it"
+        } else {
+            "the resident was removed; this fact is preserved in its archived inbox and will not wake it"
+        };
+        return Ok(Landed::Waiting { why: Some(why.into()), answered: false });
     }
     if !kept {
         if let Some(why) = crate::delivery::input_uncertainty(&directory, &pending.delivery.id)
@@ -658,7 +662,8 @@ pub async fn restore(node: &Arc<Node>) {
                     crate::delivery::finish(&directory, &turn, end, &readers)?;
                 }
             }
-            let speaking = node.residents.speaking(&resident.id).expect("resident on record");
+            // Deleted since it was listed: nothing of it is left to restore.
+            let Some(speaking) = node.residents.speaking(&resident.id) else { return Ok(()) };
             let _speaking = speaking.lock().await;
             for mut handover in crate::delivery::handovers(&directory)? {
                 if let Some(turn) = handover.turn.clone() {
@@ -690,7 +695,7 @@ pub async fn recover(node: &Arc<Node>) {
                 return;
             }
             let result = async {
-                let speaking = node.residents.speaking(&resident.id).expect("resident on record");
+                let Some(speaking) = node.residents.speaking(&resident.id) else { return Ok(()) };
                 let guard = speaking.lock().await;
                 let handovers = crate::delivery::handovers(&directory)?;
                 let covered: std::collections::BTreeSet<NoticeId> = handovers.iter()
@@ -741,7 +746,7 @@ pub fn resume(node: &Arc<Node>, runtime: &tokio::runtime::Handle) {
             let Some(_answering) = node.handoff.call() else { return };
             let directory = node.world.conversation(&resident.id);
             let result = async {
-                let speaking = node.residents.speaking(&resident.id).expect("resident on record");
+                let Some(speaking) = node.residents.speaking(&resident.id) else { return Ok(()) };
                 let guard = speaking.lock().await;
                 let waiting =
                     crate::inbox::pending(&directory)?.into_iter().find(|input| input.state == PendingState::Waiting);

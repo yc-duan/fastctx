@@ -10,8 +10,8 @@ use fastctx_types::{Address, MachineName, ResidentId};
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 
-use crate::Piece;
 use crate::transcript::Transcript;
+use crate::{NotWatched, Piece};
 
 /// The history a reading gave, as what the page's watch is given next.
 fn given(transcript: &Mutex<Transcript>, history: &[SessionEvent]) -> Option<Piece> {
@@ -26,7 +26,7 @@ fn given(transcript: &Mutex<Transcript>, history: &[SessionEvent]) -> Option<Pie
 /// the page let go or what it holds could not be kept.
 fn deliver(pieces: &Channel<Piece>, piece: Option<Piece>) -> bool {
     let Some(piece) = piece else { return true };
-    let ended = matches!(piece, Piece::Ended { .. });
+    let ended = piece.last();
     pieces.send(piece).is_ok() && !ended
 }
 
@@ -35,7 +35,7 @@ pub(crate) async fn open(
     resident: ResidentId,
     machine: Option<MachineName>,
     again: bool,
-) -> Result<(Conversation, Vec<SessionEvent>), String> {
+) -> Result<(Conversation, Vec<SessionEvent>), NotWatched> {
     if let Some(machine) = &machine
         && let Some(cache) = world.cache().cloned()
     {
@@ -45,7 +45,7 @@ pub(crate) async fn open(
             .map_err(|error| error.to_string())?
             .map_err(|error| error.to_string())?;
         if held {
-            return opening(world, resident, machine.clone().into(), again).await.map_err(|error| error.to_string());
+            return Ok(opening(world, resident, machine.clone().into(), again).await?);
         }
     }
     let (_, mut connection) =
@@ -53,7 +53,7 @@ pub(crate) async fn open(
     loop {
         let state = connection.borrow_and_update().clone();
         match state {
-            Status::Stopped { reason } => return Err(reason),
+            Status::Stopped { reason } => return Err(reason.into()),
             Status::Connecting { .. } => connection.changed().await.map_err(|error| error.to_string())?,
             Status::Online { .. } => {
                 let read = tokio::select! {
@@ -65,7 +65,7 @@ pub(crate) async fn open(
                 if read.is_err() && connection.has_changed().map_err(|error| error.to_string())? {
                     continue;
                 }
-                return read.map_err(|error| error.to_string());
+                return Ok(read?);
             }
         }
     }
@@ -107,7 +107,7 @@ pub(crate) async fn stream(
                 }
             }
             Err(error) => {
-                let _ = pieces.send(Piece::Ended { error: Some(error.to_string()) });
+                let _ = pieces.send(Piece::failed(&error));
                 return;
             }
             _ => unreachable!("cached rest precedes network updates"),
@@ -141,7 +141,7 @@ pub(crate) async fn stream(
                     }
                 }
                 Err(error) => {
-                    let _ = pieces.send(Piece::Ended { error: Some(error.to_string()) });
+                    let _ = pieces.send(Piece::failed(&error));
                     return;
                 }
                 _ => unreachable!("cached rest precedes network updates"),
@@ -165,7 +165,10 @@ pub(crate) async fn stream(
                     conversation = Some(fresh);
                 }
                 Err(error) => {
-                    let _ = pieces.send(Piece::Ended { error: Some(error.to_string()) });
+                    let _ = pieces.send(match error.deleted {
+                        true => Piece::Deleted { error: error.message },
+                        false => Piece::Ended { error: Some(error.message) },
+                    });
                     return;
                 }
             }
@@ -189,6 +192,10 @@ pub(crate) async fn stream(
                     Ok(update) => {
                         let piece = transcript.lock().expect("transcript").take(update).unwrap_or_else(|error| Some(Piece::Ended { error: Some(error) }));
                         if !deliver(&pieces, piece) { return; }
+                    }
+                    Err(error) if error.is_deleted() => {
+                        let _ = pieces.send(Piece::failed(&error));
+                        return;
                     }
                     Err(error) => {
                         conversation = None;

@@ -61,13 +61,13 @@ impl Watching {
                 () = sender.closed() => return,
                 result = session.link.call_with_stream(&machine, &account, fastctx_types::access::Purpose::Agents, RemoteCall::Watch { resident, watch, composer, held }, feed) => result,
             };
-            let error = match ended {
+            let failure = match ended {
                 Ok(Ok(RemoteReply::Watched)) => return,
-                Ok(Ok(_)) => format!("{machine} answered something other than a watch"),
-                Ok(Err(failure)) => failure.to_string(),
-                Err(failure) => failure.to_string(),
+                Ok(Ok(_)) => Failure::new(format!("{machine} answered something other than a watch")),
+                Ok(Err(failure)) => failure,
+                Err(failure) => Failure::new(failure.to_string()),
             };
-            let _ = sender.send(Err(CallError::Failed(Failure::new(error))));
+            let _ = sender.send(Err(CallError::Failed(failure)));
         });
         Ok(Self { pieces, task })
     }

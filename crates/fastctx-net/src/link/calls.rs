@@ -17,6 +17,11 @@ use fastctx_types::remote::{Letter, RemoteCall, RemoteResult};
 use fastctx_types::{AccountName, MachineName};
 use tokio::sync::{mpsc, oneshot};
 
+/// How long the answer to a call is waited for once its data connection
+/// broke: a machine that refuses the call ends the connection before it
+/// answers.
+const ANSWER_AFTER_BREAK: std::time::Duration = std::time::Duration::from_secs(5);
+
 use super::direct::{DataWay, PeerConn, Worked};
 use super::{CallEvent, CallFailure, CallOn, Connection, Feed, Inner, Waiter};
 use crate::data::{Endpoint, Stream};
@@ -217,12 +222,19 @@ impl Inner {
             // target even if the hub's Delivered status never reached us.
             let lost = |reason: String| CallFailure::Unknown { name: to.clone(), reason };
             let mut fed: Option<oneshot::Receiver<Result<(), String>>> = None;
+            // Its data connection broke: the answer, which may say why, is
+            // given a moment to come by its own way.
+            let mut broke: Option<(String, std::pin::Pin<Box<tokio::time::Sleep>>)> = None;
             loop {
                 let event = tokio::select! {
                     event = received.recv() => match event {
                         Some(event) => event,
                         None => return Err(lost("the link stopped".to_string())),
                     },
+                    () = async { broke.as_mut().expect("polled only once broken").1.as_mut().await }, if broke.is_some() => {
+                        let (error, _) = broke.take().expect("broken");
+                        return Err(lost(format!("sending its data failed: {error}")));
+                    }
                     opened = async { opening.as_mut().expect("polled only while opening").await }, if opening.is_some() => {
                         opening = None;
                         match opened {
@@ -242,7 +254,10 @@ impl Inner {
                     finished = async { fed.as_mut().expect("polled only while feeding").await }, if fed.is_some() => {
                         fed = None;
                         match finished {
-                            Ok(Err(error)) => return Err(lost(format!("sending its data failed: {error}"))),
+                            Ok(Err(error)) => {
+                                broke = Some((error, Box::pin(tokio::time::sleep(ANSWER_AFTER_BREAK))));
+                                continue;
+                            }
                             // Fed in full; the answer decides.
                             Ok(Ok(())) | Err(_) => continue,
                         }

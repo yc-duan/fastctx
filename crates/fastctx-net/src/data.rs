@@ -231,6 +231,12 @@ impl Stream {
         }
     }
 
+    /// Closes it the way a WebSocket closes, with nothing more to send: the
+    /// other end reads its end, not a cut.
+    pub async fn close(self) {
+        self.line.close().await;
+    }
+
     /// As the sink: says everything arrived, and closes.
     pub async fn done(mut self) -> Result<(), String> {
         self.put(WsMessage::Text(DONE.into())).await.map_err(|error| format!("sending the receipt: {error}"))?;

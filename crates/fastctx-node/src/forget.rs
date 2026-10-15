@@ -44,6 +44,15 @@ struct Ask {
     conversation: Address,
 }
 
+/// What whoever asks about `resident`, which lives here no more, is told:
+/// that it was deleted, which asking again will not change.
+pub(crate) fn gone(node: &Node, resident: &ResidentId) -> Failure {
+    Failure::deleted(match node.residents.deleted(resident) {
+        Some(at) => format!("{resident} was deleted from {} at {at}", node.machine()),
+        None => format!("no conversation {resident} is on {}", node.machine()),
+    })
+}
+
 /// The user asks, on this computer, that the conversation of `resident` on
 /// `machine` be deleted from every machine and device keeping something of
 /// it.
@@ -180,9 +189,11 @@ fn pairs(node: &Node, acting: &Acting) -> Vec<(HubId, AccountName)> {
 }
 
 /// Deletes the conversation `id`, which lives here, and everything of it
-/// here: its turn and its commands stopped first.
+/// here: from now on it takes nothing new, and its turn and its commands
+/// are stopped first.
 async fn home(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
-    crate::talk::stop_and_wait(node, id).await.map_err(|failure| format!("stopping its turn: {}", failure.message))?;
+    let _deleting = node.residents.deleting(id);
+    stop_turn(node, id).await?;
     let address = Address { machine: node.machine(), resident: id.clone() };
     stop_jobs(node, &address).await?;
     match crate::data::delete::delete_one(node, id.as_str()).await {
@@ -194,6 +205,33 @@ async fn home(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
     machines.extend(names.was);
     forget_copies(node, id, machines).await
 }
+
+/// Stops the turn `id` runs, for its deletion. A Claude Code background
+/// session the World started whose turn does not end as asked, or whose
+/// plugin cannot be asked, is stopped as a whole, and its turn with it.
+async fn stop_turn(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
+    let asked = match tokio::time::timeout(TURN_STOPS, crate::talk::stop_and_wait(node, id)).await {
+        Ok(Ok(())) => return Ok(()),
+        Ok(Err(failure)) => format!("stopping its turn: {}", failure.message),
+        Err(_) => format!("its turn did not stop within {} seconds of being asked", TURN_STOPS.as_secs()),
+    };
+    let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
+    let Some(session) =
+        about.session.as_deref().filter(|_| about.world_started && about.host.agent.as_str() == "claude")
+    else {
+        return Err(asked);
+    };
+    crate::claude::management::stop(node, about.home.as_deref(), id, session, false)
+        .await
+        .map_err(|failure| format!("{asked}; stopping its Claude Code session: {}", failure.message))?;
+    if node.residents.now(id).is_some_and(|now| now.turn.is_some()) {
+        return Err(format!("{asked}; its turn did not end with its Claude Code session"));
+    }
+    Ok(())
+}
+
+/// How long a turn is given to stop when its conversation is deleted.
+const TURN_STOPS: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// Deletes the guest rooms here of the conversation at `conversation`, its
 /// commands in them stopped first.

@@ -111,16 +111,28 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
             let retiring = node.clone();
             match tokio::task::spawn_blocking(move || {
                 let _collecting = retiring.disk.lock().expect("never poisoned");
-                crate::books::retire(&retiring)
-                    .and(crate::claude::garbage::collect(&retiring.world))
-                    .and(crate::claude::garbage::untrust_departed(&retiring))
-                    .and(crate::usage::collect(&retiring))
-                    .and(crate::gather::sweep(&retiring.world))
+                // Each step is told on its own when it fails.
+                [
+                    ("retiring the bookkeeping of removed conversations", crate::books::retire(&retiring)),
+                    ("collecting what Claude sessions left", crate::claude::garbage::collect(&retiring.world)),
+                    (
+                        "taking back Claude Code's trust of deleted conversations",
+                        crate::claude::garbage::untrust_departed(&retiring),
+                    ),
+                    ("collecting usage records", crate::usage::collect(&retiring)),
+                    ("sweeping earlier conversation directories", crate::gather::sweep(&retiring.world)),
+                ]
+                .into_iter()
+                .filter_map(|(step, result)| result.err().map(|error| format!("{step}: {error}")))
+                .collect::<Vec<_>>()
             })
             .await
             {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => node.log.line(format_args!("retiring bookkeeping: {error}")),
+                Ok(failures) => {
+                    for failure in failures {
+                        node.log.line(format_args!("{failure}"));
+                    }
+                }
                 Err(error) => node.log.line(format_args!("retiring bookkeeping: {error}")),
             }
             let collecting = node.clone();

@@ -43,6 +43,14 @@ pub enum Error {
     Other(String),
 }
 
+impl Error {
+    /// Whether it says the conversation asked about was deleted: asking
+    /// again will not find it.
+    pub fn is_deleted(&self) -> bool {
+        matches!(self, Error::Call(CallError::Failed(failure)) if failure.is_deleted())
+    }
+}
+
 /// A World reached through a local node or an application's device identity.
 #[derive(Clone)]
 pub struct World {

@@ -10,47 +10,55 @@ use fastctx_types::layout::WorldDir;
 
 use crate::Node;
 
+/// Collects what each session left; one that cannot be collected is told
+/// and the others still are.
 pub(crate) fn collect(world: &WorldDir) -> io::Result<()> {
     let mut sessions = crate::retention::entries(&exchange::sessions(world.path()))?;
     for kept in world.kept()? {
         sessions.extend(crate::retention::entries(&kept.directory.path().join("claude"))?);
     }
-    for session in sessions {
-        if fastctx_platform::owned_directory::is_link(&std::fs::symlink_metadata(&session)?) {
-            continue;
+    let failures: Vec<String> = sessions
+        .iter()
+        .filter_map(|session| collect_session(session).err().map(|error| format!("{}: {error}", session.display())))
+        .collect();
+    if failures.is_empty() { Ok(()) } else { Err(io::Error::other(failures.join("; "))) }
+}
+
+fn collect_session(session: &Path) -> io::Result<()> {
+    let metadata = std::fs::symlink_metadata(session)?;
+    if fastctx_platform::owned_directory::is_link(&metadata) || !metadata.is_dir() {
+        return Ok(());
+    }
+    let alive = exchange::registration(session)?
+        .and_then(|registration| registration.process)
+        .map(|process| fastctx_platform::is_alive(&process))
+        .transpose()?
+        .unwrap_or(false);
+    if !alive {
+        for directory in [session.to_path_buf(), session.join("events"), session.join("control")] {
+            parts(&directory, &session.join("damaged"))?;
         }
-        let alive = exchange::registration(&session)?
-            .and_then(|registration| registration.process)
-            .map(|process| fastctx_platform::is_alive(&process))
-            .transpose()?
-            .unwrap_or(false);
-        if !alive {
-            for directory in [&session, &session.join("events"), &session.join("control")] {
-                parts(directory, &session.join("damaged"))?;
-            }
-            let retired =
-                session.parent().and_then(Path::parent).is_some_and(|home| home.join("books-retired").exists());
-            if retired {
-                for name in ["applied", "receipts", "attempts", "closed", "calls", "inbox-parts"] {
-                    fastctx_platform::owned_directory::delete(&session.join(name))?;
-                }
+        let retired = session.parent().and_then(Path::parent).is_some_and(|home| home.join("books-retired").exists());
+        if retired {
+            for name in ["applied", "receipts", "attempts", "closed", "calls", "inbox-parts"] {
+                fastctx_platform::owned_directory::delete(&session.join(name))?;
             }
         }
-        let directory = session.join("control");
-        if let Some(host) = control::host(&directory)?
-            && !fastctx_platform::is_alive(&host.process)?
+    }
+    let directory = session.join("control");
+    if let Some(host) = control::host(&directory)?
+        && !fastctx_platform::is_alive(&host.process)?
+    {
+        for side in ["inbox", "replies"] {
+            fastctx_platform::owned_directory::delete(&directory.join(side))?;
+        }
+    }
+    for path in control::requests(&directory)? {
+        if let Some(waiting) = control::read::<control::Waiting>(&path.join("request.json"))?
+            && !fastctx_platform::is_alive(&waiting.process)?
+            && path.join("resolved.json").try_exists()?
         {
-            for side in ["inbox", "replies"] {
-                fastctx_platform::owned_directory::delete(&directory.join(side))?;
-            }
-        }
-        for path in crate::retention::entries(&directory.join("requests"))? {
-            if let Some(waiting) = control::read::<control::Waiting>(&path.join("request.json"))?
-                && !fastctx_platform::is_alive(&waiting.process)?
-                && path.join("resolved.json").try_exists()?
-            {
-                fastctx_platform::owned_directory::delete(&path)?;
-            }
+            fastctx_platform::owned_directory::delete(&path)?;
         }
     }
     Ok(())

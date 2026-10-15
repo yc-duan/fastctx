@@ -582,6 +582,9 @@ pub async fn run_prepared(
     codex::replay(&node).await;
     let mut unfinished: std::collections::BTreeSet<_> = unfinished.into_iter().collect();
     unfinished.extend(node.residents.unfinished());
+    // Before Claude's sessions are looked at: a deletion a stopped node left
+    // halfway leaves directories of sessions that are no one's now.
+    data::delete::finish_interrupted(&node).await;
     claude::replay(&node).await;
     claude::recover_startups(&node);
     claude::start(&node).context("writing the World's Claude Code plugin")?;

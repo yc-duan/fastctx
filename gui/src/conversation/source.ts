@@ -28,6 +28,8 @@ export interface ConversationFeed {
   resumed(): void;
   /** It is over: what is shown stays, no longer live. */
   ended(why: string | null): void;
+  /** It was deleted: what is shown stays, and nothing more comes. */
+  deleted(why: string): void;
 }
 
 export interface Reading {
@@ -85,6 +87,10 @@ export const watched: ConversationSource = {
           return;
         case "ended":
           feed.ended(piece.error);
+          return;
+        case "deleted":
+          closed = true;
+          feed.deleted(piece.error);
       }
     };
     // A watch that could not start is tried again, as `../world/again.ts`
@@ -115,6 +121,12 @@ export const watched: ConversationSource = {
         })
         .catch((error: unknown) => {
           if (mine !== reading || closed) return;
+          // Deleted: asking again will not find it.
+          if (typeof error === "object" && error !== null && (error as { deleted?: unknown }).deleted === true) {
+            closed = true;
+            feed.deleted(whyOf(error));
+            return;
+          }
           since ??= new Date();
           feed.interrupted(whyOf(error), since);
           tries += 1;

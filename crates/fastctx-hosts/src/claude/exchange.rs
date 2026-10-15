@@ -43,6 +43,9 @@ pub struct Registration {
     pub inbox_address: Option<String>,
     /// How the session was started: `cli`, `claude-vscode` and the like.
     pub entrypoint: Option<String>,
+    /// The directory it was started in, as Claude Code says.
+    #[serde(default)]
+    pub cwd: Option<String>,
     pub model: Option<Value>,
     pub version: Option<Value>,
 }

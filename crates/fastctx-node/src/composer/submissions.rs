@@ -179,7 +179,9 @@ pub fn resume(node: &Arc<Node>) {
 
 async fn release(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     node.ready().await;
-    if node.residents.removed(id).is_some() {
+    // Removed, being deleted or deleted: what is queued for it waits, or
+    // goes with it.
+    if node.residents.active(id).is_err() {
         return Ok(());
     }
     let cell = node.composers.cell(id);
