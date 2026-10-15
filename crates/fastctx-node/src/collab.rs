@@ -14,6 +14,11 @@ use fastctx_types::{AccountName, AgentName, ResidentId};
 
 use crate::Node;
 
+/// Whether model collaboration is offered: while it is in development, no
+/// session is given a colleague, whatever an account or this computer has
+/// set, and the interface has nothing to turn it on (`world-gui.md`, 功能).
+const OFFERED: bool = false;
+
 pub(crate) struct Candidate {
     pub shown: String,
     pub whose: Whose,
@@ -68,6 +73,9 @@ pub(crate) fn choices(
     resident: Option<&ResidentId>,
     login: Option<&Caller>,
 ) -> Result<Option<Choices>, Failure> {
+    if !OFFERED {
+        return Ok(None);
+    }
     let about = resident.and_then(|id| node.residents.about(id).map(|(about, _)| about));
     let was_started = resident.map(|id| started(node, id)).transpose()?.flatten().is_some();
     if about.as_ref().is_some_and(|about| matches!(about.origin, Origin::Colleague { .. })) || was_started {
@@ -218,9 +226,11 @@ pub(crate) fn require(node: &Arc<Node>, resident: &ResidentId, login: Option<&Ca
         )));
     }
     choices(node, Some(resident), login)?.ok_or_else(|| {
-        Failure::not_run(
-            "model collaboration is off for this caller; the user changes it on the Model collaboration page",
-        )
+        Failure::not_run(if OFFERED {
+            "model collaboration is off for this caller; the user changes it on the Model collaboration page"
+        } else {
+            "model collaboration is still in development: no colleague can be asked yet"
+        })
     })
 }
 

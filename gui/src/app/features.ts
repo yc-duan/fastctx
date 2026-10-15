@@ -14,7 +14,9 @@
 // GPT (callers), which GPTs they may hand it to (callees: a Codex login
 // each, its model and effort, the name and the line the calling model
 // chooses by, whether it may use the screen), the text the callers are given
-// and the rules every callee is given. Project memory is in development: its
+// and the rules every callee is given. It is in development: its card says
+// so, and its page is its film and what it gives, with nothing to turn on,
+// until `COLLABORATION_READY`. Project memory is in development too: its
 // card says so and its page says nothing else.
 
 import { EffortSlider, effortLabel } from "../conversation/effort-slider";
@@ -38,6 +40,10 @@ import { deviceFeatures } from "./device-features";
 import { collaboration } from "../film/collaboration";
 import { Film } from "../film/film";
 import type { Built, Shape } from "../film/reel";
+
+/** Whether model collaboration can be turned on; while it is in
+ *  development, no session is offered a colleague either (`collab.rs`). */
+const COLLABORATION_READY = false;
 import { watchFilm } from "../film/theater";
 import { workbench } from "../film/workbench";
 
@@ -208,24 +214,24 @@ export class FeaturesPage implements Page {
     const { words } = this.options;
     const tag = (on: boolean | null) =>
       on === null ? "" : on ? `<span class="tag feature-tag-on">${glyph("check", 12)}<span>${escape(words.on)}</span></span>` : `<span class="tag">${escape(words.off)}</span>`;
+    const coming = `<span class="tag">${escape(words.coming)}</span>`;
     const draw = (on: boolean | null) => {
-      const state = tag(on);
       this.body.innerHTML = `<ul class="feature-cards">
         <li><a class="feature-card" href="${link({ kind: "feature", feature: "conversations" })}">
           <span class="feature-card-art">${glyph("phone", 22)}${glyph("desktop", 22)}</span>
           <span class="feature-card-name">${escape(words.conversations.name)}</span>
           <span class="feature-card-line">${escape(words.conversations.line)}</span>${tag(deviceFeatures.conversations.peek())}</a></li>
-        <li><a class="feature-card" href="${link({ kind: "feature", feature: "collaboration" })}">
+        <li><a class="feature-card${COLLABORATION_READY ? "" : " coming"}" href="${link({ kind: "feature", feature: "collaboration" })}">
           <span class="feature-card-art">${glyph("codex", 22)}${glyph("claude", 22)}</span>
           <span class="feature-card-name">${escape(words.collaboration.name)}</span>
-          <span class="feature-card-line">${escape(words.collaboration.line)}</span>${state}</a></li>
+          <span class="feature-card-line">${escape(words.collaboration.line)}</span>${COLLABORATION_READY ? tag(on) : coming}</a></li>
         <li><a class="feature-card coming" href="${link({ kind: "feature", feature: "memory" })}">
           <span class="feature-card-art">${glyph("folder", 22)}</span>
-          <span class="feature-card-name">${escape(words.memory.name)}</span>
-          <span class="feature-card-line">${escape(words.memory.line)}</span><span class="tag">${escape(words.coming)}</span></a></li>
+          <span class="feature-card-name">${escape(words.memory.name)}</span>${coming}</a></li>
       </ul>`;
     };
     draw(null);
+    if (!COLLABORATION_READY) return;
     // In no network, this computer keeps its own settings.
     const [first] = loginsOf(this.options.store.world.peek()?.accounts);
     readCollab(first?.hub ?? null, first?.account ?? null)
@@ -277,6 +283,13 @@ export class FeaturesPage implements Page {
     const { store, words } = this.options;
     const make = (shape: Shape) => collaboration(words.collaboration.film, shape);
     this.replayFilm = () => this.watch(make, words.collaboration.name);
+    if (!COLLABORATION_READY) {
+      // Its story and what it gives, and that it is still being made.
+      this.body.classList.add("features-film");
+      this.body.innerHTML = `<div class="feature-intro with-gives"><div class="feature-film"></div>${this.gives()}<p class="feature-coming">${glyph("info", 18)}<span>${escape(words.coming)}</span></p></div>`;
+      this.film(this.body.querySelector(".feature-film"), make, words.collaboration.name);
+      return;
+    }
     const logins = loginsOf(store.world.peek()?.accounts);
     this.account = logins[0] ?? null;
     this.draw();
@@ -488,15 +501,20 @@ export class FeaturesPage implements Page {
     this.replayFilm?.();
   }
 
+  /** What model collaboration gives the user: a ready text that teaches
+   *  the calling model to hand a part over in plain words, and nothing to
+   *  operate by hand. */
+  private gives(): string {
+    return `<ul class="feature-gives">${this.options.words.collaboration.gives
+      .map(([mark, line]) => `<li><span class="feature-give-mark">${glyph(mark, 16)}</span><span>${escape(line)}</span></li>`)
+      .join("")}</ul>`;
+  }
+
   private draw(): void {
     const { words } = this.options;
     const collab = this.draft;
     const on = !!collab?.on;
-    // What it gives the user: a ready text that teaches the calling model to
-    // hand a part over in plain words, and nothing to operate by hand.
-    const gives = `<ul class="feature-gives">${words.collaboration.gives
-      .map(([mark, line]) => `<li><span class="feature-give-mark">${glyph(mark, 16)}</span><span>${escape(line)}</span></li>`)
-      .join("")}</ul>`;
+    const gives = this.gives();
     const turn = !collab
         ? this.problem
           ? `<p class="feature-note feature-trouble" title="${escape(this.problem.detail)}">${escape(this.problem.text)}<button class="text-button quiet-button" type="button" data-act="retry">${glyph("regenerate", 14)}<span>${escape(words.retry)}</span></button></p>`

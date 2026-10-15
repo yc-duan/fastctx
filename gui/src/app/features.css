@@ -70,6 +70,11 @@
   color: var(--text-2);
 }
 
+/* A card's state sits at its foot, under a line or with none. */
+.feature-card > .tag {
+  margin-top: auto;
+}
+
 .feature-coming {
   display: flex;
   align-items: center;
@@ -565,6 +570,11 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
+}
+
+/* Where a feature still being made would have its switch. */
+.feature-intro .feature-coming {
+  margin-top: 0;
 }
 
 /* A feature's film: as large as the page allows, with room under it for

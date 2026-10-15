@@ -30,7 +30,7 @@ export interface FeaturesWords {
   /** While the settings are being read. */
   reading: string;
   retry: string;
-  memory: { name: string; line: string };
+  memory: { name: string };
   callers: string;
   callersSaid: string;
   callees: string;
@@ -107,7 +107,7 @@ export const zhFeatures: FeaturesWords = {
   },
   reading: "正在读取设置",
   retry: "重试",
-  memory: { name: "项目记忆", line: "手记、定论与地图" },
+  memory: { name: "项目记忆" },
   callers: "调用方",
   callersSaid: "这些智能体的对话里会有请 GPT 的工具",
   callees: "被调用方",
@@ -183,7 +183,7 @@ export const enFeatures: FeaturesWords = {
   },
   reading: "Reading the settings",
   retry: "Retry",
-  memory: { name: "Project memory", line: "Journals, decisions and the map" },
+  memory: { name: "Project memory" },
   callers: "Callers",
   callersSaid: "Conversations with these agents get the tools to ask a GPT",
   callees: "Callees",
