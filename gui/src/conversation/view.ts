@@ -1292,7 +1292,10 @@ export class ConversationView {
     if (entry.reply) return `<p class="reply-line">${glyph("check", 14)}<span>${escape(entry.reply.answers.join(this.context.words.listSeparator))}</span></p>`;
     const mine = !entry.from || entry.from.kind === "user";
     const acts = mine && entry.turn && !entry.sending && this.conversation.turnEnded(entry.turn) ? this.userActs(entry) : "";
-    return this.attached(entry.attached ?? []) + this.heard(entry.from, entry.text, entry.sending ?? null) + acts;
+    // Words sent into the turn under way are said: the turn takes them in
+    // where it next can, and only a failure is told.
+    const sending = entry.intoTurn && entry.sending?.state !== "failed" ? null : (entry.sending ?? null);
+    return this.attached(entry.attached ?? []) + this.heard(entry.from, entry.text, sending) + acts;
   }
 
   /** Under the user's own words once their turn is over: copy them, or

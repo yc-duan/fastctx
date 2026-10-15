@@ -703,6 +703,7 @@ impl fastctx_net::link::Node for Handler {
                     crate::here::serve(&node, from, account, resident, town, request).await
                 }
                 RemoteCall::WordsCame { resident } => Ok(crate::here::words_came(&node, from, resident)),
+                RemoteCall::TurnInterrupted { resident } => Ok(crate::here::turn_interrupted(&node, from, resident)),
                 RemoteCall::Forget { resident, town, job, delivery, mut origin, through_exit } => {
                     if let Some(delivery) = delivery {
                         if job != delivery.job {
@@ -762,7 +763,14 @@ impl fastctx_net::link::Node for Handler {
                 }
                 RemoteCall::StopOn { origin, job } => crate::on_stop::serve(&node, origin, job).await,
                 RemoteCall::StopJob { job, by } => {
-                    crate::stop::here_(&node, &job, &format!("{by} on {from}, for {}", caller.account))
+                    // The user is the user on whichever of their machines they
+                    // asked; an agent is named with where it lives.
+                    let by = if by == fastctx_types::residents::STOPPED_BY_USER {
+                        by
+                    } else {
+                        format!("{by} on {from}, for {}", caller.account)
+                    };
+                    crate::stop::here_(&node, &job, &by)
                         .await
                         .map(|record| RemoteReply::JobStopped { record: record.map(Box::new) })
                 }

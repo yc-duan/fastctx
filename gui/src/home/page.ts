@@ -38,6 +38,8 @@ export interface HomeOptions {
   /** Answers what an agent asked with one of the answers it offered, however
    *  long the way to its machine is closed. */
   answer(address: Address, asked: Asked, choice: number): Promise<unknown>;
+  /** Stops a running command, on the machine it runs on, whoever started it. */
+  stopJob?(job: string, machine: string): Promise<void>;
 }
 
 type Glyph = Parameters<typeof glyph>[0];
@@ -75,6 +77,11 @@ export class HomePage {
   /** Answers given here, by the question they answer, until the World says
    *  it was answered. */
   private readonly answered = new Map<string, string>();
+  /** The command whose stop is being asked once more, and what became of
+   *  stops that did not go, by command. */
+  private confirming: string | null = null;
+  private stopping = new Set<string>();
+  private readonly notStopped = new Map<string, string>();
 
   /** Shows the drawing of the World, or leaves the page to the board where
    *  there is no network to draw. */
@@ -100,6 +107,8 @@ export class HomePage {
       }
       const button = target.closest<HTMLButtonElement>(".front-answer");
       if (button) this.answer(button);
+      const stop = target.closest<HTMLElement>("[data-job]");
+      if (stop) void this.stopJob(stop);
     });
     // A mark on the line of the time away and its conversation's line light
     // together.
@@ -385,6 +394,30 @@ export class HomePage {
     </a>${rest}</li>`;
   }
 
+  /** A command's stop: asked once more, then done; why it did not go is
+   *  said in its place. */
+  private async stopJob(button: HTMLElement): Promise<void> {
+    const key = button.dataset.job!;
+    const act = button.dataset.act;
+    if (act === "ask") this.confirming = key;
+    if (act === "cancel") this.confirming = null;
+    this.notStopped.delete(key);
+    if (act === "stop" && this.options.stopJob && !this.stopping.has(key)) {
+      const [machine, job] = key.split("\n") as [string, string];
+      this.stopping.add(key);
+      this.redraw();
+      try {
+        await this.options.stopJob(job, machine);
+        if (this.confirming === key) this.confirming = null;
+      } catch (error) {
+        this.notStopped.set(key, error instanceof Error ? error.message : String(error));
+      } finally {
+        this.stopping.delete(key);
+      }
+    }
+    this.redraw();
+  }
+
   private job(job: RunningJob): string {
     const { words } = this.options;
     const owner = ownerResident(job.owner);
@@ -393,9 +426,19 @@ export class HomePage {
     const lasted = words.lasted(Math.max(0, this.now.getTime() - Date.parse(job.started_at)));
     const first = job.command.split("\n")[0] ?? "";
     const about = [job.command, words.startedBy(by), whose ? words.forAccounts(whose) : ""].filter(Boolean).join("\n");
-    return `<li><a class="front-job" href="${escape(fileLink(job.machine, job.output, true))}" title="${escape(about)}">
+    const key = escape(`${job.machine}\n${job.job}`);
+    const stop = this.options.stopJob
+      ? `<button class="icon-button front-job-stop" type="button" data-job="${key}" data-act="ask" aria-label="${escape(words.stopJob)}" title="${escape(words.stopJob)}">${glyph("stop", 14)}</button>`
+      : "";
+    const why = this.notStopped.get(`${job.machine}\n${job.job}`);
+    const busy = this.stopping.has(`${job.machine}\n${job.job}`) ? " disabled" : "";
+    const asking =
+      this.confirming === `${job.machine}\n${job.job}`
+        ? `<div class="jobs-confirm"><span${why ? ` title="${escape(why)}"` : ""}>${escape(why ? `${words.jobNotStopped} · ${why}` : words.stopJobAsk)}</span><button class="ask-button" type="button" data-job="${key}" data-act="cancel">${escape(words.cancel)}</button><button class="ask-button ask-primary" type="button" data-job="${key}" data-act="stop"${busy}>${escape(words.stopJob)}</button></div>`
+        : "";
+    return `<li><div class="front-job-line"><a class="front-job" href="${escape(fileLink(job.machine, job.output, true))}" title="${escape(about)}">
       <span class="front-job-glyph" aria-hidden="true">${glyph("command", 16)}</span><code class="front-command">${escape(first)}</code>${whose ? `<span class="front-whose">${glyph("person", 12)}<span>${escape(whose)}</span></span>` : ""}${this.device(job.machine)}<span class="front-for">${escape(lasted)}</span>
-    </a></li>`;
+    </a>${stop}</div>${asking}</li>`;
   }
 }
 

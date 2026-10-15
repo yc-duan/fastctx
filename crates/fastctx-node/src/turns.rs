@@ -146,6 +146,9 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
                         return Ok(());
                     }
                     node.residents.turn_started(&node.world, id, turn, event.at)?;
+                    // What waited to ride with the next turn goes into this one.
+                    let (node, id) = (node.clone(), id.clone());
+                    tokio::spawn(async move { crate::speech::along(&node, &id).await });
                     format!("started:{turn}")
                 }
                 _ => serde_json::to_string(&event).map_err(std::io::Error::other)?,
@@ -240,6 +243,11 @@ async fn finish_at(
     let (finished, first) = crate::delivery::finish_at(&directory, turn, end, &readers, ended_at)?;
     if first {
         crate::usage::turn_ended(node, id, &about, &finished.end, ended_at.unwrap_or_else(Timestamp::now));
+        // What its run calls wait for stops with an interrupted turn, here
+        // and on the machines it works on.
+        if matches!(finished.end.how, TurnHow::Interrupted) {
+            node.interrupts.raise(&fastctx_types::Address { machine: node.machine(), resident: id.clone() });
+        }
     }
     if !first && directory.path().join("books-retired").try_exists()? {
         return Ok(());

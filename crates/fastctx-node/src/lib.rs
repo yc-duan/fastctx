@@ -91,6 +91,7 @@ mod session_live;
 mod session_options;
 mod session_record;
 mod shown;
+mod signals;
 mod since;
 mod speech;
 mod stats;
@@ -108,7 +109,6 @@ mod waiting;
 mod watch;
 mod watchdog;
 mod who;
-mod words;
 mod world;
 mod world_program;
 mod write;
@@ -201,7 +201,10 @@ pub(crate) struct Node {
     learned: learned::Learned,
     /// Words coming for residents here, and for residents elsewhere that
     /// work here, for the `run` calls waiting.
-    words: words::Words,
+    words: signals::Signals,
+    /// Turns of residents here, and of residents elsewhere that work here,
+    /// interrupted: the job a `run` call of the turn waits for stops.
+    interrupts: signals::Signals,
     /// Jobs run for residents here on the machines they work on, answered
     /// whole, until their hosts have the answers (`here`).
     dispatched: here::Dispatched,
@@ -530,6 +533,7 @@ pub async fn run_prepared(
         copying: Default::default(),
         learned: Default::default(),
         words: Default::default(),
+        interrupts: Default::default(),
         dispatched: Default::default(),
         births: Default::default(),
         on_deliveries: Default::default(),

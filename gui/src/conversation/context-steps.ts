@@ -5,8 +5,9 @@
 // notices). The growth is read from the requests the host reported; how it
 // splits between the tool calls of that step is estimated by how much each
 // returned. Claude Code names the calls each answer made, so a step's calls
-// are known; Codex names none, so the calls that ended between two
-// requests are taken as that step's. A prompt that shrinks was compacted.
+// are known. Codex names none, and reports a request only once the calls
+// its answer made have returned: a step's calls are those that ended
+// between the two requests before it. A prompt that shrinks was compacted.
 
 import { contextOf, type ModelRequest } from "./requests";
 
@@ -62,9 +63,10 @@ export function contextSteps(requests: readonly ModelRequest[], calls: readonly 
     // is what came back to it and what else was put in.
     const answer = Math.min(before.output, grew);
     const rest = grew - answer;
+    const earlier = requests[index - 2]?.at ?? -Infinity;
     const between = before.items.length
       ? before.items.map((item) => byItem.get(item)).filter((call): call is CallSpan => !!call)
-      : calls.filter((call) => call.ended !== null && call.ended > before.at && call.ended <= request.at && (!request.turn || call.turn === request.turn));
+      : calls.filter((call) => call.ended !== null && call.ended > earlier && call.ended <= before.at && (!before.turn || call.turn === before.turn));
     const causes: Cause[] = [];
     if (answer > 0) causes.push({ kind: "answer", tokens: answer });
     const weight = between.reduce((sum, call) => sum + Math.max(1, call.size), 0);

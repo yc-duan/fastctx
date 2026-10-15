@@ -178,6 +178,11 @@ impl Device {
                 let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::Stop { resident: resident.clone() }, Some(resident))
             }
+            // A command stops as the user asks, on the machine it runs on.
+            Call::StopJob { job, machine, .. } => {
+                let machine = machine.ok_or_else(|| failed("say which machine the command runs on"))?;
+                (machine, RemoteCall::StopJob { job, by: fastctx_types::residents::STOPPED_BY_USER.to_string() }, None)
+            }
             Call::Manage { resident, machine, action } => {
                 let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::Manage { resident: resident.clone(), action }, Some(resident))
@@ -281,6 +286,10 @@ impl Device {
             (RemoteCall::Stop { .. }, RemoteReply::Stopped { stopped }) => {
                 Reply::Stopped { resident: address.expect("stop resident"), stopped }
             }
+            (RemoteCall::StopJob { job, .. }, RemoteReply::JobStopped { record }) => match record {
+                Some(record) => Reply::JobStopped { machine: machine.clone(), record },
+                None => return Err(failed(format!("{machine} has no job {job}"))),
+            },
             (RemoteCall::Manage { .. }, RemoteReply::Managed(managed)) => {
                 Reply::Managed { resident: address.expect("manage resident"), managed }
             }

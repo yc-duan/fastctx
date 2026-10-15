@@ -73,17 +73,37 @@ pub const MOD_LOOK: std::time::Duration = std::time::Duration::from_millis(2000)
 const FRAME: &str = "A message from fastctx, not typed by the user:";
 /// The frame written before 2026-10-09 (UTC); session histories still hold it.
 const FRAME_V1: &str = "The fastctx plugin delivers a message from the World.";
+/// How the user's words sent into a running turn begin, as the model reads
+/// them beside a tool's result (`world.js`, `userFramed`).
+const USER_FRAME: &str = "The user sent a new message while you were working:";
 
 /// Words the World says on its own account, as the model reads them.
 pub fn framed(text: &str) -> String {
     format!("{FRAME}\n\n{text}")
 }
 
-/// Whether words a session heard are the World's own, framed as such. The
-/// session hears them inside Claude Code's own frame for what a plugin
-/// submits, which puts a line of its own before them (2.1.289).
+/// Whether words a session heard went in framed by the World: its own
+/// telling, or the user's words sent into a running turn. The World records
+/// both as it hands them over. The session hears them inside Claude Code's
+/// own frame for what a plugin submits, which puts a line of its own before
+/// them (2.1.289).
 pub fn is_framed(text: &str) -> bool {
-    [FRAME, FRAME_V1].iter().any(|frame| text.starts_with(frame) || text.contains(&format!("\n{frame}\n")))
+    [FRAME, FRAME_V1, USER_FRAME].iter().any(|frame| text.starts_with(frame) || text.contains(&format!("\n{frame}\n")))
+}
+
+/// The words before the World's telling, where it went in beside them, as
+/// the context of a prompt that starts a turn; `None` where it is all the
+/// World's, or none of it is.
+pub fn beside_framed(text: &str) -> Option<&str> {
+    let frames = [FRAME, FRAME_V1, USER_FRAME];
+    if frames.iter().any(|frame| text.starts_with(frame)) {
+        return None;
+    }
+    let at = frames.iter().filter_map(|frame| text.find(&format!("\n{frame}\n"))).min()?;
+    let before = text[..at].trim_end();
+    // Claude Code's own line before what a plugin submits says nothing.
+    let plugin_line = !before.contains('\n') && before.starts_with("The ") && before.contains(" plugin sent a message");
+    (!before.is_empty() && !plugin_line).then_some(before)
 }
 
 /// The local marketplace: `<world>/claude-plugins`.

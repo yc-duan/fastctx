@@ -173,6 +173,9 @@ impl Jobs {
         // Words for a resident of another machine that works here come
         // from where it lives.
         let mut words = owner.resident().map(|address| node.words.watch(address));
+        // The job stops with the turn of the call that waits for it; one the
+        // call left running goes on (`world-run.md`).
+        let mut interrupted = owner.resident().map(|address| node.interrupts.watch(address));
         let launched = self.launch(node, owner, town, request, None, None, account).await?;
         let mut answered = None;
         loop {
@@ -185,6 +188,15 @@ impl Jobs {
                     Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(broadcast::error::RecvError::Closed) => unreachable!("the node holds the sender"),
                 },
+                () = came(&mut interrupted) => {
+                    // Its end, as the stop records it, is what this call answers.
+                    interrupted = None;
+                    let reason = "the turn that was waiting for it was interrupted";
+                    if let Err(failure) = stop(node, &launched.record, fastctx_types::residents::STOPPED_BY_USER, reason).await {
+                        node.log.line(format_args!("stopping job {} with its turn: {}", launched.job, failure.message));
+                    }
+                    continue;
+                }
                 () = tokio::time::sleep_until(deadline) => {
                     answered = Some(Answered::WaitOver { seconds: seconds(wait) });
                     break;

@@ -15,7 +15,7 @@ import type { ResidentDetail, ResidentNow } from "../world/world";
 import { AttachTray, type AttachSeam, type AttachWords, type Attached } from "./attach";
 import { SendQueue, type Queued } from "./queue";
 import { bindComposer, type ComposerSession, type ComposerSessionState } from "./composer";
-import type { ComposerUpdated } from "../world/composer";
+import type { ComposerSnapshot, ComposerUpdated } from "../world/composer";
 import { NodeQueue } from "./node-queue";
 import { NodeTray, type AssistantFiles } from "./node-tray";
 import { Menu, commandFor, commandRow, commandsOf, usageOf, type MenuCommand } from "./commands";
@@ -162,7 +162,8 @@ export interface PageOptions {
   /** Sends the user's words, and what arrived of what was attached;
    *  resolves with what came of them. */
   send(text: string, attached: { refs: unknown[]; shown: Attached[]; filesOn?: string | null }): Promise<Sent> | void;
-  stop(): void;
+  /** Asks the agent to stop; resolves whether a turn was running to stop. */
+  stop(): Promise<boolean> | void;
   /** Stops one job it started, on the machine it runs on. */
   stopJob?: ((job: string, machine: string) => Promise<void>) | undefined;
   /** A job's output as lines from the machine running it, read as it
@@ -199,6 +200,11 @@ export class ConversationPage {
   private name: HTMLElement;
   private looking = 0;
   private following = true;
+  /** A stop was asked for and the turn has not ended yet. */
+  private stopping = false;
+  /** Words of the shared queue on their way into the turn, by queue item,
+   *  as the conversation shows them meanwhile. */
+  private readonly onTheirWay = new Map<string, string>();
   private gone: string | null = null;
   /** Why the watch ended or broke, in the kernel's words, for the hover. */
   private goneWhy = "";
@@ -766,11 +772,16 @@ export class ConversationPage {
     if (typed.trim() && !this.input.value.trim()) this.setWords(typed, caret);
     const say = (why: string) => this.say(why, why, true);
     const assistantFiles = this.options.attach?.filesOn ?? null;
-    this.nodeQueue = new NodeQueue(this.options.words.queue, this.options.attach?.words ?? null, session, say, assistantFiles, (text, attachments, sending) => {
-      const shown = attachments.map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null }));
-      const key = this.options.conversation.sending(text, this.options.here || null, shown);
+    this.nodeQueue = new NodeQueue(this.options.words.queue, this.options.attach?.words ?? null, session, say, assistantFiles, (id, text, attachments, sending) => {
+      // Sent now, they are said at once; the node takes them into the turn.
+      this.onItsWay(id, text, attachments);
       this.update();
-      this.follow(key, sending);
+      sending.catch(() => {
+        const key = this.onTheirWay.get(id);
+        if (key) this.options.conversation.unsend(key);
+        this.onTheirWay.delete(id);
+        this.update();
+      });
     });
     this.queue.element.replaceWith(this.nodeQueue.element);
     if (this.options.attach && this.tray) {
@@ -779,11 +790,58 @@ export class ConversationPage {
     }
     session.subscribe((state) => {
       this.sharedState = state;
+      this.showOnTheirWay(state.composer);
       this.nodeQueue?.draw(state);
       this.nodeTray?.draw(state);
       this.fit();
       this.drawAction();
     });
+  }
+
+  /** Shows words of the queue on their way as said, once each. */
+  private onItsWay(id: string, text: string, attachments: readonly { name: string; size: number; media_type: string }[]): void {
+    if (this.onTheirWay.has(id)) return;
+    const shown = attachments.map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null }));
+    this.onTheirWay.set(id, this.options.conversation.sending(text, this.options.here || null, shown));
+  }
+
+  /** Words the node sends from the shared queue, whoever asked, are said
+   *  in the conversation until the agent hears them; words back in the
+   *  queue, or whose arrival nobody can tell, leave it. */
+  private showOnTheirWay(composer: ComposerSnapshot | undefined): void {
+    if (!composer) return;
+    for (const item of composer.queue) if (item.sending) this.onItsWay(item.id, item.draft.text, item.draft.attachments);
+    for (const [id, key] of this.onTheirWay) {
+      if (composer.queue.some((item) => item.id === id && item.sending)) continue;
+      const back = composer.queue.some((item) => item.id === id) || composer.unobserved.some((item) => item.id === id);
+      if (back) this.options.conversation.unsend(key);
+      this.onTheirWay.delete(id);
+    }
+    this.update();
+  }
+
+  /** Asks the agent to stop: the button says it is stopping until the turn
+   *  ends. A World that says no turn runs is believed: what still looked
+   *  under way here had ended. */
+  private stop(): void {
+    const asked = this.options.stop();
+    if (!asked) return;
+    this.stopping = true;
+    this.drawAction();
+    asked.then(
+      (stopped) => {
+        if (stopped) return;
+        this.stopping = false;
+        this.options.conversation.noTurnRuns();
+        this.update();
+      },
+      (error: unknown) => {
+        this.stopping = false;
+        const why = error instanceof Error ? error.message : String(error);
+        this.say(this.options.words.turnNotStopped(why), why, true);
+        this.drawAction();
+      },
+    );
   }
 
   /** Puts words into the input as if typed, so the shared input has them. */
@@ -931,7 +989,7 @@ export class ConversationPage {
     }
     const attached = !session && this.tray?.count ? { ...this.tray.take(), filesOn } : { refs: [], shown: [], filesOn: null };
     if (!text && !attached.refs.length && !(session && this.nodeTray?.count)) {
-      if (this.options.conversation.moving()) this.options.stop();
+      if (this.options.conversation.busy()) this.stop();
       return;
     }
     if (this.options.controls && text.startsWith("/")) {
@@ -1511,7 +1569,7 @@ export class ConversationPage {
     if (!controls) return false;
     const words = controls.words;
     if (command.control === "stop") {
-      this.options.stop();
+      this.stop();
       return true;
     }
     if (command.control === "model" && !given && !args) {
@@ -1921,13 +1979,15 @@ export class ConversationPage {
     const { words, conversation } = this.options;
     const typed = this.input.value.trim() !== "" || ((this.session ? this.nodeTray?.count : this.tray?.count) ?? 0) > 0;
     const busy = conversation.busy();
+    if (!busy) this.stopping = false;
     const stop = !typed && busy;
     this.action.innerHTML = glyph(stop ? "stop" : "send", 18);
     const waits = this.released !== null || (this.session ? this.queues() : busy);
-    const label = stop ? words.stop : typed && waits ? words.queue.queue : words.send;
+    const label = stop ? (this.stopping ? words.stopping : words.stop) : typed && waits ? words.queue.queue : words.send;
     this.action.setAttribute("aria-label", label);
     this.action.title = label;
     this.action.classList.toggle("stop", stop);
+    this.action.classList.toggle("stopping", stop && this.stopping);
     this.action.disabled = !typed && !stop;
   }
 }

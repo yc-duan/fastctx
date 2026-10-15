@@ -37,6 +37,8 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
             | RemoteCall::Composer { .. }
             | RemoteCall::Open { .. }
             | RemoteCall::Stop { .. }
+            // Stopping a command, as the user asks, on the machine it runs on.
+            | RemoteCall::StopJob { .. }
             | RemoteCall::Control { .. }
             | RemoteCall::Manage {
                 action: Management::Archive

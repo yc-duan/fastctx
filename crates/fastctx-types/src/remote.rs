@@ -47,6 +47,11 @@ pub enum RemoteCall {
     WordsCame {
         resident: ResidentId,
     },
+    /// A turn of a resident of the calling machine was interrupted: the job
+    /// a `Run` of it waits for there stops, as one here would.
+    TurnInterrupted {
+        resident: ResidentId,
+    },
     /// The answer to a `Run` of a resident of the calling machine showed its
     /// ended job whole, and its host has it: the job's files go.
     Forget {
@@ -433,6 +438,7 @@ impl RemoteCall {
         match self {
             RemoteCall::Run { .. }
             | RemoteCall::WordsCame { .. }
+            | RemoteCall::TurnInterrupted { .. }
             | RemoteCall::Forget { .. }
             | RemoteCall::Write { .. }
             | RemoteCall::On { .. }

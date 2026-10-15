@@ -81,6 +81,11 @@ pub(crate) async fn stop(installation: &Installation) -> anyhow::Result<Option<f
         if process == invoking || process.pid == std::process::id() {
             continue;
         }
+        // A hub on this computer keeps serving until its service is taken
+        // away, after the logins are withdrawn from it.
+        if fastctx_platform::owned_images::serves_hub(&process)? {
+            continue;
+        }
         fastctx_platform::terminate::terminate(&process)?;
         fastctx_platform::host_process::exited(&process).await?;
     }

@@ -247,14 +247,27 @@
     align-items: center;
   }
 
-  /* Labels that do not fit on one line go on to the next; who is logged
-     in is said in the agent's choices only. */
+  /* The labels stay on one line, so the input beneath never moves; what
+     does not fit ends in an ellipsis. Who is logged in is said in the
+     agent's choices only. */
   .talk-context {
-    flex-wrap: wrap;
+    overflow: hidden;
   }
 
   .talk-chip {
+    flex: 0 1 auto;
+    min-width: 0;
     height: 34px;
+  }
+
+  .talk-chip > :is(.talk-chip-name, .talk-chip-sub, .talk-chip-works) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .talk-chip-sub {
+    flex: 0 2 auto;
   }
 
   .talk-chip-sub.who {

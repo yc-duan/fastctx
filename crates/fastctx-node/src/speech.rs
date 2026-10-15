@@ -111,6 +111,27 @@ pub(crate) async fn tell_here_locked(
         Owed::Nobody => Vec::new(),
     };
     let directory = node.world.conversation(to);
+    if let Some(kind) = delivery.notice.along() {
+        // Told again before it went in: what has not gone anywhere yet goes
+        // no more; what a mod holds, it drops (`claude::into_inbox`).
+        let earlier = {
+            let directory = directory.clone();
+            tokio::task::spawn_blocking(move || crate::inbox::pending(&directory))
+                .await
+                .map_err(|error| Failure::new(error.to_string()))?
+                .map_err(|error| Failure::new(format!("reading what waits: {error}")))?
+        };
+        for kept in earlier {
+            if kept.state == PendingState::Waiting
+                && kept.delivery.id != delivery.id
+                && kept.delivery.notice.along() == Some(kind)
+                && kept.delivery.at <= delivery.at
+            {
+                crate::inbox::withdraw(&directory, &kept.delivery.id)
+                    .map_err(|error| Failure::new(format!("replacing what waits: {error}")))?;
+            }
+        }
+    }
     let pending = Pending { delivery, readers, state: PendingState::Waiting, working, session: None };
     let kept = {
         let (directory, pending) = (directory.clone(), pending.clone());
@@ -136,12 +157,46 @@ pub(crate) async fn tell_here_locked(
         // The same thing told again: it is on its way or went in already.
         return Ok(Landed::Waiting { why: None, answered: answered(node, to, &about) });
     }
+    // What rides with the next turn waits while none runs; a Claude
+    // session's mod holds it for the next one (`along`).
+    if pending.delivery.notice.along().is_some() {
+        let running = node.residents.now(to).is_some_and(|now| now.turn.is_some());
+        if !running && about.host.agent.as_str() != "claude" {
+            return Ok(Landed::Waiting { why: None, answered: true });
+        }
+        return hand_over_locked(node, to, &about, &directory, pending).await;
+    }
     // The end of the resident's own job waits for whatever call is waiting
     // now; words for it end the wait (`world-run.md`).
     if !matches!(pending.delivery.notice, Notice::JobEnded { .. }) {
-        node.words.came(&fastctx_types::Address { machine: node.machine(), resident: to.clone() });
+        node.words.raise(&fastctx_types::Address { machine: node.machine(), resident: to.clone() });
     }
     hand_over_locked(node, to, &about, &directory, pending).await
+}
+
+/// A turn of `id` began: what waited to ride with the next turn goes into
+/// it now (`Notice::along`).
+pub async fn along(node: &Arc<Node>, id: &ResidentId) {
+    let Some((about, _)) = node.residents.about(id) else { return };
+    let directory = node.world.conversation(id);
+    let waiting = {
+        let directory = directory.clone();
+        match tokio::task::spawn_blocking(move || crate::inbox::pending(&directory)).await {
+            Ok(Ok(waiting)) => waiting,
+            Ok(Err(error)) => {
+                node.log.line(format_args!("reading what waits for {id}: {error}"));
+                return;
+            }
+            Err(_) => return,
+        }
+    };
+    for pending in
+        waiting.into_iter().filter(|kept| kept.state == PendingState::Waiting && kept.delivery.notice.along().is_some())
+    {
+        if let Err(failure) = hand_over(node, id, &about, &directory, pending).await {
+            node.log.line(format_args!("what rides with {id}'s turn waits: {}", failure.message));
+        }
+    }
 }
 
 /// Puts something kept into the resident's session, if its host lets the
@@ -324,8 +379,9 @@ async fn submit_thread(
             })),
         };
     }
+    // The user's words go alone, but for what rides with the next turn.
     if single {
-        batch.retain(|kept| kept.delivery.id == pending.delivery.id);
+        batch.retain(|kept| kept.delivery.id == pending.delivery.id || kept.delivery.notice.along().is_some());
     }
     // The user's words go in as typed and first: the World's telling after
     // them begins with a head note, so none of it reads as theirs, while

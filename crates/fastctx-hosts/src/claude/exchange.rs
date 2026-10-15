@@ -196,6 +196,11 @@ pub enum Reported {
         ids: Vec<String>,
         turn: String,
     },
+    /// These inbox files were replaced by what came after them before they
+    /// went in: they never will.
+    Replaced {
+        ids: Vec<String>,
+    },
     /// Claude Code kept this record of the main conversation; its file has
     /// it only a moment later (`crate::claude::transcript`).
     Stored {
@@ -315,6 +320,9 @@ enum ModEvent {
     Handed {
         deliveries: Vec<String>,
         turn: Option<String>,
+    },
+    Replaced {
+        deliveries: Vec<String>,
     },
 }
 
@@ -596,6 +604,7 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
             vec![happened(at, Happened::Health { turn, health: Health { kind: HealthKind::Error, text } })]
         }
         ModEvent::Handed { deliveries, turn } => vec![Reported::Handed { ids: deliveries, turn: turn_of(turn) }],
+        ModEvent::Replaced { deliveries } => vec![Reported::Replaced { ids: deliveries }],
     }
 }
 
@@ -606,14 +615,31 @@ struct Inbox<'a> {
     text: &'a str,
     /// Words the user typed, which go in as the user's.
     as_user: bool,
+    /// It goes in with the next turn and starts none; its kind, of which
+    /// only the latest goes in (`Notice::along`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    along: Option<&'a str>,
+    /// What it replaces, handed over before and not yet in.
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    replaces: &'a [String],
+}
+
+/// How one thing goes into the session: as the user's words, or with the
+/// next turn in place of what it replaces.
+#[derive(Default)]
+pub struct Delivering<'a> {
+    pub as_user: bool,
+    pub along: Option<&'a str>,
+    pub replaces: &'a [String],
 }
 
 /// Puts something in the session's inbox for its mod to hand over. The same
 /// id twice is the same thing and is written once.
-pub fn deliver(directory: &Path, id: &str, text: &str, as_user: bool) -> io::Result<()> {
+pub fn deliver(directory: &Path, id: &str, text: &str, how: Delivering<'_>) -> io::Result<()> {
+    let Delivering { as_user, along, replaces } = how;
     let inbox = directory.join("inbox");
     ensure_private_dir(&inbox)?;
-    let mut bytes = serde_json::to_vec(&Inbox { id, text, as_user }).expect("strings serialize");
+    let mut bytes = serde_json::to_vec(&Inbox { id, text, as_user, along, replaces }).expect("strings serialize");
     // Claude Code 2.1.287's fs API accepts at most 4 MiB per operation.
     const FILE_BYTES: usize = 4 * 1024 * 1024;
     if bytes.len() > FILE_BYTES {
@@ -640,9 +666,14 @@ pub fn deliver(directory: &Path, id: &str, text: &str, as_user: bool) -> io::Res
             rest = &rest[end..];
             count += 1;
         }
-        bytes =
-            serde_json::to_vec(&serde_json::json!({ "id": id, "text": "", "text_parts": count, "as_user": as_user }))
-                .map_err(io::Error::other)?;
+        let mut value = serde_json::json!({ "id": id, "text": "", "text_parts": count, "as_user": as_user });
+        if let Some(along) = along {
+            value["along"] = along.into();
+        }
+        if !replaces.is_empty() {
+            value["replaces"] = replaces.into();
+        }
+        bytes = serde_json::to_vec(&value).map_err(io::Error::other)?;
     }
     match publish_new(&inbox.join(format!("{id}.json")), &bytes, Permissions::Private) {
         Err(error) if error.kind() != io::ErrorKind::AlreadyExists => Err(error),

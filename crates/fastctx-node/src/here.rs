@@ -229,9 +229,10 @@ pub(crate) async fn run(
     let acting = node.residents.about(resident).map(|(about, _)| about.acting).unwrap_or_default();
     let here = Address { machine: node.machine(), resident: resident.clone() };
     let directory = node.world.conversation(resident);
-    // Listening before the call goes, so words that come meanwhile are not
-    // missed here.
+    // Listening before the call goes, so words that come, or an interrupted
+    // turn, meanwhile are not missed here.
     let mut words = node.words.watch(&here);
+    let mut interrupted = node.interrupts.watch(&here);
     let town = match node.speaking(&acting, to, Purpose::Hands) {
         Ok((link, _)) => node.town_across(&link, town.as_ref()),
         Err(_) => town,
@@ -240,10 +241,21 @@ pub(crate) async fn run(
     let call = RemoteCall::Run { resident: resident.clone(), town: town.clone(), request };
     let answer = node.call(&acting, to, Purpose::Hands, call);
     tokio::pin!(answer);
-    let mut told = false;
+    let (mut told, mut stopping) = (false, false);
     let answered = loop {
         tokio::select! {
             answered = &mut answer => break answered,
+            // The job there stops with the turn; its answer comes as it ends.
+            _ = interrupted.changed(), if !stopping => {
+                stopping = true;
+                let (node, acting, to, resident) = (node.clone(), acting.clone(), to.clone(), resident.clone());
+                tokio::spawn(async move {
+                    let stop = RemoteCall::TurnInterrupted { resident };
+                    if let Err(failure) = node.call(&acting, &to, Purpose::Hands, stop).await {
+                        node.log.line(format_args!("telling {} that the turn was interrupted: {failure}", to.name));
+                    }
+                });
+            }
             // The node holds every sender, so the watch never closes.
             _ = words.changed(), if !told => {
                 told = true;
@@ -343,7 +355,14 @@ pub(crate) async fn serve(
 
 /// Words came for `resident` of `from`: its runs waiting here answer.
 pub(crate) fn words_came(node: &Node, from: MachineName, resident: ResidentId) -> RemoteReply {
-    node.words.came(&Address { machine: from, resident });
+    node.words.raise(&Address { machine: from, resident });
+    RemoteReply::Set
+}
+
+/// A turn of `resident` of `from` was interrupted: a run of it here stops
+/// the job it waits for.
+pub(crate) fn turn_interrupted(node: &Node, from: MachineName, resident: ResidentId) -> RemoteReply {
+    node.interrupts.raise(&Address { machine: from, resident });
     RemoteReply::Set
 }
 

@@ -246,6 +246,8 @@ impl Device {
             device.sessions.write().expect("device sessions").remove(&id);
             drop(session);
             changed(&device.ways);
+            // What the device shows changes with it: a network fewer.
+            changed(&device.shown_changes);
             device.store.forget(&id)?;
             Ok(())
         })

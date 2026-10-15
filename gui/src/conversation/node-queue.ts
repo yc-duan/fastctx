@@ -39,7 +39,7 @@ export class NodeQueue {
     private readonly assistantFiles: AssistantFiles | null = null,
     /** A line sent at once: the page shows it below the turn's line until
      *  the session takes it in (walkthrough items 9, 10). */
-    private readonly sentNow: ((text: string, attachments: readonly Attachment[], sending: Promise<ComposerUpdated>) => void) | null = null,
+    private readonly sentNow: ((id: string, text: string, attachments: readonly Attachment[], sending: Promise<ComposerUpdated>) => void) | null = null,
   ) {
     this.element = document.createElement("div");
     this.element.className = "send-queue";
@@ -81,7 +81,7 @@ export class NodeQueue {
       case "now": {
         const item = this.state?.composer.queue.find((one) => one.id === id);
         const sending = this.session.sendQueued(id);
-        if (item) this.sentNow?.(item.draft.text, item.draft.attachments, sending);
+        if (item) this.sentNow?.(id, item.draft.text, item.draft.attachments, sending);
         this.act(sending);
         return;
       }
@@ -196,7 +196,8 @@ export class NodeQueue {
     this.state = state;
     const { words } = this;
     const composer = state?.composer;
-    const queue = composer?.queue ?? [];
+    // Words on their way are said in the conversation, not kept here.
+    const queue = (composer?.queue ?? []).filter((item) => !item.sending);
     const unobserved = composer?.unobserved ?? [];
     // The one being changed is gone from the queue: it was sent or removed.
     if (this.editing && !queue.some((item) => item.id === this.editing!.id)) this.close();
@@ -223,9 +224,9 @@ export class NodeQueue {
               : ""
           }` : ""}<button class="text-button" type="button" data-queue="done">${escape(words.done)}</button></span></li>`;
         }
-        const state = item.sending ? ` <span class="queue-state">${escape(words.sending)}</span>` : item.editing ? ` <span class="queue-state">${escape(words.editingElsewhere)}</span>` : "";
+        const state = item.editing ? ` <span class="queue-state">${escape(words.editingElsewhere)}</span>` : "";
         const wrong = item.error ? ` title="${escape(item.error)}"` : "";
-        return `<li class="queue-row${item.error ? " wrong" : ""}" data-key="${escape(item.id)}"${wrong}><button class="queue-grip" type="button" aria-label="${escape(words.reorder)}" title="${escape(words.reorder)}">${glyph("grip", 14)}</button><span class="queue-text" title="${escape(item.draft.text)}">${escape(said(item.draft.text))}</span>${files(count)}${state}<span class="queue-acts"><button class="text-button queue-now" type="button" data-queue="now" title="${escape(words.sendNowTitle)}"${item.sending ? " disabled" : ""}>${glyph("send", 14)}<span>${escape(words.sendNow)}</span></button><button class="icon-button" type="button" data-queue="edit" aria-label="${escape(words.edit)}" title="${escape(words.edit)}"${item.sending ? " disabled" : ""}>${glyph("edit", 14)}</button><button class="icon-button" type="button" data-queue="remove" aria-label="${escape(words.remove)}" title="${escape(words.remove)}"${item.sending ? " disabled" : ""}>${glyph("close", 14)}</button></span></li>`;
+        return `<li class="queue-row${item.error ? " wrong" : ""}" data-key="${escape(item.id)}"${wrong}><button class="queue-grip" type="button" aria-label="${escape(words.reorder)}" title="${escape(words.reorder)}">${glyph("grip", 14)}</button><span class="queue-text" title="${escape(item.draft.text)}">${escape(said(item.draft.text))}</span>${files(count)}${state}<span class="queue-acts"><button class="text-button queue-now" type="button" data-queue="now" title="${escape(words.sendNowTitle)}">${glyph("send", 14)}<span>${escape(words.sendNow)}</span></button><button class="icon-button" type="button" data-queue="edit" aria-label="${escape(words.edit)}" title="${escape(words.edit)}">${glyph("edit", 14)}</button><button class="icon-button" type="button" data-queue="remove" aria-label="${escape(words.remove)}" title="${escape(words.remove)}">${glyph("close", 14)}</button></span></li>`;
       })
       .join("");
     // Sent where the World cannot tell whether they arrived: kept apart,

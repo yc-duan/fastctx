@@ -502,6 +502,22 @@
   color: var(--bg);
 }
 
+/* Asked to stop: it breathes until the turn has ended. */
+.composer-action.stopping {
+  animation: stopping 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes stopping {
+  to {
+    opacity: 0.45;
+  }
+}
+
+:root[data-reduced] .composer-action.stopping {
+  animation: none;
+  opacity: 0.6;
+}
+
 .composer-action .glyph {
   stroke-width: 2;
 }

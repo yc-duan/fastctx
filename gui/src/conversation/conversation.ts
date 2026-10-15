@@ -542,6 +542,10 @@ export class Conversation {
   busy(): boolean {
     return this.live.busy();
   }
+  /** No turn runs, the World says: nothing shown is under way any more. */
+  noTurnRuns(): void {
+    this.live.noTurnRuns();
+  }
   turning(): boolean {
     return this.live.turning();
   }

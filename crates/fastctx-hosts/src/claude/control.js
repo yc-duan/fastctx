@@ -364,6 +364,7 @@ async function controlCancelCall($, state, call) {
 async function startControls($) { await controlBegin($, sessions) }
 
 async function startControlTurn($, e) {
+    if (e.agentId !== undefined) return
     const state = await controlBegin($, sessions)
     if (state === null) return
     // The choices this turn runs with are read as it starts: the node keeps

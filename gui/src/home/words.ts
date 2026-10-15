@@ -23,6 +23,11 @@ export interface HomeWords {
   /** Conversations at work, and the commands running. */
   now: string;
   jobs: string;
+  /** Stopping a running command, asked once more before it is done. */
+  stopJob: string;
+  stopJobAsk: string;
+  cancel: string;
+  jobNotStopped: string;
   nobodyWorking: string;
   /** Begins a conversation, where nobody is at work. */
   begin: string;
@@ -105,6 +110,10 @@ export const zhHome: HomeWords = {
   answered: (choice) => `已回答：${choice}`,
   now: "工作中",
   jobs: "后台命令",
+  stopJob: "停止",
+  stopJobAsk: "停下这条命令？会告诉智能体是你停的。",
+  cancel: "取消",
+  jobNotStopped: "没能停下",
   nobodyWorking: "暂无工作中的智能体",
   begin: "新对话",
   away: "离开期间",
@@ -154,6 +163,10 @@ export const enHome: HomeWords = {
   answered: (choice) => `Answered: ${choice}`,
   now: "Working",
   jobs: "Background commands",
+  stopJob: "Stop",
+  stopJobAsk: "Stop this command? The agent is told you stopped it.",
+  cancel: "Cancel",
+  jobNotStopped: "Couldn't stop",
   nobodyWorking: "No agents working",
   begin: "New conversation",
   away: "While you were away",

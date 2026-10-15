@@ -1054,6 +1054,28 @@ export class Fold {
     }
   }
 
+  /** The World says no turn runs: what is still shown under way here
+   *  ended unseen, and stands as cut off. */
+  noTurnRuns(): void {
+    if (this.running.size === 0) return;
+    const at = Date.now();
+    for (const turn of this.running) {
+      for (const entry of this.byTurn.get(turn) ?? []) {
+        if (entry.kind === "tool" && entry.ended === null) {
+          entry.ended = { at, use: "cut" };
+          this.touch(entry);
+        }
+        if (entry.kind === "prose" && entry.writing) {
+          entry.writing = false;
+          this.touch(entry);
+        }
+      }
+    }
+    this.running.clear();
+    this.began.clear();
+    this.clock += 1;
+  }
+
   /** Whether a turn is under way: begun and not ended, or anything shown
    *  still happening. */
   busy(): boolean {

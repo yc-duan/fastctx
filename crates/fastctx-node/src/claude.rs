@@ -393,6 +393,15 @@ async fn look(node: &Arc<Node>, directory: &Path) {
                         .await?;
                         exchange::acknowledge_handover(directory, &ids, &turn)?;
                     }
+                    exchange::Reported::Replaced { ids } => {
+                        // Told again before they went in: they never will.
+                        let conversation = node.world.conversation(&resident);
+                        for id in ids {
+                            if let Ok(id) = fastctx_types::NoticeId::try_from(id.as_str()) {
+                                crate::inbox::settle(node, &conversation, &id)?;
+                            }
+                        }
+                    }
                     exchange::Reported::Stored { uuid } => {
                         node.claude.state.lock().expect("never poisoned").stored.insert(session.clone(), uuid);
                     }
@@ -986,6 +995,9 @@ pub async fn deliver(
     }
     Some(match alive(node, about.home.as_deref(), &session).await {
         Ok(true) => into_inbox(node, to, &session, directory, pending),
+        // What rides with the next turn wakes nobody: it waits for the turn
+        // that wakes it, and goes in then (`speech::along`).
+        Ok(false) if pending.delivery.notice.along().is_some() => Ok(Landed::Waiting { why: None, answered: true }),
         // Its supervisor stopped it: the words wake it, as they are, and its
         // next turn takes them.
         Ok(false) => {
@@ -1086,7 +1098,25 @@ fn into_inbox(
     if as_user {
         node.claude.handing(resident, &text);
     }
-    exchange::deliver(&session_directory, pending.delivery.id.as_str(), &text, as_user)
+    // Handed over before and not in yet, what this tells again goes in no
+    // more: the mod drops what it still holds of it.
+    let along = pending.delivery.notice.along();
+    let replaces: Vec<String> = match along {
+        Some(kind) => crate::inbox::pending(directory)
+            .map_err(|error| Failure::new(error.to_string()))?
+            .into_iter()
+            .filter(|kept| {
+                kept.delivery.id != pending.delivery.id
+                    && kept.state == PendingState::Handed
+                    && kept.delivery.notice.along() == Some(kind)
+                    && kept.delivery.at <= pending.delivery.at
+            })
+            .map(|kept| kept.delivery.id.as_str().to_string())
+            .collect(),
+        None => Vec::new(),
+    };
+    let how = exchange::Delivering { as_user, along, replaces: &replaces };
+    exchange::deliver(&session_directory, pending.delivery.id.as_str(), &text, how)
         .and_then(|()| crate::inbox::set_state(directory, &pending.delivery.id, PendingState::Handed))
         .map(|()| Landed::Handed { id: pending.delivery.id.clone() })
         .map_err(|error| Failure::new(format!("handing it to the session's plugin: {error}")))

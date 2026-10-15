@@ -284,8 +284,11 @@ export class MePage implements Page {
         for (const one of ordered) await change(one, { change: "logout" });
       },
       done: () => {
-        void store.refresh();
-        location.hash = link({ kind: "agents", machine: null });
+        // A phone in no network any more shows only the way in again.
+        void store.refresh().then(() => {
+          const left = !computer && !loginsOf(store.world.peek()?.accounts).length;
+          location.hash = link(left ? { kind: "login" } : { kind: "agents", machine: null });
+        });
       },
     });
   }

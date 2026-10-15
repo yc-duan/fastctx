@@ -48,7 +48,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use fastctx_types::session::{
-    Happened, Item, Part, SessionChange, SessionEvent, Step, StepStatus, TurnEnd, TurnHow, What,
+    Happened, Health, HealthKind, Item, Part, SessionChange, SessionEvent, Step, StepStatus, TurnEnd, TurnHow, What,
 };
 use jiff::Timestamp;
 use serde_json::{Value, json};
@@ -352,6 +352,10 @@ struct Thread {
     turn: Option<String>,
     submitted: bool,
     observed_submission: Option<String>,
+    /// A stop asked for while words were on their way into a turn whose id
+    /// was not known yet: that turn is stopped as soon as it is.
+    #[serde(skip)]
+    stop_wanted: bool,
     /// Turns reported started and not yet ended. A turn the app-server took
     /// but could not set up never starts, and the error it reports is its
     /// only end.
@@ -602,11 +606,11 @@ impl CodexHost {
             entry.turn.clone()
         };
         let response = server.ask("turn/start", params).await;
-        let observed = {
+        let (observed, stop) = {
             let mut state = self.lock();
             let entry = state.threads.entry(thread.to_string()).or_default();
             entry.submitted = false;
-            entry.observed_submission.take()
+            (entry.observed_submission.take(), std::mem::take(&mut entry.stop_wanted))
         };
         let answer = match response {
             Ok(answer) => answer,
@@ -637,15 +641,30 @@ impl CodexHost {
                 entry.last_message = None;
             }
         }
+        if stop && let Err(why) = server.request("turn/interrupt", json!({ "threadId": thread, "turnId": turn })).await
+        {
+            let health = Health { kind: HealthKind::Error, text: format!("the turn could not be stopped: {why}") };
+            self.emit(thread, Timestamp::now(), Happened::Health { turn: Some(turn.clone()), health });
+        }
         let joined = before.as_deref() == Some(turn.as_str());
         Ok(Sent { turn, joined })
     }
 
     /// Stops a thread's running turn; `false` when none runs. The turn's end
-    /// comes as usual, from the app-server.
+    /// comes as usual, from the app-server. Words on their way start a turn
+    /// whose id is not known yet: it is stopped once it is.
     pub async fn interrupt(self: &Arc<Self>, thread: &str) -> Result<bool, String> {
-        let Some(turn) = self.running_turn(thread) else {
-            return Ok(false);
+        let turn = {
+            let mut state = self.lock();
+            let Some(entry) = state.threads.get_mut(thread) else { return Ok(false) };
+            match entry.turn.clone() {
+                Some(turn) => turn,
+                None if entry.submitted => {
+                    entry.stop_wanted = true;
+                    return Ok(true);
+                }
+                None => return Ok(false),
+            }
         };
         let server = self.server().await?;
         server.request("turn/interrupt", json!({ "threadId": thread, "turnId": turn })).await?;

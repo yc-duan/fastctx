@@ -145,6 +145,21 @@ pub enum Notice {
     World { fact: WorldFact, text: String },
 }
 
+impl Notice {
+    /// What the World tells when the user changes a conversation's machines
+    /// and folders, or its project: it starts no turn, but goes in with the
+    /// next one, or into the one running where it next can; told again
+    /// before it went in, only the latest goes (`world-colleagues.md`).
+    /// Notices of one kind replace one another.
+    pub fn along(&self) -> Option<&'static str> {
+        match self {
+            Notice::World { fact: WorldFact::Focus { .. }, .. } => Some("focus"),
+            Notice::World { fact: WorldFact::Moved { .. }, .. } => Some("project"),
+            _ => None,
+        }
+    }
+}
+
 /// What the World tells a resident of its surroundings, as facts an
 /// interface can show without reading the words given to the model.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

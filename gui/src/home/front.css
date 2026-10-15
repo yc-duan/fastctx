@@ -470,6 +470,27 @@
   list-style: none;
 }
 
+/* A command and, at its end, the button that stops it. */
+.front-job-line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.front-job-line > .front-job {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.front-job-stop {
+  flex: none;
+  color: var(--text-3);
+}
+
+.front-jobs .jobs-confirm {
+  padding-left: var(--space-3);
+}
+
 .front-job {
   display: flex;
   align-items: center;

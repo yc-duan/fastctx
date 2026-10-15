@@ -106,3 +106,25 @@ pub fn processes(owned: &[PathBuf]) -> io::Result<Vec<ProcessIdentity>> {
     }
     Ok(found)
 }
+
+/// Whether the process serves a hub (`fastctx hub serve`). A hub on Linux runs
+/// the same image as the node, and is stopped with its own service, never
+/// swept with the node's processes.
+#[cfg(target_os = "linux")]
+pub fn serves_hub(process: &ProcessIdentity) -> io::Result<bool> {
+    let line = match std::fs::read(format!("/proc/{}/cmdline", process.pid)) {
+        Ok(line) => line,
+        Err(error) if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied) => {
+            return Ok(false);
+        }
+        Err(error) => return Err(error),
+    };
+    let mut arguments = line.split(|byte| *byte == 0).skip(1);
+    Ok(arguments.next() == Some(b"hub".as_slice()) && arguments.next() == Some(b"serve".as_slice()))
+}
+
+/// A hub elsewhere runs as its guardian's payload, an image no node uses.
+#[cfg(not(target_os = "linux"))]
+pub fn serves_hub(_process: &ProcessIdentity) -> io::Result<bool> {
+    Ok(false)
+}

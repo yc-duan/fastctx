@@ -295,6 +295,12 @@ pub(super) fn place(mut events: Vec<SessionEvent>, recorded: &[SessionEvent]) ->
                 _ => {}
             }
         }
+        // Words the World's telling went in beside are the speaker's alone.
+        if let Happened::Heard { text, .. } = &mut event.happened
+            && let Some(words) = claude::beside_framed(text)
+        {
+            *text = words.to_string();
+        }
         if let Happened::Heard { turn, text, message, .. } = &event.happened {
             let told = claude::is_framed(text)
                 || turn.as_deref().and_then(|turn| heard.get(turn)).is_some_and(|said| said.contains(&text.as_str()));

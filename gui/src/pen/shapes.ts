@@ -43,6 +43,12 @@ export function outline(
   { pressure = 0.25, taper = 0.12, taperStart = taper, taperEnd = taper }: { pressure?: number; taper?: number; taperStart?: number; taperEnd?: number } = {},
 ): string {
   if (points.length < 2) return "";
+  // A straight stroke given by its two ends gets points between them, so
+  // only its ends taper and the rest of it is as wide as asked.
+  if (points.length === 2) {
+    const [[x0, y0], [x1, y1]] = points;
+    points = [0, 0.25, 0.5, 0.75, 1].map((t): Point => [x0 + (x1 - x0) * t, y0 + (y1 - y0) * t]);
+  }
   const lengths = [0];
   for (let index = 1; index < points.length; index += 1) {
     lengths.push(lengths[index - 1] + Math.hypot(points[index][0] - points[index - 1][0], points[index][1] - points[index - 1][1]));

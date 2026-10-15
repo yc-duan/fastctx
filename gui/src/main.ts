@@ -1089,6 +1089,7 @@ function home(): Page {
     link: talkLink,
     head: head(""),
     newTalk: () => beginTalk(),
+    stopJob: live ? (job, machine) => stopJob(job, machine) : async () => {},
     // An answer from here goes in once, however long the way is closed, as
     // one from a notification does (`world-network.md`, 断开不是结束).
     answer: (address, asked, choice) => {
@@ -1507,9 +1508,7 @@ function liveTalk(address: Address): KeepablePage {
           return "failed" as const;
         });
     },
-    stop() {
-      void stop(address);
-    },
+    stop: () => stop(address),
     stopJob: (job, machine) => stopJob(job, machine),
     jobOutput: (job) => RemoteLines.open(job.machine, job.output, { kind: "output", job: job.job }),
     lines: (machine, path, decoding) => RemoteLines.open(machine, path, decoding),
@@ -2312,6 +2311,18 @@ applyTheme(() => {
   openPage?.contextChanged();
 });
 show(specimenPlace() ?? placeOf(location.hash));
+// A device in no network any more, however it left (it logged out, the
+// network was dissolved, its hub went away), has only the way in to show,
+// as when it first opened (`world-gui.md`).
+let deviceIn = loginsOf(store.world.peek()?.accounts).length > 0;
+effect(() => {
+  const world = store.world.get();
+  if (!world) return;
+  const inAny = loginsOf(world.accounts).length > 0;
+  const left = deviceIn && !inAny;
+  deviceIn = inAny;
+  if (live && asDevice && left && place.kind !== "login" && place.kind !== "data") replacePlace(link({ kind: "login" }));
+});
 // Becoming a managed machine, or no longer being one, changes the whole
 // window (`world-gui.md`, 受管机器上的界面).
 let shownAlone = !!managedOf(store.world.peek()?.accounts);
