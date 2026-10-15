@@ -33,6 +33,10 @@ pub fn run(args: CopyArgs) -> anyhow::Result<ExitCode> {
                 failed |= !report.problems.is_empty();
             }
             Ok((other, _)) => anyhow::bail!("the node answered something else: {other:?}"),
+            Err(error) if error.is::<crate::paths::Said>() => {
+                eprintln!("{error}");
+                failed = true;
+            }
             Err(error) => {
                 // Most failures already name the path they were about.
                 let error = format!("{error:#}");
@@ -45,16 +49,28 @@ pub fn run(args: CopyArgs) -> anyhow::Result<ExitCode> {
     Ok(if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS })
 }
 
-/// `MACHINE:PATH`, or a path on this machine made absolute. A prefix of one
-/// English letter is a Windows drive, not a machine.
+/// `MACHINE:PATH`, or a path on this machine, each absolute. A prefix of
+/// one English letter is a Windows drive, not a machine.
 fn place(text: &str) -> anyhow::Result<Place> {
     if let Some((machine, path)) = text.split_once(':')
         && !(machine.len() == 1 && machine.as_bytes()[0].is_ascii_alphabetic())
-        && let Ok(machine) = Written::parse(machine)
+        && let Ok(written) = Written::parse(machine)
     {
-        return Ok(Place { machine: Some(machine.name), hub: machine.hub, path: path.to_string() });
+        let bytes = path.as_bytes();
+        let rooted = bytes.first().is_some_and(|byte| matches!(byte, b'/' | b'\\'))
+            || bytes.len() >= 3
+                && bytes[0].is_ascii_alphabetic()
+                && bytes[1] == b':'
+                && matches!(bytes[2], b'/' | b'\\');
+        if !rooted {
+            return Err(crate::paths::Said(format!(
+                "fastctx copy {text}: fastctx copy takes absolute paths, and {path} on {machine} is not one."
+            ))
+            .into());
+        }
+        return Ok(Place { machine: Some(written.name), hub: written.hub, path: path.to_string() });
     }
-    let mut path = std::path::absolute(fastctx_platform::local_path(text)?)?.to_string_lossy().into_owned();
+    let mut path = crate::paths::absolute("fastctx copy", std::path::Path::new(text))?.to_string_lossy().into_owned();
     if cfg!(windows) {
         path = path.replace('\\', "/");
     }

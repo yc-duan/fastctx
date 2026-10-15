@@ -130,8 +130,9 @@ fn run_definition(writes_off: bool, woken: bool, codex: bool, machines: Option<&
     let (shell, copy, on, commands) = if alone {
         (RUN_SHELL_ALONE, RUN_COPY_ALONE, String::new(), RUN_COMMANDS_ALONE)
     } else {
-        (RUN_SHELL, RUN_COPY, format!("{RUN_ON}\n\n"), RUN_COMMANDS)
+        (RUN_SHELL, RUN_COPY, format!("{}\n\n", run_on(writes_off)), RUN_COMMANDS)
     };
+    let paths = run_paths(writes_off);
     let mut properties = json!({
         "command": {
             "type": "string",
@@ -155,7 +156,7 @@ fn run_definition(writes_off: bool, woken: bool, codex: bool, machines: Option<&
     json!({
         "name": "run",
         "description": format!(
-            "{exec}{}\n\n{shell}{start}\n{RUN_SHELL_REST}{ends}\n\n{RUN_FILES}{writing}{copy}\n\n{on}{together}\n\n{commands}",
+            "{exec}{}\n\n{shell}{start}\n{RUN_SHELL_REST}{ends}\n\nFiles:\n{paths}{RUN_FILES}{writing}{copy}\n\n{on}{together}\n\n{commands}",
             opening(machines),
         ),
         "inputSchema": {
@@ -227,8 +228,17 @@ const RUN_ENDS_ASKED: &str = "\
 const WAIT_DESCRIPTION: &str = "\
 The most seconds to wait for the script; the call answers as soon as it ends. 15 by default, at most 600. A script still running then goes on in the background by itself; 0 sends it there at once, before any output.";
 
+/// The rule every command for files keeps, said once for all of them that
+/// are on (`world-write.md`, `world-view.md`).
+fn run_paths(writes_off: bool) -> &'static str {
+    if writes_off {
+        "- `fastctx view` and `fastctx copy` take only absolute paths, of the machine they run on: /srv/app/main.rs, or C:/Users/me/app/main.rs on Windows. A relative path is refused, and nothing is read or written: the directory a script is in is often not the one you think.\n"
+    } else {
+        "- `fastctx view`, `edit`, `write` and `fastctx copy` take only absolute paths, of the machine they run on: /srv/app/main.rs, or C:/Users/me/app/main.rs on Windows. A relative path is refused, and nothing is read or written: the directory a script is in is often not the one you think.\n"
+    }
+}
+
 const RUN_FILES: &str = "\
-Files:
 - `fastctx view PATH...` shows files, each as its kind is read: text with line numbers; an image as the image itself, for you to see; a PDF as its text, page by page; Word, PowerPoint and Excel as their content, with Excel cells by address. Without a range, a file too big to show whole comes back as its first lines and an outline of where its headings and definitions are (a PDF's bookmarks, a deck's slide titles, a workbook's sheets), or, with no outline to give, as its beginning and its end; several files looked at together share what one file would get, the small ones shown whole. With a range (`--lines`, `--chars`, `--pages`, `--sheet`), that range is shown in full. When you are unsure what a file holds, look at it without a range first. It shows a lot at once, so give it all the files you need in one call rather than one by one; read the ones the work needs, not everything in sight. When not all of it fits, it says what was shown and what was not. Use it for any file you need to look at:
     fastctx view /srv/app/src/main.rs /srv/app/README.md
     fastctx view --lines 120-180 /srv/app/src/main.rs
@@ -252,7 +262,7 @@ const RUN_WRITING: &str = "\
   The SEARCH text must be in the file exactly once (`--all` replaces every one); all blocks apply, or none. Only the text replaced changes: the file keeps its encoding, BOM and line endings.
   When the file or your text has lines like these markers, write the block's markers longer than those lines, all three the same length, such as <<<<<<<<< SEARCH, ========= and >>>>>>>>> REPLACE.
 - `write PATH` makes standard input the whole file, in the file's encoding and line endings; a new file is UTF-8 (`-n`: no final newline).
-- `edit` and `write` take absolute paths. Quote the here-document delimiter, <<'EOF', so bash leaves the text as written.
+- Quote the delimiter of a here-document for `edit` or `write`, <<'EOF', so bash leaves the text as written.
 ";
 
 const RUN_COPY: &str = "\
@@ -261,17 +271,28 @@ const RUN_COPY: &str = "\
 const RUN_COPY_ALONE: &str = "\
 - `fastctx copy SOURCE... DEST` copies files and directories. DEST is what the copy becomes; end it with / to copy into that directory, as several sources need.";
 
-const RUN_ON: &str = "\
-Other machines: write `on MACHINE` before a command, or give it a script on standard input:
-    on laptop cargo test --release
+/// `on`, which runs a command or a script on another machine; with the
+/// World's write commands off, without the example that writes there.
+fn run_on(writes_off: bool) -> String {
+    let write = if writes_off {
+        ""
+    } else {
+        "\n    on server write /srv/app/config.json <<'EOF'\n    {\"port\": 8081}\n    EOF"
+    };
+    format!(
+        "\
+Other machines: write `on MACHINE` before a command to run it there. As with ssh, standard input is the command's when a command follows, and the script to run there when none does:
+    on laptop cargo test --release{write}
     on server <<'EOF'
     cd /srv/app && tail -n 200 app.log | grep ERROR
     EOF
 - The part sent there sees your script's variables, functions and shell options; PATH, HOME, LANG and the machine's other settings are its own.
-- Its output, exit code and standard input work like any command's, in pipelines and `if` too.
-- A script after `on MACHINE` goes on standard input, as a here-document; one quoted as a single word is refused.
+- Its output and exit code work like any command's, in pipelines and `if` too.
+- A script quoted as a single word is refused: give it as a here-document.
 - If the connection drops, it goes on there, and its end still reaches you.
-- Every command here works there too, such as `on server fastctx view /srv/app/app.ini`.";
+- Every command here works there too, with that machine's paths, such as `on server fastctx view /srv/app/app.ini`."
+    )
+}
 
 /// The commands as programs a script combines; the example of piping into
 /// `write` goes when the World's write commands are off, and those with

@@ -7,7 +7,6 @@ use std::process::ExitCode;
 use anyhow::{Context as _, bail};
 use clap::Args;
 use fastctx_client::Client;
-use fastctx_hands::write::absolute_path;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::write::{ApplyPatchRequest, EditBlocksRequest, WriteOp, WriteRequest};
 use fastctx_types::{Call, Reply, TownName};
@@ -38,7 +37,7 @@ pub struct WriteArgs {
 
 pub fn edit(args: EditArgs) -> anyhow::Result<ExitCode> {
     enabled()?;
-    let file_path = absolute_path(&args.path).map_err(anyhow::Error::msg)?;
+    let file_path = crate::paths::absolute("edit", &args.path)?;
     execute(WriteOp::EditBlocks(EditBlocksRequest {
         file_path,
         input: input()?,
@@ -49,7 +48,7 @@ pub fn edit(args: EditArgs) -> anyhow::Result<ExitCode> {
 
 pub fn write(args: WriteArgs) -> anyhow::Result<ExitCode> {
     enabled()?;
-    let file_path = absolute_path(&args.path).map_err(anyhow::Error::msg)?;
+    let file_path = crate::paths::absolute("write", &args.path)?;
     let mut content = input()?;
     if args.no_newline && content.ends_with('\n') {
         content.pop();

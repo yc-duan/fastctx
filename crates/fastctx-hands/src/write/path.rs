@@ -5,7 +5,10 @@ use std::path::{Path, PathBuf};
 pub fn absolute_path(path: &Path) -> Result<PathBuf, String> {
     let path = fastctx_platform::local_path(path).map_err(|error| error.to_string())?;
     if !path.is_absolute() {
-        return Err(format!("Use an absolute path, not a relative path: {}", path.display()));
+        return Err(format!(
+            "{} is a relative path; the World's file commands take only absolute paths, as /… or C:/… on Windows",
+            path.display()
+        ));
     }
     Ok(path)
 }

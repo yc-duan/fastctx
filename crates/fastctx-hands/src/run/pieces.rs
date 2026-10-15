@@ -134,6 +134,7 @@ mod tests {
                 pieces,
                 legacy: Vec::new(),
                 escaped_lines: 0,
+                failed: Vec::new(),
             },
             visited: Vec::new(),
             answered: None,

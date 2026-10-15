@@ -63,7 +63,8 @@ pub(super) fn refuse(line: usize, reason: impl std::fmt::Display) -> Failure {
 }
 
 pub(super) fn check(source: &str) -> Result<(), Failure> {
-    if !source.contains('<') {
+    let documents = source.contains('<');
+    if !documents && !PATH_COMMANDS.iter().any(|name| source.contains(name)) {
         return Ok(());
     }
     let mut scanner = Scanner {
@@ -78,8 +79,14 @@ pub(super) fn check(source: &str) -> Result<(), Failure> {
         descriptor: None,
         functions: std::collections::HashSet::new(),
     };
-    scanner.shell(None)?;
-    let mut uncertain = scanner.functions;
+    let scanned = scanner.shell(None);
+    // Only a here-document can be beyond the scanner; without one, a script
+    // it cannot follow is bash's to read, and its paths the commands' own.
+    if !documents && scanned.is_err() {
+        return Ok(());
+    }
+    scanned?;
+    let mut uncertain = std::mem::take(&mut scanner.functions);
     for command in &scanner.commands {
         if let (_, Some(name)) = command_kind(&command.words, &std::collections::HashSet::new())
             && name.text == b"alias"
@@ -91,6 +98,7 @@ pub(super) fn check(source: &str) -> Result<(), Failure> {
             }
         }
     }
+    relative_paths(&scanner, &uncertain)?;
     let mut sources = vec![Vec::new(); scanner.commands.len()];
     for &(producer, consumer) in &scanner.flows {
         sources[consumer].push(producer);
@@ -996,7 +1004,10 @@ enum Kind {
     Unknown,
 }
 
-fn command_kind<'a>(words: &'a [Word], uncertain: &std::collections::HashSet<Vec<u8>>) -> (Kind, Option<&'a Word>) {
+/// Where the command of `words` is named, past what only runs it: its
+/// assignments, `on MACHINE`, `command`, `exec`, `env`. `Err` with the word
+/// where that cannot be told, or with none when nothing is named.
+fn command_at(words: &[Word], uncertain: &std::collections::HashSet<Vec<u8>>) -> Result<usize, Option<usize>> {
     let mut index = 0;
     while let Some(word) = words.get(index) {
         if word.assignment {
@@ -1007,17 +1018,18 @@ fn command_kind<'a>(words: &'a [Word], uncertain: &std::collections::HashSet<Vec
     }
     loop {
         let Some(word) = words.get(index) else {
-            return (Kind::Unknown, None);
+            return Err(None);
         };
         if word.dynamic || uncertain.contains(&word.text) {
-            return (Kind::Unknown, Some(word));
+            return Err(Some(index));
         }
         match word.text.as_slice() {
             b"on" => index += 2,
             b"command" if words.get(index + 1).is_some_and(|word| matches!(word.text.as_slice(), b"-v" | b"-V")) => {
-                return (Kind::Other, Some(word));
+                return Ok(index);
             }
             b"exec" => {
+                let at = index;
                 index += 1;
                 while let Some(option) = words.get(index).filter(|word| word.text.starts_with(b"-")) {
                     match option.text.as_slice() {
@@ -1027,7 +1039,7 @@ fn command_kind<'a>(words: &'a [Word], uncertain: &std::collections::HashSet<Vec
                         }
                         b"-a" => index += 2,
                         b"-c" | b"-l" | b"-cl" | b"-lc" => index += 1,
-                        _ => return (Kind::Unknown, Some(word)),
+                        _ => return Err(Some(at)),
                     }
                 }
             }
@@ -1043,7 +1055,7 @@ fn command_kind<'a>(words: &'a [Word], uncertain: &std::collections::HashSet<Vec
                     if assignment(&word.text) || word.text == b"--" {
                         index += 1;
                     } else if word.text.starts_with(b"-") {
-                        return (Kind::Unknown, Some(word));
+                        return Err(Some(index));
                     } else {
                         break;
                     }
@@ -1052,10 +1064,21 @@ fn command_kind<'a>(words: &'a [Word], uncertain: &std::collections::HashSet<Vec
             _ => break,
         }
     }
-    let Some(word) = words.get(index) else {
-        return (Kind::Unknown, None);
+    if words.get(index).is_some() { Ok(index) } else { Err(None) }
+}
+
+/// The program a command names, without its directory.
+fn program(word: &Word) -> &[u8] {
+    word.text.rsplit(|&b| b == b'/' || b == b'\\').next().unwrap_or_default()
+}
+
+fn command_kind<'a>(words: &'a [Word], uncertain: &std::collections::HashSet<Vec<u8>>) -> (Kind, Option<&'a Word>) {
+    let index = match command_at(words, uncertain) {
+        Ok(index) => index,
+        Err(at) => return (Kind::Unknown, at.map(|at| &words[at])),
     };
-    let name = word.text.rsplit(|&b| b == b'/' || b == b'\\').next().unwrap_or_default();
+    let word = &words[index];
+    let name = program(word);
     if matches!(name, b"fastctx" | b"fastctx.exe") && words.get(index + 1).is_some_and(|word| word.dynamic) {
         return (Kind::Unknown, Some(word));
     }
@@ -1065,6 +1088,105 @@ fn command_kind<'a>(words: &'a [Word], uncertain: &std::collections::HashSet<Vec
                 !word.dynamic && matches!(word.text.as_slice(), b"edit" | b"write" | b"apply-patch")
             });
     (if writer { Kind::Writer } else { Kind::Other }, Some(word))
+}
+
+/// What the World's commands that take only absolute paths are called in a
+/// script: one that names none of them has nothing to check.
+const PATH_COMMANDS: [&str; 4] = ["edit", "write", "copy", "view"];
+
+/// Refuses a script that writes a relative path literally where a World
+/// command takes only absolute ones (`world-write.md`, `world-view.md`,
+/// `world-run.md`): `edit` and `write` their file, `fastctx copy` each end,
+/// `fastctx view` each file, here or after `on MACHINE`. A path the script
+/// builds as it runs is the command's to refuse.
+fn relative_paths(scanner: &Scanner, uncertain: &std::collections::HashSet<Vec<u8>>) -> Result<(), Failure> {
+    for command in &scanner.commands {
+        let words = &command.words;
+        let Ok(index) = command_at(words, uncertain) else { continue };
+        let (name, first) = match program(&words[index]) {
+            b"edit" => ("edit", index + 1),
+            b"write" => ("write", index + 1),
+            b"fastctx" | b"fastctx.exe" => match words.get(index + 1) {
+                Some(word) if !word.dynamic => match word.text.as_slice() {
+                    b"edit" => ("edit", index + 2),
+                    b"write" => ("write", index + 2),
+                    b"copy" => ("fastctx copy", index + 2),
+                    b"view" => ("fastctx view", index + 2),
+                    _ => continue,
+                },
+                _ => continue,
+            },
+            _ => continue,
+        };
+        let valued: &[&[u8]] = match name {
+            "edit" | "write" => &[b"--encoding"],
+            "fastctx view" => &[
+                b"--lines",
+                b"--chars",
+                b"--pages",
+                b"--sheet",
+                b"--sheet-index",
+                b"--range",
+                b"--encoding",
+                b"--files0-from",
+            ],
+            _ => &[],
+        };
+        let mut at = first;
+        let mut options = true;
+        while let Some(word) = words.get(at) {
+            at += 1;
+            // What the script builds could be an option with a value: the
+            // rest is the command's to read.
+            if word.dynamic {
+                break;
+            }
+            if options && word.text == b"--" {
+                options = false;
+                continue;
+            }
+            if options && word.text.len() > 1 && word.text.starts_with(b"-") {
+                if valued.contains(&word.text.as_slice()) {
+                    at += 1;
+                }
+                continue;
+            }
+            if let Some(why) = relative(name == "fastctx copy", &String::from_utf8_lossy(&word.text)) {
+                return Err(refuse(
+                    word.line,
+                    format!(
+                        "{name} takes only absolute paths, and {why}: name it from the root, as /\u{2026}, or C:/\u{2026} on Windows; nothing of the script ran"
+                    ),
+                ));
+            }
+            if matches!(name, "edit" | "write") {
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Why `text`, a path given to a World command, is relative; `None` when it
+/// is not. Bash makes a leading `~` the home directory; one of a copy's ends
+/// may be `MACHINE:PATH`, whose path nothing expands.
+fn relative(copy: bool, text: &str) -> Option<String> {
+    let rooted = |path: &str| {
+        let bytes = path.as_bytes();
+        bytes.first().is_some_and(|byte| matches!(byte, b'/' | b'\\'))
+            || bytes.len() >= 3
+                && bytes[0].is_ascii_alphabetic()
+                && bytes[1] == b':'
+                && matches!(bytes[2], b'/' | b'\\')
+    };
+    if copy
+        && let Some((machine, path)) = text.split_once(':')
+        && !machine.is_empty()
+        && !(machine.len() == 1 && machine.as_bytes()[0].is_ascii_alphabetic())
+    {
+        return (!rooted(path)).then(|| format!("{text} names {path} on {machine}, which is relative"));
+    }
+    (!rooted(text) && !text.starts_with('~')).then(|| format!("{text} is relative"))
 }
 
 fn assignment(word: &[u8]) -> bool {

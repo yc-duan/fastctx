@@ -156,7 +156,7 @@ impl Serialize for Answer<'_> {
             && let Reply::Run(run) = self.reply
         {
             let RunReply { machine, job, state, output, visited, .. } = run;
-            let OutputWindow { log, bytes, lines, pieces, legacy, escaped_lines } = output;
+            let OutputWindow { log, bytes, lines, pieces, legacy, escaped_lines, .. } = output;
             let mut pieces = Cow::Borrowed(pieces.as_slice());
             let legacy = match legacy.as_slice() {
                 [] => None,

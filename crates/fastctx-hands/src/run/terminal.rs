@@ -44,6 +44,13 @@ pub struct Decoding {
 
 pub const VIEW_MARK: &str = "\x1b]7701;fastctx;view\x07";
 pub const VIEW_END: &str = "\x1b]7701;fastctx;end\x07";
+/// Written by one of the World's commands that failed, before the command
+/// as it was given and a closing BEL: the run's answer names it whatever
+/// the script's exit status (`world-run.md`).
+pub const FAILED_MARK: &str = "\x1b]7701;fastctx;failed;";
+/// The most failed commands one answer names; the most bytes of each.
+const FAILED_KEPT: usize = 100;
+const FAILED_BYTES: usize = 300;
 
 const TEXT: u64 = 0;
 const LITERAL: u64 = 1;
@@ -86,6 +93,7 @@ pub struct Lines<R> {
     matches: Option<Vec<(std::ops::Range<u64>, u64)>>,
     text_tags: Vec<(std::ops::Range<usize>, u64)>,
     tagged_records: Vec<Vec<(std::ops::Range<usize>, u64)>>,
+    failed: Vec<String>,
 }
 
 impl<R: Read> Lines<R> {
@@ -127,6 +135,7 @@ impl<R: Read> Lines<R> {
             matches: None,
             text_tags: Vec::new(),
             tagged_records: Vec::new(),
+            failed: Vec::new(),
         }
     }
     pub(crate) fn tagged_at(input: R, raw_start: u64, ranges: Vec<(std::ops::Range<u64>, u64)>) -> Self {
@@ -313,6 +322,10 @@ impl<R: Read> Lines<R> {
     pub(super) fn closed_views(&self) -> &ViewSet {
         &self.closed_views
     }
+    /// The World's commands that said they failed, as they were given.
+    pub(super) fn failed(&self) -> &[String] {
+        &self.failed
+    }
     pub(super) fn unfinished(&self) -> Option<super::unfinished::Unfinished> {
         self.tracker.unfinished()
     }
@@ -398,6 +411,12 @@ impl<R: Read> Lines<R> {
             self.change_view(true)?;
         } else if !apc && prefix == VIEW_END.as_bytes()[2..VIEW_END.len() - 1] {
             self.change_view(false)?;
+        } else if !apc && self.failed.len() < FAILED_KEPT {
+            let mark = &FAILED_MARK.as_bytes()[2..];
+            if body.len() > mark.len() && body.slice(0..mark.len()).to_vec()? == mark {
+                let named = body.slice(mark.len()..body.len().min(mark.len() + FAILED_BYTES)).to_vec()?;
+                self.failed.push(String::from_utf8_lossy(&named).into_owned());
+            }
         }
         for bytes in body.chunks() {
             self.number += memchr::memchr_iter(b'\n', &bytes?).count() as u64;

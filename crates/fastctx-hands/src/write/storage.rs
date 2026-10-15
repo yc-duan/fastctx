@@ -37,7 +37,10 @@ impl Target {
         let native = fastctx_platform::local_path(path).map_err(|e| e.to_string())?;
         let path = native.as_path();
         if !path.is_absolute() {
-            return Err(format!("Use an absolute path, not a relative path: {}", path.display()));
+            return Err(format!(
+                "{} is a relative path; the World's file commands take only absolute paths, as /… or C:/… on Windows",
+                path.display()
+            ));
         }
         check_policy(path, writer)?;
         let resolved = canonical_path(path).map_err(|e| error(path, e))?;

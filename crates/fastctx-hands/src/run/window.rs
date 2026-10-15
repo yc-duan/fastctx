@@ -159,7 +159,9 @@ fn snapshot(log: &Path, through: Option<u64>) -> io::Result<OutputWindow> {
             reason: format!("{}; raw bytes: {}", unfinished.description(), log.display()),
         });
     }
-    Ok(assembly.finish(log, size, lines.raw_lines()))
+    let mut window = assembly.finish(log, size, lines.raw_lines());
+    window.failed = lines.failed().to_vec();
+    Ok(window)
 }
 
 /// Whether the log holds the mark `fastctx view` writes first, read in
@@ -566,6 +568,7 @@ impl Assembly {
                 .map(|(encoding, lines)| LegacyLines { encoding, lines: lines.count })
                 .collect(),
             escaped_lines: self.escaped.count,
+            failed: Vec::new(),
         }
     }
 }

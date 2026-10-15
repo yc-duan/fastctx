@@ -127,6 +127,17 @@ fn facts(reply: &RunReply) -> String {
 
 fn output_facts(output: &OutputWindow) -> Vec<String> {
     let mut facts = Vec::new();
+    // Whatever the shell's status: a script goes on past a command that
+    // failed, and its output may bury what that command said.
+    match output.failed.as_slice() {
+        [] => {}
+        [one] => facts.push(format!("{one} failed")),
+        many => {
+            let named: Vec<&str> = many.iter().take(3).map(String::as_str).collect();
+            let more = if many.len() > 3 { format!(", and {} more", many.len() - 3) } else { String::new() };
+            facts.push(format!("{} World commands failed: {}{more}", many.len(), named.join(", ")));
+        }
+    }
     for legacy in &output.legacy {
         let lines = if legacy.lines == 1 { "1 line".to_string() } else { format!("{} lines", legacy.lines) };
         facts.push(format!("{lines} decoded as {}", legacy.encoding));

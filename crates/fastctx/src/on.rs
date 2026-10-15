@@ -34,8 +34,8 @@ pub const USAGE: &str = "on MACHINE COMMAND [ARG...]
        ...the script...
        EOF";
 
-pub const AFTER_HELP: &str = "The command's words are sent exactly as this shell expanded them. Without a command, standard input is the script, read only by that machine's bash.
-The part sent there sees your script's variables, functions and shell options; PATH, HOME, LANG and the machine's other settings are its own. Its output, exit code and standard input work like any command's, in pipelines and `if` too. A script quoted as one word is refused: use a here-document.
+pub const AFTER_HELP: &str = "The command's words are sent exactly as this shell expanded them. As with ssh, standard input is the command's when a command follows, and the script to run there, read only by that machine's bash, when none does.
+The part sent there sees your script's variables, functions and shell options; PATH, HOME, LANG and the machine's other settings are its own. Its output and exit code work like any command's, in pipelines and `if` too. A script quoted as one word is refused: use a here-document.
 If the connection drops, it goes on there and its end still reaches you. It exits 255 when it could not reach that machine.";
 
 /// Run part of a script on another machine of the World, as the World's

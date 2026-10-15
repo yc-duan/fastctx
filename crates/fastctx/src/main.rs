@@ -438,16 +438,16 @@ fn main() -> ExitCode {
         #[cfg(windows)]
         Command::ServiceCheck { name } => fastctx_install::service::check_guardian(&name),
         Command::Serve { writer: _, writes } => serve(writes == "off"),
-        Command::View(args) => return finish(view::run(args)),
-        Command::Edit(args) => return finish(writers::edit(args)),
-        Command::Write(args) => return finish(writers::write(args)),
-        Command::ApplyPatch => return finish(writers::apply_patch()),
+        Command::View(args) => return told(finish(view::run(args))),
+        Command::Edit(args) => return told(finish(writers::edit(args))),
+        Command::Write(args) => return told(finish(writers::write(args))),
+        Command::ApplyPatch => return told(finish(writers::apply_patch())),
         Command::W(args) => w::run(args),
         Command::On(args) => return on::run(args),
         Command::Stop(args) => return finish(stop::run(args)),
         Command::Wait(args) => return finish(wait::run(args)),
         Command::Nodes => world::nodes(),
-        Command::Copy(args) => return finish(copy::run(args)),
+        Command::Copy(args) => return told(finish(copy::run(args))),
         Command::Talk(args) => talk::run(args),
         Command::Attach(args) => attach::run(args),
         Command::Project(command) => project::run(command),
@@ -530,9 +530,43 @@ fn command_line() -> clap::Command {
 /// A command that sets its own exit code, or fails.
 fn finish(result: anyhow::Result<ExitCode>) -> ExitCode {
     result.unwrap_or_else(|error| {
-        eprintln!("fastctx: {error:#}");
+        if error.is::<paths::Said>() {
+            eprintln!("{error}");
+        } else {
+            eprintln!("fastctx: {error:#}");
+        }
         ExitCode::FAILURE
     })
+}
+
+/// One of the World's file commands, inside a `run`: when it fails, the
+/// run's answer names it as it was given, whatever the script's exit status
+/// (`world-run.md`).
+fn told(code: ExitCode) -> ExitCode {
+    if code == ExitCode::SUCCESS || std::env::var_os("FASTCTX_MACHINE").is_none() {
+        return code;
+    }
+    let mut args = std::env::args().skip(1);
+    let mut given = match args.next().as_deref() {
+        Some(name @ ("edit" | "write")) => name.to_string(),
+        Some("apply-patch") => "apply_patch".to_string(),
+        Some(name) => format!("fastctx {name}"),
+        None => return code,
+    };
+    for arg in args {
+        let arg: String = arg.chars().filter(|character| !character.is_control()).collect();
+        if arg.is_empty() || arg.contains([' ', '\'', '"']) {
+            given.push_str(&format!(" '{}'", arg.replace('\'', "'\\''")));
+        } else {
+            given.push(' ');
+            given.push_str(&arg);
+        }
+    }
+    let mark = fastctx_hands::run::terminal::FAILED_MARK;
+    let mut out = std::io::stdout();
+    let _ = std::io::Write::write_all(&mut out, format!("{mark}{given}\x07").as_bytes());
+    let _ = std::io::Write::flush(&mut out);
+    code
 }
 
 fn node(

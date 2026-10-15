@@ -55,7 +55,7 @@ pub fn run(args: ViewArgs) -> anyhow::Result<std::process::ExitCode> {
         if list.as_os_str() == "-" {
             std::io::stdin().read_to_end(&mut bytes)?;
         } else {
-            let list = fastctx_platform::local_path(list)?;
+            let list = crate::paths::absolute("fastctx view", list)?;
             bytes = std::fs::read(&list).with_context(|| format!("reading {}", list.display()))?;
         }
         for name in bytes.split(|&b| b == 0).filter(|name| !name.is_empty()) {
@@ -65,6 +65,9 @@ pub fn run(args: ViewArgs) -> anyhow::Result<std::process::ExitCode> {
     }
     if paths.is_empty() {
         bail!("name the files to look at, such as: fastctx view -- /path/to/file");
+    }
+    for path in &paths {
+        crate::paths::absolute("fastctx view", path)?;
     }
     let lines = args.lines.as_deref().map(|text| parse_range(text, "lines")).transpose()?;
     let chars = args.chars.as_deref().map(|text| parse_range(text, "chars")).transpose()?;

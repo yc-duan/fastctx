@@ -126,6 +126,10 @@ pub struct OutputWindow {
     /// Shown lines holding bytes that decode in no known encoding; those
     /// bytes appear as `\xNN`.
     pub escaped_lines: u64,
+    /// The World's commands in it that failed, each as it was given, in the
+    /// order they failed, wherever in the output they did.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failed: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
