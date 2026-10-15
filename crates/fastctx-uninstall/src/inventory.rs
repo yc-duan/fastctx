@@ -392,6 +392,7 @@ pub fn preview(mut installation: Installation, everything: bool) -> anyhow::Resu
                     | "hub-services.json"
                     | "upgrade-clean.lock"
                     | "cache"
+                    | "updates"
             )
         {
             add(
