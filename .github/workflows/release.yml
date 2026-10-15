@@ -69,6 +69,11 @@ jobs:
       RUSTFLAGS: '-C target-feature=+crt-static'
     steps:
       - uses: actions/checkout@v4
+      # These machines scan every file as it is written, and keep scanning a build's thousands of new files
+      # long after it: what runs next waits behind them. The build's own files need no scan.
+      - name: Keep the antivirus off the build's own files
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup"
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           targets: ${{ matrix.target }}
@@ -461,6 +466,11 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+      # These machines scan every file as it is written, and keep scanning a build's thousands of new files
+      # long after it: what runs next waits behind them. The build's own files need no scan.
+      - name: Keep the antivirus off the build's own files
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup"
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: rust-docs
