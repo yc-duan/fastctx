@@ -41,7 +41,7 @@ export interface ProjectOptions {
   more?: { label: string; shown(town: string): boolean; open(town: string, name: string, anchor: HTMLElement): void; sharedBy(town: string): string | null };
 }
 
-type Tab = "here" | "pages" | "places";
+type Tab = "here" | "instructions" | "pages" | "places";
 
 export class ProjectPage {
   readonly element: HTMLElement;
@@ -103,7 +103,6 @@ export class ProjectPage {
     this.title.textContent = record.name;
     const sharedBy = this.options.more?.sharedBy(map.town) ?? null;
     const intro = `
-      <p class="project-lede">${escape(record.what)}</p>
       <p class="project-facts">${factRow(
         [...record.machines, words.opened(this.writer(map.opened.by), map.opened.on, words.day(new Date(map.opened.at))), ...(sharedBy ? [sharedBy] : [])].map(escape),
       )}</p>`;
@@ -119,6 +118,13 @@ export class ProjectPage {
                 .map((job) => this.job(job, known, now))
                 .join("")}</ul>`
             : ""),
+      ],
+      [
+        "instructions",
+        words.instructions,
+        record.what.trim()
+          ? `<p class="project-instructions">${escape(record.what.trim())}</p>`
+          : `<p class="quiet">${escape(words.noInstructions)}</p>`,
       ],
       ["pages", this.options.pageWords.pages, this.pages(map.town, map.pages, now)],
       ["places", words.places, record.places.length ? this.places(map) : `<p class="quiet">${escape(words.noPlaces)}</p>`],

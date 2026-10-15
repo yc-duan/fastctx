@@ -14,7 +14,8 @@ use crate::ask;
 pub enum ProjectCommand {
     /// The projects this machine is part of.
     List,
-    /// A project's record: what it is, its machines, where things are.
+    /// A project's record: the user's instructions for it, its machines,
+    /// where things are.
     Show {
         /// The project; without it, the one you work in.
         #[arg(value_name = "NAME")]
@@ -66,8 +67,10 @@ pub struct Fields {
     /// The project's name, in any words.
     #[arg(long)]
     name: Option<String>,
-    /// What it is for, in a sentence or two.
-    #[arg(long)]
+    /// The user's instructions for all work in the project, which every
+    /// agent working in it is given: what it is for, how to work in it,
+    /// what to keep in mind. Written as the user words them.
+    #[arg(long, value_name = "TEXT")]
     what: Option<String>,
     /// The machines the project spans, separated by commas. Opening a
     /// project without it, the project spans this machine; editing without
@@ -169,7 +172,10 @@ fn list(here: &MachineName, towns: &[TownSummary]) -> String {
         let record = &town.record;
         let machines: Vec<&str> = record.machines.iter().map(|machine| machine.as_str()).collect();
         text.push_str(&format!("{}  {} · {}\n", town.town, record.name, machines.join(", ")));
-        text.push_str(&format!("    {}\n", record.what));
+        // The first line of its instructions, which `show` gives whole.
+        if let Some(first) = record.what.lines().map(str::trim).find(|line| !line.is_empty()) {
+            text.push_str(&format!("    {first}\n"));
+        }
     }
     text
 }
@@ -177,7 +183,10 @@ fn list(here: &MachineName, towns: &[TownSummary]) -> String {
 fn show(title: &str, record: &Record, opened: &Stamp) -> String {
     let mut text = format!("=== {title} ===\n");
     text.push_str(&format!("Name: {}\n", record.name));
-    text.push_str(&format!("What it is: {}\n", record.what));
+    let instructions = record.what.trim();
+    if !instructions.is_empty() {
+        text.push_str(&format!("The user's instructions for all work in this project; follow them:\n{instructions}\n"));
+    }
     let machines: Vec<&str> = record.machines.iter().map(|machine| machine.as_str()).collect();
     text.push_str(&format!("Machines: {}\n", machines.join(", ")));
     if record.places.is_empty() {

@@ -1,7 +1,8 @@
 //! What a resident is told of where it lives, in the head of the answers of
 //! the World's tools (`world-projects.md`, `world-map.md`): who and where it
-//! is, the first time; and what its town gained since it last heard,
-//! without sending its record again.
+//! is, with its project's record, the first time; and its record again
+//! whenever it changed since it last heard, which replaces the one it was
+//! given.
 
 use std::io;
 
@@ -22,7 +23,7 @@ pub fn notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Option<He
     };
     let now = Heard { town: town.clone(), ledger };
     let notes = match node.residents.heard(id) {
-        None => vec![introduction(id, &here, town.as_ref())],
+        None => vec![introduction(&node.world, id, &here, town.as_ref())?],
         // It moved: entering gave it the new town's record.
         Some(heard) if heard.town != town => Vec::new(),
         Some(heard) if heard.ledger >= ledger => return Ok((Vec::new(), None)),
@@ -37,20 +38,24 @@ pub fn notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Option<He
     Ok((notes, Some(now)))
 }
 
-fn introduction(id: &ResidentId, here: &MachineName, town: Option<&TownName>) -> String {
-    match town {
-        Some(town) => {
-            format!("=== you are {id} on {here}, working in the project {town}; its record: `fastctx project show` ===")
-        }
+fn introduction(world: &WorldDir, id: &ResidentId, here: &MachineName, town: Option<&TownName>) -> io::Result<String> {
+    Ok(match town {
+        Some(town) => match super::instructions::text(world, town)? {
+            Some(record) => format!("=== you are {id} on {here}, working in the project {town} ===\n{record}"),
+            None => format!(
+                "=== you are {id} on {here}, working in the project {town}; its record: `fastctx project show` ==="
+            ),
+        },
         // When to enter a project is said once, in the session's guidance.
         None => format!("=== you are {id} on {here}, in no project ==="),
-    }
+    })
 }
 
-/// One line saying the town's record changed after `after`, leaving out
-/// what `me` wrote; `None` when it did not. Journals are project memory,
-/// which is not wired in until it is finished (`world-journals.md`), so
-/// their news is not told.
+/// The town's record, when it changed after `after` other than by `me`;
+/// `None` when it did not. It replaces the record the resident was given,
+/// with the user's instructions in it. Journals are project memory, which
+/// is not wired in until it is finished (`world-journals.md`), so their
+/// news is not told.
 fn news(world: &WorldDir, town: &TownName, after: u64, me: &Address) -> io::Result<Option<String>> {
     let mine = |by: &Writer| matches!(by, Writer::Resident { address } if address == me);
     let ledger = world.town(town).ledger();
@@ -66,8 +71,14 @@ fn news(world: &WorldDir, town: &TownName, after: u64, me: &Address) -> io::Resu
             }
         }
     }
-    Ok(record.map(|version| {
-        format!("=== the project {town} changed since you last heard: its record is at version {version}; read it with `fastctx project show` ===")
+    let Some(version) = record else { return Ok(None) };
+    Ok(Some(match super::instructions::text(world, town)? {
+        Some(record) => format!(
+            "=== the project {town} changed since you last heard; its record now, which replaces the one you were given ===\n{record}"
+        ),
+        None => format!(
+            "=== the project {town} changed since you last heard: its record is at version {version}; read it with `fastctx project show` ==="
+        ),
     }))
 }
 

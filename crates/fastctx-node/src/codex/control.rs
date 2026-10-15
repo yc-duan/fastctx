@@ -278,7 +278,7 @@ async fn fork(
     node.residents.create(&node.world, about, town, now).map_err(|error| {
         Failure::new(format!("Codex created thread {fork}, but recording its resident {id} failed: {error}"))
     })?;
-    node.residents.set_heard(&id, heard);
+    node.residents.set_instructed(&id, heard);
     let event = SessionEvent {
         at,
         happened: Happened::Changed {

@@ -100,6 +100,8 @@ pub(crate) async fn directory(
         if node.residents.about(&id).is_some_and(|(about, _)| about.world_started) {
             crate::focus::hand_to_session(&node.world.conversation(&id), &source)?;
         }
+        // Its project's record, with the user's instructions for it.
+        crate::town::instructions::hand_to_session(node, &id, &source)?;
         if registration.process.is_some() {
             fastctx_platform::publish(
                 &source.join("session.json"),

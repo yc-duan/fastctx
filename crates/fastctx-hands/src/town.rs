@@ -6,7 +6,7 @@ use fastctx_types::project::{
     Attachment, AttachmentKind, Description, EntryStamp, EntryView, JournalSummary, JournalView, Kept, MapView, Record,
     Stamp, Writer,
 };
-use fastctx_types::{EntryId, MachineName};
+use fastctx_types::{EntryId, MachineName, TownName};
 use jiff::Timestamp;
 
 /// How journals are kept, as every resident is told it: with the town it
@@ -45,13 +45,24 @@ them: test them, and add what you see. When your entry answers an earlier
 one, cite that entry's id. Never change an entry, yours included; add a new
 one. Journal files are read-only copies; write only through `fastctx journal`.";
 
-/// The town's record as a resident reads it: what it is, its machines,
-/// where things are, and who opened and last changed it.
+/// The town's record as a resident reads it: the user's instructions for
+/// all work in it, its machines, where things are, and who opened and last
+/// changed it.
 pub fn record(view: &MapView) -> String {
-    let record = &view.record;
-    let mut text =
-        format!("=== project {} ({}), version {} of its record ===\n", view.town, record.name, record.version);
-    text.push_str(&format!("What it is: {}\n", record.what));
+    record_of(&view.town, &view.record, &view.opened)
+}
+
+/// The record of `town` as a resident reads it, `opened` saying who opened
+/// the town (`record`).
+pub fn record_of(town: &TownName, record: &Record, opened: &Stamp) -> String {
+    let mut text = format!("=== project {town} ({}), version {} of its record ===\n", record.name, record.version);
+    // What the user wrote for whoever works here, as they wrote it (须知).
+    let instructions = record.what.trim();
+    if !instructions.is_empty() {
+        text.push_str("The user's instructions for all work in this project; follow them:\n");
+        text.push_str(instructions);
+        text.push('\n');
+    }
     text.push_str(&format!("Machines: {}\n", names(&record.machines)));
     if record.places.is_empty() {
         text.push_str("Where things are: nothing listed\n");
@@ -61,7 +72,6 @@ pub fn record(view: &MapView) -> String {
             text.push_str(&format!("  {}: {} {}\n", place.what, place.location.machine, place.location.path));
         }
     }
-    let opened = &view.opened;
     text.push_str(&format!("Opened by {} on {}, {}", writer(&opened.by, &opened.on), opened.on, day(opened.at)));
     if record.version > 1 {
         text.push_str(&format!(

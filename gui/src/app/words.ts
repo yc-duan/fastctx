@@ -814,6 +814,8 @@ export interface ProjectFormWords {
   slugHint: string;
   what: string;
   whatPlaceholder: string;
+  /** What the instructions are and how agents are given them. */
+  whatTip: string;
   machines: string;
   places: string;
   placesHint: string;
@@ -842,8 +844,9 @@ export const zhProjectForm: ProjectFormWords = {
   namePlaceholder: "例如 mark50 研发",
   slug: "短名",
   slugHint: "小写字母开头，可含数字和连字符；创建后不可修改",
-  what: "简介",
-  whatPlaceholder: "这个项目做什么",
+  what: "须知",
+  whatPlaceholder: "这个项目里的智能体每次都会读到：它是做什么的、怎么做、要注意什么",
+  whatTip: "写给在这个项目里干活的智能体：要照做的规矩，要知道的事。从 Fastctx 开的对话一开始就带着它，压缩之后也还在；改了以后，正在干活的对话下一次调用世界的工具时，会收到新的全文。",
   machines: "机器",
   places: "位置",
   placesHint: "每行一项：名称、机器、绝对路径",
@@ -871,8 +874,9 @@ export const enProjectForm: ProjectFormWords = {
   namePlaceholder: "e.g. Mark 50 research",
   slug: "Short name",
   slugHint: "Starts with a lowercase letter; digits and hyphens allowed; can't be changed later",
-  what: "Description",
-  whatPlaceholder: "What this project is for",
+  what: "Instructions",
+  whatPlaceholder: "What every agent here reads each time: what this project is for, how to work in it, what to watch out for",
+  whatTip: "For every agent working in this project: what to follow and what to know. Conversations opened from Fastctx start with them and keep them after compacting; once they change, a conversation at work gets the new text with its next call of a World tool.",
   machines: "Machines",
   places: "Locations",
   placesHint: "One per line: name, machine, absolute path",

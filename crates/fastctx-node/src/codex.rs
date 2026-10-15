@@ -33,7 +33,7 @@ pub async fn adopt(node: &Arc<Node>) {
         }
         // What it was told of its town when it was started, it still has.
         match crate::colleagues::heard_now(node, resident.town.as_ref()) {
-            Ok(heard) => node.residents.set_heard(&about.id, heard),
+            Ok(heard) => node.residents.set_instructed(&about.id, heard),
             Err(error) => node.log.line(format_args!("reading {}'s town: {error}", about.id)),
         }
         if about.host.agent.as_str() != "codex" {

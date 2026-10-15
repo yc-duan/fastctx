@@ -62,7 +62,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     let id = node.residents.new_id(&source.host.agent)?;
     let super::Command { program, env, .. } = super::command(node, source.home.as_deref())?;
     let (words, heard) =
-        crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &source.acting).await?;
+        crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &source.acting, false).await?;
     let directory = node.world.conversation(&id);
     fastctx_platform::ensure_private_dir(directory.path()).map_err(failure)?;
     let cwd = crate::colleagues::standing(node, town.as_ref())?;
@@ -86,7 +86,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     now.activity = fastctx_types::residents::Activity::Busy;
     node.residents.create(&node.world, about, town, now).map_err(failure)?;
     let completion = async {
-        node.residents.set_heard(&id, heard);
+        node.residents.set_instructed(&id, heard);
         crate::session_options::keep(
             node,
             &id,

@@ -186,8 +186,8 @@ export class ProjectForm {
           <input name="slug" autocomplete="off" required pattern="[a-z][a-z0-9-]{0,31}" spellcheck="false" class="mono" value="${escape(kept.slug)}">
           <span class="field-hint">${escape(words.slugHint)}</span></label>`
         }
-        <label class="field"><span class="field-label">${escape(words.what)}</span>
-          <textarea name="what" rows="2" required placeholder="${escape(words.whatPlaceholder)}">${escape(kept.what)}</textarea></label>
+        <div class="field"><span class="field-label">${escape(words.what)}<span class="field-tip" tabindex="0" aria-label="${escape(words.whatTip)}">?<span class="field-tip-card" role="tooltip">${escape(words.whatTip)}</span></span></span>
+          <textarea name="what" rows="6" required aria-label="${escape(words.what)}" placeholder="${escape(words.whatPlaceholder)}">${escape(kept.what)}</textarea></div>
         <div class="field"><span class="field-label">${escape(words.machines)}</span>
           <div class="choice-options" role="group" aria-label="${escape(words.machines)}">${names
             .map(

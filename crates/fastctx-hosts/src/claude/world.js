@@ -869,13 +869,23 @@ async function transcript($, context, path) {
 // the conversation. None where the node keeps none.
 const FOCUS_BLOCK = 'machinesAndFolders'
 
-async function focus($, context) {
+// The record of the project the conversation works in, the user's
+// instructions for all work in it first, as the node keeps it in the
+// session's directory, up to date: read into the context the same way.
+// None where it works in no project.
+const PROJECT_BLOCK = 'projectRecord'
+
+async function blockText($, context, name) {
   try {
-    const text = await $.fs.read(context.dir + '/focus.md')
+    const text = await $.fs.read(context.dir + '/' + name)
     return text.trim() === '' ? null : text
   } catch (error) {
     return null
   }
+}
+
+async function focus($, context) {
+  return blockText($, context, 'focus.md')
 }
 
 async function session($, registry, id, renew = false) {
@@ -1005,9 +1015,14 @@ export function register(on) {
   on('prompt.context', async ($, e, next) => {
     if (await removed($)) return next(e)
     const result = await next(e)
-    const text = await focus($, await session($, registry, await $.session.id()))
-    if (text === null) return result
-    return { ...result, blocks: [...result.blocks.filter((block) => block.name !== FOCUS_BLOCK), { name: FOCUS_BLOCK, text }] }
+    const context = await session($, registry, await $.session.id())
+    const added = [
+      { name: FOCUS_BLOCK, text: await focus($, context) },
+      { name: PROJECT_BLOCK, text: await blockText($, context, 'project.md') },
+    ].filter((block) => block.text !== null)
+    if (!added.length) return result
+    const names = added.map((block) => block.name)
+    return { ...result, blocks: [...result.blocks.filter((block) => !names.includes(block.name)), ...added] }
   }).catch(($, e, next) => continueWithoutWorld($, 'prompt.context', e, next))
   on('prompt.section', async ($, e, next) => {
     if (await removed($)) return next(e)

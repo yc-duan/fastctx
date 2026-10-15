@@ -178,6 +178,11 @@ struct Live {
     /// to exactly those whose words went into it.
     /// `None` until it is told who and where it is.
     heard: Option<Heard>,
+    /// What the instructions its session started with tell it of its town,
+    /// which is all it knows of it after compacting; `None` for a session
+    /// that started with none of the World's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    instructed: Option<Heard>,
 }
 
 impl Live {
@@ -187,7 +192,18 @@ impl Live {
             .flat_map(|now| now.owed.iter())
             .map(|(turn, readers)| (turn.clone(), readers.iter().cloned().collect()))
             .collect();
-        Self { removed: None, about, places, inbox: None, connections: 0, claude_here: false, now, owed, heard: None }
+        Self {
+            removed: None,
+            about,
+            places,
+            inbox: None,
+            connections: 0,
+            claude_here: false,
+            now,
+            owed,
+            heard: None,
+            instructed: None,
+        }
     }
 
     fn town(&self) -> Option<TownName> {
@@ -347,6 +363,26 @@ impl Residents {
     pub fn set_heard(&self, id: &ResidentId, heard: Heard) {
         if let Some(live) = self.lock().live.get_mut(id) {
             live.heard = Some(heard);
+        }
+    }
+
+    /// The session of `id` starts with instructions that tell it `heard` of
+    /// its town: it has heard that, and is back there when it compacts.
+    pub fn set_instructed(&self, id: &ResidentId, heard: Heard) {
+        if let Some(live) = self.lock().live.get_mut(id) {
+            live.heard = Some(heard.clone());
+            live.instructed = Some(heard);
+        }
+    }
+
+    /// The session of `id` compacted its conversation, and knows of its town
+    /// only what its instructions tell it: what changed since is told again,
+    /// as all of it is to one whose instructions told it of another town or
+    /// of none.
+    pub fn compacted(&self, id: &ResidentId) {
+        if let Some(live) = self.lock().live.get_mut(id) {
+            let town = live.town();
+            live.heard = live.instructed.clone().filter(|heard| heard.town == town);
         }
     }
 

@@ -1277,7 +1277,7 @@ pub async fn open_here(
     // machine (`background::Start::assisting`).
     let assisting = node.works_here(&opened.acting).is_err();
     let (words, heard) =
-        crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &opened.acting).await?;
+        crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &opened.acting, false).await?;
     // What it is told of its machines and folders its plugin adds to the
     // first message's context, from the session's own directory.
     crate::focus::open(node, &node.world.conversation(&id), &opened.acting, &opened.focus).await?;
@@ -1316,7 +1316,7 @@ pub async fn open_here(
     node.residents
         .create(&node.world, about, town.clone(), now)
         .map_err(|error| Failure::new(format!("recording the session: {error}")))?;
-    node.residents.set_heard(&id, heard);
+    node.residents.set_instructed(&id, heard);
     crate::session_options::keep(node, &id, &options)?;
     let directory = node.world.conversation(&id);
     let settings = directory.claude_settings();

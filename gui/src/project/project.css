@@ -83,6 +83,16 @@
   color: var(--text);
 }
 
+/* The user's instructions for the project, as they wrote them. */
+.project-instructions {
+  margin: 0;
+  font-size: var(--body-size);
+  line-height: var(--leading-prose);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .project-intro .project-facts {
   margin: var(--space-2) 0 0;
 }

@@ -239,7 +239,7 @@ pub async fn ask_here(
     node.residents
         .create(&node.world, about.clone(), town.clone(), now)
         .map_err(|error| Failure::new(format!("recording the colleague: {error}")))?;
-    node.residents.set_heard(&id, heard);
+    node.residents.set_instructed(&id, heard);
     crate::codex::claim(node, &thread, &id).await;
     let directory = node.world.conversation(&id);
     let asked = MessageLine { at: born_at, what: MessageKind::Asked { from: asker.clone(), text: prompt.clone() } };
@@ -337,7 +337,7 @@ pub async fn thread_spec(
         codex::assisting(&mut config, &servers, &plugins);
     }
     crate::session_options::configure(&mut config, crate::session_options::read(node, id)?);
-    let (mut developer_instructions, heard) = instructions(node, id, town, origin, acting).await?;
+    let (mut developer_instructions, heard) = instructions(node, id, town, origin, acting, true).await?;
     // The machines and folders the user pointed it at, in the words its
     // thread started with, each time it is resumed (`crate::focus`).
     if let Some(opening) =
@@ -391,12 +391,17 @@ pub(crate) fn standing(node: &Node, town: Option<&TownName>) -> Result<PathBuf, 
 /// is, its hands, and its town's record. Also what it is told of its town by
 /// that: how far into the ledger, read before the record so nothing written
 /// meanwhile goes unsaid.
+///
+/// A Claude session's plugin gives it its town's record, as it is each time
+/// Claude Code reads its context (`town::instructions`); for it, `record`
+/// is false and the instructions leave the record out.
 pub(crate) async fn instructions(
     node: &Arc<Node>,
     id: &ResidentId,
     town: Option<&TownName>,
     origin: &Origin,
     acting: &Acting,
+    record: bool,
 ) -> Result<(String, Heard), Failure> {
     let heard = heard_now(node, town).map_err(|error| Failure::new(format!("reading the town's ledger: {error}")))?;
     // An agent assisting another account is given the machines it may work
@@ -405,10 +410,10 @@ pub(crate) async fn instructions(
         let (_, others, groups) = crate::world::grouped_machines(node, acting);
         fastctx_types::world::listed(&others, &groups, None)
     });
-    let words = words(id, &node.machine(), assisting.as_deref(), town, origin);
+    let words = words(id, &node.machine(), assisting.as_deref(), town, origin, record);
     let text = match town {
-        Some(town) => format!("{words}\n\n{}", crate::town::map::brief(node, town).await?),
-        None => words,
+        Some(town) if record => format!("{words}\n\n{}", crate::town::map::brief(node, town).await?),
+        _ => words,
     };
     Ok((text, heard))
 }
@@ -422,10 +427,12 @@ fn words(
     assisting: Option<&str>,
     town: Option<&TownName>,
     origin: &Origin,
+    record: bool,
 ) -> String {
+    let given = if record { "Its record follows" } else { "Its record comes with your context" };
     let place = match (town, origin) {
         (Some(town), _) => format!(
-            " You work in the user's project {town}: a fastctx project, which is not a folder or a repository but a named piece of work that can span several machines. Its record follows: what it is for, its machines, and where its code and data are on each."
+            " You work in the user's project {town}: a fastctx project, which is not a folder or a repository but a named piece of work that can span several machines. {given}: the user's instructions for all work in it, which you follow, its machines, and where its code and data are on each."
         ),
         (None, Origin::User) => " When the user names the project to work on, enter it with `fastctx project enter NAME` (`fastctx project list` lists them).".to_string(),
         (None, Origin::Colleague { .. }) => String::new(),

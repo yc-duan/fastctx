@@ -99,8 +99,16 @@ async fn check_all(node: &Arc<Node>) {
     }
 }
 
-/// Sets one town's ledger right, while no entry is being taken.
+/// Sets one town's ledger right; then what its residents' Claude sessions
+/// hold of its record follows it.
 async fn check(node: &Arc<Node>, town: &TownName) {
+    set_town_right(node, town).await;
+    let (handing, name) = (node.clone(), town.clone());
+    let _ = tokio::task::spawn_blocking(move || super::instructions::refresh(&handing, &name)).await;
+}
+
+/// Sets one town's ledger right, while no entry is being taken.
+async fn set_town_right(node: &Arc<Node>, town: &TownName) {
     let _syncing = node.syncing.lock().await;
     let (world, name) = (node.world.clone(), town.clone());
     match tokio::task::spawn_blocking(move || set_right(&world, &name)).await {

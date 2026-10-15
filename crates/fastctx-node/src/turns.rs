@@ -86,11 +86,14 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
                 crate::asked::ask(node, id, asked)?;
             }
             // A Codex thread keeps its first instructions through compacting
-            // its conversation; a change they no longer say is told again.
+            // its conversation; a change they no longer say is told again,
+            // its project's record with the next answer of a World tool. A
+            // Claude session's plugin gives it its project's record again.
             if matches!(item.what, fastctx_types::session::What::Compaction)
                 && about.host.agent.as_str() == "codex"
                 && about.world_started
             {
+                node.residents.compacted(id);
                 let (node, id, compaction) = (node.clone(), id.clone(), item.id.clone());
                 tokio::spawn(async move { crate::focus::compacted(&node, &id, &compaction).await });
             }

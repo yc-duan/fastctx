@@ -760,7 +760,7 @@ pub async fn open_here(
     node.residents
         .create(&node.world, about, town, now)
         .map_err(|error| Failure::new(format!("recording the session: {error}")))?;
-    node.residents.set_heard(&id, heard);
+    node.residents.set_instructed(&id, heard);
     crate::codex::claim(node, &thread, &id).await;
     let landed = talk_here(node, typed_on, &id, text, attachments, opened.files_on.as_ref(), None).await?;
     Ok((id, landed))

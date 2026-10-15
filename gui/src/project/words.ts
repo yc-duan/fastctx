@@ -17,6 +17,9 @@ export interface ProjectWords {
   decisionsUnreadable(why: string): string;
   places: string;
   noPlaces: string;
+  /** What the user wrote for every agent working in the project. */
+  instructions: string;
+  noInstructions: string;
   /** Shorter names for the tabs a narrow screen shows the sections behind. */
   hereTab: string;
   placesTab: string;
@@ -72,6 +75,8 @@ export const zhProject: ProjectWords = {
   decisionsUnreadable: failure(zhProblems, "无法读取定论"),
   places: "位置",
   noPlaces: "暂无位置",
+  instructions: "须知",
+  noInstructions: "还没有写须知",
   hereTab: "对话",
   placesTab: "位置",
   opened: (by, on, day) => `${then(by)}创建于 ${on} · ${day}`,
@@ -119,6 +124,8 @@ export const enProject: ProjectWords = {
   decisionsUnreadable: failure(enProblems, "Couldn't read decisions"),
   places: "Locations",
   noPlaces: "No locations yet",
+  instructions: "Instructions",
+  noInstructions: "No instructions yet",
   hereTab: "Conversations",
   placesTab: "Places",
   opened: (by, on, day) => `Created by ${by} on ${on} · ${day}`,

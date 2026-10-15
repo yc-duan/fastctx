@@ -346,6 +346,7 @@ async fn enter(node: &Arc<Node>, caller: &Caller, town: TownName) -> Result<Repl
     };
     if moved {
         crate::codex::moved(node, &id).await;
+        crate::town::instructions::hand_to_current(node, &id);
     }
     let map = map::view(node, &town).await?;
     let ledger = crate::ledger::seq(&node.world, &town).map_err(|error| Failure::new(error.to_string()))?;

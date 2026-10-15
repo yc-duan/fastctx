@@ -369,6 +369,49 @@
   line-height: var(--leading-ui);
 }
 
+/* A question mark beside a field's name: what the field is for, over it
+   while the pointer rests there or it has focus (a tap, on a touch screen). */
+.field-tip {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--field);
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1;
+  vertical-align: 1px;
+  cursor: default;
+  outline: 0;
+}
+
+.field-tip-card {
+  position: absolute;
+  left: -8px;
+  bottom: calc(100% + 6px);
+  z-index: 5;
+  display: none;
+  width: max-content;
+  max-width: min(360px, 76vw);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  color: var(--text);
+  font-size: var(--size-small);
+  line-height: var(--leading-prose);
+  white-space: normal;
+}
+
+.field-tip:hover .field-tip-card,
+.field-tip:focus .field-tip-card {
+  display: block;
+  animation: paper-in 0.12s ease both;
+}
+
 .field input,
 .field textarea,
 .field select {
