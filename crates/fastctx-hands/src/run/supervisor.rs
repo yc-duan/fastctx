@@ -340,61 +340,116 @@ async fn tell_node(world: &WorldDir, record: &JobRecord) {
 mod signals {
     use std::io;
 
-    /// The main thread and every thread it creates block these signals so
-    /// sigwaitinfo can receive them. ProcessTree resets the child's mask.
+    const STOP: [libc::c_int; 3] = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP];
+
+    /// The main thread and every thread it creates block these signals, so
+    /// only the thread waiting for them takes them. ProcessTree resets the
+    /// child's mask.
     pub fn block() -> io::Result<libc::sigset_t> {
-        // SAFETY: building and installing a signal mask for this thread.
-        unsafe {
+        // SAFETY: building a signal set in place.
+        let set = unsafe {
             let mut set: libc::sigset_t = std::mem::zeroed();
             libc::sigemptyset(&mut set);
-            for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+            for signal in STOP {
                 libc::sigaddset(&mut set, signal);
             }
-            let code = libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
-            if code != 0 {
-                return Err(io::Error::from_raw_os_error(code));
-            }
-            Ok(set)
+            set
+        };
+        mask(libc::SIG_BLOCK, &set)?;
+        Ok(set)
+    }
+
+    fn mask(how: libc::c_int, set: &libc::sigset_t) -> io::Result<()> {
+        // SAFETY: changes this thread's signal mask by a valid set.
+        let code = unsafe { libc::pthread_sigmask(how, set, std::ptr::null_mut()) };
+        if code != 0 {
+            return Err(io::Error::from_raw_os_error(code));
         }
+        Ok(())
     }
 
     pub fn stop_on_signal(set: libc::sigset_t, sender: tokio::sync::mpsc::UnboundedSender<super::Event>) {
         std::thread::spawn(move || {
-            let result = loop {
-                match wait(&set) {
-                    Ok((signal, by)) => {
-                        break Ok(fastctx_types::run::StopRequest { by, reason: format!("signal {signal}") });
-                    }
-                    Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                    Err(error) => break Err(error),
+            let result = wait(&set).map(|info| {
+                // SAFETY: the kernel filled in who sent the signal.
+                let (pid, uid) = unsafe { (info.si_pid(), info.si_uid()) };
+                fastctx_types::run::StopRequest {
+                    by: format!("process {pid} (uid {uid})"),
+                    reason: format!("signal {}", info.si_signo),
                 }
-            };
+            });
             let _ = sender.send(super::Event::Stop(result));
         });
     }
 
-    /// One of the blocked signals, and who sent it.
+    /// One of the blocked signals, as the kernel describes it.
     #[cfg(target_os = "linux")]
-    fn wait(set: &libc::sigset_t) -> io::Result<(i32, String)> {
+    fn wait(set: &libc::sigset_t) -> io::Result<libc::siginfo_t> {
         // SAFETY: an out-parameter for one of the blocked signals.
         let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-        let signal = unsafe { libc::sigwaitinfo(set, &mut info) };
-        if signal < 0 {
-            return Err(io::Error::last_os_error());
+        while unsafe { libc::sigwaitinfo(set, &mut info) } < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::Interrupted {
+                return Err(error);
+            }
         }
-        // SAFETY: sigwaitinfo initialized the sender fields.
-        Ok((signal, unsafe { format!("process {} (uid {})", info.si_pid(), info.si_uid()) }))
+        Ok(info)
     }
 
-    /// One of the blocked signals; macOS does not say who sent it.
+    /// The pipe's end the handler writes to, set before it is installed.
     #[cfg(not(target_os = "linux"))]
-    fn wait(set: &libc::sigset_t) -> io::Result<(i32, String)> {
-        let mut signal = 0;
-        // SAFETY: waits for one of the blocked signals into a valid int.
-        let code = unsafe { libc::sigwait(set, &mut signal) };
-        if code != 0 {
-            return Err(io::Error::from_raw_os_error(code));
+    static TOLD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+    /// Passes on, whole, what the kernel tells a handler about its signal.
+    #[cfg(not(target_os = "linux"))]
+    extern "C" fn pass_on(_: libc::c_int, info: *mut libc::siginfo_t, _: *mut libc::c_void) {
+        // SAFETY: an SA_SIGINFO handler is given a valid siginfo, and write is
+        // async-signal-safe; errno is put back for the code it interrupted.
+        unsafe {
+            let errno = *libc::__error();
+            let told = TOLD.load(std::sync::atomic::Ordering::Relaxed);
+            libc::write(told, info.cast_const().cast(), std::mem::size_of::<libc::siginfo_t>());
+            *libc::__error() = errno;
         }
-        Ok((signal, "a signal from another process".to_string()))
+    }
+
+    /// One of the blocked signals, as the kernel describes it. macOS has no
+    /// sigwaitinfo, but tells a signal's handler who sent it: this thread
+    /// alone leaves the signals unblocked, so the handler runs here and
+    /// passes the description on through a pipe.
+    #[cfg(not(target_os = "linux"))]
+    fn wait(set: &libc::sigset_t) -> io::Result<libc::siginfo_t> {
+        use std::io::Read as _;
+        use std::os::fd::AsRawFd as _;
+        let (mut told, teller) = std::io::pipe()?;
+        // A full pipe loses a signal instead of stopping its handler; the
+        // first one is all that is read.
+        // SAFETY: sets a flag on a descriptor this function owns.
+        if unsafe { libc::fcntl(teller.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) } == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        TOLD.store(teller.as_raw_fd(), std::sync::atomic::Ordering::Relaxed);
+        // SAFETY: the handler only writes to the pipe, which stays open until
+        // the signals are blocked again.
+        unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = pass_on as extern "C" fn(_, _, _) as libc::sighandler_t;
+            action.sa_flags = libc::SA_SIGINFO;
+            for signal in STOP {
+                if libc::sigaction(signal, &action, std::ptr::null_mut()) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+        }
+        mask(libc::SIG_UNBLOCK, set)?;
+        // SAFETY: siginfo_t is plain data, which the handler writes whole.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let bytes = unsafe {
+            std::slice::from_raw_parts_mut((&raw mut info).cast::<u8>(), std::mem::size_of::<libc::siginfo_t>())
+        };
+        let read = told.read_exact(bytes);
+        // Blocked again before the pipe closes, the signals reach no handler.
+        mask(libc::SIG_BLOCK, set)?;
+        read.map(|()| info)
     }
 }
