@@ -28,10 +28,20 @@ impl std::fmt::Display for Proxy {
 /// The proxy the system would use for `target`, if any. `NO_PROXY` exempts
 /// a target it names.
 pub fn system(target: SocketAddr) -> Option<Proxy> {
-    let host = target.ip().to_string();
+    system_for(&target.ip().to_string())
+}
+
+/// The proxy the system would use for `host`, a name or an address, if any.
+/// `NO_PROXY` exempts a host it names, and a name under a domain it names.
+pub fn system_for(host: &str) -> Option<Proxy> {
     for name in ["NO_PROXY", "no_proxy"] {
         if let Ok(list) = std::env::var(name)
-            && list.split(',').map(str::trim).any(|entry| entry == "*" || entry == host)
+            && list.split(',').map(str::trim).filter(|entry| !entry.is_empty()).any(|entry| {
+                let domain = entry.trim_start_matches('.');
+                entry == "*"
+                    || host.eq_ignore_ascii_case(domain)
+                    || host.to_ascii_lowercase().ends_with(&format!(".{}", domain.to_ascii_lowercase()))
+            })
         {
             return None;
         }
@@ -102,6 +112,11 @@ fn unescape(text: &str) -> String {
 
 /// A TCP connection to `target` through `proxy`.
 pub async fn connect(proxy: &Proxy, target: SocketAddr) -> Result<TcpStream, String> {
+    connect_to(proxy, &target.to_string()).await
+}
+
+/// A TCP connection to `target`, `host:port`, through `proxy`.
+pub async fn connect_to(proxy: &Proxy, target: &str) -> Result<TcpStream, String> {
     let mut stream = TcpStream::connect((proxy.host.as_str(), proxy.port))
         .await
         .map_err(|error| format!("reaching {proxy}: {error}"))?;

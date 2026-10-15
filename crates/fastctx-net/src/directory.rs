@@ -613,6 +613,12 @@ pub struct View {
     /// session of a member that sent one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dissolves: bool,
+    /// Whether this hub keeps the network's versions: it takes
+    /// `Up::Versions`, answers `Question::Package`, takes `Change::Updates`
+    /// and the data connections of packages. Earlier hubs omit it, and would
+    /// end the session of a member that sent any of them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub versions: bool,
     /// The tokens the accounts logged in on this member made that still
     /// let devices in.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -651,6 +657,7 @@ impl View {
             roles: false,
             groups: false,
             dissolves: false,
+            versions: false,
             tokens: Vec::new(),
             hub_addresses: Vec::new(),
             hub_moves: Vec::new(),

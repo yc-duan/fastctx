@@ -42,6 +42,7 @@ fn hub() -> HubAccounts {
         roles: true,
         groups: true,
         dissolves: true,
+        versions: true,
         logins: vec!["ada".parse().unwrap()],
         home: Some("ada".parse().unwrap()),
         self_registration: true,

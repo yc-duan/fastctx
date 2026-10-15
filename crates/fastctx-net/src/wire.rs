@@ -99,6 +99,13 @@ pub enum Up {
     /// What this member did with the deletion the hub numbered `id`
     /// (`Down::Forget`).
     Forgot { id: u64, outcome: Forgot },
+    /// The versions this machine runs and knows of; sent only to a hub
+    /// whose view says it takes them, when the session opens and whenever
+    /// they change.
+    Versions { report: Box<fastctx_types::update::Report> },
+    /// This member could not fetch the package of the hub's request `id`
+    /// (`Down::Fetch`), and why.
+    Unfetched { id: u64, why: String },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -152,6 +159,11 @@ pub enum Intent {
         /// visitors as members.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         roles: bool,
+        /// The member reads `Down::Versions` and `Down::Fetch`. Earlier
+        /// releases do not say so, and would end the session on a frame
+        /// they cannot read.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        versions: bool,
     },
     /// A password login to `account`: the first OPAQUE message. The hub
     /// answers `Down::LoginResponse`; the device finishes with
@@ -177,6 +189,15 @@ pub enum Intent {
     Register { account: AccountName, request: Bytes },
     /// One end of the data connection `stream`.
     Data { key: PublicKey, proof: Signature, stream: u64, end: End },
+    /// A package the hub holds, from the byte `from` on: the hub says the
+    /// whole package's size, `{"size":…}`, then sends the bytes, and the
+    /// member says it has them all. Sent only to a hub whose view says it
+    /// keeps versions.
+    Package { key: PublicKey, proof: Signature, version: String, target: String, from: u64 },
+    /// The package of the hub's request `id` (`Down::Fetch`): the member
+    /// says its size, `{"size":…}`, then sends the bytes, and the hub says
+    /// `"done"` once it has checked them, or why it did not take them.
+    Deliver { key: PublicKey, proof: Signature, id: u64 },
     /// Whether the hub takes sessions now, through this address: answered
     /// `Down::Ready`, and closed. A machine on a later address of its list
     /// asks the earlier ones.
@@ -350,6 +371,19 @@ pub enum Down {
     Forget {
         forgetting: Forgetting,
     },
+    /// The versions of the network as the hub knows them, sent when the
+    /// session opens and whenever they change, only to a member whose
+    /// session says it reads them.
+    Versions {
+        network: Box<fastctx_types::update::Network>,
+    },
+    /// Fetch this package for the network, and deliver it
+    /// (`Intent::Deliver`) or say why not (`Up::Unfetched`). Sent only to a
+    /// member that reads versions and said it fetches for others, or holds
+    /// the package.
+    Fetch {
+        fetch: Box<fastctx_types::update::Fetch>,
+    },
 }
 
 /// A conversation the hub has its members delete what they keep of
@@ -496,6 +530,11 @@ pub enum Question {
     /// `Told::Done` once the hub holds it. Asked only of a hub whose view
     /// says it forgets.
     Forget { account: AccountName, conversation: fastctx_types::Address },
+    /// The package `target` of the release `version`, for this member to
+    /// download (`Intent::Package`): answered `Told::Package` once the hub
+    /// holds it, having fetched it first, or asked a machine that can, when
+    /// it did not. Asked only of a hub whose view says it keeps versions.
+    Package { version: String, target: String },
 }
 
 /// What a machine knows of its own firewall when it starts taking direct
@@ -672,6 +711,12 @@ pub enum Change {
     Settings {
         self_registration: bool,
     },
+    /// The channel the network's devices follow and the version it asks
+    /// each machine to run at least. Sent only to a hub whose view says it
+    /// keeps versions.
+    Updates {
+        policy: fastctx_types::update::Policy,
+    },
     /// The super administrator dissolves the network named `name`, typed
     /// as it is: every machine and device is taken off it, and the hub lets
     /// nobody in again. Sent only to a hub whose view says it dissolves.
@@ -714,6 +759,10 @@ pub enum Told {
         view: Box<View>,
     },
     Done,
+    /// The hub holds the package asked for, of this many bytes.
+    Package {
+        size: u64,
+    },
     /// The token, as text to carry to the device.
     Token {
         text: String,

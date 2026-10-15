@@ -105,6 +105,10 @@ impl Link {
             AccountChange::Transfer { to } => Change::Transfer { to },
             AccountChange::DeleteAccount { name } => Change::DeleteAccount { name },
             AccountChange::Settings { self_registration } => Change::Settings { self_registration },
+            AccountChange::Updates { .. } if !self.view().versions => {
+                return Err(format!("the hub {} runs an older fastctx that keeps no versions", self.hub_name()));
+            }
+            AccountChange::Updates { policy } => Change::Updates { policy },
             AccountChange::Dissolve { .. } if !self.view().dissolves => {
                 return Err(format!("the hub {} runs an older fastctx that dissolves no network", self.hub_name()));
             }
@@ -190,6 +194,7 @@ impl Link {
             roles: view.roles,
             groups: view.groups,
             dissolves: view.dissolves,
+            versions: view.versions,
             logins: me.map(|me| me.logins.iter().cloned().collect()).unwrap_or_default(),
             home: me.and_then(|me| me.home.clone()),
             self_registration: view.self_registration,

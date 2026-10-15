@@ -1847,7 +1847,7 @@ checksum = "c6e8948ce679d00a02a94739ea185595dca7118ed04feb991127e443bd3d761f"
 
 [[package]]
 name = "fastctx-client"
-version = "1.0.0"
+version = "1.0.1-beta.1"
 dependencies = [
  "base64 0.22.1",
  "fastctx-net",
@@ -1864,7 +1864,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-gui"
-version = "1.0.0"
+version = "1.0.1-beta.1"
 dependencies = [
  "ashpd",
  "base64 0.22.1",
@@ -1900,7 +1900,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-gui-command"
-version = "1.0.0"
+version = "1.0.1-beta.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1909,7 +1909,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hands"
-version = "1.0.0"
+version = "1.0.1-beta.1"
 dependencies = [
  "aho-corasick",
  "base64 0.22.1",
@@ -1938,7 +1938,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hosts"
-version = "1.0.0"
+version = "1.0.1-beta.1"
 dependencies = [
  "base64 0.22.1",
  "fastctx-platform",
@@ -1961,7 +1961,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hub"
-version = "1.0.0"
+version = "1.0.1-beta.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1969,6 +1969,7 @@ dependencies = [
  "fastctx-platform",
  "fastctx-ripgrep",
  "fastctx-types",
+ "fastctx-update",
  "flate2",
  "futures-util",
  "http-body-util",
@@ -1990,7 +1991,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-install"
-version = "1.0.0"
+version = "1.0.1-beta.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2024,7 +2025,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-net"
-version = "1.0.0"
+version = "1.0.1-beta.1"
 dependencies = [
  "argon2 0.5.3",
  "base64 0.22.1",
@@ -2036,6 +2037,9 @@ dependencies = [
  "getrandom 0.3.4",
  "hkdf 0.12.4",
  "hmac 0.12.1",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "jiff",
  "libc",
  "opaque-ke",
@@ -2050,6 +2054,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite",
+ "webpki-roots",
  "windows-sys 0.61.2",
  "zbus",
  "zeroize",
@@ -2058,7 +2063,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-office"
-version = "1.0.0"
+version = "1.0.1-beta.1"
 dependencies = [
  "anyhow",
  "num-bigint 0.4.8",
@@ -2070,7 +2075,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-pdf"
-version = "1.0.0"
+version = "1.0.1-beta.1"
 dependencies = [
  "fontdb",
  "hayro",
@@ -2086,7 +2091,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-platform"
-version = "1.0.0"
+version = "1.0.1-beta.1"
 dependencies = [
  "async-io",
  "fastctx-types",
@@ -2099,7 +2104,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-ripgrep"
-version = "1.0.0"
+version = "1.0.1-beta.1"
 dependencies = [
  "fastctx-platform",
  "flate2",
@@ -2109,15 +2114,33 @@ dependencies = [
 
 [[package]]
 name = "fastctx-types"
-version = "1.0.0"
+version = "1.0.1-beta.1"
 dependencies = [
  "icu_casemap",
  "icu_normalizer",
  "icu_properties",
  "jiff",
+ "semver",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "fastctx-update"
+version = "1.0.1-beta.1"
+dependencies = [
+ "base64 0.22.1",
+ "fastctx-net",
+ "fastctx-types",
+ "flate2",
+ "jiff",
+ "minisign-verify",
+ "semver",
+ "serde",
+ "serde_json",
+ "tar",
+ "tokio",
 ]
 
 [[package]]
@@ -6791,7 +6814,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-world-pages"
-version = "1.0.0"
+version = "1.0.1-beta.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -7761,6 +7784,15 @@ name = "webpki-root-certs"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
+dependencies = [
+ "rustls-pki-types",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
 dependencies = [
  "rustls-pki-types",
 ]

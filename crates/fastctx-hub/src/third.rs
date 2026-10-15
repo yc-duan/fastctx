@@ -141,6 +141,7 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
         listen: third.listen,
         self_registration: false,
         dissolved: None,
+        updates: Default::default(),
     };
     Store::create(to, &hub, &certificate, &secrets.to_bytes(), &book)?;
     Ok(report)

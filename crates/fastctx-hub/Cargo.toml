@@ -13,6 +13,7 @@ anyhow.workspace = true
 fastctx-net = { path = "../fastctx-net" }
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
+fastctx-update = { path = "../fastctx-update" }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 bytes = "1"
 http-body-util = "0.1"

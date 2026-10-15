@@ -211,6 +211,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             afoot: true,
             forgets: true,
             roles: true,
+            versions: true,
         },
     };
     match tokio::time::timeout(SILENCE, dial::send(&mut socket, &hello)).await {
@@ -345,6 +346,7 @@ async fn connected(
             }
             // The hub tells what is afoot elsewhere before it answers.
             inner.afoot_synced(generation);
+            inner.versions_synced(generation);
             tell_worked(&inner).await;
             inner.node.directory_changed();
             inner.node.connected();
@@ -463,6 +465,8 @@ async fn connected(
                     let _ = up.send(Up::Forgot { id, outcome });
                 });
             }
+            Down::Versions { network } => inner.heard_versions(*network),
+            Down::Fetch { fetch } => inner.fetch_for_hub(*fetch),
             Down::Refused { reason } => break refused(inner, reason),
             Down::Welcome { .. }
             | Down::LoginResponse { .. }

@@ -103,6 +103,7 @@ mod turns;
 mod uninstall;
 mod unpublished;
 mod unstarted;
+mod updates;
 mod usage;
 mod user_images;
 mod waiting;
@@ -227,6 +228,8 @@ pub(crate) struct Node {
     features: features::Switches,
     own_collab: own_collab::Keeping,
     renewal: renewal::Startup,
+    /// New versions of Fastctx here (`updates`).
+    updates: updates::Updates,
     supervised: bool,
     lifetime: fastctx_types::node_lifetime::NodeLifetime,
     /// When this node started.
@@ -549,6 +552,7 @@ pub async fn run_prepared(
         features: features::Switches::default(),
         own_collab: own_collab::Keeping::default(),
         renewal,
+        updates: Default::default(),
         supervised: supervision.is_some(),
         lifetime,
         started: jiff::Timestamp::now(),
@@ -595,6 +599,7 @@ pub async fn run_prepared(
     speech::recover(&node).await;
     on_delivery::resume(&node);
     retention::start(&node).context("starting command artifact retention")?;
+    updates::start(&node);
     afoot::start(&node);
     forget::start(&node);
     let jobs_node = node.clone();

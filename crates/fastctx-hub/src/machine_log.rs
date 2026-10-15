@@ -175,7 +175,7 @@ impl History {
             Action::Logout => {
                 names.extend(actor.member.iter().cloned());
             }
-            Action::Settings { .. } | Action::Dissolve { .. } => {
+            Action::Settings { .. } | Action::Updates { .. } | Action::Dissolve { .. } => {
                 accounts.extend(directory.accounts.iter().map(|account| account.name.clone()));
             }
             Action::Collab { .. } | Action::Forget { .. } | Action::Forgotten { .. } => {}
@@ -246,7 +246,7 @@ impl History {
         me: &MachineName,
         account: &AccountName,
         before: Option<u64>,
-        (renames, forgets): (bool, bool),
+        (renames, forgets, versions): (bool, bool, bool),
     ) -> Result<Page, String> {
         if !directory.may_act_for(account, me) {
             return Err(format!("{me} may not read the machine log of the account {account}"));
@@ -269,6 +269,7 @@ impl History {
                 let private = kept.record.action.of_conversation();
                 before.is_none_or(|before| kept.record.id < before)
                     && (renames || !matches!(kept.record.action, Action::Rename { .. }))
+                    && (versions || !matches!(kept.record.action, Action::Updates { .. }))
                     && (forgets || !private)
                     && kept.record.at.checked_add(RETENTION).expect("timestamp in range") > now
                     && ((whole && !private)
@@ -355,6 +356,7 @@ pub(crate) fn action(change: &Change, book: &Book) -> Action {
         Change::Transfer { to } => Action::Transfer { to: to.clone() },
         Change::DeleteAccount { name } => Action::DeleteAccount { name: name.clone() },
         Change::Settings { self_registration } => Action::Settings { self_registration: *self_registration },
+        Change::Updates { policy } => Action::Updates { channel: policy.channel, minimum: policy.minimum.clone() },
         Change::Dissolve { name } => Action::Dissolve { name: name.clone() },
         Change::OpenProject { town, name } => Action::OpenProject { town: town.clone(), name: name.clone() },
         Change::ShareProject { town, with, shared } => {

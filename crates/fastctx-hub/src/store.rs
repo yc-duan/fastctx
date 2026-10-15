@@ -51,6 +51,10 @@ pub struct HubFile {
     /// every machine that was on it, as it comes, that it is gone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dissolved: Option<Dissolved>,
+    /// The channel the network's devices follow and the version it asks
+    /// for at least (`fastctx_types::update::Policy`).
+    #[serde(default)]
+    pub updates: fastctx_types::update::Policy,
 }
 
 /// Who dissolved the network, and when; and the machines and devices that
@@ -243,6 +247,10 @@ pub struct Letters {
     /// accounts (`fastctx_net::wire::Intent::Session`).
     #[serde(default)]
     pub roles: bool,
+    /// The member's last session said it reads the network's versions,
+    /// and the records of the update policy with them.
+    #[serde(default)]
+    pub versions: bool,
 }
 
 pub struct Store {
@@ -491,6 +499,7 @@ impl Store {
                 renames: false,
                 forgets: false,
                 roles: false,
+                versions: false,
             };
             self.letters.insert(name.clone(), fresh);
         }

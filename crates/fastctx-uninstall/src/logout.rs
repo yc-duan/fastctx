@@ -62,6 +62,7 @@ async fn open(world: &WorldDir, directory: &Path) -> anyhow::Result<Option<dial:
         afoot: false,
         forgets: false,
         roles: true,
+        versions: false,
         dialed: Some(connection.address),
         any_names: true,
     };

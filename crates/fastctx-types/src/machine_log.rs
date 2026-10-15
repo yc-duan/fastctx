@@ -146,6 +146,12 @@ pub enum Action {
     Settings {
         self_registration: bool,
     },
+    /// The network's update policy was set (`crate::update::Policy`).
+    Updates {
+        channel: crate::update::Channel,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        minimum: Option<String>,
+    },
     /// The network named `name` was dissolved.
     Dissolve {
         name: crate::HubName,

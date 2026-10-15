@@ -31,6 +31,7 @@ mod moving;
 mod outgoing;
 mod session;
 pub mod state;
+pub mod versions;
 mod ways;
 
 use std::collections::{BTreeSet, HashMap};
@@ -124,6 +125,16 @@ pub trait Node: Send + Sync + 'static {
     /// tells it again at the next session until it says it is done, so it
     /// may come for what is gone already.
     fn forget(&self, forgetting: crate::wire::Forgetting) -> BoxFuture<crate::wire::Forgot>;
+    /// What the hub tells of the network's versions changed
+    /// (`Link::versions`).
+    fn versions_changed(&self) {}
+    /// Brings here the package the hub asks for, for machines that cannot
+    /// reach GitHub, checked against its signature, and says where it is
+    /// (`crate::wire::Down::Fetch`).
+    fn relay(&self, fetch: fastctx_types::update::Fetch) -> BoxFuture<Result<std::path::PathBuf, String>> {
+        let _ = fetch;
+        Box::pin(async { Err("this device does not fetch packages for others".to_string()) })
+    }
     /// Lets other computers reach this machine at exactly the TCP `ports`
     /// through its own firewall, as far as the World does that, and says
     /// what it knows of that firewall: this machine takes direct connections
@@ -260,6 +271,8 @@ pub(crate) struct Inner {
     direct: direct::Direct,
     /// What is afoot here and elsewhere (`afoot`).
     afoots: afoot::Afoots,
+    /// The versions told and heard (`versions`).
+    versions: versions::Versions,
     /// The task that keeps the connection.
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// The hub said, refusing this machine, that its network was dissolved.
@@ -380,6 +393,7 @@ impl Link {
             line: Mutex::default(),
             direct: direct::Direct::default(),
             afoots: afoot::Afoots::default(),
+            versions: versions::Versions::default(),
             task: Mutex::new(None),
         });
         inner.line_started();

@@ -39,6 +39,7 @@ mod moving;
 mod releases;
 mod store;
 pub mod third;
+mod updates;
 mod upgrade;
 mod views;
 
@@ -129,6 +130,7 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
         listen: new.listen,
         self_registration: false,
         dissolved: None,
+        updates: Default::default(),
     };
     Store::create(dir, &hub, &certificate, &secrets.to_bytes(), &book)?;
     Ok(certificate.pin())
@@ -218,6 +220,9 @@ pub(crate) struct Hub {
     next_assist_end: assists::NextEnd,
     /// What is afoot on each machine, taken after `sessions` and `store`.
     afoots: Mutex<afoot::Afoots>,
+    /// The network's versions and the packages kept here, taken after
+    /// `sessions` and `store`.
+    updates: Mutex<updates::Updates>,
     /// Told when the network is dissolved, and as each machine on it is
     /// told so (`dissolve`).
     dissolution: tokio::sync::Notify,
@@ -243,6 +248,8 @@ pub(crate) struct Session {
     afoot: bool,
     /// Whether it deletes what it keeps of a conversation when told.
     forgets: bool,
+    /// Whether it reads the network's versions.
+    versions: bool,
 }
 
 pub(crate) enum Out {
@@ -457,8 +464,10 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         assists_changed: tokio::sync::Notify::new(),
         next_assist_end: assists::NextEnd::default(),
         afoots: Mutex::new(afoot::Afoots::default()),
+        updates: Mutex::new(updates::Updates::new(dir)),
         dissolution: tokio::sync::Notify::new(),
     });
+    tokio::spawn(updates::look_every(Arc::downgrade(&hub)));
     if driven {
         moving::out::drive(&hub);
     }
@@ -609,9 +618,21 @@ async fn intended(
                 afoot,
                 forgets,
                 roles,
+                versions,
             },
         ) => {
-            let said = control::Said { through, direct, interfaces, any_names, dialed, renames, afoot, forgets, roles };
+            let said = control::Said {
+                through,
+                direct,
+                interfaces,
+                any_names,
+                dialed,
+                renames,
+                afoot,
+                forgets,
+                roles,
+                versions,
+            };
             control::session(hub, socket, peer, binding, key, proof, letters, said).await;
         }
         (wire::CONTROL_PATH, Intent::Login { account, request }) => {
@@ -632,6 +653,12 @@ async fn intended(
         }
         (wire::DATA_PATH, Intent::Data { key, proof, stream, end }) => {
             data::end(hub, socket, binding, key, proof, stream, end).await;
+        }
+        (wire::DATA_PATH, Intent::Package { key, proof, version, target, from }) => {
+            updates::serve(hub, socket, binding, key, proof, version, target, from).await;
+        }
+        (wire::DATA_PATH, Intent::Deliver { key, proof, id }) => {
+            updates::deliver(hub, socket, binding, key, proof, id).await;
         }
         (wire::CONTROL_PATH, Intent::Handover { id, role, proof }) => {
             moving::follow::old_connected(hub, socket, binding, id, role, proof).await;

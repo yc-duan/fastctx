@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use fastctx_net::wire;
-use fastctx_types::kernel::{AARCH64_ARCHIVE, RELEASE_PATH, SUMS, X86_64_ARCHIVE, stable_version};
+use fastctx_types::kernel::{AARCH64_ARCHIVE, RELEASE_PATH, SUMS, X86_64_ARCHIVE, release_version};
 use futures_util::TryStreamExt as _;
 use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt as _, Full, StreamBody};
@@ -138,7 +138,7 @@ async fn respond(
     else {
         return Ok(text(StatusCode::NOT_FOUND, "Not found"));
     };
-    if !stable_version(version) {
+    if !release_version(version) {
         return Ok(text(StatusCode::NOT_FOUND, "Not found"));
     }
     let gzip = match name {

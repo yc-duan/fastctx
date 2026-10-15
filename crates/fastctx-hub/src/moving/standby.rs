@@ -78,6 +78,7 @@ pub fn prepare(dir: &Path, id: &str, to: &MachineName, identity: &Identity) -> a
         listen,
         self_registration: identity.self_registration,
         dissolved: None,
+        updates: Default::default(),
     };
     let arriving = Arriving {
         id: id.to_string(),

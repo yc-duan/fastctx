@@ -44,6 +44,8 @@ pub(crate) struct Said {
     pub forgets: bool,
     /// Whether it reads visitors among the accounts.
     pub roles: bool,
+    /// Whether it reads the network's versions.
+    pub versions: bool,
 }
 
 /// What a call or a data connection was allowed under: `from` saying it to
@@ -210,6 +212,7 @@ fn open(
     entry.renames = said.renames;
     entry.forgets = said.forgets;
     entry.roles = said.roles;
+    entry.versions = said.versions;
     if too_old {
         // A member back on a release from before names of any language,
         // which would fail on the first name it cannot read: it is told why
@@ -258,9 +261,13 @@ fn open(
         paths: None,
         afoot: said.afoot,
         forgets: said.forgets,
+        versions: said.versions,
     };
     let replaced = hub.sessions().insert(name.clone(), session);
     drop(store);
+    if said.versions {
+        crate::updates::opened(hub, name);
+    }
     if let Some(old) = replaced {
         let _ = old.out.send(Out::End(Refusal::Replaced));
         fail_calls_of(hub, name, old.generation);
@@ -291,6 +298,7 @@ pub(crate) fn close(hub: &Hub, name: &MachineName, generation: u64) {
     // Data connections it registered and nobody paired wait no longer; a
     // session that replaced this one keeps its own.
     crate::data::member_left(hub, name, generation);
+    crate::updates::closed(hub, name, generation);
     fail_calls_of(hub, name, generation);
 }
 
@@ -384,6 +392,11 @@ fn handle(
         Up::Answer { call, message } => answer(hub, name, generation, call, message),
         Up::Afoot { change } => crate::afoot::heard(hub, name, *change),
         Up::Forgot { id, outcome } => crate::forget::forgot(hub, name, id, outcome),
+        Up::Versions { report } => crate::updates::heard(hub, name, generation, *report),
+        Up::Unfetched { id, why } => crate::updates::unfetched(hub, name, id, why),
+        Up::Ask { id, question: Question::Package { version, target } } => {
+            crate::updates::ask(hub, id, version, target, out.clone());
+        }
         Up::Cancel { id } => {
             hub.calls
                 .lock()
@@ -397,6 +410,8 @@ fn handle(
             let (answer, ended) = crate::manage::change(hub, name, &account, change);
             reply(Down::Told { id, answer });
             crate::manage::end(hub, ended);
+            // The network's update policy may be what changed.
+            crate::updates::tell(hub, None);
         }
         Up::Ask { id, question: Question::KernelRelease { version, allow_partial } } => {
             let releases = hub.releases.clone();
@@ -712,14 +727,19 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
     match question {
         Question::MachineLog { account, before } => {
             let store = hub.store();
-            let reads = store.letters.get(name).map_or((false, false), |letters| (letters.renames, letters.forgets));
+            let reads = store
+                .letters
+                .get(name)
+                .map_or((false, false, false), |letters| (letters.renames, letters.forgets, letters.versions));
             store
                 .book
                 .machine_log
                 .read(&store.book.directory, name, &account, before, reads)
                 .map(|page| Told::MachineLog { page })
         }
-        Question::KernelRelease { .. } => Err("release reads are dispatched asynchronously".into()),
+        Question::KernelRelease { .. } | Question::Package { .. } => {
+            Err("release reads are dispatched asynchronously".into())
+        }
         Question::Directory => Ok(Told::Directory { view: Box::new(hub.view_for(name)) }),
         Question::Manage { .. } => Err("changes are made as they come".into()),
         Question::LedgerWrite { town, entry } => {

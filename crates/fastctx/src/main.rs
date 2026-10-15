@@ -27,6 +27,7 @@ mod program;
 mod project;
 mod renew;
 mod secret;
+mod self_update;
 mod server_install;
 mod service;
 #[cfg(windows)]
@@ -272,6 +273,9 @@ enum Command {
     /// What fastctx keeps on this machine, conversation by conversation,
     /// and deleting it; how long command output is kept.
     Data(data::DataArgs),
+    /// Bring this machine's World program up to the newest release on its
+    /// channel, from GitHub or through the network; set how it updates.
+    Update(self_update::UpdateArgs),
     /// Give the sessions you open on this machine, in Codex and Claude Code,
     /// the World's tools.
     Apply(apply::ApplyArgs),
@@ -454,6 +458,7 @@ fn main() -> ExitCode {
         Command::Token(command) => world::token(command),
         Command::Accounts => world::accounts(),
         Command::Data(args) => data::run(args),
+        Command::Update(args) => self_update::run(args),
         Command::Share(args) => world::share(args),
         Command::Assist(args) => world::assist(args),
         Command::Disallow(args) => world::disallow(args),

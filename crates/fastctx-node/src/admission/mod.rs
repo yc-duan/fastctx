@@ -113,6 +113,16 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
             caller.account
         )));
     }
+    // Which version a machine runs is its owner's to choose; a managed
+    // machine's, the network's super administrator's (`world-upgrade.md`).
+    if matches!(call, RemoteCall::UpdateWorld) {
+        let member = view.member(&here);
+        let owner = member.and_then(|member| member.home.as_ref()) == Some(&caller.account);
+        let administered = member.is_some_and(|member| member.managed) && view.is_super(&caller.account);
+        if !owner && !administered {
+            return Err(refuse(format!("only {here}'s owner updates it, not the account {}", caller.account)));
+        }
+    }
     crate::devices::admit(&view, &caller.machine, call)?;
     let hub = link.membership().id.clone();
     if let Some(town) = town_of(call) {

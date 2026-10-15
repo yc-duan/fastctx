@@ -9,7 +9,7 @@ use std::fs::File;
 use std::io::{self, Read as _};
 use std::path::Path;
 
-use fastctx_types::kernel::{AARCH64_ARCHIVE, KernelRelease, SUMS, X86_64_ARCHIVE, stable_version};
+use fastctx_types::kernel::{AARCH64_ARCHIVE, KernelRelease, SUMS, X86_64_ARCHIVE, release_version};
 use sha2::{Digest as _, Sha256};
 
 pub(crate) struct Releases {
@@ -53,8 +53,8 @@ impl Releases {
     }
 
     pub fn ready(&self, version: &str, allow_partial: bool) -> Result<KernelRelease, String> {
-        if !stable_version(version) {
-            return Err("a kernel release version must be stable major.minor.patch".into());
+        if !release_version(version) {
+            return Err("a kernel release version must be major.minor.patch, with at most a pre-release".into());
         }
         self.load(version, allow_partial).map_err(|error| {
             format!(

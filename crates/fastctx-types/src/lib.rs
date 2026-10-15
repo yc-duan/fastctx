@@ -49,6 +49,7 @@ pub mod stats;
 pub mod thumbnail;
 pub mod town;
 pub mod uninstall;
+pub mod update;
 pub mod usage;
 pub mod world;
 pub mod write;

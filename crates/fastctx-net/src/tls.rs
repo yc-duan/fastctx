@@ -19,7 +19,7 @@ use rustls::{DigitallySignedStruct, SignatureScheme};
 
 use crate::ids::CertPin;
 
-fn provider() -> Arc<CryptoProvider> {
+pub(crate) fn provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
 

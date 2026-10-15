@@ -437,6 +437,17 @@ fn apply(
             store.save_hub().map_err(|error| format!("the hub could not keep its settings: {error}"))?;
             Ok(Told::Done)
         }
+        Change::Updates { policy } => {
+            need_super()?;
+            if let Some(minimum) = &policy.minimum
+                && fastctx_types::update::release(minimum).is_none()
+            {
+                return Err(format!("{minimum} is not a version a release can have"));
+            }
+            store.hub.updates = policy;
+            store.save_hub().map_err(|error| format!("the hub could not keep its settings: {error}"))?;
+            Ok(Told::Done)
+        }
         // The network ends: every machine and device is taken off it, told
         // now or as it next comes that the network is gone; no code lets
         // anything in, and the hub lets nobody in again

@@ -68,6 +68,18 @@ impl Stream {
                 return Ok(Self::over(socket, way.cut()));
             }
         };
+        Self::to_hub(upstreams, hub, cert, key, |key, proof| Intent::Data { key, proof, stream, end }).await
+    }
+
+    /// Opens a data connection the hub itself is the other end of, as
+    /// `intent` says: by the first of `upstreams` that reaches it.
+    pub(crate) async fn to_hub(
+        upstreams: &[Upstream],
+        hub: &HubId,
+        cert: CertPin,
+        key: &SecretKey,
+        intent: impl FnOnce(crate::sign::PublicKey, crate::sign::Signature) -> Intent,
+    ) -> Result<Self, String> {
         let limit = wire::MAX_DATA_MESSAGE + wire::MAX_CONTROL_FRAME;
         let mut failures = Vec::new();
         let mut dialed = None;
@@ -86,7 +98,7 @@ impl Stream {
         let hello = Up::Hello {
             protocol: wire::GREETING_PROTOCOL,
             version: env!("CARGO_PKG_VERSION").to_string(),
-            intent: Intent::Data { key: key.public(), proof, stream, end },
+            intent: intent(key.public(), proof),
         };
         dial::send(&mut socket, &hello).await?;
         match dial::recv(&mut socket).await? {

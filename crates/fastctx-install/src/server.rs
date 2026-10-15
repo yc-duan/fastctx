@@ -47,8 +47,8 @@ pub fn certificate_pin(certificate_der: &[u8]) -> anyhow::Result<String> {
 /// The kernel owns durable installation, enrollment and service registration.
 pub fn command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> anyhow::Result<String> {
     ensure!(
-        fastctx_types::kernel::stable_version(kernel.version),
-        "the release version must be a stable major.minor.patch version"
+        fastctx_types::kernel::release_version(kernel.version),
+        "the release version must be major.minor.patch, with at most a pre-release"
     );
     ensure!(
         !invitation.is_empty() && !invitation.contains('\0') && !invitation.chars().any(char::is_whitespace),

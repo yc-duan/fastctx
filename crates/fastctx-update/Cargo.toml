@@ -1,0 +1,24 @@
+[package]
+name = "fastctx-update"
+description = "New versions of Fastctx: finding them on GitHub or through the network, bringing their packages here and checking their signatures"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+base64 = "0.22"
+fastctx-net = { path = "../fastctx-net" }
+fastctx-types = { path = "../fastctx-types" }
+# The command-line program comes as a .tar.gz with its notices.
+flate2 = "1"
+jiff.workspace = true
+# The minisign signatures every package carries, as the official updater checks them.
+minisign-verify = "0.2.5"
+semver = "1"
+serde.workspace = true
+serde_json.workspace = true
+tar = "0.4"
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt", "sync", "time"] }

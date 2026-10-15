@@ -151,6 +151,7 @@ pub fn start(node: &Arc<Node>, membership: Membership) -> io::Result<Arc<Link>> 
     // What the link said of its ways before it was among the links was not
     // seen in them.
     node.ways_changed();
+    crate::updates::report(node);
     if dissolved {
         let node = node.clone();
         tokio::spawn(async move {
@@ -912,6 +913,10 @@ impl fastctx_net::link::Node for Handler {
                         .map_err(|error| Failure::new(format!("reading the canon on {machine}: {error}")))
                 }
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&node))),
+                RemoteCall::UpdateWorld => crate::updates::call(&node, fastctx_types::update::UpdateCall::Kernel)
+                    .await
+                    .map(|state| RemoteReply::Update(Box::new(state)))
+                    .map_err(Failure::new),
                 RemoteCall::Stats { after } => {
                     crate::stats::here(&node, after).await.map(|stats| RemoteReply::Stats(Box::new(stats)))
                 }
@@ -1119,6 +1124,25 @@ impl fastctx_net::link::Node for Handler {
         if let Some(node) = self.node.upgrade() {
             node.shown_changed();
         }
+    }
+
+    fn versions_changed(&self) {
+        if let Some(node) = self.node.upgrade() {
+            crate::updates::heard(&node);
+        }
+    }
+
+    fn relay(
+        &self,
+        fetch: fastctx_types::update::Fetch,
+    ) -> fastctx_net::link::BoxFuture<Result<std::path::PathBuf, String>> {
+        let node = self.node.upgrade();
+        Box::pin(async move {
+            match node {
+                Some(node) => crate::updates::relay(&node, fetch).await,
+                None => Err("the node is stopping".to_string()),
+            }
+        })
     }
 
     fn forget(

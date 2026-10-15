@@ -436,6 +436,13 @@ pub enum Call {
     /// What the World keeps on this machine, and deleting it. Answered here,
     /// never by another machine.
     Data(crate::data::DataCall),
+    /// New versions of Fastctx for this machine (`crate::update`).
+    Update(crate::update::UpdateCall),
+    /// Update `machine`'s World program from the newest release on its
+    /// channel; answered with how updates stand there.
+    UpdateMachine {
+        machine: MachineName,
+    },
     /// Manage this resident as the user, on its own machine.
     Manage {
         resident: ResidentId,
@@ -696,6 +703,7 @@ pub enum Reply {
         how: crate::management::Forgetting,
     },
     Data(crate::data::DataReply),
+    Update(Box<crate::update::State>),
     ClaudeSessionDirectory {
         path: String,
     },

@@ -18,13 +18,27 @@ pub struct KernelRelease {
     pub aarch64_sha256: Option<String>,
 }
 
-/// Stable versions are also single safe directory components.
-pub fn stable_version(version: &str) -> bool {
-    let parts: Vec<_> = version.split('.').collect();
+/// A released version: `major.minor.patch`, or a test release of it with a
+/// semver pre-release such as `1.0.1-beta.2`; never build metadata. Each is
+/// also a single safe directory component.
+pub fn release_version(version: &str) -> bool {
+    let number = |part: &str| {
+        !part.is_empty()
+            && part.bytes().all(|byte| byte.is_ascii_digit())
+            && (part.len() == 1 || !part.starts_with('0'))
+    };
+    let (core, pre) = match version.split_once('-') {
+        Some((core, pre)) => (core, Some(pre)),
+        None => (version, None),
+    };
+    let parts: Vec<_> = core.split('.').collect();
     parts.len() == 3
-        && parts.iter().all(|part| {
-            !part.is_empty()
-                && part.bytes().all(|byte| byte.is_ascii_digit())
-                && (part.len() == 1 || !part.starts_with('0'))
+        && parts.iter().all(|part| number(part))
+        && pre.is_none_or(|pre| {
+            pre.split('.').all(|part| {
+                !part.is_empty()
+                    && part.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                    && (!part.bytes().all(|byte| byte.is_ascii_digit()) || number(part))
+            })
         })
 }

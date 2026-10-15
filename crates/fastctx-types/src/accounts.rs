@@ -247,6 +247,11 @@ pub enum AccountChange {
     Settings {
         self_registration: bool,
     },
+    /// The channel the network's devices follow and the version it asks
+    /// each machine to run at least (`world-upgrade.md`).
+    Updates {
+        policy: crate::update::Policy,
+    },
     /// The super administrator dissolves the network named `name`, typed as
     /// it is (`world-network.md`, 解散网络).
     Dissolve {
@@ -321,6 +326,10 @@ pub struct HubAccounts {
     /// asks (`world-network.md`, 解散网络).
     #[serde(default)]
     pub dissolves: bool,
+    /// Whether the hub keeps the network's versions and hands out packages
+    /// (`world-upgrade.md`).
+    #[serde(default)]
+    pub versions: bool,
     /// The accounts this computer is logged in to there.
     pub logins: Vec<AccountName>,
     /// The account this computer is registered under there, as a machine.

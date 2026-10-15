@@ -20,6 +20,10 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 getrandom = { version = "0.3", features = ["std"] }
 hkdf = "0.12"
 hmac = "0.12"
+# Requests to the open web: new versions on GitHub (`crate::web`).
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 jiff.workspace = true
 # Password logins without the hub ever holding the password (RFC 9807).
 opaque-ke = { version = "3.0.0", default-features = false, features = ["argon2", "ristretto255-voprf"] }
@@ -35,6 +39,8 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+# The public authorities the open web is checked against, carried in the program.
+webpki-roots = "1"
 zeroize = { version = "1.8", features = ["serde"] }
 zstd = { version = "0.14", default-features = false }
 

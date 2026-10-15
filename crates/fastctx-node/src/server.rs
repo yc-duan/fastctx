@@ -979,6 +979,16 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             crate::data::answer(node, call).await.map(Reply::Data)
         }
+        Call::Update(call) => {
+            // Which versions this machine runs is the user's to choose.
+            users_voice(node, peer)?;
+            crate::updates::call(node, call).await.map(|state| Reply::Update(Box::new(state))).map_err(Failure::new)
+        }
+        Call::UpdateMachine { machine } => {
+            users_voice(node, peer)?;
+            let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
+            crate::updates::machine(node, &acting, machine).await.map(|state| Reply::Update(Box::new(state)))
+        }
         Call::Manage { resident, machine, action } => {
             users_voice(node, peer)?;
             crate::management::manage(node, resident, machine, action)
