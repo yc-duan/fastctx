@@ -14,7 +14,8 @@ const { version } = JSON.parse(readFileSync(path.join(gui, "src-tauri/tauri.conf
 const [, major, minor, patch, beta] = /^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/.exec(version) ?? [];
 if (major === undefined || Number(beta ?? 0) > 98) throw new Error(`no Android version code for ${version}`);
 const versionCode = ((Number(major) * 1000 + Number(minor)) * 1000 + Number(patch)) * 100 + (beta === undefined ? 99 : Number(beta));
-const env = { ...process.env, TAURI_CONFIG: JSON.stringify({ bundle: { android: { versionCode } } }) };
+// The library a phone loads keeps only the symbols it is loaded by: its symbol table is a third of it.
+const env = { ...process.env, TAURI_CONFIG: JSON.stringify({ bundle: { android: { versionCode } } }), CARGO_PROFILE_RELEASE_STRIP: "symbols" };
 function tauri(args) {
   const result = spawnSync(process.execPath, [cli, "android", ...args], { cwd: gui, stdio: "inherit", env });
   if (result.error) throw result.error;
@@ -68,6 +69,14 @@ const dependency = '    implementation("com.journeyapps:zxing-android-embedded:4
 if (!build.includes(dependency)) {
   if (!build.includes("dependencies {")) throw new Error("Tauri Android template has no dependencies block");
   build = build.replace("dependencies {", `dependencies {\n${dependency}`);
+  writeFileSync(gradle, build);
+}
+// One APK carries a library for each of four processors, and a phone unpacks only its own: stored
+// compressed, the download is less than half, and what stays on the phone is smaller too.
+const compressed = "            packaging { jniLibs { useLegacyPackaging = true } }";
+if (!build.includes(compressed)) {
+  if (!build.includes('        getByName("release") {')) throw new Error("Tauri Android template has no release build type");
+  build = build.replace('        getByName("release") {', `        getByName("release") {\n${compressed}`);
   writeFileSync(gradle, build);
 }
 const args = process.argv.slice(2);
