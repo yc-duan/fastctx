@@ -1,6 +1,6 @@
 [package]
 name = "fastctx-gui-command"
-version = "1.0.1-beta.1"
+version = "1.0.1-beta.2"
 edition = "2024"
 license = "Apache-2.0"
 publish = false
