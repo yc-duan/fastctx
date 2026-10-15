@@ -202,16 +202,12 @@ pub enum RemoteCall {
     ScanAgents {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         stop: bool,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        limits: bool,
     },
     /// Take up a directory there as a candidate login; only for the
     /// machine's owner.
     AddAgentLogin {
         agent: AgentName,
         dir: std::path::PathBuf,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        limits: bool,
     },
     /// Choose a folder there for logins, stop its search, or no longer
     /// search it; only for the machine's owner.

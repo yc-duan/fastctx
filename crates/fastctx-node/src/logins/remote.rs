@@ -129,16 +129,11 @@ fn other(machine: &MachineName) -> Failure {
     Failure::new(format!("{machine} answered something other than its agents' logins; the World there may be older"))
 }
 
-pub(crate) async fn scan(
-    node: &Arc<Node>,
-    machine: MachineName,
-    stop: bool,
-    limits: bool,
-) -> Result<MachineLogins, Failure> {
+pub(crate) async fn scan(node: &Arc<Node>, machine: MachineName, stop: bool) -> Result<MachineLogins, Failure> {
     if node.is_me(&machine) {
-        return super::scan::scan(node, stop, limits).await;
+        return super::scan::scan(node, stop).await;
     }
-    match ask(node, &machine, Purpose::Hands, RemoteCall::ScanAgents { stop, limits }).await? {
+    match ask(node, &machine, Purpose::Hands, RemoteCall::ScanAgents { stop }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
         _ => Err(other(&machine)),
     }
@@ -149,12 +144,11 @@ pub(crate) async fn add(
     machine: MachineName,
     agent: AgentName,
     dir: PathBuf,
-    limits: bool,
 ) -> Result<MachineLogins, Failure> {
     if node.is_me(&machine) {
-        return super::take_up(node, agent, dir, limits).await;
+        return super::take_up(node, agent, dir).await;
     }
-    match ask(node, &machine, Purpose::Hands, RemoteCall::AddAgentLogin { agent, dir, limits }).await? {
+    match ask(node, &machine, Purpose::Hands, RemoteCall::AddAgentLogin { agent, dir }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
         _ => Err(other(&machine)),
     }
@@ -288,8 +282,8 @@ pub(crate) async fn answer(
     let logins = |logins: MachineLogins| RemoteReply::AgentLogins(Box::new(seen(view, asker, logins)));
     match call {
         RemoteCall::AgentLogins => super::here(node).await.map(logins),
-        RemoteCall::ScanAgents { stop, limits } => super::scan::scan(node, stop, limits).await.map(logins),
-        RemoteCall::AddAgentLogin { agent, dir, limits } => super::take_up(node, agent, dir, limits).await.map(logins),
+        RemoteCall::ScanAgents { stop } => super::scan::scan(node, stop).await.map(logins),
+        RemoteCall::AddAgentLogin { agent, dir } => super::take_up(node, agent, dir).await.map(logins),
         RemoteCall::AgentFolder { dir, change } => super::folders::change(node, dir, change).await.map(logins),
         RemoteCall::SetAgentTitle { agent, dir, on } => {
             super::set_title(node, &agent, &dir, on)?;

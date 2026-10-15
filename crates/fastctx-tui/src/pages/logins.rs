@@ -165,7 +165,8 @@ fn login_rows(ctx: &Ctx, name: &str, facts: &AgentFacts, many: bool, item: usize
 }
 
 /// Each window as `5h 42%`, a window past nine tenths with care, one spent
-/// as wrong; a window of another Codex limit than the first is named by it.
+/// as wrong, one past the reset it was read before as reset; a window of
+/// another Codex limit than the first is named by it.
 fn limits_line(ctx: &Ctx, windows: &[LimitWindow]) -> Line<'static> {
     let look = &ctx.look;
     let first = windows.first().map(|window| window.name.clone()).unwrap_or_default();
@@ -181,6 +182,10 @@ fn limits_line(ctx: &Ctx, windows: &[LimitWindow]) -> Line<'static> {
         } else {
             format!("{} {span}", window.name)
         };
+        if window.resets_at.is_some_and(|at| at <= ctx.now) {
+            spans.push(Span::styled(format!("{label} {}", ctx.words.limit_reset()), look.text(Role::Faint)));
+            continue;
+        }
         let role = match window.used_tenths {
             1000.. => Role::Wrong,
             900.. => Role::Caution,

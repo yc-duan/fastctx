@@ -7,6 +7,7 @@
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { AgentLimits, Fact, LimitWindow } from "../world/agents";
+import { isReset } from "./agent-homes";
 import type { AssistSeen } from "../world/accounts";
 import type { FoundProgram, Login } from "../world/logins";
 import { wholeDollars } from "../world/money";
@@ -96,7 +97,8 @@ function week(facts: RowFacts, usageWords: UsageWords, words: AgentLoginsWords):
 /** A row for each usage window: its name, a short bar, how much of it is
  *  used and how long until it starts again, in columns shared by the
  *  rows; the rest a hover away. A window never read is a dashed empty
- *  bar. */
+ *  bar; one past the reset it was read before, an empty bar that says it
+ *  has reset where its time would be. */
 export function bars(agent: Agent, limits: Fact<AgentLimits>, now: Date, words: AgentLoginsWords, when: (at: Date, now: Date) => string): string {
   if (limits.kind !== "known") {
     const why = limits.kind === "failed" ? limits.reason : words.notRead(agent);
@@ -108,12 +110,17 @@ export function bars(agent: Agent, limits: Fact<AgentLimits>, now: Date, words: 
   const rows = value.windows.map((window) => {
     // A whole number, rounded: hosts often give no more.
     const percent = `${Math.round(window.used_tenths / 10)}%`;
+    const name = escape(words.window(window.name, window.minutes ?? null));
+    if (isReset(window, now.getTime())) {
+      const said = [words.reset, words.usedBefore(percent), read].join(" · ");
+      return `<span class="logins-bar reset" title="${escape(said)}"><span class="logins-bar-name">${name}</span><span class="logins-bar-track"></span><span class="logins-bar-used"></span><span class="logins-bar-reset">${escape(words.reset)}</span></span>`;
+    }
     const said = [words.used(percent), window.resets_at ? words.resets(new Date(window.resets_at), now) : "", read, credits ? words.credits(credits.balance ?? null, credits.unlimited) : ""].filter(Boolean).join(" · ");
     const width = Math.min(100, window.used_tenths / 10).toFixed(1);
     const onCredits = window.used_tenths >= 1000 && !!credits;
     const left = window.resets_at ? words.resetsIn(new Date(window.resets_at), now) : "";
     const used = `${escape(percent)}${onCredits ? `<span class="logins-credits" title="${escape(words.creditsMark)}">¢</span>` : ""}`;
-    return `<span class="logins-bar${levelOf(window)}" title="${escape(said)}"><span class="logins-bar-name">${escape(words.window(window.name, window.minutes ?? null))}</span><span class="logins-bar-track"><span style="width:${width}%"></span></span><span class="logins-bar-used">${used}</span><span class="logins-bar-reset">${left ? `${glyph("history", 12)}${escape(left)}` : ""}</span></span>`;
+    return `<span class="logins-bar${levelOf(window)}" title="${escape(said)}"><span class="logins-bar-name">${name}</span><span class="logins-bar-track"><span style="width:${width}%"></span></span><span class="logins-bar-used">${used}</span><span class="logins-bar-reset">${left ? `${glyph("history", 12)}${escape(left)}` : ""}</span></span>`;
   });
   return `<div class="logins-bars">${rows.join("")}</div>`;
 }

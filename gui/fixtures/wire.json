@@ -16299,8 +16299,7 @@
       },
       {
         "call": "scan_agents",
-        "machine": "desktop",
-        "limits": true
+        "machine": "desktop"
       },
       {
         "call": "add_agent_login",
@@ -16313,8 +16312,7 @@
         "machine": "desktop",
         "dir": "C:/Users/me/CodexHomes",
         "change": {
-          "change": "choose",
-          "limits": true
+          "change": "choose"
         }
       },
       {
@@ -17102,8 +17100,7 @@
       {
         "call": "add_agent_login",
         "agent": "claude",
-        "dir": "/home/me/.claude-work",
-        "limits": true
+        "dir": "/home/me/.claude-work"
       },
       {
         "call": "agent_folder",

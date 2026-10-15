@@ -607,6 +607,12 @@ impl Words {
         }
     }
 
+    /// A usage window past the reset it was read before: what it holds now
+    /// is not known until a session reads it again.
+    pub fn limit_reset(&self) -> &'static str {
+        self.pick("已重置", "reset")
+    }
+
     /// One usage window, by its length or the agent's name for it: `5h`.
     pub fn window(&self, name: &str, minutes: Option<u32>) -> String {
         let minutes = minutes.or(match name {

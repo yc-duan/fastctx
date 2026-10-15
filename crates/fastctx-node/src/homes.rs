@@ -122,7 +122,7 @@ pub(crate) async fn call(node: &Arc<Node>, machine: MachineName, change: HomeCha
 /// logins are no longer hidden, but removed from the list.
 pub(crate) async fn change(node: &Arc<Node>, change: HomeChange) -> Result<(), Failure> {
     match change {
-        HomeChange::Add { agent, dir } => crate::logins::take_up(node, agent, dir, false).await.map(|_| ()),
+        HomeChange::Add { agent, dir } => crate::logins::take_up(node, agent, dir).await.map(|_| ()),
         HomeChange::Hide { .. } | HomeChange::Show { .. } => Err(Failure::not_run(
             "logins are no longer hidden or shown: a login is in the agent list once the World's tools are put into it, and removing it takes them out",
         )),

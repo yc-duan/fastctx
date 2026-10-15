@@ -50,7 +50,7 @@ impl Searches {
 /// What the user does with the folder `dir`.
 pub(super) async fn change(node: &Arc<Node>, dir: PathBuf, change: FolderChange) -> Result<MachineLogins, Failure> {
     match change {
-        FolderChange::Choose { limits } => choose(node, dir, limits).await,
+        FolderChange::Choose => choose(node, dir).await,
         FolderChange::Stop => {
             if let Some(searching) = node.logins.searches.get(&walk::key(&dir)) {
                 searching.stop.store(true, Ordering::Relaxed);
@@ -63,7 +63,7 @@ pub(super) async fn change(node: &Arc<Node>, dir: PathBuf, change: FolderChange)
 
 /// Chooses `dir` for logins: one that is a login itself is taken up as a
 /// candidate of its agent; any other is kept and searched now.
-async fn choose(node: &Arc<Node>, dir: PathBuf, limits: bool) -> Result<MachineLogins, Failure> {
+async fn choose(node: &Arc<Node>, dir: PathBuf) -> Result<MachineLogins, Failure> {
     if !dir.is_absolute() {
         return Err(Failure::not_run(format!("{} is not an absolute path", dir.display())));
     }
@@ -82,7 +82,7 @@ async fn choose(node: &Arc<Node>, dir: PathBuf, limits: bool) -> Result<MachineL
     if !agents.is_empty() {
         for agent in agents {
             let agent = AgentName::try_from(agent.to_string()).map_err(|error| Failure::new(error.to_string()))?;
-            super::take_up(node, agent, dir.clone(), limits).await?;
+            super::take_up(node, agent, dir.clone()).await?;
         }
         return super::here(node).await;
     }

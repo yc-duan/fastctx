@@ -331,16 +331,15 @@ export function agentLogins(machine: MachineName | null): Promise<WorldLogins> {
 
 /** Scans a machine for its agents, answered once the usual places are
  *  done while its chosen folders are searched again; with `stop`, stops
- *  those searches. With `limits`, Codex's logins are asked their limits
- *  too: this device's workbench is on. */
-export function scanAgents(machine: MachineName, stop: boolean, limits: boolean): Promise<MachineLogins> {
-  return invoke("scan_agents", { machineName: machine, stop, limits });
+ *  those searches. */
+export function scanAgents(machine: MachineName, stop: boolean): Promise<MachineLogins> {
+  return invoke("scan_agents", { machineName: machine, stop });
 }
 
 /** Takes up a directory on a machine as a candidate login of `agent`,
- *  asking who is logged in there, and with `limits` its limits. */
-export function addAgentLogin(machine: MachineName, agent: string, dir: string, limits: boolean): Promise<MachineLogins> {
-  return invoke("add_agent_login", { machineName: machine, agentName: agent, dir, limits });
+ *  asking who is logged in there. */
+export function addAgentLogin(machine: MachineName, agent: string, dir: string): Promise<MachineLogins> {
+  return invoke("add_agent_login", { machineName: machine, agentName: agent, dir });
 }
 
 /** Chooses a folder on a machine for logins, stops its search, or no

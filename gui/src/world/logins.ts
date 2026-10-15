@@ -187,7 +187,7 @@ export interface FoundIn {
 
 /** What the user does with a folder: choose it (a folder that is a login
  *  becomes a candidate), stop its search, or no longer search it. */
-export type FolderChange = { change: "choose"; limits?: boolean } | { change: "stop" } | { change: "forget" };
+export type FolderChange = { change: "choose" } | { change: "stop" } | { change: "forget" };
 
 export type Stage =
   | { state: "running" }

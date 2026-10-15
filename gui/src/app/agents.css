@@ -186,14 +186,6 @@
   font-size: var(--size-small);
 }
 
-.agent-card .home-limits {
-  row-gap: 4px;
-}
-
-.agent-card .limit-bar {
-  width: 64px;
-}
-
 .agent-card .given-row {
   display: flex;
   flex-wrap: wrap;

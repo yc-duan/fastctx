@@ -1933,8 +1933,8 @@ function show(next: Place): void {
         when,
         workbench: deviceFeatures.conversations,
         read: (machine) => (live ? agentLogins(machine) : specimenLogins(machine, specimen.now)),
-        scan: (machine, stop, limits) => (live ? scanAgents(machine, stop, limits) : specimenScan(machine, stop, specimen.now)),
-        add: (machine, agent, dir, limits) => (live ? addAgentLogin(machine, agent, dir, limits) : specimenTakeUp(machine, agent, dir, specimen.now)),
+        scan: (machine, stop) => (live ? scanAgents(machine, stop) : specimenScan(machine, stop, specimen.now)),
+        add: (machine, agent, dir) => (live ? addAgentLogin(machine, agent, dir) : specimenTakeUp(machine, agent, dir, specimen.now)),
         folder: (machine, dir, change) => (live ? agentFolder(machine, dir, change) : specimenFolder(machine, dir, change, specimen.now)),
         // A phone holds no folder of the World's; a plain browser walks the
         // specimen's folders.
@@ -1961,6 +1961,7 @@ function show(next: Place): void {
         workbench: deviceFeatures.conversations,
         read: (machine) => (live ? agentLogins(machine) : specimenLogins(machine, specimen.now)),
         usage: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen.now)),
+        when,
         talk: (machine, agent, home) => beginTalk(null, loginKey(machine, agent, home), machine),
       });
       break;

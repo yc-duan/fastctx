@@ -159,7 +159,6 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
     {
         scan.usual = Stage::Failed { at: jiff::Timestamp::now(), reason: "the node stopped during it".into() };
     }
-    let claude_limits = fastctx_hosts::claude::exchange::limits(node.world.path());
     let claude_models = fastctx_hosts::claude::exchange::models(node.world.path())
         .map_err(|error| Failure::new(format!("reading Claude's model rows: {error}")))?;
     let changes = node.logins.changes.lock().expect("never poisoned").clone();
@@ -185,8 +184,7 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
                 Err(error) => return Err(Failure::new(format!("reading how {} stands: {error}", dir.display()))),
             };
             let listed = integration == Integration::In;
-            let limits =
-                if agent == "codex" { limits::of(&kept, dir) } else { claude_reading(&homes, dir, &claude_limits) };
+            let limits = if agent == "codex" { limits::of(&kept, dir) } else { claude_limits(node, dir) };
             let models = if agent == "codex" {
                 known.map(|login| login.models.clone()).unwrap_or_default()
             } else {
@@ -258,15 +256,13 @@ fn owner<'a>(homes: &'a [AgentHome], transcript: &Path) -> Option<&'a Path> {
     crate::homes::limits_home(homes, transcript).map(|home| home.dir.as_path())
 }
 
-/// The newest reading of the limits of the Claude login `dir`, from its
-/// sessions' reports.
-fn claude_reading(homes: &[AgentHome], dir: &Path, readings: &[(PathBuf, AgentLimits)]) -> Fact<AgentLimits> {
-    match readings
-        .iter()
-        .find(|(transcript, _)| owner(homes, transcript).is_some_and(|home| crate::homes::same_dir(home, dir)))
-    {
-        Some((_, limits)) => Fact::known(limits.clone()),
-        None => Fact::unavailable("no session in this login has reported its limits yet"),
+/// The limits of the Claude login `dir` as its sessions last read them:
+/// Claude Code reads them only in a session at work, and its usage ledger
+/// keeps the last reading past that session and its conversation.
+fn claude_limits(node: &Node, dir: &Path) -> Fact<AgentLimits> {
+    match crate::usage::last_limits(node, "claude", dir) {
+        Some(limits) => Fact::known(limits),
+        None => Fact::unavailable("no session in this login has read its limits yet"),
     }
 }
 
@@ -352,14 +348,9 @@ pub(crate) async fn query(
 
 /// Takes up `dir` as a candidate login of `agent`: a folder the user chose
 /// that is a login, or one a folder's search found. The agent is asked who
-/// is logged in there, and with `limits` its usage limits; the directory is
-/// kept among those the user took up.
-pub(crate) async fn take_up(
-    node: &Arc<Node>,
-    agent: AgentName,
-    dir: PathBuf,
-    limits: bool,
-) -> Result<MachineLogins, Failure> {
+/// is logged in there, not its limits; the directory is kept among those
+/// the user took up.
+pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) -> Result<MachineLogins, Failure> {
     host(agent.as_str())?;
     if !dir.is_absolute() {
         return Err(Failure::not_run(format!("{} is not an absolute path", dir.display())));
@@ -391,7 +382,7 @@ pub(crate) async fn take_up(
         .map_err(|error| Failure::new(error.to_string()))??
     };
     let asked = if agent.as_str() == "codex" {
-        identify::codex(node, &dir, limits).await
+        identify::codex(node, &dir, false).await
     } else {
         let path = dir.clone();
         tokio::task::spawn_blocking(move || identify::claude(&path, default, &programs))
@@ -402,15 +393,6 @@ pub(crate) async fn take_up(
         let (node, agent, dir) = (node.clone(), agent.clone(), dir.clone());
         tokio::task::spawn_blocking(move || {
             kept::change(&node, |kept| {
-                if let Some((at, answer)) = asked.limits {
-                    let limits = &mut kept.codex.limits;
-                    limits.retain(|known| !crate::homes::same_dir(&known.dir, &dir));
-                    limits.push(kept::KeptLimits {
-                        dir: dir.clone(),
-                        at,
-                        buckets: fastctx_hosts::codex::buckets(&answer),
-                    });
-                }
                 let logins = &mut kept.of_mut(agent.as_str()).logins;
                 logins.retain(|known| !crate::homes::same_dir(&known.dir, &dir));
                 logins.push(kept::KeptLogin {

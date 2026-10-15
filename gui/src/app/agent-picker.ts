@@ -48,6 +48,8 @@ export interface PickerWords {
   noMachine: string;
   token: string;
   onCredits: string;
+  /** A usage window past the reset it was read before. */
+  reset: string;
 }
 
 const HOLDS: PickerHold[] = ["mine", "shared", "others", "assist"];
@@ -81,10 +83,12 @@ function rowHtml(row: PickerRow, words: PickerWords): string {
   const account = facts ? accountOf(facts) : { email: null, plan: null };
   const token = facts?.login.kind === "known" && facts.login.value.kind === "logged_in" && facts.login.value.method === "oauth_token";
   const plan = account.plan ?? (token ? words.token : null);
-  const limits = row.note ? "" : limitsHtml(facts);
-  const credits = !row.note && onCredits(facts) ? words.onCredits : null;
+  const now = Date.now();
+  const limits = row.note ? "" : limitsHtml(facts, words, now);
+  const credits = !row.note && onCredits(facts, now) ? words.onCredits : null;
   const note = row.note ?? row.caution ?? credits;
-  const said = [name, row.who, plan, limits ? windowsShort(facts?.limits).map((window) => `${window.label} ${window.percent}`).join(" · ") : "", note].filter(Boolean).join(" · ");
+  const windows = limits ? windowsShort(facts?.limits, now).map((window) => `${window.label} ${window.reset ? words.reset : window.percent}`) : [];
+  const said = [name, row.who, plan, windows.join(" · "), note].filter(Boolean).join(" · ");
   const kind = row.note ? "" : row.caution ? " caution" : credits ? " credits" : "";
   const find = [name, row.who, plan].filter(Boolean).join(" ").toLowerCase();
   return `<button type="button" class="agent-row${row.chosen ? " chosen" : ""}" role="radio" aria-checked="${row.chosen}" aria-label="${escape(said)}" title="${escape(said)}" data-choice="pick" data-value="${escape(row.key)}" data-find="${escape(find)}"${row.startable ? "" : " disabled"}>
@@ -121,18 +125,19 @@ export function narrowPicker(root: HTMLElement, typed: string): void {
   }
 }
 
-/** Each usage window a short bar with how much of it is spent. */
-function limitsHtml(facts: AgentFacts | null): string {
-  return windowsShort(facts?.limits)
+/** Each usage window a short bar with how much of it is spent; one past
+ *  its reset an empty bar that says so. */
+function limitsHtml(facts: AgentFacts | null, words: PickerWords, now: number): string {
+  return windowsShort(facts?.limits, now)
     .map((window) => {
-      const width = Math.min(100, parseFloat(window.percent) || 0);
-      return `<span class="agent-limit${window.level ? ` ${window.level}` : ""}"><span class="agent-limit-name">${escape(window.label)}</span><span class="agent-limit-track"><i style="width:${width}%"></i></span><span class="agent-limit-used">${escape(window.percent)}</span></span>`;
+      const width = window.reset ? 0 : Math.min(100, parseFloat(window.percent) || 0);
+      return `<span class="agent-limit${window.level ? ` ${window.level}` : ""}"><span class="agent-limit-name">${escape(window.label)}</span><span class="agent-limit-track"><i style="width:${width}%"></i></span><span class="agent-limit-used">${escape(window.reset ? words.reset : window.percent)}</span></span>`;
     })
     .join("");
 }
 
 /** Whether a login goes on with credits: a window of it is spent and it
  *  has them. */
-function onCredits(facts: AgentFacts | null): boolean {
-  return windowsShort(facts?.limits).some((window) => window.level === "spent") && facts?.limits?.kind === "known" && !!facts.limits.value.credits;
+function onCredits(facts: AgentFacts | null, now: number): boolean {
+  return windowsShort(facts?.limits, now).some((window) => window.level === "spent") && facts?.limits?.kind === "known" && !!facts.limits.value.credits;
 }

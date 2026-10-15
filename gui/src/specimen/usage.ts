@@ -34,13 +34,15 @@ interface Specimen {
   five: number;
   /** When the seven-day window resets, from now. */
   resetsIn: number;
+  /** A plan with a weekly window and no five-hour one. */
+  weekOnly?: boolean;
 }
 
 const home = (account: string): HubAccount => ({ hub: "w-5be1fcee3751dc7a", account });
 const acme = (account: string): HubAccount => ({ hub: "w-9a07c2d4e1b36f58", account });
 
 const SPECIMENS: Record<string, Specimen> = {
-  "desktop|codex|C:\\Users\\me\\.codex": { people: [{ account: null, daily: 9, weekday: 0.9, weekend: 0.45, since: 400 }, { account: home("me"), daily: 4, weekday: 0.5, weekend: 0.2, since: 200 }], claude: false, week: 0.233, five: 0.412, resetsIn: 3 * DAY },
+  "desktop|codex|C:\\Users\\me\\.codex": { people: [{ account: null, daily: 9, weekday: 0.9, weekend: 0.45, since: 400 }, { account: home("me"), daily: 4, weekday: 0.5, weekend: 0.2, since: 200 }], claude: false, week: 0.233, five: 0.412, resetsIn: 3 * DAY, weekOnly: true },
   "desktop|codex|C:\\Users\\me\\.codex-work": {
     people: [
       { account: home("me"), daily: 6, weekday: 0.85, weekend: 0.2, since: 300 },
@@ -202,7 +204,7 @@ function readings(hours: UsageHour[], start: number, now: number, specimen: Spec
     out.push({
       at: new Date(Math.min(now, at + 50 * 60_000)).toISOString(),
       windows: [
-        { name: "five_hour", minutes: 300, used_tenths: five, resets_at: new Date(block.from + 5 * HOUR).toISOString() },
+        ...(specimen.weekOnly ? [] : [{ name: "five_hour", minutes: 300, used_tenths: five, resets_at: new Date(block.from + 5 * HOUR).toISOString() }]),
         { name: "seven_day", minutes: 10080, used_tenths: week, resets_at: new Date(start + 7 * DAY).toISOString() },
       ],
     });
@@ -211,7 +213,7 @@ function readings(hours: UsageHour[], start: number, now: number, specimen: Spec
 }
 
 /** The limits a specimen login says now, as its last reading has them. */
-export function specimenLimits(machine: string, agent: string, dir: string): { five: number; week: number; resetsIn: number } | null {
+export function specimenLimits(machine: string, agent: string, dir: string): { five: number; week: number; resetsIn: number; weekOnly: boolean } | null {
   const specimen = SPECIMENS[`${machine}|${agent}|${dir}`];
-  return specimen ? { five: Math.round(specimen.five * 1000), week: Math.round(specimen.week * 1000), resetsIn: specimen.resetsIn } : null;
+  return specimen ? { five: Math.round(specimen.five * 1000), week: Math.round(specimen.week * 1000), resetsIn: specimen.resetsIn, weekOnly: !!specimen.weekOnly } : null;
 }

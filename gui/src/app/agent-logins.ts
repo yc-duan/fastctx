@@ -61,8 +61,8 @@ export interface AgentLoginsOptions {
    *  belong to it, and without it they are neither read nor shown. */
   workbench: Signal<boolean>;
   read(machine: string | null): Promise<WorldLogins>;
-  scan(machine: string, stop: boolean, limits: boolean): Promise<MachineLogins>;
-  add(machine: string, agent: Agent, dir: string, limits: boolean): Promise<MachineLogins>;
+  scan(machine: string, stop: boolean): Promise<MachineLogins>;
+  add(machine: string, agent: Agent, dir: string): Promise<MachineLogins>;
   folder(machine: string, dir: string, change: FolderChange): Promise<MachineLogins>;
   /** This computer's own folder picker, where it has one. */
   pick: (() => Promise<string | null>) | null;
@@ -560,10 +560,9 @@ export class AgentLoginsPage implements Page {
     if (button.disabled) return;
     const machine = button.dataset.machine ?? "";
     const dir = button.dataset.dir ?? "";
-    const limits = this.options.workbench.peek();
     switch (button.dataset.act) {
       case "scan":
-        await this.quietly(button, `m:${machine}`, () => this.options.scan(machine, false, limits));
+        await this.quietly(button, `m:${machine}`, () => this.options.scan(machine, false));
         return;
       case "apply": {
         const target = this.target(machine, dir, true) ?? { agent: this.agent, machine, dir, who: dirName(dir), programs: [], here: this.shown(this.options.store.world.peek())?.here ?? false, into: true };
@@ -731,7 +730,7 @@ export class AgentLoginsPage implements Page {
     this.notes.delete(`m:${machine}`);
     this.draw();
     try {
-      const after = await this.options.folder(machine, dir, { change: "choose", limits: this.options.workbench.peek() });
+      const after = await this.options.folder(machine, dir, { change: "choose" });
       const marked = this.became(before, after, dir);
       if (marked.agent && marked.agent !== this.agent) {
         this.agent = marked.agent;
@@ -768,7 +767,7 @@ export class AgentLoginsPage implements Page {
     this.notes.delete(`f:${machine}:${folder}`);
     this.draw();
     try {
-      await this.options.add(machine, agent, dir, this.options.workbench.peek());
+      await this.options.add(machine, agent, dir);
       await this.read();
       const target = this.agent === agent ? this.target(machine, dir, true) : null;
       if (target) this.sheet.open(target);

@@ -5,7 +5,6 @@
 // the agent itself read them on that machine, with when; a window not read
 // is not shown, never shown as unused.
 
-import { escape } from "../conversation/prose";
 import type { AgentFacts, AgentLimits, Fact, LimitWindow } from "../world/agents";
 
 /** The homes of `agent` in what a machine said, its default one first. */
@@ -79,17 +78,6 @@ export interface HomeWords {
   /** How the World knows of a home. */
   found: string;
   added: string;
-  /** One usage window: "5 小时". `minutes` is its length, when said. */
-  window(name: string, minutes: number | null): string;
-  /** When the window starts afresh, from now. */
-  resets(at: Date, now: Date): string;
-  /** When the agent read the numbers: "14:05" or "昨天" from `when`. */
-  observed(when: string): string;
-  /** What the account goes on with once a window is used up. */
-  credits(balance: string | null, unlimited: boolean): string;
-  /** No session of this Claude home has read its limits yet. */
-  notRead: string;
-  limitsFailed(why: string): string;
 }
 
 /** A window's length, from its minutes or the agent's own name for it. */
@@ -99,68 +87,23 @@ function length(name: string, minutes: number | null): { n: number; unit: "minut
   return m % 1440 === 0 ? { n: m / 1440, unit: "day" } : m % 60 === 0 ? { n: m / 60, unit: "hour" } : { n: m, unit: "minute" };
 }
 
-const pad = (n: number) => String(n).padStart(2, "0");
-
 export const zhHomes: HomeWords = {
   defaultHome: "默认",
   found: "自动发现",
   added: "手动添加",
-  window: (name, minutes) => {
-    const model = /^seven_day_(\w+)$/.exec(name);
-    if (model) return `7 天 · ${planName(model[1]!)}`;
-    const span = length(name, minutes);
-    return span ? `${span.n} ${{ minute: "分钟", hour: "小时", day: "天" }[span.unit]}` : name === "spend_limit" ? "花费上限" : name;
-  },
-  resets: (at, now) => {
-    const minutes = Math.round((at.getTime() - now.getTime()) / 60000);
-    if (minutes < 1) return "马上重置";
-    if (minutes < 60) return `${minutes} 分钟后重置`;
-    if (minutes < 24 * 60) return `${Math.floor(minutes / 60)} 小时${minutes % 60 ? ` ${minutes % 60} 分` : ""}后重置`;
-    const clock = `${pad(at.getHours())}:${pad(at.getMinutes())}`;
-    if (minutes < 7 * 24 * 60) return `周${"日一二三四五六"[at.getDay()]} ${clock} 重置`;
-    return `${at.getMonth() + 1}月${at.getDate()}日重置`;
-  },
-  observed: (when) => `${when} 更新`,
-  credits: (balance, unlimited) => (unlimited ? "超出后使用 credits（不限）" : balance ? `超出后使用 credits（余 ${balance}）` : "超出后使用 credits"),
-  notRead: "运行一轮后显示额度",
-  limitsFailed: () => "无法获取额度",
 };
 
 export const enHomes: HomeWords = {
   defaultHome: "default",
   found: "detected",
   added: "added manually",
-  window: (name, minutes) => {
-    const model = /^seven_day_(\w+)$/.exec(name);
-    if (model) return `7 days · ${planName(model[1]!)}`;
-    const span = length(name, minutes);
-    return span ? `${span.n} ${span.unit}${span.n === 1 ? "" : "s"}` : name === "spend_limit" ? "spend limit" : name;
-  },
-  resets: (at, now) => {
-    const minutes = Math.round((at.getTime() - now.getTime()) / 60000);
-    if (minutes < 1) return "resets now";
-    if (minutes < 60) return `resets in ${minutes} min`;
-    if (minutes < 24 * 60) return `resets in ${Math.floor(minutes / 60)} h${minutes % 60 ? ` ${minutes % 60} min` : ""}`;
-    if (minutes < 7 * 24 * 60) return `resets ${at.toLocaleString("en", { weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false })}`;
-    return `resets ${at.toLocaleString("en", { month: "short", day: "numeric" })}`;
-  },
-  observed: (when) => `updated ${when}`,
-  credits: (balance, unlimited) =>
-    unlimited ? "then credits, unlimited" : balance ? `then credits, ${balance} left` : "then credits",
-  notRead: "Limits appear after one turn",
-  limitsFailed: () => "Couldn't load limits",
 };
 
-/** How full a window is: past nine tenths it is said with care, and spent
- *  once it is full. */
-function level(window: LimitWindow): string {
-  return window.used_tenths >= 1000 ? " spent" : window.used_tenths >= 900 ? " high" : "";
-}
-
-/** A balance as a whole number with its digits grouped: "52,230". */
-function amount(balance: string): string {
-  const value = Number(balance);
-  return Number.isFinite(value) ? Math.round(value).toLocaleString("en") : balance;
+/** Whether a window was read before the reset it has passed since: what it
+ *  holds now is not known until a session reads it again, so it is said to
+ *  have reset, never shown as it was nor as unused. */
+export function isReset(window: LimitWindow, now: number): boolean {
+  return !!window.resets_at && Date.parse(window.resets_at) <= now;
 }
 
 function percent(window: LimitWindow): string {
@@ -168,10 +111,13 @@ function percent(window: LimitWindow): string {
 }
 
 /** A home's usage windows in a few characters each, as Claude Code's own
- *  status line writes them: "5h", "7d" and how much is used; the first
- *  limit's windows only, for those of another limit and of one model are
- *  named on the machines page. */
-export function windowsShort(limits: Fact<AgentLimits> | undefined): { label: string; percent: string; level: "" | "high" | "spent" }[] {
+ *  status line writes them: "5h", "7d" and how much is used, or that it has
+ *  reset since; the first limit's windows only, for those of another limit
+ *  and of one model are named on the machines page. */
+export function windowsShort(
+  limits: Fact<AgentLimits> | undefined,
+  now: number,
+): { label: string; percent: string; level: "" | "high" | "spent"; reset: boolean }[] {
   if (limits?.kind !== "known") return [];
   const first = limits.value.windows[0]?.name;
   return limits.value.windows
@@ -179,40 +125,8 @@ export function windowsShort(limits: Fact<AgentLimits> | undefined): { label: st
     .map((window) => {
       const span = length(window.name, window.minutes ?? null);
       const label = span ? `${span.n}${{ minute: "m", hour: "h", day: "d" }[span.unit]}` : window.name;
-      return { label, percent: percent(window), level: window.used_tenths >= 1000 ? "spent" : window.used_tenths >= 900 ? "high" : "" };
+      const reset = isReset(window, now);
+      const level = reset ? "" : window.used_tenths >= 1000 ? "spent" : window.used_tenths >= 900 ? "high" : "";
+      return { label, percent: percent(window), level, reset };
     });
-}
-
-/** The usage windows of one home, a bar each, and when they were read.
- *  Windows of another limit than the first are named by it. `when` says
- *  a past moment as the page does. */
-export function limitsHtml(
-  limits: Fact<AgentLimits> | undefined,
-  words: HomeWords,
-  now: Date,
-  when: (at: Date, now: Date) => string,
-  quiet: { notRead: boolean },
-): string {
-  if (!limits) return "";
-  if (limits.kind === "failed") return `<p class="home-limits-said" title="${escape(limits.reason)}">${escape(words.limitsFailed(limits.reason))}</p>`;
-  if (limits.kind === "unavailable") return quiet.notRead ? `<p class="home-limits-said">${escape(words.notRead)}</p>` : "";
-  const windows = limits.value.windows;
-  if (!windows.length) return "";
-  // Claude Code names each window; Codex names each limit, whose windows
-  // its length tells apart: a window of another limit than the first is
-  // named by that limit.
-  const first = windows[0]!.name;
-  const rows = windows.map((window) => {
-    const name = words.window(window.name, window.minutes ?? null);
-    const claude = /^(five_hour|seven_day|spend_limit)/.test(window.name);
-    const label = claude || window.name === first || window.minutes === undefined ? name : `${window.name} · ${name}`;
-    const width = Math.min(100, window.used_tenths / 10).toFixed(1);
-    const reset = window.resets_at ? `<span class="limit-reset">${escape(words.resets(new Date(window.resets_at), now))}</span>` : "";
-    return `<span class="limit${level(window)}"><span class="limit-name">${escape(label)}</span><span class="limit-bar" aria-hidden="true"><span style="width:${width}%"></span></span><span class="limit-used">${escape(percent(window))}</span>${reset}</span>`;
-  });
-  const credits = limits.value.credits;
-  const balance = credits?.balance !== undefined ? amount(credits.balance) : null;
-  const more = credits ? `<span class="limit-credits">${escape(words.credits(balance, credits.unlimited))}</span>` : "";
-  const read = `<span class="limit-seen">${escape(words.observed(when(new Date(limits.value.observed_at), now)))}</span>`;
-  return `<div class="home-limits">${rows.join("")}${more}${read}</div>`;
 }

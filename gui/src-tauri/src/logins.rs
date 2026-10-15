@@ -38,9 +38,8 @@ pub(crate) async fn scan_agents(
     shell: tauri::State<'_, Shell>,
     machine_name: String,
     stop: bool,
-    limits: bool,
 ) -> Result<MachineLogins, String> {
-    shell.world().scan_agents(machine(machine_name)?, stop, limits).await.map_err(|error| error.to_string())
+    shell.world().scan_agents(machine(machine_name)?, stop).await.map_err(|error| error.to_string())
 }
 
 /// Takes up a directory on a machine as a candidate login.
@@ -50,11 +49,10 @@ pub(crate) async fn add_agent_login(
     machine_name: String,
     agent_name: String,
     dir: PathBuf,
-    limits: bool,
 ) -> Result<MachineLogins, String> {
     shell
         .world()
-        .add_agent_login(machine(machine_name)?, agent(agent_name)?, dir, limits)
+        .add_agent_login(machine(machine_name)?, agent(agent_name)?, dir)
         .await
         .map_err(|error| error.to_string())
 }

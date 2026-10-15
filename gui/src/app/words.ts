@@ -159,6 +159,8 @@ export interface NewTalkWords {
   assistantGone: string;
   /** A login whose usage window is spent goes on with credits. */
   onCredits: string;
+  /** A usage window past the reset it was read before. */
+  limitReset: string;
   /** A Claude login with a long-lived token, which names no plan. */
   token: string;
   /** Which account it works for. */
@@ -215,6 +217,7 @@ export const zhNewTalk: NewTalkWords = {
   narrow: "按机器、智能体、账号筛选",
   assistantGone: "该登录已不可用",
   onCredits: "使用 credits",
+  limitReset: "已重置",
   token: "长期令牌",
   account: "账号",
   assistantWorks: (owner) => `来自 ${owner}，在你的机器上工作，不接触 ${owner} 的电脑`,
@@ -256,6 +259,7 @@ export const enNewTalk: NewTalkWords = {
   narrow: "Filter by machine, agent or account",
   assistantGone: "Login unavailable",
   onCredits: "on credits",
+  limitReset: "reset",
   token: "Token",
   account: "Account",
   assistantWorks: (owner) => `From ${owner}; works on your machines, never on ${owner}'s computer`,
@@ -1015,6 +1019,10 @@ export interface ComposerWords {
     resets(at: Date): string;
     /** How long until a window resets, under its ring. */
     resetsIn(ms: number): string;
+    /** A window past the reset it was read before, under its ring. */
+    reset: string;
+    /** What it had used when it was read, before that reset. */
+    usedBefore(percent: string): string;
     /** What Claude Code reckons the conversation has cost so far. */
     cost(usd: number): string;
     /** How that figure is reckoned, said where the pointer rests. */
@@ -1234,6 +1242,8 @@ export const zhComposer: ComposerWords = {
     used: (percent) => `已用 ${percent}%`,
     resets: (at) => `${at.getMonth() + 1}月${at.getDate()}日 ${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")} 重置`,
     resetsIn: (ms) => `${zhLeft(ms)}后重置`,
+    reset: "已重置",
+    usedBefore: (percent) => `重置前已用 ${percent}%`,
     cost: (usd) => (underCent(usd) ? "本次对话 不到 $0.01" : `本次对话 约 ${dollars(usd)}`),
     costWhy: "按 API 标价折算。订阅登录并没有花这笔钱；按 Esc 打断的那次请求 Claude Code 不记，所以只会偏少。",
     none: "暂无用量数据",
@@ -1447,6 +1457,8 @@ export const enComposer: ComposerWords = {
     used: (percent) => `${percent}% used`,
     resets: (at) => `Resets ${at.toLocaleString("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })}`,
     resetsIn: (ms) => `resets in ${enLeft(ms)}`,
+    reset: "reset",
+    usedBefore: (percent) => `${percent}% used before it reset`,
     cost: (usd) => (underCent(usd) ? "This conversation under $0.01" : `This conversation about ${dollars(usd)}`),
     costWhy: "Reckoned at the API's list prices. A subscription login is not charged this; a request stopped with Esc is not counted, so it can only read low.",
     none: "No usage data",

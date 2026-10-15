@@ -14,22 +14,28 @@ let base = Date.now();
 const ago = (minutes: number) => new Date(base - minutes * 60_000).toISOString();
 const later = (minutes: number) => new Date(base + minutes * 60_000).toISOString();
 
-const limits = (five: number, week: number, weekResets = 3 * 1440) => ({
-  kind: "known" as const,
-  value: {
-    observed_at: ago(3),
-    windows: [
-      { name: "five_hour", minutes: 300, used_tenths: five, resets_at: later(140) },
-      { name: "seven_day", minutes: 10080, used_tenths: week, resets_at: later(weekResets) },
-    ],
-  },
-});
+/** A login's windows as last read: the five-hour one resets `fiveResets`
+ *  minutes from now, past already for a reading older than its reset, and
+ *  a plan with a weekly window alone has no five-hour one. */
+const limits = (five: number, week: number, shape: { weekResets?: number; fiveResets?: number; weekOnly?: boolean } = {}) => {
+  const { weekResets = 3 * 1440, fiveResets = 140, weekOnly = false } = shape;
+  return {
+    kind: "known" as const,
+    value: {
+      observed_at: ago(fiveResets < 0 ? 52 : 3),
+      windows: [
+        ...(weekOnly ? [] : [{ name: "five_hour", minutes: 300, used_tenths: five, resets_at: later(fiveResets) }]),
+        { name: "seven_day", minutes: 10080, used_tenths: week, resets_at: later(weekResets) },
+      ],
+    },
+  };
+};
 
 /** The limits a listed login says now: those its usage specimen climbs
  *  to, so its rings and its readings agree. */
-const limitsOf = (machine: string, agent: string, dir: string, five: number, week: number) => {
+const limitsOf = (machine: string, agent: string, dir: string, five: number, week: number, fiveResets = 140) => {
   const said = specimenLimits(machine, agent, dir);
-  return said ? limits(said.five, said.week, said.resetsIn / 60_000) : limits(five, week);
+  return said ? limits(said.five, said.week, { weekResets: said.resetsIn / 60_000, fiveResets, weekOnly: said.weekOnly }) : limits(five, week, { fiveResets });
 };
 
 const HOMES = "C:\\Users\\me\\CodexHomes";
@@ -117,7 +123,7 @@ function desktop(now: number): MachineLogins {
     claude: {
       programs: [{ path: "C:\\Users\\me\\.local\\bin\\claude.exe", how: "official", version: "2.1.296", on_path: true }],
       listed: [
-        { dir: "C:\\Users\\me\\.claude", default: true, found: "default", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "oauth_token" } } }, limits: limitsOf("desktop", "claude", "C:\\Users\\me\\.claude", 410, 640), programs: [0], integration: "in", unattended: true },
+        { dir: "C:\\Users\\me\\.claude", default: true, found: "default", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "oauth_token" } } }, limits: limitsOf("desktop", "claude", "C:\\Users\\me\\.claude", 410, 640, -25), programs: [0], integration: "in", unattended: true },
       ],
       candidates: [
         { dir: "C:\\Users\\me\\.claude-max", default: false, found: "home", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "claude.ai", email: "me@example.com", plan: "max" } } }, limits: limits(120, 300), programs: [0], integration: "out" },

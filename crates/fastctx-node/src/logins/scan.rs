@@ -15,16 +15,17 @@ use fastctx_types::ipc::Failure;
 use fastctx_types::logins::{Found, MachineLogins, Scan, Stage};
 use jiff::Timestamp;
 
-use super::kept::{self, KeptLimits, KeptLogin};
+use super::kept::{self, KeptLogin};
 use super::{AGENTS, Context, identify};
 use crate::Node;
 
 /// Scans this machine, answering once the usual places are done while the
 /// chosen folders are searched; with `stop`, stops those searches. Asked
-/// while a scan runs, it answers how that one is going. With `limits`,
-/// each Codex login is asked its usage limits too. The scan goes on to its
-/// end even when whoever asked for it is gone.
-pub(crate) async fn scan(node: &Arc<Node>, stop: bool, limits: bool) -> Result<MachineLogins, Failure> {
+/// while a scan runs, it answers how that one is going. It asks each login
+/// who it is, never its limits: those come as its sessions work, or when
+/// the user asks for them (`limits::read`). The scan goes on to its end
+/// even when whoever asked for it is gone.
+pub(crate) async fn scan(node: &Arc<Node>, stop: bool) -> Result<MachineLogins, Failure> {
     if stop {
         super::folders::stop_all(node);
         return super::here(node).await;
@@ -35,7 +36,7 @@ pub(crate) async fn scan(node: &Arc<Node>, stop: bool, limits: bool) -> Result<M
     let scanning = node.clone();
     let scanned = tokio::spawn(async move {
         let node = scanning;
-        let scanned = scan_once(&node, limits).await;
+        let scanned = scan_once(&node).await;
         // What the scan finds is listed as this fastctx writes it.
         super::refresh::all(&node).await;
         node.logins.scanning.store(false, Ordering::Release);
@@ -50,9 +51,9 @@ pub(crate) async fn scan(node: &Arc<Node>, stop: bool, limits: bool) -> Result<M
 /// The usual places, then the chosen folders' searches; the record says how
 /// the scan ended before the scan is no longer running, so no reader sees
 /// it running in the record and nowhere else.
-async fn scan_once(node: &Arc<Node>, limits: bool) -> Result<(), Failure> {
+async fn scan_once(node: &Arc<Node>) -> Result<(), Failure> {
     let started_at = Timestamp::now();
-    if let Err(failure) = usual(node, started_at, limits).await {
+    if let Err(failure) = usual(node, started_at).await {
         let failed = Stage::Failed { at: Timestamp::now(), reason: failure.message.clone() };
         blocking(node, move |node| {
             kept::change(node, |kept| {
@@ -82,7 +83,7 @@ async fn blocking<T: Send + 'static>(
 /// in the user's home named and kept like the agent's, those the user took
 /// up and those the World's tools are in, each asked who it is; and the
 /// agents' programs.
-async fn usual(node: &Arc<Node>, started_at: Timestamp, limits: bool) -> Result<(), Failure> {
+async fn usual(node: &Arc<Node>, started_at: Timestamp) -> Result<(), Failure> {
     let (context, programs, candidates) = blocking(node, move |node| {
         let context = Context::of(node)?;
         kept::change(node, |kept| {
@@ -121,7 +122,7 @@ async fn usual(node: &Arc<Node>, started_at: Timestamp, limits: bool) -> Result<
             let default = crate::homes::same_dir(&dir, context.default_of(agent));
             asking.push(tokio::spawn(async move {
                 let asked = if agent == "codex" {
-                    identify::codex(&node, &dir, limits).await
+                    identify::codex(&node, &dir, false).await
                 } else {
                     let path = dir.clone();
                     match tokio::task::spawn_blocking(move || identify::claude(&path, default, &claude_programs)).await
@@ -146,12 +147,6 @@ async fn usual(node: &Arc<Node>, started_at: Timestamp, limits: bool) -> Result<
             kept.codex.logins.clear();
             kept.claude.logins.clear();
             for (agent, dir, found, asked) in answers {
-                if let Some((at, answer)) = asked.limits {
-                    let buckets = fastctx_hosts::codex::buckets(&answer);
-                    let limits = &mut kept.codex.limits;
-                    limits.retain(|known| !crate::homes::same_dir(&known.dir, &dir));
-                    limits.push(KeptLimits { dir: dir.clone(), at, buckets });
-                }
                 kept.of_mut(agent).logins.push(KeptLogin {
                     dir,
                     found,

@@ -17,7 +17,7 @@ use std::sync::Mutex;
 
 use fastctx_types::ResidentId;
 use fastctx_types::access::{Acting, HubAccount};
-use fastctx_types::agents::LimitWindow;
+use fastctx_types::agents::{AgentLimits, LimitWindow};
 use fastctx_types::residents::About;
 use fastctx_types::session::{Happened, SessionChange, SessionEvent, TurnEnd, TurnTokens};
 use fastctx_types::usage::{Tokens, Usd};
@@ -73,8 +73,9 @@ pub(crate) struct Usage {
     /// Each Claude session's cost total as last counted, loaded from
     /// `claude-costs.json` when first needed.
     costs: Mutex<Option<HashMap<String, Kept>>>,
-    /// The windows of the last reading kept for each login, by its ledger.
-    readings: Mutex<HashMap<String, Vec<LimitWindow>>>,
+    /// The last reading kept for each login, by its ledger, or that it has
+    /// none: when it came and the windows it had.
+    readings: Mutex<HashMap<String, Option<(Timestamp, Vec<LimitWindow>)>>>,
     /// The login each Claude conversation's sessions count under.
     logins: Mutex<HashMap<ResidentId, PathBuf>>,
     /// One write to the ledgers at a time.
@@ -111,10 +112,8 @@ fn append(node: &Node, ledger: &Path, entry: &Entry) -> io::Result<()> {
     file.write_all(&line)
 }
 
-/// The entries of `ledger` from `since` on, oldest first. A line that does
-/// not read is passed over: a later version may write kinds this one does
-/// not know.
-fn entries(ledger: &Path, since: Timestamp) -> io::Result<Vec<Entry>> {
+/// The day files of `ledger` from the day of `since` on, oldest first.
+fn days(ledger: &Path, since: Timestamp) -> io::Result<Vec<PathBuf>> {
     let first = since.strftime("%Y-%m-%d").to_string();
     let mut days: Vec<PathBuf> = match std::fs::read_dir(ledger) {
         Ok(read) => read
@@ -128,8 +127,15 @@ fn entries(ledger: &Path, since: Timestamp) -> io::Result<Vec<Entry>> {
         Err(error) => return Err(error),
     };
     days.sort();
+    Ok(days)
+}
+
+/// The entries of `ledger` from `since` on, oldest first. A line that does
+/// not read is passed over: a later version may write kinds this one does
+/// not know.
+fn entries(ledger: &Path, since: Timestamp) -> io::Result<Vec<Entry>> {
     let mut found = Vec::new();
-    for day in days {
+    for day in days(ledger, since)? {
         let text = std::fs::read_to_string(&day)?;
         for line in text.lines() {
             if let Ok(entry) = serde_json::from_str::<Entry>(line)
@@ -206,9 +212,9 @@ const WEEK_SECONDS: i64 = 7 * 24 * 60 * 60;
 /// that reset has passed, as the window itself begins again each week. The
 /// seven days up to `now` where no reading had one.
 pub(super) fn week(node: &Node, ledger: &Path, now: Timestamp) -> Week {
-    let reset = last_windows(node, ledger)
+    let reset = last_reading(node, ledger)
         .into_iter()
-        .flatten()
+        .flat_map(|(_, windows)| windows)
         .find(|window| window.minutes == Some(10_080))
         .and_then(|window| window.resets_at);
     let week = jiff::SignedDuration::from_secs(WEEK_SECONDS);
@@ -228,19 +234,42 @@ pub(super) fn week(node: &Node, ledger: &Path, now: Timestamp) -> Week {
 /// How far back a login's last reading is looked for.
 const READING_DAYS: i64 = 62;
 
-/// The windows of the last reading kept in `ledger`.
-fn last_windows(node: &Node, ledger: &Path) -> Option<Vec<LimitWindow>> {
+/// The last reading kept in `ledger`, with when it came: read from its
+/// files once, or that it has none, and known from then on as readings
+/// come.
+fn last_reading(node: &Node, ledger: &Path) -> Option<(Timestamp, Vec<LimitWindow>)> {
     let key = ledger.to_string_lossy().into_owned();
-    if let Some(windows) = node.usage.readings.lock().expect("never poisoned").get(&key) {
-        return Some(windows.clone());
+    if let Some(last) = node.usage.readings.lock().expect("never poisoned").get(&key) {
+        return last.clone();
     }
     let since = Timestamp::now() - jiff::SignedDuration::from_hours(24 * READING_DAYS);
-    let found = entries(ledger, since).ok()?.into_iter().rev().find_map(|entry| match entry {
-        Entry::Reading { windows, .. } => Some(windows),
-        _ => None,
-    })?;
-    node.usage.readings.lock().expect("never poisoned").insert(key, found.clone());
-    Some(found)
+    let found = newest_reading(ledger, since).ok()?;
+    // A reading kept while the files were read is newer than theirs.
+    node.usage.readings.lock().expect("never poisoned").entry(key).or_insert(found).clone()
+}
+
+/// The newest reading in `ledger` from the day of `since` on, looked for
+/// from the newest day back.
+fn newest_reading(ledger: &Path, since: Timestamp) -> io::Result<Option<(Timestamp, Vec<LimitWindow>)>> {
+    for day in days(ledger, since)?.into_iter().rev() {
+        let text = std::fs::read_to_string(&day)?;
+        let found = text.lines().rev().find_map(|line| match serde_json::from_str::<Entry>(line) {
+            Ok(Entry::Reading { at, windows }) => Some((at, windows)),
+            _ => None,
+        });
+        if found.is_some() {
+            return Ok(found);
+        }
+    }
+    Ok(None)
+}
+
+/// The limits of `agent`'s login `dir` as they were last read, which its
+/// ledger keeps past the sessions that read them and their conversations
+/// (`world-agent-logins.md`, 额度).
+pub(crate) fn last_limits(node: &Node, agent: &str, dir: &Path) -> Option<AgentLimits> {
+    let (observed_at, windows) = last_reading(node, &ledger(node, agent, dir))?;
+    Some(AgentLimits { observed_at, windows, credits: None })
 }
 
 /// Counts a Claude session's measurement, as its plugin hands it over: a
@@ -330,10 +359,10 @@ fn reading(node: &Node, ledger: &Path, windows: Vec<LimitWindow>, at: Timestamp)
     let key = ledger.to_string_lossy().into_owned();
     {
         let mut readings = node.usage.readings.lock().expect("never poisoned");
-        if readings.get(&key).is_some_and(|last| *last == windows) {
+        if readings.get(&key).is_some_and(|last| last.as_ref().is_some_and(|(_, last)| *last == windows)) {
             return Ok(());
         }
-        readings.insert(key, windows.clone());
+        readings.insert(key, Some((at, windows.clone())));
     }
     append(node, ledger, &Entry::Reading { at, windows })
 }

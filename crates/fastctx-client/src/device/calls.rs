@@ -137,10 +137,8 @@ impl Device {
                 (machine, RemoteCall::ClaudeConsent { accept, home }, None)
             }
             Call::Homes { machine, change } => (machine, RemoteCall::Homes { change }, None),
-            Call::ScanAgents { machine, stop, limits } => (machine, RemoteCall::ScanAgents { stop, limits }, None),
-            Call::AddAgentLogin { machine, agent, dir, limits } => {
-                (machine, RemoteCall::AddAgentLogin { agent, dir, limits }, None)
-            }
+            Call::ScanAgents { machine, stop } => (machine, RemoteCall::ScanAgents { stop }, None),
+            Call::AddAgentLogin { machine, agent, dir } => (machine, RemoteCall::AddAgentLogin { agent, dir }, None),
             Call::AgentFolder { machine, dir, change } => (machine, RemoteCall::AgentFolder { dir, change }, None),
             Call::SetAgentTitle { machine, agent, dir, on } => {
                 (machine, RemoteCall::SetAgentTitle { agent, dir, on }, None)

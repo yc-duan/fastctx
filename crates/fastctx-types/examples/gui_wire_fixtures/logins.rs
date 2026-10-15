@@ -303,17 +303,12 @@ pub fn fixtures() -> Fixtures {
     Fixtures {
         calls: vec![
             Call::AgentLogins { machine: None },
-            Call::ScanAgents { machine: machine.clone(), stop: false, limits: true },
-            Call::AddAgentLogin {
-                machine: machine.clone(),
-                agent: codex.clone(),
-                dir: "D:/backup/.codex".into(),
-                limits: false,
-            },
+            Call::ScanAgents { machine: machine.clone(), stop: false },
+            Call::AddAgentLogin { machine: machine.clone(), agent: codex.clone(), dir: "D:/backup/.codex".into() },
             Call::AgentFolder {
                 machine: machine.clone(),
                 dir: "C:/Users/me/CodexHomes".into(),
-                change: FolderChange::Choose { limits: true },
+                change: FolderChange::Choose,
             },
             Call::AgentFolder { machine: machine.clone(), dir: "D:/".into(), change: FolderChange::Stop },
             Call::AgentFolder { machine: machine.clone(), dir: "E:/old".into(), change: FolderChange::Forget },
@@ -354,9 +349,9 @@ pub fn fixtures() -> Fixtures {
         ],
         remote_calls: vec![
             RemoteCall::AgentLogins,
-            RemoteCall::ScanAgents { stop: true, limits: false },
-            RemoteCall::AddAgentLogin { agent: claude.clone(), dir: "/home/me/.claude-work".into(), limits: true },
-            RemoteCall::AgentFolder { dir: "/home/me/agents".into(), change: FolderChange::Choose { limits: false } },
+            RemoteCall::ScanAgents { stop: true },
+            RemoteCall::AddAgentLogin { agent: claude.clone(), dir: "/home/me/.claude-work".into() },
+            RemoteCall::AgentFolder { dir: "/home/me/agents".into(), change: FolderChange::Choose },
             RemoteCall::PreviewAgentChange {
                 agent: claude.clone(),
                 dir: "/home/me/.claude-work".into(),

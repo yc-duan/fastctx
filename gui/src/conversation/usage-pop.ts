@@ -136,11 +136,16 @@ export class UsagePop {
     const asOf = minutes === null ? "" : words.asOf(minutes);
     return usage.limits
       .map((limit) => {
-        const percent = limit.used_percent === null ? null : Number(limit.used_percent);
-        const share = percent === null ? null : percent / 100;
+        const read = limit.used_percent === null ? null : Number(limit.used_percent);
         const resets = limit.resets_at ? new Date(limit.resets_at) : null;
-        const reset = resets ? words.resetsIn(Math.max(0, resets.getTime() - Date.now())) : "";
-        const said = [words.window(limit.name), percent === null ? "" : words.used(String(percent)), resets ? words.resets(resets) : "", asOf].filter(Boolean).join(" · ");
+        // Read before a reset it has passed since: it is said to have reset.
+        const past = !!resets && resets.getTime() <= Date.now();
+        const percent = past ? null : read;
+        const share = percent === null ? null : percent / 100;
+        const reset = past ? words.reset : resets ? words.resetsIn(resets.getTime() - Date.now()) : "";
+        const said = past
+          ? [words.window(limit.name), words.reset, read === null ? "" : words.usedBefore(String(read)), asOf].filter(Boolean).join(" · ")
+          : [words.window(limit.name), percent === null ? "" : words.used(String(percent)), resets ? words.resets(resets) : "", asOf].filter(Boolean).join(" · ");
         return `<span class="talk-usage-ring" title="${escape(said)}"><span class="talk-usage-ring-face">${ring(share, `talk:${limit.name}`, 44)}<span class="talk-usage-ring-num"><span>${percent === null ? "–" : `${Math.round(percent)}<small>%</small>`}</span></span></span><span class="talk-usage-ring-text"><span class="talk-usage-ring-name">${escape(words.window(limit.name))}</span><span class="talk-usage-ring-when">${escape(reset)}</span></span></span>`;
       })
       .join("");

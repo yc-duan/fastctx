@@ -94,6 +94,10 @@ export interface AgentLoginsWords extends MachinePickWords {
   /** How long until a window starts again, as short as its name: 45m,
    *  2h20m, 3d4h; nothing once that time has passed. */
   resetsIn(at: Date, now: Date): string;
+  /** A window past the reset it was read before, where its time would be. */
+  reset: string;
+  /** What it had used when it was read, before that reset. */
+  usedBefore(percent: string): string;
   observed(when: string): string;
   credits(balance: string | null, unlimited: boolean): string;
   creditsMark: string;
@@ -201,10 +205,12 @@ export const zhAgentLogins: AgentLoginsWords = {
     return `${["周日", "周一", "周二", "周三", "周四", "周五", "周六"][at.getDay()]} ${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")} 重置`;
   },
   resetsIn: (at, now) => left(at, now),
+  reset: "已重置",
+  usedBefore: (percent) => `重置前已用 ${percent}`,
   observed: (when) => `${when} 读到`,
   credits: (balance, unlimited) => (unlimited ? "超出后用 credits（不限）" : balance !== null ? `超出后用 credits，余 ${balance}` : "超出后用 credits"),
   creditsMark: "正在用 credits",
-  notRead: (agent) => (agent === "claude" ? "还没读到：这个登录的会话干过一轮之后才有" : "还没读到"),
+  notRead: (agent) => (agent === "claude" ? "还没读到：这个登录的会话干过一轮之后才有" : "还没读到：这个登录的对话在 Fastctx 里干过一轮之后才有"),
   failed: "没办成",
 };
 
@@ -293,10 +299,12 @@ export const enAgentLogins: AgentLoginsWords = {
     return `resets ${at.toLocaleString("en", { weekday: "short", hour: "2-digit", minute: "2-digit" })}`;
   },
   resetsIn: (at, now) => left(at, now),
+  reset: "reset",
+  usedBefore: (percent) => `${percent} used before it reset`,
   observed: (when) => `read ${when}`,
   credits: (balance, unlimited) => (unlimited ? "Then credits (unlimited)" : balance !== null ? `Then credits, ${balance} left` : "Then credits"),
   creditsMark: "On credits",
-  notRead: (agent) => (agent === "claude" ? "Not read yet: a session in this login has to do one turn first" : "Not read yet"),
+  notRead: (agent) => (agent === "claude" ? "Not read yet: a session in this login has to do one turn first" : "Not read yet: a conversation in this login has to do one turn in Fastctx first"),
   failed: "Not done",
 };
 

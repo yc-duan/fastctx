@@ -12,7 +12,6 @@ import { presentation } from './presentation.js'
 // directory, reserved by the node before its first write:
 //   session.json       written when the session starts
 //   transcript.json    where Claude Code keeps the session's own record
-//   limits.json        the account's limits as the session last read them
 //   events/<n>.json    a report or an ordered batch of stream events, and
 //   events/<n>.done    written after it, once it is whole
 //   inbox/<id>.json    what the node has for the session; read, never changed
@@ -20,6 +19,8 @@ import { presentation } from './presentation.js'
 //   stop.json          the turn the node asks to be stopped; read, never changed
 //   focus.md           the machines and folders the user pointed the
 //                      conversation at; read, never changed
+//   project.md         the record of the conversation's project, with
+//                      the user's instructions for it; read, never changed
 // Before a call to the World's own tools goes through, it writes which
 // session makes it to `calls/<call id>.json` there; the node takes
 // that file when the call arrives, and sweeps those of ended sessions.
@@ -1097,13 +1098,6 @@ export function register(on) {
   on('session.measure', async ($, e, next) => {
     if (await removed($)) return next(e)
     const context = await route($, registry, 'session.measure', e)
-    if (Array.isArray(e.changed) && e.changed.includes('rateLimits')) {
-      try {
-        await keepLimits($, context, e.rateLimits)
-      } catch (error) {
-        // The node then shows the last reading it has; the report goes on.
-      }
-    }
     return context.shown.measure(reports($, context), e, next)
   }).catch(($, e, next) => continueWithoutWorld($, 'session.measure', e, next))
   on('classic.PostToolUse', async ($, e, next) => {
@@ -1128,16 +1122,6 @@ export function register(on) {
     await observeTitle($, context, e)
     return next(e)
   }).catch(($, e, next) => continueWithoutWorld($, 'classic.SessionStart', e, next))
-}
-
-// The account's limits as Claude Code read them from its own answers, kept
-// for the node with when they came: the host gives no time, and reads them
-// only while a session works. An empty reading is none and is not kept.
-// Nothing is shown in Claude Code's own interface: the World's interface
-// shows them (`world.md`, 不改官方程序自己的界面).
-async function keepLimits($, context, rateLimits) {
-  if (!Array.isArray(rateLimits) || !rateLimits.length || !context.dir) return
-  await $.fs.write(context.dir + '/limits.json', JSON.stringify({ at: new Date().toISOString(), rateLimits }))
 }
 
 // The file is whole before the call leaves the host, so the node reads it

@@ -703,6 +703,7 @@ export class NewTalk {
       noMachine: words.noMachine,
       token: words.token,
       onCredits: words.onCredits,
+      reset: words.limitReset,
     });
   }
 

@@ -294,13 +294,9 @@ pub struct Folder {
 #[serde(rename_all = "snake_case", tag = "change")]
 pub enum FolderChange {
     /// Chooses it for logins: a folder that is a login is taken up as a
-    /// candidate, asked who is logged in there and, with `limits`, its
-    /// usage limits, which only a device with the workbench on asks for;
-    /// any other is kept among the folders searched, and searched now.
-    Choose {
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        limits: bool,
-    },
+    /// candidate and asked who is logged in there; any other is kept among
+    /// the folders searched, and searched now.
+    Choose,
     /// Stops its search; what it found so far stays.
     Stop,
     /// No longer searches it: its search stops, and what it found goes.

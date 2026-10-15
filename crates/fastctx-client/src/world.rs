@@ -285,15 +285,13 @@ impl World {
 
     /// Scans `machine` for its agents, answered once the usual places are
     /// done while its chosen folders are searched again; with `stop`, stops
-    /// those searches. With `limits`, Codex's logins are asked their usage
-    /// limits too, which only a device with the workbench on asks for.
+    /// those searches.
     pub async fn scan_agents(
         &self,
         machine: MachineName,
         stop: bool,
-        limits: bool,
     ) -> Result<fastctx_types::logins::MachineLogins, Error> {
-        machine_logins(self.ask(Call::ScanAgents { machine, stop, limits }).await?)
+        machine_logins(self.ask(Call::ScanAgents { machine, stop }).await?)
     }
 
     /// Takes up `dir` on `machine` as a candidate login of `agent`.
@@ -302,9 +300,8 @@ impl World {
         machine: MachineName,
         agent: fastctx_types::AgentName,
         dir: std::path::PathBuf,
-        limits: bool,
     ) -> Result<fastctx_types::logins::MachineLogins, Error> {
-        machine_logins(self.ask(Call::AddAgentLogin { machine, agent, dir, limits }).await?)
+        machine_logins(self.ask(Call::AddAgentLogin { machine, agent, dir }).await?)
     }
 
     /// Chooses the folder `dir` on `machine` for logins, stops its search,

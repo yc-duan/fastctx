@@ -14,6 +14,7 @@ import { glyph } from "../../conversation/glyphs";
 import { escape } from "../../conversation/prose";
 import { modelName } from "../../conversation/view";
 import type { AgentLimits, Fact, LimitWindow } from "../../world/agents";
+import { isReset } from "../agent-homes";
 import type { Login, MachineLogins, WorldLogins } from "../../world/logins";
 import { wholeDollars } from "../../world/money";
 import type { UsageReport } from "../../world/usage";
@@ -43,6 +44,8 @@ export interface LoginUsageOptions {
   workbench: Signal<boolean>;
   read(machine: string): Promise<WorldLogins>;
   usage(machine: string, agent: Agent, dir: string): Promise<UsageReport>;
+  /** A past moment as the pages say it. */
+  when(at: Date, now: Date): string;
   /** Begins a conversation in this login. */
   talk(machine: string, agent: Agent, home: string | null): void;
 }
@@ -204,11 +207,13 @@ export class LoginUsagePage implements Page {
   /** What stands now: the windows, this week, and who used it. */
   private strip(usage: Usage, limits: Fact<AgentLimits> | null, unit: Unit, amounts: Amounts, mine: ReturnType<typeof assistingMe>, now: number): string {
     const { words } = this.options;
-    const windows = limits?.kind === "known" ? limits.value.windows : [];
+    const known = limits?.kind === "known" ? limits.value : null;
     const rings = [300, 10080]
       .map((minutes) => {
-        const window = windows.find((one) => one.minutes === minutes || one.name.startsWith(minutes === 300 ? "five_hour" : "seven_day")) ?? null;
-        return this.ring(minutes, window, now);
+        const window = known?.windows.find((one) => one.minutes === minutes || one.name.startsWith(minutes === 300 ? "five_hour" : "seven_day")) ?? null;
+        // A reading without this window: the account has none.
+        if (known && !window) return "";
+        return this.ring(minutes, window, known?.observed_at ?? null, now);
       })
       .join("");
     const only = usage.people.find((person) => person.key === this.only) ?? null;
@@ -238,16 +243,28 @@ export class LoginUsagePage implements Page {
     return `<section class="ledger-strip"><div class="ledger-rings">${rings}</div>${totals}${mine ? this.assisted(usage, mine, now) : this.people(usage, unit, amounts)}</section>`;
   }
 
-  private ring(minutes: number, window: LimitWindow | null, now: number): string {
+  /** One window's ring: how much is used and how long until it resets; a
+   *  window past the reset it was read before is empty and says it has
+   *  reset; one never read, empty and says so. When it was read, and what
+   *  it had used before a reset, a hover away. */
+  private ring(minutes: number, window: LimitWindow | null, observed: string | null, now: number): string {
     const { words, logins } = this.options;
-    const share = window ? window.used_tenths / 1000 : null;
-    const left = window?.resets_at ? logins.resetsIn(new Date(window.resets_at), new Date(now)) : "";
     const name = words.window(minutes, window?.name ?? "");
-    const said = window ? `${name} · ${logins.used(`${Math.round(window.used_tenths / 10)}%`)}${window.resets_at ? `\n${logins.resets(new Date(window.resets_at), new Date(now))}` : ""}` : `${name} · ${words.notRead}`;
+    const read = observed ? logins.observed(this.options.when(new Date(observed), new Date(now))) : "";
+    const percent = window ? `${Math.round(window.used_tenths / 10)}%` : "";
+    const reset = window ? isReset(window, now) : false;
+    const share = window && !reset ? window.used_tenths / 1000 : null;
+    const left = window?.resets_at && !reset ? logins.resetsIn(new Date(window.resets_at), new Date(now)) : "";
+    const said = !window
+      ? `${name} · ${logins.notRead(this.options.agent)}`
+      : reset
+        ? [`${name} · ${logins.reset}`, logins.usedBefore(percent), read].join("\n")
+        : [`${name} · ${logins.used(percent)}`, window.resets_at ? logins.resets(new Date(window.resets_at), new Date(now)) : "", read].filter(Boolean).join("\n");
+    const under = !window ? words.notRead : reset ? logins.reset : left ? words.resetsIn(left) : "";
     return `<div class="ledger-ring" title="${escape(said)}">
       <span class="ledger-ring-face">${ring(share, `${this.key}:${minutes}`)}<span class="ledger-ring-num"><span>${share === null ? "–" : `${Math.round(share * 100)}<small>%</small>`}</span></span></span>
       <span class="ledger-ring-name">${escape(name)}</span>
-      <span class="ledger-ring-left">${escape(left ? words.resetsIn(left) : window ? "" : words.notRead)}</span>
+      <span class="ledger-ring-left">${escape(under)}</span>
     </div>`;
   }
 

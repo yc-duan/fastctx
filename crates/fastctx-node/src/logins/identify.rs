@@ -26,8 +26,8 @@ pub(super) struct Asked {
 }
 
 /// Asks the Codex login in `dir` who is logged in, and with `limits` its
-/// usage limits: those belong to the workbench, and a device without it
-/// does not read them (`world-agent-logins.md`, 额度).
+/// usage limits, which are read only when the user asks for them
+/// (`world-agent-logins.md`, 额度).
 pub(super) async fn codex(node: &Arc<Node>, dir: &Path, limits: bool) -> Asked {
     let at = Timestamp::now();
     if let Some(host) = node.codex.existing(dir)
