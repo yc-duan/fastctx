@@ -146,7 +146,7 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
             let request =
                 fastctx_types::run::RunRequest { call_id: None, script, cwd: None, writes_off: false, wait: None };
             let (reply, _) = node.jobs.run(node, owner, town, request, None).await?;
-            Ok(PageResult::Run(reply))
+            Ok(PageResult::Run(Box::new(reply)))
         }
         PageInvocation::Say { to, text } => {
             if !node.is_me(&to.machine) {

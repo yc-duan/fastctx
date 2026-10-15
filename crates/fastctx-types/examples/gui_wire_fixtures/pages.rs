@@ -106,7 +106,7 @@ pub fn fixtures() -> Fixtures {
         .map(Call::Page)
         .collect();
     let results = vec![
-        PageResult::Run(RunReply {
+        PageResult::Run(Box::new(RunReply {
             run: None,
             consumed: None,
             machine: machine.clone(),
@@ -123,7 +123,7 @@ pub fn fixtures() -> Fixtures {
             },
             visited: Vec::new(),
             answered: None,
-        }),
+        })),
         PageResult::Said { to, landed: Landed::Sent },
         PageResult::EntryAdded { journal, id: "20261004T120000Z-desktop".parse().unwrap() },
     ];

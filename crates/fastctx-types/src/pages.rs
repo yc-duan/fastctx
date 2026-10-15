@@ -178,7 +178,7 @@ impl PageCall {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum PageResult {
-    Run(crate::run::RunReply),
+    Run(Box<crate::run::RunReply>),
     Said { to: Address, landed: crate::residents::Landed },
     EntryAdded { journal: JournalName, id: EntryId },
 }
