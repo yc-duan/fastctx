@@ -26,7 +26,7 @@ import type { MachineFacts, ResidentNow } from "../world/world";
 import type { Place } from "./places";
 import { link } from "./places";
 import { assistantsOf, groupsOf, isComputer, loginLabel, machinesOf, residentIn } from "./reach";
-import { effect } from "./signals";
+import { effect, type Signal } from "./signals";
 import type { Store } from "./store";
 import type { TalkActs } from "./talk-acts";
 import type { TalkMenu } from "./talk-menu";
@@ -35,6 +35,8 @@ import { isUnreached } from "./store";
 import { TalkList } from "./talk-list";
 import { factsByMachine, talkRow, talksOf } from "./talk-row";
 import type { ShellWords } from "./words";
+import type { Offered } from "./updates";
+import type { UpdateWords } from "./update-words";
 
 export interface SidebarOptions {
   store: Store;
@@ -49,6 +51,8 @@ export interface SidebarOptions {
   acts: TalkActs;
   menu: TalkMenu;
   menuWords: TalkMenuWords;
+  /** A new version of the application, offered above the foot. */
+  updates?: { offered: Signal<Offered | null>; open(): void; words: UpdateWords } | undefined;
 }
 
 /** An answer usually comes within a second and is asked for every two;
@@ -104,6 +108,7 @@ export class Sidebar {
       </div>
       <button class="new-talk" type="button">${glyph("plus", 18)}<span>${escape(words.newTalk)}</span><kbd>Ctrl N</kbd></button>
       <div class="sidebar-places"></div>
+      <div class="sidebar-update" hidden></div>
       <div class="sidebar-foot"></div>`;
     this.list = this.element.querySelector<HTMLElement>(".sidebar-places")!;
     this.foot = this.element.querySelector<HTMLElement>(".sidebar-foot")!;
@@ -128,6 +133,14 @@ export class Sidebar {
       if (target.closest("a")) this.popover.hide();
     });
     this.element.querySelector(".new-talk")!.addEventListener("click", () => options.newTalk());
+    const updates = options.updates;
+    if (updates) {
+      const bar = this.element.querySelector<HTMLElement>(".sidebar-update")!;
+      bar.addEventListener("click", (event) => {
+        if ((event.target as HTMLElement).closest("button")) updates.open();
+      });
+      effect(() => drawUpdate(bar, updates.offered.get(), updates.words));
+    }
     this.element.querySelector(".sidebar-fold")!.addEventListener("click", () => options.fold());
     this.talkList = new TalkList(this.list, {
       acts: options.acts,
@@ -396,4 +409,28 @@ function mark(): string {
 
 function knotMark(): string {
   return `<svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="10" cy="10" r="1.8"/><circle cx="4.6" cy="6" r="2.1"/><circle cx="15.6" cy="6.4" r="2.1"/><circle cx="10" cy="16.2" r="2.1"/></g></svg>`;
+}
+
+/** The button a new version is offered by: its version, or how far it has
+ *  come, or that it is ready. */
+function drawUpdate(bar: HTMLElement, offered: Offered | null, words: UpdateWords): void {
+  bar.hidden = !offered;
+  if (!offered) {
+    bar.innerHTML = "";
+    return;
+  }
+  const { stage } = offered;
+  const percent = stage.kind === "fetching" && stage.total ? Math.min(100, Math.floor((stage.received / stage.total) * 100)) : null;
+  const said =
+    stage.kind === "fetching"
+      ? words.barFetching(percent)
+      : stage.kind === "ready" || stage.kind === "waiting" || stage.kind === "permission"
+        ? words.barReady
+        : stage.kind === "installing"
+          ? words.barInstalling
+          : words.bar;
+  const html = `<button class="update-place${stage.kind === "fetching" ? " coming" : ""}" type="button">${glyph("update", 18)}<span class="place-name">${escape(said)}</span><span class="update-version">${escape(offered.manifest.version)}</span>${
+    stage.kind === "fetching" ? `<span class="update-fill" style="width:${percent ?? 4}%"></span>` : ""
+  }</button>`;
+  if (bar.innerHTML !== html) bar.innerHTML = html;
 }

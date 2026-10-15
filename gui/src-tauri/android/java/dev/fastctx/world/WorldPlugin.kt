@@ -46,6 +46,28 @@ class WorldPlugin(activity: Activity) : Plugin(activity) {
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
         invoke.resolve()
     }
+    /** Hands a new version's package, checked by the World, to the system's installer. Without the
+     *  user's leave to install apps, the system's page for giving it opens instead. */
+    @Command fun installPackage(invoke: Invoke) = answer(invoke) {
+        val context = current()
+        val result = JSObject()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
+            context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:${context.packageName}")))
+            result.put("started", false)
+            invoke.resolve(result)
+            return@answer
+        }
+        val source = File(invoke.getArgs().getString("path")).canonicalFile
+        val folder = File(context.cacheDir, "updates").apply { mkdirs() }
+        val apk = File(folder, "Fastctx.apk")
+        source.copyTo(apk, overwrite = true)
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apk)
+        context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
+        result.put("started", true)
+        invoke.resolve(result)
+    }
     @Command fun configure(invoke: Invoke) = answer(invoke) {
         val configuration = invoke.getArgs().getJSONObject("configuration").toString()
         val error = WorldRuntime.validateConfigurationNative(configuration)

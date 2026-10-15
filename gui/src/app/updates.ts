@@ -1,0 +1,163 @@
+// What the interface knows of new versions of itself (`world-upgrade.md`,
+// 界面上的样子): how they stand, asked of this computer's node or this
+// phone's device every minute, every second while a package comes; whether
+// a version newer than this one is offered for this device; and, with
+// automatic updates on, bringing it here at once and installing it once
+// nothing here is under way.
+
+import { signal, type Signal } from "./signals";
+import { compareVersions, type Manifest, type UpdateSeam, type UpdateSettings, type UpdateState } from "../world/updates";
+
+/** What the sidebar's button and the card show. */
+export interface Offered {
+  manifest: Manifest;
+  /** The package's size, when the release says it. */
+  size: number | null;
+  stage:
+    | { kind: "offered" }
+    | { kind: "fetching"; received: number; total: number | null; network: boolean }
+    | { kind: "ready" }
+    /** With automatic updates on: ready, waiting for what is under way. */
+    | { kind: "waiting" }
+    | { kind: "installing" }
+    /** A phone sent the user to allow installing apps. */
+    | { kind: "permission" }
+    | { kind: "failed"; why: string };
+  /** The network asks for at least this version, which this one is not. */
+  minimum: string | null;
+}
+
+export class Updates {
+  readonly state: Signal<UpdateState | null> = signal<UpdateState | null>(null);
+  readonly offered: Signal<Offered | null> = signal<Offered | null>(null, (a, b) => JSON.stringify(a) === JSON.stringify(b));
+  private installing = false;
+  private permission = false;
+  private failed: string | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private known: string | null = null;
+
+  constructor(
+    private readonly seam: UpdateSeam,
+    /** Whether nothing here is under way: no agent in a turn, nobody typing. */
+    private readonly idle: () => boolean,
+  ) {
+    this.ask();
+  }
+
+  /** This application's version, once the shell said it. */
+  get version(): string {
+    return this.known ?? "";
+  }
+
+  /** The shell says which version this application is. */
+  know(version: string): void {
+    this.known = version;
+    this.refresh();
+  }
+
+  /** Looks on GitHub now. */
+  look(): Promise<void> {
+    return this.seam.look().then((state) => this.take(state));
+  }
+
+  set(settings: UpdateSettings): Promise<void> {
+    return this.seam.set(settings).then((state) => this.take(state));
+  }
+
+  /** Brings the offered version here, or installs it when it is here. */
+  go(): void {
+    const offered = this.offered.peek();
+    if (!offered || this.installing) return;
+    this.failed = null;
+    this.permission = false;
+    if (offered.stage.kind === "ready" || offered.stage.kind === "waiting" || offered.stage.kind === "permission") {
+      this.install(offered.manifest.version);
+      return;
+    }
+    void this.seam.fetch(offered.manifest.version).then(
+      (state) => this.take(state),
+      (error: unknown) => {
+        this.failed = String(error);
+        this.refresh();
+      },
+    );
+  }
+
+  private install(version: string): void {
+    this.installing = true;
+    this.refresh();
+    this.seam.install(version).then(
+      (started) => {
+        // A computer starts again as the new version; a phone hands it to
+        // the system, which asks the user and replaces this application.
+        this.installing = false;
+        this.permission = !started;
+        this.refresh();
+      },
+      (error: unknown) => {
+        this.installing = false;
+        this.failed = String(error);
+        this.refresh();
+      },
+    );
+  }
+
+  private ask(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.seam.state().then(
+      (state) => this.take(state),
+      () => this.later(60_000),
+    );
+  }
+
+  private later(after: number): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.ask(), after);
+  }
+
+  private take(state: UpdateState): void {
+    this.state.set(state);
+    this.refresh();
+    this.later(state.fetching ? 1_000 : this.offered.peek()?.stage.kind === "waiting" ? 5_000 : 60_000);
+  }
+
+  /** What is offered now, and what automatic updates do with it. */
+  private refresh(): void {
+    const state = this.state.peek();
+    const offered = state ? this.offerOf(state) : null;
+    this.offered.set(offered);
+    if (!state?.settings.auto || !offered || this.installing || this.failed) return;
+    if (offered.stage.kind === "offered") this.go();
+    else if (offered.stage.kind === "waiting" && this.idle()) this.install(offered.manifest.version);
+  }
+
+  private offerOf(state: UpdateState): Offered | null {
+    const manifest = state.offer;
+    const target = state.app?.target;
+    if (!manifest || !target || !this.known || compareVersions(manifest.version, this.known) <= 0) return null;
+    const pack = manifest.platforms[target];
+    if (!pack) return null;
+    const minimum = state.network?.policy.minimum;
+    const below = minimum && compareVersions(this.version, minimum) < 0 ? minimum : null;
+    const base = { manifest, size: pack.size ?? null, minimum: below };
+    if (this.installing) return { ...base, stage: { kind: "installing" } };
+    if (this.failed) return { ...base, stage: { kind: "failed", why: this.failed } };
+    const fetching = state.fetching;
+    if (fetching && fetching.version === manifest.version && fetching.target === target) {
+      return {
+        ...base,
+        stage: { kind: "fetching", received: fetching.received, total: fetching.total ?? pack.size ?? null, network: fetching.via === "network" },
+      };
+    }
+    if (state.kept?.some((kept) => kept.version === manifest.version && kept.target === target)) {
+      if (this.permission) return { ...base, stage: { kind: "permission" } };
+      return { ...base, stage: { kind: state.settings.auto ? "waiting" : "ready" } };
+    }
+    const failed = state.failed;
+    if (failed && failed.version === manifest.version && failed.target === target) {
+      return { ...base, stage: { kind: "failed", why: failed.why } };
+    }
+    return { ...base, stage: { kind: "offered" } };
+  }
+}

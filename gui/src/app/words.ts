@@ -375,17 +375,6 @@ export interface SettingsWords {
   renewFailed(why: string): string;
   guardian: string;
   guardianWhy: string;
-  /** The app's own version, and a newer one from the project's releases. */
-  app: string;
-  appChecking: string;
-  appLatest: string;
-  appCheckAgain: string;
-  appUnknown(why: string): string;
-  appAvailable(version: string): string;
-  appInstall: string;
-  appDownloading(percent: number | null): string;
-  appInstalling: string;
-  appFailed(why: string): string;
   /** A phone: what it lets the World do in the background. */
   phoneNotices: string;
   phoneNoticesOn: string;
@@ -482,16 +471,6 @@ export const zhSettings: SettingsWords = {
   renewFailed: failure(zhProblems, "更新失败"),
   guardian: "管理员确认",
   guardianWhy: "更新开机服务，当前工作不受影响",
-  app: "应用",
-  appChecking: "正在检查更新…",
-  appLatest: "已是最新版本",
-  appCheckAgain: "检查更新",
-  appUnknown: () => "无法检查更新",
-  appAvailable: (version) => `新版本 ${version}`,
-  appInstall: "下载并安装",
-  appDownloading: (percent) => (percent === null ? "下载中…" : `下载中 ${percent}%`),
-  appInstalling: "正在安装，应用将重新启动…",
-  appFailed: failure(zhProblems, "安装失败"),
   phoneNotices: "通知",
   phoneNoticesOn: "已允许",
   phoneNoticesOff: "未允许",
@@ -603,16 +582,6 @@ export const enSettings: SettingsWords = {
   renewFailed: failure(enProblems, "Update failed"),
   guardian: "Approve as administrator",
   guardianWhy: "Updates the startup service; current work continues",
-  app: "App",
-  appChecking: "Checking for updates…",
-  appLatest: "Up to date",
-  appCheckAgain: "Check for updates",
-  appUnknown: () => "Couldn't check for updates",
-  appAvailable: (version) => `Version ${version} available`,
-  appInstall: "Download and install",
-  appDownloading: (percent) => (percent === null ? "Downloading…" : `Downloading ${percent}%`),
-  appInstalling: "Installing; the app will restart…",
-  appFailed: failure(enProblems, "Install failed"),
   phoneNotices: "Notifications",
   phoneNoticesOn: "Allowed",
   phoneNoticesOff: "Not allowed",

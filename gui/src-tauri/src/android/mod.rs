@@ -135,6 +135,18 @@ pub(crate) async fn save_as(
         .map_err(|error| error.to_string())
 }
 
+/// Hands the package at `path` to the system's installer; `false` when the
+/// system's page for allowing it to install apps opened instead.
+pub(crate) async fn install_package(app: &tauri::AppHandle, path: String) -> Result<bool, String> {
+    let answer: Value = app
+        .state::<Native>()
+        .0
+        .run_mobile_plugin_async("installPackage", serde_json::json!({"path": path}))
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(answer.get("started").and_then(Value::as_bool).unwrap_or(false))
+}
+
 pub(crate) async fn open_file(app: &tauri::AppHandle, path: String) -> Result<(), String> {
     app.state::<Native>()
         .0

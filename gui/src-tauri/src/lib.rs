@@ -17,6 +17,7 @@ mod hub_moving;
 mod item_details;
 mod kept;
 mod transcript;
+mod updates;
 mod world_watch;
 
 #[cfg(desktop)]
@@ -1026,6 +1027,17 @@ pub fn run() {
             app.manage(removal::State::default());
             #[cfg(desktop)]
             app.manage(remote_world::Sessions::default());
+            #[cfg(desktop)]
+            updates::after_update(app.handle());
+            // The node or the device learns which application this is, for
+            // its updates and the network's.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let carried = handle.path().resource_dir().ok().map(|dir| dir.join("linux"));
+                if let Err(error) = updates::introduce(&handle.state::<Shell>(), carried).await {
+                    eprintln!("World: telling the World which application this is: {error}");
+                }
+            });
             Ok(())
         })
         .on_page_load(|webview, payload| {
@@ -1037,6 +1049,12 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            updates::update_state,
+            updates::update_look,
+            updates::update_set,
+            updates::update_fetch,
+            updates::update_machine,
+            updates::update_install,
             #[cfg(desktop)]
             removal::removal_plan,
             #[cfg(desktop)]

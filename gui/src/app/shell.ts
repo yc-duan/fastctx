@@ -15,6 +15,9 @@ import type { TalkActs } from "./talk-acts";
 import type { TalkMenu } from "./talk-menu";
 import type { TalkMenuWords } from "./talk-menu-words";
 import type { ShellWords } from "./words";
+import { effect, type Signal } from "./signals";
+import type { Offered } from "./updates";
+import type { UpdateWords } from "./update-words";
 
 export interface Page {
   readonly element: HTMLElement;
@@ -33,6 +36,9 @@ export interface ShellOptions {
   acts: TalkActs;
   menu: TalkMenu;
   menuWords: TalkMenuWords;
+  /** A new version of the application: offered in the sidebar, and marked
+   *  on the way to the drawer on a phone. */
+  updates?: { offered: Signal<Offered | null>; open(): void; words: UpdateWords } | undefined;
 }
 
 const narrow = matchMedia("(max-width: 760px)");
@@ -84,7 +90,22 @@ export class Shell {
       acts: options.acts,
       menu: options.menu,
       menuWords: options.menuWords,
+      updates: options.updates
+        ? {
+            ...options.updates,
+            open: () => {
+              this.closeDrawer();
+              options.updates!.open();
+            },
+          }
+        : undefined,
     });
+    const updates = options.updates;
+    if (updates) {
+      effect(() => {
+        this.element.classList.toggle("update-offered", !!updates.offered.get());
+      });
+    }
     this.element.querySelector(".sidebar-frame")!.append(this.sidebar.element);
     this.element.querySelector(".scrim")!.addEventListener("click", () => this.closeDrawer());
     // Any page's menu button brings the sidebar back: as a drawer on a

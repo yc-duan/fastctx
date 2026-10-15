@@ -9,7 +9,9 @@ import { chooseMotion, chosenMotion, motions, type Motion } from "../motion";
 import { chooseSize, chooseTheme, chosenSize, chosenTheme, textSizes, themes, type Theme } from "../theme";
 import type { KeptNow, Legacy, Setup, WorldNow } from "../world/bridge";
 import { RenewalRow, type Renewing } from "./renewal";
-import { AppUpdateRow, type Updating } from "./app-update";
+import { UpdateRows } from "./update-rows";
+import type { Updates } from "./updates";
+import type { UpdateWords } from "./update-words";
 import { PhoneRow, type PhoneSeam } from "./phone";
 import { desktopAvailable } from "../world/desktop";
 import { chooseNotifying, notifying } from "./presence";
@@ -50,13 +52,12 @@ export interface SettingsOptions {
     removal?: RemovalSheet | undefined;
     /** Which World it runs, and putting a new one in place. */
     renewing: Renewing;
-    /** The app's own version, and a newer one from its releases. */
-    updating?: Updating | undefined;
     /** How much World keeps on this computer, in bytes. */
     dataSize?(): Promise<number>;
   } | undefined;
-  /** Told of a newer app version, so the sidebar can mark the way to it. */
-  appUpdate?(version: string | null): void;
+  /** New versions of the application: its rows, and the card a new one
+   *  opens in; `relays` where this device passes packages to the network. */
+  updates?: { updates: Updates; words: UpdateWords; open(): void; relays: boolean } | undefined;
   /** This is an Android phone: what it lets the World do in the background. */
   phone?: PhoneSeam | undefined;
   /** Whether calls are wanted changed, for where calls are made by more
@@ -86,7 +87,7 @@ export class SettingsPage implements Page {
   readonly title: string;
   private stop: () => void;
   private renewal: RenewalRow | null = null;
-  private appUpdate: AppUpdateRow | null = null;
+  private updateRows: UpdateRows | null = null;
   private device: HTMLElement;
   /** This computer's name: the way to its page, and renaming it there. */
   private name: HTMLElement;
@@ -128,13 +129,14 @@ export class SettingsPage implements Page {
     this.askService();
     const renewing = options.computer?.renewing;
     if (renewing) this.renewal = new RenewalRow(this.element.querySelector<HTMLElement>(".settings-renewal")!, words, renewing);
-    const updating = options.computer?.updating;
-    if (updating) {
-      this.appUpdate = new AppUpdateRow(
+    const updates = options.updates;
+    if (updates) {
+      this.updateRows = new UpdateRows(
         this.element.querySelector<HTMLElement>(".settings-app")!,
-        words,
-        updating,
-        (version) => options.appUpdate?.(version),
+        updates.updates,
+        updates.words,
+        updates.open,
+        updates.relays,
       );
     }
     if (options.phone) new PhoneRow(this.element.querySelector<HTMLElement>(".settings-phone")!, words, options.phone);
@@ -183,7 +185,7 @@ export class SettingsPage implements Page {
   leave(): void {
     this.stop();
     this.renewal?.leave();
-    this.appUpdate?.leave();
+    this.updateRows?.leave();
     this.renaming?.dispose();
   }
 

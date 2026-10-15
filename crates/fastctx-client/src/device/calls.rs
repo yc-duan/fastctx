@@ -94,6 +94,7 @@ impl Device {
                     here(),
                 ));
             }
+            Call::Update(call) => return Ok((Reply::Update(Box::new(self.update(call).await?)), here())),
             Call::SeenDissolved => {
                 self.store.seen_dissolved().map_err(failed)?;
                 super::changed(&self.shown_changes);
@@ -123,6 +124,7 @@ impl Device {
                     machine.ok_or_else(|| failed("choose a machine; a device has no details page of its own"))?;
                 (machine, RemoteCall::Stats { after }, None)
             }
+            Call::UpdateMachine { machine } => (machine, RemoteCall::UpdateWorld, None),
             Call::Thumbnail { machine, request } => {
                 let machine = machine.ok_or_else(|| failed("choose the machine holding the image"))?;
                 (machine, RemoteCall::Thumbnail { request }, None)
@@ -255,6 +257,7 @@ impl Device {
             (RemoteCall::FindFiles { .. }, RemoteReply::FilesFound(reply)) => Reply::FilesFound(reply),
             (RemoteCall::Folders { .. }, RemoteReply::Folders(folders)) => Reply::Folders(folders),
             (RemoteCall::Stats { .. }, RemoteReply::Stats(stats)) => Reply::Stats(stats),
+            (RemoteCall::UpdateWorld, RemoteReply::Update(state)) => Reply::Update(state),
             (RemoteCall::Thumbnail { .. }, RemoteReply::Thumbnail(reply)) => Reply::Thumbnail(reply),
             (RemoteCall::AttachmentThumbnail { .. }, RemoteReply::Thumbnail(reply)) => Reply::Thumbnail(reply),
             (RemoteCall::Lines { .. }, RemoteReply::Lines(reply)) => Reply::Lines(reply),

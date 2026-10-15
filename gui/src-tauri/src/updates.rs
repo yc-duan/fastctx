@@ -1,0 +1,258 @@
+//! New versions of the application (`world-upgrade.md`, 新版本自己往后怎样升级):
+//! how they stand, from this computer's node or this phone's own device; the
+//! package brought here by them, from GitHub or through the network; and
+//! installing it. A computer installs with the official updater, handed the
+//! package the node checked through an address on this computer alone, so a
+//! package that came through the network is installed as one from GitHub
+//! is; a phone hands it to the system's installer. After a computer's update
+//! the World program the new application carries is put in place, as the
+//! user asked for it with the update.
+
+use fastctx_types::update::{App, Settings, State, UpdateCall};
+use fastctx_types::{Call, Reply};
+
+use crate::Shell;
+
+/// The updater target this application's packages are for: the official
+/// updater's `<os>-<arch>-<installer>`, or the phone's own.
+pub(crate) fn target() -> String {
+    if cfg!(target_os = "android") {
+        return "android-apk".to_string();
+    }
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        os => os,
+    };
+    let arch = std::env::consts::ARCH;
+    #[cfg(desktop)]
+    let installer = tauri::utils::platform::bundle_type().map(|bundle| match bundle {
+        tauri::utils::config::BundleType::Deb => "deb",
+        tauri::utils::config::BundleType::Rpm => "rpm",
+        tauri::utils::config::BundleType::AppImage => "appimage",
+        tauri::utils::config::BundleType::Msi => "msi",
+        tauri::utils::config::BundleType::Nsis => "nsis",
+        tauri::utils::config::BundleType::App | tauri::utils::config::BundleType::Dmg => "app",
+    });
+    #[cfg(not(desktop))]
+    let installer: Option<&str> = None;
+    match installer {
+        Some(installer) => format!("{os}-{arch}-{installer}"),
+        None => format!("{os}-{arch}"),
+    }
+}
+
+async fn ask(shell: &Shell, call: UpdateCall) -> Result<State, String> {
+    match shell.world().call(Call::Update(call)).await.map_err(|error| error.to_string())?.0 {
+        Reply::Update(state) => Ok(*state),
+        other => Err(format!("the World answered {other:?}")),
+    }
+}
+
+/// Tells the node or the device which application this is, and where it
+/// keeps the command-line programs it carries.
+pub(crate) async fn introduce(shell: &Shell, carried: Option<std::path::PathBuf>) -> Result<(), String> {
+    let app = App { version: env!("CARGO_PKG_VERSION").to_string(), target: target() };
+    let carried = carried.filter(|dir| dir.is_dir()).map(|dir| dir.display().to_string());
+    ask(shell, UpdateCall::App { app, carried }).await.map(|_| ())
+}
+
+#[fastctx_gui_command::command]
+pub(crate) async fn update_state(shell: tauri::State<'_, Shell>) -> Result<State, String> {
+    ask(&shell, UpdateCall::State).await
+}
+
+#[fastctx_gui_command::command]
+pub(crate) async fn update_look(shell: tauri::State<'_, Shell>) -> Result<State, String> {
+    ask(&shell, UpdateCall::Look).await
+}
+
+#[fastctx_gui_command::command]
+pub(crate) async fn update_set(shell: tauri::State<'_, Shell>, settings: Settings) -> Result<State, String> {
+    ask(&shell, UpdateCall::Set { settings }).await
+}
+
+/// Brings this application's package of `version` here.
+#[fastctx_gui_command::command]
+pub(crate) async fn update_fetch(shell: tauri::State<'_, Shell>, version: String) -> Result<State, String> {
+    ask(&shell, UpdateCall::Fetch { version, target: target() }).await
+}
+
+/// Has `machine_name` update its World program itself.
+#[fastctx_gui_command::command]
+pub(crate) async fn update_machine(shell: tauri::State<'_, Shell>, machine_name: String) -> Result<State, String> {
+    let machine = fastctx_types::MachineName::try_from(machine_name).map_err(|error| error.to_string())?;
+    match shell.world().call(Call::UpdateMachine { machine }).await.map_err(|error| error.to_string())?.0 {
+        Reply::Update(state) => Ok(*state),
+        other => Err(format!("the World answered {other:?}")),
+    }
+}
+
+/// Installs this application's package of `version`, which is here: on a
+/// computer the application then starts again as the new version, on a
+/// phone the system asks the user. `false` when the phone first sent the
+/// user to allow installing apps.
+#[fastctx_gui_command::command]
+pub(crate) async fn update_install(
+    app: tauri::AppHandle,
+    shell: tauri::State<'_, Shell>,
+    version: String,
+) -> Result<bool, String> {
+    let state = ask(&shell, UpdateCall::State).await?;
+    let target = target();
+    let kept = state
+        .kept
+        .iter()
+        .find(|kept| kept.version == version && kept.target == target)
+        .ok_or("the new version is not here yet")?;
+    #[cfg(target_os = "android")]
+    {
+        let _ = state;
+        crate::android::install_package(&app, kept.path.clone()).await
+    }
+    #[cfg(desktop)]
+    {
+        let manifest = [state.offer.as_ref()]
+            .into_iter()
+            .flatten()
+            .chain(
+                state.network.as_ref().into_iter().flat_map(|network| network.stable.iter().chain(network.beta.iter())),
+            )
+            .chain(state.looked.stable.iter().chain(state.looked.beta.iter()))
+            .find(|manifest| manifest.version == version)
+            .ok_or("the new version's manifest is not known here")?;
+        let package = manifest.package(&target).ok_or("the new version has no package for this computer")?;
+        desktop::install(&app, &version, &target, package, std::path::Path::new(&kept.path)).await?;
+        Ok(true)
+    }
+}
+
+/// After a computer's update, the World program the new application carries
+/// is put in place once.
+#[cfg(desktop)]
+pub(crate) fn after_update(app: &tauri::AppHandle) {
+    desktop::after_update(app);
+}
+
+#[cfg(desktop)]
+mod desktop {
+    use std::path::{Path, PathBuf};
+
+    use fastctx_types::update::Package;
+    use tauri::Manager as _;
+    use tauri_plugin_updater::UpdaterExt as _;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    /// Kept between the update and the new application's first start.
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Updated {
+        from: String,
+        to: String,
+    }
+
+    fn marker(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+        Ok(app.path().app_data_dir().map_err(|error| error.to_string())?.join("updated.json"))
+    }
+
+    pub(super) async fn install(
+        app: &tauri::AppHandle,
+        version: &str,
+        target: &str,
+        package: &Package,
+        path: &Path,
+    ) -> Result<(), String> {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.map_err(|error| error.to_string())?;
+        let port = listener.local_addr().map_err(|error| error.to_string())?.port();
+        let manifest = serde_json::json!({
+            "version": version,
+            "platforms": { target: { "url": format!("http://127.0.0.1:{port}/package"), "signature": package.signature } },
+        });
+        let serving = tokio::spawn(serve(listener, manifest.to_string(), path.to_path_buf()));
+        let installed = async {
+            let endpoint =
+                format!("http://127.0.0.1:{port}/latest.json").parse().map_err(|error| format!("{error}"))?;
+            let updater = app
+                .updater_builder()
+                .endpoints(vec![endpoint])
+                .map_err(|error| error.to_string())?
+                .target(target)
+                .build()
+                .map_err(|error| error.to_string())?;
+            let update = updater
+                .check()
+                .await
+                .map_err(|error| error.to_string())?
+                .ok_or("the updater does not take this version as newer")?;
+            // The updater checks the signature again as it reads the package.
+            let bytes = update.download(|_, _| {}, || {}).await.map_err(|error| error.to_string())?;
+            let marker = marker(app)?;
+            if let Some(dir) = marker.parent() {
+                std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+            }
+            let updated = Updated { from: env!("CARGO_PKG_VERSION").to_string(), to: version.to_string() };
+            std::fs::write(&marker, serde_json::to_vec(&updated).map_err(|error| error.to_string())?)
+                .map_err(|error| error.to_string())?;
+            update.install(bytes).map_err(|error| error.to_string())
+        };
+        let outcome: Result<(), String> = installed.await;
+        serving.abort();
+        outcome?;
+        // Windows' installer has ended this application and starts the new
+        // one itself; elsewhere the new one is started here.
+        app.restart();
+    }
+
+    /// Answers the updater's two requests: the manifest naming the package
+    /// here, and the package.
+    async fn serve(listener: tokio::net::TcpListener, manifest: String, package: PathBuf) {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            let (manifest, package) = (manifest.clone(), package.clone());
+            tokio::spawn(async move {
+                let mut request = Vec::new();
+                let mut byte = [0_u8; 1];
+                while !request.ends_with(b"\r\n\r\n") && request.len() < 16 * 1024 {
+                    match stream.read(&mut byte).await {
+                        Ok(1) => request.push(byte[0]),
+                        _ => return,
+                    }
+                }
+                let line = String::from_utf8_lossy(&request).lines().next().unwrap_or_default().to_string();
+                let (kind, body) = if line.starts_with("GET /latest.json ") {
+                    ("application/json", manifest.into_bytes())
+                } else if line.starts_with("GET /package ") {
+                    match tokio::fs::read(&package).await {
+                        Ok(bytes) => ("application/octet-stream", bytes),
+                        Err(_) => return,
+                    }
+                } else {
+                    let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n").await;
+                    return;
+                };
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(head.as_bytes()).await;
+                let _ = stream.write_all(&body).await;
+                let _ = stream.shutdown().await;
+            });
+        }
+    }
+
+    /// The new application's first start after an update puts the World
+    /// program it carries in place; the renewal waits for the turns under
+    /// way to end.
+    pub(super) fn after_update(app: &tauri::AppHandle) {
+        let Ok(marker) = marker(app) else { return };
+        let Ok(bytes) = std::fs::read(&marker) else { return };
+        let _ = std::fs::remove_file(&marker);
+        let Ok(updated) = serde_json::from_slice::<Updated>(&bytes) else { return };
+        if updated.to != env!("CARGO_PKG_VERSION") {
+            return;
+        }
+        std::thread::spawn(move || {
+            if let Err(error) = crate::setup::place() {
+                eprintln!("World: putting the updated World program in place: {error}");
+            }
+        });
+    }
+}

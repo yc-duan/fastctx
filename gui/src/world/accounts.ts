@@ -252,6 +252,8 @@ export interface HubAccounts {
   /** Whether the hub dissolves its network when its super administrator
    *  asks (`world-network.md`, 解散网络). */
   dissolves?: boolean;
+  /** Whether the hub keeps the network's versions and their policy. */
+  versions?: boolean;
   logins: AccountName[];
   home: AccountName | null;
   self_registration: boolean;
@@ -320,6 +322,7 @@ export type AccountChange =
   | { change: "transfer"; to: AccountName }
   | { change: "delete_account"; name: AccountName }
   | { change: "settings"; self_registration: boolean }
+  | { change: "updates"; policy: { channel: "stable" | "beta"; minimum?: string } }
   /** The super administrator dissolves the network named `name`, typed as
    *  it is. */
   | { change: "dissolve"; name: HubName }

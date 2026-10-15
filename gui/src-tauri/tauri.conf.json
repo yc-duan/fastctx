@@ -48,6 +48,7 @@
       "endpoints": [
         "https://github.com/yc-duan/fastctx/releases/latest/download/latest.json"
       ],
+      "dangerousInsecureTransportProtocol": true,
       "windows": {
         "installMode": "passive"
       }

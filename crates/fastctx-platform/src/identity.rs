@@ -87,6 +87,32 @@ mod imp {
     }
 }
 
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+mod imp {
+    use std::io;
+    use std::process::Command;
+
+    /// Without /proc, `ps` gives the start time; at one-second precision a
+    /// reused PID within the same second would look like the same process.
+    pub fn token(pid: u32) -> io::Result<Option<String>> {
+        let output = Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "lstart=", "-o", "stat="])
+            .env("LC_ALL", "C")
+            .output()?;
+        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !output.status.success() || text.is_empty() || text.ends_with('Z') {
+            return Ok(None);
+        }
+        Ok(Some(text))
+    }
+
+    /// `ps` shows no state for a process in the middle of exiting; such a
+    /// process reads as alive here until it is a zombie.
+    pub fn has_ended(identity: &fastctx_types::ProcessIdentity) -> io::Result<bool> {
+        Ok(token(identity.pid)?.as_deref() != Some(identity.token.as_str()))
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod imp {
     use std::io;

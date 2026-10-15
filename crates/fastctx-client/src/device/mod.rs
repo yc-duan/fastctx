@@ -11,6 +11,7 @@ mod file_search;
 mod lines;
 mod store;
 mod thumbnail;
+mod updates;
 mod upload;
 pub(crate) mod watch;
 mod world_now;
@@ -52,6 +53,8 @@ pub struct Device {
     shown: world_now::Shown,
     /// Moves whenever what it shows of the World may have changed.
     shown_changes: Arc<tokio::sync::watch::Sender<u64>>,
+    /// New versions of Fastctx here (`updates`).
+    updates: updates::Updates,
 }
 
 pub(super) struct Session {
@@ -103,6 +106,7 @@ impl Device {
             ways: Arc::new(tokio::sync::watch::channel(0).0),
             shown: world_now::Shown::default(),
             shown_changes: Arc::new(tokio::sync::watch::channel(0).0),
+            updates: updates::Updates::default(),
         });
         for membership in memberships {
             device.start(membership)?;
@@ -277,6 +281,7 @@ impl Device {
         // What the link said of its ways before it was among the sessions
         // was not seen in them.
         changed(&self.ways);
+        self.report_versions();
         Ok(())
     }
 
@@ -452,6 +457,10 @@ impl fastctx_net::link::Node for Handler {
     }
 
     fn afoot_changed(&self) {
+        changed(&self.shown);
+    }
+
+    fn versions_changed(&self) {
         changed(&self.shown);
     }
 

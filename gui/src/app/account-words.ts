@@ -1014,6 +1014,8 @@ export const zhMachines: MachinesWords = {
         return `${a.on} 上删除 ${a.conversation.resident}`;
       case "dissolve":
         return `解散网络 ${a.name}`;
+      case "updates":
+        return `网络的更新改为${a.channel === "beta" ? "测试版" : "正式版"}${a.minimum ? `，至少 ${a.minimum}` : ""}`;
       default:
         return null;
     }
@@ -1305,6 +1307,8 @@ export const enMachines: MachinesWords = {
         return `${a.conversation.resident} deleted on ${a.on}`;
       case "dissolve":
         return `Dissolved the network ${a.name}`;
+      case "updates":
+        return `Network updates set to ${a.channel === "beta" ? "beta" : "stable"}${a.minimum ? `, at least ${a.minimum}` : ""}`;
       default:
         return null;
     }

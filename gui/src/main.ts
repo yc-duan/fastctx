@@ -19,6 +19,7 @@ import "./conversation/agents.css";
 import "./longview/longview.css";
 import "./app/shell.css";
 import "./app/sheet.css";
+import "./app/updates.css";
 import "./app/pages.css";
 import "./app/accounts.css";
 import "./app/me.css";
@@ -250,7 +251,12 @@ import {
   agentActivity,
 } from "./world/bridge";
 import { en, zh } from "./words";
-import { updating } from "./world/updater";
+import { updates as updateSeam } from "./world/updates";
+import { Updates } from "./app/updates";
+import { UpdateCard } from "./app/update-card";
+import { enUpdate, zhUpdate } from "./app/update-words";
+import { specimenUpdates } from "./specimen/updates";
+import { getVersion } from "@tauri-apps/api/app";
 import { desktopAvailable } from "./world/desktop";
 import { answerWith, notifying, startPresence } from "./app/presence";
 import { installAccess } from "./app/access";
@@ -819,9 +825,38 @@ async function specimenForgot(address: Address): Promise<Forgetting> {
   return "asked";
 }
 
+/** Nothing here is under way, so a new version may be installed now: no
+ *  agent of this machine in a turn, and nobody typing. */
+function idleHere(): boolean {
+  const world = store.world.peek();
+  const here = machinesOf(world).find((machine) => machine.here)?.name;
+  const busy = residentsOf(world).some((r) => r.now?.activity === "busy" && (!here || r.about.machine === here));
+  const active = document.activeElement;
+  const typing = (active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement) && active.value.trim() !== "";
+  return !busy && !typing;
+}
+
+const updateWords = english ? enUpdate : zhUpdate;
+const appUpdates = (() => {
+  if (live) {
+    const updates = new Updates(updateSeam, idleHere);
+    void getVersion().then(
+      (version) => updates.know(version),
+      (error: unknown) => console.error("reading this application's version", error),
+    );
+    return updates;
+  }
+  const specimen = specimenUpdates(params, params.has("phone"));
+  const updates = new Updates(specimen.seam, idleHere);
+  updates.know(specimen.version);
+  return updates;
+})();
+const updateCard = new UpdateCard(appUpdates, updateWords, live ? !onComputer() : params.has("phone"));
+
 const shell = new Shell({
   store,
   words: shellWords,
+  updates: { offered: appUpdates.offered, open: () => updateCard.open(), words: updateWords },
   newTalk: () => beginTalk(place.kind === "project" || place.kind === "new" ? place.town : null),
   newProject: (login) => projectForm.open(null, login),
   acts: talkActs,
@@ -1812,12 +1847,21 @@ function show(next: Place): void {
         talk: (machine) => beginTalk(null, null, machine),
         confirm: accountConfirm,
         replace: (to) => replacePlace(link(to)),
+        updates: {
+          state: appUpdates.state,
+          machine: (name) => (live ? updateSeam.machine(name) : specimenUpdates(params, false).seam.machine(name)),
+          words: updateWords,
+        },
       });
       break;
     }
     case "machines":
       page = new MachinesPage({
         store,
+        updates: {
+          policy: () => appUpdates.state.peek()?.network?.policy ?? { channel: "stable" },
+          words: updateWords,
+        },
         words: english ? enMachines : zhMachines,
         access: english ? enAccess : zhAccess,
         people: english ? enPeople : zhPeople,
@@ -2047,6 +2091,12 @@ function show(next: Place): void {
           },
         },
         phone: live ? (onPhone() ? phoneSeam : undefined) : params.has("phone") ? specimenPhone : undefined,
+        updates: {
+          updates: appUpdates,
+          words: updateWords,
+          open: () => updateCard.open(),
+          relays: live ? onComputer() : !params.has("phone"),
+        },
         notifyChanged: (on) => {
           if (live && onPhone()) void configurePhone(presenceWords, on).catch((error: unknown) => console.error("telling the phone its calls", error));
         },
@@ -2071,7 +2121,6 @@ function show(next: Place): void {
                   },
                   guardian: renewGuardianHere,
                 },
-                updating,
               }
             : undefined
           : { ...specimenComputer(), removal },

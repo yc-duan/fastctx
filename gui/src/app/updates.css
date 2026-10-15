@@ -1,0 +1,203 @@
+/* A new version: a solid block of the accent above the sidebar's foot, a
+   dot on the way to the drawer on a phone, and its card. */
+
+.sidebar-update {
+  flex: none;
+  padding-top: var(--space-2);
+}
+
+.update-place {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 4px var(--space-3);
+  border-radius: var(--radius-s);
+  background: var(--accent);
+  color: var(--bg);
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+  text-align: left;
+  overflow: hidden;
+  transition: background-color var(--hover) ease;
+}
+
+.update-place:hover {
+  background: var(--accent-bright);
+}
+
+.update-place .glyph {
+  flex: none;
+}
+
+.update-place .place-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-version {
+  flex: none;
+  font-size: var(--size-small);
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+
+/* While it comes, the block fills as far as it has come, over a wash. */
+.update-place.coming {
+  background: var(--accent-wash);
+  color: var(--text-strong);
+}
+
+.update-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  opacity: 0.55;
+  transition: width 0.4s ease;
+  pointer-events: none;
+}
+
+.update-place.coming > :not(.update-fill) {
+  position: relative;
+}
+
+/* On a phone the way to the drawer carries a dot while a version waits. */
+.shell.update-offered .menu-button {
+  position: relative;
+}
+
+.shell.update-offered .menu-button::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* The card. */
+.update-sheet .sheet-body {
+  width: min(440px, 100vw - 32px);
+}
+
+.update-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.update-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--size-h3, 17px);
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.update-tag {
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: var(--accent-wash);
+  color: var(--text-strong);
+  font-size: var(--size-small);
+}
+
+.update-notes,
+.update-facts,
+.update-minimum {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--size-ui);
+}
+
+.update-facts {
+  color: var(--text-3);
+  font-size: var(--size-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.update-minimum {
+  color: var(--caution);
+}
+
+.update-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  min-height: 34px;
+  margin-top: var(--space-3);
+}
+
+.update-bar {
+  flex: 1;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--hairline);
+  overflow: hidden;
+}
+
+.update-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+
+.update-said {
+  color: var(--text-2);
+  font-size: var(--size-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.update-bar + .update-said {
+  flex: none;
+  min-width: 3em;
+  text-align: right;
+}
+
+.update-foot .update-said:first-child:not(:last-child) {
+  flex: 1;
+}
+
+.update-failed {
+  color: var(--caution);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Another machine's update, said where its button was. */
+.mp-update-said {
+  margin-left: var(--space-2);
+  color: var(--text-3);
+  font-size: var(--size-small);
+}
+
+.policy-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.policy-minimum {
+  width: 12em;
+  height: 32px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-s);
+  background: var(--hairline);
+  color: var(--text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}

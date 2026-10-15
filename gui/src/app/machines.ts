@@ -49,6 +49,8 @@ import { link, talkLink } from "./places";
 import { assistantsOf, groupsOf, isComputer, isSuper, isVisitor, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, superOf, type Assistant, type Machine } from "./reach";
 import type { Page } from "./shell";
 import { effect } from "./signals";
+import { UpdatePolicySheet, type Policy } from "./update-policy";
+import type { UpdateWords } from "./update-words";
 import { jobsOf, residentsOf, type Store } from "./store";
 
 export interface MachinesOptions {
@@ -81,6 +83,9 @@ export interface MachinesOptions {
     check(text: string): Promise<NameProblem | null>;
     here(to: string): Promise<void>;
   };
+  /** The network's update policy, as this device last heard it, and the
+   *  words of setting it. */
+  updates?: { policy(): Policy; words: UpdateWords } | undefined;
 }
 
 /** A group's box on the drawing: its name, its machines, and how each is
@@ -139,6 +144,8 @@ function keptView(): View {
 }
 
 export class MachinesPage implements Page {
+  private policySheet: UpdatePolicySheet | null = null;
+  private policyLogin: Login | null = null;
   readonly element: HTMLElement;
   readonly title: string;
   private readonly panel: HTMLElement;
@@ -892,6 +899,20 @@ export class MachinesPage implements Page {
   }
 
   /** The login of this device that is `hub`'s super administrator. */
+  /** The network's update policy, set as its super administrator. */
+  private policy(login: Login): void {
+    const updates = this.options.updates;
+    if (!updates) return;
+    this.policySheet ??= new UpdatePolicySheet(updates.words, async (policy) => {
+      const top = this.policyLogin;
+      if (!top) return;
+      await this.options.change(top, { change: "updates", policy });
+      await this.options.store.refresh();
+    });
+    this.policyLogin = login;
+    this.policySheet.open(updates.policy());
+  }
+
   private superLogin(hub: HubAccounts, world: WorldNow): Login | undefined {
     return loginsOf(world.accounts).find((login) => login.hub === hub.hub && hub.accounts.find((account) => account.name === login.account)?.level === "super");
   }
@@ -981,6 +1002,7 @@ export class MachinesPage implements Page {
         ...(logins.length ? [{ act: "invite", label: words.inviteDevice, icon: "plus" as const }] : []),
         ...(top ? [{ act: "move", label: words.moveHub, icon: "move" as const }] : []),
         ...(top ? [{ act: "signup", label: this.options.people.signUpState(open), icon: "signup" as const, on: open }] : []),
+        ...(top && spot.hub.versions && this.options.updates ? [{ act: "updates", label: this.options.updates.words.policy, icon: "update" as const }] : []),
         details,
         ...(top && spot.hub.dissolves ? [{ act: "dissolve", label: words.dissolve, icon: "close" as const, danger: true }] : []),
       ];
@@ -1085,6 +1107,10 @@ export class MachinesPage implements Page {
       const login = this.hubLogin(spot.hub.hub);
       if (act === "invite" && login) this.invite(login);
       else if (act === "signup") this.people.signUp(spot.hub.hub);
+      else if (act === "updates") {
+        const top = this.superLogin(spot.hub, world);
+        if (top && this.options.updates) this.policy(top);
+      }
       else if (act === "dissolve") {
         const top = this.superLogin(spot.hub, world);
         if (top) this.dissolve(top, spot.hub);

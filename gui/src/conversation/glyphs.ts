@@ -12,12 +12,12 @@ type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "sto
  *  password, a phone, logging out, trust and a relay; locking a person out
  *  and letting them in, signing up; a conversation's context, the
  *  provider's cache and how long it stays; saving a copy, and a file's
- *  path; the machines as a drawing and as a list. */
+ *  path; the machines as a drawing and as a list; a new version. */
 type Frame =
   | "menu" | "plus" | "minus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back" | "sleep" | "wake" | "move"
   | "archive" | "unarchive" | "trash" | "reread" | "scan" | "grip" | "page" | "versions" | "history" | "person" | "key" | "phone"
   | "logout" | "shield" | "lock" | "unlock" | "signup" | "relay" | "save" | "link"
-  | "context" | "cache" | "clock" | "tree" | "rows"
+  | "context" | "cache" | "clock" | "tree" | "rows" | "update"
   | Marks;
 
 /** Which agent and which kind of device, drawn small beside a conversation's
@@ -30,6 +30,8 @@ type Marks =
 
 const paths: Record<Named, string> = {
   menu: '<path d="M4 7h12M4 13h8"/>',
+  update: '<path d="M10 3.75v8.5M6.75 9.25L10 12.5l3.25-3.25"/><path d="M4.75 15.75h10.5"/>',
+
   claude: '<path d="M10 3.75v12.5M3.75 10h12.5M5.6 5.6l8.8 8.8M14.4 5.6l-8.8 8.8"/>',
   codex: '<path d="M10 3.6l5.6 3.2v6.4L10 16.4l-5.6-3.2V6.8z"/><path d="M8.2 8.4L6.6 10l1.6 1.6M11.8 8.4l1.6 1.6-1.6 1.6"/>',
   desktop: '<rect x="3.75" y="4.25" width="12.5" height="8.75" rx="1.25"/><path d="M7.5 15.75h5M10 13v2.75"/>',

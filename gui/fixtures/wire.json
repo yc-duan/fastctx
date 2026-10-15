@@ -1685,6 +1685,7 @@
             "roles": true,
             "groups": true,
             "dissolves": true,
+            "versions": true,
             "logins": [
               "ada"
             ],

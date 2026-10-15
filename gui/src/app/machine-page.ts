@@ -36,7 +36,9 @@ import { detailOf } from "./problem";
 import { assistantsOn, groupsOf, inNoNetwork, isSuper, isVisitor, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, type Machine } from "./reach";
 import { RenameField, renamerOf, type Renamer } from "./rename";
 import type { Page } from "./shell";
-import { effect } from "./signals";
+import { effect, type Signal } from "./signals";
+import { compareVersions, type UpdateState } from "../world/updates";
+import type { UpdateWords } from "./update-words";
 import { jobsOf, residentsOf, type Store } from "./store";
 
 export interface MachinePageOptions {
@@ -62,6 +64,9 @@ export interface MachinePageOptions {
   /** Goes to `place` in this page's stead: the machine renamed, removed, or
    *  one with no page of its own. */
   replace(place: Place): void;
+  /** What the network says of versions, and having a machine that runs no
+   *  application update its World program itself. */
+  updates?: { state: Signal<UpdateState | null>; machine(name: string): Promise<UpdateState>; words: UpdateWords } | undefined;
 }
 
 type Range = "day" | "week" | "month";
@@ -131,6 +136,8 @@ export class MachinePage implements Page {
   private readonly stop: () => void;
   private readonly born = Date.now();
   private machine: Machine | null = null;
+  /** How having this machine update itself stands, while it is asked. */
+  private machineUpdate: string | null = null;
   private vitals: Vital[] = [];
   private vitalsShape = "";
   private lines: LineView[] = [];
@@ -723,7 +730,7 @@ export class MachinePage implements Page {
   private drawAbout(machine: Machine, stats: MachineStats | null, world: WorldNow): void {
     const { words, machines } = this.options;
     const facts = factsOf(machine);
-    const rows: { label: string; lines: string[]; title?: string; code?: boolean }[] = [];
+    const rows: { label: string; lines: string[]; title?: string; code?: boolean; act?: string }[] = [];
     if (stats?.host) rows.push({ label: words.host, lines: [stats.host] });
     if (stats?.kernel) rows.push({ label: words.kernel, lines: [stats.kernel] });
     if (facts?.home) rows.push({ label: words.home, lines: [facts.home], code: true });
@@ -732,7 +739,7 @@ export class MachinePage implements Page {
     if (version) {
       const kept = stats ? (stats.node.service ? words.service : words.noService) : "";
       const running = stats ? words.nodeFor(words.span(Date.parse(stats.at) - Date.parse(stats.node.started))) : "";
-      rows.push({ label: words.version, lines: [[version, kept].filter(Boolean).join(" · ")], title: running });
+      rows.push({ label: words.version, lines: [[version, kept].filter(Boolean).join(" · ")], title: running, act: this.updateAct(machine, version, world) });
     }
     // Where it stands in each network: how this computer reaches each hub
     // and as whom, or whose machine another is there.
@@ -760,7 +767,7 @@ export class MachinePage implements Page {
           (row) =>
             `<div class="mp-fact"><dt>${escape(row.label)}</dt><dd${row.title ? ` title="${escape(row.title)}"` : ""}${row.code ? ` class="code"` : ""}>${row.lines
               .map((line) => `<span>${escape(line)}</span>`)
-              .join("")}</dd></div>`,
+              .join("")}${row.act ?? ""}</dd></div>`,
         )
         .join("")}</dl>${remove}`,
     );
@@ -840,6 +847,46 @@ export class MachinePage implements Page {
 
   /** The login a machine is the account's own under: this computer's on a
    *  hub it is registered on, or the one that registered another. */
+  /** The way to have another machine that runs no application update
+   *  itself, for its owner, or a managed one's super administrator, while
+   *  the network knows a newer release than it runs. */
+  private updateAct(machine: Machine, version: string, world: WorldNow): string {
+    const updates = this.options.updates;
+    if (!updates || machine.here) return "";
+    const said = this.machineUpdate;
+    if (said) return `<span class="mp-update-said">${escape(said)}</span>`;
+    const state = updates.state.peek();
+    const running = state?.network?.machines?.[machine.name];
+    const offer = state?.offer;
+    if (!offer || (running && running.app) || compareVersions(offer.version, version) <= 0) return "";
+    const owner = this.ownerLogin(machine, world);
+    const administered = isManaged(world, machine.name) && loginsOf(world.accounts).some((login) => isSuper(world, login));
+    if (!owner && !administered) return "";
+    return `<button class="text-button quiet-button" type="button" data-act="update-machine" title="${escape(updates.words.machineBehind(offer.version))}">${escape(updates.words.updateMachine)}</button>`;
+  }
+
+  private redrawAbout(): void {
+    const world = this.options.store.world.peek();
+    if (world && this.machine) this.drawAbout(this.machine, keptOf(this.machine.name).last, world);
+  }
+
+  private updateMachine(machine: Machine): void {
+    const updates = this.options.updates;
+    if (!updates || this.machineUpdate) return;
+    this.machineUpdate = updates.words.machineUpdating;
+    this.redrawAbout();
+    updates.machine(machine.name).then(
+      () => {
+        this.machineUpdate = null;
+        this.redrawAbout();
+      },
+      (error: unknown) => {
+        this.machineUpdate = detailOf(String(error));
+        this.redrawAbout();
+      },
+    );
+  }
+
   private ownerLogin(machine: Machine, world: WorldNow): Login | undefined {
     const logins = loginsOf(world.accounts);
     if (machine.here) return logins.find((login) => world.nodes.hubs.some((hub) => hub.hub === login.hub && hub.home === login.account));
@@ -932,6 +979,9 @@ export class MachinePage implements Page {
       }
       case "remove":
         if (owner) this.remove(owner, machine);
+        return;
+      case "update-machine":
+        this.updateMachine(machine);
         return;
       case "undo":
         void this.undo();
