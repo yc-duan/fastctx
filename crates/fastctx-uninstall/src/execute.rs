@@ -761,6 +761,10 @@ pub(crate) fn run_system_phase(request: &Request, early: bool, mut events: impl 
                                 | "letters.json"
                                 | "worked.json"
                                 | "hub.log"
+                                // What a retired hub keeps: why, and where it
+                                // was moving to.
+                                | "retired.json"
+                                | "moving-out.json"
                                 | "directory.before-sharing.json"
                                 | "directory.upgraded.txt"
                                 | "ledger"

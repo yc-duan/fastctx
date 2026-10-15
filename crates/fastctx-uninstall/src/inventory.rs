@@ -1,4 +1,3 @@
-use anyhow::Context as _;
 use fastctx_install::{apply, service, uninstall::Installation};
 use fastctx_types::uninstall::{Hub, Item, Other, Plan};
 use serde::{Deserialize, Serialize};
@@ -332,12 +331,25 @@ pub fn preview(mut installation: Installation, everything: bool) -> anyhow::Resu
     let mut hubs = Vec::new();
     for directory in hub_dirs {
         let metadata = crate::read::<serde_json::Value>(&directory.join("hub.json"))?;
-        let name = metadata
-            .as_ref()
-            .and_then(|value| value.get("name"))
-            .and_then(serde_json::Value::as_str)
-            .context("a local hub has no readable world name")?
-            .to_owned();
+        let name = metadata.as_ref().and_then(|value| value.get("name")).and_then(serde_json::Value::as_str);
+        let Some(name) = name.map(str::to_owned) else {
+            // A hub retired when its network was dissolved or moved keeps
+            // only its log and why (`retired.json`): it hosts nothing, and
+            // what it left goes with everything.
+            if directory.join("retired.json").try_exists()? {
+                if everything {
+                    add(
+                        "hub-data",
+                        "Delete what a retired hub left: its log",
+                        directory.display().to_string(),
+                        true,
+                        Action::HubData(directory.clone()),
+                    );
+                }
+                continue;
+            }
+            anyhow::bail!("the local hub in {} has no readable world name", directory.display());
+        };
         if everything {
             add(
                 "hub-data",
