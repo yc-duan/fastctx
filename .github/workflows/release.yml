@@ -103,6 +103,11 @@ jobs:
         run: |
           python -m pip install ziglang==0.14.1
           cargo install --locked cargo-zigbuild --version 0.23.0
+          # The kernel's debug sections are stripped with zig itself, which pip installs as a module.
+          mkdir -p "$RUNNER_TEMP/zig-bin"
+          printf '#!/bin/sh\nexec %s -m ziglang "$@"\n' "$(command -v python)" > "$RUNNER_TEMP/zig-bin/zig"
+          chmod +x "$RUNNER_TEMP/zig-bin/zig"
+          echo "$RUNNER_TEMP/zig-bin" >> "$GITHUB_PATH"
       - run: node scripts/kernel.mjs '${{ matrix.target }}'
       - name: Verify bundled ripgrep offline
         run: |
@@ -383,7 +388,7 @@ jobs:
       - name: Install the build's system packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev patchelf squashfs-tools xvfb imagemagick file
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev patchelf squashfs-tools xvfb imagemagick file libfuse2
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: rust-docs
@@ -480,7 +485,7 @@ jobs:
       - name: Install the Android SDK parts the build takes
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37" "build-tools;37.0.0" "ndk;29.0.14206865" > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" "ndk;29.0.14206865" > /dev/null
           echo "NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v4
         with:

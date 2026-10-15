@@ -82,20 +82,41 @@ impl Session {
         #[cfg(unix)]
         let process = {
             let graphical = request.installation.graphical;
-            let diagnostics = std::fs::File::create(temporary.path().join("helper.log"))?;
+            let log = temporary.path().join("helper.log");
+            let diagnostics = std::fs::File::create(&log)?;
             tokio::spawn(async move {
                 let mut command = if fastctx_platform::elevation::is_elevated()? {
-                    tokio::process::Command::new(&program)
+                    let mut command = tokio::process::Command::new(&program);
+                    command.args(args);
+                    command
+                } else if graphical && cfg!(target_os = "macos") {
+                    // macOS asks in its own dialog; the helper still writes
+                    // what it says of itself to its log.
+                    let quote = |word: &std::ffi::OsStr| format!("'{}'", word.to_string_lossy().replace('\'', r"'\''"));
+                    let mut line = quote(program.as_os_str());
+                    for arg in &args {
+                        line.push(' ');
+                        line.push_str(&quote(arg));
+                    }
+                    line.push_str(" > /dev/null 2>> ");
+                    line.push_str(&quote(log.as_os_str()));
+                    let script = format!(
+                        "do shell script \"{}\" with administrator privileges",
+                        line.replace('\\', r"\\").replace('"', "\\\"")
+                    );
+                    let mut command = tokio::process::Command::new("/usr/bin/osascript");
+                    command.args(["-e", &script]);
+                    command
                 } else if graphical {
                     let mut command = tokio::process::Command::new("pkexec");
-                    command.arg(&program);
+                    command.arg(&program).args(args);
                     command
                 } else {
                     let mut command = tokio::process::Command::new("sudo");
-                    command.arg("--").arg(&program);
+                    command.arg("--").arg(&program).args(args);
                     command
                 };
-                command.args(args).stdout(std::process::Stdio::null()).stderr(diagnostics);
+                command.stdout(std::process::Stdio::null()).stderr(diagnostics);
                 Ok(command.status().await?.code().context("the system helper ended without a status")? as u32)
             })
         };
@@ -181,7 +202,16 @@ impl Session {
             }
         }
         let code = self.exit.context("system helper finished without an exit status")??;
-        anyhow::ensure!(code == 0, "the system helper exited {code}");
+        if code != 0 {
+            // What the helper said of itself, where it says it: its own words name the step.
+            let said = std::fs::read_to_string(self.temporary.path().join("helper.log")).unwrap_or_default();
+            let said = said.trim();
+            let tail: String = said.chars().rev().take(1500).collect::<Vec<_>>().into_iter().rev().collect();
+            anyhow::bail!(
+                "the system helper exited {code}{}",
+                if tail.is_empty() { String::new() } else { format!(": {tail}") }
+            );
+        }
         anyhow::ensure!(self.buffer.is_empty(), "the system helper left an incomplete progress line");
         drop(self.watcher);
         drop(self.output);
