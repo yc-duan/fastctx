@@ -56,6 +56,8 @@ export class TalkMenu {
     this.element.className = "talk-menu";
     this.element.setAttribute("role", "menu");
     this.element.hidden = true;
+    // Opened from a caption, it may lie over one, which drags the window on Windows.
+    this.element.dataset.worldTitlebar = "client";
     document.body.append(this.shade, this.element);
     this.shade.addEventListener("click", () => this.close());
     this.element.addEventListener("click", (event) => this.pick(event));

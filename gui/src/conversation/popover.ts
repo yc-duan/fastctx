@@ -20,6 +20,8 @@ export class Popover {
     private readonly closed: () => void = () => {},
   ) {
     button.setAttribute("aria-expanded", "false");
+    // Opened from a caption, it may lie over one, which drags the window on Windows.
+    panel.dataset.worldTitlebar ??= "client";
     // Judged by the press's path as it was when the press began: what the
     // press does inside the panel may redraw the very element it landed on.
     document.addEventListener(

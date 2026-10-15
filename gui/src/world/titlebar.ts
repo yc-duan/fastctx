@@ -74,6 +74,11 @@ function regions(): Regions {
   for (const kind of ["minimize", "maximize", "close"]) {
     if (!buttons.has(kind)) throw new Error(`Missing ${kind} titlebar button`);
   }
+  // A modal dialog holds the page: nothing behind it drags the window, so a
+  // press on the dialog where it lies over a caption reaches the dialog.
+  if (document.querySelector("dialog:modal")) {
+    result.client.push({ x: 0, y: 0, width: document.documentElement.clientWidth, height: document.documentElement.clientHeight });
+  }
   return result;
 }
 
@@ -213,7 +218,7 @@ export async function connectTitlebar(options: {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["data-world-titlebar", "class", "style", "hidden"],
+      attributeFilter: ["data-world-titlebar", "class", "style", "hidden", "open"],
     });
     observeSizes();
     watchResolution();

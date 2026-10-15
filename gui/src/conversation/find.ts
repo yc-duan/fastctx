@@ -81,6 +81,8 @@ export class Finder {
     this.element.className = "find-bar";
     this.element.hidden = true;
     this.element.setAttribute("role", "search");
+    // It floats over the page's caption, which drags the window on Windows.
+    this.element.dataset.worldTitlebar = "client";
     this.element.innerHTML = `<span class="find-glyph">${glyph("search", 16)}</span><input class="find-input" type="search" enterkeyhint="search" placeholder="${escape(words.placeholder)}" aria-label="${escape(words.find)}"><span class="find-count" aria-live="polite"></span><button class="icon-button find-step" type="button" data-step="-1" aria-label="${escape(words.previous)}" title="${escape(words.previous)}">${glyph("chevron", 16)}</button><button class="icon-button find-step find-next" type="button" data-step="1" aria-label="${escape(words.next)}" title="${escape(words.next)}">${glyph("chevron", 16)}</button><button class="icon-button find-close" type="button" aria-label="${escape(words.close)}" title="${escape(words.close)}">${glyph("close", 16)}</button>`;
     this.input = this.element.querySelector<HTMLInputElement>(".find-input")!;
     this.count = this.element.querySelector<HTMLElement>(".find-count")!;
