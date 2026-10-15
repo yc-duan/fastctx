@@ -30,6 +30,8 @@ const platform = process.platform;
 if (!["win32", "darwin", "linux"].includes(platform)) throw new Error("World's installers are built on Windows, macOS and Linux");
 const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("CLAUDE")));
 env.RUSTUP_TOOLCHAIN = toolchain.slice(1);
+// A release build: its World is the user's, not a development one's apart.
+env.FASTCTX_RELEASE = "1";
 delete env.TAURI_SIGNING_PRIVATE_KEY;
 delete env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD;
 // The Tauri CLI's own script, started by this Node: through a shell, Windows' cmd strips the quotes

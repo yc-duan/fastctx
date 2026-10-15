@@ -72,6 +72,11 @@ pub(crate) fn start(node: &Arc<Node>) {
         }
     }
     report(node);
+    // A development build looks for no release, unless a drill names a list
+    // of its own (`fastctx_update::github`).
+    if !fastctx_platform::RELEASED && std::env::var_os("FASTCTX_UPDATE_RELEASES").is_none() {
+        return;
+    }
     let node = node.clone();
     tokio::spawn(async move {
         // The first look waits for the node to settle, and for the next due

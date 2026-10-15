@@ -42,8 +42,16 @@ mod wait;
 mod world;
 mod writers;
 
+/// The version `--version` prints; a development build, which keeps its
+/// World apart (`fastctx_platform::RELEASED`), says it is one.
+const VERSION: &str = if fastctx_platform::RELEASED {
+    env!("CARGO_PKG_VERSION")
+} else {
+    concat!(env!("CARGO_PKG_VERSION"), " (development build)")
+};
+
 #[derive(Parser)]
-#[command(name = "fastctx", bin_name = "fastctx", version, about = "One world, many machines.")]
+#[command(name = "fastctx", bin_name = "fastctx", version = VERSION, about = "One world, many machines.")]
 struct Cli {
     /// Print this executable's licenses and third-party notices.
     #[arg(long, exclusive = true)]

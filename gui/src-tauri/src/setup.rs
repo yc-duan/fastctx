@@ -150,8 +150,13 @@ pub fn place() -> Result<String, String> {
     }
     let installed = places.installed();
     let bin = installed.parent().ok_or("the placed fastctx has no directory")?;
-    crate::user_path::add(bin)
-        .map_err(|error| format!("{} is in place, but putting it on the PATH failed: {error}", installed.display()))?;
+    // A development build's fastctx stays off the PATH, which the installed
+    // one's is on.
+    if fastctx_platform::RELEASED {
+        crate::user_path::add(bin).map_err(|error| {
+            format!("{} is in place, but putting it on the PATH failed: {error}", installed.display())
+        })?;
+    }
     Ok(installed.display().to_string())
 }
 

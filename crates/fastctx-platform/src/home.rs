@@ -4,13 +4,21 @@ use std::ffi::OsString;
 use std::io;
 use std::path::PathBuf;
 
+/// Whether this program was built by the release scripts, which set
+/// `FASTCTX_RELEASE` (`scripts/kernel.mjs`, `gui/scripts/release.mjs`,
+/// `gui/scripts/android.mjs`). Any other build is a development build,
+/// whose World is kept apart from the one the user's installed Fastctx
+/// runs: in `.fastctx-dev`, off the PATH, looking for no new versions.
+pub const RELEASED: bool = option_env!("FASTCTX_RELEASE").is_some();
+
 /// The directory holding everything fastctx keeps for this user:
 /// `FASTCTX_HOME` when it is set, which lets a test or a second World run
-/// beside the real one, and `.fastctx` in the user's home otherwise.
+/// beside the real one, and `.fastctx` in the user's home otherwise, or
+/// `.fastctx-dev` for a development build (`RELEASED`).
 pub fn fastctx_root() -> io::Result<PathBuf> {
     match std::env::var_os("FASTCTX_HOME") {
         Some(root) => absolute("FASTCTX_HOME", root),
-        None => Ok(user_home()?.join(".fastctx")),
+        None => Ok(user_home()?.join(if RELEASED { ".fastctx" } else { ".fastctx-dev" })),
     }
 }
 

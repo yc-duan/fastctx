@@ -19,6 +19,8 @@ const tests = { offline: "fastctx-ripgrep", own_lifetime: "fastctx-node", job_li
 /** How a release kernel for `target` is compiled: its environment and its cargo. */
 function release(target, environment) {
   const env = Object.fromEntries(Object.entries(environment).filter(([name]) => !name.startsWith("CLAUDE")));
+  // A release build: its World is the user's, not a development one's apart.
+  env.FASTCTX_RELEASE = "1";
   env.FASTCTX_THIRD_PARTY_LICENSES = resolve(repo, env.FASTCTX_THIRD_PARTY_LICENSES ?? "dist/THIRD_PARTY_LICENSES.md");
   if (!existsSync(env.FASTCTX_THIRD_PARTY_LICENSES)) {
     throw new Error("Generate dist/THIRD_PARTY_LICENSES.md with scripts/notices.py before building a release");

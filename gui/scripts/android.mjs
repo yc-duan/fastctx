@@ -85,5 +85,7 @@ if (!build.includes(compressed)) {
 const args = process.argv.slice(2);
 if (args[0] !== "prepare") {
   const [command, ...rest] = args.length ? args : ["build", "--apk"];
+  // A release build: its World is the user's, not a development one's apart.
+  if (command === "build") env.FASTCTX_RELEASE = "1";
   tauri(command === "build" ? [command, "--config", versioned, ...rest] : [command, ...rest]);
 }
