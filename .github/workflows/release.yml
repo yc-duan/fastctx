@@ -347,7 +347,12 @@ jobs:
           tar -xzf dist/*.app.tar.gz -C "$RUNNER_TEMP"
           app="$RUNNER_TEMP/Fastctx.app"
           codesign --verify --verbose "$app"
-          cmp "$app/Contents/MacOS/fastctx" kernel/fastctx
+          # The bundle signs what it carries again: the same program, once both signatures are removed.
+          cp "$app/Contents/MacOS/fastctx" "$RUNNER_TEMP/bundled" && cp kernel/fastctx "$RUNNER_TEMP/built"
+          for copy in "$RUNNER_TEMP/bundled" "$RUNNER_TEMP/built"; do
+            if codesign --display "$copy" 2> /dev/null; then codesign --remove-signature "$copy"; fi
+          done
+          cmp "$RUNNER_TEMP/bundled" "$RUNNER_TEMP/built"
           "$app/Contents/MacOS/fastctx" --version
           "$app/Contents/MacOS/fastctx-app" > app.log 2>&1 &
           sleep 25
@@ -584,7 +589,12 @@ jobs:
         run: |
           app=gui/src-tauri/target/release/bundle/macos/Fastctx.app
           codesign --verify --verbose "$app"
-          cmp "$app/Contents/MacOS/fastctx" kernel/fastctx
+          # The bundle signs what it carries again: the same program, once both signatures are removed.
+          cp "$app/Contents/MacOS/fastctx" "$RUNNER_TEMP/bundled" && cp kernel/fastctx "$RUNNER_TEMP/built"
+          for copy in "$RUNNER_TEMP/bundled" "$RUNNER_TEMP/built"; do
+            if codesign --display "$copy" 2> /dev/null; then codesign --remove-signature "$copy"; fi
+          done
+          cmp "$RUNNER_TEMP/bundled" "$RUNNER_TEMP/built"
           "$app/Contents/MacOS/fastctx" --version
           "$app/Contents/MacOS/fastctx-app" > app.log 2>&1 &
           sleep 25

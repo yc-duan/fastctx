@@ -21,13 +21,16 @@ pub fn user_environment() -> io::Result<Vec<(OsString, OsString)>> {
 }
 
 /// The environment for a fastctx process the World starts on its own (a
-/// node, a supervisor): the user's, plus `FASTCTX_HOME` when this process
-/// has it, so the new process belongs to the same World.
+/// node, a supervisor): the user's, plus what of this process's says which
+/// World it is, so the new process belongs to the same one: `FASTCTX_HOME`,
+/// and `FASTCTX_UPDATE_RELEASES`, where a drill's World looks for releases.
 pub fn world_process_environment() -> io::Result<Vec<(OsString, OsString)>> {
     let mut env = user_environment()?;
-    if let Some(root) = std::env::var_os("FASTCTX_HOME") {
-        env.retain(|(name, _)| name != "FASTCTX_HOME");
-        env.push(("FASTCTX_HOME".into(), root));
+    for carried in ["FASTCTX_HOME", "FASTCTX_UPDATE_RELEASES"] {
+        if let Some(value) = std::env::var_os(carried) {
+            env.retain(|(name, _)| name != carried);
+            env.push((carried.into(), value));
+        }
     }
     Ok(env)
 }
