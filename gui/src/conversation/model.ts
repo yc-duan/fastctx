@@ -406,6 +406,13 @@ export class Fold {
             sent.turn = heard.turn;
             sent.from = heard.from;
             sent.at = this.current;
+            // Its files as the World kept them, which its pictures are drawn
+            // from: sent, they were known only by name.
+            const attached = this.attachedOf(heard);
+            if (attached.length) {
+              sent.attached = attached;
+              sent.kept = heard.message?.attachments ?? [];
+            }
             // Heard now: it stands where the session took it in, after what
             // the turn did before it read them.
             this.entries.splice(this.entries.indexOf(sent), 1);
@@ -422,24 +429,7 @@ export class Fold {
         const reply = heard.from?.kind === "user" ? readReply(heard.text) : null;
         if (reply) this.answered(reply.item, reply.answers);
         if (!known) {
-          for (const file of heard.message?.attachments ?? []) this.attachments.set(file.path.replaceAll("\\", "/"), file.name);
-          // The files that came with the words, as the World kept them.
-          const attached: ShownAttachment[] = [
-            ...(heard.message?.attachments ?? []).map((file) => ({
-              name: file.name,
-              size: file.size,
-              image: file.media_type.startsWith("image/"),
-              preview: null,
-              kept: file,
-            })),
-            ...(heard.message?.images ?? []).map((picture) => ({
-              name: picture.name ?? "",
-              size: null,
-              image: true,
-              preview: null,
-              recorded: picture.source,
-            })),
-          ];
+          const attached = this.attachedOf(heard);
           const ordinal = this.heardIn.get(turnKey) ?? 0;
           this.heardIn.set(turnKey, ordinal + 1);
           // Words in a turn are told apart by their place in it; words in no
@@ -959,6 +949,28 @@ export class Fold {
   /** An entry by its key. */
   get(key: string): Entry | undefined {
     return this.byKey.get(key);
+  }
+
+  /** The files that came with words, as the World kept them; their names
+   *  are known by their paths from here on. */
+  private attachedOf(heard: Extract<SessionEvent, { event: "heard" }>): ShownAttachment[] {
+    for (const file of heard.message?.attachments ?? []) this.attachments.set(file.path.replaceAll("\\", "/"), file.name);
+    return [
+      ...(heard.message?.attachments ?? []).map((file) => ({
+        name: file.name,
+        size: file.size,
+        image: file.media_type.startsWith("image/"),
+        preview: null,
+        kept: file,
+      })),
+      ...(heard.message?.images ?? []).map((picture) => ({
+        name: picture.name ?? "",
+        size: null,
+        image: true,
+        preview: null,
+        recorded: picture.source,
+      })),
+    ];
   }
 
   /** Words the user is sending, shown at once; returns their key. */
