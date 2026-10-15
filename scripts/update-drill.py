@@ -25,11 +25,19 @@ def check(label, ok, detail=""):
     return ok
 
 
-def processes(name):
+def applications():
+    """Each running fastctx-app by its process id, with its command line."""
     listed = subprocess.run(["powershell", "-NoProfile", "-Command",
-                             f"Get-Process -Name {name} -ErrorAction SilentlyContinue | ForEach-Object {{ $_.Id }}"],
-                            capture_output=True, text=True).stdout.split()
-    return {int(pid) for pid in listed}
+                             "Get-CimInstance Win32_Process -Filter \"Name = 'fastctx-app.exe'\" | "
+                             "ForEach-Object { '{0}|{1}' -f $_.ProcessId, $_.CommandLine }"],
+                            capture_output=True, text=True).stdout.splitlines()
+    return {int(pid): line for pid, _, line in (entry.partition("|") for entry in listed) if pid.strip().isdigit()}
+
+
+def opened(line):
+    """Whether a fastctx-app is the application itself: the installer also runs it with an argument
+    of its own for each of its steps."""
+    return " --" not in line
 
 
 def evidence(updates):
@@ -103,19 +111,21 @@ def main():
         time.sleep(2)
     check("the node found the later version, brought its package and checked it", package.is_file(),
           evidence(updates))
-    relaunched = set()
+    relaunched = {}
     while time.monotonic() - began < 600:
         if first.poll() is not None:
-            relaunched = processes("fastctx-app") - {first.pid}
+            relaunched = {pid: line for pid, line in applications().items() if pid != first.pid and opened(line)}
             if relaunched:
                 break
         time.sleep(2)
     check("the interface installed it, and Fastctx closed and opened again", first.poll() is not None and relaunched,
-          (first.poll(), relaunched))
+          (first.poll(), applications()))
     marker = Path(os.environ["APPDATA"]) / "dev.fastctx.world" / "updated.json"
-    time.sleep(10)
-    check("the new start read what the update left for it", not marker.exists(), marker)
-    for pid in processes("fastctx-app"):
+    reopened = time.monotonic()
+    while marker.exists() and time.monotonic() - reopened < 60:
+        time.sleep(1)
+    check("the new start read what the update left for it", not marker.exists(), (marker, applications()))
+    for pid in applications():
         subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
     passed = sum(RESULTS)
     print(f"\n{passed}/{len(RESULTS)} passed")
