@@ -71,7 +71,19 @@ pub struct DiffRef {
     pub machine: MachineName,
     /// UTF-8 JSON lines, one DiffLine per displayed row.
     pub path: String,
+    /// How many bytes those lines take.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+    /// The rows themselves, for a change whose rows take at most
+    /// `INLINE_DIFF` bytes: kept with the conversation, as what was said
+    /// is, they are shown with no request (`world-gui.md`, 对话).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<Vec<DiffLine>>,
 }
+
+/// The most bytes of rows a change keeps with the conversation; about
+/// ninety-nine changes in a hundred take fewer.
+pub const INLINE_DIFF: u64 = 32 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiffLine {

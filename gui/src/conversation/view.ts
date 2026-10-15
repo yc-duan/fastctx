@@ -47,7 +47,7 @@ import { toldSaid, type AgentRun } from "./agents";
 import type { Conversation } from "./conversation";
 import { escape, plain, render } from "./prose";
 import { numbered, parse } from "./diff";
-import { DiffLines, RemoteDiff, diffPaint, memoryDiff } from "./diff-lines";
+import { DiffLines, RemoteDiff, diffPaint, keptDiff, memoryDiff } from "./diff-lines";
 import { headline, onlyWrites, tenseOf, writeHeadline } from "./tool";
 import { drawDiagrams } from "./diagrams";
 import { readTold, worldSaid, type WorldSaid } from "./told";
@@ -131,6 +131,9 @@ interface Row {
 
 /** A write's row is keyed by its run's row and the write. */
 const WRITE = "~";
+/** The most bytes of rows a change is read ahead in, not kept with the
+ *  conversation: larger ones are read as they are opened. */
+const PREFETCH = 1024 * 1024;
 
 /** How far beyond what is in view blocks are drawn, in screens: one above,
  *  as a reader going up meets what was just there; two below, where the
@@ -217,7 +220,13 @@ export class ConversationView {
   /** What finding last read of each block, and blocks gone since. */
   private findRead = new Map<string, string>();
   private findRemoved = new Set<string>();
+  /** The rows of changes read whole, by row: what finding and opening
+   *  them again draw from, with no request. */
   private findWrites = new Map<string, { signature: string; lines: readonly string[] }>();
+  /** Reading in the background the changes that are not kept with the
+   *  conversation but are small enough to read whole (`prefetch`). */
+  private prefetching: AbortController | null = null;
+  private readAhead = new Set<string>();
   private readonly findContent: FindContent;
   private readonly layoutAnchor: AnchorLayout;
   private readonly line: TurnLine;
@@ -358,6 +367,7 @@ export class ConversationView {
     this.live = true;
     this.agentsMoved();
     this.tick();
+    this.prefetch();
     for (const element of drawn) void drawDiagrams(element).then(() => {
       const slot = this.byElement.get(element);
       if (slot && element.querySelector(".diagram.drawn")) slot.findRevision = (slot.findRevision ?? 0) + 1;
@@ -787,7 +797,10 @@ export class ConversationView {
     const split = key.indexOf(WRITE);
     const entry = this.conversation.get(key.slice(0, split));
     const write = entry?.kind === "tool" ? entry.tool.run?.writes.find((one) => one.id === key.slice(split + 1)) : undefined;
-    if (!write?.diff || !this.context.lines) return "";
+    if (!write?.diff) return "";
+    const held = this.heldRows(key, write);
+    if (held) return held.map((line) => displayedDiff(line, true, this.context.words.unchangedLines)).join("\n");
+    if (!this.context.lines) return "";
     let raw: OpenedLines | null = null;
     try {
       raw = await this.context.lines(write.diff.machine, write.diff.path, { kind: "file", encoding: "utf-8" });
@@ -860,6 +873,7 @@ export class ConversationView {
 
   /** Lets go of everything drawn, as the page is left for good. */
   destroy(): void {
+    this.prefetching?.abort();
     for (const slot of this.slots.values()) this.forget(slot);
     this.slots.clear();
     this.findWrites.clear();
@@ -1992,9 +2006,9 @@ export class ConversationView {
   /** What a write changed, read from the machine that keeps it: a few rows
    *  are read whole and shown outright, more are read a screen at a time. */
   private fillWrite(key: string, write: WriteFact, into: HTMLElement): void {
-    const cached = this.findWrites.get(key);
-    if (cached?.signature === JSON.stringify(write)) {
-      const long = this.diffText(cached.lines, write.path, true);
+    const kept = this.heldRows(key, write);
+    if (kept) {
+      const long = this.diffText(kept, write.path, true);
       this.longs.set(key, [long]);
       into.append(long.element);
       return;
@@ -2029,6 +2043,7 @@ export class ConversationView {
         if (remote.extent.length <= FEW) {
           const rows = [...(await remote.read(0, remote.extent.length, request.signal))];
           close();
+          this.findWrites.set(key, { signature: JSON.stringify(write), lines: rows });
           long = this.diffText(rows, write.path, true);
         } else long = this.diffText(remote, write.path, true);
         if (request.signal.aborted) {
@@ -2047,6 +2062,60 @@ export class ConversationView {
     this.filling.set(key, pending);
     void pending.finally(() => {
       if (this.filling.get(key) === pending) this.filling.delete(key);
+    });
+  }
+
+  /** The rows of a change held here: kept with the conversation, or read
+   *  whole before; null when they are to be read. */
+  private heldRows(key: string, write: WriteFact): readonly string[] | null {
+    if (write.diff?.lines) return keptDiff(write.diff.lines);
+    const read = this.findWrites.get(key);
+    return read?.signature === JSON.stringify(write) ? read.lines : null;
+  }
+
+  /** Reads in the background, one at a time, the changes of what is held
+   *  whose rows are not kept with the conversation and take at most
+   *  `PREFETCH` bytes, so opening one shows it at once; a larger one is
+   *  read as it is opened, a screen at a time (`world-gui.md`, 对话). */
+  private prefetch(): void {
+    const lines = this.context.lines;
+    if (!lines || this.prefetching) return;
+    const wanted: [string, WriteFact, NonNullable<WriteFact["diff"]>][] = [];
+    for (const block of this.conversation.blocks()) {
+      const entries = block.kind === "activity-group" ? block.members : [block];
+      for (const entry of entries) {
+        if (entry.kind !== "tool") continue;
+        for (const write of entry.tool.run?.writes ?? []) {
+          const key = `${entry.key}${WRITE}${write.id}`;
+          const diff = write.diff;
+          if (diff && !diff.lines && diff.bytes !== undefined && diff.bytes <= PREFETCH && !this.readAhead.has(key)) {
+            this.readAhead.add(key);
+            wanted.push([key, write, diff]);
+          }
+        }
+      }
+    }
+    if (!wanted.length) return;
+    const request = new AbortController();
+    this.prefetching = request;
+    void (async () => {
+      // The latest first: the reader is at the end.
+      for (const [key, write, diff] of wanted.reverse()) {
+        let raw: OpenedLines | null = null;
+        try {
+          raw = await lines(diff.machine, diff.path, { kind: "file", encoding: "utf-8" });
+          const remote = await RemoteDiff.open(raw, request.signal);
+          const rows = [...(await remote.read(0, remote.extent.length, request.signal))];
+          this.findWrites.set(key, { signature: JSON.stringify(write), lines: rows });
+        } catch (error) {
+          if (request.signal.aborted) return;
+          console.warn("a change could not be read ahead", error);
+        } finally {
+          if (raw) await raw.close().catch((error: unknown) => console.warn("a change's lines could not be let go", error));
+        }
+      }
+    })().finally(() => {
+      if (this.prefetching === request) this.prefetching = null;
     });
   }
 

@@ -56,6 +56,25 @@ pub fn example() -> RunFacts {
                     content: None,
                     machine: "gpu".parse().unwrap(),
                     path: format!("/tmp/diff-{i}.jsonl"),
+                    bytes: Some(if i == 0 { 180 } else { 70_000 }),
+                    lines: (i == 0).then(|| {
+                        vec![
+                            DiffLine {
+                                kind: DiffLineKind::Removed,
+                                before: Some(1),
+                                after: None,
+                                text: "port = 8080".into(),
+                                ending: "\n".into(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Added,
+                                before: None,
+                                after: Some(1),
+                                text: "port = 8081".into(),
+                                ending: "\n".into(),
+                            },
+                        ]
+                    }),
                 }),
             })
             .collect(),

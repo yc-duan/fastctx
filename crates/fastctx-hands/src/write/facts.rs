@@ -2,7 +2,7 @@
 
 use crate::encoding::file::{Plan, Source};
 use fastctx_types::MachineName;
-use fastctx_types::run_facts::{DiffLine, DiffLineKind, DiffRef, WriteFact};
+use fastctx_types::run_facts::{DiffLine, DiffLineKind, DiffRef, INLINE_DIFF, WriteFact};
 use fastctx_types::write::ChangeKind;
 use imara_diff::{Algorithm, Diff, InternedInput};
 use std::borrow::Cow;
@@ -79,6 +79,10 @@ impl Capture {
                 .open(&artifact)
                 .map_err(|error| error.to_string())?,
         );
+        // The rows, as long as they are few enough to go with the
+        // conversation.
+        let mut written: u64 = 0;
+        let mut kept = Some(Vec::new());
         let mut row = |kind, before, after, text: &str| -> io::Result<()> {
             let ending = if text.ends_with("\r\n") {
                 "\r\n"
@@ -88,11 +92,17 @@ impl Capture {
                 ""
             };
             let text = &text[..text.len() - ending.len()];
-            serde_json::to_writer(
-                &mut output,
-                &DiffLine { kind, before, after, text: crate::text::visible(text), ending: ending.into() },
-            )?;
-            output.write_all(b"\n")
+            let line = DiffLine { kind, before, after, text: crate::text::visible(text), ending: ending.into() };
+            let bytes = serde_json::to_vec(&line)?;
+            output.write_all(&bytes)?;
+            output.write_all(b"\n")?;
+            written += bytes.len() as u64 + 1;
+            if written > INLINE_DIFF {
+                kept = None;
+            } else if let Some(kept) = &mut kept {
+                kept.push(line);
+            }
+            Ok(())
         };
         let mut previous_after = 0;
         let hunks: Vec<_> = diff.hunks().collect();
@@ -149,6 +159,8 @@ impl Capture {
                 content: Some(crate::files::content_fingerprint(&artifact).map_err(|error| error.to_string())?),
                 machine: self.machine.clone(),
                 path: artifact.to_string_lossy().into_owned(),
+                bytes: Some(written),
+                lines: kept,
             }),
         }))
     }

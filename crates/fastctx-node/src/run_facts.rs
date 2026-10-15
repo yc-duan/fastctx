@@ -66,13 +66,26 @@ pub(crate) fn writes(record: &Path) -> io::Result<Vec<WriteFact>> {
     Ok(facts)
 }
 
+/// The most bytes of changes' rows one run keeps with the conversation.
+const RUN_INLINE: u64 = 256 * 1024;
+
 pub(crate) fn assemble(reply: &RunReply, record: &Path) -> io::Result<RunFacts> {
     let cut = reply
         .output
         .pieces
         .iter()
         .any(|piece| matches!(piece, OutputPiece::Omitted { .. } | OutputPiece::PartOfLine { .. }));
-    let writes = writes(record)?;
+    let mut writes = writes(record)?;
+    // What one run keeps with the conversation of its changes' rows is
+    // bounded, all of them together: past it, a change is read from its
+    // machine.
+    let mut kept = 0;
+    for diff in writes.iter_mut().filter_map(|write| write.diff.as_mut()).filter(|diff| diff.lines.is_some()) {
+        kept += diff.bytes.unwrap_or(fastctx_types::run_facts::INLINE_DIFF);
+        if kept > RUN_INLINE {
+            diff.lines = None;
+        }
+    }
     let (spans, notes) = fastctx_hands::run::projection::read_with_matches(&reply.output, &writes)?;
     Ok(RunFacts {
         machine: reply.machine.clone(),

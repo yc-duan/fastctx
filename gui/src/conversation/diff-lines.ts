@@ -209,6 +209,18 @@ export class RemoteDiff implements LineSource {
   }
 }
 
+/** The rows a change keeps with the conversation, as lines a viewer
+ *  holds: read as `RemoteDiff` reads them from the machine that keeps them,
+ *  a first hunk at the very top left out. */
+export function keptDiff(records: readonly DiffLine[]): string[] {
+  const skip = records[0]?.kind === "hunk" && records[0].before === 1 ? 1 : 0;
+  const lines: string[] = [];
+  for (let index = skip; index < records.length; index += 1) {
+    lines.push(encodeRow(rowOf(records[index]!, records[index - 1] ?? null, index === 0)));
+  }
+  return lines;
+}
+
 /** A change held here, as lines and the source that searches them. */
 export function memoryDiff(rows: DiffRow[]): { lines: string[]; source: DiffLines } {
   const lines = rows.map(encodeRow);

@@ -761,7 +761,24 @@
             "removed": 1,
             "diff": {
               "machine": "gpu",
-              "path": "/tmp/diff-0.jsonl"
+              "path": "/tmp/diff-0.jsonl",
+              "bytes": 180,
+              "lines": [
+                {
+                  "kind": "removed",
+                  "before": 1,
+                  "after": null,
+                  "text": "port = 8080",
+                  "ending": "\n"
+                },
+                {
+                  "kind": "added",
+                  "before": null,
+                  "after": 1,
+                  "text": "port = 8081",
+                  "ending": "\n"
+                }
+              ]
             },
             "note": {
               "kind": "text",
@@ -778,7 +795,8 @@
             "removed": 1,
             "diff": {
               "machine": "gpu",
-              "path": "/tmp/diff-1.jsonl"
+              "path": "/tmp/diff-1.jsonl",
+              "bytes": 70000
             },
             "note": {
               "kind": "same",
@@ -794,7 +812,8 @@
             "removed": 1,
             "diff": {
               "machine": "gpu",
-              "path": "/tmp/diff-2.jsonl"
+              "path": "/tmp/diff-2.jsonl",
+              "bytes": 70000
             },
             "note": {
               "kind": "same",
@@ -904,7 +923,8 @@
             "removed": 1,
             "diff": {
               "machine": "gpu",
-              "path": "/tmp/diff-1.jsonl"
+              "path": "/tmp/diff-1.jsonl",
+              "bytes": 70000
             },
             "note": {
               "kind": "same",
@@ -920,7 +940,8 @@
             "removed": 1,
             "diff": {
               "machine": "gpu",
-              "path": "/tmp/diff-2.jsonl"
+              "path": "/tmp/diff-2.jsonl",
+              "bytes": 70000
             },
             "note": {
               "kind": "same",
@@ -1034,7 +1055,8 @@
             "removed": 1,
             "diff": {
               "machine": "gpu",
-              "path": "/tmp/diff-1.jsonl"
+              "path": "/tmp/diff-1.jsonl",
+              "bytes": 70000
             },
             "note": {
               "kind": "same",
@@ -1050,7 +1072,8 @@
             "removed": 1,
             "diff": {
               "machine": "gpu",
-              "path": "/tmp/diff-2.jsonl"
+              "path": "/tmp/diff-2.jsonl",
+              "bytes": 70000
             },
             "note": {
               "kind": "same",
@@ -1160,7 +1183,8 @@
             "removed": 1,
             "diff": {
               "machine": "gpu",
-              "path": "/tmp/diff-1.jsonl"
+              "path": "/tmp/diff-1.jsonl",
+              "bytes": 70000
             },
             "note": {
               "kind": "same",
@@ -1176,7 +1200,8 @@
             "removed": 1,
             "diff": {
               "machine": "gpu",
-              "path": "/tmp/diff-2.jsonl"
+              "path": "/tmp/diff-2.jsonl",
+              "bytes": 70000
             },
             "note": {
               "kind": "same",
@@ -1287,7 +1312,8 @@
             "removed": 1,
             "diff": {
               "machine": "gpu",
-              "path": "/tmp/diff-1.jsonl"
+              "path": "/tmp/diff-1.jsonl",
+              "bytes": 70000
             },
             "note": {
               "kind": "same",
@@ -1303,7 +1329,8 @@
             "removed": 1,
             "diff": {
               "machine": "gpu",
-              "path": "/tmp/diff-2.jsonl"
+              "path": "/tmp/diff-2.jsonl",
+              "bytes": 70000
             },
             "note": {
               "kind": "same",
@@ -1414,7 +1441,8 @@
             "removed": 1,
             "diff": {
               "machine": "gpu",
-              "path": "/tmp/diff-1.jsonl"
+              "path": "/tmp/diff-1.jsonl",
+              "bytes": 70000
             },
             "note": {
               "kind": "same",
@@ -1430,7 +1458,8 @@
             "removed": 1,
             "diff": {
               "machine": "gpu",
-              "path": "/tmp/diff-2.jsonl"
+              "path": "/tmp/diff-2.jsonl",
+              "bytes": 70000
             },
             "note": {
               "kind": "same",
@@ -1566,7 +1595,24 @@
             "removed": 1,
             "diff": {
               "machine": "gpu",
-              "path": "/tmp/diff-0.jsonl"
+              "path": "/tmp/diff-0.jsonl",
+              "bytes": 180,
+              "lines": [
+                {
+                  "kind": "removed",
+                  "before": 1,
+                  "after": null,
+                  "text": "port = 8080",
+                  "ending": "\n"
+                },
+                {
+                  "kind": "added",
+                  "before": null,
+                  "after": 1,
+                  "text": "port = 8081",
+                  "ending": "\n"
+                }
+              ]
             },
             "note": {
               "kind": "text",
@@ -1583,7 +1629,8 @@
             "removed": 1,
             "diff": {
               "machine": "gpu",
-              "path": "/tmp/diff-1.jsonl"
+              "path": "/tmp/diff-1.jsonl",
+              "bytes": 70000
             },
             "note": {
               "kind": "same",
@@ -1599,7 +1646,8 @@
             "removed": 1,
             "diff": {
               "machine": "gpu",
-              "path": "/tmp/diff-2.jsonl"
+              "path": "/tmp/diff-2.jsonl",
+              "bytes": 70000
             },
             "note": {
               "kind": "same",
@@ -3517,7 +3565,24 @@
                 "removed": 1,
                 "diff": {
                   "machine": "gpu",
-                  "path": "/tmp/diff-0.jsonl"
+                  "path": "/tmp/diff-0.jsonl",
+                  "bytes": 180,
+                  "lines": [
+                    {
+                      "kind": "removed",
+                      "before": 1,
+                      "after": null,
+                      "text": "port = 8080",
+                      "ending": "\n"
+                    },
+                    {
+                      "kind": "added",
+                      "before": null,
+                      "after": 1,
+                      "text": "port = 8081",
+                      "ending": "\n"
+                    }
+                  ]
                 },
                 "note": {
                   "kind": "text",
@@ -3534,7 +3599,8 @@
                 "removed": 1,
                 "diff": {
                   "machine": "gpu",
-                  "path": "/tmp/diff-1.jsonl"
+                  "path": "/tmp/diff-1.jsonl",
+                  "bytes": 70000
                 },
                 "note": {
                   "kind": "same",
@@ -3550,7 +3616,8 @@
                 "removed": 1,
                 "diff": {
                   "machine": "gpu",
-                  "path": "/tmp/diff-2.jsonl"
+                  "path": "/tmp/diff-2.jsonl",
+                  "bytes": 70000
                 },
                 "note": {
                   "kind": "same",
@@ -3737,7 +3804,24 @@
                 "removed": 1,
                 "diff": {
                   "machine": "gpu",
-                  "path": "/tmp/diff-0.jsonl"
+                  "path": "/tmp/diff-0.jsonl",
+                  "bytes": 180,
+                  "lines": [
+                    {
+                      "kind": "removed",
+                      "before": 1,
+                      "after": null,
+                      "text": "port = 8080",
+                      "ending": "\n"
+                    },
+                    {
+                      "kind": "added",
+                      "before": null,
+                      "after": 1,
+                      "text": "port = 8081",
+                      "ending": "\n"
+                    }
+                  ]
                 },
                 "note": {
                   "kind": "text",
@@ -3754,7 +3838,8 @@
                 "removed": 1,
                 "diff": {
                   "machine": "gpu",
-                  "path": "/tmp/diff-1.jsonl"
+                  "path": "/tmp/diff-1.jsonl",
+                  "bytes": 70000
                 },
                 "note": {
                   "kind": "same",
@@ -3770,7 +3855,8 @@
                 "removed": 1,
                 "diff": {
                   "machine": "gpu",
-                  "path": "/tmp/diff-2.jsonl"
+                  "path": "/tmp/diff-2.jsonl",
+                  "bytes": 70000
                 },
                 "note": {
                   "kind": "same",
@@ -3957,7 +4043,24 @@
                 "removed": 1,
                 "diff": {
                   "machine": "gpu",
-                  "path": "/tmp/diff-0.jsonl"
+                  "path": "/tmp/diff-0.jsonl",
+                  "bytes": 180,
+                  "lines": [
+                    {
+                      "kind": "removed",
+                      "before": 1,
+                      "after": null,
+                      "text": "port = 8080",
+                      "ending": "\n"
+                    },
+                    {
+                      "kind": "added",
+                      "before": null,
+                      "after": 1,
+                      "text": "port = 8081",
+                      "ending": "\n"
+                    }
+                  ]
                 },
                 "note": {
                   "kind": "text",
@@ -3974,7 +4077,8 @@
                 "removed": 1,
                 "diff": {
                   "machine": "gpu",
-                  "path": "/tmp/diff-1.jsonl"
+                  "path": "/tmp/diff-1.jsonl",
+                  "bytes": 70000
                 },
                 "note": {
                   "kind": "same",
@@ -3990,7 +4094,8 @@
                 "removed": 1,
                 "diff": {
                   "machine": "gpu",
-                  "path": "/tmp/diff-2.jsonl"
+                  "path": "/tmp/diff-2.jsonl",
+                  "bytes": 70000
                 },
                 "note": {
                   "kind": "same",
@@ -7396,7 +7501,24 @@
                 "removed": 1,
                 "diff": {
                   "machine": "gpu",
-                  "path": "/tmp/diff-0.jsonl"
+                  "path": "/tmp/diff-0.jsonl",
+                  "bytes": 180,
+                  "lines": [
+                    {
+                      "kind": "removed",
+                      "before": 1,
+                      "after": null,
+                      "text": "port = 8080",
+                      "ending": "\n"
+                    },
+                    {
+                      "kind": "added",
+                      "before": null,
+                      "after": 1,
+                      "text": "port = 8081",
+                      "ending": "\n"
+                    }
+                  ]
                 },
                 "note": {
                   "kind": "text",
@@ -7413,7 +7535,8 @@
                 "removed": 1,
                 "diff": {
                   "machine": "gpu",
-                  "path": "/tmp/diff-1.jsonl"
+                  "path": "/tmp/diff-1.jsonl",
+                  "bytes": 70000
                 },
                 "note": {
                   "kind": "same",
@@ -7429,7 +7552,8 @@
                 "removed": 1,
                 "diff": {
                   "machine": "gpu",
-                  "path": "/tmp/diff-2.jsonl"
+                  "path": "/tmp/diff-2.jsonl",
+                  "bytes": 70000
                 },
                 "note": {
                   "kind": "same",
@@ -8315,7 +8439,24 @@
                 "removed": 1,
                 "diff": {
                   "machine": "gpu",
-                  "path": "/tmp/diff-0.jsonl"
+                  "path": "/tmp/diff-0.jsonl",
+                  "bytes": 180,
+                  "lines": [
+                    {
+                      "kind": "removed",
+                      "before": 1,
+                      "after": null,
+                      "text": "port = 8080",
+                      "ending": "\n"
+                    },
+                    {
+                      "kind": "added",
+                      "before": null,
+                      "after": 1,
+                      "text": "port = 8081",
+                      "ending": "\n"
+                    }
+                  ]
                 },
                 "note": {
                   "kind": "text",
@@ -8332,7 +8473,8 @@
                 "removed": 1,
                 "diff": {
                   "machine": "gpu",
-                  "path": "/tmp/diff-1.jsonl"
+                  "path": "/tmp/diff-1.jsonl",
+                  "bytes": 70000
                 },
                 "note": {
                   "kind": "same",
@@ -8348,7 +8490,8 @@
                 "removed": 1,
                 "diff": {
                   "machine": "gpu",
-                  "path": "/tmp/diff-2.jsonl"
+                  "path": "/tmp/diff-2.jsonl",
+                  "bytes": 70000
                 },
                 "note": {
                   "kind": "same",

@@ -903,6 +903,34 @@ fn tool_details(ctx: &Ctx, tool: &Tool, width: usize) -> Vec<Line<'static>> {
             }
         }
     }
+    // What a World run's `edit`, `write` and `apply_patch` changed, from the
+    // rows kept with the conversation; a larger change says only how much.
+    if let Some(run) = &tool.run {
+        use fastctx_types::run_facts::DiffLineKind;
+        for write in &run.writes {
+            let counted = match (write.added, write.removed) {
+                (Some(added), Some(removed)) => format!(" +{added} -{removed}"),
+                _ => String::new(),
+            };
+            plain(&mut lines, &format!("{}{counted}", write.path), Role::Muted);
+            let Some(rows) = write.diff.as_ref().and_then(|diff| diff.lines.as_ref()) else { continue };
+            // A first hunk at the very top of the file stands for nothing.
+            let top = rows.first().is_some_and(|row| row.kind == DiffLineKind::Hunk && row.before == Some(1));
+            let rows = &rows[usize::from(top)..];
+            for row in rows.iter().take(DIFF_LINES) {
+                let (text, role) = match row.kind {
+                    DiffLineKind::Added => (format!("+{}", row.text), Role::Alive),
+                    DiffLineKind::Removed => (format!("-{}", row.text), Role::Wrong),
+                    DiffLineKind::Context => (format!(" {}", row.text), Role::Faint),
+                    DiffLineKind::Hunk => ("⋯".to_string(), Role::Faint),
+                };
+                plain(&mut lines, &text, role);
+            }
+            if rows.len() > DIFF_LINES {
+                plain(&mut lines, &words.more_lines_after(rows.len() - DIFF_LINES), Role::Faint);
+            }
+        }
+    }
     let mut output: Vec<String> = Vec::new();
     // A World run that went slimmed carries the model's copy of its output
     // as facts alone (`fastctx_net::history::slim`).

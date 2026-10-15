@@ -11,8 +11,16 @@ export interface OutputRef {
   cut: boolean;
 }
 
-/** UTF-8 JSON lines, one DiffLine per row, read through the line-source APIs. */
-export interface DiffRef { machine: MachineName; path: string; content?: import("./events").Fingerprint }
+/** UTF-8 JSON lines, one DiffLine per row, read through the line-source APIs;
+ *  `bytes` is what they take. A change whose rows take 32 KiB or less carries
+ *  them in `lines`, kept with the conversation and shown with no request. */
+export interface DiffRef {
+  machine: MachineName;
+  path: string;
+  content?: import("./events").Fingerprint;
+  bytes?: number;
+  lines?: DiffLine[];
+}
 
 export interface DiffLine {
   kind: "context" | "added" | "removed" | "hunk";
