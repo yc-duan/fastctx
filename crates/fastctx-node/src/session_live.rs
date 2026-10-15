@@ -113,11 +113,16 @@ impl Live {
                     }
                 }
             }
+            // A Claude reply is recorded under the name its row in Claude
+            // Code's file gives it, naming the draft it streamed as: that
+            // draft ends with it, or a watcher joining before the turn ends
+            // would be shown the reply twice.
             Happened::Finished { turn, item } => {
-                self.deltas.remove(&(turn.clone(), item.id.clone()));
+                let ended = |id: &String| *id == item.id || item.draft.as_ref() == Some(id);
+                self.deltas.retain(|(t, id), _| !(t == turn && ended(id)));
                 self.items.retain(|event| {
                     !matches!(&event.happened,
-                Happened::Began { turn: t, item: i } if t == turn && i.id == item.id)
+                Happened::Began { turn: t, item: i } if t == turn && ended(&i.id))
                 });
             }
             Happened::TurnEnded { turn, .. } => {
