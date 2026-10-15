@@ -233,10 +233,9 @@ pub async fn system_worker(
     {
         crate::package::remember(request.installation.clone())?;
     }
-    let mut output = std::fs::OpenOptions::new().append(true).open(output)?;
     let mut failure = None;
     let mut events = |event| {
-        if let Err(error) = write(&mut output, &Message::Progress { event }) {
+        if let Err(error) = write(output, &Message::Progress { event }) {
             failure = Some(error);
         }
     };
@@ -244,7 +243,7 @@ pub async fn system_worker(
     if let Some(error) = failure {
         return Err(error);
     }
-    write(&mut output, &Message::Ready)?;
+    write(output, &Message::Ready)?;
     let (send, mut changes) = tokio::sync::mpsc::unbounded_channel();
     let mut watcher = notify::recommended_watcher(move |event| {
         let _ = send.send(event);
@@ -262,14 +261,14 @@ pub async fn system_worker(
     }
     let mut failure = None;
     crate::execute::run_system_phase(request, false, |event| {
-        if let Err(error) = write(&mut output, &Message::Progress { event }) {
+        if let Err(error) = write(output, &Message::Progress { event }) {
             failure = Some(error);
         }
     });
     if let Some(error) = failure {
         return Err(error);
     }
-    write(&mut output, &Message::SystemDone)?;
+    write(output, &Message::SystemDone)?;
     let final_control = control.parent().context("the system handoff has no parent")?.join("complete.json");
     let completed = loop {
         if final_control.try_exists()? {
@@ -288,7 +287,6 @@ pub async fn system_worker(
         && request.steps.iter().any(|step| matches!(step.action, crate::Action::Package))
     {
         let result = crate::package::finish(request).await;
-        drop(output);
         if result.is_ok() {
             crate::package::schedule_cleanup(
                 control.parent().context("the system helper has no temporary directory")?,
@@ -300,10 +298,13 @@ pub async fn system_worker(
     Ok(())
 }
 
-fn write(output: &mut std::fs::File, message: &Message) -> anyhow::Result<()> {
-    serde_json::to_writer(&mut *output, message)?;
-    output.write_all(b"\n")?;
-    output.flush()?;
-    output.sync_data()?;
+/// Each message is appended through a file of its own, closed again at once: macOS reports a change
+/// to a file only when its writer closes it, so appends to one kept open never wake the controller.
+fn write(output: &Path, message: &Message) -> anyhow::Result<()> {
+    let mut line = serde_json::to_vec(message)?;
+    line.push(b'\n');
+    let mut file = std::fs::OpenOptions::new().append(true).open(output)?;
+    file.write_all(&line)?;
+    file.sync_data()?;
     Ok(())
 }

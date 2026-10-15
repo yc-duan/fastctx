@@ -231,13 +231,25 @@ pub(crate) async fn open(
     ))
 }
 
+/// How often the output of a job still running is looked at again, beside its file's events: its
+/// supervisor writes through a file it keeps open, and macOS reports such a file's growth only once
+/// it is closed.
+const RUNNING_LOOK: std::time::Duration = std::time::Duration::from_secs(1);
+
 async fn monitor(
     source: Weak<Source>,
     mut events: tokio::sync::watch::Receiver<std::result::Result<u64, String>>,
     mut closed: tokio::sync::watch::Receiver<bool>,
 ) {
     loop {
-        tokio::select! { _ = closed.changed() => break, event = events.changed() => if event.is_err() { break; } }
+        let running = source.upgrade().is_some_and(|source| {
+            source.job_record.is_some() && !source.state.lock().expect("line source").extent.complete
+        });
+        tokio::select! {
+            _ = closed.changed() => break,
+            event = events.changed() => if event.is_err() { break; },
+            () = tokio::time::sleep(RUNNING_LOOK), if running => {}
+        }
         let Some(source) = source.upgrade() else { break };
         if refresh(source).await.is_err() {
             break;
