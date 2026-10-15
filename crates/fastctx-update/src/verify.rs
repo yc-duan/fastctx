@@ -1,6 +1,8 @@
 //! A package's signature, checked as the official updater checks it: by the
-//! one minisign key compiled in, over the whole file read once, the version
-//! the signature names, when it names one, being the release's.
+//! one minisign key compiled in, over the whole file read once. Every
+//! release signs its packages bound to its version, so a signature that
+//! names no version, or another, is refused: an older package is never
+//! taken for a newer release, wherever its manifest came from.
 
 use std::io::Read as _;
 use std::path::Path;
@@ -29,15 +31,12 @@ pub fn file(path: &Path, signature: &str, version: &str) -> Result<(), String> {
         verifier.update(&buffer[..read]);
     }
     verifier.finalize().map_err(|_| "the package does not match its signature".to_string())?;
-    // The trusted comment is signed too: a signature made for another
-    // version is not taken for this one.
-    let signed = signature.trusted_comment().split('\t').find_map(|field| field.strip_prefix("version:"));
-    if let Some(signed) = signed
-        && signed.trim_start_matches('v') != version
-    {
-        return Err(format!("the package was signed for {signed}, not {version}"));
+    // The trusted comment is signed too.
+    match signature.trusted_comment().split('\t').find_map(|field| field.strip_prefix("version:")) {
+        Some(signed) if signed.trim_start_matches('v') == version => Ok(()),
+        Some(signed) => Err(format!("the package was signed for {signed}, not {version}")),
+        None => Err(format!("the package's signature is bound to no version, so it is not taken for {version}")),
     }
-    Ok(())
 }
 
 fn text(base64: &str) -> Result<String, String> {

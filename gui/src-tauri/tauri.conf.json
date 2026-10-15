@@ -49,6 +49,7 @@
         "https://github.com/yc-duan/fastctx/releases/latest/download/latest.json"
       ],
       "dangerousInsecureTransportProtocol": true,
+      "requireSignedVersion": true,
       "windows": {
         "installMode": "passive"
       }
