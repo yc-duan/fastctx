@@ -101,7 +101,17 @@ export class ContextSheet {
     chart.addEventListener("pointerleave", () => this.point(null));
     chart.addEventListener("click", (event) => {
       const at = this.stepAt(event);
-      if (at !== null) this.choose(at === this.chosen ? null : at);
+      if (at === null) return;
+      // A step that called something leads to the call that grew it most;
+      // one that called nothing shows what it was made of.
+      const call = this.steps[at]?.causes.find((cause) => cause.kind === "call");
+      if (call?.kind === "call") {
+        this.left = this.sheet.body.scrollTop;
+        this.sheet.close();
+        this.opening(call.key);
+        return;
+      }
+      this.choose(at === this.chosen ? null : at);
     });
     this.resizing.observe(chart);
     this.drawChart();

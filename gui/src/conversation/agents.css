@@ -197,11 +197,13 @@
 /* Pressed in the picture of them all: the row is found with a wash that
    fades. */
 .row.row-found > .row-line {
-  animation: row-found 1.6s ease both;
+  animation: row-found 1.8s ease both;
 }
 
+/* It stays washed a moment, then fades back. */
 @keyframes row-found {
-  from {
+  0%,
+  35% {
     background: var(--accent-wash);
   }
 }

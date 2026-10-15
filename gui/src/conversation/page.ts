@@ -424,7 +424,7 @@ export class ConversationPage {
       agentRecord: options.agentRecord,
     });
     // The host's own agents as one picture (`agents-panel.ts`): a lane
-    // pressed opens the row of the call that started it.
+    // pressed brings the row of the call that started it into view.
     this.agents = new AgentsPanel(this.element.querySelector<HTMLButtonElement>(".composer-agents")!, this.element.querySelector<HTMLElement>(".agents-pop")!, {
       words,
       show: (run) => {
@@ -1341,14 +1341,14 @@ export class ConversationPage {
 
   /** Each step's context on a page of its own, over the conversation: what
    *  the page holds of its requests and its calls (`context-sheet.ts`). A
-   *  call's row brings it into view, opened. */
+   *  call's row, or a step on the drawing, brings that call into view. */
   private openSteps(again = false): void {
     const controls = this.options.controls;
     if (!controls) return;
     this.usagePopover?.hide();
     this.element.querySelector<HTMLElement>(".steps-back")!.hidden = true;
     this.steps ??= new ContextSheet(controls.words.usage, (key) => {
-      void this.view.openRow(key);
+      if (this.view.openRow(key)) this.following = false;
       this.offerStepsBack();
     });
     const { conversation, words } = this.options;

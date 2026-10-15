@@ -112,7 +112,14 @@ export function workbench(words: WorkbenchWords, shape: Shape): Built {
   // As many characters as the box holds inside its margins: the program's
   // type is monospaced, each character six tenths of its size wide.
   const fits = Math.floor((dry.w - 52) / (L.dryType * 0.6));
-  reel.group([dry.x + dry.w / 2, dry.y + dry.h / 2], [{ t: 0 }, { t: 2600 }, { t: 3500, x: shape === "wide" ? -40 : 0, sx: 0.95, sy: 0.95, o: 0.4 }, { t: 5600, o: 0.4 }, { t: 6400, o: 0 }], () => {
+  // Tall, the text alone stands in the middle of the frame, and rises to
+  // the top before the workbench draws in beneath it.
+  const lift = L.height / 2 - (dry.y + dry.h / 2);
+  const fading: Pose[] =
+    shape === "wide"
+      ? [{ t: 0 }, { t: 2600 }, { t: 3500, x: -40, sx: 0.95, sy: 0.95, o: 0.4 }, { t: 5600, o: 0.4 }, { t: 6400, o: 0 }]
+      : [{ t: 0, y: lift }, { t: 2050 }, { t: 2650, y: 0 }, { t: 3500, sx: 0.95, sy: 0.95, o: 0.4 }, { t: 5600 }, { t: 6400, o: 0 }];
+  reel.group([dry.x + dry.w / 2, dry.y + dry.h / 2], fading, () => {
     reel.wash(dry.x, dry.y, dry.w, dry.h, "raised", 250, 380, 18);
     DRY.slice(0, L.dryLines).forEach((line, index) => {
       reel.text([dry.x + 26, dry.y + 50 + index * (L.dryType * 1.75)], clip(line, fits), L.dryType, "graphite", 450 + index * 130, { mono: true });

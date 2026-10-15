@@ -15,26 +15,41 @@
 .lv-text mark { background: var(--selection); color: inherit; }
 .lv-status { position: absolute; left: 0; top: 0; width: fit-content; color: var(--text-2); background: var(--surface-code); }
 .lv-status:empty { display: none; }
-.lv-viewer { position: fixed; inset: 0; margin: 0; width: 100%; height: 100%; max-width: none; max-height: none; padding: var(--space-4); border: 0; background: var(--bg); color: var(--text); }
-.lv-viewer[open] { display: flex; flex-direction: column; gap: var(--space-2); }
-.lv-viewer::backdrop { background: var(--bg); }
-.lv-viewer-head, .lv-viewer-tools, .lv-search-form, .lv-jump-form { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-.lv-viewer-head strong { flex: 1; font-family: var(--font-emphasis); font-weight: 400; }
-.lv-viewer-head span { color: var(--text-3); }
-.lv-viewer button { min-height: 44px; padding: 0 var(--space-3); white-space: nowrap; background: var(--fill); border-radius: var(--radius-s); }
-.lv-viewer input, .lv-viewer select { font: inherit; color: inherit; background: var(--field); border: 0; border-radius: var(--radius-s); padding: var(--space-3); min-height: 44px; min-width: 0; }
-.lv-search-form { flex: 1; }
-.lv-search-form input { width: 0; flex: 1; }
-.lv-jump-form input { width: 10ch; }
-.lv-viewer-message { color: var(--text-2); font-size: var(--size-small); }
-.lv-viewer-message:empty { display: none; }
+/* The viewer: a card over the dimmed page, of a size of its own; its lines
+   scroll inside it. */
+.lv-viewer { margin: auto; padding: 0; border: 0; max-width: none; max-height: none; background: transparent; color: var(--text); overflow: visible; }
+.lv-viewer::backdrop { background: rgba(0, 0, 0, 0.42); }
+.lv-viewer[open] .lv-card { animation: sheet-in var(--enter) var(--fold-easing) both; }
+.lv-card { display: flex; flex-direction: column; gap: var(--space-2); width: min(1040px, 100vw - 48px); height: min(760px, 86dvh); padding: var(--space-3) var(--space-4) var(--space-4); border-radius: var(--radius-l); background: var(--bg-elevated); box-shadow: var(--shadow-pop); }
+.lv-viewer-head, .lv-viewer-tools { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.lv-viewer-head { min-height: 32px; }
+.lv-viewer-head strong { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-emphasis); font-weight: 400; color: var(--text-strong); }
+.lv-viewer-count { flex: none; font-size: var(--size-small); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.lv-viewer-sources { flex: none; display: flex; gap: 2px; margin-left: auto; }
+.lv-viewer-sources button { height: 26px; padding: 0 var(--space-2); border-radius: var(--radius-full); font-size: var(--size-small); color: var(--text-2); white-space: nowrap; transition: background-color var(--hover) ease, color var(--hover) ease; }
+.lv-viewer-sources button:hover { color: var(--text); }
+.lv-viewer-sources button[aria-pressed="true"] { background: var(--accent-wash); color: var(--text); }
+.lv-viewer-close { flex: none; margin-left: auto; margin-right: -6px; }
+.lv-viewer-sources + .lv-viewer-close { margin-left: var(--space-1); }
+.lv-search-form { flex: 0 1 380px; min-width: 0; display: flex; align-items: center; gap: 2px; height: 32px; padding: 0 3px 0 var(--space-2); border-radius: var(--radius-m); background: var(--field); color: var(--text-3); }
+.lv-search-form input { flex: 1; width: 0; min-width: 0; height: 100%; margin-left: 6px; padding: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: var(--size-small); color: var(--text); }
+.lv-search-form input::-webkit-search-cancel-button { display: none; }
+.lv-search-form .icon-button { flex: none; width: 26px; height: 26px; color: var(--text-3); }
+.lv-search-form .lv-previous .glyph { transform: rotate(180deg); }
+.lv-jump-form { flex: none; display: flex; }
+.lv-jump-form input { width: 6.5em; height: 32px; padding: 0 var(--space-2); border: 0; outline: 0; border-radius: var(--radius-m); background: var(--field); font: inherit; font-size: var(--size-small); color: var(--text); }
+.lv-viewer-message { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--size-small); color: var(--text-3); }
 .lv-viewer-body { flex: 1; min-height: 0; min-width: 0; }
 .lv-viewer-body > .lv-viewport { height: 100%; }
 .lv-fold [hidden] { display: none !important; }
-@media (max-width: 600px) {
-  .lv-viewer-head { flex-wrap: wrap; }
+@media (max-width: 760px) {
+  .lv-viewer { margin: auto 0 0; width: 100%; }
+  .lv-card { width: 100%; height: 88dvh; padding: var(--space-3) var(--space-4) calc(var(--space-3) + var(--safe-bottom)); border-radius: var(--radius-l) var(--radius-l) 0 0; }
+  .lv-viewer[open] .lv-card { animation-name: sheet-rise; }
+  .lv-search-form { flex: 1 1 auto; height: 38px; }
+  .lv-search-form .icon-button { width: 32px; height: 32px; }
+  .lv-jump-form input { width: 4.5em; height: 38px; }
   .lv-viewer-tools { flex-wrap: wrap; }
-  .lv-search-form { flex-basis: 100%; }
-  .lv-jump-form { width: 100%; }
-  .lv-jump-form input { flex: 1; }
+  .lv-viewer-message { flex-basis: 100%; }
+  .lv-viewer-message:empty { display: none; }
 }

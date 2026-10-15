@@ -257,17 +257,38 @@
   .talk-chip {
     flex: 0 1 auto;
     min-width: 0;
+    overflow: hidden;
     height: 34px;
+    padding: 0 6px;
+  }
+
+  /* The pill is what says it opens; the arrow needs the room. */
+  .talk-chip > .glyph:last-child {
+    display: none;
   }
 
   .talk-chip > :is(.talk-chip-name, .talk-chip-sub, .talk-chip-works) {
-    min-width: 0;
+    min-width: 3em;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  .talk-chip-sub {
-    flex: 0 2 auto;
+  /* What gives way first: the machine the agent lives on, then the
+     project, then the machines and folders; the agent's name never. */
+  .talk-chip[data-pop="agent"] {
+    flex-shrink: 6;
+  }
+
+  .talk-chip[data-pop="agent"] > .talk-chip-name {
+    flex: none;
+  }
+
+  .talk-chip[data-pop="agent"] > .talk-chip-sub {
+    min-width: 0;
+  }
+
+  .talk-chip[data-pop="town"] {
+    flex-shrink: 3;
   }
 
   .talk-chip-sub.who {

@@ -660,9 +660,9 @@ export class ConversationView {
   }
 
   /** Brings the row of the call that started one of the host's own agents
-   *  into view, opened; for an agent another agent started, the row of the
-   *  first one's call, whose box holds it. False where the conversation
-   *  does not hold that row. */
+   *  into view, as `openRow` does; for an agent another agent started, the
+   *  row of the first one's call, whose box holds it. False where the
+   *  conversation does not hold that row. */
   openAgent(id: string): boolean {
     let run = this.conversation.agent(id);
     let entry = run?.call ? this.conversation.call(run.call) : null;
@@ -675,18 +675,20 @@ export class ConversationView {
     return !!entry && this.openRow(entry.key);
   }
 
-  /** Brings a tool call's row into view, opened, by its key; false where
-   *  the conversation does not hold that row. */
+  /** Brings a tool call's row, by its key, to the middle of the view and
+   *  washes it a moment: the stretch it is folded in opens, the row itself
+   *  stays as it was. False where the conversation does not hold that row. */
   openRow(key: string): boolean {
     const group = this.blocks.find((block) => block.kind === "activity-group" && block.members.some((member) => member.key === key));
     if (!group) return false;
-    const slot = this.reveal(group.key, key, true);
+    const slot = this.reveal(group.key, key, false);
     const row = slot?.stretch?.drawn.get(key)?.element;
     if (!row) return false;
     this.context.reading();
     const scroller = this.context.scroller;
-    const top = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-    scroller.scrollTop += top - Math.min(96, scroller.clientHeight / 4);
+    const box = row.getBoundingClientRect();
+    const top = box.top - scroller.getBoundingClientRect().top;
+    scroller.scrollTop += top - Math.max(0, (scroller.clientHeight - box.height) / 2);
     row.classList.remove("row-found");
     void row.offsetWidth;
     row.classList.add("row-found");
@@ -2141,7 +2143,7 @@ export class ConversationView {
       if (foot.childElementCount) holder.append(foot);
       surface.append(holder);
     };
-    // What the model got, and beside it in the full-screen view the whole
+    // What the model got, and beside it in the popup the whole
     // output on its machine, where the model got less than the whole or the
     // command went on after the model had its answer.
     let printed: string | LongLines = output;
@@ -2170,8 +2172,11 @@ export class ConversationView {
     }
     // How a command ended, under what it wrote.
     const ending = endText ? `<span class="io-end${tool.does.as === "command" && !tool.does.job && tool.does.exit !== null && tool.does.exit !== 0 ? " nonzero" : ""}">${escape(endText)}</span>` : "";
-    if (given) part("in", "IN", given);
-    if (printed || images || ending) part("out", "OUT", printed, images, ending);
+    // A command's output is named by the command; what else a call gave
+    // back, by what it is.
+    const named = tool.does.as === "command" ? tool.does.command.split("\n")[0]?.trim() : "";
+    if (given) part("in", words.output.input, given);
+    if (printed || images || ending) part("out", named || words.output.printed, printed, images, ending);
     content.append(surface);
     this.longs.set(key, longs);
     this.closers.set(key, closers);

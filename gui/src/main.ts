@@ -1272,7 +1272,8 @@ function specimenTalk(address: Address): KeepablePage {
       );
       page.update();
     },
-    stop() {},
+    // A specimen's agent never stops: the button shows it stopping.
+    stop: () => new Promise<boolean>(() => {}),
     stopJob: async () => {},
     jobOutput: async (job) => specimenOutput(job.command),
     lines: async (_machine, path) => specimenLines(path),

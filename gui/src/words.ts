@@ -165,12 +165,15 @@ export interface Words {
   /** The button under the first lines of something long: "+ 28 行". */
   moreLines(n: number): string;
   unchangedLines(n: number): string;
-  /** Long text opened full screen. */
+  /** Long text opened whole, in a popup. */
   fullScreen: string;
   /** What a command printed and what a write changed, opened under their
    *  rows: what was left out of what the model got, the whole output on
    *  its machine beside it, and what is said when either is gone. */
   output: OutputWords & {
+    /** What a call was given, and what it gave back, as their boxes are named. */
+    input: string;
+    printed: string;
     modelCopy: string;
     whole: string;
     wholeGone: string;
@@ -414,8 +417,10 @@ export const zh: Words = {
   listSeparator: "、",
   moreLines: (n) => `+ ${n.toLocaleString("zh-CN")} 行`,
   unchangedLines: (n) => `${n} 行未改动`,
-  fullScreen: "整屏查看",
+  fullScreen: "查看全部",
   output: {
+    input: "输入",
+    printed: "输出",
     linesLeftOut: (n) => `⋯ 省略 ${n.toLocaleString("zh-CN")} 行`,
     charsLeftOut: (n) => `⋯ 省略 ${n.toLocaleString("zh-CN")} 个字符`,
     unreadable: "此行无法显示",
@@ -661,8 +666,10 @@ export const en: Words = {
   listSeparator: ", ",
   moreLines: (n) => `+ ${n.toLocaleString("en")} more line${n === 1 ? "" : "s"}`,
   unchangedLines: (n) => `${n} unchanged lines`,
-  fullScreen: "Full screen",
+  fullScreen: "View all",
   output: {
+    input: "Input",
+    printed: "Output",
     linesLeftOut: (n) => `⋯ ${n.toLocaleString("en")} line${n === 1 ? "" : "s"} left out`,
     charsLeftOut: (n) => `⋯ ${n.toLocaleString("en")} character${n === 1 ? "" : "s"} left out`,
     unreadable: "This line can't be shown",
