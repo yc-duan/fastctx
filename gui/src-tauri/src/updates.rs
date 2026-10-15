@@ -41,7 +41,25 @@ pub(crate) fn target() -> String {
     }
 }
 
+/// Where this application keeps the command-line programs it carries.
+static CARRIED: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+fn app() -> App {
+    App { version: env!("CARGO_PKG_VERSION").to_string(), target: target() }
+}
+
+/// Asks, and tells the node or the device which application this is
+/// whenever what it keeps of it is not this one: a node that was not up
+/// when the application started, or one an older application spoke to.
 async fn ask(shell: &Shell, call: UpdateCall) -> Result<State, String> {
+    let state = once(shell, call).await?;
+    if state.app.as_ref() == Some(&app()) {
+        return Ok(state);
+    }
+    once(shell, UpdateCall::App { app: app(), carried: CARRIED.get().cloned().flatten() }).await
+}
+
+async fn once(shell: &Shell, call: UpdateCall) -> Result<State, String> {
     match shell.world().call(Call::Update(call)).await.map_err(|error| error.to_string())?.0 {
         Reply::Update(state) => Ok(*state),
         other => Err(format!("the World answered {other:?}")),
@@ -51,9 +69,9 @@ async fn ask(shell: &Shell, call: UpdateCall) -> Result<State, String> {
 /// Tells the node or the device which application this is, and where it
 /// keeps the command-line programs it carries.
 pub(crate) async fn introduce(shell: &Shell, carried: Option<std::path::PathBuf>) -> Result<(), String> {
-    let app = App { version: env!("CARGO_PKG_VERSION").to_string(), target: target() };
     let carried = carried.filter(|dir| dir.is_dir()).map(|dir| dir.display().to_string());
-    ask(shell, UpdateCall::App { app, carried }).await.map(|_| ())
+    let _ = CARRIED.set(carried.clone());
+    once(shell, UpdateCall::App { app: app(), carried }).await.map(|_| ())
 }
 
 #[fastctx_gui_command::command]
