@@ -1,0 +1,108 @@
+"""The whole of an application update on a Windows computer, as a release's check: World installed
+from its installer, automatic updates and test releases switched on, and a stand-in for GitHub on
+this computer offering a later version, which is the same installer signed for that version. The
+node finds it, brings it and checks its signature; the interface installs it with the official
+updater once nothing is under way, and Fastctx opens again.
+
+    python scripts/update-drill.py INSTALLER LATER-INSTALLER LATER-VERSION
+"""
+import json
+import os
+import subprocess
+import sys
+import threading
+import time
+import http.server
+from pathlib import Path
+
+RESULTS = []
+
+
+def check(label, ok, detail=""):
+    RESULTS.append(bool(ok))
+    print(("PASS " if ok else "FAIL ") + label + ("" if ok or not detail else f"\n     {str(detail)[-2000:]}"), flush=True)
+    return ok
+
+
+def processes(name):
+    listed = subprocess.run(["powershell", "-NoProfile", "-Command",
+                             f"Get-Process -Name {name} -ErrorAction SilentlyContinue | ForEach-Object {{ $_.Id }}"],
+                            capture_output=True, text=True).stdout.split()
+    return {int(pid) for pid in listed}
+
+
+def serve(directory, releases):
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_GET(self):
+            if self.path.startswith("/releases"):
+                body = json.dumps(releases).encode()
+            else:
+                file = directory / self.path.removeprefix("/download/")
+                if not file.is_file():
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                body = file.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server.server_address[1]
+
+
+def main():
+    installer, later, version = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve(), sys.argv[3]
+    site = later.parent
+    target = "windows-x86_64-nsis"
+    releases = []
+    port = serve(site, releases)
+    manifest = {"version": version, "notes": "A drill's later version.",
+                "platforms": {target: {"url": f"http://127.0.0.1:{port}/download/{later.name}",
+                                       "signature": Path(str(later) + ".sig").read_text().strip(),
+                                       "size": later.stat().st_size}}}
+    (site / "latest.json").write_text(json.dumps(manifest))
+    releases.append({"tag_name": "v" + version, "draft": False, "prerelease": True,
+                     "assets": [{"name": "latest.json", "browser_download_url": f"http://127.0.0.1:{port}/download/latest.json"}]})
+
+    subprocess.run([str(installer), "/S"], check=True)
+    app = Path(os.environ["LOCALAPPDATA"]) / "Fastctx" / "fastctx-app.exe"
+    check("the installer put Fastctx in place", app.is_file(), app)
+    updates = Path.home() / ".fastctx" / "updates"
+    updates.mkdir(parents=True, exist_ok=True)
+    (updates / "settings.json").write_text(json.dumps({"auto": True, "beta": True, "relays": True}))
+    env = {key: value for key, value in os.environ.items() if not key.upper().startswith("CLAUDE")}
+    env["FASTCTX_UPDATE_RELEASES"] = f"http://127.0.0.1:{port}/releases"
+    first = subprocess.Popen([str(app)], env=env)
+    package = updates / "packages" / f"v{version}" / target
+    began = time.monotonic()
+    while time.monotonic() - began < 420 and not package.is_file():
+        time.sleep(2)
+    check("the node found the later version, brought its package and checked it", package.is_file(),
+          sorted(str(path) for path in updates.rglob("*")))
+    relaunched = set()
+    while time.monotonic() - began < 600:
+        if first.poll() is not None:
+            relaunched = processes("fastctx-app") - {first.pid}
+            if relaunched:
+                break
+        time.sleep(2)
+    check("the interface installed it, and Fastctx closed and opened again", first.poll() is not None and relaunched,
+          (first.poll(), relaunched))
+    marker = Path(os.environ["APPDATA"]) / "dev.fastctx.world" / "updated.json"
+    time.sleep(10)
+    check("the new start read what the update left for it", not marker.exists(), marker)
+    for pid in processes("fastctx-app"):
+        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+    passed = sum(RESULTS)
+    print(f"\n{passed}/{len(RESULTS)} passed")
+    return 0 if passed == len(RESULTS) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

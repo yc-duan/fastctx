@@ -1,15 +1,22 @@
-name: Build release artifacts
+name: Release
+
+# Every platform's installer from one commit: the command-line programs built, tested and run on the
+# machines they are for; World's installers carrying those very programs; each package signed bound
+# to the release's version; and, for a version tag, a GitHub release of them with the manifest the
+# updater reads. A push to a ci/ branch runs everything but the release. Nothing goes to npm.
 
 on:
   workflow_dispatch:
   push:
     tags: ['v*']
+    branches: ['ci/**']
 
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  TAURI_CLI: '@tauri-apps/cli@2.12.1'
 
 jobs:
   notices:
@@ -27,16 +34,13 @@ jobs:
       - run: |
           cargo run --locked --release -p fastctx-tui --example syntax_notices > syntax-notices.md
           python scripts/notices.py --syntax-notices syntax-notices.md --output dist/THIRD_PARTY_LICENSES.md
-          python scripts/package.py roots --notices dist/THIRD_PARTY_LICENSES.md --output dist
       - uses: actions/upload-artifact@v4
         with:
-          name: release-common
-          path: |
-            dist/THIRD_PARTY_LICENSES.md
-            dist/npm/
+          name: notices
+          path: dist/THIRD_PARTY_LICENSES.md
           if-no-files-found: error
 
-  build:
+  kernel:
     needs: notices
     strategy:
       fail-fast: false
@@ -44,34 +48,32 @@ jobs:
         include:
           - target: x86_64-pc-windows-msvc
             runner: windows-2025
-            package: win32-x64
             binary: fastctx.exe
             rustflags: '-C target-feature=+crt-static'
           - target: aarch64-pc-windows-msvc
             runner: windows-11-arm
-            package: win32-arm64
             binary: fastctx.exe
             rustflags: '-C target-feature=+crt-static'
           - target: x86_64-apple-darwin
             runner: macos-15-intel
-            package: darwin-x64
             binary: fastctx
             rustflags: ''
+            service: '--service'
           - target: aarch64-apple-darwin
             runner: macos-14
-            package: darwin-arm64
             binary: fastctx
             rustflags: ''
+            service: '--service'
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-24.04
-            package: linux-x64
             binary: fastctx
             rustflags: ''
+            service: '--service'
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
-            package: linux-arm64
             binary: fastctx
             rustflags: ''
+            service: '--service'
     runs-on: ${{ matrix.runner }}
     defaults:
       run:
@@ -83,12 +85,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           targets: ${{ startsWith(matrix.target, 'x86_64-unknown-linux') && 'x86_64-unknown-linux-musl' || startsWith(matrix.target, 'aarch64-unknown-linux') && 'aarch64-unknown-linux-musl' || matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: kernel-${{ matrix.target }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
       - uses: actions/download-artifact@v4
         with:
-          name: release-common
+          name: notices
           path: dist
       - uses: actions/setup-node@v4
         with:
@@ -147,33 +152,459 @@ jobs:
           test "$("$binary" --version)" = "fastctx $version"
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then test "$GITHUB_REF_NAME" = "v$version"; fi
           python scripts/package.py platform --target '${{ matrix.target }}' --binary "$binary" --notices dist/THIRD_PARTY_LICENSES.md --output dist
-          python scripts/package.py verify --output dist
+          mkdir -p kernel && cp "$binary" kernel/
+      - name: Smoke test on this machine
+        run: python scripts/smoke.py "kernel/${{ matrix.binary }}" ${{ matrix.service }}
       - uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.target }}
+          name: kernel-${{ matrix.target }}
+          path: kernel/${{ matrix.binary }}
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.target }}
           path: |
             dist/fastctx-*.zip
             dist/fastctx-*.tar.gz
-            dist/*.json
-            dist/npm/fastctx-${{ matrix.package }}-*.tgz
           if-no-files-found: error
 
-  assemble:
-    needs: [notices, build]
+  sign-kernels:
+    needs: kernel
     runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*-unknown-linux-gnu
+          merge-multiple: true
+          path: kernels
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/checkout@v4
+        with:
+          path: source
+      - name: Sign the Linux command-line programs
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("source/Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          for archive in kernels/fastctx-*-unknown-linux-gnu.tar.gz; do
+            npx --yes "$TAURI_CLI" signer sign --app-version "$version" "$archive"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-kernels
+          path: kernels/fastctx-*-unknown-linux-gnu.tar.gz*
+          if-no-files-found: error
+
+  gui-windows:
+    needs: [notices, kernel]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+            arch: x64
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          components: rust-docs
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+          key: gui-${{ matrix.target }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: cargo install --locked cargo-about --version 0.9.0 --features cli
+      - uses: actions/download-artifact@v4
+        with:
+          name: notices
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-${{ matrix.target }}
+          path: kernel
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*-unknown-linux-gnu
+          merge-multiple: true
+          path: gui/src-tauri/linux
+      - name: Build the installer
+        working-directory: gui
+        run: |
+          npm ci --no-audit --no-fund
+          cargo fetch --locked --manifest-path src-tauri/Cargo.toml
+          node scripts/release.mjs --kernel ../kernel/fastctx.exe --out ../dist/gui
+      - name: Sign the installer for the updater
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        working-directory: gui
+        run: |
+          version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          for installer in ../dist/gui/*-setup.exe; do
+            node node_modules/@tauri-apps/cli/tauri.js signer sign --app-version "$version" "$installer"
+          done
+      - name: Install it and open it
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist/gui/*-setup.exe | Select-Object -First 1
+          Start-Process $installer.FullName -ArgumentList '/S' -Wait
+          $app = Join-Path $env:LOCALAPPDATA 'Fastctx/fastctx-app.exe'
+          if (-not (Test-Path $app)) { throw "the installer left no $app" }
+          $kernel = Join-Path $env:LOCALAPPDATA 'Fastctx/fastctx.exe'
+          & $kernel --version
+          $process = Start-Process $app -PassThru
+          Start-Sleep -Seconds 25
+          if ($process.HasExited) { throw "Fastctx exited with $($process.ExitCode)" }
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $shot = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+          [System.Drawing.Graphics]::FromImage($shot).CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+          New-Item -ItemType Directory -Force shots | Out-Null
+          $shot.Save("shots/windows-${{ matrix.arch }}.png")
+          Stop-Process -Id $process.Id
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shot-windows-${{ matrix.arch }}
+          path: shots
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gui-windows-${{ matrix.arch }}
+          path: dist/gui/*-setup.exe*
+          if-no-files-found: error
+
+  gui-macos:
+    needs: [notices, kernel]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            arch: aarch64
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          components: rust-docs
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+          key: gui-${{ matrix.target }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: cargo install --locked cargo-about --version 0.9.0 --features cli
+      - uses: actions/download-artifact@v4
+        with:
+          name: notices
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-${{ matrix.target }}
+          path: kernel
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*-unknown-linux-gnu
+          merge-multiple: true
+          path: gui/src-tauri/linux
+      - name: Build the application
+        working-directory: gui
+        run: |
+          chmod +x ../kernel/fastctx
+          npm ci --no-audit --no-fund
+          cargo fetch --locked --manifest-path src-tauri/Cargo.toml
+          node scripts/release.mjs --kernel ../kernel/fastctx --out ../dist/gui
+      - name: Sign the application for the updater
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        working-directory: gui
+        run: |
+          version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          node node_modules/@tauri-apps/cli/tauri.js signer sign --app-version "$version" ../dist/gui/*.app.tar.gz
+      - name: Open it
+        run: |
+          app=gui/src-tauri/target/release/bundle/macos/Fastctx.app
+          codesign --verify --verbose "$app"
+          "$app/Contents/MacOS/fastctx" --version
+          "$app/Contents/MacOS/fastctx-app" > app.log 2>&1 &
+          sleep 25
+          pgrep -f fastctx-app
+          mkdir -p shots
+          screencapture -x "shots/macos-${{ matrix.arch }}.png" || true
+          pkill -f fastctx-app || true
+          cat app.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shot-macos-${{ matrix.arch }}
+          path: shots
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gui-macos-${{ matrix.arch }}
+          path: |
+            dist/gui/*.dmg
+            dist/gui/*.app.tar.gz*
+          if-no-files-found: error
+
+  gui-linux:
+    needs: [notices, kernel]
+    runs-on: ubuntu-22.04
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/gui/src-tauri/target
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the build's system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev patchelf squashfs-tools xvfb imagemagick file
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          components: rust-docs
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+          key: gui-linux
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: cargo install --locked cargo-about --version 0.9.0 --features cli
+      - uses: actions/download-artifact@v4
+        with:
+          name: notices
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-x86_64-unknown-linux-gnu
+          path: kernel
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*-unknown-linux-gnu
+          merge-multiple: true
+          path: gui/src-tauri/linux
+      - name: Build, seal and verify the deb and the AppImage
+        run: |
+          chmod +x kernel/fastctx
+          # linux-bundle.py checks both packages carry this very program.
+          mkdir -p "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release"
+          cp kernel/fastctx "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/fastctx"
+          cd gui
+          npm ci --no-audit --no-fund
+          cargo fetch --locked --manifest-path src-tauri/Cargo.toml
+          node scripts/release.mjs --kernel ../kernel/fastctx
+          python ../scripts/linux-bundle.py --target-dir "$CARGO_TARGET_DIR" --output ../dist/gui
+      - name: Sign the packages for the updater
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        working-directory: gui
+        run: |
+          version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          for package in ../dist/gui/*.AppImage ../dist/gui/*.deb; do
+            node node_modules/@tauri-apps/cli/tauri.js signer sign --app-version "$version" "$package"
+          done
+      - name: Open the AppImage
+        run: |
+          image="$(ls dist/gui/*.AppImage)"
+          chmod +x "$image"
+          export APPIMAGE_EXTRACT_AND_RUN=1 WEBKIT_DISABLE_DMABUF_RENDERER=1
+          xvfb-run -a -s "-screen 0 1280x860x24" bash -c "\"$image\" > app.log 2>&1 & sleep 30; mkdir -p shots; import -window root shots/linux-x64.png; pgrep -f fastctx-app; status=\$?; pkill -f fastctx-app; exit \$status"
+          cat app.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shot-linux-x64
+          path: shots
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gui-linux-x64
+          path: |
+            dist/gui/*.AppImage*
+            dist/gui/*.deb*
+          if-no-files-found: error
+
+  android:
+    needs: notices
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          components: rust-docs
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+          key: android
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: cargo install --locked cargo-about --version 0.9.0 --features cli
+      - name: Install the Android SDK parts the build takes
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37" "build-tools;37.0.0" "ndk;29.0.14206865" > /dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          name: notices
+          path: dist
+      - name: Build the APK for every phone's processor
+        working-directory: gui
+        run: |
+          npm ci --no-audit --no-fund
+          cargo fetch --locked --manifest-path src-tauri/Cargo.toml
+          node scripts/android.mjs build --apk
+          version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          built="$(ls src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk)"
+          mkdir -p ../dist/gui
+          "$ANDROID_HOME/build-tools/37.0.0/zipalign" -f -P 16 4 "$built" "../dist/gui/aligned.apk"
+      - name: Sign the APK
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        working-directory: gui
+        run: |
+          version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          keystore="$RUNNER_TEMP/release.jks"
+          trap 'rm -f "$keystore"' EXIT
+          printf '%s' "$ANDROID_KEYSTORE" | base64 -d > "$keystore"
+          signed="../dist/gui/Fastctx_${version}_universal.apk"
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" sign --ks "$keystore" --ks-key-alias fastctx \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD --key-pass env:ANDROID_KEYSTORE_PASSWORD \
+            --out "$signed" ../dist/gui/aligned.apk
+          rm ../dist/gui/aligned.apk
+          "$ANDROID_HOME/build-tools/37.0.0/zipalign" -c -P 16 4 "$signed"
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs "$signed" | grep -E "^Signer #1 certificate SHA-256"
+          node node_modules/@tauri-apps/cli/tauri.js signer sign --app-version "$version" "$signed"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gui-android
+          path: dist/gui/*.apk*
+          if-no-files-found: error
+
+  update-windows:
+    needs: gui-windows
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - uses: actions/download-artifact@v4
         with:
-          pattern: release-*
-          merge-multiple: true
+          name: gui-windows-x64
           path: dist
-      - run: python scripts/package.py verify --complete --output dist
+      - name: Sign a copy of the installer as a later version
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          version="$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          later="${version%.*}.99"
+          mkdir -p later
+          cp dist/*-setup.exe later/next-setup.exe
+          npx --yes "$TAURI_CLI" signer sign --app-version "$later" later/next-setup.exe
+          echo "LATER=$later" >> "$GITHUB_ENV"
+      - name: Update to it, as a user with automatic updates would
+        run: python scripts/update-drill.py "$(ls dist/*-setup.exe)" later/next-setup.exe "$LATER"
+
+  manifest:
+    needs: [sign-kernels, gui-windows, gui-macos, gui-linux, android, update-windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: gui-*
+          merge-multiple: true
+          path: assets
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed-kernels
+          path: assets
+      - name: Write the updater's manifest
+        run: |
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          python3 scripts/release-manifest.py --version "$version" --assets assets --output assets/latest.json \
+            --notes "This is a beta release of the new Fastctx, for testing before the stable release."
+          ls -la assets
       - uses: actions/upload-artifact@v4
         with:
-          name: fastctx-distribution
-          path: dist
+          name: release
+          path: |
+            assets/latest.json
+            assets/*-setup.exe
+            assets/*.dmg
+            assets/*.app.tar.gz
+            assets/*.AppImage
+            assets/*.deb
+            assets/*.apk
           if-no-files-found: error
+
+  publish:
+    needs: manifest
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: release
+      - name: Publish the test release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          test "$GITHUB_REF_NAME" = "v$version"
+          case "$version" in *-*) ;; *) echo "only a test release is published by this workflow"; exit 1 ;; esac
+          gh release create "$GITHUB_REF_NAME" --verify-tag --prerelease --title "Fastctx $version" \
+            --notes "This is a beta release of the new Fastctx, for testing before the stable release." release/*

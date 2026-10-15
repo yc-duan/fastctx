@@ -8,8 +8,15 @@ import path from "node:path";
 const gui = fileURLToPath(new URL("../", import.meta.url));
 const cli = path.join(gui, "node_modules/@tauri-apps/cli/tauri.js");
 const generated = path.join(gui, "src-tauri/gen/android");
+// Each release installs over the one before it: Android takes an APK only with a higher version
+// code, so the code orders releases as their versions do, a test release below its own stable one.
+const { version } = JSON.parse(readFileSync(path.join(gui, "src-tauri/tauri.conf.json"), "utf8"));
+const [, major, minor, patch, beta] = /^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/.exec(version) ?? [];
+if (major === undefined || Number(beta ?? 0) > 98) throw new Error(`no Android version code for ${version}`);
+const versionCode = ((Number(major) * 1000 + Number(minor)) * 1000 + Number(patch)) * 100 + (beta === undefined ? 99 : Number(beta));
+const env = { ...process.env, TAURI_CONFIG: JSON.stringify({ bundle: { android: { versionCode } } }) };
 function tauri(args) {
-  const result = spawnSync(process.execPath, [cli, "android", ...args], { cwd: gui, stdio: "inherit" });
+  const result = spawnSync(process.execPath, [cli, "android", ...args], { cwd: gui, stdio: "inherit", env });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
