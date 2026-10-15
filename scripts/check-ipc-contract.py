@@ -1,6 +1,7 @@
 """Decode today's compatible replies with the actual historical Rust readers.
 
-Requires git history for the pinned revisions (CI uses fetch-depth: 0). Sources
+Requires git history for the pinned revisions: the development history, which
+the public repository does not carry, so this runs in a clone that has it. Sources
 are materialized only under target; no historical production program is run.
 A protocol that ships adds its revision to REVISIONS, and a reply shape that
 changes adds a case to scripts/ipc-contract/samples.py.
