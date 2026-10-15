@@ -79,7 +79,10 @@ __fastctx_on() {
         builtin printf '%s\n' "on: '$4' is one word, the name of a program to run on $3. For a script, give it on standard input: on $3 <<'EOF' ... EOF" >&2
         builtin return 255
     fi
-    builtin set -- "${FASTCTX_SCRATCH:?on works only inside a script run by the run tool}/on-$BASHPID-$RANDOM$RANDOM" "$BASHPID" "$@"
+    # This shell's own process: BASHPID from bash 4 on; in bash 3.2, which
+    # macOS keeps, the parent of a program it starts.
+    builtin set -- "${BASHPID:-$(builtin exec /usr/bin/env -i /bin/sh -c 'echo "$PPID"')}" "$@"
+    builtin set -- "${FASTCTX_SCRATCH:?on works only inside a script run by the run tool}/on-$1-$RANDOM$RANDOM" "$@"
     __fastctx_state "$-" >"$1.state" || builtin return 255
     if [ -r "/proc/$2/winpid" ]; then
         builtin set -- "$1" "$(/usr/bin/cat "/proc/$2/winpid")" "${@:3}"

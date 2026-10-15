@@ -813,16 +813,22 @@ impl Scanner<'_> {
 
     fn balanced_on_stack(&mut self, end: &[u8], arithmetic: bool) -> Result<(), Failure> {
         let line = self.line;
+        // Bash ends `${` at the first brace of its own, whatever parentheses
+        // or braces come before it, as in `${version%%(*}` and `${x:-{a}`;
+        // only a `${` inside it has a brace of its own.
+        let expansion = end == b"}";
         let mut parentheses = 0usize;
         let mut brackets = 0usize;
-        let mut braces = 0usize;
         while let Some(byte) = self.byte() {
-            if parentheses == 0 && brackets == 0 && braces == 0 && self.at(end) {
+            if parentheses == 0 && brackets == 0 && self.at(end) {
                 self.advance(end.len());
                 return Ok(());
             }
             if self.at(b"$(") || self.at(b"<(") || self.at(b">(") {
                 self.substitution()?;
+            } else if expansion && self.at(b"${") {
+                self.advance(2);
+                self.balanced(b"}", false)?;
             } else if byte == b'`' {
                 self.backticks()?;
             } else if byte == b'\'' || byte == b'"' {
@@ -852,12 +858,10 @@ impl Scanner<'_> {
                 }
             } else {
                 match byte {
-                    b'(' => parentheses += 1,
-                    b')' => parentheses = parentheses.saturating_sub(1),
+                    b'(' if !expansion => parentheses += 1,
+                    b')' if !expansion => parentheses = parentheses.saturating_sub(1),
                     b'[' if arithmetic || end == b"]" => brackets += 1,
                     b']' if arithmetic || end == b"]" => brackets = brackets.saturating_sub(1),
-                    b'{' if end == b"}" => braces += 1,
-                    b'}' if end == b"}" => braces = braces.saturating_sub(1),
                     _ => {}
                 }
                 self.advance(1);

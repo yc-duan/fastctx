@@ -80,7 +80,8 @@ pub fn run(args: ServiceArgs) -> anyhow::Result<()> {
             }
         }
     };
-    let service = Service::new(kind, executable, directory);
+    let kept_before = fastctx_types::layout::WorldDir::under(&directory).node_service().exists();
+    let service = Service::new(kind, executable, directory.clone());
     #[cfg(windows)]
     let service = Service { user_sid: args.user_sid, ..service };
     #[cfg(target_os = "linux")]
@@ -90,6 +91,11 @@ pub fn run(args: ServiceArgs) -> anyhow::Result<()> {
         Action::Uninstall => service.uninstall()?,
         Action::Status => service.status()?,
     };
+    // As when this computer joins a World (`crate::keep`): the node that
+    // served until now hands the World to the service's.
+    if kind == Kind::Node && matches!(args.action, Action::Install) && !kept_before {
+        hand_over(&directory);
+    }
     #[cfg(target_os = "linux")]
     if matches!(args.action, Action::Install)
         && let Some(owner) = args.package_owner
@@ -98,4 +104,28 @@ pub fn run(args: ServiceArgs) -> anyhow::Result<()> {
     }
     println!("{}", serde_json::to_string_pretty(&status)?);
     Ok(())
+}
+
+/// Asks the node serving the World under `root`, when one does, to hand it
+/// over once idle. None is started for it.
+fn hand_over(root: &std::path::Path) {
+    let world = fastctx_types::layout::WorldDir::under(root);
+    let asked =
+        tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(anyhow::Error::from).and_then(
+            |runtime| {
+                runtime.block_on(async {
+                    match fastctx_client::Client::connect(&world, fastctx_client::command_peer()).await {
+                        Ok(mut client) => match client.call(fastctx_types::Call::HandOver).await? {
+                            fastctx_types::Reply::Done => Ok(()),
+                            other => Err(anyhow::anyhow!("the node answered {other:?}")),
+                        },
+                        Err(fastctx_client::ConnectError::NoNode { .. }) => Ok(()),
+                        Err(error) => Err(error.into()),
+                    }
+                })
+            },
+        );
+    if let Err(error) = asked {
+        eprintln!("fastctx: the node serving until now was not asked to hand the World over: {error:#}");
+    }
 }

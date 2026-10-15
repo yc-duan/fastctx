@@ -93,13 +93,14 @@ pub async fn exited(identity: &ProcessIdentity) -> io::Result<()> {
 }
 
 /// On macOS the kqueue watching the process becomes readable when it exits.
+/// A kqueue takes no write filter, so it is watched for reading alone.
 #[cfg(target_os = "macos")]
 pub async fn exited(identity: &ProcessIdentity) -> io::Result<()> {
     let Some(queue) = super::exit_queue(identity.pid)? else { return Ok(()) };
     if !crate::is_alive(identity)? {
         return Ok(());
     }
-    let watched = tokio::io::unix::AsyncFd::new(queue)?;
+    let watched = tokio::io::unix::AsyncFd::with_interest(queue, tokio::io::Interest::READABLE)?;
     let _ready = watched.readable().await?;
     Ok(())
 }

@@ -1,9 +1,12 @@
 //! Which bash runs a job, and the environment it starts with.
 //!
-//! The shell is the machine's own bash: `/bin/bash` on Unix and Git for
-//! Windows' bash on Windows (`world-run.md`). It runs as a login shell: it gets the environment a person logging in
-//! gets, then reads the profile as their shell would, so a command sees
-//! the machine as a person at it does, whichever process started the node.
+//! The shell is the machine's own bash: `/bin/bash` on Unix, on macOS the
+//! one Homebrew installed when there is one, and Git for Windows' bash on
+//! Windows (`world-run.md`). It runs as a login shell: it gets the
+//! environment a person logging in gets, then reads the profile as their
+//! shell would, so a command sees the machine as a person at it does,
+//! whichever process started the node. On macOS, where the person's login
+//! shell is zsh, the environment is what zsh sets up (`login_shell`).
 
 use std::ffi::{OsStr, OsString};
 use std::io;
@@ -44,15 +47,17 @@ pub struct Prepared {
     pub environment: Vec<(OsString, OsString)>,
 }
 
-/// The program and arguments that run `script` (a file) in a login shell.
-pub fn command(script: &Path) -> io::Result<(PathBuf, Vec<OsString>)> {
-    let bash = bash()?;
-    Ok((bash, vec!["--login".into(), script_argument(script)?]))
-}
-
-/// The environment the shell starts with.
-pub fn environment(context: &Context<'_>) -> io::Result<Vec<(OsString, OsString)>> {
-    Ok(environment_from(user_environment()?, context))
+/// The shell that runs `script` (a file) as the user's login shell would,
+/// with its complete environment.
+pub fn prepare(script: &Path, context: &Context<'_>) -> io::Result<Prepared> {
+    let program = bash()?;
+    let script = script_argument(script)?;
+    let base = user_environment()?;
+    #[cfg(target_os = "macos")]
+    if let Some(login) = super::login_shell::environment(&base) {
+        return Ok(Prepared { program, args: vec![script], environment: environment_from(login, context) });
+    }
+    Ok(Prepared { program, args: vec!["--login".into(), script], environment: environment_from(base, context) })
 }
 
 /// Adds the World's identity and executable directory to a supplied login
@@ -196,11 +201,18 @@ fn prepend_path(env: &mut [(OsString, OsString)], directory: &Path) {
     }
 }
 
-/// The bash every `run` starts: `/bin/bash`.
+/// The bash every `run` starts: `/bin/bash`. macOS keeps bash 3.2 there, of
+/// 2007; one Homebrew installed, current, comes first.
 #[cfg(unix)]
 pub fn bash() -> io::Result<PathBuf> {
-    let bash = PathBuf::from("/bin/bash");
-    if bash.is_file() { Ok(bash) } else { Err(io::Error::new(io::ErrorKind::NotFound, "/bin/bash does not exist")) }
+    let homebrew: &[&str] =
+        if cfg!(target_os = "macos") { &["/opt/homebrew/bin/bash", "/usr/local/bin/bash"] } else { &[] };
+    homebrew
+        .iter()
+        .chain(&["/bin/bash"])
+        .map(PathBuf::from)
+        .find(|bash| bash.is_file())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "/bin/bash does not exist"))
 }
 
 #[cfg(unix)]

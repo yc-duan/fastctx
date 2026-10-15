@@ -25,24 +25,25 @@ use super::{control, output, record, shell};
 pub fn supervise(world: &Path, record_path: &Path, fastctx_dir: &Path) -> io::Result<()> {
     supervise_with(world, record_path, |_, record| {
         let resident = room(record_path)?;
-        let (program, args) = shell::command(&resident.job_script(&record.id))?;
         shell::ensure_prelude(fastctx_dir)?;
         let fastctx_home = std::env::var_os("FASTCTX_HOME");
         let scratch = resident.job_scratch(&record.id);
         fastctx_platform::ensure_private_dir(&scratch)?;
         let on_state = record.on.as_ref().map(|on| std::path::PathBuf::from(&on.state));
-        let environment = shell::environment(&shell::Context {
-            machine: &record.machine,
-            owner: &record.owner,
-            town: record.town.as_ref(),
-            fastctx_dir,
-            fastctx_home: fastctx_home.as_deref(),
-            job: Some(&record.id),
-            scratch: Some(&scratch),
-            writes_off: record.writes_off,
-            on_state: on_state.as_deref(),
-        })?;
-        Ok(shell::Prepared { program, args, environment })
+        shell::prepare(
+            &resident.job_script(&record.id),
+            &shell::Context {
+                machine: &record.machine,
+                owner: &record.owner,
+                town: record.town.as_ref(),
+                fastctx_dir,
+                fastctx_home: fastctx_home.as_deref(),
+                job: Some(&record.id),
+                scratch: Some(&scratch),
+                writes_off: record.writes_off,
+                on_state: on_state.as_deref(),
+            },
+        )
     })
 }
 

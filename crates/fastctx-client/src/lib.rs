@@ -72,6 +72,11 @@ pub enum ConnectError {
     KeptByService { endpoint: String },
 }
 
+/// How long a World its service keeps may stand with no node before that is
+/// taken as the service not starting one: launchd and systemd start an
+/// exited node again within a second or two.
+const SERVICE_RESTART: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Whether a node holds the World now, opening its endpoint or on its way
 /// out. Asking takes the lock for a moment when it is free; a node waiting
 /// for it takes it right after.
@@ -179,19 +184,27 @@ impl Client {
             // opening its endpoint once it has looked at what the last one
             // left, or while a successor waits to take it from one handing it
             // over: their ownership and their lives, not a guessed delay,
-            // keep the client waiting.
-            Err(ConnectError::NoNode { endpoint }) if world.node_service().exists() => loop {
-                if !(held(world).map_err(|error| ConnectError::Io { endpoint: endpoint.clone(), error })?
-                    || successor_waiting(world))
-                {
-                    return Err(ConnectError::KeptByService { endpoint });
+            // keep the client waiting. Nobody holds it for a moment after a
+            // node exits, before the service manager has started the next,
+            // as when the node that served before the service was installed
+            // hands the World to the service's: that moment is waited out.
+            Err(ConnectError::NoNode { endpoint }) if world.node_service().exists() => {
+                let mut vacant_since = None;
+                loop {
+                    if held(world).map_err(|error| ConnectError::Io { endpoint: endpoint.clone(), error })?
+                        || successor_waiting(world)
+                    {
+                        vacant_since = None;
+                    } else if vacant_since.get_or_insert_with(std::time::Instant::now).elapsed() >= SERVICE_RESTART {
+                        return Err(ConnectError::KeptByService { endpoint });
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    match Self::connect(world, peer.clone()).await {
+                        Err(ConnectError::NoNode { .. }) => {}
+                        connected => return connected,
+                    }
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                match Self::connect(world, peer.clone()).await {
-                    Err(ConnectError::NoNode { .. }) => {}
-                    connected => return connected,
-                }
-            },
+            }
             Err(ConnectError::NoNode { endpoint }) => {
                 let started = start_node(world, program, &peer)
                     .map_err(|error| ConnectError::Io { endpoint: endpoint.clone(), error })?;

@@ -545,6 +545,14 @@ fn node(
         Some(root) => root,
         None => fastctx_platform::fastctx_root()?,
     };
+    // What the node starts belongs to its World: a service starts it with
+    // `--dir` alone, and its supervisors, the commands its jobs run and its
+    // agents' sessions find their World by FASTCTX_HOME.
+    if fastctx_platform::fastctx_root()? != root {
+        // SAFETY: no other thread reads the environment before the node's
+        // runtime starts below.
+        unsafe { std::env::set_var("FASTCTX_HOME", &root) };
+    }
     anyhow::ensure!(
         !root.join("uninstalled.json").try_exists()?,
         "this World was uninstalled; reinstall it before starting its node"

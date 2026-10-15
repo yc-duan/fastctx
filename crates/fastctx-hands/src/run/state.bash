@@ -65,6 +65,12 @@ while IFS= read -r declaration; do
         *a*) printf 'builtin declare -a -- %q || return 255\n' "$name" ;;
     esac
     assignment=${declaration#declare -* }
+    # Before 4.4, bash prints an array's value as one quoted word,
+    # name='([0]="a")', which assigned as it is makes a string; the word's
+    # own value is the compound assignment.
+    case $variable_attrs:$assignment in
+        *[aA]*:*=\'\(*\)\') value=${assignment#*=}; eval "value=$value"; assignment=${assignment%%=*}=$value ;;
+    esac
     if [[ $assignment == *=* ]]; then printf '%s || return 255\n' "$assignment"; fi
     if [ "$variable_attrs" = - ]; then
         printf 'builtin declare -- %q || return 255\n' "$name"

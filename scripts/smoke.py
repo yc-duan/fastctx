@@ -1,12 +1,16 @@
 """A release's smoke test on the machine it runs on, through the command line alone: a private hub,
-two computers that log in to it and copy files to each other through it, the node's startup service
-installed, serving and taken away where asked, and a complete uninstall. Nothing outside a fresh
-temporary directory is used, except the startup service the test installs and removes again.
+two computers that log in to it and copy files to each other through it, an agent's `run` there and,
+with `on`, on the other computer, the node's startup service installed, serving and taken away where
+asked, and a complete uninstall. Nothing outside a fresh temporary directory is used, except the
+startup service the test installs and removes again. When a check fails, the logs of the nodes, the
+services and the hub are shown.
 
     python scripts/smoke.py PROGRAM [--service]
 """
 import argparse
+import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -60,6 +64,58 @@ class Lab:
         self.owned.append(process)
         return process
 
+    def online(self, who, other):
+        """Whether `who` sees `other` online, as `fastctx nodes` lists it; what it listed, when not."""
+        code, out = self.run(who, "nodes")
+        if code == 0 and any(re.match(rf"{re.escape(other)}\b.*?\s{{2}}online\b", line) for line in out.splitlines()):
+            return True
+        raise RuntimeError(out)
+
+
+class Agent:
+    """An agent's session, as a host speaks to `fastctx serve` over MCP's stdio."""
+
+    def __init__(self, lab, who):
+        self.process = subprocess.Popen([str(lab.program), "serve"], env=lab.env(who), stdin=subprocess.PIPE,
+                                        stdout=subprocess.PIPE, stderr=open(lab.root / f"{who}-serve.log", "ab"))
+        self.next = 0
+        self.ask("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                "clientInfo": {"name": "smoke", "version": "1"}})
+        self.tell("notifications/initialized")
+
+    def tell(self, method, params=None):
+        message = {"jsonrpc": "2.0", "method": method, **({"params": params} if params is not None else {})}
+        self.process.stdin.write((json.dumps(message) + "\n").encode())
+        self.process.stdin.flush()
+
+    def ask(self, method, params):
+        self.next += 1
+        self.process.stdin.write((json.dumps({"jsonrpc": "2.0", "id": self.next, "method": method,
+                                              "params": params}) + "\n").encode())
+        self.process.stdin.flush()
+        while True:
+            line = self.process.stdout.readline()
+            if not line:
+                raise RuntimeError("fastctx serve closed its output")
+            message = json.loads(line)
+            if message.get("id") == self.next:
+                if "error" in message:
+                    raise RuntimeError(json.dumps(message["error"]))
+                return message["result"]
+
+    def run(self, command):
+        """The text a `run` call answers, and whether it says it failed."""
+        result = self.ask("tools/call", {"name": "run", "arguments": {"command": command, "wait": 120}})
+        text = "\n".join(part.get("text", "") for part in result.get("content", []) if part.get("type") == "text")
+        return text, bool(result.get("isError"))
+
+    def close(self):
+        self.process.stdin.close()
+        try:
+            self.process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+
 
 def until(label, probe, limit=90):
     began = time.monotonic()
@@ -79,6 +135,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("program", type=Path)
     parser.add_argument("--service", action="store_true", help="also install and remove the node's startup service")
+    parser.add_argument("--expect-bash", metavar="VERSION", help="the version `run` must find bash at, such as 3.2")
     args = parser.parse_args()
     root = Path(tempfile.mkdtemp(prefix="fastctx-smoke-", dir=os.environ.get("RUNNER_TEMP")))
     lab = Lab(args.program.resolve(), root)
@@ -100,7 +157,8 @@ def main():
         for who in ("alpha", "beta"):
             code, out = lab.run(who, "login", f"127.0.0.1:{port}", "root", "--name", who, stdin=password + "\n")
             check(f"{who} logs in", code == 0, out)
-        until("alpha sees beta online", lambda: "beta" in lab.run("alpha", "nodes")[1] and lab.run("alpha", "nodes")[0] == 0)
+        until("alpha sees beta online", lambda: lab.online("alpha", "beta"))
+        until("beta sees alpha online", lambda: lab.online("beta", "alpha"))
 
         source = root / "from-alpha.txt"
         source.write_text("smoke " + uuid.uuid4().hex + "\n", encoding="utf-8")
@@ -112,6 +170,8 @@ def main():
         code, out = lab.run("alpha", "copy", f"beta:{target}", str(back))
         check("alpha copies it back from beta", code == 0 and back.is_file() and back.read_bytes() == source.read_bytes(), out)
 
+        hands(lab, args.expect_bash)
+
         if args.service:
             service(lab, root)
 
@@ -119,6 +179,8 @@ def main():
         check("beta is uninstalled completely", code == 0, out)
         check("nothing of beta's World is left", not (root / "beta" / "bin").exists(), sorted(p.name for p in (root / "beta").glob("*")))
     finally:
+        if not all(RESULTS):
+            diagnose(lab, root)
         for process in lab.owned:
             process.kill()
         for who in ("alpha", "beta"):
@@ -128,8 +190,56 @@ def main():
     return 0 if passed == len(RESULTS) else 1
 
 
+def hands(lab, expect_bash):
+    """An agent's `run` on alpha, and the part of its script `on` sends to beta with the script's state."""
+    marker = uuid.uuid4().hex[:8]
+    try:
+        agent = Agent(lab, "alpha")
+    except Exception as error:  # noqa: BLE001 - reported as the check's failure
+        check("an agent's session starts", False, error)
+        return
+    try:
+        script = (f'echo "here $FASTCTX_MACHINE ${{BASH_VERSION%%(*}}"\n'
+                  f'carried={marker}\n'
+                  "on beta <<'EOF'\n"
+                  'echo "there $FASTCTX_MACHINE $carried ${BASH_VERSION%%(*}"\n'
+                  "EOF\n")
+        text, failed = agent.run(script)
+        print(f"     {text.strip().splitlines()[-3:] if text.strip() else text!r}", flush=True)
+        check("an agent's run answers on alpha", not failed and re.search(r"^here alpha \d", text, re.M), text)
+        check("its on runs on beta with the script's variables", not failed
+              and re.search(rf"^there beta {marker} \d", text, re.M), text)
+        if expect_bash:
+            versions = re.findall(r"^(?:here alpha|there beta \w+) (\S+)", text, re.M)
+            check(f"both run in bash {expect_bash}", len(versions) == 2
+                  and all(version.startswith(expect_bash) for version in versions), versions)
+    except Exception as error:  # noqa: BLE001 - reported as the check's failure
+        check("an agent's run answers", False, error)
+    finally:
+        agent.close()
+
+
+def node_processes(root, who):
+    """The process ids of the nodes serving `who`'s World, by their command lines."""
+    listing = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True).stdout
+    serving = re.compile(rf"\snode\s.*--dir {re.escape(str(root / who))}(\s|$)")
+    return {int(line.split(None, 1)[0]) for line in listing.splitlines() if serving.search(line)}
+
+
+def service_process(status):
+    """The process id the service manager says runs the service `status` names."""
+    name = status["name"]
+    if sys.platform == "darwin":
+        printed = subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{name}"], capture_output=True, text=True).stdout
+        found = re.search(r"^\s*pid = (\d+)", printed, re.M)
+    else:
+        printed = subprocess.run(["systemctl", "show", "-p", "MainPID", "--value", name], capture_output=True, text=True).stdout
+        found = re.match(r"\s*(\d+)", printed)
+    return int(found.group(1)) if found and int(found.group(1)) > 0 else None
+
+
 def service(lab, root):
-    """The node's startup service: installed, serving the World, and taken away again."""
+    """The node's startup service: installed, taking the World over from the node that served it, and taken away."""
     home = str(root / "alpha")
     installed = root / "alpha" / "bin" / lab.program.name
     elevate = ["sudo", "-E"] if sys.platform.startswith("linux") else []
@@ -137,7 +247,13 @@ def service(lab, root):
     command = [*elevate, str(installed), "service", "node", "install", "--dir", home, "--executable", str(installed), *extra]
     done = subprocess.run(command, env=lab.env("alpha"), capture_output=True, text=True)
     check("alpha's startup service is installed", done.returncode == 0, done.stdout + done.stderr)
-    until("the service's node serves alpha's World", lambda: lab.run("alpha", "nodes")[0] == 0 and "beta" in lab.run("alpha", "nodes")[1], 120)
+    status = json.loads(lab.run("alpha", "service", "node", "status", "--dir", home, "--executable", str(installed))[1])
+
+    def served_by_service():
+        pid = service_process(status)
+        return pid is not None and node_processes(root, "alpha") == {pid} and lab.online("alpha", "beta")
+
+    until("the service's own node serves alpha's World, and no other", served_by_service, 120)
     code, out = lab.run("alpha", "service", "node", "status", "--dir", home, "--executable", str(installed))
     check("the service says it runs", code == 0 and "running" in out, out)
     command = [*elevate, str(installed), "service", "node", "uninstall", "--dir", home, "--executable", str(installed), *extra]
@@ -145,6 +261,37 @@ def service(lab, root):
     check("alpha's startup service is taken away", done.returncode == 0, done.stdout + done.stderr)
     code, out = lab.run("alpha", "service", "node", "status", "--dir", home, "--executable", str(installed))
     check("the service is gone", '"installed": false' in out or "absent" in out, out)
+
+
+def diagnose(lab, root):
+    """What the nodes, services and hub said, for a failed check."""
+    def tail(path, lines=60):
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError as error:
+            return [f"({error.strerror})"]
+        return text[-lines:]
+
+    print("\n--- diagnostics", flush=True)
+    for who in ("alpha", "beta"):
+        for log in [root / who / "world" / "node.log", *sorted((root / who).glob("service-*.log"))]:
+            print(f"== {log.relative_to(root)}")
+            print("\n".join(tail(log)))
+        print(f"== {who}: fastctx nodes")
+        print(lab.run(who, "nodes", timeout=60)[1])
+    for log in sorted(root.glob("*-*.log")):
+        print(f"== {log.name}")
+        print("\n".join(tail(log)))
+    if sys.platform.startswith("linux"):
+        units = subprocess.run(["systemctl", "list-units", "--all", "--plain", "--no-legend", "fastctx-service-*"],
+                               capture_output=True, text=True).stdout.split()
+        for unit in [word for word in units if word.endswith(".service")]:
+            print(f"== journal of {unit}")
+            print(subprocess.run(["journalctl", "-u", unit, "-n", "60", "--no-pager"], capture_output=True, text=True).stdout)
+    if os.name != "nt":
+        print("== node processes")
+        listing = subprocess.run(["ps", "-eo", "pid=,ppid=,args="], capture_output=True, text=True).stdout
+        print("\n".join(line.replace(str(root), "<root>") for line in listing.splitlines() if str(root) in line))
 
 
 if __name__ == "__main__":

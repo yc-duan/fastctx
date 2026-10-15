@@ -155,7 +155,7 @@ fn definition(service: &Service) -> anyhow::Result<String> {
     let log = log.to_str().context("the log's path is not UTF-8")?;
     let arguments: String = words.iter().map(|word| format!("\t\t<string>{}</string>\n", escape(word))).collect();
     Ok(format!(
-        "{MARKER}\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>Label</key>\n\t<string>{}</string>\n\t<key>ProgramArguments</key>\n\t<array>\n{arguments}\t</array>\n\t<key>RunAtLoad</key>\n\t<true/>\n\t<key>KeepAlive</key>\n\t<true/>\n\t<key>ThrottleInterval</key>\n\t<integer>5</integer>\n\t<key>ProcessType</key>\n\t<string>Background</string>\n\t<key>StandardInPath</key>\n\t<string>/dev/null</string>\n\t<key>StandardOutPath</key>\n\t<string>{}</string>\n\t<key>StandardErrorPath</key>\n\t<string>{}</string>\n</dict>\n</plist>\n",
+        "{MARKER}\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>Label</key>\n\t<string>{}</string>\n\t<key>ProgramArguments</key>\n\t<array>\n{arguments}\t</array>\n\t<key>RunAtLoad</key>\n\t<true/>\n\t<key>KeepAlive</key>\n\t<true/>\n\t<key>ThrottleInterval</key>\n\t<integer>1</integer>\n\t<key>ProcessType</key>\n\t<string>Standard</string>\n\t<key>StandardInPath</key>\n\t<string>/dev/null</string>\n\t<key>StandardOutPath</key>\n\t<string>{}</string>\n\t<key>StandardErrorPath</key>\n\t<string>{}</string>\n</dict>\n</plist>\n",
         escape(&label(service)),
         escape(log),
         escape(log),
