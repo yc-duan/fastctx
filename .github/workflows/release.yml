@@ -231,7 +231,7 @@ jobs:
         run: |
           python -m pip install ziglang==0.14.1
           cargo install --locked cargo-zigbuild --version 0.23.0
-          # The kernel's debug sections are stripped with zig itself, which pip installs as a module.
+          # The kernel's debug sections and symbols are stripped with zig itself, which pip installs as a module.
           mkdir -p "$RUNNER_TEMP/zig-bin"
           printf '#!/bin/sh\nexec %s -m ziglang "$@"\n' "$(command -v python)" > "$RUNNER_TEMP/zig-bin/zig"
           chmod +x "$RUNNER_TEMP/zig-bin/zig"

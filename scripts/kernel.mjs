@@ -43,7 +43,8 @@ export function buildKernel(target, environment = process.env) {
   const directory = resolve(repo, env.CARGO_TARGET_DIR ?? "target");
   const binary = join(directory, buildTarget, "release", windows ? "fastctx.exe" : "fastctx");
   if (linux) {
-    execFileSync("zig", ["objcopy", "--strip-debug", binary, `${binary}.stripped`], { env, stdio: "inherit" });
+    // Nothing reads a release kernel's symbols: a panic is logged by its message and place.
+    execFileSync("zig", ["objcopy", "--strip-all", binary, `${binary}.stripped`], { env, stdio: "inherit" });
     renameSync(`${binary}.stripped`, binary);
   }
   execFileSync("python", [join(repo, "scripts/package.py"), "check-binary", "--target", bundleTarget.replace(/-unknown-linux-musl$/, "-unknown-linux-gnu"),
