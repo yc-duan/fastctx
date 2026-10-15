@@ -488,12 +488,7 @@ jobs:
           $process = Start-Process $app -PassThru
           Start-Sleep -Seconds 25
           if ($process.HasExited) { throw "Fastctx exited with $($process.ExitCode)" }
-          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-          $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-          $shot = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
-          [System.Drawing.Graphics]::FromImage($shot).CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
-          New-Item -ItemType Directory -Force shots | Out-Null
-          $shot.Save("shots/windows-${{ matrix.arch }}.png")
+          & scripts/window-shot.ps1 -ProcessId $process.Id -Path "shots/windows-${{ matrix.arch }}.png"
           Stop-Process -Id $process.Id
       - uses: actions/upload-artifact@v4
         if: always()
