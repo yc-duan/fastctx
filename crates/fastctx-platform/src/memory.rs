@@ -13,7 +13,7 @@ pub fn physical() -> io::Result<u64> {
     Ok(status.ullTotalPhys)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn physical() -> io::Result<u64> {
     let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
     let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
@@ -23,7 +23,7 @@ pub fn physical() -> io::Result<u64> {
     (pages as u64).checked_mul(page as u64).ok_or_else(|| io::Error::other("physical memory overflow"))
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn physical() -> io::Result<u64> {
     Err(io::Error::new(io::ErrorKind::Unsupported, "isolated image decoding is not implemented on this platform"))
 }
@@ -98,7 +98,14 @@ pub fn limit(additional: u64) -> io::Result<Limit> {
     Ok(Limit)
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+/// macOS enforces no limit on a process's address space: the decoder's own
+/// limits on what it allocates bound it there.
+#[cfg(target_os = "macos")]
+pub fn limit(_: u64) -> io::Result<Limit> {
+    Ok(Limit)
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn limit(_: u64) -> io::Result<Limit> {
     Err(io::Error::new(io::ErrorKind::Unsupported, "isolated image decoding is not implemented on this platform"))
 }

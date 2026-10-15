@@ -5,17 +5,20 @@
 #[cfg(target_os = "linux")]
 #[path = "changes/linux.rs"]
 mod platform;
+#[cfg(target_os = "macos")]
+#[path = "changes/macos.rs"]
+mod platform;
 #[cfg(windows)]
 #[path = "changes/windows.rs"]
 mod platform;
 
-#[cfg(any(target_os = "linux", windows))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub(super) use platform::Changes;
 
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub(super) struct Changes;
 
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 impl Changes {
     pub fn new(_: std::sync::Arc<dyn super::Node>) -> std::io::Result<Self> {
         Err(std::io::Error::new(

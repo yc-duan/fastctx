@@ -1,5 +1,7 @@
 //! Uninstall is independent of node startup and installation migration.
 
+#[cfg(target_os = "macos")]
+pub mod bundle;
 mod claude_cache;
 mod claude_cache_paths;
 mod claude_session_cache;

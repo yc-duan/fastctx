@@ -23,7 +23,14 @@ pub fn application_directories(home: &Path) -> io::Result<Vec<PathBuf>> {
                 .unwrap_or_else(|| home.join(default))
         })
         .collect::<Vec<_>>();
-    #[cfg(not(any(windows, target_os = "linux")))]
+    // macOS keeps an application's data, caches and its web view's storage
+    // under ~/Library, each by the application's identifier.
+    #[cfg(target_os = "macos")]
+    let roots: Vec<PathBuf> = ["Library/Application Support", "Library/Caches", "Library/WebKit"]
+        .into_iter()
+        .map(|place| home.join(place))
+        .collect();
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     let roots: Vec<PathBuf> = {
         let _ = home;
         Vec::new()

@@ -157,7 +157,35 @@ fn command_line(args: &[OsString]) -> OsString {
     line
 }
 
-#[cfg(unix)]
+/// On macOS the system's own dialog asks for an administrator's password,
+/// through `osascript`; declining it reads as PermissionDenied.
+#[cfg(target_os = "macos")]
+pub fn run_elevated(program: &Path, args: &[OsString]) -> io::Result<u32> {
+    // Each word in single quotes for the shell, then the whole line in an
+    // AppleScript string.
+    let quote = |word: &std::ffi::OsStr| format!("'{}'", word.to_string_lossy().replace('\'', r"'\''"));
+    let mut line = quote(program.as_os_str());
+    for arg in args {
+        line.push(' ');
+        line.push_str(&quote(arg));
+    }
+    let script =
+        format!("do shell script \"{}\" with administrator privileges", line.replace('\\', r"\\").replace('"', "\\\""));
+    let output = std::process::Command::new("/usr/bin/osascript").args(["-e", &script]).output()?;
+    if output.status.success() {
+        return Ok(0);
+    }
+    let said = String::from_utf8_lossy(&output.stderr);
+    if said.contains("(-128)") {
+        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "the administrator's approval was declined"));
+    }
+    // A failing command ends the script with its own exit status in brackets.
+    let code =
+        said.trim_end().strip_suffix(')').and_then(|rest| rest.rsplit('(').next()).and_then(|code| code.parse().ok());
+    Ok(code.unwrap_or(1))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
 pub fn run_elevated(_program: &Path, _args: &[OsString]) -> io::Result<u32> {
     Err(io::Error::new(io::ErrorKind::Unsupported, "on Unix, administrator rights are asked for with sudo"))
 }

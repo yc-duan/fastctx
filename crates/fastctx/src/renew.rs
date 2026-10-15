@@ -229,8 +229,13 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
     if !plan.keeper_restarted {
         let service =
             fastctx_install::service::Service::new(fastctx_install::service::Kind::Node, store::installed(root), root);
+        // A macOS node is the user's own LaunchAgent; only a hub kept here,
+        // a LaunchDaemon, needs an administrator to start the new program.
         if (needs_guardian && !service.guardian_staged(&plan.candidate.build.digest)?)
             || (cfg!(target_os = "linux") && !fastctx_platform::elevation::is_elevated()?)
+            || (cfg!(target_os = "macos")
+                && !fastctx_platform::elevation::is_elevated()?
+                && !fastctx_install::service::registered_hubs(root)?.is_empty())
         {
             return phase(root, plan, Phase::AwaitingAdministrator);
         }
@@ -315,7 +320,7 @@ fn transient(error: &std::io::Error) -> bool {
 }
 
 async fn guardian(root: &Path, graphical: bool) -> anyhow::Result<()> {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     let _ = graphical;
     let plan = store::read(root)?.context("no local replacement was staged")?;
     ensure!(
@@ -361,7 +366,34 @@ async fn guardian(root: &Path, graphical: bool) -> anyhow::Result<()> {
         store::save(root, &plan)?;
         store::request(root, true)
     }
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        let mut plan = plan;
+        let uid = std::fs::metadata(root).map(|metadata| {
+            use std::os::unix::fs::MetadataExt as _;
+            metadata.uid()
+        })?;
+        let args: Vec<std::ffi::OsString> = vec![
+            "renew".into(),
+            "guardian-apply".into(),
+            "--dir".into(),
+            root.into(),
+            "--uid".into(),
+            uid.to_string().into(),
+        ];
+        let installed = store::installed(root);
+        let code = if graphical {
+            fastctx_platform::elevation::run_elevated(&installed, &args)?
+        } else {
+            let status = std::process::Command::new("sudo").arg(&installed).args(&args).status()?;
+            u32::from(!status.success())
+        };
+        ensure!(code == 0, "system-service handover failed (exit {code})");
+        plan.keeper_restarted = true;
+        store::save(root, &plan)?;
+        store::request(root, true)
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     bail!("this platform has no boot-service handover")
 }
 
@@ -378,11 +410,11 @@ async fn guardian_apply(root: &Path, user_sid: Option<String>, uid: Option<u32>)
         }
         #[cfg(not(windows))]
         let _ = user_sid;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             service.uid = uid.context("system-service handover needs its user UID")?;
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         let _ = uid;
         service
     };
@@ -409,11 +441,11 @@ async fn guardian_apply(root: &Path, user_sid: Option<String>, uid: Option<u32>)
         }
         Ok(())
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         service.restart_guardian(&own.digest)?;
-        // systemd runs a kept hub straight from the World program, so a
-        // restart is all it takes to run the new one.
+        // systemd and launchd run a kept hub straight from the World
+        // program, so a restart is all it takes to run the new one.
         for directory in fastctx_install::service::registered_hubs(root)? {
             let hub = fastctx_install::service::Service::new(
                 fastctx_install::service::Kind::Hub,
@@ -426,7 +458,7 @@ async fn guardian_apply(root: &Path, user_sid: Option<String>, uid: Option<u32>)
         }
         Ok(())
     }
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     bail!("this platform has no boot-service handover")
 }
 

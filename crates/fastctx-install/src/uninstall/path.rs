@@ -1,6 +1,11 @@
 use std::io;
 use std::path::Path;
 
+/// The lines that put ~/.local/bin on a macOS login shell's PATH, exactly as
+/// written into ~/.zprofile and taken out again.
+pub const ZPROFILE_LINES: &str =
+    "# Added by Fastctx: ~/.local/bin on the PATH.\nexport PATH=\"$HOME/.local/bin:$PATH\"\n";
+
 /// Removes exactly matching directory entries, preserving every other entry
 /// and its spelling. Separator ownership belongs to the removed entry.
 pub fn path_entry(value: &str, directory: &str) -> String {
@@ -58,8 +63,10 @@ pub fn remove_path(_home: &Path, directory: &Path) -> io::Result<bool> {
     Ok(true)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 pub fn remove_path(home: &Path, directory: &Path) -> io::Result<bool> {
+    #[cfg(target_os = "macos")]
+    off_login_path(home)?;
     let link = home.join(".local/bin/fastctx");
     match std::fs::read_link(&link) {
         Ok(target) if target == directory.join("fastctx") => {
@@ -72,7 +79,17 @@ pub fn remove_path(home: &Path, directory: &Path) -> io::Result<bool> {
     }
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
-pub fn remove_path(_home: &Path, _directory: &Path) -> io::Result<bool> {
-    Ok(false)
+/// Takes out of ~/.zprofile exactly the lines installing put there.
+#[cfg(target_os = "macos")]
+fn off_login_path(home: &Path) -> io::Result<()> {
+    let profile = home.join(".zprofile");
+    let text = match std::fs::read_to_string(&profile) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if text.contains(ZPROFILE_LINES) {
+        std::fs::write(&profile, text.replacen(ZPROFILE_LINES, "", 1))?;
+    }
+    Ok(())
 }

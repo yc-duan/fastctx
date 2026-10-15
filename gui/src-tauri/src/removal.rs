@@ -281,7 +281,53 @@ fn finish(app: &AppHandle, everything: bool) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+/// On macOS the application is the `.app` bundle it runs from: a copy of
+/// fastctx outside it removes it once Fastctx has exited.
+#[cfg(target_os = "macos")]
+fn finish(app: &AppHandle, everything: bool) -> Result<(), String> {
+    let current = std::env::current_exe().map_err(|error| error.to_string())?;
+    let bundle = current
+        .ancestors()
+        .find(|path| path.extension().is_some_and(|extension| extension == "app"))
+        .ok_or("this Fastctx is not running from an application bundle")?
+        .to_path_buf();
+    let identity = fastctx_platform::current_identity().map_err(|error| error.to_string())?;
+    let temporary =
+        tempfile::Builder::new().prefix(fastctx_uninstall_prefix()).tempdir().map_err(|error| error.to_string())?;
+    fastctx_platform::ensure_private_dir(temporary.path()).map_err(|error| error.to_string())?;
+    let helper = temporary.path().join("fastctx");
+    std::fs::copy(program()?, &helper).map_err(|error| error.to_string())?;
+    let mut command = Command::new(&helper);
+    command
+        .args(["uninstall", "bundle", "--bundle"])
+        .arg(&bundle)
+        .arg("--process")
+        .arg(serde_json::to_string(&identity).map_err(|error| error.to_string())?)
+        .arg("--temporary")
+        .arg(temporary.path());
+    if everything {
+        for path in directories(app)? {
+            command.arg("--data").arg(path);
+        }
+    }
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let _ = temporary.keep();
+    Ok(())
+}
+
+/// The prefix of the removal helper's private directory, as the helper
+/// checks it.
+#[cfg(target_os = "macos")]
+fn fastctx_uninstall_prefix() -> &'static str {
+    "fastctx-bundle-uninstall-"
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 fn finish(_app: &AppHandle, _everything: bool) -> Result<(), String> {
-    Err("package uninstall is supported on Windows and Linux".into())
+    Err("package uninstall is supported on Windows, Linux and macOS".into())
 }

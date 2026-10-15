@@ -3,7 +3,7 @@
 
 use super::{Kind, Service};
 use serde::{Deserialize, Serialize};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -23,7 +23,7 @@ impl Registration {
         if self.kind == Kind::Node {
             service.user_sid = Some(installation.user_sid.clone());
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if self.kind == Kind::Node {
             service.uid = installation.uid;
         }
@@ -120,14 +120,16 @@ pub fn registrations(installation: &crate::uninstall::Installation) -> anyhow::R
     return super::windows::registrations(installation);
     #[cfg(target_os = "linux")]
     return super::linux::registrations(installation);
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    return super::macos::registrations(installation);
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         let _ = installation;
-        anyhow::bail!("uninstall supports Windows and Linux")
+        anyhow::bail!("uninstall supports Windows, Linux and macOS")
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(super) fn entries(path: &Path) -> std::io::Result<Vec<std::fs::DirEntry>> {
     match std::fs::read_dir(path) {
         Ok(entries) => entries.collect(),

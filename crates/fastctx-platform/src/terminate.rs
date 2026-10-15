@@ -4,9 +4,21 @@
 use fastctx_types::ProcessIdentity;
 use std::io;
 
-#[cfg(not(any(windows, target_os = "linux")))]
-pub fn terminate(_identity: &ProcessIdentity) -> io::Result<()> {
-    Err(io::Error::new(io::ErrorKind::Unsupported, "uninstall process termination supports Windows and Linux"))
+/// Nothing names a process for good on macOS: its start time, read just
+/// before the signal, tells a reused PID.
+#[cfg(target_os = "macos")]
+pub fn terminate(identity: &ProcessIdentity) -> io::Result<()> {
+    if !crate::is_alive(identity)? {
+        return Ok(());
+    }
+    // SAFETY: a signal to the process just identified.
+    if unsafe { libc::kill(identity.pid as libc::pid_t, libc::SIGKILL) } == -1 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::ESRCH) {
+            return Err(error);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(windows)]

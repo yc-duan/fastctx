@@ -7,7 +7,8 @@ use std::path::Path;
 use fastctx_types::ResidentId;
 
 /// Runs `fastctx attach <resident>` in a new terminal window and waits for
-/// it to end; says how it ended when that was not well.
+/// it to end where the terminal lets it be waited for; says how it ended
+/// when that was not well.
 pub fn attach(program: &Path, resident: &ResidentId) -> Result<(), String> {
     let status = spawn(program, resident)?.wait().map_err(|error| error.to_string())?;
     if status.success() {
@@ -33,7 +34,57 @@ fn spawn(program: &Path, resident: &ResidentId) -> Result<std::process::Child, S
         .map_err(|error| format!("{}: {error}", program.display()))
 }
 
-#[cfg(not(windows))]
-fn spawn(_program: &Path, _resident: &ResidentId) -> Result<std::process::Child, String> {
-    Err("opening a terminal window is made for Windows so far".into())
+/// Terminal.app runs a `.command` file it is given in a window of its own,
+/// with no permission to script it asked for; the file removes itself as it
+/// starts. `open` returns once Terminal has it, and the window stays with
+/// whatever the attach printed once it ends.
+#[cfg(target_os = "macos")]
+fn spawn(program: &Path, resident: &ResidentId) -> Result<std::process::Child, String> {
+    use std::io::Write as _;
+    use std::os::unix::fs::PermissionsExt as _;
+    let quote = |word: &str| format!("'{}'", word.replace('\'', r"'\''"));
+    let mut file = tempfile::Builder::new()
+        .prefix("fastctx-attach-")
+        .suffix(".command")
+        .tempfile()
+        .map_err(|error| error.to_string())?;
+    write!(file, "#!/bin/sh\nrm -f -- \"$0\"\nexec {} attach {}\n", quote(&program.to_string_lossy()), quote(resident))
+        .map_err(|error| error.to_string())?;
+    file.as_file().set_permissions(std::fs::Permissions::from_mode(0o700)).map_err(|error| error.to_string())?;
+    let (_, path) = file.keep().map_err(|error| error.to_string())?;
+    std::process::Command::new("/usr/bin/open")
+        .args(["-a", "Terminal"])
+        .arg(&path)
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .map_err(|error| format!("opening Terminal: {error}"))
+}
+
+/// The desktop's own terminal: Debian and Ubuntu name it
+/// `x-terminal-emulator`; otherwise the first of the common ones found.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn spawn(program: &Path, resident: &ResidentId) -> Result<std::process::Child, String> {
+    const TERMINALS: [(&str, &[&str]); 6] = [
+        ("x-terminal-emulator", &["-e"]),
+        ("gnome-terminal", &["--"]),
+        ("konsole", &["-e"]),
+        ("xfce4-terminal", &["-x"]),
+        ("kitty", &[]),
+        ("xterm", &["-e"]),
+    ];
+    for (terminal, lead) in TERMINALS {
+        match std::process::Command::new(terminal)
+            .args(lead)
+            .arg(program)
+            .arg("attach")
+            .arg(&**resident)
+            .stdin(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(child) => return Ok(child),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("{terminal}: {error}")),
+        }
+    }
+    Err("no terminal program was found on this computer".into())
 }

@@ -84,6 +84,12 @@ pub(crate) async fn create_world(
         } else {
             kept
         };
+        #[cfg(target_os = "macos")]
+        let kept = if matches!(kept, fastctx_install::service::Kept::Command(_)) {
+            hub_as_administrator(&dir, &places.installed())?
+        } else {
+            kept
+        };
         #[cfg(windows)]
         {
             Ok::<_, String>((kept, node_kept))
@@ -122,6 +128,32 @@ pub(crate) async fn create_world(
     }
     #[cfg(not(windows))]
     crate::accounts::logged_in(&shell, joined).await
+}
+
+/// macOS asks for an administrator in its own dialog: the hub is a
+/// LaunchDaemon, installed by the World program run as root.
+#[cfg(target_os = "macos")]
+fn hub_as_administrator(
+    dir: &std::path::Path,
+    executable: &std::path::Path,
+) -> Result<fastctx_install::service::Kept, String> {
+    let args: Vec<std::ffi::OsString> = vec![
+        "service".into(),
+        "hub".into(),
+        "install".into(),
+        "--dir".into(),
+        dir.into(),
+        "--executable".into(),
+        executable.into(),
+    ];
+    match fastctx_platform::elevation::run_elevated(executable, &args) {
+        Ok(0) => Ok(fastctx_install::service::Kept::Installed),
+        Ok(code) => Err(format!("installing the hub service failed (exit {code})")),
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            Ok(fastctx_install::service::Kept::Declined)
+        }
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 /// Places fastctx where it runs from, and has it make the hub; the hub's
@@ -185,14 +217,16 @@ struct Made {
 /// for once: its service is removed and its data deleted, all but its log.
 fn retire(fastctx: &std::path::Path, dir: &std::path::Path) -> Result<(), String> {
     let args: Vec<std::ffi::OsString> = vec!["hub".into(), "retire".into(), "--dir".into(), dir.into()];
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     let ended = if fastctx_platform::elevation::is_elevated().map_err(|error| error.to_string())? {
-        use std::os::windows::process::CommandExt as _;
-        let output = std::process::Command::new(fastctx)
-            .args(&args)
-            .creation_flags(0x08000000)
-            .output()
-            .map_err(|error| error.to_string())?;
+        let mut command = std::process::Command::new(fastctx);
+        command.args(&args);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt as _;
+            command.creation_flags(0x08000000);
+        }
+        let output = command.output().map_err(|error| error.to_string())?;
         if !output.status.success() {
             return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
         }
@@ -207,7 +241,7 @@ fn retire(fastctx: &std::path::Path, dir: &std::path::Path) -> Result<(), String
             Err(error) => Err(error.to_string()),
         }
     };
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     let ended = {
         let output = std::process::Command::new("pkexec")
             .arg(fastctx)

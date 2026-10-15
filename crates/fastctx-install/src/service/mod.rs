@@ -5,14 +5,14 @@
 #[cfg(target_os = "linux")]
 use std::ffi::OsString;
 use std::path::PathBuf;
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use std::process::{Command, Stdio};
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use anyhow::Context as _;
 use anyhow::bail;
 use serde::{Deserialize, Serialize};
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use sha2::{Digest as _, Sha256};
 
 #[cfg(windows)]
@@ -27,6 +27,8 @@ mod linux;
 mod linux_watchdog;
 #[cfg(windows)]
 mod local_network;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(any(windows, target_os = "linux"))]
 mod transaction;
 
@@ -59,8 +61,9 @@ pub struct Service {
     pub kind: Kind,
     pub executable: PathBuf,
     pub directory: PathBuf,
-    /// Linux system services run as this UID (root installs on its behalf).
-    #[cfg(target_os = "linux")]
+    /// Linux system services run as this UID (root installs on its behalf);
+    /// a macOS node is a LaunchAgent of this user.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub uid: u32,
     /// Windows node owner; defaults to the installing user's SID.
     /// Hubs always run as LocalSystem.
@@ -99,7 +102,7 @@ impl Service {
             directory: directory.into(),
             #[cfg(windows)]
             user_sid: None,
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             // SAFETY: getuid has no preconditions.
             uid: if kind == Kind::Hub { 0 } else { unsafe { libc::getuid() } },
         }
@@ -133,9 +136,11 @@ impl Service {
         let status = windows::install(&normalized)?;
         #[cfg(target_os = "linux")]
         let status = linux::install(&normalized)?;
-        #[cfg(not(any(windows, target_os = "linux")))]
-        bail!("fastctx services support Windows and Linux; this platform is not supported");
-        #[cfg(any(windows, target_os = "linux"))]
+        #[cfg(target_os = "macos")]
+        let status = macos::install(&normalized)?;
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        bail!("fastctx services support Windows, Linux and macOS; this platform is not supported");
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             if self.kind == Kind::Node {
                 std::fs::write(keep::marker(&self.directory), b"")?;
@@ -166,9 +171,11 @@ impl Service {
         let status = windows::uninstall(&normalized)?;
         #[cfg(target_os = "linux")]
         let status = linux::uninstall(&normalized)?;
-        #[cfg(not(any(windows, target_os = "linux")))]
-        bail!("fastctx services support Windows and Linux; this platform is not supported");
-        #[cfg(any(windows, target_os = "linux"))]
+        #[cfg(target_os = "macos")]
+        let status = macos::uninstall(&normalized)?;
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        bail!("fastctx services support Windows, Linux and macOS; this platform is not supported");
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             Ok(status)
         }
@@ -181,8 +188,10 @@ impl Service {
         return windows::status(&normalized);
         #[cfg(target_os = "linux")]
         return linux::status(&normalized);
-        #[cfg(not(any(windows, target_os = "linux")))]
-        bail!("fastctx services support Windows and Linux; this platform is not supported")
+        #[cfg(target_os = "macos")]
+        return macos::status(&normalized);
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        bail!("fastctx services support Windows, Linux and macOS; this platform is not supported")
     }
 
     /// Whether the protected guardian already runs this image. Linux's
@@ -244,7 +253,12 @@ impl Service {
             ]))?;
             Ok(())
         }
-        #[cfg(not(any(windows, target_os = "linux")))]
+        #[cfg(target_os = "macos")]
+        {
+            let _ = digest;
+            macos::restart(&normalized)
+        }
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = digest;
             Ok(())
@@ -263,7 +277,7 @@ impl Service {
     }
 
     fn validate(&self) -> anyhow::Result<()> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if self.kind == Kind::Hub && self.uid != 0 {
             bail!("a hub system service runs as root");
         }
@@ -279,7 +293,7 @@ impl Service {
         Ok(())
     }
 
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn role(&self) -> &'static str {
         match self.kind {
             Kind::Node => "node",
@@ -299,7 +313,7 @@ impl Service {
 
     /// Hashes the native directory spelling and account, independent of the
     /// binary version. Keeping the same spelling identifies the same service.
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn id(&self, account: &[u8]) -> String {
         let mut hash = Sha256::new();
         hash.update(self.role());
@@ -350,7 +364,7 @@ pub fn check_guardian(name: &str) -> anyhow::Result<()> {
     windows::check(name)
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) fn checked(command: &mut Command) -> anyhow::Result<String> {
     command.stdin(Stdio::null());
     #[cfg(windows)]

@@ -92,7 +92,19 @@ pub async fn exited(identity: &ProcessIdentity) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+/// On macOS the kqueue watching the process becomes readable when it exits.
+#[cfg(target_os = "macos")]
+pub async fn exited(identity: &ProcessIdentity) -> io::Result<()> {
+    let Some(queue) = super::exit_queue(identity.pid)? else { return Ok(()) };
+    if !crate::is_alive(identity)? {
+        return Ok(());
+    }
+    let watched = tokio::io::unix::AsyncFd::new(queue)?;
+    let _ready = watched.readable().await?;
+    Ok(())
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub async fn exited(_identity: &ProcessIdentity) -> io::Result<()> {
     Err(io::Error::new(io::ErrorKind::Unsupported, "host process observation is not implemented on this platform"))
 }

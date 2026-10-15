@@ -53,6 +53,9 @@ impl Checkpoint {
 #[cfg(target_os = "linux")]
 #[path = "output_pipe/linux.rs"]
 mod imp;
+#[cfg(target_os = "macos")]
+#[path = "output_pipe/macos.rs"]
+mod imp;
 #[cfg(windows)]
 #[path = "output_pipe/windows.rs"]
 mod imp;

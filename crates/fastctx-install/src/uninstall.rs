@@ -4,6 +4,7 @@ mod application;
 mod files;
 mod legacy;
 mod path;
+pub use path::ZPROFILE_LINES;
 
 pub use application::{application_directories, remove_application_data};
 pub use files::{Programs, delete_file, delete_tree, remove_programs};
@@ -34,7 +35,7 @@ pub struct Installation {
     pub graphical: bool,
     #[cfg(windows)]
     pub user_sid: String,
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     pub uid: u32,
 }
 
@@ -68,7 +69,7 @@ impl Installation {
             graphical: false,
             #[cfg(windows)]
             user_sid: fastctx_platform::current_user_sid()?,
-            #[cfg(target_os = "linux")]
+            #[cfg(unix)]
             uid: unsafe { libc::getuid() },
         })
     }

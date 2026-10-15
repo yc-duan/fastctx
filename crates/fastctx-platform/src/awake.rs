@@ -26,7 +26,7 @@ impl Sample {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 fn clock(id: libc::clockid_t) -> io::Result<Duration> {
     let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     // SAFETY: an initialized output and a supported system clock.
@@ -42,6 +42,17 @@ fn active() -> io::Result<Duration> {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn continuous() -> io::Result<Duration> {
     clock(libc::CLOCK_BOOTTIME)
+}
+
+// macOS: the uptime clock stops while the machine sleeps; the raw monotonic
+// clock goes on.
+#[cfg(target_os = "macos")]
+fn active() -> io::Result<Duration> {
+    clock(libc::CLOCK_UPTIME_RAW)
+}
+#[cfg(target_os = "macos")]
+fn continuous() -> io::Result<Duration> {
+    clock(libc::CLOCK_MONOTONIC_RAW)
 }
 
 #[cfg(windows)]
@@ -63,11 +74,11 @@ fn continuous() -> io::Result<Duration> {
     Ok(Duration::from_nanos(ticks * 100))
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos", windows)))]
 fn active() -> io::Result<Duration> {
     Err(io::Error::new(io::ErrorKind::Unsupported, "the running-time clock is not implemented on this platform"))
 }
-#[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos", windows)))]
 fn continuous() -> io::Result<Duration> {
     active()
 }

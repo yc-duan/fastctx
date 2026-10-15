@@ -36,11 +36,12 @@ pub fn keep_connected(places: &Places) -> anyhow::Result<(Kept, Report)> {
     if WorldDir::under(&places.root).node_service().exists() {
         return Ok((Kept::Already, Report::default()));
     }
-    if !cfg!(any(windows, target_os = "linux")) {
+    if !cfg!(any(windows, target_os = "linux", target_os = "macos")) {
         return Ok((Kept::Unsupported, Report::default()));
     }
     let (executable, report) = place_executable(places)?;
-    if fastctx_platform::elevation::is_elevated()? {
+    // A macOS node is a LaunchAgent of the user's own, installed as the user.
+    if cfg!(target_os = "macos") || fastctx_platform::elevation::is_elevated()? {
         Service::new(Kind::Node, &executable, &places.root).install()?;
         return Ok((Kept::Installed, report));
     }
@@ -68,7 +69,7 @@ pub fn stop_keeping(places: &Places) -> anyhow::Result<Released> {
         return Ok(Released::NotKept);
     }
     let executable = places.installed();
-    if fastctx_platform::elevation::is_elevated()? {
+    if cfg!(target_os = "macos") || fastctx_platform::elevation::is_elevated()? {
         Service::new(Kind::Node, &executable, &places.root).uninstall()?;
         return Ok(Released::Removed);
     }

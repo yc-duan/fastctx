@@ -130,7 +130,60 @@ pub fn wait_for_exit(identity: &ProcessIdentity) -> io::Result<()> {
     result
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+/// On macOS a kqueue tells of the process's exit; the registration comes
+/// before the identity is checked, so an exit in between is not missed.
+#[cfg(target_os = "macos")]
+pub fn wait_for_exit(identity: &ProcessIdentity) -> io::Result<()> {
+    let Some(queue) = exit_queue(identity.pid)? else { return Ok(()) };
+    if !crate::is_alive(identity)? {
+        return Ok(());
+    }
+    use std::os::fd::AsRawFd as _;
+    loop {
+        // SAFETY: a zeroed kevent is a valid output buffer for one event.
+        let mut event: libc::kevent = unsafe { std::mem::zeroed() };
+        // SAFETY: waits on a kqueue owned here for one event, no timeout.
+        let got = unsafe { libc::kevent(queue.as_raw_fd(), std::ptr::null(), 0, &mut event, 1, std::ptr::null()) };
+        if got >= 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
+/// A kqueue watching `pid` for its exit; `None` when no such process is left
+/// to watch.
+#[cfg(target_os = "macos")]
+pub(crate) fn exit_queue(pid: u32) -> io::Result<Option<std::os::fd::OwnedFd>> {
+    use std::os::fd::FromRawFd as _;
+    // SAFETY: kqueue returns a new descriptor or -1.
+    let queue = unsafe { libc::kqueue() };
+    if queue == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: the descriptor was just created and is owned here.
+    let queue = unsafe { std::os::fd::OwnedFd::from_raw_fd(queue) };
+    let change = libc::kevent {
+        ident: pid as libc::uintptr_t,
+        filter: libc::EVFILT_PROC,
+        flags: libc::EV_ADD | libc::EV_ONESHOT,
+        fflags: libc::NOTE_EXIT,
+        data: 0,
+        udata: std::ptr::null_mut(),
+    };
+    use std::os::fd::AsRawFd as _;
+    // SAFETY: registers one change on the kqueue owned here.
+    if unsafe { libc::kevent(queue.as_raw_fd(), &change, 1, std::ptr::null_mut(), 0, std::ptr::null()) } == -1 {
+        let error = io::Error::last_os_error();
+        return if error.raw_os_error() == Some(libc::ESRCH) { Ok(None) } else { Err(error) };
+    }
+    Ok(Some(queue))
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn wait_for_exit(_identity: &ProcessIdentity) -> io::Result<()> {
     Err(io::Error::new(io::ErrorKind::Unsupported, "host process observation is not implemented on this platform"))
 }

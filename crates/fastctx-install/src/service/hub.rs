@@ -12,7 +12,7 @@ use crate::apply::{Places, place_executable};
 
 /// Has a system service run the hub kept in `dir`.
 pub fn keep_hub(places: &Places, dir: &Path) -> anyhow::Result<Kept> {
-    if !cfg!(any(windows, target_os = "linux")) {
+    if !cfg!(any(windows, target_os = "linux", target_os = "macos")) {
         return Ok(Kept::Unsupported);
     }
     let (executable, _) = place_executable(places)?;
@@ -23,7 +23,7 @@ pub fn keep_hub(places: &Places, dir: &Path) -> anyhow::Result<Kept> {
 /// program already in place, as on a machine whose node runs from it: placing
 /// another would wait for that node to hand over.
 pub fn keep_hub_at(places: &Places, dir: &Path, executable: &Path) -> anyhow::Result<Kept> {
-    if !cfg!(any(windows, target_os = "linux")) {
+    if !cfg!(any(windows, target_os = "linux", target_os = "macos")) {
         return Ok(Kept::Unsupported);
     }
     super::hub_registry::remember(&places.root, dir)?;

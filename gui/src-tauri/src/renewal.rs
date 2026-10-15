@@ -9,7 +9,7 @@ fn run(action: &str) -> Result<Vec<u8>, String> {
     let root = fastctx_platform::fastctx_root().map_err(|error| error.to_string())?;
     let mut command = std::process::Command::new(program);
     command.args(["renew", action, "--dir"]).arg(root);
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     if action == "guardian" {
         command.arg("--graphical");
     }

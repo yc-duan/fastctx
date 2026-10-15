@@ -226,10 +226,84 @@ mod imp {
     }
 }
 
+/// On macOS the mounts are read with getmntinfo: a disk is a local volume a
+/// person browses, the startup disk and those under `/Volumes`; the system's
+/// own hidden volumes (its data, preboot and VM volumes) are not walked again.
+#[cfg(target_os = "macos")]
+mod imp {
+    use std::ffi::CStr;
+    use std::io;
+    use std::path::PathBuf;
+
+    /// Filesystems kept on a disk.
+    const DISK_FILESYSTEMS: &[&str] = &["apfs", "hfs", "exfat", "msdos", "ntfs", "ufs"];
+
+    struct Mount {
+        point: PathBuf,
+        kind: String,
+        flags: u32,
+    }
+
+    fn mounts() -> io::Result<Vec<Mount>> {
+        let mut table: *mut libc::statfs = std::ptr::null_mut();
+        // SAFETY: getmntinfo points `table` at its own buffer of `count`
+        // entries, valid until the next call on this thread.
+        let count = unsafe { libc::getmntinfo(&mut table, libc::MNT_NOWAIT) };
+        if count <= 0 || table.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: the buffer holds `count` initialized entries.
+        let entries = unsafe { std::slice::from_raw_parts(table, count as usize) };
+        Ok(entries
+            .iter()
+            .map(|entry| {
+                // SAFETY: both names are NUL-terminated within their arrays.
+                let (point, kind) = unsafe {
+                    (CStr::from_ptr(entry.f_mntonname.as_ptr()), CStr::from_ptr(entry.f_fstypename.as_ptr()))
+                };
+                Mount {
+                    point: PathBuf::from(point.to_string_lossy().into_owned()),
+                    kind: kind.to_string_lossy().into_owned(),
+                    flags: entry.f_flags,
+                }
+            })
+            .collect())
+    }
+
+    pub fn fixed_disks() -> io::Result<Vec<PathBuf>> {
+        let mut disks: Vec<PathBuf> = mounts()?
+            .into_iter()
+            .filter(|mount| {
+                DISK_FILESYSTEMS.contains(&mount.kind.as_str())
+                    && mount.flags & libc::MNT_LOCAL as u32 != 0
+                    && mount.flags & libc::MNT_DONTBROWSE as u32 == 0
+            })
+            .map(|mount| mount.point)
+            .collect();
+        disks.sort();
+        disks.dedup();
+        Ok(disks)
+    }
+
+    pub fn mount_points() -> io::Result<Vec<PathBuf>> {
+        Ok(mounts()?.into_iter().map(|mount| mount.point).collect())
+    }
+
+    pub fn lower_this_thread() -> io::Result<()> {
+        // The background band lowers this thread's processor, disk and
+        // network priority together.
+        // SAFETY: setpriority of the calling thread.
+        if unsafe { libc::setpriority(libc::PRIO_DARWIN_THREAD, 0, libc::PRIO_DARWIN_BG) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+}
+
 /// Elsewhere neither the disks nor a thread's own background priority are
 /// known to the World yet: a walk there fails, saying so, rather than walk
 /// at the priority of the whole node.
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 mod imp {
     use std::io;
     use std::path::PathBuf;

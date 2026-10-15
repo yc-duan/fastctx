@@ -81,9 +81,21 @@ pub fn processes(owned: &[PathBuf]) -> io::Result<Vec<ProcessIdentity>> {
     }
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
-pub fn processes(_owned: &[PathBuf]) -> io::Result<Vec<ProcessIdentity>> {
-    Err(io::Error::new(io::ErrorKind::Unsupported, "uninstall process discovery supports Windows and Linux"))
+#[cfg(target_os = "macos")]
+pub fn processes(owned: &[PathBuf]) -> io::Result<Vec<ProcessIdentity>> {
+    let mut found = Vec::new();
+    for process in crate::darwin_proc::all()? {
+        if process.zombie {
+            continue;
+        }
+        if let Some(image) = crate::darwin_proc::image(process.pid)
+            && matches(&image, owned)
+            && let Some(identity) = crate::identity_of(process.pid)?
+        {
+            found.push(identity);
+        }
+    }
+    Ok(found)
 }
 
 #[cfg(target_os = "linux")]
@@ -123,8 +135,20 @@ pub fn serves_hub(process: &ProcessIdentity) -> io::Result<bool> {
     Ok(arguments.next() == Some(b"hub".as_slice()) && arguments.next() == Some(b"serve".as_slice()))
 }
 
-/// A hub elsewhere runs as its guardian's payload, an image no node uses.
-#[cfg(not(target_os = "linux"))]
+/// On macOS a hub runs the node's image too; its arguments say which it is.
+#[cfg(target_os = "macos")]
+pub fn serves_hub(process: &ProcessIdentity) -> io::Result<bool> {
+    let output = std::process::Command::new("ps")
+        .args(["-o", "args=", "-p", &process.pid.to_string()])
+        .env("LC_ALL", "C")
+        .output()?;
+    let line = String::from_utf8_lossy(&output.stdout);
+    let mut words = line.split_whitespace().skip(1);
+    Ok(words.next() == Some("hub") && words.next() == Some("serve"))
+}
+
+/// A hub on Windows runs as its guardian's payload, an image no node uses.
+#[cfg(windows)]
 pub fn serves_hub(_process: &ProcessIdentity) -> io::Result<bool> {
     Ok(false)
 }

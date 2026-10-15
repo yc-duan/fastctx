@@ -17,6 +17,11 @@
 //! child, so the signal comes only when the node is gone; dropping the child
 //! ends whatever is left of its process group. A program the child started
 //! in a process group or session of its own is not reached on Linux.
+//!
+//! macOS has no death signal. The program leads a process group of its own
+//! there too, and dropping the child ends it; a node that ends any other way
+//! leaves the program its standard input, which closes with the node, and
+//! the programs the node drives this way end when it does.
 
 use std::ffi::{OsStr, OsString};
 use std::io;
@@ -124,7 +129,7 @@ mod imp {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod imp {
     use std::ffi::{OsStr, OsString};
     use std::io;
@@ -175,18 +180,25 @@ mod imp {
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
+            #[cfg(target_os = "linux")]
             let parent = std::process::id();
             // SAFETY: setpgid, prctl, getppid and the descriptor marking are
             // async-signal-safe.
             unsafe {
                 command.pre_exec(move || {
-                    if libc::setpgid(0, 0) == -1 || libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0) == -1 {
+                    if libc::setpgid(0, 0) == -1 {
                         return Err(io::Error::last_os_error());
                     }
-                    // The parent may have died before the signal was asked
-                    // for; then nothing would ever send it.
-                    if libc::getppid() as u32 != parent {
-                        return Err(io::Error::other("the parent exited while the program started"));
+                    #[cfg(target_os = "linux")]
+                    {
+                        if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0) == -1 {
+                            return Err(io::Error::last_os_error());
+                        }
+                        // The parent may have died before the signal was asked
+                        // for; then nothing would ever send it.
+                        if libc::getppid() as u32 != parent {
+                            return Err(io::Error::other("the parent exited while the program started"));
+                        }
                     }
                     close_on_exec_from(3)
                 });

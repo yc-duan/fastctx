@@ -15,14 +15,15 @@ pub fn close_on_exec_from(first: u32) -> io::Result<()> {
 #[cfg(not(target_os = "linux"))]
 pub fn close_on_exec_from(first: u32) -> io::Result<()> {
     // No range call here; every descriptor is below the soft limit on open
-    // files.
+    // files. That limit may read as unlimited, and no process of the World
+    // holds anything near 65,536 descriptors.
     // SAFETY: getrlimit and fcntl are async-signal-safe.
     unsafe {
         let mut limit: libc::rlimit = std::mem::zeroed();
         if libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) == -1 {
             return Err(io::Error::last_os_error());
         }
-        for fd in first as libc::c_int..limit.rlim_cur.min(libc::c_int::MAX as libc::rlim_t) as libc::c_int {
+        for fd in first as libc::c_int..limit.rlim_cur.min(65_536) as libc::c_int {
             libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
         }
     }

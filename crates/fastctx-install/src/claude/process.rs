@@ -76,7 +76,7 @@ pub(crate) fn output(program: &Path, args: &[String], cwd: &Path, settings_home:
     })
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn output(program: &Path, args: &[String], cwd: &Path, settings_home: &Path) -> io::Result<Output> {
     use std::ffi::OsString;
     let mut environment: Vec<(OsString, OsString)> =
@@ -96,7 +96,7 @@ pub(crate) fn output(program: &Path, args: &[String], cwd: &Path, settings_home:
     })
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub(crate) fn output(_program: &Path, _args: &[String], _cwd: &Path, _settings_home: &Path) -> io::Result<Output> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
@@ -104,14 +104,14 @@ pub(crate) fn output(_program: &Path, _args: &[String], _cwd: &Path, _settings_h
     ))
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn read(stream: &mut impl io::Read) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     stream.read_to_end(&mut bytes)?;
     Ok(bytes)
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn joined(result: std::thread::Result<io::Result<Vec<u8>>>) -> io::Result<Vec<u8>> {
     result.map_err(|_| io::Error::other("Claude output reader panicked"))?
 }

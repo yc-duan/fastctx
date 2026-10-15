@@ -360,22 +360,40 @@ mod signals {
     pub fn stop_on_signal(set: libc::sigset_t, sender: tokio::sync::mpsc::UnboundedSender<super::Event>) {
         std::thread::spawn(move || {
             let result = loop {
-                // SAFETY: an out-parameter for one of the blocked signals.
-                let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-                let signal = unsafe { libc::sigwaitinfo(&set, &mut info) };
-                if signal >= 0 {
-                    break Ok(fastctx_types::run::StopRequest {
-                        // SAFETY: sigwaitinfo initialized the sender fields.
-                        by: unsafe { format!("process {} (uid {})", info.si_pid(), info.si_uid()) },
-                        reason: format!("signal {signal}"),
-                    });
-                }
-                let error = io::Error::last_os_error();
-                if error.kind() != io::ErrorKind::Interrupted {
-                    break Err(error);
+                match wait(&set) {
+                    Ok((signal, by)) => {
+                        break Ok(fastctx_types::run::StopRequest { by, reason: format!("signal {signal}") });
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(error) => break Err(error),
                 }
             };
             let _ = sender.send(super::Event::Stop(result));
         });
+    }
+
+    /// One of the blocked signals, and who sent it.
+    #[cfg(target_os = "linux")]
+    fn wait(set: &libc::sigset_t) -> io::Result<(i32, String)> {
+        // SAFETY: an out-parameter for one of the blocked signals.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let signal = unsafe { libc::sigwaitinfo(set, &mut info) };
+        if signal < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: sigwaitinfo initialized the sender fields.
+        Ok((signal, unsafe { format!("process {} (uid {})", info.si_pid(), info.si_uid()) }))
+    }
+
+    /// One of the blocked signals; macOS does not say who sent it.
+    #[cfg(not(target_os = "linux"))]
+    fn wait(set: &libc::sigset_t) -> io::Result<(i32, String)> {
+        let mut signal = 0;
+        // SAFETY: waits for one of the blocked signals into a valid int.
+        let code = unsafe { libc::sigwait(set, &mut signal) };
+        if code != 0 {
+            return Err(io::Error::from_raw_os_error(code));
+        }
+        Ok((signal, "a signal from another process".to_string()))
     }
 }

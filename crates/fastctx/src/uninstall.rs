@@ -61,6 +61,19 @@ pub enum Uninstall {
         #[arg(long)]
         data: Vec<PathBuf>,
     },
+    /// Removes the macOS application bundle once the application exited.
+    #[cfg(target_os = "macos")]
+    #[command(hide = true)]
+    Bundle {
+        #[arg(long)]
+        bundle: PathBuf,
+        #[arg(long)]
+        process: String,
+        #[arg(long)]
+        temporary: PathBuf,
+        #[arg(long)]
+        data: Vec<PathBuf>,
+    },
     #[command(hide = true)]
     ApplicationFinish,
 }
@@ -73,6 +86,10 @@ pub fn run(command: Uninstall) -> anyhow::Result<()> {
         #[cfg(target_os = "linux")]
         Uninstall::Application { image, process, temporary, data } => tokio::runtime::Runtime::new()?.block_on(
             fastctx_uninstall::package::remove_image(&image, &serde_json::from_str(&process)?, &temporary, data),
+        ),
+        #[cfg(target_os = "macos")]
+        Uninstall::Bundle { bundle, process, temporary, data } => tokio::runtime::Runtime::new()?.block_on(
+            fastctx_uninstall::bundle::remove_bundle(&bundle, &serde_json::from_str(&process)?, &temporary, data),
         ),
         Uninstall::System { request, output, control, controller } => {
             let request: fastctx_uninstall::Request = serde_json::from_slice(&std::fs::read(request)?)?;

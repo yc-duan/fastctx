@@ -21,18 +21,35 @@ fn name(root: &Path) -> io::Result<String> {
     }
     #[cfg(windows)]
     let user = crate::current_user_sid()?;
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
+    // SAFETY: getuid cannot fail.
     let user = unsafe { libc::getuid() }.to_string();
-    #[cfg(not(any(windows, target_os = "linux")))]
-    let user = "unsupported";
     Ok(format!("fastctx-uninstall-{user}-{hash:016x}"))
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+/// macOS has no abstract socket names: the gate is a lock on a file in the
+/// user's temporary directory that is never removed, released whenever its
+/// holder ends.
+#[cfg(target_os = "macos")]
 mod imp {
-    pub struct Gate;
-    pub fn acquire(_name: &str) -> std::io::Result<Option<Gate>> {
-        Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "uninstall supports Windows and Linux"))
+    use std::io;
+    use std::os::fd::AsRawFd as _;
+    pub struct Gate {
+        _file: std::fs::File,
+    }
+    pub fn acquire(name: &str) -> io::Result<Option<Gate>> {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(std::env::temp_dir().join(format!("{name}.lock")))?;
+        // SAFETY: a lock on a descriptor owned here.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == -1 {
+            let error = io::Error::last_os_error();
+            return if error.raw_os_error() == Some(libc::EWOULDBLOCK) { Ok(None) } else { Err(error) };
+        }
+        Ok(Some(Gate { _file: file }))
     }
 }
 

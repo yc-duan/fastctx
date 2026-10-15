@@ -36,7 +36,28 @@ pub fn unused(path: &Path) -> io::Result<Option<File>> {
     }
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+/// macOS lets a running image be opened for writing, so no handle proves it
+/// unused: no running process may have it, by its file's identity.
+#[cfg(target_os = "macos")]
+pub fn unused(path: &Path) -> io::Result<Option<File>> {
+    use std::os::unix::fs::MetadataExt as _;
+    let metadata = std::fs::symlink_metadata(path)?;
+    if crate::owned_directory::is_link(&metadata) || !metadata.is_file() {
+        return Err(io::Error::other(format!("unexpected program image {}", path.display())));
+    }
+    for process in crate::darwin_proc::all()? {
+        if let Some(image) = crate::darwin_proc::image(process.pid)
+            && let Ok(running) = std::fs::metadata(&image)
+            && running.dev() == metadata.dev()
+            && running.ino() == metadata.ino()
+        {
+            return Ok(None);
+        }
+    }
+    File::open(path).map(Some)
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn unused(_path: &Path) -> io::Result<Option<File>> {
     Err(io::Error::new(io::ErrorKind::Unsupported, "image collection supports Windows and Linux"))
 }

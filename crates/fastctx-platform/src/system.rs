@@ -407,7 +407,7 @@ mod imp {
                 (fields.get(4)? == &wanted.as_ref())
                     .then(|| fields.get(separator + 1).map(|kind| (*kind).to_string()))?
             })
-            .last()
+            .next_back()
             .unwrap_or_default()
     }
 
@@ -420,13 +420,13 @@ mod imp {
         if unsafe { libc::statvfs(path.as_ptr(), &mut stat) } != 0 {
             return Err(io::Error::last_os_error());
         }
-        let fragment = stat.f_frsize as u64;
+        let fragment = stat.f_frsize;
         Ok(DiskUse {
             fs: kind_at(&root),
             at: root,
             label: None,
-            total: stat.f_blocks as u64 * fragment,
-            free: stat.f_bavail as u64 * fragment,
+            total: stat.f_blocks * fragment,
+            free: stat.f_bavail * fragment,
         })
     }
 
@@ -474,8 +474,222 @@ mod imp {
     }
 }
 
+/// macOS: sysctl for the machine's facts, Mach for the processors' and
+/// memory's counters, the routing socket's 64-bit counters for the cards.
+#[cfg(target_os = "macos")]
+mod imp {
+    use std::ffi::{CStr, CString};
+    use std::io;
+    use std::path::PathBuf;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use super::{CpuTimes, DiskUse, MemoryUse, Traffic};
+
+    unsafe extern "C" {
+        /// The host port, for the host's statistics.
+        fn mach_host_self() -> libc::mach_port_t;
+    }
+
+    /// A fixed-size value sysctl keeps under `name`.
+    fn value<T: Copy>(name: &str) -> io::Result<T> {
+        let name = CString::new(name)?;
+        let mut value = std::mem::MaybeUninit::<T>::zeroed();
+        let mut size = std::mem::size_of::<T>();
+        // SAFETY: the buffer holds `size` bytes for the value asked for.
+        if unsafe { libc::sysctlbyname(name.as_ptr(), value.as_mut_ptr().cast(), &mut size, std::ptr::null_mut(), 0) }
+            != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if size != std::mem::size_of::<T>() {
+            return Err(io::Error::other(format!("{} is not of the size expected", name.to_string_lossy())));
+        }
+        // SAFETY: sysctl filled every byte of it.
+        Ok(unsafe { value.assume_init() })
+    }
+
+    /// A string sysctl keeps under `name`.
+    fn text(name: &str) -> io::Result<String> {
+        let name = CString::new(name)?;
+        let mut size = 0;
+        // SAFETY: a null buffer asks only for the size.
+        if unsafe { libc::sysctlbyname(name.as_ptr(), std::ptr::null_mut(), &mut size, std::ptr::null_mut(), 0) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut buffer = vec![0u8; size];
+        // SAFETY: the buffer holds `size` bytes.
+        if unsafe { libc::sysctlbyname(name.as_ptr(), buffer.as_mut_ptr().cast(), &mut size, std::ptr::null_mut(), 0) }
+            != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        buffer.truncate(size);
+        while buffer.last() == Some(&0) {
+            buffer.pop();
+        }
+        Ok(String::from_utf8_lossy(&buffer).into_owned())
+    }
+
+    pub fn uptime() -> io::Result<Duration> {
+        let boot: libc::timeval = value("kern.boottime")?;
+        let boot = Duration::new(boot.tv_sec as u64, boot.tv_usec as u32 * 1000);
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map_err(io::Error::other)?;
+        Ok(now.saturating_sub(boot))
+    }
+
+    pub fn cpu_model() -> io::Result<String> {
+        text("machdep.cpu.brand_string")
+    }
+
+    pub fn threads() -> u32 {
+        std::thread::available_parallelism().map_or(1, |n| n.get() as u32)
+    }
+
+    pub fn cpu_times() -> io::Result<CpuTimes> {
+        // SAFETY: zeroed is a valid out-parameter for the load counters.
+        let mut info: libc::host_cpu_load_info = unsafe { std::mem::zeroed() };
+        let mut count = libc::HOST_CPU_LOAD_INFO_COUNT;
+        // SAFETY: the buffer and its count describe one host_cpu_load_info.
+        let result = unsafe {
+            libc::host_statistics(
+                mach_host_self(),
+                libc::HOST_CPU_LOAD_INFO,
+                (&mut info as *mut libc::host_cpu_load_info).cast(),
+                &mut count,
+            )
+        };
+        if result != libc::KERN_SUCCESS {
+            return Err(io::Error::other(format!("host_statistics answered {result}")));
+        }
+        let ticks: Vec<u64> = info.cpu_ticks.iter().map(|ticks| u64::from(*ticks)).collect();
+        Ok(CpuTimes { idle: ticks[libc::CPU_STATE_IDLE as usize], total: ticks.iter().sum() })
+    }
+
+    pub fn load() -> Option<[f32; 3]> {
+        let mut averages = [0f64; 3];
+        // SAFETY: the array holds the three averages asked for.
+        (unsafe { libc::getloadavg(averages.as_mut_ptr(), 3) } == 3)
+            .then(|| [averages[0] as f32, averages[1] as f32, averages[2] as f32])
+    }
+
+    pub fn memory() -> io::Result<MemoryUse> {
+        let total: u64 = value("hw.memsize")?;
+        let page: u64 = value::<libc::c_int>("hw.pagesize")? as u64;
+        // SAFETY: zeroed is a valid out-parameter for the VM counters.
+        let mut vm: libc::vm_statistics64 = unsafe { std::mem::zeroed() };
+        let mut count = libc::HOST_VM_INFO64_COUNT;
+        // SAFETY: the buffer and its count describe one vm_statistics64.
+        let result = unsafe {
+            libc::host_statistics64(
+                mach_host_self(),
+                libc::HOST_VM_INFO64,
+                (&mut vm as *mut libc::vm_statistics64).cast(),
+                &mut count,
+            )
+        };
+        if result != libc::KERN_SUCCESS {
+            return Err(io::Error::other(format!("host_statistics64 answered {result}")));
+        }
+        // What Activity Monitor calls memory used: what programs hold, less
+        // what they may give back at once, with the wired and compressed.
+        let pages = u64::from(vm.internal_page_count).saturating_sub(u64::from(vm.purgeable_count))
+            + u64::from(vm.wire_count)
+            + u64::from(vm.compressor_page_count);
+        let swap: libc::xsw_usage = value("vm.swapusage")?;
+        Ok(MemoryUse { total, used: (pages * page).min(total), swap_total: swap.xsu_total, swap_used: swap.xsu_used })
+    }
+
+    pub fn disk(root: PathBuf) -> io::Result<DiskUse> {
+        use std::os::unix::ffi::OsStrExt as _;
+        let path = CString::new(root.as_os_str().as_bytes())?;
+        // SAFETY: zeroed is a valid out-parameter for statfs.
+        let mut fs: libc::statfs = unsafe { std::mem::zeroed() };
+        // SAFETY: a terminated path and a buffer for one statfs.
+        if unsafe { libc::statfs(path.as_ptr(), &mut fs) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: the type name is terminated within its array.
+        let kind = unsafe { CStr::from_ptr(fs.f_fstypename.as_ptr()) }.to_string_lossy().into_owned();
+        let block = u64::from(fs.f_bsize);
+        // A disk under /Volumes goes by its own name; the startup disk by none.
+        let label = root
+            .strip_prefix("/Volumes")
+            .ok()
+            .and_then(|rest| rest.to_str())
+            .filter(|name| !name.is_empty())
+            .map(str::to_string);
+        Ok(DiskUse { at: root, label, fs: kind, total: fs.f_blocks * block, free: fs.f_bavail * block })
+    }
+
+    pub fn traffic() -> io::Result<Vec<Traffic>> {
+        let mut mib = [libc::CTL_NET, libc::PF_ROUTE, 0, 0, libc::NET_RT_IFLIST2, 0];
+        let mut size = 0;
+        // SAFETY: a null buffer asks only for the size.
+        if unsafe { libc::sysctl(mib.as_mut_ptr(), 6, std::ptr::null_mut(), &mut size, std::ptr::null_mut(), 0) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut buffer = vec![0u8; size];
+        // SAFETY: the buffer holds `size` bytes.
+        if unsafe { libc::sysctl(mib.as_mut_ptr(), 6, buffer.as_mut_ptr().cast(), &mut size, std::ptr::null_mut(), 0) }
+            != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        buffer.truncate(size);
+        let mut cards = Vec::new();
+        let mut at = 0;
+        while at + std::mem::size_of::<libc::if_msghdr2>() <= buffer.len() {
+            // SAFETY: a routing message starts here; the header is read
+            // unaligned from the byte buffer.
+            let header: libc::if_msghdr2 = unsafe { std::ptr::read_unaligned(buffer.as_ptr().add(at).cast()) };
+            let length = usize::from(header.ifm_msglen);
+            if length == 0 {
+                break;
+            }
+            if i32::from(header.ifm_type) == libc::RTM_IFINFO2 && header.ifm_flags & libc::IFF_LOOPBACK == 0 {
+                let mut name = [0 as libc::c_char; libc::IF_NAMESIZE];
+                // SAFETY: the buffer holds IF_NAMESIZE characters.
+                let named = unsafe { libc::if_indextoname(u32::from(header.ifm_index), name.as_mut_ptr()) };
+                if !named.is_null() {
+                    // SAFETY: if_indextoname terminated the name.
+                    let name = unsafe { CStr::from_ptr(name.as_ptr()) }.to_string_lossy().into_owned();
+                    let data = header.ifm_data;
+                    // A card of the machine's own is Ethernet or Wi-Fi under
+                    // the system's `en` names; bridges, tunnels and peer
+                    // links are virtual.
+                    const ETHERNET: u8 = 0x06;
+                    let hardware = data.ifi_type == ETHERNET && name.starts_with("en");
+                    cards.push(Traffic {
+                        index: u32::from(header.ifm_index),
+                        name,
+                        up: header.ifm_flags & libc::IFF_UP != 0,
+                        speed: (data.ifi_baudrate > 0).then_some(data.ifi_baudrate),
+                        received: data.ifi_ibytes,
+                        sent: data.ifi_obytes,
+                        hardware,
+                    });
+                }
+            }
+            at += length;
+        }
+        Ok(cards)
+    }
+
+    pub fn system_name() -> io::Result<String> {
+        let version = text("kern.osproductversion")?;
+        Ok(match text("kern.osversion") {
+            Ok(build) if !build.is_empty() => format!("macOS {version} ({build})"),
+            _ => format!("macOS {version}"),
+        })
+    }
+
+    pub fn kernel() -> Option<String> {
+        text("kern.osrelease").ok().map(|release| format!("Darwin {release}"))
+    }
+}
+
 /// Elsewhere the World does not read the machine yet: each reading says so.
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 mod imp {
     use std::io;
     use std::path::PathBuf;

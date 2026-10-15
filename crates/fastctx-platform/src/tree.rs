@@ -19,6 +19,12 @@
 //! dies takes the tree with it. A process started on the program's behalf
 //! by a service (WMI, the Task Scheduler) is not its descendant and is not
 //! in the job.
+//!
+//! macOS has no subreaper: a process whose parent exits goes to launchd. The
+//! program leads a session of its own, and the tree is that session together
+//! with the program's descendants found through their parents; a process
+//! that leaves the session and loses its parent both is not reached. Whether
+//! the tree is empty is seen by looking, not proven by the kernel.
 
 use std::ffi::{OsStr, OsString};
 use std::io;
@@ -345,6 +351,164 @@ mod imp {
         // SAFETY: the descriptor opened above.
         unsafe { libc::close(pidfd) };
         result
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod imp {
+    use std::ffi::{OsStr, OsString};
+    use std::io;
+    use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
+    use std::path::Path;
+    use std::process::{Command, ExitStatus, Stdio};
+    use std::time::Duration;
+
+    use crate::darwin_proc::{self, Info};
+    use crate::unix_fds::close_on_exec_from;
+
+    /// How often an emptying tree is looked at.
+    const LOOK: Duration = Duration::from_millis(100);
+
+    pub struct Tree {
+        main: u32,
+    }
+
+    impl Tree {
+        pub fn spawn(
+            program: &Path,
+            args: &[&OsStr],
+            cwd: &Path,
+            env: &[(OsString, OsString)],
+            stdout: io::PipeWriter,
+            stderr: io::PipeWriter,
+            stdin: Option<&Path>,
+        ) -> io::Result<Self> {
+            let mut command = Command::new(program);
+            command
+                .args(args)
+                .current_dir(cwd)
+                .env_clear()
+                .envs(env.iter().map(|(name, value)| (name, value)))
+                .stdin(match stdin {
+                    Some(path) => Stdio::from(std::fs::File::open(path)?),
+                    None => Stdio::null(),
+                })
+                .stdout(stdout)
+                .stderr(stderr);
+            // SAFETY: setsid, sigprocmask and the descriptor marking are
+            // async-signal-safe.
+            unsafe {
+                command.pre_exec(|| {
+                    if libc::setsid() == -1 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    let mut empty: libc::sigset_t = std::mem::zeroed();
+                    libc::sigemptyset(&mut empty);
+                    if libc::sigprocmask(libc::SIG_SETMASK, &empty, std::ptr::null_mut()) == -1 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    close_on_exec_from(3)
+                });
+            }
+            let main = command.spawn()?.id();
+            drop(command);
+            Ok(Self { main })
+        }
+
+        pub fn main_pid(&self) -> u32 {
+            self.main
+        }
+
+        pub fn wait_main(&self) -> io::Result<ExitStatus> {
+            loop {
+                let mut status = 0;
+                // SAFETY: waits for this process's own child, the program.
+                let pid = unsafe { libc::waitpid(self.main as libc::pid_t, &mut status, 0) };
+                if pid == self.main as libc::pid_t {
+                    return Ok(ExitStatus::from_raw(status));
+                }
+                let error = io::Error::last_os_error();
+                if error.raw_os_error() != Some(libc::EINTR) {
+                    return Err(error);
+                }
+            }
+        }
+
+        pub fn remaining(&self) -> io::Result<usize> {
+            self.count()
+        }
+
+        pub fn wait_empty(&self) -> io::Result<()> {
+            while self.count()? > 0 {
+                std::thread::sleep(LOOK);
+            }
+            Ok(())
+        }
+
+        pub fn count(&self) -> io::Result<usize> {
+            Ok(members(self.main)?.len())
+        }
+
+        pub fn kill(&self) -> io::Result<()> {
+            // Each round kills every process found; one started meanwhile by
+            // a process not yet killed is found in the next round.
+            loop {
+                let found = members(self.main)?;
+                if found.is_empty() {
+                    return Ok(());
+                }
+                for process in found {
+                    signal(process, libc::SIGKILL)?;
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+    }
+
+    /// Every live process of the tree: the program's session, and the
+    /// program's descendants found through their parents.
+    fn members(main: u32) -> io::Result<Vec<Info>> {
+        let processes = darwin_proc::all()?;
+        let here = std::process::id();
+        let mut found: Vec<Info> = Vec::new();
+        let mut parents = vec![main];
+        while let Some(parent) = parents.pop() {
+            for process in processes.iter().filter(|process| process.ppid == parent) {
+                if !found.iter().any(|known| known.pid == process.pid) {
+                    parents.push(process.pid);
+                    found.push(*process);
+                }
+            }
+        }
+        for process in &processes {
+            if process.pid != here
+                && process.session() == Some(main)
+                && !found.iter().any(|known| known.pid == process.pid)
+            {
+                found.push(*process);
+            }
+        }
+        found.retain(|process| !process.zombie);
+        Ok(found)
+    }
+
+    /// Sends `signal` to `process` if it is still the process that was
+    /// found: nothing names a process for good on macOS, so its start time,
+    /// read again just before, tells a reused PID.
+    fn signal(process: Info, signal: i32) -> io::Result<()> {
+        match darwin_proc::info(process.pid)? {
+            Some(now) if now.start == process.start => {
+                // SAFETY: a signal to the process just identified.
+                if unsafe { libc::kill(process.pid as libc::pid_t, signal) } == -1 {
+                    let error = io::Error::last_os_error();
+                    if error.raw_os_error() != Some(libc::ESRCH) {
+                        return Err(error);
+                    }
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
     }
 }
 

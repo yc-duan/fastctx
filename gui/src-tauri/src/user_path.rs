@@ -1,6 +1,8 @@
 //! A terminal opened after installation finds the placed fastctx. Windows
 //! appends its directory to the user's registry PATH. Linux links it into
 //! ~/.local/bin, which Ubuntu's login profile adds without editing the profile.
+//! macOS links it there too, and its login shell, zsh, is told of that folder
+//! by two marked lines in ~/.zprofile, which uninstalling takes out again.
 
 use std::path::Path;
 
@@ -24,7 +26,7 @@ pub fn add(dir: &Path) -> Result<Added, String> {
     Ok(added)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 pub fn add(dir: &Path) -> Result<Added, String> {
     use std::os::unix::fs::symlink;
     let home = fastctx_platform::user_home().map_err(|error| error.to_string())?;
@@ -32,6 +34,8 @@ pub fn add(dir: &Path) -> Result<Added, String> {
     std::fs::create_dir_all(&bin).map_err(|error| error.to_string())?;
     let link = bin.join("fastctx");
     let target = dir.join("fastctx");
+    #[cfg(target_os = "macos")]
+    on_login_path(&home)?;
     match symlink(&target, &link) {
         Ok(()) => Ok(Added::Added),
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -45,9 +49,22 @@ pub fn add(dir: &Path) -> Result<Added, String> {
     }
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
-pub fn add(_dir: &Path) -> Result<Added, String> {
-    Err("putting fastctx on the PATH is made for Windows so far".into())
+/// Puts ~/.local/bin on zsh's login PATH, unless ~/.zprofile names it.
+#[cfg(target_os = "macos")]
+fn on_login_path(home: &Path) -> Result<(), String> {
+    let profile = home.join(".zprofile");
+    let text = match std::fs::read_to_string(&profile) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(format!("reading {}: {error}", profile.display())),
+    };
+    if text.contains(".local/bin") {
+        return Ok(());
+    }
+    let separator = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
+    let lines = fastctx_install::uninstall::ZPROFILE_LINES;
+    std::fs::write(&profile, format!("{text}{separator}{lines}"))
+        .map_err(|error| format!("writing {}: {error}", profile.display()))
 }
 
 /// Appends `dir` to the `Path` value under `key` unless an entry already

@@ -8,8 +8,10 @@
 
 pub mod atomic;
 pub mod awake;
-#[cfg(any(target_os = "linux", windows))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod child;
+#[cfg(target_os = "macos")]
+pub mod darwin_proc;
 pub mod detach;
 pub mod directory_alias;
 pub mod disk_usage;
@@ -30,10 +32,10 @@ pub mod legacy_text;
 pub mod local_path;
 pub mod lock;
 pub mod memory;
-#[cfg(any(target_os = "linux", windows))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod output_pipe;
 pub mod owned_directory;
-#[cfg(any(target_os = "linux", windows))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod owned_images;
 pub mod parent;
 pub mod private;
@@ -46,11 +48,11 @@ pub mod service_channel;
 #[cfg(windows)]
 pub mod shell_process;
 pub mod system;
-#[cfg(any(target_os = "linux", windows))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod terminate;
-#[cfg(any(target_os = "linux", windows))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod tree;
-#[cfg(any(target_os = "linux", windows))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod uninstall_gate;
 #[cfg(unix)]
 mod unix_fds;
@@ -64,7 +66,7 @@ mod windows_process;
 mod windows_user;
 
 pub use atomic::{Permissions, Staged, publish, publish_new};
-#[cfg(any(target_os = "linux", windows))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub use child::Child;
 pub use detach::{DetachedProcess, spawn_detached};
 pub use environment::{in_job, user_environment, world_process_environment};
@@ -75,7 +77,7 @@ pub use legacy_text::decode_legacy;
 pub use local_path::local_path;
 pub use lock::FileLock;
 pub use private::ensure_private_dir;
-#[cfg(any(target_os = "linux", windows))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub use tree::ProcessTree;
 #[cfg(windows)]
 pub use windows_user::{account_name, current_user_sid};
