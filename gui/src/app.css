@@ -523,10 +523,11 @@
 }
 
 /* The card about the agent: a sheet resting under the head's right edge,
-   over the conversation, scrolling on its own. */
+   over the conversation, scrolling on its own; over the focus strip too,
+   which it covers on a narrow screen. */
 .details {
   position: absolute;
-  z-index: 3;
+  z-index: 6;
   top: calc(52px + var(--safe-top));
   right: var(--space-4);
   width: min(420px, 100% - 2 * var(--space-4));

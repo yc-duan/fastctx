@@ -1549,7 +1549,8 @@
   position: absolute;
   top: calc(52px + var(--safe-top));
   right: var(--space-4);
-  z-index: 3;
+  /* Over the focus strip, which it covers on a narrow screen. */
+  z-index: 6;
   display: flex;
   align-items: center;
   gap: 2px;
