@@ -1,9 +1,10 @@
-"""A release's smoke test on the machine it runs on, through the command line alone: a private hub,
-two computers that log in to it and copy files to each other through it, an agent's `run` there and,
-with `on`, on the other computer, the node's startup service installed, serving and taken away where
-asked, and a complete uninstall. Nothing outside a fresh temporary directory is used, except the
-startup service the test installs and removes again. When a check fails, the logs of the nodes, the
-services and the hub are shown.
+"""A release's smoke test on the machine it runs on, through the command line alone: a computer that
+makes a private network keeps its hub as a system service; it and a second computer log in to it and
+copy files to each other through it; an agent's `run` there reaches the other computer with `on`;
+the node's startup service is installed, serving and taken away where asked; and both computers are
+uninstalled completely, the one keeping the hub with it. Nothing outside a fresh temporary directory
+is used, except the services the test installs and removes again. When a check fails, the logs of
+the nodes, the services and the hub are shown.
 
     python scripts/smoke.py PROGRAM [--service]
 """
@@ -142,12 +143,13 @@ def main():
     port = free_port()
     password = "Smoke-" + uuid.uuid4().hex[:12] + "-7"
     try:
-        code, out = lab.run("hub", "--version")
+        code, out = lab.run("alpha", "--version")
         check("the program says its version", code == 0 and out.startswith("fastctx "), out)
-        code, out = lab.run("hub", "hub", "init", "--name", "smoke", "--admin", "root", "--public", f"127.0.0.1:{port}",
-                            "--listen", f"127.0.0.1:{port}", "--dir", str(root / "hub-data"), stdin=password + "\n")
-        check("a hub is made", code == 0, out)
-        lab.spawn("hub", "hub", "serve", "--dir", str(root / "hub-data"))
+        # As a computer that makes a new network does: it keeps the hub, run as a system service.
+        code, out = lab.run("alpha", "hub", "init", "--name", "smoke", "--admin", "root", "--public", f"127.0.0.1:{port}",
+                            "--listen", f"127.0.0.1:{port}", "--dir", str(root / "alpha" / "hub"), "--service",
+                            stdin=password + "\n", timeout=300)
+        check("alpha makes a hub and runs it as a system service", code == 0, out)
 
         def listening():
             with socket.create_connection(("127.0.0.1", port), timeout=1):
@@ -178,6 +180,18 @@ def main():
         code, out = lab.run("beta", "uninstall", "run", "--everything", "--json", timeout=300)
         check("beta is uninstalled completely", code == 0, out)
         check("nothing of beta's World is left", not (root / "beta" / "bin").exists(), sorted(p.name for p in (root / "beta").glob("*")))
+        code, out = lab.run("alpha", "uninstall", "run", "--everything", "--json", timeout=300)
+        check("alpha, which keeps the hub, is uninstalled completely", code == 0, out)
+
+        def closed():
+            try:
+                listening()
+            except OSError:
+                return True
+            return False
+
+        until("the hub is gone with it", closed, 60)
+        check("nothing of alpha's World is left", not (root / "alpha" / "bin").exists(), sorted(p.name for p in (root / "alpha").glob("*")))
     finally:
         if not all(RESULTS):
             diagnose(lab, root)
@@ -274,7 +288,8 @@ def diagnose(lab, root):
 
     print("\n--- diagnostics", flush=True)
     for who in ("alpha", "beta"):
-        for log in [root / who / "world" / "node.log", *sorted((root / who).glob("service-*.log"))]:
+        for log in [root / who / "world" / "node.log", *sorted((root / who).glob("service-*.log")),
+                    *sorted((root / who / "hub").glob("*.log"))]:
             print(f"== {log.relative_to(root)}")
             print("\n".join(tail(log)))
         print(f"== {who}: fastctx nodes")
