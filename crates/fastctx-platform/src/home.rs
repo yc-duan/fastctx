@@ -11,6 +11,14 @@ use std::path::PathBuf;
 /// runs: in `.fastctx-dev`, off the PATH, looking for no new versions.
 pub const RELEASED: bool = option_env!("FASTCTX_RELEASE").is_some();
 
+/// Whether this program takes part in its networks' versions, looking for
+/// new releases and telling its hubs what it runs: a release does, and a
+/// development build only in a drill whose `FASTCTX_UPDATE_RELEASES` names
+/// a list of releases of its own.
+pub fn follows_releases() -> bool {
+    RELEASED || std::env::var_os("FASTCTX_UPDATE_RELEASES").is_some()
+}
+
 /// The directory holding everything fastctx keeps for this user:
 /// `FASTCTX_HOME` when it is set, which lets a test or a second World run
 /// beside the real one, and `.fastctx` in the user's home otherwise, or

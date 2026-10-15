@@ -70,6 +70,9 @@ impl Device {
                 held.looked = self.kept_update("looked.json");
                 held.app = self.kept_update::<Option<App>>("app.json");
             }
+            if !fastctx_platform::follows_releases() {
+                return;
+            }
             let device = Arc::downgrade(self);
             tokio::spawn(async move {
                 let since =
@@ -110,6 +113,9 @@ impl Device {
     /// What this device tells the hubs it is on of versions now.
     pub(super) fn report_versions(self: &Arc<Self>) {
         self.start_updates();
+        if !fastctx_platform::follows_releases() {
+            return;
+        }
         let held = self.updates.held.lock().expect("never poisoned");
         let mut found: Vec<Manifest> =
             [held.looked.stable.clone(), held.looked.beta.clone()].into_iter().flatten().collect();

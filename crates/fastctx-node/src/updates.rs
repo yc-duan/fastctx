@@ -72,9 +72,7 @@ pub(crate) fn start(node: &Arc<Node>) {
         }
     }
     report(node);
-    // A development build looks for no release, unless a drill names a list
-    // of its own (`fastctx_update::github`).
-    if !fastctx_platform::RELEASED && std::env::var_os("FASTCTX_UPDATE_RELEASES").is_none() {
+    if !fastctx_platform::follows_releases() {
         return;
     }
     let node = node.clone();
@@ -179,6 +177,9 @@ fn on_channel(manifest: &Manifest, channel: Channel) -> bool {
 
 /// What this machine tells its hubs of versions now.
 pub(crate) fn report(node: &Node) {
+    if !fastctx_platform::follows_releases() {
+        return;
+    }
     let held = node.updates.held.lock().expect("never poisoned");
     let cache = cache(node);
     let mut found: Vec<Manifest> =
