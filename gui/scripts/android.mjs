@@ -14,8 +14,11 @@ const { version } = JSON.parse(readFileSync(path.join(gui, "src-tauri/tauri.conf
 const [, major, minor, patch, beta] = /^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/.exec(version) ?? [];
 if (major === undefined || Number(beta ?? 0) > 98) throw new Error(`no Android version code for ${version}`);
 const versionCode = ((Number(major) * 1000 + Number(minor)) * 1000 + Number(patch)) * 100 + (beta === undefined ? 99 : Number(beta));
+// The CLI sets TAURI_CONFIG for the build itself, from the configuration it is given: the code goes
+// in as configuration of the build.
+const versioned = JSON.stringify({ bundle: { android: { versionCode } } });
 // The library a phone loads keeps only the symbols it is loaded by: its symbol table is a third of it.
-const env = { ...process.env, TAURI_CONFIG: JSON.stringify({ bundle: { android: { versionCode } } }), CARGO_PROFILE_RELEASE_STRIP: "symbols" };
+const env = { ...process.env, CARGO_PROFILE_RELEASE_STRIP: "symbols" };
 function tauri(args) {
   const result = spawnSync(process.execPath, [cli, "android", ...args], { cwd: gui, stdio: "inherit", env });
   if (result.error) throw result.error;
@@ -80,4 +83,7 @@ if (!build.includes(compressed)) {
   writeFileSync(gradle, build);
 }
 const args = process.argv.slice(2);
-if (args[0] !== "prepare") tauri(args.length ? args : ["build", "--apk"]);
+if (args[0] !== "prepare") {
+  const [command, ...rest] = args.length ? args : ["build", "--apk"];
+  tauri(command === "build" ? [command, "--config", versioned, ...rest] : [command, ...rest]);
+}
