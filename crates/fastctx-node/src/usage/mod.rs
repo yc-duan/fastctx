@@ -74,13 +74,16 @@ pub(crate) struct Usage {
     /// `claude-costs.json` when first needed.
     costs: Mutex<Option<HashMap<String, Kept>>>,
     /// The last reading kept for each login, by its ledger, or that it has
-    /// none: when it came and the windows it had.
-    readings: Mutex<HashMap<String, Option<(Timestamp, Vec<LimitWindow>)>>>,
+    /// none.
+    readings: Mutex<HashMap<String, Option<Reading>>>,
     /// The login each Claude conversation's sessions count under.
     logins: Mutex<HashMap<ResidentId, PathBuf>>,
     /// One write to the ledgers at a time.
     writing: Mutex<()>,
 }
+
+/// A reading of a login's windows: when it came, and the windows it had.
+type Reading = (Timestamp, Vec<LimitWindow>);
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 struct Kept {
@@ -237,7 +240,7 @@ const READING_DAYS: i64 = 62;
 /// The last reading kept in `ledger`, with when it came: read from its
 /// files once, or that it has none, and known from then on as readings
 /// come.
-fn last_reading(node: &Node, ledger: &Path) -> Option<(Timestamp, Vec<LimitWindow>)> {
+fn last_reading(node: &Node, ledger: &Path) -> Option<Reading> {
     let key = ledger.to_string_lossy().into_owned();
     if let Some(last) = node.usage.readings.lock().expect("never poisoned").get(&key) {
         return last.clone();
@@ -250,7 +253,7 @@ fn last_reading(node: &Node, ledger: &Path) -> Option<(Timestamp, Vec<LimitWindo
 
 /// The newest reading in `ledger` from the day of `since` on, looked for
 /// from the newest day back.
-fn newest_reading(ledger: &Path, since: Timestamp) -> io::Result<Option<(Timestamp, Vec<LimitWindow>)>> {
+fn newest_reading(ledger: &Path, since: Timestamp) -> io::Result<Option<Reading>> {
     for day in days(ledger, since)?.into_iter().rev() {
         let text = std::fs::read_to_string(&day)?;
         let found = text.lines().rev().find_map(|line| match serde_json::from_str::<Entry>(line) {
