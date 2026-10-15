@@ -124,8 +124,34 @@ async fn diagnosis(command: &super::Command, short: &str, mut why: String) -> St
         Ok(_) => why.push_str("; `claude logs` returned no terminal output"),
         Err(error) => why.push_str(&format!("; reading its terminal output failed: {error}")),
     }
+    // A session that exits before it starts leaves no terminal output; its
+    // daemon says why in its own log.
+    if let Some(said) = daemon_said(command, short) {
+        why.push_str(&format!("; Claude Code's daemon log says: {said}"));
+    }
     why
 }
+
+/// The last line Claude Code's daemon logged of the session `short`, in the
+/// login the command runs with (`daemon.log` in its directory).
+fn daemon_said(command: &super::Command, short: &str) -> Option<String> {
+    use std::io::{Read as _, Seek as _};
+    let login = match command.env.iter().find(|(name, _)| name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR")) {
+        Some((_, dir)) => std::path::PathBuf::from(dir),
+        None => fastctx_platform::user_home().ok()?.join(".claude"),
+    };
+    let mut log = std::fs::File::open(login.join("daemon.log")).ok()?;
+    let length = log.metadata().ok()?.len();
+    log.seek(std::io::SeekFrom::Start(length.saturating_sub(DAEMON_TAIL))).ok()?;
+    let mut tail = Vec::new();
+    log.read_to_end(&mut tail).ok()?;
+    let tail = String::from_utf8_lossy(&tail);
+    let line = tail.lines().rev().find(|line| line.contains(short))?.trim();
+    Some(line.chars().take(400).collect())
+}
+
+/// How much of the end of Claude Code's daemon log is read for a session.
+const DAEMON_TAIL: u64 = 256 * 1024;
 
 fn pending(node: &Node, resident: &ResidentId, id: &NoticeId) -> bool {
     if super::paired(node, resident) || node.residents.removed(resident).is_some() {

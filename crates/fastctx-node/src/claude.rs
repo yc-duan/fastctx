@@ -1471,7 +1471,7 @@ pub(crate) fn untrust(directory: &Path, home: Option<&Path>) -> Result<(), Strin
 /// without approvals (`background::settings_args`), so nothing else needs
 /// allowing.
 fn settings_json(id: &ResidentId) -> String {
-    let settings = serde_json::json!({
+    let mut settings = serde_json::json!({
         "env": {
             "MAX_MCP_OUTPUT_TOKENS": fastctx_hosts::claude::MAX_MCP_OUTPUT_TOKENS.to_string(),
             "CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH": fastctx_hosts::claude::MAX_MCP_DESCRIPTION_LENGTH.to_string(),
@@ -1481,5 +1481,11 @@ fn settings_json(id: &ResidentId) -> String {
             "deny": ["Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob"],
         },
     });
+    // Claude Code lets root skip approvals only in a sandbox declared as
+    // one: where the World's conversations run as root, they are declared
+    // so, and skip them as they do everywhere.
+    if fastctx_platform::user_id() == Some(0) {
+        settings["env"]["IS_SANDBOX"] = "1".into();
+    }
     serde_json::to_string_pretty(&settings).expect("JSON values serialize")
 }
