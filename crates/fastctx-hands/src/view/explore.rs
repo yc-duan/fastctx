@@ -359,8 +359,11 @@ impl Exploring {
     }
 
     pub fn fits(&self, path: &Path, options: &Options, facts: &str, total: u64) -> bool {
+        // One of several files is sampled however small it is, unless its
+        // sample would be all of it: it is empty, or one line its start
+        // holds whole.
         if self.limits.sampled {
-            return false;
+            return total == 0 || total == 1 && self.head.cut_line().is_none();
         }
         let pending = if self.line.length > 0 || self.pending_cr {
             self.line_cost + usize::from(self.pending_cr) * 4 + self.line.number.to_string().len() + 2

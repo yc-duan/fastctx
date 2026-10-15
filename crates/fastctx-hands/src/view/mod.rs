@@ -166,7 +166,7 @@ fn explore_several(paths: &[PathBuf], options: &Options, out: &mut impl Write) -
             None
         };
         let mut part = looked(share.max(note.cost), explore::Limits::share(share));
-        if part.0.whole || part.0.cost > share.max(note.cost) {
+        if part.0.cost > share.max(note.cost) {
             // What cannot be sampled within its share is named.
             part = (note, None);
         }
