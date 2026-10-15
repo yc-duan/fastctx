@@ -22,11 +22,15 @@ import uuid
 from pathlib import Path
 
 RESULTS = []
+# When the previous check was made: a check that took a while says how long, so a slow one shows.
+LAST = [time.monotonic()]
 
 
 def check(label, ok, detail=""):
     RESULTS.append(bool(ok))
-    print(("PASS " if ok else "FAIL ") + label + ("" if ok or not detail else f"\n     {str(detail)[-1500:]}"), flush=True)
+    took, LAST[0] = time.monotonic() - LAST[0], time.monotonic()
+    print(("PASS " if ok else "FAIL ") + label + (f" ({took:.0f} s)" if took >= 5 else "")
+          + ("" if ok or not detail else f"\n     {str(detail)[-1500:]}"), flush=True)
     return ok
 
 

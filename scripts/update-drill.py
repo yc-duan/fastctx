@@ -20,7 +20,7 @@ RESULTS = []
 
 def check(label, ok, detail=""):
     RESULTS.append(bool(ok))
-    print(("PASS " if ok else "FAIL ") + label + ("" if ok or not detail else f"\n     {str(detail)[-2000:]}"), flush=True)
+    print(("PASS " if ok else "FAIL ") + label + ("" if ok or not detail else f"\n     {str(detail)[-6000:]}"), flush=True)
     return ok
 
 
@@ -29,6 +29,18 @@ def processes(name):
                              f"Get-Process -Name {name} -ErrorAction SilentlyContinue | ForEach-Object {{ $_.Id }}"],
                             capture_output=True, text=True).stdout.split()
     return {int(pid) for pid in listed}
+
+
+def evidence(updates):
+    """What the World kept of its looking and bringing, and what its node said."""
+    said = [str(path) for path in sorted(updates.rglob("*"))]
+    for name in ("looked.json", "app.json"):
+        if (updates / name).is_file():
+            said.append(f"{name}: {(updates / name).read_text(encoding='utf-8', errors='replace')[:800]}")
+    log = updates.parent / "world" / "node.log"
+    if log.is_file():
+        said.append("node.log: " + " | ".join(log.read_text(encoding="utf-8", errors="replace").splitlines()[-25:]))
+    return "\n     ".join(said)
 
 
 def serve(directory, releases):
@@ -84,7 +96,7 @@ def main():
     while time.monotonic() - began < 420 and not package.is_file():
         time.sleep(2)
     check("the node found the later version, brought its package and checked it", package.is_file(),
-          sorted(str(path) for path in updates.rglob("*")))
+          evidence(updates))
     relaunched = set()
     while time.monotonic() - began < 600:
         if first.poll() is not None:

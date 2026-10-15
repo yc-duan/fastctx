@@ -4,9 +4,11 @@
 // to its version. A macOS application is signed ad hoc, so it runs where its owner allows it.
 //   node scripts/release.mjs [--kernel PATH] [--target TRIPLE] [--out DIR]
 //   node scripts/release.mjs --prepare [--target TRIPLE]
+//   node scripts/release.mjs --prepared --kernel PATH [--target TRIPLE] [--out DIR]
 // `--target` builds for another processor of this platform, as an Intel Mac's application is built
 // on Apple silicon. `--prepare` compiles the application while its kernel is still being built,
-// with stand-ins for what it carries; the build that then bundles it compiles only what they change.
+// with stand-ins for what it carries: nothing it carries is compiled into it. `--prepared` then
+// bundles that very application with what it carries, compiling nothing.
 // Windows leaves its NSIS installer in DIR; macOS its disk image and the updater's archive of the
 // application; Linux leaves its deb and AppImage in the bundle directory, for linux-bundle.py.
 import { execFileSync } from "node:child_process";
@@ -23,6 +25,7 @@ const option = (name) => {
   return at === -1 ? undefined : args[at + 1];
 };
 const prepare = args.includes("--prepare");
+const prepared = args.includes("--prepared");
 const platform = process.platform;
 if (!["win32", "darwin", "linux"].includes(platform)) throw new Error("World's installers are built on Windows, macOS and Linux");
 const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("CLAUDE")));
@@ -59,10 +62,14 @@ if (platform === "linux") {
     "/usr/share/doc/fastctx/THIRD_PARTY_LICENSES.md": "licenses/THIRD_PARTY_LICENSES.md",
   } } };
 }
+const crossing = target === host ? [] : ["--target", target];
 const build = (bundling) => run([
-  "build", ...(target === host ? [] : ["--target", target]), ...(bundling ? [] : ["--no-bundle"]),
+  "build", ...crossing, ...(bundling ? [] : ["--no-bundle"]),
   "--config", JSON.stringify(config), "--", "--locked", "-j", env.CARGO_BUILD_JOBS ?? String(availableParallelism()),
 ]);
+// A sidecar or resource that changes reruns tauri-build, which then compiles the application again,
+// though it compiles nothing of them in: the prepared application is bundled as it is.
+const bundlePrepared = () => run(["bundle", ...crossing, "--config", JSON.stringify(config)]);
 // What a stand-in holds, so that nothing built with one can pass for a package.
 const STAND_IN = "a stand-in while the release kernel is built\n";
 const standsIn = (path) => {
@@ -102,7 +109,8 @@ copyFileSync(kernel.binary, sidecar);
 for (const resource of resources) {
   if (!existsSync(resource) || standsIn(resource)) throw new Error(`the installer carries ${resource}, which is not there`);
 }
-build(true);
+if (prepared) bundlePrepared();
+else build(true);
 const bundle = resolve(gui, "src-tauri", env.CARGO_TARGET_DIR ?? "target", ...(target === host ? [] : [target]), "release", "bundle");
 const out = resolve(option("--out") ?? join(gui, "..", "dist", "gui"));
 mkdirSync(out, { recursive: true });

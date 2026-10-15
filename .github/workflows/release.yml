@@ -7,8 +7,9 @@ name: Release
 #
 # The jobs start together. One that needs what another uploads does what it can before
 # (`scripts/ci-await.py`): an application compiles while the kernel it carries is still being built.
-# Both Mac kernels and applications are built on Apple silicon, Intel's as a cross build, and an Intel
-# Mac runs that very kernel, its tests and its application.
+# The machines that compile fastest compile for their slower siblings: both Mac kernels and applications
+# are built on Apple silicon and both Windows ones on ARM64 Windows, Intel's and x64's as cross builds,
+# and an Intel Mac and an x64 Windows machine run those very kernels, tests and applications.
 
 on:
   workflow_dispatch:
@@ -40,7 +41,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - run: cargo install --locked cargo-about --version 0.9.0 --features cli
+      - run: python scripts/cargo-about.py
       - run: cargo fetch --locked
       - name: Write the notices
         run: |
@@ -59,12 +60,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: x86_64-pc-windows-msvc
-            runner: windows-2025
-          - target: aarch64-pc-windows-msvc
-            runner: windows-11-arm
-    runs-on: ${{ matrix.runner }}
+        target: [x86_64-pc-windows-msvc, aarch64-pc-windows-msvc]
+    runs-on: windows-11-arm
     defaults:
       run:
         shell: bash
@@ -115,18 +112,87 @@ jobs:
           name: archive-${{ matrix.target }}
           path: dist/fastctx-*.zip
           if-no-files-found: error
-      - name: Smoke test on this machine
+      - name: Build the release tests
+        run: node scripts/kernel.mjs --tests '${{ matrix.target }}' tests
+      - if: matrix.target == 'x86_64-pc-windows-msvc'
+        name: Upload the tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: tests-${{ matrix.target }}
+          path: tests
+          if-no-files-found: error
+      - if: matrix.target == 'aarch64-pc-windows-msvc'
+        name: Smoke test on this machine
         run: python scripts/smoke.py kernel/fastctx.exe
-      - name: Verify bundled ripgrep offline
+      - if: matrix.target == 'aarch64-pc-windows-msvc'
+        name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams
         run: |
           python scripts/ripgrep.py verify
-          cargo test --locked -p fastctx-ripgrep --target '${{ matrix.target }}'
-      - name: Verify the node's lifetime, job control and byte streams
-        run: |
           export FASTCTX_TEST_BASH="$(cygpath -m /usr/bin/bash.exe)"
           export FASTCTX_TEST_ROOT="$(cygpath -m "$RUNNER_TEMP")"
-          cargo test --locked --release -p fastctx-node --test own_lifetime -p fastctx-hands --test job_lifecycle \
-            --target '${{ matrix.target }}'
+          tests/offline.exe
+          tests/own_lifetime.exe
+          tests/job_lifecycle.exe
+
+  windows-x64:
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Wait for what ARM64 Windows built for x64
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/ci-await.py "kernel x86_64-pc-windows-msvc=Upload the kernel" \
+            "kernel x86_64-pc-windows-msvc=Upload the tests" "gui x86_64-pc-windows-msvc=Upload the installer"
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-x86_64-pc-windows-msvc
+          path: kernel
+      - uses: actions/download-artifact@v4
+        with:
+          name: tests-x86_64-pc-windows-msvc
+          path: tests
+      - uses: actions/download-artifact@v4
+        with:
+          name: gui-windows-x64
+          path: dist/gui
+      - name: Smoke test on an x64 machine
+        run: python scripts/smoke.py kernel/fastctx.exe
+      - name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams
+        run: |
+          python scripts/ripgrep.py verify
+          export FASTCTX_TEST_BASH="$(cygpath -m /usr/bin/bash.exe)"
+          export FASTCTX_TEST_ROOT="$(cygpath -m "$RUNNER_TEMP")"
+          tests/offline.exe
+          tests/own_lifetime.exe
+          tests/job_lifecycle.exe
+      - name: Install it and open it
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist/gui/*-setup.exe | Select-Object -First 1
+          Start-Process $installer.FullName -ArgumentList '/S' -Wait
+          $app = Join-Path $env:LOCALAPPDATA 'Fastctx/fastctx-app.exe'
+          if (-not (Test-Path $app)) { throw "the installer left no $app" }
+          $kernel = Join-Path $env:LOCALAPPDATA 'Fastctx/fastctx.exe'
+          if ((Get-FileHash $kernel).Hash -ne (Get-FileHash kernel/fastctx.exe).Hash) { throw "the installed kernel is not the one this run built and tested" }
+          & $kernel --version
+          $process = Start-Process $app -PassThru
+          Start-Sleep -Seconds 25
+          if ($process.HasExited) { throw "Fastctx exited with $($process.ExitCode)" }
+          & scripts/window-shot.ps1 -ProcessId $process.Id -Path "shots/windows-x64.png"
+          Stop-Process -Id $process.Id
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shot-windows-x64
+          path: shots
+          if-no-files-found: ignore
 
   kernel-linux:
     name: kernel ${{ matrix.target }}
@@ -197,20 +263,14 @@ jobs:
           if-no-files-found: error
       - name: Smoke test on this machine
         run: python scripts/smoke.py kernel/fastctx --service
-      - name: Verify bundled ripgrep offline
+      - name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams
         run: |
+          node scripts/kernel.mjs --tests '${{ matrix.target }}' tests
           python scripts/ripgrep.py verify
-          cargo test --locked -p fastctx-ripgrep --target '${{ matrix.target }}'
-      - name: Verify the node's lifetime, job control and byte streams
-        run: |
           export FASTCTX_TEST_BASH=/bin/bash FASTCTX_TEST_ROOT="$RUNNER_TEMP"
-          cargo zigbuild --locked --release -p fastctx-node --test own_lifetime -p fastctx-hands --test job_lifecycle \
-            --target '${{ matrix.build }}'
-          for name in own_lifetime job_lifecycle; do
-            mapfile -t tests < <(find "target/${{ matrix.build }}/release/deps" -maxdepth 1 -name "$name-*" ! -name '*.d' -type f -executable)
-            test "${#tests[@]}" = 1
-            "${tests[0]}"
-          done
+          tests/offline
+          tests/own_lifetime
+          tests/job_lifecycle
 
   kernel-macos:
     name: kernel ${{ matrix.target }}
@@ -270,28 +330,14 @@ jobs:
       - if: matrix.target == 'aarch64-apple-darwin'
         name: Smoke test on this machine
         run: python scripts/smoke.py kernel/fastctx --service
-      - name: Verify bundled ripgrep offline
+      - name: Build the release tests
+        run: node scripts/kernel.mjs --tests '${{ matrix.target }}' tests
+      - if: matrix.target == 'aarch64-apple-darwin'
+        name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams, in the bash a Mac comes with
         run: |
           python scripts/ripgrep.py verify
-          cargo test --locked -p fastctx-ripgrep --target '${{ matrix.target }}'
-      - name: Build the node's lifetime, job control and byte-stream tests
-        run: |
-          cargo test --locked --release --no-run --message-format=json -p fastctx-node --test own_lifetime \
-            -p fastctx-hands --test job_lifecycle --target '${{ matrix.target }}' > tests.json
-          mkdir -p tests
-          python - <<'EOF'
-          import json, shutil
-          for line in open("tests.json"):
-              message = json.loads(line)
-              if message.get("reason") == "compiler-artifact" and message.get("executable") \
-                      and message["target"]["name"] in ("own_lifetime", "job_lifecycle"):
-                  shutil.copy2(message["executable"], "tests/" + message["target"]["name"])
-          EOF
-          test -x tests/own_lifetime && test -x tests/job_lifecycle
-      - if: matrix.target == 'aarch64-apple-darwin'
-        name: Verify the node's lifetime, job control and byte streams, in the bash a Mac comes with
-        run: |
           export FASTCTX_TEST_BASH=/bin/bash FASTCTX_TEST_ROOT="$RUNNER_TEMP"
+          tests/offline
           tests/own_lifetime
           tests/job_lifecycle
       - if: matrix.target == 'x86_64-apple-darwin'
@@ -337,9 +383,11 @@ jobs:
         run: |
           chmod +x kernel/fastctx tests/*
           python scripts/smoke.py kernel/fastctx --service --expect-bash 3.2
-      - name: Verify the node's lifetime, job control and byte streams
+      - name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams
         run: |
+          python scripts/ripgrep.py verify
           export FASTCTX_TEST_BASH=/bin/bash FASTCTX_TEST_ROOT="$RUNNER_TEMP"
+          tests/offline
           tests/own_lifetime
           tests/job_lifecycle
       - name: Open the application
@@ -347,19 +395,18 @@ jobs:
           tar -xzf dist/*.app.tar.gz -C "$RUNNER_TEMP"
           app="$RUNNER_TEMP/Fastctx.app"
           codesign --verify --verbose "$app"
-          # The bundle signs what it carries again: the same program, once both signatures are removed.
-          cp "$app/Contents/MacOS/fastctx" "$RUNNER_TEMP/bundled" && cp kernel/fastctx "$RUNNER_TEMP/built"
-          for copy in "$RUNNER_TEMP/bundled" "$RUNNER_TEMP/built"; do
-            if codesign --display "$copy" 2> /dev/null; then codesign --remove-signature "$copy"; fi
-          done
-          cmp "$RUNNER_TEMP/bundled" "$RUNNER_TEMP/built"
+          # The bundle signs what it carries again, so its bytes differ; it is the program built here
+          # when it has the UUID the linker derived from that program's content.
+          uuid() { dwarfdump --uuid "$1" | awk '{ print $2 }'; }
+          built="$(uuid kernel/fastctx)" && test -n "$built"
+          test "$(uuid "$app/Contents/MacOS/fastctx")" = "$built"
           "$app/Contents/MacOS/fastctx" --version
           "$app/Contents/MacOS/fastctx-app" > app.log 2>&1 &
           sleep 25
-          pgrep -f fastctx-app
+          pgrep -x fastctx-app
           mkdir -p shots
           screencapture -x shots/macos-x64.png || true
-          pkill -f fastctx-app || true
+          pkill -x fastctx-app || true
           cat app.log
       - uses: actions/upload-artifact@v4
         if: always()
@@ -405,12 +452,10 @@ jobs:
       matrix:
         include:
           - target: x86_64-pc-windows-msvc
-            runner: windows-2025
             arch: x64
           - target: aarch64-pc-windows-msvc
-            runner: windows-11-arm
             arch: arm64
-    runs-on: ${{ matrix.runner }}
+    runs-on: windows-11-arm
     defaults:
       run:
         shell: bash
@@ -419,6 +464,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: rust-docs
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: gui/src-tauri
@@ -430,7 +476,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: cargo install --locked cargo-about --version 0.9.0 --features cli
+      - run: python scripts/cargo-about.py
       - name: Fetch the application's dependencies
         working-directory: gui
         run: |
@@ -446,7 +492,7 @@ jobs:
           path: dist
       - name: Compile the application while its kernel is built
         working-directory: gui
-        run: node scripts/release.mjs --prepare
+        run: node scripts/release.mjs --prepare --target '${{ matrix.target }}'
       - name: Wait for the kernels it carries
         env:
           GH_TOKEN: ${{ github.token }}
@@ -464,7 +510,7 @@ jobs:
           path: gui/src-tauri/linux
       - name: Build the installer
         working-directory: gui
-        run: node scripts/release.mjs --kernel ../kernel/fastctx.exe --out ../dist/gui
+        run: node scripts/release.mjs --prepared --kernel ../kernel/fastctx.exe --target '${{ matrix.target }}' --out ../dist/gui
       - name: Sign the installer for the updater
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -475,7 +521,8 @@ jobs:
           for installer in ../dist/gui/*-setup.exe; do
             node node_modules/@tauri-apps/cli/tauri.js signer sign --app-version "$version" "$installer"
           done
-      - name: Install it and open it
+      - if: matrix.arch == 'arm64'
+        name: Install it and open it
         shell: pwsh
         run: |
           $installer = Get-ChildItem dist/gui/*-setup.exe | Select-Object -First 1
@@ -491,7 +538,7 @@ jobs:
           & scripts/window-shot.ps1 -ProcessId $process.Id -Path "shots/windows-${{ matrix.arch }}.png"
           Stop-Process -Id $process.Id
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && matrix.arch == 'arm64'
         with:
           name: shot-windows-${{ matrix.arch }}
           path: shots
@@ -534,7 +581,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: cargo install --locked cargo-about --version 0.9.0 --features cli
+      - run: python scripts/cargo-about.py
       - name: Fetch the application's dependencies
         working-directory: gui
         run: |
@@ -570,7 +617,7 @@ jobs:
         working-directory: gui
         run: |
           chmod +x ../kernel/fastctx
-          node scripts/release.mjs --kernel ../kernel/fastctx --target '${{ matrix.target }}' --out ../dist/gui
+          node scripts/release.mjs --prepared --kernel ../kernel/fastctx --target '${{ matrix.target }}' --out ../dist/gui
       - name: Sign the application for the updater
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -584,19 +631,18 @@ jobs:
         run: |
           app=gui/src-tauri/target/release/bundle/macos/Fastctx.app
           codesign --verify --verbose "$app"
-          # The bundle signs what it carries again: the same program, once both signatures are removed.
-          cp "$app/Contents/MacOS/fastctx" "$RUNNER_TEMP/bundled" && cp kernel/fastctx "$RUNNER_TEMP/built"
-          for copy in "$RUNNER_TEMP/bundled" "$RUNNER_TEMP/built"; do
-            if codesign --display "$copy" 2> /dev/null; then codesign --remove-signature "$copy"; fi
-          done
-          cmp "$RUNNER_TEMP/bundled" "$RUNNER_TEMP/built"
+          # The bundle signs what it carries again, so its bytes differ; it is the program built here
+          # when it has the UUID the linker derived from that program's content.
+          uuid() { dwarfdump --uuid "$1" | awk '{ print $2 }'; }
+          built="$(uuid kernel/fastctx)" && test -n "$built"
+          test "$(uuid "$app/Contents/MacOS/fastctx")" = "$built"
           "$app/Contents/MacOS/fastctx" --version
           "$app/Contents/MacOS/fastctx-app" > app.log 2>&1 &
           sleep 25
-          pgrep -f fastctx-app
+          pgrep -x fastctx-app
           mkdir -p shots
           screencapture -x "shots/macos-${{ matrix.arch }}.png" || true
-          pkill -f fastctx-app || true
+          pkill -x fastctx-app || true
           cat app.log
       - uses: actions/upload-artifact@v4
         if: always() && matrix.target == 'aarch64-apple-darwin'
@@ -623,7 +669,7 @@ jobs:
       - name: Install the build's system packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev patchelf squashfs-tools xvfb imagemagick file libfuse2
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev patchelf squashfs-tools xvfb x11-utils imagemagick file libfuse2
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: rust-docs
@@ -638,7 +684,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: cargo install --locked cargo-about --version 0.9.0 --features cli
+      - run: python scripts/cargo-about.py
       - name: Fetch the application's dependencies
         working-directory: gui
         run: |
@@ -677,7 +723,7 @@ jobs:
           mkdir -p "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release"
           cp kernel/fastctx "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/fastctx"
           cd gui
-          node scripts/release.mjs --kernel ../kernel/fastctx
+          node scripts/release.mjs --prepared --kernel ../kernel/fastctx
           python ../scripts/linux-bundle.py --target-dir "$CARGO_TARGET_DIR" --output ../dist/gui
       - name: Sign the packages for the updater
         env:
@@ -691,11 +737,23 @@ jobs:
           done
       - name: Open the AppImage
         run: |
-          image="$(ls dist/gui/*.AppImage)"
+          image="$(realpath dist/gui/*.AppImage)"
           chmod +x "$image"
+          mkdir -p shots
           export APPIMAGE_EXTRACT_AND_RUN=1 WEBKIT_DISABLE_DMABUF_RENDERER=1
-          xvfb-run -a -s "-screen 0 1280x860x24" bash -c "\"$image\" > app.log 2>&1 & sleep 30; mkdir -p shots; import -window root shots/linux-x64.png; pgrep -f fastctx-app; status=\$?; pkill -f fastctx-app; exit \$status"
+          # The application is found by its own process name, and by its window's title on the screen.
+          status=0
+          xvfb-run -a -s "-screen 0 1280x860x24" sh -c '
+            "$1" > app.log 2>&1 &
+            sleep 30
+            import -window root shots/linux-x64.png
+            xwininfo -root -tree | grep -F "\"Fastctx\""
+            shown=$?
+            pgrep -x fastctx-app > /dev/null || shown=1
+            pkill -x fastctx-app
+            exit $shown' sh "$image" || status=$?
           cat app.log
+          exit $status
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -734,7 +792,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: cargo install --locked cargo-about --version 0.9.0 --features cli
+      - run: python scripts/cargo-about.py
       - name: Install the Android SDK parts the build takes
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
@@ -792,7 +850,6 @@ jobs:
           if-no-files-found: error
 
   update-windows:
-    needs: gui-windows
     runs-on: windows-2025
     defaults:
       run:
@@ -805,6 +862,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Wait for the x64 installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/ci-await.py "gui x86_64-pc-windows-msvc=Upload the installer"
       - uses: actions/download-artifact@v4
         with:
           name: gui-windows-x64
@@ -824,7 +885,7 @@ jobs:
         run: python scripts/update-drill.py "$(ls dist/*-setup.exe)" later/next-setup.exe "$LATER"
 
   manifest:
-    needs: [kernel-windows, kernel-linux, kernel-macos, macos-intel, sign-kernels, gui-windows, gui-macos, gui-linux, android, update-windows]
+    needs: [kernel-windows, windows-x64, kernel-linux, kernel-macos, macos-intel, sign-kernels, gui-windows, gui-macos, gui-linux, android, update-windows]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
