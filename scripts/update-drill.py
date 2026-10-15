@@ -1,8 +1,9 @@
 """The whole of an application update on a Windows computer, as a release's check: World installed
-from its installer, automatic updates and test releases switched on, and a stand-in for GitHub on
-this computer offering a later version, which is the same installer signed for that version. The
-node finds it, brings it and checks its signature; the interface installs it with the official
-updater once nothing is under way, and Fastctx opens again.
+from its installer, a language chosen and automatic updates and test releases switched on, as by
+a user of the interface, and a stand-in for GitHub on this computer offering a later version,
+which is the same installer signed for that version. The node finds it; the interface has it
+brought and checked, installs it with the official updater once nothing is under way, and
+Fastctx opens again.
 
     python scripts/update-drill.py INSTALLER LATER-INSTALLER LATER-VERSION
 """
@@ -88,6 +89,11 @@ def main():
     updates = Path.home() / ".fastctx" / "updates"
     updates.mkdir(parents=True, exist_ok=True)
     (updates / "settings.json").write_text(json.dumps({"auto": True, "beta": True, "relays": True}))
+    # Until a language is chosen the interface shows only the page that asks for one; the rest of
+    # it, which takes the updates, loads after.
+    world = Path.home() / ".fastctx" / "world"
+    world.mkdir(parents=True, exist_ok=True)
+    (world / "features.json").write_text(json.dumps({"language": "en"}))
     env = {key: value for key, value in os.environ.items() if not key.upper().startswith("CLAUDE")}
     env["FASTCTX_UPDATE_RELEASES"] = f"http://127.0.0.1:{port}/releases"
     first = subprocess.Popen([str(app)], env=env)
