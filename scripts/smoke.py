@@ -54,8 +54,13 @@ class Lab:
         return values
 
     def run(self, who, *args, stdin=None, timeout=180):
-        done = subprocess.run([str(self.program), *args], env=self.env(who), input=stdin, capture_output=True,
-                              text=True, encoding="utf-8", errors="replace", timeout=timeout)
+        try:
+            done = subprocess.run([str(self.program), *args], env=self.env(who), input=stdin, capture_output=True,
+                                  text=True, encoding="utf-8", errors="replace", timeout=timeout)
+        except subprocess.TimeoutExpired as expired:
+            said = [part.decode("utf-8", "replace") if isinstance(part, bytes) else part or ""
+                    for part in (expired.stdout, expired.stderr)]
+            return None, "".join(said) + f"\n[still running after {timeout} s, so stopped]"
         return done.returncode, done.stdout + done.stderr
 
     def spawn(self, who, *args):
@@ -303,10 +308,17 @@ def diagnose(lab, root):
         for unit in [word for word in units if word.endswith(".service")]:
             print(f"== journal of {unit}")
             print(subprocess.run(["journalctl", "-u", unit, "-n", "60", "--no-pager"], capture_output=True, text=True).stdout)
+    # An uninstall's administrator helper works from a directory of its own, with its own log.
+    for helper in sorted(Path(tempfile.gettempdir()).glob("fastctx-uninstall-admin-*")):
+        for name in ("helper.log", "events.jsonl", "continue.json", "complete.json"):
+            if (helper / name).exists():
+                print(f"== {helper.name}/{name}")
+                print("\n".join(tail(helper / name, 40)))
     if os.name != "nt":
-        print("== node processes")
+        print("== fastctx processes")
         listing = subprocess.run(["ps", "-eo", "pid=,ppid=,args="], capture_output=True, text=True).stdout
-        print("\n".join(line.replace(str(root), "<root>") for line in listing.splitlines() if str(root) in line))
+        print("\n".join(line.replace(str(root), "<root>") for line in listing.splitlines()
+                        if str(root) in line or "fastctx" in line))
 
 
 if __name__ == "__main__":

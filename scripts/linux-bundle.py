@@ -86,7 +86,13 @@ def native_notices(appdir):
         text += f'## {binary} {version}\n\nSource: https://launchpad.net/ubuntu/+source/{source}/{source_version}\n\n'+fenced(copyright_text)
         for name in sorted(set(re.findall(r'/usr/share/common-licenses/([A-Za-z0-9.+-]+)', copyright_text))):
             name = name.rstrip('.')
-            text += f'### {name}\n\n'+fenced((Path('/usr/share/common-licenses')/name).read_text())
+            license_path = Path('/usr/share/common-licenses')/name
+            # Some packages name `GPL-2.0` what Debian and Ubuntu keep as `GPL-2`.
+            if not license_path.is_file() and name.endswith('.0'):
+                license_path = license_path.with_name(name[:-2])
+            if not license_path.is_file():
+                raise FileNotFoundError(f'{binary} refers to /usr/share/common-licenses/{name}, which is not there')
+            text += f'### {name}\n\n'+fenced(license_path.read_text())
     if hooks:
         text += ('## GTK deployment hook\n\nThe linuxdeploy GTK plugin by TheAssassin and the linuxdeploy contributors '
                  'is modified and embedded by Tauri CLI 2.12.1; '

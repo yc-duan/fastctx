@@ -29,8 +29,9 @@ __fastctx_flags=$-
 __fastctx_login=$(
     compgen -v; printf '\036'; compgen -A function; printf '\036'; shopt -p
     # Command substitution normally clears errexit. Read the caller's
-    # setting, not that implementation detail of the snapshot.
-    case $__fastctx_flags in *e*) set -e ;; esac
+    # setting, not that implementation detail of the snapshot. The pattern
+    # opens with its own parenthesis: bash 3.2 ends `$(` at a bare `)`.
+    case $__fastctx_flags in (*e*) set -e ;; esac
     set +o
 )
 
@@ -52,7 +53,9 @@ __fastctx_state() {
         builtin printf '\0'
         if [ -n "$3" ]; then builtin eval "builtin declare -f -- $3" || builtin return 255; fi
         builtin printf '\0'
-        if [ -n "$3" ]; then builtin eval "builtin declare -F -p -- $3" || builtin return 255; fi
+        # The chosen names, then every function's attributes: bash 3.2 lists
+        # them only all at once. The helper keeps the chosen ones'.
+        if [ -n "$3" ]; then builtin printf '%s\n' "$3"; builtin declare -F; fi
         builtin printf '\0'
         builtin shopt -p
         builtin set +o

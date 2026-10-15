@@ -49,6 +49,20 @@ fi
 IFS= read -r -d '' declarations
 IFS= read -r -d '' definitions
 IFS= read -r -d '' attributes
+# The chosen functions' names come first, quoted as this helper quoted them,
+# then every function's attributes; only the chosen ones' are kept.
+chosen=${attributes%%$'\n'*}
+listing=${attributes#*$'\n'}
+attributes=
+eval "set -- $chosen"
+while IFS= read -r attribute; do
+    for name in "$@"; do
+        if [ "${attribute#declare -* }" = "$name" ]; then
+            attributes+="$attribute"$'\n'
+            break
+        fi
+    done
+done <<<"$listing"
 printf 'builtin shopt -s extglob || return 255\n'
 vars_sent=
 while IFS= read -r declaration; do
