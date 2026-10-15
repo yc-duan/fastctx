@@ -16,9 +16,17 @@ const overrides = {
 // Vite names their files by the real path: a package's place in the lock is
 // read against the real `node_modules`.
 const modules = realpathSync(join(gui, "node_modules"));
+// macOS and Windows ignore case, and a tool reading files there may name them
+// in another case than the disk's, as TypeScript lowers whole paths on a Mac.
+const ignoresCase = process.platform === "darwin" || process.platform === "win32";
 function locationOf(directory) {
-  const inside = relative(modules, directory);
-  const location = inside.startsWith("..") || isAbsolute(inside) ? relative(gui, directory) : join("node_modules", inside);
+  let inside = relative(modules, directory);
+  const outside = (path) => path.startsWith("..") || isAbsolute(path);
+  if (outside(inside) && ignoresCase) {
+    const folded = relative(modules.toLowerCase(), directory.toLowerCase());
+    if (!outside(folded)) inside = directory.slice(directory.length - folded.length);
+  }
+  const location = outside(inside) ? relative(gui, directory) : join("node_modules", inside);
   return location.replaceAll("\\", "/");
 }
 
