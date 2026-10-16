@@ -37,6 +37,8 @@ use fastctx_net::sign::{Bytes, PublicKey};
 use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
 use fastctx_types::{AccountName, HubName, MachineName};
 use jiff::Timestamp;
+mod counts;
+
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -448,8 +450,9 @@ impl Store {
         let hub: HubFile = read(&Self::hub_file(dir))?;
         let (book, upgraded) = Self::read_book(dir)?;
         let mut letters: BTreeMap<MachineName, Letters> = read_or_default(&dir.join("letters.json"))?;
-        let mut changed = rehouse(dir, &book.directory, &mut letters)?;
-        for (name, entry) in &mut letters {
+        let mut changed = counts::migrate(dir, &book.directory, &mut letters)?;
+        changed |= rehouse(dir, &book.directory, &mut letters)?;
+        for entry in letters.values_mut() {
             // A member connected when the hub stopped left at a time the
             // hub never saw.
             if entry.connected_at.take().is_some() {
@@ -465,7 +468,7 @@ impl Store {
             }
             // A sender's count is kept in a file of its own, written before
             // the hub said it holds a letter; the records may be older.
-            if let Some(kept) = read_count(dir, entry.out_epoch, name)? {
+            if let Some(kept) = read_count(dir, entry.out_epoch)? {
                 if (kept.epoch, kept.taken) != (entry.epoch, entry.taken) {
                     entry.epoch = kept.epoch;
                     entry.taken = kept.taken;
@@ -666,9 +669,17 @@ impl Store {
         for (old, new) in renamed {
             // The same name spelled anew keeps its records where they are.
             if old != new && self.letters.contains_key(&new) {
-                return Err(io::Error::other(format!(
-                    "letters are kept for both {old} and {new}, which it was renamed to"
-                )));
+                // The current member still owns its old-name record. The
+                // occupied destination belongs to a removed member (2026-10-16).
+                let removed = self.letters[&new].out_epoch;
+                let discarded = self.forget_letters(&new);
+                said.push(format!(
+                    "{new} was reused by {old}; retired the removed member's numbering {removed:016x} at {}",
+                    box_path(&self.dir, removed).display()
+                ));
+                if let Err(error) = discarded {
+                    said.push(format!("preserved remnants of removed numbering {removed:016x}: {error}"));
+                }
             }
             // Its letters stay in the directory of their numbering, and what
             // is known of them goes on under the new name, those being
@@ -855,7 +866,7 @@ impl Store {
     /// those the hub said it holds.
     pub fn letters_of(&mut self, name: &MachineName) -> io::Result<&mut Letters> {
         if !self.letters.contains_key(name) {
-            let fresh = Letters::fresh(read_taken(&self.dir, name)?)?;
+            let fresh = Letters::fresh(None)?;
             self.letters.insert(name.clone(), fresh);
             if let Err(error) = self.save_letters_now() {
                 self.letters.remove(name);
@@ -925,19 +936,11 @@ fn count_path(dir: &Path, numbering: u64) -> PathBuf {
     dir.join(COUNTS).join(format!("{numbering:016x}"))
 }
 
-/// Migrates a legacy name-based count before any session can write it.
-fn read_count(dir: &Path, numbering: u64, name: &MachineName) -> io::Result<Option<Taken>> {
-    let path = count_path(dir, numbering);
-    match read(&path) {
+/// Reads only the immutable storage identity after the one-time import.
+fn read_count(dir: &Path, numbering: u64) -> io::Result<Option<Taken>> {
+    match read(&count_path(dir, numbering)) {
         Ok(taken) => Ok(Some(taken)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let taken = read_taken(dir, name)?;
-            if let Some(taken) = &taken {
-                ensure_private_dir(&dir.join(COUNTS))?;
-                publish(&path, &json(taken)?, Permissions::Private)?;
-            }
-            Ok(taken)
-        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }
 }
@@ -1015,7 +1018,7 @@ fn rehouse(dir: &Path, directory: &Directory, letters: &mut BTreeMap<MachineName
                 found |= std::fs::exists(name.entry_in(&outbox)?)?;
             }
             if found {
-                letters.insert(member.name.clone(), Letters::fresh(read_taken(dir, &member.name)?)?);
+                letters.insert(member.name.clone(), Letters::fresh(None)?);
                 changed = true;
             }
         }
@@ -1030,8 +1033,13 @@ fn rehouse(dir: &Path, directory: &Directory, letters: &mut BTreeMap<MachineName
                 directory.member(name).into_iter().flat_map(|member| std::iter::once(&member.name).chain(&member.was)),
             )
             .collect();
-        for name in names {
-            let old = name.entry_in(&outbox)?;
+        for alias in names {
+            // A directly recorded name belongs to that record even when a
+            // different current member now has it as an alias (2026-10-16).
+            if alias != name && letters.contains_key(alias) {
+                continue;
+            }
+            let old = alias.entry_in(&outbox)?;
             if !std::fs::exists(&old)? {
                 continue;
             }
