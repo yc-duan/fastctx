@@ -110,6 +110,8 @@ function conversation(sessionId, previous) {
     // Something a later look can settle failed in this one.
     unsettled: false,
     stopped: null,
+    // The user stopped the last turn, which the next one is to hear.
+    toldStopped: false,
     writing: Promise.resolve(),
     streamBatch: null,
     unwritten: new Map(),
@@ -373,25 +375,46 @@ async function replaced($, context, deliveries) {
   await event($, context, 'replaced', { deliveries: deliveries.map((delivery) => delivery.id) })
 }
 
+// What the next turn reads of the last one the user stopped. Claude Code
+// ends a turn a plugin stops as one ended to deliver a following message,
+// and says so to a call it cut short: the model would not otherwise know
+// the user stopped it.
+const STOPPED = 'The user stopped your previous turn on purpose. A tool call it cut short may have partly taken effect, whatever its result says about why it ended. The commands it was waiting on were stopped; any already left running in the background go on.'
+
+// What rides with the next turn, the World's words for it: that the user
+// stopped the last turn, and what is held to go along. Taken as it is read;
+// `keep` puts back what did not go in.
+function alongNext(context) {
+  const along = context.held.filter((delivery) => delivery.along !== undefined)
+  for (const delivery of along) context.held.splice(context.held.indexOf(delivery), 1)
+  const stopped = context.toldStopped
+  context.toldStopped = false
+  const texts = [...(stopped ? [framed({ text: STOPPED })] : []), ...along.map(framed)]
+  const keep = () => {
+    context.held.unshift(...along)
+    if (stopped) context.toldStopped = true
+  }
+  return { along, texts, keep }
+}
+
 // What waits to ride with the next turn goes in as a row of its own just
 // before a prompt this plugin submits; the turn that prompt starts takes it
 // (`startTurn`), and the model reads both in the one request.
 async function alongBefore($, context) {
-  const along = context.held.filter((delivery) => delivery.along !== undefined)
-  if (along.length === 0) return
-  for (const delivery of along) context.held.splice(context.held.indexOf(delivery), 1)
+  const { along, texts, keep } = alongNext(context)
+  if (texts.length === 0) return
   let appended
   try {
     context.appending = true
-    appended = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: along.map(framed).join('\n\n') }] } })
+    appended = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: texts.join('\n\n') }] } })
   } catch (error) {
-    context.held.unshift(...along)
+    keep()
     worldFailure($, 'session.append', error)
     return
   } finally {
     context.appending = false
   }
-  if (appended.deny !== undefined) context.held.unshift(...along)
+  if (appended.deny !== undefined) keep()
   else context.alongTaken.push(...along)
 }
 
@@ -399,17 +422,16 @@ async function alongBefore($, context) {
 // that starts it; the turn it starts takes it (`startTurn`).
 async function alongPrompt($, context, e, next) {
   if (e.turnId !== undefined || e.command !== undefined || context.closed) return next(e)
-  const along = context.held.filter((delivery) => delivery.along !== undefined)
-  if (along.length === 0) return next(e)
-  for (const delivery of along) context.held.splice(context.held.indexOf(delivery), 1)
+  const { along, texts, keep } = alongNext(context)
+  if (texts.length === 0) return next(e)
   let result
   try {
-    result = await next({ ...e, context: [...(e.context ?? []), ...along.map(framed)] })
+    result = await next({ ...e, context: [...(e.context ?? []), ...texts] })
   } catch (error) {
-    context.held.unshift(...along)
+    keep()
     throw error
   }
-  if (result.drop !== undefined) context.held.unshift(...along)
+  if (result.drop !== undefined) keep()
   else context.alongTaken.push(...along)
   return result
 }
@@ -512,6 +534,7 @@ async function stopping($, context) {
   context.stopped = asked
   try {
     await $.turn.abort({ turnId: asked })
+    context.toldStopped = true
   } catch (error) {
     // Claude Code refuses an abort only for a turn that is not running: the
     // turn held as running had ended unseen, and is ended here.
