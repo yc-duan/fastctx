@@ -176,11 +176,13 @@ fn network(node: &Node) -> Option<Network> {
         kept.beta = fastctx_types::update::newest(kept.beta.as_ref(), network.beta.as_ref()).cloned();
         kept.policy.minimum = higher(kept.policy.minimum.take(), network.policy.minimum);
         kept.policy.managed_auto &= network.policy.managed_auto;
+        // A hub that does not say what it runs takes nothing from what
+        // another says: the oldest a hub is known to run still holds.
         kept.hub = match (kept.hub.take(), network.hub) {
             (Some(a), Some(b)) => {
                 Some(if fastctx_types::update::release(&b) < fastctx_types::update::release(&a) { b } else { a })
             }
-            _ => None,
+            (known, unknown) => known.or(unknown),
         };
         kept.machines.extend(network.machines);
         kept.due.extend(network.due);
@@ -201,14 +203,16 @@ fn kind(node: &Node, held: &Held) -> Kind {
 
 /// The newest major version every hub this machine is on runs, which a
 /// release taken by itself does not pass (`world-upgrade.md`, 自动更新): none
-/// outside any network, where a hub does not say, or where the machine
-/// itself keeps a hub, which would otherwise never move to a new one.
+/// outside any network, or where the machine itself keeps a hub, which would
+/// otherwise never move to a new one. Where no hub says what it runs, the
+/// major version running here: an older hub does not say, and is not passed.
 fn hub_major(node: &Node, network: Option<&Network>) -> Option<u64> {
     let hubs_here = fastctx_install::service::registered_hubs(&node.root).is_ok_and(|hubs| !hubs.is_empty());
     if hubs_here || node.links().is_empty() {
         return None;
     }
-    network?.hub.as_deref().and_then(fastctx_types::update::release).map(|version| version.major)
+    let said = network.and_then(|network| network.hub.as_deref()).and_then(fastctx_types::update::release);
+    said.or_else(|| fastctx_types::update::release(env!("CARGO_PKG_VERSION"))).map(|version| version.major)
 }
 
 /// The higher of two minimum versions, either of which may be missing.
@@ -613,17 +617,36 @@ pub(crate) async fn machine(
     if node.is_me(&machine) {
         return call(node, update).await.map_err(Failure::new);
     }
-    let older = network(node)
-        .and_then(|network| network.machines.get(&machine).map(|running| running.kernel.clone()))
-        .is_some_and(|kernel| fastctx_types::update::release(&kernel) < fastctx_types::update::release(ASKED_SINCE));
-    let call = match update {
-        UpdateCall::Kernel { version: None } if older => RemoteCall::UpdateWorld,
-        _ if older => {
+    // What it runs, as its hub last heard; else as it says itself. A machine
+    // whose release is not known is not taken for one that knows the newer
+    // call.
+    let heard = network(node).and_then(|network| network.machines.get(&machine).map(|running| running.kernel.clone()));
+    let running = match heard {
+        Some(kernel) => Some(kernel),
+        None => {
+            match node.call(acting, &(&machine).into(), fastctx_types::access::Purpose::Look, RemoteCall::Facts).await {
+                Ok(Ok(RemoteReply::Facts(facts))) => Some(facts.version),
+                _ => None,
+            }
+        }
+    };
+    let older = running
+        .as_deref()
+        .map(|kernel| fastctx_types::update::release(kernel) < fastctx_types::update::release(ASKED_SINCE));
+    let call = match (update, older) {
+        (update, Some(false)) => RemoteCall::Updates { update },
+        // Every release takes this one.
+        (UpdateCall::Kernel { version: None }, _) => RemoteCall::UpdateWorld,
+        (_, Some(true)) => {
             return Err(Failure::new(format!(
                 "{machine} runs a release before {ASKED_SINCE}, which only updates to the newest on its line"
             )));
         }
-        update => RemoteCall::Updates { update },
+        (_, None) => {
+            return Err(Failure::new(format!(
+                "what {machine} runs is not known now, and a release before {ASKED_SINCE} only updates to the newest on its line; ask again once it is connected"
+            )));
+        }
     };
     match node
         .call(acting, &(&machine).into(), fastctx_types::access::Purpose::Hands, call)

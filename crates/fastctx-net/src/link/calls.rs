@@ -213,9 +213,15 @@ impl Inner {
             }
             Kind::Answer => match reply.body::<Body>() {
                 Ok(Body::Answer { result }) => Ok(result),
-                Ok(Body::LargeAnswer { carried }) => self.fetch(via, to, &reply, &carried).await.map_err(|reason| {
-                    broken(format!("its answer was too large for a message, and fetching it failed: {reason}"))
-                }),
+                Ok(Body::LargeAnswer { carried }) => {
+                    let bytes = self.fetch(via, to, &reply, &carried).await.map_err(|reason| {
+                        broken(format!("its answer was too large for a message, and fetching it failed: {reason}"))
+                    })?;
+                    // It answered: what it said cannot be read, as a newer
+                    // release may say, which is not the same as no answer.
+                    serde_json::from_slice(&bytes)
+                        .map_err(|error| CallFailure::Unreadable { name: to.clone(), reason: error.to_string() })
+                }
                 Ok(_) => Err(broken("what came back is not an answer".to_string())),
                 Err(_) => Err(CallFailure::Unreadable {
                     name: to.clone(),
@@ -368,22 +374,21 @@ impl Inner {
         Ok(envelope)
     }
 
-    /// Takes a large answer `to` sends over the data connection its answer
-    /// names.
+    /// Takes the bytes of a large answer `to` sends over the data connection
+    /// its answer names.
     async fn fetch(
         self: &Arc<Self>,
         via: &Via,
         to: &MachineName,
         answer: &Envelope,
         carried: &Carried,
-    ) -> Result<RemoteResult, String> {
+    ) -> Result<Vec<u8>, String> {
         let ticket = answer.stream.as_ref().ok_or("the answer names no data connection")?;
         let view = self.view();
         if !view.same(&ticket.source, to) || !view.is_me(&ticket.sink) || ticket.stream != carried.stream {
             return Err(format!("its data connection is for {} to {}", ticket.source, ticket.sink));
         }
-        let bytes = crate::data::sink(&via.endpoint(self), &self.key, carried).await?;
-        serde_json::from_slice(&bytes).map_err(|error| format!("the answer cannot be read: {error}"))
+        crate::data::sink(&via.endpoint(self), &self.key, carried).await
     }
 
     /// The next number this machine sends under, for something to `to`.

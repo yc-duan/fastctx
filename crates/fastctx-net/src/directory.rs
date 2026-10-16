@@ -36,6 +36,9 @@ pub struct Member {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub was: Vec<MachineName>,
     pub key: PublicKey,
+    /// A kind a later hub adds is read as the most careful this release
+    /// knows (`fastctx_types::tolerant`).
+    #[serde(deserialize_with = "fastctx_types::tolerant::read")]
     pub kind: Kind,
     /// The accounts logged in on it.
     pub logins: BTreeSet<AccountName>,
@@ -217,6 +220,9 @@ pub struct Project {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Account {
     pub name: AccountName,
+    /// A level a later hub adds is read as the most careful this release
+    /// knows (`fastctx_types::tolerant`).
+    #[serde(deserialize_with = "fastctx_types::tolerant::read")]
     pub level: Level,
     pub locked: bool,
     pub opened: Timestamp,
