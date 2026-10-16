@@ -154,6 +154,23 @@ pub const MOST_USES: u32 = 9999;
 /// Where the letters of members taken off wait to be deleted.
 pub(crate) const TRASH: &str = "outbox-trash";
 
+/// Where the letters waiting for each member are kept: a directory for each
+/// numbering of the hub's letters to it (`Letters::out_epoch`), never for
+/// its name. A rename moves nothing, so a letter written as it happens goes
+/// where its number says; a member that takes the name of one taken off
+/// numbers its letters in a directory of its own, which nothing written for
+/// the other reaches.
+const BOXES: &str = "outboxes";
+
+/// Where the letters waiting for each member were kept, by its name, before
+/// 1.0.1-beta.3; moved to `BOXES` as the hub opens (`rehouse`).
+const OUTBOX: &str = "outbox";
+
+/// The directory of the letters numbered `epoch`.
+fn box_path(dir: &Path, epoch: u64) -> PathBuf {
+    dir.join(BOXES).join(format!("{epoch:016x}"))
+}
+
 /// How long a code no device comes in by any more is kept before it is
 /// forgotten: its maker still sees which machines came in by it, and a
 /// device cut off on its last use may still finish.
@@ -290,6 +307,33 @@ pub struct Letters {
     pub refused: BTreeMap<u64, String>,
 }
 
+impl Letters {
+    /// The records of a member's letters as they start: its own count of its
+    /// letters as its file keeps it, should one be left, and the hub's
+    /// numbering of its letters to it, new.
+    fn fresh(kept: Option<Taken>) -> io::Result<Self> {
+        let (epoch, taken, refused) = match kept {
+            Some(kept) => (kept.epoch, kept.taken, kept.refused),
+            None => (0, 0, BTreeMap::new()),
+        };
+        Ok(Self {
+            epoch,
+            taken,
+            out_epoch: u64::from_le_bytes(fastctx_net::sign::random::<8>()?),
+            next: 1,
+            last_seen: None,
+            connected_at: None,
+            any_names: false,
+            renames: false,
+            forgets: false,
+            roles: false,
+            versions: false,
+            due: false,
+            refused,
+        })
+    }
+}
+
 pub struct Store {
     dir: PathBuf,
     pub hub: HubFile,
@@ -330,13 +374,11 @@ pub struct Store {
     pub(crate) intake: std::collections::HashMap<MachineName, u64>,
 }
 
-/// The most refusals a sender's count keeps, the latest.
-const REFUSALS: usize = 256;
-
 /// A sender's count of its own letters, the last of which the hub holds,
-/// and why it refused those it refused: kept in a small file of its own,
-/// written before the hub says it holds a letter, so a letter sent again
-/// after a stop is known, and one refused is told why again.
+/// and why it refused those it refused that the sender has not shown it
+/// heard of: kept in a small file of its own, written before the hub says
+/// it holds a letter, so a letter sent again after a stop is known, and one
+/// refused is told why again.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Taken {
     pub epoch: u64,
@@ -346,17 +388,17 @@ pub(crate) struct Taken {
 }
 
 impl Taken {
-    /// `entry`'s count as it is now, with its latest refusals.
+    /// `entry`'s count as it is now, with its refusals not yet heard of.
     pub(crate) fn of(entry: &Letters) -> Self {
-        let skip = entry.refused.len().saturating_sub(REFUSALS);
-        let refused = entry.refused.iter().skip(skip).map(|(seq, why)| (*seq, why.clone())).collect();
-        Self { epoch: entry.epoch, taken: entry.taken, refused }
+        Self { epoch: entry.epoch, taken: entry.taken, refused: entry.refused.clone() }
     }
 }
 
 /// A number given to a letter for a member (`Store::next_letter`).
 pub(crate) struct Numbered {
     pub seq: u64,
+    /// The numbering it is of (`Letters::out_epoch`).
+    pub epoch: u64,
     /// The file it is written to.
     pub path: PathBuf,
     /// The key of the member it is for, when it was numbered.
@@ -406,7 +448,7 @@ impl Store {
         let hub: HubFile = read(&Self::hub_file(dir))?;
         let (book, upgraded) = Self::read_book(dir)?;
         let mut letters: BTreeMap<MachineName, Letters> = read_or_default(&dir.join("letters.json"))?;
-        let mut changed = false;
+        let mut changed = rehouse(dir, &book.directory, &mut letters)?;
         for (name, entry) in &mut letters {
             // A member connected when the hub stopped left at a time the
             // hub never saw.
@@ -415,7 +457,7 @@ impl Store {
                 changed = true;
             }
             // A letter written just before a stop may not be counted yet.
-            if let Some(highest) = outbox_entries(dir, name)?.last().map(|(seq, _)| *seq)
+            if let Some(highest) = box_entries(dir, entry.out_epoch)?.last().map(|(seq, _)| *seq)
                 && highest >= entry.next
             {
                 entry.next = highest + 1;
@@ -507,24 +549,44 @@ impl Store {
                 }
             }
         }
-        let outbox = self.dir.join("outbox");
-        let entries = match std::fs::read_dir(&outbox) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return said,
-            Err(error) => {
-                said.push(format!("reading {}: {error}", outbox.display()));
-                return said;
+        // Kept by name, as before 1.0.1-beta.3: a member's were moved as the
+        // hub opened, so what is left is no member's.
+        let outbox = self.dir.join(OUTBOX);
+        match std::fs::read_dir(&outbox) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if name.starts_with('.') {
+                        continue;
+                    }
+                    match self.set_aside(&entry.path(), &name) {
+                        Ok(()) => said.push(format!("set aside the letters kept for {name}, no member of the hub")),
+                        Err(error) => said.push(format!("setting aside the letters kept for {name}: {error}")),
+                    }
+                }
+                let _ = std::fs::remove_dir(&outbox);
             }
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') || members.contains(&name) {
-                continue;
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => said.push(format!("reading {}: {error}", outbox.display())),
+        }
+        let numberings: std::collections::BTreeSet<String> =
+            self.letters.values().map(|entry| format!("{:016x}", entry.out_epoch)).collect();
+        let boxes = self.dir.join(BOXES);
+        match std::fs::read_dir(&boxes) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    let numbering = entry.file_name().to_string_lossy().into_owned();
+                    if numbering.starts_with('.') || numberings.contains(&numbering) {
+                        continue;
+                    }
+                    match self.set_aside(&entry.path(), &numbering) {
+                        Ok(()) => said.push(format!("set aside the letters numbered {numbering}, no member's")),
+                        Err(error) => said.push(format!("setting aside the letters numbered {numbering}: {error}")),
+                    }
+                }
             }
-            match self.set_aside(&entry.path(), &name) {
-                Ok(()) => said.push(format!("set aside the letters kept for {name}, no member of the hub")),
-                Err(error) => said.push(format!("setting aside the letters kept for {name}: {error}")),
-            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => said.push(format!("reading {}: {error}", boxes.display())),
         }
         said
     }
@@ -574,20 +636,16 @@ impl Store {
                     ));
                     continue;
                 }
-                let from = old.entry_in(&self.dir.join("outbox"))?;
-                if std::fs::exists(&from)? {
-                    let to = new.entry_in(&self.dir.join("outbox"))?;
-                    std::fs::rename(&from, &to)?;
-                }
                 let count = taken_path(&self.dir, &old);
                 if std::fs::exists(&count)? {
                     std::fs::rename(&count, taken_path(&self.dir, &new))?;
                 }
             }
-            // What is known of the letters under the old name is read again
-            // under the new, once its session wants them; what was writing
-            // under the old name writes there no more.
-            self.mailboxes.remove(&old);
+            // Its letters stay in the directory of their numbering, and what
+            // is known of them goes on under the new name, those being
+            // written among them; its session ended with the rename. What was
+            // counting its own letters under the old name counts no more.
+            crate::mailbox::renamed(&mut self.mailboxes, &old, &new);
             self.intake.remove(&old);
             if let Some(fence) = self.counts.remove(&old) {
                 fence.close();
@@ -716,9 +774,10 @@ impl Store {
         self.revision
     }
 
-    /// Where the letters waiting for `name` are kept.
-    pub(crate) fn outbox_of(&self, name: &MachineName) -> io::Result<PathBuf> {
-        name.entry_in(&self.dir.join("outbox"))
+    /// The numbering of the letters waiting for `name`, and the directory
+    /// they are kept in; none while it has no records of letters.
+    pub(crate) fn outbox_of(&self, name: &MachineName) -> Option<(u64, PathBuf)> {
+        self.letters.get(name).map(|entry| (entry.out_epoch, box_path(&self.dir, entry.out_epoch)))
     }
 
     /// `name`'s count as it is now, its revision, and the fence it is
@@ -752,25 +811,18 @@ impl Store {
             .map(|_| ())
     }
 
-    /// The letter records of a member, made when it first connects.
+    /// The letter records of a member, made when it first connects or a
+    /// letter first comes for it, and kept before either goes on: a stop
+    /// before they are kept would number its first letters again, over
+    /// those the hub said it holds.
     pub fn letters_of(&mut self, name: &MachineName) -> io::Result<&mut Letters> {
         if !self.letters.contains_key(name) {
-            let fresh = Letters {
-                epoch: 0,
-                taken: 0,
-                out_epoch: u64::from_le_bytes(fastctx_net::sign::random::<8>()?),
-                next: 1,
-                last_seen: None,
-                connected_at: None,
-                any_names: false,
-                renames: false,
-                forgets: false,
-                roles: false,
-                versions: false,
-                due: false,
-                refused: BTreeMap::new(),
-            };
+            let fresh = Letters::fresh(read_taken(&self.dir, name)?)?;
             self.letters.insert(name.clone(), fresh);
+            if let Err(error) = self.save_letters_now() {
+                self.letters.remove(name);
+                return Err(error);
+            }
         }
         Ok(self.letters.get_mut(name).expect("just made"))
     }
@@ -780,14 +832,13 @@ impl Store {
     /// given up (`crate::mailbox::kept`, `abandoned`), no letter after it goes
     /// to `to`; one given up leaves a gap, which nothing minds.
     pub(crate) fn next_letter(&mut self, to: &MachineName) -> io::Result<Numbered> {
-        let directory = to.entry_in(&self.dir.join("outbox"))?;
         let key = self.book.directory.member(to).map(|member| member.key);
         let entry = self.letters_of(to)?;
-        let seq = entry.next;
+        let (seq, epoch) = (entry.next, entry.out_epoch);
         entry.next = seq + 1;
         self.save_letters()?;
-        crate::mailbox::numbered(self, to, seq);
-        Ok(Numbered { seq, path: directory.join(format!("{seq:020}")), key })
+        crate::mailbox::numbered(self, to, epoch, seq);
+        Ok(Numbered { seq, epoch, path: box_path(&self.dir, epoch).join(format!("{seq:020}")), key })
     }
 
     /// Forgets which machines were called to work for the conversation at
@@ -805,7 +856,7 @@ impl Store {
     /// records, once it is taken off the hub and the directory that says so
     /// is kept (`clear_trash` deletes them).
     pub fn forget_letters(&mut self, name: &MachineName) -> io::Result<()> {
-        self.letters.remove(name);
+        let entry = self.letters.remove(name);
         self.mailboxes.remove(name);
         self.intake.remove(name);
         if let Some(fence) = self.counts.remove(name) {
@@ -816,8 +867,11 @@ impl Store {
             Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
             _ => {}
         }
-        let path = name.entry_in(&self.dir.join("outbox"))?;
-        self.set_aside(&path, &name.file_name())
+        self.set_aside(&name.entry_in(&self.dir.join(OUTBOX))?, &name.file_name())?;
+        match entry {
+            Some(entry) => self.set_aside(&box_path(&self.dir, entry.out_epoch), &format!("{:016x}", entry.out_epoch)),
+            None => Ok(()),
+        }
     }
 }
 
@@ -876,9 +930,58 @@ pub(crate) fn read_letter(directory: &Path, seq: u64) -> io::Result<Option<Envel
 }
 
 /// The letter files waiting for `name`, by number.
-fn outbox_entries(dir: &Path, name: &MachineName) -> io::Result<Vec<(u64, PathBuf)>> {
-    let directory = name.entry_in(&dir.join("outbox"))?;
-    let entries = match std::fs::read_dir(&directory) {
+/// Moves the letters kept by name, as before 1.0.1-beta.3, to the directory
+/// of their numbering: those of each member's records, under the name the
+/// records are kept for and under the member's name now, either of which a
+/// rename stopped halfway may have left them under; and those of a member
+/// with no records yet, as a stop before its first were kept left, which it
+/// gets now. Whether the records changed.
+fn rehouse(dir: &Path, directory: &Directory, letters: &mut BTreeMap<MachineName, Letters>) -> io::Result<bool> {
+    let outbox = dir.join(OUTBOX);
+    if !std::fs::exists(&outbox)? {
+        return Ok(false);
+    }
+    let mut changed = false;
+    for member in &directory.members {
+        let recorded =
+            letters.keys().any(|kept| directory.member(kept).is_some_and(|recorded| recorded.key == member.key));
+        if !recorded && std::fs::exists(member.name.entry_in(&outbox)?)? {
+            letters.insert(member.name.clone(), Letters::fresh(read_taken(dir, &member.name)?)?);
+            changed = true;
+        }
+    }
+    for (name, entry) in letters.iter() {
+        let now = directory.member(name).map(|member| &member.name).filter(|now| *now != name);
+        for name in std::iter::once(name).chain(now) {
+            let old = name.entry_in(&outbox)?;
+            if !std::fs::exists(&old)? {
+                continue;
+            }
+            let new = box_path(dir, entry.out_epoch);
+            ensure_private_dir(&dir.join(BOXES))?;
+            if !std::fs::exists(&new)? {
+                std::fs::rename(&old, &new)?;
+                continue;
+            }
+            for (seq, path) in numbered_in(&old)? {
+                let to = new.join(format!("{seq:020}"));
+                if !std::fs::exists(&to)? {
+                    std::fs::rename(&path, &to)?;
+                }
+            }
+            let _ = std::fs::remove_dir(&old);
+        }
+    }
+    Ok(changed)
+}
+
+fn box_entries(dir: &Path, epoch: u64) -> io::Result<Vec<(u64, PathBuf)>> {
+    numbered_in(&box_path(dir, epoch))
+}
+
+/// The letters in `directory`, by number.
+fn numbered_in(directory: &Path) -> io::Result<Vec<(u64, PathBuf)>> {
+    let entries = match std::fs::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error),

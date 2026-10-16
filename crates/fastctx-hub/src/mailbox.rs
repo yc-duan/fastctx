@@ -42,9 +42,11 @@ const WINDOW: usize = 256;
 /// The most bytes of them.
 const WINDOW_BYTES: u64 = 8 * 1024 * 1024;
 
-/// What the hub knows of the letters waiting for one member.
-#[derive(Default)]
+/// What the hub knows of the letters waiting for one member, of one
+/// numbering of them (`crate::store::Letters::out_epoch`).
 pub(crate) struct Mailbox {
+    /// The numbering they are of.
+    epoch: u64,
     /// Where its letters are kept, once known.
     dir: Option<PathBuf>,
     /// The letters on disk for it, by number, and how large each is: those
@@ -61,6 +63,10 @@ pub(crate) struct Mailbox {
 }
 
 impl Mailbox {
+    fn new(epoch: u64) -> Self {
+        Self { epoch, dir: None, held: BTreeMap::new(), writing: BTreeSet::new(), loaded: false, taken: 0, to: None }
+    }
+
     /// The first number no letter goes past yet: one still being written.
     fn frontier(&self) -> u64 {
         self.writing.first().copied().unwrap_or(u64::MAX)
@@ -115,10 +121,34 @@ pub(crate) fn backlog(store: &Store) -> Vec<Backlog> {
         .collect()
 }
 
-/// The session `generation` of `name` opened, having taken the hub's
-/// letters through `taken`: those are deleted, and the next go to it.
-pub(crate) fn opened(hub: &Arc<Hub>, store: &mut Store, name: &MachineName, generation: u64, out: Outq, taken: u64) {
-    let mailbox = store.mailboxes.entry(name.clone()).or_default();
+/// The mailbox of `name`'s letters numbered `epoch`. One of another
+/// numbering is of a member taken off whose name `name` took, and goes.
+fn of<'a>(store: &'a mut Store, name: &MachineName, epoch: u64) -> &'a mut Mailbox {
+    let mailbox = store.mailboxes.entry(name.clone()).or_insert_with(|| Mailbox::new(epoch));
+    if mailbox.epoch != epoch {
+        *mailbox = Mailbox::new(epoch);
+    }
+    mailbox
+}
+
+/// The mailbox of `name`'s letters if they are numbered `epoch`.
+fn numbered_as<'a>(store: &'a mut Store, name: &MachineName, epoch: u64) -> Option<&'a mut Mailbox> {
+    store.mailboxes.get_mut(name).filter(|mailbox| mailbox.epoch == epoch)
+}
+
+/// The session `generation` of `name`, whose letters are numbered `epoch`,
+/// opened, having taken the hub's letters through `taken`: those are
+/// deleted, and the next go to it.
+pub(crate) fn opened(
+    hub: &Arc<Hub>,
+    store: &mut Store,
+    name: &MachineName,
+    epoch: u64,
+    generation: u64,
+    out: Outq,
+    taken: u64,
+) {
+    let mailbox = of(store, name, epoch);
     // A member that numbers the hub's letters afresh takes them all again.
     mailbox.taken = taken;
     mailbox.to =
@@ -136,28 +166,43 @@ pub(crate) fn closed(store: &mut Store, name: &MachineName, generation: u64) {
     }
 }
 
-/// The number `seq` was given to a letter for `to`, being written now
-/// (`Store::next_letter`).
-pub(crate) fn numbered(store: &mut Store, to: &MachineName, seq: u64) {
-    store.mailboxes.entry(to.clone()).or_default().writing.insert(seq);
+/// The number `seq` of the numbering `epoch` was given to a letter for
+/// `to`, being written now (`Store::next_letter`).
+pub(crate) fn numbered(store: &mut Store, to: &MachineName, epoch: u64, seq: u64) {
+    of(store, to, epoch).writing.insert(seq);
 }
 
-/// The letter numbered `seq`, of `size` bytes, is on disk for `to`: it goes
-/// out as soon as there is room for it.
-pub(crate) fn kept(hub: &Arc<Hub>, store: &mut Store, to: &MachineName, seq: u64, size: u64) {
-    let mailbox = store.mailboxes.entry(to.clone()).or_default();
+/// The letter numbered `seq` of `epoch`, of `size` bytes, is on disk for
+/// `to`: it goes out as soon as there is room for it.
+pub(crate) fn kept(hub: &Arc<Hub>, store: &mut Store, to: &MachineName, epoch: u64, seq: u64, size: u64) {
+    let mailbox = of(store, to, epoch);
     mailbox.writing.remove(&seq);
     mailbox.held.insert(seq, size);
     pump(hub, store, to);
 }
 
-/// The letter numbered `seq` for `to` was not written: its number is a gap,
-/// and the letters after it go on.
-pub(crate) fn abandoned(hub: &Arc<Hub>, store: &mut Store, to: &MachineName, seq: u64) {
-    if let Some(mailbox) = store.mailboxes.get_mut(to) {
+/// The letter numbered `seq` of `epoch` for `to` was not written, or not
+/// for the member `to` names now: its number is a gap, and the letters
+/// after it go on. Nothing of another numbering's is touched.
+pub(crate) fn abandoned(hub: &Arc<Hub>, store: &mut Store, to: &MachineName, epoch: u64, seq: u64) {
+    if let Some(mailbox) = numbered_as(store, to, epoch) {
         mailbox.writing.remove(&seq);
     }
     pump(hub, store, to);
+}
+
+/// The member called `old` is called `new`: what is known of its letters,
+/// those being written among them, goes on under the new name, its session
+/// having ended with the rename.
+pub(crate) fn renamed(
+    mailboxes: &mut std::collections::HashMap<MachineName, Mailbox>,
+    old: &MachineName,
+    new: &MachineName,
+) {
+    if let Some(mut mailbox) = mailboxes.remove(old) {
+        mailbox.to = None;
+        mailboxes.insert(new.clone(), mailbox);
+    }
 }
 
 /// `name`'s session `generation` took the letters through `through`: they
@@ -180,8 +225,12 @@ pub(crate) fn taken(hub: &Arc<Hub>, store: &mut Store, name: &MachineName, gener
 }
 
 /// Deletes the letters `name` took, off any lock, once the records number
-/// past them.
-fn drop_taken(hub: &Hub, store: &mut Store, name: &MachineName) {
+/// past them: those of the revision now, which are written soon however it
+/// came, as a sender's count moves it without them.
+fn drop_taken(hub: &Arc<Hub>, store: &mut Store, name: &MachineName) {
+    if store.records.written_revision() < store.revision() {
+        let _ = store.save_letters();
+    }
     let (revision, records) = (store.revision(), store.records.clone());
     let Some(mailbox) = store.mailboxes.get_mut(name) else { return };
     let Some(dir) = mailbox.dir.clone() else { return };
@@ -191,7 +240,9 @@ fn drop_taken(hub: &Hub, store: &mut Store, name: &MachineName) {
         return;
     }
     let log = hub.log.clone();
+    let held = crate::moving::Moving::hold(hub);
     tokio::spawn(async move {
+        let _held = held;
         records.written(revision).await;
         let _ = tokio::task::spawn_blocking(move || {
             for seq in gone {
@@ -238,13 +289,10 @@ async fn pumping(hub: Weak<Hub>, name: MachineName, generation: u64) {
         // What to read: the directory once, then the next numbers that fit.
         let (dir, load, next) = {
             let mut store = hub.store();
-            let dir = match store.outbox_of(&name) {
-                Ok(dir) => dir,
-                Err(error) => {
-                    hub.log.line(format_args!("finding the letters of {name}: {error}"));
-                    stop_pumping(&hub, &mut store, &name, generation, true);
-                    return;
-                }
+            let Some((_, dir)) = store.outbox_of(&name) else {
+                hub.log.line(format_args!("finding the letters of {name}: it has no records of them"));
+                stop_pumping(&hub, &mut store, &name, generation, true);
+                return;
             };
             let Some(mailbox) = sending(&mut store, &name, generation) else { return };
             mailbox.dir = Some(dir.clone());
@@ -367,9 +415,10 @@ fn stop_pumping(hub: &Arc<Hub>, store: &mut Store, name: &MachineName, generatio
 /// deleted, off any lock, once the records number past them; says how many.
 /// A part of a letter too large for one message names nobody, and stays.
 pub(crate) async fn drop_for(hub: &Arc<Hub>, conversation: &Address) -> std::io::Result<usize> {
-    let (dir, revision, records) = {
+    let (epoch, dir, records) = {
         let store = hub.store();
-        (store.outbox_of(&conversation.machine)?, store.revision(), store.records.clone())
+        let Some((epoch, dir)) = store.outbox_of(&conversation.machine) else { return Ok(0) };
+        (epoch, dir, store.records.clone())
     };
     let resident = conversation.resident.clone();
     let found = tokio::task::spawn_blocking(move || -> std::io::Result<Vec<(u64, PathBuf)>> {
@@ -393,10 +442,18 @@ pub(crate) async fn drop_for(hub: &Arc<Hub>, conversation: &Address) -> std::io:
     if found.is_empty() {
         return Ok(0);
     }
+    // Each letter found was numbered before it was written, so before it
+    // was found: the records kept from now on number past all of them,
+    // also one numbered as they were being looked for.
+    let revision = {
+        let mut store = hub.store();
+        store.save_letters()?;
+        store.revision()
+    };
     records.written(revision).await;
     {
         let mut store = hub.store();
-        if let Some(mailbox) = store.mailboxes.get_mut(&conversation.machine) {
+        if let Some(mailbox) = numbered_as(&mut store, &conversation.machine, epoch) {
             for (seq, _) in &found {
                 mailbox.held.remove(seq);
             }

@@ -133,7 +133,7 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
         });
         if machine { report.machines.push(name) } else { report.devices.push(name) }
     }
-    report.letters = count_files(&from.join("outbox"))?;
+    report.letters = count_files(&from.join("outbox"))? + count_files(&from.join("outboxes"))?;
     let hub = HubFile {
         id,
         name: new.name,

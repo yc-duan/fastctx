@@ -138,7 +138,9 @@ pub(crate) fn ask(
                 }
                 // Letters held for it would only be set aside where it lived.
                 let (hub, conversation) = (hub.clone(), conversation.clone());
+                let held = crate::moving::Moving::hold(&hub);
                 tokio::spawn(async move {
+                    let _held = held;
                     match crate::mailbox::drop_for(&hub, &conversation).await {
                         Ok(0) => {}
                         Ok(dropped) => hub.log.line(format_args!(

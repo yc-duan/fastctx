@@ -332,7 +332,12 @@ pub(crate) struct Moving {
     pub olds: Mutex<std::collections::HashMap<String, mpsc::UnboundedSender<frames::ToOld>>>,
 }
 
-/// A connection that may change the records, counted while it runs.
+/// How long a hub that stops taking anything waits for what it took to be
+/// done, a letter being written among it: past it, a move does not go on.
+const SETTLING: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// A connection that may change the records, or work it began that may,
+/// counted while it runs.
 pub(crate) struct Active(std::sync::Arc<crate::Hub>);
 
 impl Drop for Active {
@@ -370,11 +375,35 @@ impl Moving {
         if hub.moving.frozen() { None } else { Some(active) }
     }
 
+    /// Counts work that something taken began, which may change the records
+    /// after it is gone, as writing a letter its session sent or deleting
+    /// those a member took: whoever waits for the records to be still waits
+    /// for it too.
+    pub fn hold(hub: &std::sync::Arc<crate::Hub>) -> Active {
+        hub.moving.active.fetch_add(1, Ordering::SeqCst);
+        Active(hub.clone())
+    }
+
+    /// Resolves once nothing that may change the records is under way:
+    /// whether that came by `deadline`.
+    pub async fn settled(&self, deadline: tokio::time::Instant) -> bool {
+        loop {
+            let idle = self.idle.notified();
+            if self.active.load(Ordering::SeqCst) == 0 {
+                return true;
+            }
+            if tokio::time::timeout_at(deadline, idle).await.is_err() {
+                return self.active.load(Ordering::SeqCst) == 0;
+            }
+        }
+    }
+
     /// Stops taking anything, ends every member's session and the
     /// connections of old places of earlier moves, waits until no
-    /// connection that may change the records is left, and keeps the
-    /// records of where the letters stand as they are then: their writer
-    /// may not have caught up with the last changes.
+    /// connection that may change the records is left, nor anything they
+    /// began, and keeps the records of where the letters stand as they are
+    /// then: their writer may not have caught up with the last changes.
+    /// What is not done within `SETTLING` holds the move back.
     pub async fn freeze(hub: &crate::Hub) -> Result<(), String> {
         hub.moving.frozen.store(true, Ordering::SeqCst);
         let sessions: Vec<_> = hub.sessions().values().map(|session| session.out.clone()).collect();
@@ -382,12 +411,8 @@ impl Moving {
             let _ = out.send(crate::Out::End(fastctx_net::wire::Refusal::ShuttingDown));
         }
         hub.moving.olds.lock().expect("never poisoned").clear();
-        loop {
-            let idle = hub.moving.idle.notified();
-            if hub.moving.active.load(Ordering::SeqCst) == 0 {
-                break;
-            }
-            idle.await;
+        if !hub.moving.settled(tokio::time::Instant::now() + SETTLING).await {
+            return Err(format!("what the hub took was not done within {} s of it stopping", SETTLING.as_secs()));
         }
         hub.store().save_letters_now().map_err(|error| format!("recording where the letters stand: {error}"))
     }

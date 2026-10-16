@@ -415,7 +415,8 @@ async fn connected(
                     // Numbered apart from the heartbeats, so its pong measures
                     // nothing.
                     let paths = inner.view().direct_links.then(|| inner.paths());
-                    let _ = up.send(Up::Ping { n: 0, paths, took: Some(pulse.taken()) });
+                    let held = Some(inner.letters.lock().expect("never poisoned").file.held);
+                    let _ = up.send(Up::Ping { n: 0, paths, took: Some(pulse.taken()), held });
                 }
                 continue;
             },
@@ -644,8 +645,9 @@ async fn ask_preferred(
 }
 
 /// Sends a heartbeat every `HEARTBEAT`, noting when, and with it how this
-/// machine's lines go, to a hub that keeps that, and how much this machine
-/// took of what the hub sent (`crate::pulse`).
+/// machine's lines go, to a hub that keeps that, how much this machine took
+/// of what the hub sent (`crate::pulse`), and how far the hub's receipts of
+/// its letters are taken in, so the hub tells no refusal again.
 async fn heartbeat(
     inner: Arc<Inner>,
     up: Outgoing,
@@ -658,7 +660,8 @@ async fn heartbeat(
         n += 1;
         let paths = inner.view().direct_links.then(|| inner.paths());
         pinged.lock().expect("never poisoned").insert(n, Instant::now());
-        if up.send(Up::Ping { n, paths, took: Some(pulse.taken()) }).is_err() {
+        let held = Some(inner.letters.lock().expect("never poisoned").file.held);
+        if up.send(Up::Ping { n, paths, took: Some(pulse.taken()), held }).is_err() {
             return;
         }
     }

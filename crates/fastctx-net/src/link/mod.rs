@@ -76,8 +76,12 @@ pub type Feed = Box<dyn FnOnce(Stream) -> BoxFuture<Result<(), String>> + Send>;
 /// account it speaks for there.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Caller {
+    /// The member, by its name now.
     pub machine: MachineName,
     pub account: AccountName,
+    /// The name it was sent under, which a letter sent before a rename keeps
+    /// every time it is sent again: what was taken of it is known by this.
+    pub sent_as: MachineName,
 }
 
 /// What the link hands the node: calls to answer and letters to keep.
@@ -979,7 +983,7 @@ impl Inner {
                 check(&self.view())?
             }
         };
-        Ok(Caller { machine: from, account: account.clone() })
+        Ok(Caller { machine: from, account: account.clone(), sent_as: envelope.from.clone() })
     }
 
     async fn ask(&self, question: Question) -> Result<Told, String> {

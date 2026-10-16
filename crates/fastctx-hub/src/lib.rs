@@ -627,10 +627,14 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
     for out in &sessions {
         let _ = out.send(Out::End(Refusal::ShuttingDown));
     }
-    // Each writer says why and closes; one that cannot is gone anyway.
+    // Each writer says why and closes, and what the sessions began, as a
+    // letter being written, is done; one that cannot is gone anyway.
     let deadline = tokio::time::Instant::now() + SILENCE;
     while !hub.sessions().is_empty() && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    if !hub.moving.settled(deadline).await {
+        hub.log.line(format_args!("stopping with work still under way; what it leaves is settled at the next start"));
     }
     keep_letters_now(&hub);
     Ok(Next::Stop)

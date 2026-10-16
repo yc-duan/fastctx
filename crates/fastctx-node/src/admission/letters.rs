@@ -15,27 +15,32 @@ use fastctx_types::access::{HubId, Purpose};
 use fastctx_types::remote::Letter;
 use fastctx_types::residents::Notice;
 use fastctx_types::session::Speaker;
-use fastctx_types::{AccountName, ResidentId};
+use fastctx_types::{AccountName, MachineName, ResidentId};
 
 use crate::Node;
 
 /// Refuses a letter `caller` may not send, with why.
 pub fn admit(node: &Node, hub: &HubId, caller: &Caller, purpose: Purpose, letter: &Letter) -> Result<(), String> {
     let from = &caller.machine;
+    // A letter written before its sender was renamed names it as it was.
+    let view = node.link_of(hub).map(|link| link.view());
+    let sender = |machine: &MachineName| {
+        machine == from || *machine == caller.sent_as || view.as_ref().is_some_and(|view| view.same(machine, from))
+    };
     let mut also: &[AccountName] = &[];
     let (to, carries) = match letter {
         // A fragment is checked whole, once every part of it is here.
         Letter::Fragment { .. } => return Ok(()),
         // Whose resident left is the sender's own.
         Letter::Left { .. } => return expect(purpose, Purpose::Echo),
-        Letter::JobFacts { to, update } if &update.machine == from => (to, Purpose::Echo),
+        Letter::JobFacts { to, update } if sender(&update.machine) => (to, Purpose::Echo),
         Letter::JobFacts { .. } => return Err(format!("{from} sent job facts of another machine")),
         Letter::Speak { to, accounts, .. } => {
             also = accounts;
             (to, Purpose::Words)
         }
         Letter::Notice { to, notice } => match notice.as_ref() {
-            Notice::Words { from: Speaker::Resident { address }, .. } if address.machine == *from => {
+            Notice::Words { from: Speaker::Resident { address }, .. } if sender(&address.machine) => {
                 (to, Purpose::Words)
             }
             Notice::Words { from: Speaker::Resident { address }, .. } => {
@@ -44,10 +49,10 @@ pub fn admit(node: &Node, hub: &HubId, caller: &Caller, purpose: Purpose, letter
             Notice::Words { .. } | Notice::Attached { .. } | Notice::World { .. } => {
                 return Err(format!("{from} sent words as the user, a page or the World, which no letter carries"));
             }
-            Notice::Answer { colleague, .. } | Notice::Health { colleague, .. } if colleague.machine == *from => {
+            Notice::Answer { colleague, .. } | Notice::Health { colleague, .. } if sender(&colleague.machine) => {
                 (to, Purpose::Echo)
             }
-            Notice::JobEnded { machine, .. } if machine == from => (to, Purpose::Echo),
+            Notice::JobEnded { machine, .. } if sender(machine) => (to, Purpose::Echo),
             Notice::Answer { .. } | Notice::Health { .. } | Notice::JobEnded { .. } => {
                 return Err(format!("{from} told of something that happened on another machine"));
             }

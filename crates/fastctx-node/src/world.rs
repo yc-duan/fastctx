@@ -999,11 +999,13 @@ impl fastctx_net::link::Node for Handler {
         id: LetterId,
         letter: Letter,
     ) -> BoxFuture<io::Result<Result<(), String>>> {
-        let from = caller.machine.clone();
+        let (from, sent_as) = (caller.machine.clone(), caller.sent_as.clone());
         // What the letter carries is named here from who sent it and what
         // they named it, never by a name from the letter itself: a letter
-        // that comes again is the same thing, and is not told twice.
-        let delivery_id = crate::speech::fixed_id("letter", &[from.key(), id.as_str()]);
+        // that comes again is the same thing, and is not told twice. Its
+        // sender is named as it was sent, which a rename since does not
+        // change, as the letter's receipt is.
+        let delivery_id = crate::speech::fixed_id("letter", &[sent_as.key(), id.as_str()]);
         let node = self.node.upgrade();
         let hub = self.hub.clone();
         Box::pin(async move {
@@ -1013,9 +1015,9 @@ impl fastctx_net::link::Node for Handler {
             let _answering = node.handoff.call().ok_or_else(|| io::Error::other("the node is handing over"))?;
             let (letter, delivery_id, completion) = match letter {
                 Letter::Fragment { id, index, total, text } => {
-                    match crate::letters::receive(&node, &from, &id, index, total, &text)? {
+                    match crate::letters::receive(&node, &sent_as, &id, index, total, &text)? {
                         Ok(Some((letter, completion))) => {
-                            (letter, crate::speech::fixed_id("letter", &[from.key(), id.as_str()]), Some(completion))
+                            (letter, crate::speech::fixed_id("letter", &[sent_as.key(), id.as_str()]), Some(completion))
                         }
                         Ok(None) => return Ok(Ok(())),
                         Err(reason) => return Ok(Err(reason)),
