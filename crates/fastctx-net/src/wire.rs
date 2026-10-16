@@ -164,6 +164,16 @@ pub enum Intent {
         /// they cannot read.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         versions: bool,
+        /// The member reads the records of updates kept for machines away
+        /// and of updates made as another asked. Earlier releases do not say
+        /// so, and could read nothing of a machine log page with one.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        due: bool,
+        /// A machine taken off the hub that was to uninstall Fastctx then,
+        /// and could not do all of it: what was left, and why. The hub
+        /// keeps it for its machine log, and refuses the session as before.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        left: Option<String>,
     },
     /// A password login to `account`: the first OPAQUE message. The hub
     /// answers `Down::LoginResponse`; the device finishes with
@@ -429,6 +439,10 @@ pub enum Refusal {
         /// an earlier release reads past it, and takes it as removed.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         dissolved: bool,
+        /// What it is to do now: uninstall Fastctx, as its remover asked.
+        /// An earlier release reads past it, and only leaves.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        then: Option<fastctx_types::uninstall::Then>,
     },
     #[error("{reason}")]
     Login { reason: String },
@@ -612,6 +626,11 @@ pub enum Change {
     Remove {
         name: MachineName,
         reason: String,
+        /// What the machine does once it hears it was taken off: only for
+        /// a machine its asker may uninstall. Sent only to a hub whose view
+        /// says it uninstalls.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        then: Option<fastctx_types::uninstall::Then>,
     },
     /// Renames `machine`, one of the account's own or, for the super
     /// administrator, any, to `to`; its names before keep naming it. Sent
@@ -711,11 +730,19 @@ pub enum Change {
     Settings {
         self_registration: bool,
     },
-    /// The channel the network's devices follow and the version it asks
-    /// each machine to run at least. Sent only to a hub whose view says it
-    /// keeps versions.
+    /// The version the network asks each machine to run at least, and
+    /// whether its managed machines update by themselves. Sent only to a hub
+    /// whose view says it keeps versions.
     Updates {
         policy: fastctx_types::update::Policy,
+    },
+    /// `machine`, one the account may update and away now, updates to
+    /// `version` once it is back; none takes back what was kept. Sent only
+    /// to a hub whose view says it keeps updates due.
+    UpdateDue {
+        machine: MachineName,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
     },
     /// The super administrator dissolves the network named `name`, typed
     /// as it is: every machine and device is taken off it, and the hub lets

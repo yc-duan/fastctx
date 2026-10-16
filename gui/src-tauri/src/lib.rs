@@ -1124,7 +1124,9 @@ pub fn run() {
             updates::update_look,
             updates::update_set,
             updates::update_fetch,
+            updates::update_choose,
             updates::update_machine,
+            updates::machine_updates,
             updates::update_install,
             #[cfg(desktop)]
             removal::removal_plan,

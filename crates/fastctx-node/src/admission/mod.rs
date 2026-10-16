@@ -113,13 +113,14 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
             caller.account
         )));
     }
-    // Which version a machine runs is its owner's to choose; a managed
-    // machine's, the network's super administrator's (`world-upgrade.md`).
-    if matches!(call, RemoteCall::UpdateWorld) {
-        let member = view.member(&here);
-        let owner = member.and_then(|member| member.home.as_ref()) == Some(&caller.account);
-        let administered = member.is_some_and(|member| member.managed) && view.is_super(&caller.account);
-        if !owner && !administered {
+    // Which version a machine runs is its owner's to choose, and the
+    // network's super administrator's but for a visitor's machine
+    // (`world-upgrade.md`, 谁来更新).
+    if matches!(call, RemoteCall::UpdateWorld | RemoteCall::Updates { .. }) {
+        let owner = view.member(&here).and_then(|member| member.home.as_ref());
+        let own = owner == Some(&caller.account);
+        let administers = view.is_super(&caller.account) && owner.is_some_and(|owner| !view.is_visitor(owner));
+        if !own && !administers {
             return Err(refuse(format!("only {here}'s owner updates it, not the account {}", caller.account)));
         }
     }

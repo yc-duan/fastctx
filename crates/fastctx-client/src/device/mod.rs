@@ -439,7 +439,7 @@ impl fastctx_net::link::Node for Handler {
 
     /// A network dissolved is left at once, as a computer leaves it
     /// (`world-network.md`, 解散网络).
-    fn place_ended(&self, dissolved: bool) {
+    fn place_ended(&self, dissolved: bool, _then: Option<fastctx_types::uninstall::Then>) {
         let Some(device) = self.device.upgrade().filter(|_| dissolved) else { return };
         let Some(link) = self.link.get().and_then(std::sync::Weak::upgrade) else { return };
         let (hub, name) = (link.membership().id.clone(), link.hub_name());

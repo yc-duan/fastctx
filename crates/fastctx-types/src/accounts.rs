@@ -162,6 +162,9 @@ pub enum AccountChange {
     Remove {
         name: MachineName,
         reason: String,
+        /// What the machine does once it hears it was taken off.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        then: Option<crate::uninstall::Then>,
     },
     /// Renames `machine`, one of the account's own or, for the hub's super
     /// administrator, any; the names it had keep naming it
@@ -247,10 +250,17 @@ pub enum AccountChange {
     Settings {
         self_registration: bool,
     },
-    /// The channel the network's devices follow and the version it asks
-    /// each machine to run at least (`world-upgrade.md`).
+    /// The version the network asks each machine to run at least, and
+    /// whether its managed machines update by themselves (`world-upgrade.md`).
     Updates {
         policy: crate::update::Policy,
+    },
+    /// `machine`, away from the network, updates to `version` once it is
+    /// back; none takes back what was kept (`world-upgrade.md`, 别的机器的更新).
+    UpdateDue {
+        machine: MachineName,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
     },
     /// The super administrator dissolves the network named `name`, typed as
     /// it is (`world-network.md`, 解散网络).
@@ -330,6 +340,14 @@ pub struct HubAccounts {
     /// (`world-upgrade.md`).
     #[serde(default)]
     pub versions: bool,
+    /// Whether the hub keeps updates for machines away until they are back,
+    /// and tells its version (`world-upgrade.md`, 别的机器的更新).
+    #[serde(default)]
+    pub due: bool,
+    /// Whether the hub tells a machine it takes off to uninstall Fastctx
+    /// (`world-network.md`, 移出网络与卸载).
+    #[serde(default)]
+    pub uninstalls: bool,
     /// The accounts this computer is logged in to there.
     pub logins: Vec<AccountName>,
     /// The account this computer is registered under there, as a machine.

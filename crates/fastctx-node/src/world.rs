@@ -998,10 +998,17 @@ impl fastctx_net::link::Node for Handler {
                         .map_err(|error| Failure::new(format!("reading the canon on {machine}: {error}")))
                 }
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&node))),
-                RemoteCall::UpdateWorld => crate::updates::call(&node, fastctx_types::update::UpdateCall::Kernel)
-                    .await
-                    .map(|state| RemoteReply::Update(Box::new(state)))
-                    .map_err(Failure::new),
+                RemoteCall::UpdateWorld | RemoteCall::Updates { .. } => {
+                    let update = match call {
+                        RemoteCall::Updates { update } => Some(update),
+                        _ => None,
+                    };
+                    let asker = crate::updates::Asker { by: caller.account.clone(), hub: hub.clone() };
+                    crate::updates::remote(&node, asker, update)
+                        .await
+                        .map(|state| RemoteReply::Update(Box::new(state)))
+                        .map_err(Failure::new)
+                }
                 RemoteCall::Stats { after } => {
                     crate::stats::here(&node, after).await.map(|stats| RemoteReply::Stats(Box::new(stats)))
                 }
@@ -1160,14 +1167,20 @@ impl fastctx_net::link::Node for Handler {
 
     /// A network dissolved is left here as well: the computer is on it no
     /// more, whoever made it (`world-network.md`, 解散网络).
-    fn place_ended(&self, dissolved: bool) {
-        let Some(node) = self.node.upgrade().filter(|_| dissolved) else { return };
+    fn place_ended(&self, dissolved: bool, then: Option<fastctx_types::uninstall::Then>) {
+        let Some(node) = self.node.upgrade() else { return };
         let hub = self.hub.clone();
-        tokio::spawn(async move {
-            if let Err(failure) = left_dissolved(&node, &hub).await {
-                node.log.line(format_args!("leaving the dissolved network: {failure}"));
-            }
-        });
+        if dissolved {
+            tokio::spawn(async move {
+                if let Err(failure) = left_dissolved(&node, &hub).await {
+                    node.log.line(format_args!("leaving the dissolved network: {failure}"));
+                }
+            });
+            return;
+        }
+        let Some(then) = then else { return };
+        let Some(membership) = node.link_of(&hub).map(|link| link.dir().to_path_buf()) else { return };
+        tokio::spawn(async move { crate::removed::uninstall(&node, &membership, then).await });
     }
 
     /// Connected again: a hub that calls this computer otherwise than the

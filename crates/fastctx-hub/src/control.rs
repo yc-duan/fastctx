@@ -46,6 +46,10 @@ pub(crate) struct Said {
     pub roles: bool,
     /// Whether it reads the network's versions.
     pub versions: bool,
+    /// Whether it reads the records of updates due and made as asked.
+    pub due: bool,
+    /// What a machine taken off could not do of the uninstall it was asked.
+    pub left: Option<String>,
 }
 
 /// What a call or a data connection was allowed under: `from` saying it to
@@ -94,6 +98,9 @@ pub(crate) async fn session(
         Ok(name) => name,
         Err(reason) => {
             hub.log.line(format_args!("{peer}: refused a session: {reason}"));
+            if let (Refusal::Removed { .. }, Some(left)) = (&reason, &said.left) {
+                crate::manage::left(&hub, &key, left);
+            }
             let tells = crate::dissolve::tells(&reason);
             if refuse(&mut socket, reason).await && tells {
                 crate::dissolve::told(&hub, &key);
@@ -258,6 +265,7 @@ fn open(
     entry.forgets = said.forgets;
     entry.roles = said.roles;
     entry.versions = said.versions;
+    entry.due = said.due;
     if too_old {
         // A member back on a release from before names of any language,
         // which would fail on the first name it cannot read: it is told why
@@ -772,10 +780,9 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
     match question {
         Question::MachineLog { account, before } => {
             let store = hub.store();
-            let reads = store
-                .letters
-                .get(name)
-                .map_or((false, false, false), |letters| (letters.renames, letters.forgets, letters.versions));
+            let reads = store.letters.get(name).map_or((false, false, false, false), |letters| {
+                (letters.renames, letters.forgets, letters.versions, letters.due)
+            });
             store
                 .book
                 .machine_log

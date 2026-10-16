@@ -80,6 +80,7 @@ mod pages;
 mod program_collection;
 mod ranked;
 mod reach;
+mod removed;
 mod renewal;
 mod renewal_legacy;
 pub mod replacement;

@@ -257,10 +257,38 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
             && !node.bridge
             && node.build.digest == plan.candidate.build.digest
         {
-            return phase(root, plan, Phase::Complete);
+            phase(root, plan, Phase::Complete)?;
+            if let Err(error) = follow_hubs(root, &plan.candidate.build.digest) {
+                plan.error = Some(format!("the node runs the new program; {error:#}"));
+                store::save(root, plan)?;
+            }
+            return Ok(());
         }
         tick().await;
     }
+}
+
+/// A hub this computer keeps runs the same World program and would go on
+/// speaking the old network protocol (`world-upgrade.md`, 中枢跟着换). Once
+/// the node is back in its boot service, systemd starts the hub again from
+/// the new program, and its machines reconnect by themselves. Where this
+/// process may not, the administrator's step does it (`guardian_apply`).
+fn follow_hubs(root: &Path, digest: &str) -> anyhow::Result<()> {
+    if !cfg!(target_os = "linux") || !fastctx_platform::elevation::is_elevated()? {
+        return Ok(());
+    }
+    for directory in fastctx_install::service::registered_hubs(root)? {
+        let hub = fastctx_install::service::Service::new(
+            fastctx_install::service::Kind::Hub,
+            store::installed(root),
+            &directory,
+        );
+        if hub.status()?.installed {
+            hub.restart_guardian(digest)
+                .with_context(|| format!("restarting the hub kept at {}", directory.display()))?;
+        }
+    }
+    Ok(())
 }
 
 async fn recover(root: &Path, plan: &Plan, kept: bool) -> anyhow::Result<()> {

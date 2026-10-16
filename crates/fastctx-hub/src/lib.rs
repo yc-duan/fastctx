@@ -131,6 +131,7 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
         self_registration: false,
         dissolved: None,
         updates: Default::default(),
+        due: Vec::new(),
     };
     Store::create(dir, &hub, &certificate, &secrets.to_bytes(), &book)?;
     Ok(certificate.pin())
@@ -302,6 +303,7 @@ impl Hub {
                 at: removed.at,
                 reason: removed.reason.clone(),
                 dissolved: removed.dissolved,
+                then: removed.then,
             },
             None => Refusal::NotMember,
         })
@@ -639,6 +641,8 @@ async fn intended(
                 forgets,
                 roles,
                 versions,
+                due,
+                left,
             },
         ) => {
             let said = control::Said {
@@ -652,6 +656,8 @@ async fn intended(
                 forgets,
                 roles,
                 versions,
+                due,
+                left,
             };
             control::session(hub, socket, peer, binding, key, proof, letters, said).await;
         }

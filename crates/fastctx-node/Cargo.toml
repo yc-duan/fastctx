@@ -26,6 +26,7 @@ fastctx-net = { path = "../fastctx-net" }
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-ripgrep = { path = "../fastctx-ripgrep" }
 fastctx-types = { path = "../fastctx-types" }
+fastctx-uninstall = { path = "../fastctx-uninstall" }
 fastctx-update = { path = "../fastctx-update" }
 getrandom = { version = "0.3", features = ["std"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }

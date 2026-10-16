@@ -117,9 +117,7 @@ fn made(
             }
             Err(reason) => {
                 store.book = before;
-                if store.hub.self_registration != before_hub.self_registration
-                    || store.hub.dissolved != before_hub.dissolved
-                {
+                if store.hub != before_hub {
                     store.hub = before_hub;
                     store.save_hub().map_err(|error| format!("restoring the hub's settings: {error}"))?;
                 }
@@ -231,11 +229,16 @@ fn apply(
         // The hub checks the machine from outside first, which takes time:
         // the control connection hands it to `crate::direct` instead.
         Change::Direct { .. } => Err("direct connections are allowed through their own check".to_string()),
-        Change::Remove { name, reason } => {
+        Change::Remove { name, reason, then } => {
             let directory = &store.book.directory;
             let member = directory.member(&name).cloned().ok_or_else(|| format!("there is no member {name}"))?;
+            if then.is_some() {
+                may_uninstall(hub, &member, account, super_)?;
+            }
             if super_ || member.home.as_ref() == Some(account) {
-                remove_member(store, &name, Some(account), &reason, false, ended)?;
+                remove_member(store, &name, Some(account), &reason, false, then, ended)?;
+            } else if then.is_some() {
+                return Err(format!("only {name}'s owner takes it off the network to uninstall it"));
             } else if member.logins.contains(account) {
                 log_out(store, &name, account, Some(account), &reason, ended)?;
             } else {
@@ -448,6 +451,27 @@ fn apply(
             store.save_hub().map_err(|error| format!("the hub could not keep its settings: {error}"))?;
             Ok(Told::Done)
         }
+        // Who may update a machine may have it update once it is back: its
+        // owner, and the super administrator but for a visitor's
+        // (`world-upgrade.md`, 谁来更新). The update is kept until the
+        // machine runs that release or a newer one (`crate::updates`).
+        Change::UpdateDue { machine, version } => {
+            own_machine(&store.book.directory, account, super_, &machine)?;
+            if let Some(version) = &version
+                && fastctx_types::update::release(version).is_none()
+            {
+                return Err(format!("{version} is not a version a release can have"));
+            }
+            let key = store.book.directory.member(&machine).expect("own_machine found it").key;
+            let directory = &store.book.directory;
+            store.hub.due.retain(|kept| kept.key != key && directory.by_key(&kept.key).is_some());
+            if let Some(version) = version {
+                let due = fastctx_types::update::Due { version, by: account.clone(), at: Timestamp::now() };
+                store.hub.due.push(crate::store::DueFor { key, due });
+            }
+            store.save_hub().map_err(|error| format!("the hub could not keep the update: {error}"))?;
+            Ok(Told::Done)
+        }
         // The network ends: every machine and device is taken off it, told
         // now or as it next comes that the network is gone; no code lets
         // anything in, and the hub lets nobody in again
@@ -460,7 +484,7 @@ fn apply(
             let members: Vec<(MachineName, PublicKey)> =
                 store.book.directory.members.iter().map(|member| (member.name.clone(), member.key)).collect();
             for (member, _) in &members {
-                remove_member(store, member, Some(account), "the network was dissolved", true, ended)?;
+                remove_member(store, member, Some(account), "the network was dissolved", true, None, ended)?;
             }
             store.book.tokens.clear();
             let untold = members.into_iter().map(|(_, key)| key).collect();
@@ -668,7 +692,7 @@ fn log_out(
         forget_machine(directory, name);
     }
     if left {
-        remove_member(store, name, by, reason, false, ended)?;
+        remove_member(store, name, by, reason, false, None, ended)?;
     }
     Ok(())
 }
@@ -685,12 +709,14 @@ fn forget_machine(directory: &mut fastctx_net::directory::Directory, name: &Mach
 /// Takes the member `name` off the hub: its logins, what was shared of it,
 /// the assistance of its agents and what it acted for go, its key is
 /// remembered as removed, and its session ends.
+#[allow(clippy::too_many_arguments)]
 fn remove_member(
     store: &mut Store,
     name: &MachineName,
     by: Option<&AccountName>,
     reason: &str,
     dissolved: bool,
+    then: Option<fastctx_types::uninstall::Then>,
     ended: &mut Vec<(MachineName, Refusal)>,
 ) -> Result<(), String> {
     let directory = &mut store.book.directory;
@@ -706,10 +732,65 @@ fn remove_member(
         at,
         reason: reason.to_string(),
         dissolved,
+        home: member.home.clone(),
+        then,
+        left: None,
     });
     store.forget_letters(name).map_err(|error| format!("dropping the letters of {name}: {error}"))?;
-    ended.push((name.clone(), Refusal::Removed { by: by.cloned(), at, reason: reason.to_string(), dissolved }));
+    let refusal = Refusal::Removed { by: by.cloned(), at, reason: reason.to_string(), dissolved, then };
+    ended.push((name.clone(), refusal));
     Ok(())
+}
+
+/// Checks `account` may have `member` uninstall Fastctx as it is taken off
+/// (`world-network.md`, 移出网络与卸载): its own machine with no application
+/// on it, or a managed machine of its own or, for the super administrator,
+/// any; never the machine that runs this hub.
+fn may_uninstall(
+    hub: &Hub,
+    member: &fastctx_net::directory::Member,
+    account: &AccountName,
+    super_: bool,
+) -> Result<(), String> {
+    let name = &member.name;
+    let own = member.home.as_ref() == Some(account);
+    if !(own || (super_ && member.managed)) {
+        return Err(format!(
+            "only {name}'s owner uninstalls Fastctx on it; a member's machine is the member's to uninstall"
+        ));
+    }
+    let running = crate::updates::running_of(hub, name);
+    if running.as_ref().is_some_and(|running| running.hub_here) {
+        return Err(format!("{name} runs this network's hub: move the hub elsewhere or dissolve the network first"));
+    }
+    if !member.managed && running.as_ref().is_some_and(|running| running.app.is_some()) {
+        return Err(format!("Fastctx on {name} is an application: whoever sits at it uninstalls it there"));
+    }
+    Ok(())
+}
+
+/// A machine taken off, with its key `key`, says what it could not do of
+/// the uninstall it was asked: kept on its removal, and in the machine log
+/// once for each thing it says.
+pub(crate) fn left(hub: &Hub, key: &PublicKey, left: &str) {
+    let mut store = hub.store();
+    let Some(removed) = store.book.removed.iter_mut().rev().find(|removed| removed.key == *key) else { return };
+    if removed.left.as_deref() == Some(left) {
+        return;
+    }
+    removed.left = Some(left.to_string());
+    let action = fastctx_types::machine_log::Action::UninstallLeft {
+        name: removed.name.clone(),
+        left: left.to_string(),
+        by: removed.by.clone(),
+        home: removed.home.clone(),
+    };
+    let actor = Actor { account: None, authenticated: true, member: None, peer: None };
+    let directory = store.book.directory.clone();
+    match crate::machine_log::keep(&mut store, &directory, actor, action, Outcome::Done) {
+        Ok(()) => hub.machine_log_changed.notify_one(),
+        Err(error) => hub.log.line(format_args!("{error}")),
+    }
 }
 
 /// Deletes `name`: its machines leave the hub, its logins and what it
@@ -737,7 +818,7 @@ fn delete_account(
         .map(|member| member.name.clone())
         .collect();
     for machine in machines {
-        remove_member(store, &machine, Some(by), &reason, false, ended)?;
+        remove_member(store, &machine, Some(by), &reason, false, None, ended)?;
     }
     let logged: Vec<MachineName> = store
         .book

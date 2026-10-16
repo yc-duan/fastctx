@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use fastctx_types::update::{
-    App, Channel, Failed, Fetching, Looked, Manifest, Network, Report, Settings, State, UpdateCall, Via,
+    App, Channel, Failed, Fetching, Kind, Looked, Manifest, Network, Report, Settings, State, UpdateCall, Via,
 };
 use fastctx_update::Cache;
 
@@ -31,6 +31,8 @@ pub(super) struct Updates {
 struct Held {
     settings: Settings,
     looked: Looked,
+    /// The release the owner chose to update to, when not the newest.
+    chosen: Option<Manifest>,
     app: Option<App>,
     fetching: Option<Fetching>,
     failed: Option<Failed>,
@@ -129,6 +131,8 @@ impl Device {
             found,
             relays: false,
             holds: Vec::new(),
+            asked: None,
+            hub_here: false,
         };
         drop(held);
         for session in self.sessions() {
@@ -145,35 +149,60 @@ impl Device {
             };
             kept.stable = fastctx_types::update::newest(kept.stable.as_ref(), network.stable.as_ref()).cloned();
             kept.beta = fastctx_types::update::newest(kept.beta.as_ref(), network.beta.as_ref()).cloned();
-            if network.policy.channel == Channel::Beta {
-                kept.policy.channel = Channel::Beta;
-            }
+            kept.policy.minimum = match (kept.policy.minimum.take(), network.policy.minimum) {
+                (Some(a), Some(b)) => {
+                    Some(if fastctx_types::update::release(&b) > fastctx_types::update::release(&a) { b } else { a })
+                }
+                (a, b) => a.or(b),
+            };
+            kept.hub = match (kept.hub.take(), network.hub) {
+                (Some(a), Some(b)) => {
+                    Some(if fastctx_types::update::release(&b) < fastctx_types::update::release(&a) { b } else { a })
+                }
+                _ => None,
+            };
             kept.machines.extend(network.machines);
+            kept.due.extend(network.due);
         }
         merged
     }
 
+    /// The version of the application this device runs.
+    fn running(held: &Held) -> String {
+        held.app.as_ref().map_or_else(|| env!("CARGO_PKG_VERSION").to_string(), |app| app.version.clone())
+    }
+
+    /// How updates stand on this device: the line of the application it
+    /// runs, and what is offered on it, the release the owner chose while it
+    /// is newer, or else the newest. A phone has someone at it: it takes new
+    /// releases by itself only when its owner chose so, and never past the
+    /// major version of the hubs it is on.
     fn update_state(&self) -> State {
         let network = self.network();
         let held = self.updates.held.lock().expect("never poisoned");
-        let policy = network.as_ref().map(|network| network.policy.clone()).unwrap_or_default();
-        let channel = held.settings.channel(&policy);
+        let running = Self::running(&held);
+        let channel = Channel::of(&running);
         let cache = self.update_cache();
         let kept = cache.manifests();
-        let offer = [held.looked.on(channel), network.as_ref().and_then(|network| network.on(channel))]
+        let newest = [held.looked.on(channel), network.as_ref().and_then(|network| network.on(channel))]
             .into_iter()
-            .chain(
-                kept.iter()
-                    .filter(|manifest| {
-                        channel == Channel::Beta || manifest.semver().is_some_and(|version| version.pre.is_empty())
-                    })
-                    .map(Some),
-            )
+            .chain(kept.iter().filter(|manifest| channel.takes(&manifest.version)).map(Some))
             .fold(None, fastctx_types::update::newest)
             .cloned();
+        let chosen = held.chosen.clone().filter(|chosen| chosen.newer_than(&running));
+        let offer = chosen.clone().or(newest);
+        let auto = held.settings.auto_for(Kind::App, network.as_ref().map(|network| &network.policy));
+        let hub_major = network
+            .as_ref()
+            .and_then(|network| network.hub.as_deref())
+            .and_then(fastctx_types::update::release)
+            .map(|version| version.major);
         State {
             settings: held.settings.clone(),
             channel,
+            auto,
+            chosen,
+            hub_major,
             looked: held.looked.clone(),
             network,
             offer,
@@ -182,6 +211,9 @@ impl Device {
             kept: cache.kept(),
             app: held.app.clone(),
             kernel_target: String::new(),
+            renewing: None,
+            take: None,
+            open: true,
         }
     }
 
@@ -206,22 +238,58 @@ impl Device {
                 }
             }
             UpdateCall::Fetch { version, target } => self.fetch_update(version, target)?,
-            UpdateCall::Kernel => return Err(failed("a device runs no World program of its own")),
+            UpdateCall::Kernel { .. } => return Err(failed("a device runs no World program of its own")),
+            UpdateCall::Choose { version } => {
+                let chosen = match version {
+                    Some(version) => Some(self.manifest_of(&version).await?),
+                    None => None,
+                };
+                self.updates.held.lock().expect("never poisoned").chosen = chosen;
+            }
         }
         Ok(self.update_state())
     }
 
+    /// The manifest of the release `version`: as this device or its hubs
+    /// know it, or as GitHub has it.
+    async fn manifest_of(&self, version: &str) -> Result<Manifest, Error> {
+        let state = self.update_state();
+        let known =
+            [state.offer.as_ref(), state.chosen.as_ref(), state.looked.stable.as_ref(), state.looked.beta.as_ref()]
+                .into_iter()
+                .flatten()
+                .chain(
+                    state
+                        .network
+                        .as_ref()
+                        .into_iter()
+                        .flat_map(|network| network.stable.iter().chain(network.beta.iter())),
+                )
+                .find(|manifest| manifest.version == version)
+                .cloned()
+                .or_else(|| self.update_cache().manifests().into_iter().find(|manifest| manifest.version == version));
+        match known {
+            Some(manifest) => Ok(manifest),
+            None => fastctx_update::github::manifest_of(&state.looked.releases, version).await.map_err(failed),
+        }
+    }
+
     fn fetch_update(self: &Arc<Self>, version: String, target: String) -> Result<(), Error> {
         let state = self.update_state();
-        let manifest = [state.offer.as_ref(), state.looked.stable.as_ref(), state.looked.beta.as_ref()]
-            .into_iter()
-            .flatten()
-            .chain(
-                state.network.as_ref().into_iter().flat_map(|network| network.stable.iter().chain(network.beta.iter())),
-            )
-            .find(|manifest| manifest.version == version)
-            .cloned()
-            .ok_or_else(|| failed(format!("no release {version} is known here")))?;
+        let manifest =
+            [state.offer.as_ref(), state.chosen.as_ref(), state.looked.stable.as_ref(), state.looked.beta.as_ref()]
+                .into_iter()
+                .flatten()
+                .chain(
+                    state
+                        .network
+                        .as_ref()
+                        .into_iter()
+                        .flat_map(|network| network.stable.iter().chain(network.beta.iter())),
+                )
+                .find(|manifest| manifest.version == version)
+                .cloned()
+                .ok_or_else(|| failed(format!("no release {version} is known here")))?;
         {
             let mut held = self.updates.held.lock().expect("never poisoned");
             if held.fetching.as_ref().is_some_and(|fetching| fetching.version == version && fetching.target == target) {

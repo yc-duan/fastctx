@@ -619,6 +619,17 @@ pub struct View {
     /// end the session of a member that sent any of them.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub versions: bool,
+    /// Whether this hub keeps updates for machines away until they are back
+    /// (`Change::UpdateDue`) and tells its version with the network's.
+    /// Earlier hubs omit it, and would end the session of a member that
+    /// sent one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub due: bool,
+    /// Whether this hub tells a machine it takes off to uninstall Fastctx
+    /// (`Change::Remove::then`). Earlier hubs omit it, and would take the
+    /// machine off and leave Fastctx on it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub uninstalls: bool,
     /// The tokens the accounts logged in on this member made that still
     /// let devices in.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -658,6 +669,8 @@ impl View {
             groups: false,
             dissolves: false,
             versions: false,
+            due: false,
+            uninstalls: false,
             tokens: Vec::new(),
             hub_addresses: Vec::new(),
             hub_moves: Vec::new(),

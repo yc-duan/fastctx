@@ -9,6 +9,16 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 pub fn run_outside(request: &Request) -> anyhow::Result<()> {
+    run_from_copy(request, None)
+}
+
+/// As `run_outside`, handing each line of the worker's progress
+/// (`fastctx_types::uninstall::Event`) to `line` instead of showing it.
+pub(crate) fn run_outside_reading(request: &Request, line: &mut dyn FnMut(&str)) -> anyhow::Result<()> {
+    run_from_copy(request, Some(line))
+}
+
+fn run_from_copy(request: &Request, line: Option<&mut dyn FnMut(&str)>) -> anyhow::Result<()> {
     // Nothing is copied or started for a removal a managed machine refuses
     // (`crate::execute::run`).
     if let Some(managed) = &request.plan.managed
@@ -32,7 +42,7 @@ pub fn run_outside(request: &Request) -> anyhow::Result<()> {
         .args(["uninstall", "worker", "--request"])
         .arg(&input)
         .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
+        .stdout(if line.is_some() { Stdio::piped() } else { Stdio::inherit() })
         .stderr(Stdio::inherit());
     #[cfg(windows)]
     {
@@ -46,6 +56,12 @@ pub fn run_outside(request: &Request) -> anyhow::Result<()> {
             .context("the uninstall worker exited before its identity was captured")?;
         let caller = fastctx_platform::current_identity()?;
         schedule_cleanup(temporary.path(), &[caller, worker])?;
+    }
+    if let (Some(line), Some(out)) = (line, child.stdout.take()) {
+        use std::io::BufRead as _;
+        for read in std::io::BufReader::new(out).lines() {
+            line(&read?);
+        }
     }
     let status = child.wait()?;
     #[cfg(windows)]

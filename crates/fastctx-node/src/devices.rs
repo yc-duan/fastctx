@@ -75,6 +75,7 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
             | RemoteCall::Stats { .. }
             // A machine of the user's updated, from its details page.
             | RemoteCall::UpdateWorld
+            | RemoteCall::Updates { .. }
             // The user's consent to Claude Code's bypass-permissions mode,
             // which only the user gives, on the machine it is about.
             | RemoteCall::ClaudeConsent { .. }

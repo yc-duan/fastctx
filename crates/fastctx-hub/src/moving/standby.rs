@@ -79,6 +79,7 @@ pub fn prepare(dir: &Path, id: &str, to: &MachineName, identity: &Identity) -> a
         self_registration: identity.self_registration,
         dissolved: None,
         updates: Default::default(),
+        due: Vec::new(),
     };
     let arriving = Arriving {
         id: id.to_string(),

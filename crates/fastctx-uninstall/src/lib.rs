@@ -13,8 +13,11 @@ mod logout;
 #[cfg(target_os = "linux")]
 pub mod package;
 mod privileged;
+mod removed;
 mod runtime;
 pub use helper::{read_request, run_outside};
+pub use logout::tell_left;
+pub use removed::after_removal;
 
 pub use execute::{finish_application, run, run_system};
 pub use fastctx_types::uninstall::{Event, Plan};

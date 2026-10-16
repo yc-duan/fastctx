@@ -352,7 +352,11 @@ async fn work(world: &World, job: Job) -> Result<Done, fastctx_client::Error> {
         }
         Job::Remove { hub, account, name, reason, seen } => {
             world
-                .account(Some(hub.clone()), account.clone(), AccountChange::Remove { name: name.clone(), reason })
+                .account(
+                    Some(hub.clone()),
+                    account.clone(),
+                    AccountChange::Remove { name: name.clone(), reason, then: None },
+                )
                 .await?;
             if seen {
                 world.account(Some(hub), account, AccountChange::Seen { name }).await?;

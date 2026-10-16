@@ -167,6 +167,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             }
             // An interface follows the World for as long as it is open: as
             // it is first, then after each change (`world-network.md`, 近况).
+            let _open = crate::updates::Open::new();
             let mut residents = node.residents.changes();
             let mut shown = node.shown.subscribe();
             let mut jobs = node.jobs.subscribe();
@@ -992,7 +993,13 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::UpdateMachine { machine } => {
             users_voice(node, peer)?;
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
-            crate::updates::machine(node, &acting, machine).await.map(|state| Reply::Update(Box::new(state)))
+            let update = fastctx_types::update::UpdateCall::Kernel { version: None };
+            crate::updates::machine(node, &acting, machine, update).await.map(|state| Reply::Update(Box::new(state)))
+        }
+        Call::MachineUpdates { machine, update } => {
+            users_voice(node, peer)?;
+            let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
+            crate::updates::machine(node, &acting, machine, update).await.map(|state| Reply::Update(Box::new(state)))
         }
         Call::Manage { resident, machine, action } => {
             users_voice(node, peer)?;

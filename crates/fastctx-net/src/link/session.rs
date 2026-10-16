@@ -71,12 +71,13 @@ pub(super) async fn run(inner: Arc<Inner>, mut changes: Option<super::changes::C
             Ended::Stop(reason) => {
                 inner.node.log(format!("the link to the hub stopped: {reason}"));
                 let dissolved = inner.dissolved.load(std::sync::atomic::Ordering::Relaxed);
-                let ended = super::state::Ended { at: Timestamp::now(), reason: reason.clone(), dissolved };
+                let then = *inner.then.lock().expect("never poisoned");
+                let ended = super::state::Ended { at: Timestamp::now(), reason: reason.clone(), dissolved, then };
                 if let Err(error) = super::state::write(&inner.dir.ended(), &ended) {
                     inner.node.log(format!("keeping that the hub ended this machine's place: {error}"));
                 }
                 inner.status.send_replace(Status::Stopped { reason });
-                inner.node.place_ended(dissolved);
+                inner.node.place_ended(dissolved, then);
                 return;
             }
             Ended::Reroute(reason) => {
@@ -212,6 +213,8 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             forgets: true,
             roles: true,
             versions: true,
+            due: true,
+            left: None,
         },
     };
     match tokio::time::timeout(SILENCE, dial::send(&mut socket, &hello)).await {
@@ -545,8 +548,9 @@ impl Drop for Tasks {
 
 fn refused(inner: &Inner, reason: Refusal) -> Ended {
     match reason {
-        Refusal::Removed { dissolved, .. } => {
+        Refusal::Removed { dissolved, then, .. } => {
             inner.dissolved.store(dissolved, std::sync::atomic::Ordering::Relaxed);
+            *inner.then.lock().expect("never poisoned") = then;
             Ended::Stop(reason.to_string())
         }
         // Connected again at once, under the name the hub gives.

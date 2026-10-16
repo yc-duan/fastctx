@@ -22,6 +22,10 @@ pub struct Options {
     application_control: Option<PathBuf>,
     #[arg(long, hide = true)]
     graphical: bool,
+    /// The membership whose hub took this machine off and asked for this
+    /// removal, passed only by the node: what is left undone is told it.
+    #[arg(long, hide = true)]
+    after_removal: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -123,7 +127,10 @@ pub fn run(command: Uninstall) -> anyhow::Result<()> {
         }
         Uninstall::Run(options) => {
             let request = request(&options)?;
-            fastctx_uninstall::run_outside(&request)
+            match &options.after_removal {
+                Some(membership) => fastctx_uninstall::after_removal(&request, membership),
+                None => fastctx_uninstall::run_outside(&request),
+            }
         }
         Uninstall::Worker { request } => {
             let request = fastctx_uninstall::read_request(&request)?;

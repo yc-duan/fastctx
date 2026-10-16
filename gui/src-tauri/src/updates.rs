@@ -56,7 +56,7 @@ async fn ask(shell: &Shell, call: UpdateCall) -> Result<State, String> {
     if state.app.as_ref() == Some(&app()) {
         return Ok(state);
     }
-    once(shell, UpdateCall::App { app: app(), carried: CARRIED.get().cloned().flatten() }).await
+    once(shell, UpdateCall::App { app: app(), carried: CARRIED.get().cloned().flatten(), program: program() }).await
 }
 
 async fn once(shell: &Shell, call: UpdateCall) -> Result<State, String> {
@@ -71,7 +71,15 @@ async fn once(shell: &Shell, call: UpdateCall) -> Result<State, String> {
 pub(crate) async fn introduce(shell: &Shell, carried: Option<std::path::PathBuf>) -> Result<(), String> {
     let carried = carried.filter(|dir| dir.is_dir()).map(|dir| dir.display().to_string());
     let _ = CARRIED.set(carried.clone());
-    once(shell, UpdateCall::App { app: app(), carried }).await.map(|_| ())
+    once(shell, UpdateCall::App { app: app(), carried, program: program() }).await.map(|_| ())
+}
+
+/// The World program this application carries, beside its own executable.
+fn program() -> Option<String> {
+    #[cfg(desktop)]
+    return crate::setup::carried().map(|path| path.display().to_string());
+    #[cfg(not(desktop))]
+    None
 }
 
 #[fastctx_gui_command::command]
@@ -95,11 +103,36 @@ pub(crate) async fn update_fetch(shell: tauri::State<'_, Shell>, version: String
     ask(&shell, UpdateCall::Fetch { version, target: target() }).await
 }
 
+/// What this application offers to update to is `version` from now on;
+/// none, the newest on its line again.
+#[fastctx_gui_command::command]
+pub(crate) async fn update_choose(shell: tauri::State<'_, Shell>, version: Option<String>) -> Result<State, String> {
+    ask(&shell, UpdateCall::Choose { version }).await
+}
+
 /// Has `machine_name` update its World program itself.
 #[fastctx_gui_command::command]
 pub(crate) async fn update_machine(shell: tauri::State<'_, Shell>, machine_name: String) -> Result<State, String> {
     let machine = fastctx_types::MachineName::try_from(machine_name).map_err(|error| error.to_string())?;
     match shell.world().call(Call::UpdateMachine { machine }).await.map_err(|error| error.to_string())?.0 {
+        Reply::Update(state) => Ok(*state),
+        other => Err(format!("the World answered {other:?}")),
+    }
+}
+
+/// Asks `machine_name`, another machine of the network, about its updates:
+/// how they stand, a look, its choices, or an update to a release.
+#[fastctx_gui_command::command]
+pub(crate) async fn machine_updates(
+    shell: tauri::State<'_, Shell>,
+    machine_name: String,
+    update: UpdateCall,
+) -> Result<State, String> {
+    let machine = fastctx_types::MachineName::try_from(machine_name).map_err(|error| error.to_string())?;
+    if matches!(update, UpdateCall::App { .. } | UpdateCall::Fetch { .. }) {
+        return Err("only an interface on that machine says what it is or brings packages there".to_string());
+    }
+    match shell.world().call(Call::MachineUpdates { machine, update }).await.map_err(|error| error.to_string())?.0 {
         Reply::Update(state) => Ok(*state),
         other => Err(format!("the World answered {other:?}")),
     }
@@ -129,7 +162,7 @@ pub(crate) async fn update_install(
     }
     #[cfg(desktop)]
     {
-        let manifest = [state.offer.as_ref()]
+        let manifest = [state.offer.as_ref(), state.chosen.as_ref()]
             .into_iter()
             .flatten()
             .chain(

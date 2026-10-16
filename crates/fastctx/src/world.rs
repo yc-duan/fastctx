@@ -201,6 +201,13 @@ pub struct RemoveArgs {
     hub: Option<HubName>,
     #[arg(long, default_value = "removed by the user")]
     reason: String,
+    /// Then uninstall Fastctx on that machine, keeping its data: one of
+    /// the account's own without the application, or a managed machine.
+    #[arg(long)]
+    uninstall: bool,
+    /// Then uninstall Fastctx on that machine with everything it wrote.
+    #[arg(long, conflicts_with = "uninstall")]
+    everything: bool,
 }
 
 #[derive(Args)]
@@ -591,8 +598,17 @@ pub fn disallow(args: DisallowArgs) -> anyhow::Result<()> {
 
 pub fn remove(args: RemoveArgs) -> anyhow::Result<()> {
     let account = account_or_owner(args.hub.as_ref(), args.account, Some(&args.name))?;
-    self::change(args.hub, account.clone(), AccountChange::Remove { name: args.name.clone(), reason: args.reason })?;
-    println!("{} is out of {account}", args.name);
+    let then = match (args.uninstall, args.everything) {
+        (_, true) => Some(fastctx_types::uninstall::Then::Everything),
+        (true, false) => Some(fastctx_types::uninstall::Then::Uninstall),
+        (false, false) => None,
+    };
+    let change = AccountChange::Remove { name: args.name.clone(), reason: args.reason, then };
+    self::change(args.hub, account.clone(), change)?;
+    match then {
+        Some(_) => println!("{} is out of {account}, and uninstalls Fastctx once it hears so", args.name),
+        None => println!("{} is out of {account}", args.name),
+    }
     Ok(())
 }
 

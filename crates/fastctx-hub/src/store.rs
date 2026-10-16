@@ -36,7 +36,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// The hub's settings.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HubFile {
     pub id: HubId,
     pub name: HubName,
@@ -51,10 +51,22 @@ pub struct HubFile {
     /// every machine that was on it, as it comes, that it is gone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dissolved: Option<Dissolved>,
-    /// The channel the network's devices follow and the version it asks
-    /// for at least (`fastctx_types::update::Policy`).
+    /// The version the network asks for at least, and whether its managed
+    /// machines update by themselves (`fastctx_types::update::Policy`).
     #[serde(default)]
     pub updates: fastctx_types::update::Policy,
+    /// The updates machines away are to make once they are back, by the
+    /// machine's key: a name it is renamed to keeps them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub due: Vec<DueFor>,
+}
+
+/// An update kept for the machine with `key` (`fastctx_types::update::Due`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DueFor {
+    pub key: PublicKey,
+    #[serde(flatten)]
+    pub due: fastctx_types::update::Due,
 }
 
 /// Who dissolved the network, and when; and the machines and devices that
@@ -214,6 +226,15 @@ pub struct Removed {
     /// It went with the whole network, dissolved.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dissolved: bool,
+    /// The account it was registered under.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<AccountName>,
+    /// What it was told to do then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub then: Option<fastctx_types::uninstall::Then>,
+    /// What it said it could not do of that, the last time it said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left: Option<String>,
 }
 
 /// Where one member's letters stand.
@@ -251,6 +272,10 @@ pub struct Letters {
     /// and the records of the update policy with them.
     #[serde(default)]
     pub versions: bool,
+    /// The member's last session said it reads the records of updates due
+    /// and made as another asked.
+    #[serde(default)]
+    pub due: bool,
 }
 
 pub struct Store {
@@ -500,6 +525,7 @@ impl Store {
                 forgets: false,
                 roles: false,
                 versions: false,
+                due: false,
             };
             self.letters.insert(name.clone(), fresh);
         }

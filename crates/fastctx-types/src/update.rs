@@ -1,5 +1,5 @@
 //! New versions of Fastctx (`world-upgrade.md`, 新版本自己往后怎样升级): the
-//! two channels releases come on, the manifest each release publishes, what
+//! two lines releases come on, the manifest each release publishes, what
 //! every machine tells its hub of versions and what the hub tells back, and
 //! what an interface on a computer asks its node.
 
@@ -25,15 +25,32 @@ pub const MANIFEST: &str = "latest.json";
 /// `fastctx-<triple>`.
 pub const KERNEL_PREFIX: &str = "fastctx-";
 
-/// Which releases a device takes. The stable channel is GitHub's latest
-/// release; the beta channel the newest of all releases, test releases and
-/// stable ones alike.
+/// Which releases a device takes: the line of the version it runs. One that
+/// runs a test release takes test releases and stable ones alike; one that
+/// runs a stable release, stable ones alone (`Channel::of`). Devices of 1.0.1
+/// beta 1 and 2 also read the network's `Policy::channel` and their own
+/// `Settings::beta`, which say no more now.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Channel {
     #[default]
     Stable,
     Beta,
+}
+
+impl Channel {
+    /// The line of `version`: a test release's is the beta line.
+    pub fn of(version: &str) -> Self {
+        match release(version) {
+            Some(version) if !version.pre.is_empty() => Channel::Beta,
+            _ => Channel::Stable,
+        }
+    }
+
+    /// Whether the release `version` is on this line.
+    pub fn takes(self, version: &str) -> bool {
+        self == Channel::Beta || release(version).is_some_and(|version| version.pre.is_empty())
+    }
 }
 
 /// A release's `latest.json`: the manifest the official updater reads, with
@@ -155,9 +172,16 @@ pub struct Report {
     /// The packages it holds, checked against their signatures.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub holds: Vec<Held>,
+    /// The update to what it runs, when someone asked for it from elsewhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked: Option<Asked>,
+    /// It runs the hub of the network it tells.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hub_here: bool,
 }
 
-/// The versions a machine of the network runs.
+/// The versions a machine of the network runs; for one away, what it ran
+/// when it was last connected while the hub ran.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Running {
     pub kernel: String,
@@ -165,22 +189,59 @@ pub struct Running {
     pub app: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github: Option<bool>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub away: bool,
+    /// It runs the network's hub.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hub_here: bool,
 }
 
-/// What the network's administrators set for updates: which channel its
-/// devices follow unless their owners choose, and the version it asks
-/// every machine to run at least. The minimum is said, never enforced.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// What the network's administrators set for updates: the version it asks
+/// every machine to run at least, said and never enforced, and whether its
+/// managed machines update by themselves. `channel` is what devices of 1.0.1
+/// beta 1 and 2 follow; a hub tells it them as the beta line.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Policy {
     #[serde(default)]
     pub channel: Channel,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub minimum: Option<String>,
+    /// Whether managed machines take new releases by themselves.
+    #[serde(default = "yes")]
+    pub managed_auto: bool,
+}
+
+impl Default for Policy {
+    fn default() -> Self {
+        Self { channel: Channel::Stable, minimum: None, managed_auto: true }
+    }
+}
+
+/// An update a machine away from the network is to make once it is back,
+/// kept by the hub until the machine runs that release or a newer one
+/// (`world-upgrade.md`, 别的机器的更新).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Due {
+    pub version: String,
+    /// Who asked for it, and when.
+    pub by: crate::AccountName,
+    pub at: Timestamp,
+}
+
+/// An update someone asked of a machine from elsewhere, which it made: told
+/// the hub it was asked through with its versions while it runs what it
+/// updated to, for the machine log (`world-upgrade.md`, 谁来更新).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Asked {
+    pub by: crate::AccountName,
+    /// What it ran before.
+    pub from: String,
 }
 
 /// What the hub tells every machine of versions: the newest release seen
-/// on each channel by any machine or by the hub itself, the network's
-/// policy, and what each machine online runs.
+/// on each line by any machine or by the hub itself, the network's
+/// policy, what each machine online runs, the hub's own version, and the
+/// updates machines are to make once they are back.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Network {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -191,6 +252,11 @@ pub struct Network {
     pub policy: Policy,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub machines: BTreeMap<MachineName, Running>,
+    /// The version the hub runs; none from a hub before 1.0.1 beta 3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub due: BTreeMap<MachineName, Due>,
 }
 
 impl Network {
@@ -216,10 +282,15 @@ pub struct Fetch {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     /// New versions are downloaded when they appear and installed once
-    /// nothing here is under way; otherwise only offered.
+    /// nothing here is under way; otherwise only offered. What the device's
+    /// owner chose, when `chosen` says they did.
     #[serde(default)]
     pub auto: bool,
-    /// Whether this device takes test releases; none follows the network.
+    /// Whether the owner chose `auto`; until they do, the device takes its
+    /// kind's default (`Settings::auto_for`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub chosen: bool,
+    /// What 1.0.1 beta 1 and 2 kept of test releases; read no more.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub beta: Option<bool>,
     /// Fetches packages for the network's machines that cannot reach GitHub.
@@ -233,19 +304,48 @@ fn yes() -> bool {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { auto: false, beta: None, relays: true }
+        Self { auto: false, chosen: false, beta: None, relays: true }
     }
 }
 
+/// What kind of device takes updates, for its default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// A computer with the application: someone sits at it.
+    App,
+    /// A machine with no application, such as a server.
+    Headless,
+    /// A managed machine, which follows its network.
+    Managed,
+}
+
 impl Settings {
-    /// The channel this device follows under `policy`.
-    pub fn channel(&self, policy: &Policy) -> Channel {
-        match self.beta {
-            Some(true) => Channel::Beta,
-            Some(false) => Channel::Stable,
-            None => policy.channel,
+    /// Whether a device of `kind` takes new releases by itself, under the
+    /// network's `policy`: a managed machine as its network says; another as
+    /// its owner chose, or by default, a computer with the application not,
+    /// a machine without one so.
+    pub fn auto_for(&self, kind: Kind, policy: Option<&Policy>) -> bool {
+        match kind {
+            Kind::Managed => policy.is_none_or(|policy| policy.managed_auto),
+            _ if self.chosen => self.auto,
+            Kind::App => false,
+            Kind::Headless => true,
         }
     }
+}
+
+/// A release as GitHub lists it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Release {
+    pub version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published: Option<Timestamp>,
+    /// Marked as a test release.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prerelease: bool,
+    /// Where its manifest is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest: Option<String>,
 }
 
 /// What a device found when it last looked on GitHub.
@@ -263,6 +363,9 @@ pub struct Looked {
     pub stable: Option<Manifest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub beta: Option<Manifest>,
+    /// Every release with a manifest, the newest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub releases: Vec<Release>,
 }
 
 impl Looked {
@@ -314,8 +417,19 @@ pub struct Kept {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct State {
     pub settings: Settings,
-    /// The channel it follows now.
+    /// The line it follows: that of the version it runs.
     pub channel: Channel,
+    /// Whether it takes new releases by itself now (`Settings::auto_for`).
+    #[serde(default)]
+    pub auto: bool,
+    /// The release its owner chose to update to, when it is not the newest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chosen: Option<Manifest>,
+    /// The newest major version the hubs it is on run: a release past it is
+    /// not taken by itself, lest it no longer reach them. None outside any
+    /// network, or where a hub does not say, or on the hub's own machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub_major: Option<u64>,
     pub looked: Looked,
     /// What the hub tells, when this machine is in a network whose hub
     /// tells it.
@@ -336,6 +450,27 @@ pub struct State {
     /// The package this machine's World program is updated from when no
     /// application carries it: `fastctx-<triple>`.
     pub kernel_target: String,
+    /// The World program this machine changes to, while it does, or that it
+    /// did not take, with why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renewing: Option<Renewing>,
+    /// The release someone asked from elsewhere that the application here
+    /// update to: it takes it as an automatic update would, as soon as
+    /// nothing here is under way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub take: Option<String>,
+    /// Whether an interface on this machine is open now.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub open: bool,
+}
+
+/// A change of this machine's World program, as it goes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Renewing {
+    pub version: String,
+    pub phase: crate::renewal::Phase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// What an interface on a computer asks its node about updates; each is
@@ -356,13 +491,27 @@ pub enum UpdateCall {
         app: App,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         carried: Option<String>,
+        /// The World program it carries, beside its own executable: what a
+        /// node that installed a new application while it was closed hands
+        /// to the renewal.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        program: Option<String>,
     },
     /// Bring the package `target` of `version` here.
     Fetch {
         version: String,
         target: String,
     },
-    /// Update this machine's World program from the newest release on its
-    /// channel, as `fastctx update` does.
-    Kernel,
+    /// Update this machine's World program, as `fastctx update` does: to
+    /// `version`, or from the newest release on its line.
+    Kernel {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
+    },
+    /// What the interface here offers to update to is `version` from now
+    /// on; none, the newest on its line again.
+    Choose {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
+    },
 }

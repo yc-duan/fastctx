@@ -15,6 +15,24 @@ async fn frame(socket: &mut dial::HubSocket) -> anyhow::Result<Option<wire::Down
 }
 
 async fn open(world: &WorldDir, directory: &Path) -> anyhow::Result<Option<dial::HubSocket>> {
+    open_saying(world, directory, None).await
+}
+
+/// Tells the hub of the membership in `directory`, which took this machine
+/// off, what it could not do of the uninstall it asked. The hub keeps it and
+/// refuses the session.
+pub async fn tell_left(world: &WorldDir, directory: &Path, left: &str) -> anyhow::Result<()> {
+    match open_saying(world, directory, Some(left)).await? {
+        None => Ok(()),
+        Some(_) => bail!("the hub let this machine in again; it was not taken off"),
+    }
+}
+
+async fn open_saying(
+    world: &WorldDir,
+    directory: &Path,
+    left: Option<&str>,
+) -> anyhow::Result<Option<dial::HubSocket>> {
     let membership =
         crate::read::<Membership>(&directory.join("membership.json"))?.context("hub membership is absent")?;
     let letters = crate::read::<LettersFile>(&directory.join("letters.json"))?
@@ -63,6 +81,8 @@ async fn open(world: &WorldDir, directory: &Path) -> anyhow::Result<Option<dial:
         forgets: false,
         roles: true,
         versions: false,
+        due: false,
+        left: left.map(str::to_string),
         dialed: Some(connection.address),
         any_names: true,
     };

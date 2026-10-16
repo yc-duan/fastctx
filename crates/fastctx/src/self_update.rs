@@ -11,17 +11,18 @@ use fastctx_types::{Call, Reply};
 
 #[derive(clap::Args)]
 pub struct UpdateArgs {
-    /// Only look for a newer version and say what was found.
-    #[arg(long)]
+    /// The release to update to; without one, the newest on the line of
+    /// what runs here: test releases and stable ones for a test release,
+    /// stable ones alone for a stable one.
+    version: Option<String>,
+    /// Only look, and list the releases this machine can update to.
+    #[arg(long, conflicts_with = "version")]
     check: bool,
     /// Take new versions by itself as they appear.
-    #[arg(long, value_enum)]
+    #[arg(long, value_enum, conflicts_with = "version")]
     auto: Option<Switch>,
-    /// Take test releases: on, off, or as the network says.
-    #[arg(long, value_enum)]
-    beta: Option<Beta>,
     /// Fetch packages for the network's machines that cannot reach GitHub.
-    #[arg(long, value_enum)]
+    #[arg(long, value_enum, conflicts_with = "version")]
     relay: Option<Switch>,
 }
 
@@ -31,26 +32,13 @@ enum Switch {
     Off,
 }
 
-#[derive(Clone, Copy, clap::ValueEnum)]
-enum Beta {
-    On,
-    Off,
-    Network,
-}
-
 pub fn run(args: UpdateArgs) -> anyhow::Result<()> {
     let mut state = call(UpdateCall::State)?;
-    if args.auto.is_some() || args.beta.is_some() || args.relay.is_some() {
+    if args.auto.is_some() || args.relay.is_some() {
         let mut settings: Settings = state.settings.clone();
         if let Some(auto) = args.auto {
             settings.auto = matches!(auto, Switch::On);
-        }
-        if let Some(beta) = args.beta {
-            settings.beta = match beta {
-                Beta::On => Some(true),
-                Beta::Off => Some(false),
-                Beta::Network => None,
-            };
+            settings.chosen = true;
         }
         if let Some(relay) = args.relay {
             settings.relays = matches!(relay, Switch::On);
@@ -62,12 +50,25 @@ pub fn run(args: UpdateArgs) -> anyhow::Result<()> {
     state = call(UpdateCall::Look)?;
     print_state(&state);
     if args.check {
+        print_releases(&state);
         return Ok(());
     }
     let running = env!("CARGO_PKG_VERSION");
-    let Some(offer) = state.offer.clone().filter(|offer| offer.newer_than(running)) else {
-        println!("nothing to update");
-        return Ok(());
+    let version = match args.version {
+        Some(version) => {
+            let version = version.strip_prefix('v').unwrap_or(&version).to_string();
+            if fastctx_types::update::release(&version) <= fastctx_types::update::release(running) {
+                anyhow::bail!("this machine runs {running}; it does not go back to {version}");
+            }
+            version
+        }
+        None => match state.offer.clone().filter(|offer| offer.newer_than(running)) {
+            Some(offer) => offer.version,
+            None => {
+                println!("nothing to update");
+                return Ok(());
+            }
+        },
     };
     if let Some(app) = &state.app {
         anyhow::bail!(
@@ -75,8 +76,9 @@ pub fn run(args: UpdateArgs) -> anyhow::Result<()> {
             app.version
         );
     }
-    println!("updating to {}", offer.version);
-    let updating = std::thread::spawn(|| call(UpdateCall::Kernel));
+    println!("updating to {version}");
+    let asked = Some(version.clone());
+    let updating = std::thread::spawn(move || call(UpdateCall::Kernel { version: asked }));
     let live = std::io::stdout().is_terminal();
     while !updating.is_finished() {
         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -97,7 +99,7 @@ pub fn run(args: UpdateArgs) -> anyhow::Result<()> {
         println!();
     }
     updating.join().map_err(|_| anyhow::anyhow!("the update stopped"))??;
-    println!("fastctx {} is in place; it takes over once the turns under way here end", offer.version);
+    println!("fastctx {version} is in place; it takes over once the turns under way here end");
     Ok(())
 }
 
@@ -116,18 +118,13 @@ fn channel(channel: Channel) -> &'static str {
 }
 
 fn print_settings(state: &State) {
-    let beta = match state.settings.beta {
-        Some(true) => "on",
-        Some(false) => "off",
-        None => "as the network says",
-    };
-    println!("channel: {} (test releases {beta})", channel(state.channel));
-    println!("automatic updates: {}", if state.settings.auto { "on" } else { "off" });
+    let how = if state.settings.chosen { "" } else { " (by default)" };
+    println!("automatic updates: {}{how}", if state.auto { "on" } else { "off" });
     println!("fetching for the network: {}", if state.settings.relays { "on" } else { "off" });
 }
 
 fn print_state(state: &State) {
-    println!("this machine runs fastctx {} on the {} channel", env!("CARGO_PKG_VERSION"), channel(state.channel));
+    println!("this machine runs fastctx {} on the {} line", env!("CARGO_PKG_VERSION"), channel(state.channel));
     match (&state.looked.github, &state.looked.why) {
         (Some(true), None) => {
             let newest = state.looked.on(state.channel).map_or("no release", |manifest| manifest.version.as_str());
@@ -143,6 +140,44 @@ fn print_state(state: &State) {
             None => println!("the network: newest {newest}"),
         }
     }
+}
+
+/// The releases newer than what runs here, the newest first.
+fn print_releases(state: &State) {
+    let running = fastctx_types::update::release(env!("CARGO_PKG_VERSION"));
+    let mut newer: Vec<(String, bool)> = state
+        .looked
+        .releases
+        .iter()
+        .filter(|release| fastctx_types::update::release(&release.version) > running)
+        .map(|release| (release.version.clone(), release.prerelease))
+        .collect();
+    if newer.is_empty()
+        && let Some(network) = &state.network
+    {
+        for manifest in network.stable.iter().chain(network.beta.iter()) {
+            if fastctx_types::update::release(&manifest.version) > running {
+                newer.push((manifest.version.clone(), Channel::of(&manifest.version) == Channel::Beta));
+            }
+        }
+        newer.sort_by(|a, b| fastctx_types::update::release(&b.0).cmp(&fastctx_types::update::release(&a.0)));
+    }
+    if newer.is_empty() {
+        println!("no newer release");
+        return;
+    }
+    println!("releases it can update to:");
+    for (version, test) in newer {
+        let major = fastctx_types::update::release(&version).map(|release| release.major);
+        let past = state.hub_major.is_some_and(|hub| major.is_some_and(|major| major > hub));
+        let notes = [test.then_some("test release"), past.then_some("newer than the hub's major version")];
+        let notes: Vec<&str> = notes.into_iter().flatten().collect();
+        match notes.is_empty() {
+            true => println!("  {version}"),
+            false => println!("  {version} ({})", notes.join(", ")),
+        }
+    }
+    println!("`fastctx update <version>` updates to one of them");
 }
 
 fn size(bytes: u64) -> String {

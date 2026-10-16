@@ -89,6 +89,20 @@ pub enum Action {
     Remove {
         name: MachineName,
         reason: String,
+        /// What it was told to do then.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        then: Option<crate::uninstall::Then>,
+    },
+    /// `name`, taken off and told to uninstall Fastctx, could not do all of
+    /// it: what was left, and why, as it said; `by` took it off, and it was
+    /// `home`'s.
+    UninstallLeft {
+        name: MachineName,
+        left: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<AccountName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home: Option<AccountName>,
     },
     Logout,
     Token {
@@ -151,6 +165,24 @@ pub enum Action {
         channel: crate::update::Channel,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         minimum: Option<String>,
+        /// Whether managed machines update by themselves; none before
+        /// 1.0.1 beta 3, which always did.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        managed_auto: Option<bool>,
+    },
+    /// `machine`, away, is to update to `version` once it is back; none,
+    /// what was kept for it was taken back.
+    UpdateDue {
+        machine: MachineName,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
+    },
+    /// `machine` says it was updated from `from` to `to` as `by` asked.
+    Updated {
+        machine: MachineName,
+        from: String,
+        to: String,
+        by: AccountName,
     },
     /// The network named `name` was dissolved.
     Dissolve {

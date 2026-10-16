@@ -383,9 +383,16 @@ pub enum RemoteCall {
     /// What that machine is like, for `fastctx nodes`.
     Facts,
     /// Update that machine's World program from the newest release on its
-    /// channel, as `fastctx update` there does: only its owner's to ask, and
-    /// a managed machine's super administrator's.
+    /// line, as `fastctx update` there does: only its owner's to ask, and the
+    /// super administrator's but for a visitor's machine. What releases
+    /// before 1.0.1 beta 3 take; later ones take `Updates`.
     UpdateWorld,
+    /// New versions of Fastctx on that machine, as its own interface asks
+    /// them (`crate::update::UpdateCall`), but for what only an interface
+    /// there says or brings: who may update it may ask.
+    Updates {
+        update: crate::update::UpdateCall,
+    },
     /// How that machine is doing, for its details page: only for an account
     /// that may work on it (`crate::stats`). With `after`, its lines bring
     /// only the round trips and changes since then: a page that asks every
@@ -474,6 +481,7 @@ impl RemoteCall {
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }
             | RemoteCall::UpdateWorld
+            | RemoteCall::Updates { .. }
             | RemoteCall::Stats { .. } => Purpose::Hands,
             RemoteCall::Composer { .. }
             | RemoteCall::AttachmentThumbnail { .. }

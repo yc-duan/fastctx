@@ -18,6 +18,16 @@ pub struct Hub {
     pub dir: String,
 }
 
+/// What a machine taken off a network does then (`world-network.md`,
+/// 移出网络与卸载): takes Fastctx off itself, keeping its data, as its own
+/// settings' uninstall does, or with everything Fastctx wrote there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Then {
+    Uninstall,
+    Everything,
+}
+
 /// The network this computer is a managed machine on, and its owner there,
 /// while the owner has not taken it off: only an administrator of this
 /// computer takes Fastctx off it then (`world-network.md`, 受管机器).

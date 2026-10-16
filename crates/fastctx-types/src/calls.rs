@@ -435,9 +435,17 @@ pub enum Call {
     /// New versions of Fastctx for this machine (`crate::update`).
     Update(crate::update::UpdateCall),
     /// Update `machine`'s World program from the newest release on its
-    /// channel; answered with how updates stand there.
+    /// line; answered with how updates stand there. What interfaces before
+    /// 1.0.1 beta 3 ask; later ones ask `MachineUpdates`.
     UpdateMachine {
         machine: MachineName,
+    },
+    /// New versions of Fastctx on `machine`, this one or another of the
+    /// network's (`crate::update::UpdateCall`); answered with how updates
+    /// stand there.
+    MachineUpdates {
+        machine: MachineName,
+        update: crate::update::UpdateCall,
     },
     /// Manage this resident as the user, on its own machine.
     Manage {

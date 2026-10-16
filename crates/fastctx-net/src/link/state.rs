@@ -117,6 +117,9 @@ pub struct Ended {
     /// The network was dissolved, not only this machine taken off it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dissolved: bool,
+    /// What its remover asked it to do then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub then: Option<fastctx_types::uninstall::Then>,
 }
 
 /// The network this World is a managed machine on and its owner there, as

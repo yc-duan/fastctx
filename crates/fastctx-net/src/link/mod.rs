@@ -108,9 +108,10 @@ pub trait Node: Send + Sync + 'static {
     /// The link connected to the hub again and has asked it for the view.
     fn connected(&self) {}
     /// The hub ended this machine's place on it, for good: the machine was
-    /// taken off, or, `dissolved`, the whole network was.
-    fn place_ended(&self, dissolved: bool) {
-        let _ = dissolved;
+    /// taken off, or, `dissolved`, the whole network was; `then`, what its
+    /// remover asked it to do now.
+    fn place_ended(&self, dissolved: bool, then: Option<fastctx_types::uninstall::Then>) {
+        let _ = (dissolved, then);
     }
     /// The ways to other machines may have changed (`Link::way_to`): the
     /// line to the hub came or went, the hub said anew who is online, or a
@@ -277,6 +278,8 @@ pub(crate) struct Inner {
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// The hub said, refusing this machine, that its network was dissolved.
     dissolved: std::sync::atomic::AtomicBool,
+    /// The hub said, refusing this machine, what it is to do now.
+    then: Mutex<Option<fastctx_types::uninstall::Then>>,
 }
 
 struct Letters {
@@ -383,6 +386,7 @@ impl Link {
             asks: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(0),
             dissolved: std::sync::atomic::AtomicBool::new(false),
+            then: Mutex::new(None),
             outbox_changed: Notify::new(),
             reconnect: Notify::new(),
             check: Notify::new(),
@@ -420,6 +424,11 @@ impl Link {
     /// ends the session, and `subscribe` says so.
     pub fn checks(&self) -> watch::Receiver<u64> {
         self.inner.checks.subscribe()
+    }
+
+    /// Where this membership is kept.
+    pub fn dir(&self) -> &std::path::Path {
+        self.inner.dir.path()
     }
 
     /// Whether the hub said, ending this machine's place, that the whole

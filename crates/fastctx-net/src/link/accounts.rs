@@ -55,7 +55,13 @@ impl Link {
                 ));
             }
             AccountChange::Direct { machine, at } => Change::Direct { machine, at },
-            AccountChange::Remove { name, reason } => Change::Remove { name, reason },
+            AccountChange::Remove { then: Some(_), .. } if !self.view().uninstalls => {
+                return Err(format!(
+                    "the hub {} runs an older fastctx that has no machine it takes off uninstall Fastctx",
+                    self.hub_name()
+                ));
+            }
+            AccountChange::Remove { name, reason, then } => Change::Remove { name, reason, then },
             AccountChange::Rename { .. } if !self.view().renames => {
                 return Err(format!("the hub {} runs an older fastctx that renames no machine", self.hub_name()));
             }
@@ -109,6 +115,13 @@ impl Link {
                 return Err(format!("the hub {} runs an older fastctx that keeps no versions", self.hub_name()));
             }
             AccountChange::Updates { policy } => Change::Updates { policy },
+            AccountChange::UpdateDue { .. } if !self.view().due => {
+                return Err(format!(
+                    "the hub {} runs an older fastctx that keeps no updates for machines away",
+                    self.hub_name()
+                ));
+            }
+            AccountChange::UpdateDue { machine, version } => Change::UpdateDue { machine, version },
             AccountChange::Dissolve { .. } if !self.view().dissolves => {
                 return Err(format!("the hub {} runs an older fastctx that dissolves no network", self.hub_name()));
             }
@@ -195,6 +208,8 @@ impl Link {
             groups: view.groups,
             dissolves: view.dissolves,
             versions: view.versions,
+            due: view.due,
+            uninstalls: view.uninstalls,
             logins: me.map(|me| me.logins.iter().cloned().collect()).unwrap_or_default(),
             home: me.and_then(|me| me.home.clone()),
             self_registration: view.self_registration,

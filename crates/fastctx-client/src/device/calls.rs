@@ -125,6 +125,7 @@ impl Device {
                 (machine, RemoteCall::Stats { after }, None)
             }
             Call::UpdateMachine { machine } => (machine, RemoteCall::UpdateWorld, None),
+            Call::MachineUpdates { machine, update } => (machine, RemoteCall::Updates { update }, None),
             Call::Thumbnail { machine, request } => {
                 let machine = machine.ok_or_else(|| failed("choose the machine holding the image"))?;
                 (machine, RemoteCall::Thumbnail { request }, None)
@@ -255,7 +256,7 @@ impl Device {
             (RemoteCall::FindFiles { .. }, RemoteReply::FilesFound(reply)) => Reply::FilesFound(reply),
             (RemoteCall::Folders { .. }, RemoteReply::Folders(folders)) => Reply::Folders(folders),
             (RemoteCall::Stats { .. }, RemoteReply::Stats(stats)) => Reply::Stats(stats),
-            (RemoteCall::UpdateWorld, RemoteReply::Update(state)) => Reply::Update(state),
+            (RemoteCall::UpdateWorld | RemoteCall::Updates { .. }, RemoteReply::Update(state)) => Reply::Update(state),
             (RemoteCall::Thumbnail { .. }, RemoteReply::Thumbnail(reply)) => Reply::Thumbnail(reply),
             (RemoteCall::AttachmentThumbnail { .. }, RemoteReply::Thumbnail(reply)) => Reply::Thumbnail(reply),
             (RemoteCall::Lines { .. }, RemoteReply::Lines(reply)) => Reply::Lines(reply),

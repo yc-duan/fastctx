@@ -142,6 +142,7 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
         self_registration: false,
         dissolved: None,
         updates: Default::default(),
+        due: Vec::new(),
     };
     Store::create(to, &hub, &certificate, &secrets.to_bytes(), &book)?;
     Ok(report)
