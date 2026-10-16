@@ -486,9 +486,13 @@ def entries(directory, missing_ok=False):
 def settled(lab, talks):
     """Whether every conversation kept here is idle with no words on their way in."""
     # An open command can fail after creating its conversation.
-    talks = set(talks) | {directory.name for directory in entries(lab.conversations())}
-    for talk in sorted(talks):
+    found = {directory.name for directory in entries(lab.conversations())}
+    for talk in sorted(set(talks) | found):
         directory = lab.conversations() / talk
+        # An opening the node did not live to record is no conversation (`world-concurrency.md`,
+        # Codex 对话出生): nothing of it is listed, working or waiting.
+        if talk not in talks and not (directory / "about").exists():
+            continue
         state = json.loads((directory / "now").read_text(encoding="utf-8"))
         if (not isinstance(state, dict) or state.get("activity") not in ("busy", "idle", "asleep")
                 or "turn" not in state or (state["turn"] is not None and not isinstance(state["turn"], str))):
