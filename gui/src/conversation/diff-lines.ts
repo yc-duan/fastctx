@@ -59,11 +59,13 @@ export function rowOf(line: DiffLine, previous: DiffLine | null, first: boolean)
 
 /** Draws a row: its numbers, its sign, its text in its language's colours;
  *  a hunk as the unchanged lines it stands for. The number columns widen to
- *  the largest number drawn in their holder. */
-export function diffPaint(path: string, unchanged: (n: number) => string): LinePaint {
+ *  the largest number drawn in their holder; a change whose rows know no
+ *  place in the file (`numbered` false) has none, wherever it is drawn. */
+export function diffPaint(path: string, unchanged: (n: number) => string, numbered = true): LinePaint {
   const lang = language(path);
   return (element, line, _index, match) => {
     const { row, at } = decodeRow(line);
+    if (!numbered) element.classList.add("unnumbered");
     if (row.kind === "gap") {
       element.classList.add("diff-gap");
       // The first hunk at the top of the file stands for nothing.

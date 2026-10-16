@@ -6,8 +6,14 @@
 .lv-fold-content { position: relative; min-width: 0; }
 .lv-corner { position: absolute; z-index: 1; right: 0; top: 0; width: 44px; height: 44px; text-align: center; background: var(--surface-header); border-radius: var(--radius-s); }
 .lv-more { min-height: 44px; white-space: nowrap; color: var(--text-2); }
-.lv-viewport { position: relative; min-width: 0; overflow: auto; overscroll-behavior: auto; overflow-anchor: none; touch-action: pan-x pinch-zoom; font-family: var(--font-code); font-variation-settings: var(--code-axes); font-size: var(--size-code); line-height: var(--code-leading, var(--leading-code)); background: var(--surface-code); border-radius: var(--radius-s); scrollbar-gutter: stable; }
-.lv-track { position: relative; min-width: 100%; }
+/* The background is painted with the lines it scrolls (`local`): text on a
+   scrolled layer gets ClearType only over a background painted in that
+   layer, and a box with a stable gutter otherwise paints it behind. */
+.lv-viewport { position: relative; min-width: 0; overflow: auto; overscroll-behavior: auto; overflow-anchor: none; touch-action: pan-x pinch-zoom; font-family: var(--font-code); font-variation-settings: var(--code-axes); font-size: var(--size-code); line-height: var(--code-leading, var(--leading-code)); background: var(--surface-code) local; border-radius: var(--radius-s); scrollbar-gutter: stable; }
+/* The track alone sizes what scrolls: whatever a row draws past its own
+   box is cut at the track's edge and never moves the scroll range, which
+   the rows in view are worked out from. */
+.lv-track { position: relative; min-width: 100%; contain: strict; }
 .lv-line { position: absolute; left: 0; min-width: 100%; width: max-content; display: flex; align-items: baseline; white-space: pre; padding-right: var(--space-4); }
 .lv-fold .lv-line { padding-right: calc(44px + var(--space-4)); }
 .lv-number { flex: none; width: calc(var(--line-digits, 7) * 1ch + 1ch); padding-right: 1ch; text-align: right; color: var(--text-3); user-select: none; font-variant-numeric: tabular-nums; }

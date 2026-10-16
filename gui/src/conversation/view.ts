@@ -1994,8 +1994,8 @@ export class ConversationView {
       {
         lines,
         ...(Array.isArray(lines) ? { source: new DiffLines(lines as readonly string[]) } : {}),
-        paint: diffPaint(path, this.context.words.unchangedLines),
-        kind: numberedRows ? "diff" : "diff unnumbered",
+        paint: diffPaint(path, this.context.words.unchangedLines, numberedRows),
+        kind: "diff",
       },
       path,
       this.layoutAnchor,

@@ -820,8 +820,10 @@
 
 /* A change: a row a line, its two numbers and its sign before it; added
    and removed lines tinted whole, with a bar at the edge. A few rows wrap
-   in the page's flow; more scroll in their box, a row a line. The number
-   columns widen to the largest number drawn (`--diff-digits`). */
+   in the page's flow; more scroll in their box, a row a line, and the
+   popup draws the same rows. The number columns widen to the largest number
+   drawn in the rows' holder (`--diff-digits`); a change whose rows know no
+   place in the file draws none. */
 
 .long-text.diff {
   border-radius: var(--radius-m);
@@ -855,7 +857,8 @@
   color: var(--text-3);
 }
 
-.long-text.diff .lv-line {
+.lv-line.diff-row,
+.lv-line.diff-gap {
   --diff-number: calc(var(--diff-digits, 2) * 1ch + 1.6ch);
 }
 
@@ -869,15 +872,15 @@
   grid-template-columns: var(--diff-number) var(--diff-number) 2.4ch minmax(0, 1fr);
 }
 
-.long-text.diff.unnumbered .lv-line.diff-row {
+.lv-line.diff-row.unnumbered {
   grid-template-columns: 2.4ch max-content;
 }
 
-.long-text.diff.unnumbered .long-static > .lv-line.diff-row {
+.long-static > .lv-line.diff-row.unnumbered {
   grid-template-columns: 2.4ch minmax(0, 1fr);
 }
 
-.long-text.diff.unnumbered .diff-num {
+.lv-line.unnumbered .diff-num {
   display: none;
 }
 
@@ -932,7 +935,7 @@
   background: var(--surface-code-2);
 }
 
-.long-text.diff.unnumbered .lv-line.diff-gap {
+.lv-line.diff-gap.unnumbered {
   padding-left: 2.4ch;
 }
 

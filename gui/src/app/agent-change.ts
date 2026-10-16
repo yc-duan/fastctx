@@ -395,7 +395,7 @@ export class AgentChangeSheet {
       if (holder.childElementCount) return;
       const rows = parse(previewDiff(file, words.withheld).join("\n"));
       const lines = memoryDiff(rows);
-      holder.append(new LongText({ ...lines, paint: diffPaint(file.path, words.lines.unchanged), kind: "diff unnumbered" }, shortPath(file.path), layout, words.lines).element);
+      holder.append(new LongText({ ...lines, paint: diffPaint(file.path, words.lines.unchanged, false), kind: "diff" }, shortPath(file.path), layout, words.lines).element);
     });
   }
 

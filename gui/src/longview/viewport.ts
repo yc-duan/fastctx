@@ -52,6 +52,8 @@ export class LineViewport {
   private said = { text: "", why: "" };
   private broken: LineInterruption | null = null;
   private unhear: () => void;
+  /** The frame on which the lines in view are looked at again after a read. */
+  private again = 0;
 
   constructor(readonly source: LineSource, private options: LineViewportOptions) {
     this.element.className = "lv-viewport";
@@ -101,7 +103,13 @@ export class LineViewport {
   }
   get rowHeight(): number { return this.lineHeight || Math.round(parseFloat(getComputedStyle(this.element).lineHeight)); }
   get ready(): Promise<void> {
-    return (async () => { do { await this.pending; } while (this.requestRange); })();
+    return (async () => {
+      do {
+        await this.pending;
+        // The look after a read was asked for first, so it runs before this frame's wait ends.
+        if (this.again) await new Promise<void>((settle) => requestAnimationFrame(() => settle()));
+      } while (this.requestRange || this.again);
+    })();
   }
   get range(): { start: number; end: number; cached: number; drawn: number } {
     return { start: this.first, end: this.end, cached: this.cache.size, drawn: this.rows.size };
@@ -135,6 +143,9 @@ export class LineViewport {
 
   jump(line: number, match: LineMatch | null = null): void {
     if (!Number.isSafeInteger(line) || line < 0 || line >= this.length) throw new RangeError("line is outside the source");
+    // A viewport just put on the page is sized here, not first on its
+    // observer's turn, which would come too late for this position.
+    if (!this.lineHeight) this.resize();
     this.match = match;
     this.setTop(line * this.rowHeight);
   }
@@ -207,7 +218,15 @@ export class LineViewport {
       if (this.request === request) {
         this.requestRange = null;
         this.element.setAttribute("aria-busy", "false");
-        if (succeeded) this.scroll();
+        // What came into view while it was read is read on the next frame,
+        // never in this task: no read and what it draws can then keep the
+        // page from painting and taking input.
+        if (succeeded && !this.again) {
+          this.again = requestAnimationFrame(() => {
+            this.again = 0;
+            this.scroll();
+          });
+        }
       }
     });
     // The visible error remains; callers can also await ready to receive it.
@@ -288,6 +307,7 @@ export class LineViewport {
 
   destroy(): void {
     this.destroyed = true;
+    cancelAnimationFrame(this.again);
     this.unchain();
     this.request?.abort();
     this.unsubscribe();
