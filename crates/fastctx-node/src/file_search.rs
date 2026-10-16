@@ -45,9 +45,9 @@ pub(crate) async fn open(
         let (reply, lease) = fastctx_net::file_search::open(link, machine, account, scope).await?;
         return Ok((reply, Lease::Remote(lease)));
     }
-    let roots = roots(node, &scope).await?;
-    let session =
-        tokio::task::spawn_blocking(move || Session::new(scope, roots)).await.map_err(failed)?.map_err(failed)?;
+    let initializing = crate::initializing::take()?;
+    let roots = roots(node, &scope, Some(&initializing)).await?;
+    let session = initializing.run(move || Session::new(scope, roots)).await?.map_err(failed)?;
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).map_err(failed)?;
     let search = bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
@@ -63,9 +63,14 @@ pub(crate) async fn serve(
     scope: FileSearchScope,
     mut stream: fastctx_net::data::Stream,
 ) -> Result<RemoteReply, Failure> {
+    let opening = open(node, &Acting::Here, from, None, scope);
+    tokio::pin!(opening);
     let (reply, mut lease) = tokio::select! {
-        result = open(node, &Acting::Here, from, None, scope) => result?,
-        () = stream.closed() => return Err(failed("the file search's owner disconnected")),
+        result = &mut opening => result?,
+        () = stream.closed() => {
+            drop(opening.await);
+            return Err(failed("the file search's owner disconnected"));
+        },
     };
     stream.say(&link.sign(fastctx_net::sign::Domain::Event, &reply)).await.map_err(failed)?;
     tokio::select! { () = stream.closed() => {}, () = lease.closed() => {} }
@@ -107,12 +112,12 @@ pub(crate) async fn here(
         FileSearchRequest::Query { search, query, limit } => {
             let session = node.file_searches.get(&(from, search))?;
             let scope = session.scope.clone();
-            let current = roots(node, &scope).await?;
+            let current = roots(node, &scope, None).await?;
             let expected = current.clone();
             let original_query = query.clone();
             let result =
                 tokio::task::spawn_blocking(move || session.query(current, query, limit)).await.map_err(failed)?;
-            if roots(node, &scope).await? != expected {
+            if roots(node, &scope, None).await? != expected {
                 FileSearchResult::Matches { query: original_query, ready: false, total: 0, files: vec![] }
             } else {
                 result.map_err(failed)?
@@ -128,7 +133,11 @@ pub(crate) async fn here(
     Ok(FileSearchReply { machine: node.machine(), result })
 }
 
-async fn roots(node: &Arc<Node>, scope: &FileSearchScope) -> Result<Vec<String>, Failure> {
+async fn roots(
+    node: &Arc<Node>,
+    scope: &FileSearchScope,
+    initializing: Option<&crate::initializing::Guard>,
+) -> Result<Vec<String>, Failure> {
     match scope {
         FileSearchScope::Roots { roots } => Ok(roots.clone()),
         FileSearchScope::Resident { resident, roots } => {
@@ -140,11 +149,13 @@ async fn roots(node: &Arc<Node>, scope: &FileSearchScope) -> Result<Vec<String>,
                 return Ok(roots.clone());
             };
             let world = node.world.clone();
-            let record = tokio::task::spawn_blocking(move || crate::town::read::latest(&world, &town))
-                .await
-                .map_err(failed)?
-                .map_err(failed)?
-                .ok_or_else(|| Failure::new("the resident's project has no local address book"))?;
+            let reading = move || crate::town::read::latest(&world, &town);
+            let record = match initializing {
+                Some(initializing) => initializing.run(reading).await?,
+                None => tokio::task::spawn_blocking(reading).await.map_err(failed)?,
+            }
+            .map_err(failed)?
+            .ok_or_else(|| Failure::new("the resident's project has no local address book"))?;
             Ok(record
                 .places
                 .into_iter()

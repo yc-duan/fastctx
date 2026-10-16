@@ -291,9 +291,14 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                     return writer.drain().await;
                 }
             };
+            let opening = crate::file_search::open(node, &acting, node.machine(), machine, scope);
+            tokio::pin!(opening);
             let opened = tokio::select! {
-                result = crate::file_search::open(node, &acting, node.machine(), machine, scope) => result,
-                _ = reader.recv() => return Ok(()),
+                result = &mut opening => result,
+                _ = reader.recv() => {
+                    drop(opening.await);
+                    return Ok(());
+                },
             };
             match opened {
                 Ok((reply, mut lease)) => {
@@ -422,9 +427,14 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 writer.send(&json(&NodeFrame::Reply { id, reply: Err(error) })).await?;
                 return writer.drain().await;
             }
+            let opening = crate::lines::open(node, node.machine(), machine, path, decoding);
+            tokio::pin!(opening);
             let opened = tokio::select! {
-                result = crate::lines::open(node, node.machine(), machine, path, decoding) => result,
-                _ = reader.recv() => return Ok(()),
+                result = &mut opening => result,
+                _ = reader.recv() => {
+                    drop(opening.await);
+                    return Ok(());
+                },
             };
             match opened {
                 Ok((reply, mut lease)) => {

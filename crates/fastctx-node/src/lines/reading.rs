@@ -30,7 +30,7 @@ async fn here(
         .get(&key)
         .cloned()
         .ok_or_else(|| failed("line source is closed or belongs to another caller"))?;
-    refresh(source.clone()).await?;
+    refresh(source.clone(), None).await?;
     let cancelled = Cancel::default();
     let cancel = cancelled.0.clone();
     {

@@ -93,6 +93,7 @@ pub(crate) async fn open(
         let (reply, lease) = fastctx_net::lines::open(link, machine, account, path, decoding).await?;
         return Ok((reply, Lease::Remote(lease)));
     }
+    let initializing = crate::initializing::take()?;
     let (decoding, expected, policy, annotation) = match decoding {
         Decoding::Immutable { content, policy, annotation, decoding } => {
             if matches!(*decoding, Decoding::Immutable { .. }) {
@@ -161,42 +162,46 @@ pub(crate) async fn open(
     let (read_path, directory, record_path) = (path.clone(), node.world.path().to_path_buf(), job_record.clone());
     let note_path = notes_record.clone();
     let expected_annotation = annotation.clone();
-    let opened = tokio::task::spawn_blocking(move || {
-        let snapshot = observe(&read_path).map_err(source_failed)?;
-        if let Some(expected) = expected
-            && fastctx_hands::files::content_fingerprint(&read_path).map_err(failed)? != expected
-        {
-            return Err(failed("the artifact no longer matches the history's content fingerprint"));
-        }
-        let (output, selection) = match &decoding {
-            Decoding::File { encoding } => (false, encoding.as_deref()),
-            Decoding::Output { .. } => (true, None),
-            Decoding::Immutable { .. } => unreachable!("unwrapped immutable decoding"),
-        };
-        let index = fastctx_hands::lines::Index::open(&read_path, &directory, output, selection, cancel.clone())
-            .map_err(failed)?;
-        let after = observe(&read_path).map_err(source_failed)?;
-        if ((immutable || !output) && snapshot != after) || !snapshot.same_file(&after) || after.size < snapshot.size {
-            return Err(failed("the text source changed during indexing"));
-        }
-        let complete = complete(record_path.as_deref()).map_err(failed)?;
-        let extent = Extent { length: index.length, complete, version: 0 };
-        let (projection, writes, writes_revision) =
-            projection::open(&read_path, snapshot.size, note_path.as_deref(), &cancel).map_err(failed)?;
-        projection::verify(projection.as_ref(), expected_annotation.as_deref()).map_err(failed)?;
-        Ok::<_, Failure>(State {
-            index: Some(index),
-            snapshot,
-            extent,
-            first: 0,
-            error: None,
-            projection,
-            writes,
-            writes_revision,
+    let opened = initializing
+        .run(move || {
+            let snapshot = observe(&read_path).map_err(source_failed)?;
+            if let Some(expected) = expected
+                && fastctx_hands::files::content_fingerprint(&read_path).map_err(failed)? != expected
+            {
+                return Err(failed("the artifact no longer matches the history's content fingerprint"));
+            }
+            let (output, selection) = match &decoding {
+                Decoding::File { encoding } => (false, encoding.as_deref()),
+                Decoding::Output { .. } => (true, None),
+                Decoding::Immutable { .. } => unreachable!("unwrapped immutable decoding"),
+            };
+            let index = fastctx_hands::lines::Index::open(&read_path, &directory, output, selection, cancel.clone())
+                .map_err(failed)?;
+            let after = observe(&read_path).map_err(source_failed)?;
+            if ((immutable || !output) && snapshot != after)
+                || !snapshot.same_file(&after)
+                || after.size < snapshot.size
+            {
+                return Err(failed("the text source changed during indexing"));
+            }
+            let complete = complete(record_path.as_deref()).map_err(failed)?;
+            let extent = Extent { length: index.length, complete, version: 0 };
+            let (projection, writes, writes_revision) =
+                projection::open(&read_path, snapshot.size, note_path.as_deref(), &cancel).map_err(failed)?;
+            projection::verify(projection.as_ref(), expected_annotation.as_deref()).map_err(failed)?;
+            Ok::<_, Failure>(State {
+                index: Some(index),
+                snapshot,
+                extent,
+                first: 0,
+                error: None,
+                projection,
+                writes,
+                writes_revision,
+            })
         })
-    })
-    .await
-    .map_err(failed)??;
+        .await
+        .map_err(failed)??;
     let source = Arc::new(Source {
         path: path.clone(),
         immutable,
@@ -220,7 +225,7 @@ pub(crate) async fn open(
     tokio::spawn(monitor(Arc::downgrade(&source), event_rx, source.closed.subscribe()));
     // Catch appends racing the initial bounded snapshot, without waiting for
     // another filesystem event to happen after the monitor starts.
-    refresh(source.clone()).await?;
+    refresh(source.clone(), Some(initializing)).await?;
     let extent = source.state.lock().expect("line source").extent.clone();
     Ok((
         Reply {
@@ -251,14 +256,18 @@ async fn monitor(
             () = tokio::time::sleep(RUNNING_LOOK), if running => {}
         }
         let Some(source) = source.upgrade() else { break };
-        if refresh(source).await.is_err() {
+        if refresh(source, None).await.is_err() {
             break;
         }
     }
 }
 
-async fn refresh(source: Arc<Source>) -> std::result::Result<(), Failure> {
+async fn refresh(
+    source: Arc<Source>,
+    initializing: Option<crate::initializing::Guard>,
+) -> std::result::Result<(), Failure> {
     tokio::task::spawn_blocking(move || {
+        let _initializing = initializing;
         let mut state = source.state.lock().expect("line source");
         if let Some(error) = &state.error {
             return Err(failed(error));
@@ -370,7 +379,7 @@ pub(crate) async fn call(
         .ok_or_else(|| failed("line source is closed or belongs to another caller"))?;
     let mut changes = source.changed.subscribe();
     let mut closed = source.closed.subscribe();
-    refresh(source.clone()).await?;
+    refresh(source.clone(), None).await?;
     if let Request::Changed { version, .. } = &request {
         loop {
             if *closed.borrow() {
@@ -442,7 +451,15 @@ pub(crate) async fn serve(
     decoding: Decoding,
     mut stream: fastctx_net::data::Stream,
 ) -> std::result::Result<RemoteReply, Failure> {
-    let (reply, mut lease) = tokio::select! { result = open(node, from, None, path, decoding) => result?, () = stream.closed() => return Err(failed("the line source's owner disconnected")) };
+    let opening = open(node, from, None, path, decoding);
+    tokio::pin!(opening);
+    let (reply, mut lease) = tokio::select! {
+        result = &mut opening => result?,
+        () = stream.closed() => {
+            drop(opening.await);
+            return Err(failed("the line source's owner disconnected"));
+        },
+    };
     stream.say(&link.sign(fastctx_net::sign::Domain::Event, &reply)).await.map_err(failed)?;
     tokio::select! { () = stream.closed() => {}, () = lease.closed() => {} }
     Ok(RemoteReply::Lines(Reply { machine: node.machine(), result: Answer::Closed }))
