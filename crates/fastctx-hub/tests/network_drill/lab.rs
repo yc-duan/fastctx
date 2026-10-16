@@ -29,6 +29,13 @@ pub const OVER_DATA: usize = 300_000;
 /// the stream ends, as a quiet watch does.
 pub const QUIET: u64 = u64::MAX;
 
+#[derive(Clone, Debug)]
+pub struct Read {
+    pub took: Duration,
+    pub sent: u64,
+    pub outcome: String,
+}
+
 pub struct Lab {
     /// How many times each letter was taken, by its id.
     got: Mutex<HashMap<String, usize>>,
@@ -42,7 +49,7 @@ pub struct Lab {
     stopped: Arc<AtomicUsize>,
     /// How each read sent over a data connection ended: how long it took,
     /// and what came of it.
-    reads: Arc<Mutex<Vec<(Duration, String)>>>,
+    reads: Arc<Mutex<Vec<Read>>>,
     log: Mutex<std::fs::File>,
 }
 
@@ -81,7 +88,7 @@ impl Lab {
     }
 
     /// How the reads sent so far ended.
-    pub fn reads(&self) -> Vec<(Duration, String)> {
+    pub fn reads(&self) -> Vec<Read> {
         self.reads.lock().expect("never poisoned").clone()
     }
 }
@@ -142,20 +149,27 @@ impl Node for Lab {
                     let Some(mut stream) = stream else {
                         return Err(Failure::new("the read came without its data connection"));
                     };
+                    let mut sent = 0_u64;
                     let outcome = if bytes == QUIET {
-                        stream.closed().await;
-                        "the stream ended".to_string()
+                        stream.ended().await.unwrap_or_else(|| "the stream closed normally".to_string())
                     } else {
-                        let sent = vec![7_u8; usize::try_from(bytes).unwrap_or(0)];
-                        match stream.send(&sent).await {
-                            Ok(()) => match stream.finish().await {
-                                Ok(()) => format!("sent {bytes}"),
-                                Err(error) => error,
-                            },
-                            Err(error) => error,
+                        let buffer = vec![7_u8; 64 * 1024];
+                        let transfer = async {
+                            while sent < bytes {
+                                let count = (bytes - sent).min(buffer.len() as u64) as usize;
+                                stream.send(&buffer[..count]).await?;
+                                sent += count as u64;
+                            }
+                            stream.finish().await
                         }
+                        .await;
+                        transfer.err().unwrap_or_else(|| format!("sent {bytes}"))
                     };
-                    reads.lock().expect("never poisoned").push((began.elapsed(), outcome.clone()));
+                    reads.lock().expect("never poisoned").push(Read {
+                        took: began.elapsed(),
+                        sent,
+                        outcome: outcome.clone(),
+                    });
                     answering.answered();
                     Err(Failure::new(outcome))
                 })
@@ -190,6 +204,8 @@ impl Node for Lab {
     }
 
     fn log(&self, line: String) {
-        let _ = writeln!(self.log.lock().expect("never poisoned"), "{} {line}", jiff::Timestamp::now());
+        if let Err(error) = writeln!(self.log.lock().expect("never poisoned"), "{} {line}", jiff::Timestamp::now()) {
+            crate::process::failed(error);
+        }
     }
 }

@@ -9,24 +9,25 @@ use fastctx_net::message::LetterId;
 use fastctx_types::access::Purpose;
 use fastctx_types::remote::Letter;
 use fastctx_types::{AccountName, MachineName, ResidentId};
-use tokio::task::JoinHandle;
+use tokio::task::JoinSet;
 
 use crate::lab::Lab;
 use crate::world::World;
 
 /// Letters on their way from their senders.
 pub struct Sending {
-    senders: Vec<JoinHandle<()>>,
+    senders: JoinSet<anyhow::Result<()>>,
     /// The ids of every letter sent.
     pub wanted: Vec<String>,
 }
 
 impl Sending {
     /// Waits until every letter is on its sender's disk.
-    pub async fn sent(&mut self) {
-        for sender in self.senders.drain(..) {
-            let _ = sender.await;
+    pub async fn sent(&mut self) -> anyhow::Result<()> {
+        while let Some(sender) = self.senders.join_next().await {
+            sender??;
         }
+        Ok(())
     }
 }
 
@@ -40,29 +41,36 @@ pub fn send(world: &World, from: &[&str], to: &str, tag: &str, count: usize) -> 
 /// As `send`, to a member that need not be a machine of this process.
 pub fn send_to(world: &World, from: &[&str], to: &MachineName, tag: &str, count: usize) -> Sending {
     let mut wanted = Vec::new();
-    let mut senders = Vec::new();
+    let mut senders = JoinSet::new();
     for (index, name) in from.iter().enumerate() {
         let ids: Vec<String> = (0..count).map(|i| format!("{tag}-{name}-{i}")).collect();
         wanted.extend(ids.iter().cloned());
         let link = world.machine(name).link();
         let (to, account) = (to.clone(), world.account.clone());
-        senders.push(tokio::spawn(sender(link, to, account, ids, index as u64 + 1)));
+        senders.spawn(sender(link, to, account, ids, index as u64 + 1));
     }
     Sending { senders, wanted }
 }
 
-async fn sender(link: Arc<Link>, to: MachineName, account: AccountName, ids: Vec<String>, seed: u64) {
+async fn sender(
+    link: Arc<Link>,
+    to: MachineName,
+    account: AccountName,
+    ids: Vec<String>,
+    seed: u64,
+) -> anyhow::Result<()> {
     let resident = ResidentId::try_from("codex-7f3a".to_string()).expect("a resident's id");
     let mut pause = crate::Rng(0x9e37_79b9_7f4a_7c15 ^ seed);
     for (i, id) in ids.into_iter().enumerate() {
         let id = LetterId::try_from(id).expect("a letter's id");
         let letter = Letter::Left { resident: resident.clone() };
         // A resident's leaving is told as an echo of the sender's own.
-        link.send_letter(&to, &account, Purpose::Echo, id, letter).expect("a letter is kept");
+        link.send_letter(&to, &account, Purpose::Echo, id, letter)?;
         if i % 100 == 99 {
             tokio::time::sleep(Duration::from_millis(pause.between(5, 60))).await;
         }
     }
+    Ok(())
 }
 
 /// What came of the letters wanted at one machine.

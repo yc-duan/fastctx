@@ -21,6 +21,7 @@ mod health;
 mod lab;
 mod letters;
 mod mixed;
+mod process;
 mod proxy;
 mod report;
 mod scenarios;
@@ -30,6 +31,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
+use futures_util::FutureExt as _;
 use report::Report;
 use world::{Program, World};
 
@@ -54,6 +56,7 @@ const SCENARIOS: [&str; 15] = [
 
 /// The longest a scenario may take.
 const LONGEST: Duration = Duration::from_secs(8 * 60);
+pub const EXPECTED_EARLIER: &str = "1.0.1-beta.2";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -124,8 +127,20 @@ fn drill(args: &[String]) -> anyhow::Result<bool> {
     let root = options.root.join(format!("fastctx-network-drill-{}", std::process::id()));
     std::fs::create_dir_all(&root)?;
     println!("network drill in {}", root.display());
+    if let Some(earlier) = &options.earlier {
+        let mut command = world::earlier(earlier, &root.join("version-check"));
+        command.arg("--version");
+        let said = process::run(command, None, Duration::from_secs(10))?;
+        anyhow::ensure!(
+            said.status.success()
+                && said.out.split_whitespace().any(|word| word == EXPECTED_EARLIER)
+                && !said.text().contains("development"),
+            "expected the released {EXPECTED_EARLIER} kernel, got {}",
+            said.text()
+        );
+    }
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-    let (mut passed, mut failed) = (0, 0);
+    let (mut passed, mut failed, mut skipped) = (0, 0, 0);
     for name in SCENARIOS {
         if options.only.as_ref().is_some_and(|only| !only.iter().any(|wanted| wanted == name)) {
             continue;
@@ -133,20 +148,37 @@ fn drill(args: &[String]) -> anyhow::Result<bool> {
         let earlier = name.starts_with("earlier-");
         if earlier && options.earlier.is_none() {
             println!("  {name}: not run: no earlier kernel was given (--earlier)");
+            skipped += 1;
+            if options.only.is_some() {
+                failed += 1;
+            }
             continue;
         }
-        let report = runtime.block_on(scenario(name, &root.join(name), options.earlier.as_deref()));
+        let report = runtime
+            .block_on(
+                std::panic::AssertUnwindSafe(scenario(name, &root.join(name), options.earlier.as_deref()))
+                    .catch_unwind(),
+            )
+            .unwrap_or_else(|_| {
+                let mut report = Report::new(name);
+                report.check(false, "the scenario did not panic", "see the panic above");
+                report
+            });
         passed += report.passed;
         failed += report.failed;
-        if report.failed == 0 {
-            let _ = std::fs::remove_dir_all(root.join(name));
+        if report.failed == 0
+            && let Err(error) = std::fs::remove_dir_all(root.join(name))
+        {
+            failed += 1;
+            println!("FAIL removing {name}'s completed workspace: {error}");
         }
     }
     // What the links leave running ends with the runtime.
     runtime.shutdown_timeout(Duration::from_secs(5));
-    println!("network drill: {passed} passed, {failed} failed");
+    failed += process::CLEANUP_FAILURES.load(std::sync::atomic::Ordering::SeqCst);
+    println!("network drill: {passed} passed, {failed} failed, {skipped} scenarios not run");
     if failed == 0 {
-        let _ = std::fs::remove_dir_all(&root);
+        std::fs::remove_dir_all(&root)?;
     } else {
         println!("what the failed scenarios left is in {}", root.display());
     }
@@ -160,10 +192,14 @@ async fn scenario(name: &'static str, dir: &Path, earlier: Option<&Path>) -> Rep
         _ => Program::This,
     };
     let names: &[&str] = if name == "earlier-node" { &["alpha", "beta"] } else { &["alpha", "beta", "gamma"] };
-    let world = match World::new(dir, program.clone(), names).await {
-        Ok(world) => world,
-        Err(error) => {
+    let world = match tokio::time::timeout(Duration::from_secs(240), World::new(dir, program.clone(), names)).await {
+        Ok(Ok(world)) => world,
+        Ok(Err(error)) => {
             report.check(false, "the hub and its machines were set up", format!("{error:#}"));
+            return report;
+        }
+        Err(error) => {
+            report.check(false, "setup completed within its deadline", error.to_string());
             return report;
         }
     };
@@ -172,7 +208,8 @@ async fn scenario(name: &'static str, dir: &Path, earlier: Option<&Path>) -> Rep
         "every machine came online and saw the others",
         "",
     ) {
-        world.end();
+        let ended = world.end().await;
+        report.check(ended.is_ok(), "every process, proxy and handler ended", format!("{ended:?}"));
         return report;
     }
     let ran = tokio::time::timeout(LONGEST, async {
@@ -238,7 +275,8 @@ async fn scenario(name: &'static str, dir: &Path, earlier: Option<&Path>) -> Rep
             );
         }
     }
-    world.end();
+    let ended = world.end().await;
+    report.check(ended.is_ok(), "every process, proxy and handler ended", format!("{ended:?}"));
     report
 }
 

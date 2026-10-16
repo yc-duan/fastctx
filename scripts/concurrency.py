@@ -32,6 +32,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from model_mock import Mock  # noqa: E402
+from drill_processes import WindowsScope  # noqa: E402
 
 RESULTS = []
 PRINTING = threading.Lock()
@@ -59,6 +60,7 @@ class Lab:
 
     def __init__(self, program, codex, root, mock):
         self.root = root
+        self.scope = WindowsScope() if os.name == "nt" else None
         self.program = root / ("fastctx.exe" if os.name == "nt" else "fastctx")
         shutil.copy2(program, self.program)
         self.program.chmod(0o755)
@@ -74,13 +76,14 @@ class Lab:
         self.codex_dir = Path(codex).parent
         self.node = None
         self.restarting = threading.Event()
+        self.ending = threading.Event()
         self.restarter = None
         self.generation = 0
         self.lock = threading.Lock()
 
     def env(self):
         values = {key: value for key, value in os.environ.items() if not key.upper().startswith("CLAUDE")}
-        values.update(FASTCTX_HOME=str(self.home), CODEX_HOME=str(self.codex_home),
+        values.update(FASTCTX_HOME=str(self.home), CODEX_HOME=str(self.codex_home), FASTCTX_DRILL_OWNER=str(self.root),
                       FASTCTX_UPDATE_RELEASES="http://127.0.0.1:9/releases", PATH=self.path())
         return values
 
@@ -98,26 +101,33 @@ class Lab:
         """What a fastctx command printed, and its exit code; a command that ran past `timeout` is -1.
         None starts while the node is being ended and started again: a command that found no node would
         start one of its own, with the user's environment and not this lab's."""
+        if self.ending.is_set():
+            raise RuntimeError("the drill is ending; no new command can start")
         deadline = time.monotonic() + timeout
         while self.restarting.is_set() and threading.current_thread() is not self.restarter:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                check("a command did not time out waiting for restart", False, args)
                 return -1, "timed out waiting for the node to restart"
             time.sleep(min(0.2, remaining))
         remaining = deadline - time.monotonic()
         if remaining <= 0:
+            check("a command began before its deadline", False, args)
             return -1, "command deadline expired"
         try:
             done = subprocess.run([str(self.program), *args], env=self.env(), capture_output=True,
                                   stdin=subprocess.DEVNULL, timeout=remaining)
         except subprocess.TimeoutExpired as late:
+            check("a command returned within its deadline", False, (args, timeout))
             return -1, (late.stdout or b"").decode("utf-8", "replace") + (late.stderr or b"").decode("utf-8", "replace")
         return done.returncode, done.stdout.decode("utf-8", "replace") + done.stderr.decode("utf-8", "replace")
 
     def start_node(self):
-        log = open(self.root / "node.out", "ab")
-        self.node = subprocess.Popen([str(self.program), "node"], env=self.env(), stdout=log,
-                                     stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+        if self.ending.is_set():
+            raise RuntimeError("the drill is ending; no new node can start")
+        with open(self.root / "node.out", "ab") as log:
+            self.node = subprocess.Popen([str(self.program), "node"], env=self.env(), stdout=log,
+                                         stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
         until("the node answers", lambda: self.run("w", timeout=20)[0] == 0, limit=60)
 
     def node_pids(self):
@@ -143,10 +153,13 @@ class Lab:
             if listed.returncode != 0:
                 raise RuntimeError(f"listing this lab's processes failed ({listed.returncode}): "
                                    f"{listed.stdout[-1000:]}{listed.stderr[-1000:]}")
+            owned = self.scope.pids()
             for line in listed.stdout.splitlines():
                 pid, _, command = line.partition("\t")
-                if root in command.lower() and pid.strip().isdigit():
+                if pid.strip().isdigit() and (root in command.lower() or int(pid) in owned):
                     found.append((int(pid), command))
+                    owned.discard(int(pid))
+            found.extend((pid, "owned by the drill's job") for pid in owned)
         else:
             for entry in Path("/proc").iterdir():
                 if not entry.name.isdigit():
@@ -155,15 +168,33 @@ class Lab:
                     command = (entry / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
                 except (FileNotFoundError, ProcessLookupError):
                     continue
-                if root in command.lower():
+                owned = root in command.lower()
+                if not owned:
+                    try:
+                        if entry.stat().st_uid != os.geteuid():
+                            continue
+                        environment = (entry / "environ").read_bytes().split(b"\0")
+                        owned = f"FASTCTX_DRILL_OWNER={self.root}".encode() in environment
+                    except (FileNotFoundError, ProcessLookupError):
+                        continue
+                if owned:
                     found.append((int(entry.name), command))
-        return found
+        return [(pid, command) for pid, command in found if pid != os.getpid()]
 
     def end_all(self):
         """Ends everything of this lab still running."""
-        for pid, _ in self.processes():
-            self.kill(pid)
-        until("all of this lab's processes ended", lambda: not self.processes(), limit=30, every=0.2)
+        self.ending.set()
+        deadline = time.monotonic() + 30
+        while processes := self.processes():
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"owned processes survived cleanup: {processes}")
+            for pid, _ in processes:
+                self.kill(pid)
+            if self.node and self.node.poll() is not None:
+                self.node.wait(timeout=1)
+            time.sleep(0.2)
+        if self.scope:
+            self.scope.close()
 
     def kill(self, pid):
         if os.name == "nt":
@@ -243,6 +274,7 @@ class Drill:
         self.threads = {}
         self.speakers = []
         self.background_failures = []
+        self.deleted_while_busy = 0
         self.plain_calls = 0
         self.slow_calls = []
         self.outcomes = []
@@ -264,10 +296,14 @@ class Drill:
             self.stop.set()
 
     def open(self):
+        generation = self.lab.generation
+        restarting = self.lab.restarting.is_set()
         code, out = self.lab.run("talk", "--open", "codex", "hello", timeout=240)
         found = re.search(r"=== opened (\S+) on ", out)
         if code != 0 or not found:
             self.note(("open failed", code, out[-400:]))
+            if not restarting and generation == self.lab.generation and not self.lab.restarting.is_set():
+                raise RuntimeError(f"open failed without an injected restart ({code}): {out[-1000:]}")
             return None
         talk = found.group(1)
         thread = thread_of(self.lab, talk)
@@ -279,11 +315,15 @@ class Drill:
         self.note(("opened", talk))
         return talk
 
-    def speak(self, talk, words, timeout=240):
+    def speak(self, talk, words, timeout=240, deleting=False):
         started = time.monotonic()
+        generation = self.lab.generation
+        restarting = self.lab.restarting.is_set()
         code, out = self.lab.run("talk", talk, words, timeout=timeout)
         took = time.monotonic() - started
         self.note(("said", talk, words[:30], code, round(took, 1), out.strip()[-160:] if code else ""))
+        if code != 0 and not deleting and not restarting and generation == self.lab.generation and not self.lab.restarting.is_set():
+            raise RuntimeError(f"speak failed without an injected restart or deletion ({code}): {out[-1000:]}")
         return code, out
 
     def delete(self, talk, timeout=180):
@@ -310,6 +350,10 @@ class Drill:
     def delete_working(self, talk):
         """Deletes a conversation that may be working, stopping what it runs, within two minutes."""
         deadline = time.monotonic() + 120
+        state = json.loads((self.lab.conversations() / talk / "now").read_text(encoding="utf-8"))
+        if state.get("activity") == "busy" or state.get("turn"):
+            with self.lock:
+                self.deleted_while_busy += 1
         last = "no deletion tried"
         while (remaining := deadline - time.monotonic()) > 0:
             gone, out = self.delete(talk, timeout=remaining)
@@ -360,7 +404,7 @@ class Drill:
                 # of it runs, as a user would, its command is stopped and the
                 # deletion asked again until it goes.
                 words = self.rng.choice(["[[run: sleep 8]]", "[[slow: 3]]", "hello"])
-                speaking = threading.Thread(target=self.guarded, args=(f"speaking to {talk}", self.speak, talk, words),
+                speaking = threading.Thread(target=self.guarded, args=(f"speaking to {talk}", self.speak, talk, words, 240, True),
                                             daemon=True)
                 with self.lock:
                     self.speakers.append(speaking)
@@ -516,9 +560,11 @@ def main():
     say(f"seed {args.seed}")
     rng = random.Random(args.seed)
     root = Path(tempfile.mkdtemp(prefix="fastctx-concurrency-", dir=args.root))
-    mock = Mock()
-    lab = Lab(args.program, args.codex, root, mock)
+    mock = lab = drill = None
+    threads = []
     try:
+        mock = Mock()
+        lab = Lab(args.program, args.codex, root, mock)
         lab.start_node()
         code, out = lab.run("apply", "--target", "codex", "--home", str(lab.codex_home), timeout=180)
         if not check("the Codex login gets the World's tools", code == 0, out):
@@ -546,6 +592,7 @@ def main():
         opened = sum(1 for outcome in drill.outcomes if outcome[0] == "opened")
         failures = [outcome for outcome in drill.outcomes if outcome[0] == "open failed"]
         check("conversations opened and were spoken to", opened > 0 and len(mock.requests) > 0, failures[:3])
+        check("deletion was actually attempted while a conversation was working", drill.deleted_while_busy > 0)
         check("every deletion went through within two minutes of stopping what its conversation ran",
               bool(drill.deleted) and not drill.undeleted, drill.undeleted[:5] or "no deletion completed")
         if args.restarts:
@@ -581,13 +628,25 @@ def main():
     except Exception as error:  # noqa: BLE001 - keep the lab and a failed verdict on setup or inspection errors
         check("the drill completed", False, f"{type(error).__name__}: {error}")
     finally:
+        if drill:
+            drill.stop.set()
         try:
-            lab.end_all()
+            if lab:
+                lab.end_all()
+            deadline = time.monotonic() + 30
+            for thread in threads + (drill.speakers if drill else []):
+                thread.join(timeout=max(0, deadline - time.monotonic()))
+                if thread.is_alive():
+                    check("every drill thread ended during cleanup", False, thread.name)
         except Exception as error:  # noqa: BLE001 - cleanup failure must not erase the verdict
             check("the lab's processes could be ended", False, error)
         finally:
-            mock.close()
-        if not all(RESULTS):
+            if mock:
+                try:
+                    mock.close()
+                except Exception as error:  # noqa: BLE001 - mock cleanup is part of the verdict
+                    check("the model mock ended", False, error)
+        if lab and not all(RESULTS):
             say("--- node.log (last 80 lines) ---")
             try:
                 say("\n".join(lab.node_log().splitlines()[-80:]))

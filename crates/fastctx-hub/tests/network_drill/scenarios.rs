@@ -4,8 +4,9 @@
 //! or given up and then stopped, every machine comes back.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
+use tokio::task::JoinSet;
 
 use fastctx_net::link::{BoxFuture, CallFailure, Feed};
 use fastctx_net::wire::SILENCE;
@@ -31,7 +32,7 @@ pub async fn backlog(world: &World, report: &mut Report) -> anyhow::Result<()> {
     let gamma = world.machine("gamma");
     gamma.stop();
     let mut sending = send(world, &["alpha", "beta"], "gamma", "backlog", 1500);
-    sending.sent().await;
+    sending.sent().await?;
     let all = sending.wanted.len() as u64;
     let held = until(Duration::from_secs(90), || health::held(&world.hub).is_some_and(|held| held >= all)).await;
     report.check(
@@ -65,7 +66,7 @@ pub async fn cuts(world: &World, report: &mut Report) -> anyhow::Result<()> {
             machine.line.cut();
         }
     }
-    sending.sent().await;
+    sending.sent().await?;
     let came = arrived(&gamma.lab, &sending.wanted, DRAIN).await;
     let again: Vec<usize> =
         world.machines.iter().zip(&before).map(|(machine, before)| machine.lab.connections() - before).collect();
@@ -107,7 +108,7 @@ pub async fn refused(world: &World, report: &mut Report) -> anyhow::Result<()> {
     let before = (counted(), alpha.lab.connections());
     alpha.line.freeze_to_machine(true);
     let mut sending = crate::letters::send_to(world, &["alpha"], &nobody, "refused", COUNT);
-    sending.sent().await;
+    sending.sent().await?;
     let refusing = until(Duration::from_secs(30), || counted() >= before.0 + 200).await;
     let unheard = alpha.refused().is_empty();
     alpha.line.cut();
@@ -143,11 +144,16 @@ pub async fn refused(world: &World, report: &mut Report) -> anyhow::Result<()> {
     tokio::time::sleep(fastctx_net::wire::HEARTBEAT + Duration::from_secs(2)).await;
     let gamma = world.machine("gamma");
     let mut after = send(world, &["alpha"], "gamma", "refused-after", 1);
-    after.sent().await;
+    after.sent().await?;
     let came = arrived(&gamma.lab, &after.wanted, DRAIN).await;
-    let count = std::fs::read(world.hub.dir.join("taken").join("alpha"))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+    let epoch = world
+        .hub
+        .letters()
+        .and_then(|letters| letters["alpha"]["out_epoch"].as_u64())
+        .ok_or_else(|| anyhow::anyhow!("alpha's durable letter identity is missing"))?;
+    let count: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(world.hub.dir.join("counts").join(format!("{epoch:016x}")))?)?;
+    let count = Some(count);
     let kept = count.as_ref().map(|count| count["refused"].as_object().map_or(0, serde_json::Map::len));
     report.check(
         came.missing.is_empty() && kept == Some(0),
@@ -175,7 +181,7 @@ pub async fn crash(world: &World, report: &mut Report) -> anyhow::Result<()> {
     let mut distinct = pids.clone();
     distinct.sort_unstable();
     distinct.dedup();
-    sending.sent().await;
+    sending.sent().await?;
     let came = arrived(&gamma.lab, &sending.wanted, DRAIN).await;
     report.check(
         world.hub.restarts.load(Ordering::SeqCst) == KILLS && distinct.len() == KILLS + 1 && amid >= KILLS / 2,
@@ -209,7 +215,7 @@ pub async fn restart(world: &World, report: &mut Report) -> anyhow::Result<()> {
         tokio::time::sleep(Duration::from_millis(rng.between(500, 2000))).await;
         gamma.start()?;
     }
-    sending.sent().await;
+    sending.sent().await?;
     let came = arrived(&gamma.lab, &sending.wanted, DRAIN).await;
     let again = gamma.lab.connections() - before;
     report.check(
@@ -304,7 +310,7 @@ async fn dead_line(world: &World, report: &mut Report, one_way: bool) -> anyhow:
         "gamma came back by itself once its line did",
         back.map_or("not within 90 s".to_string(), seconds),
     );
-    sending.sent().await;
+    sending.sent().await?;
     let came = arrived(&gamma.lab, &sending.wanted, DRAIN).await;
     report.check(
         came.missing.is_empty(),
@@ -377,7 +383,7 @@ pub async fn cancel(world: &World, report: &mut Report) -> anyhow::Result<()> {
     const ASKED: usize = 20;
     let (alpha, beta) = (world.machine("alpha"), world.machine("beta"));
     beta.lab.stall(true);
-    let gave_up = give_up(world, "alpha", "beta", ASKED).await;
+    let gave_up = give_up(world, "alpha", "beta", ASKED).await?;
     let answering = beta.lab.answering();
     let stopped = until(Duration::from_secs(15), || beta.lab.answering() == 0).await;
     beta.lab.stall(false);
@@ -468,20 +474,24 @@ pub async fn quiet_stream(world: &World, report: &mut Report) -> anyhow::Result<
     let link = alpha.link();
     let read = lab::read_of(lab::QUIET);
     let (to, account, purpose) = (beta.name.clone(), world.account.clone(), read.purpose());
-    let call = tokio::spawn(async move {
-        let taken = Arc::new(AtomicUsize::new(0));
-        timed(link.call_with_stream(&to, &account, purpose, read, taking(1, taken))).await
-    });
-    let open = until(Duration::from_secs(15), || beta.lab.answering() == 1).await;
-    report.check(open.is_some(), "a quiet stream from beta to alpha was open", "");
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    let entered = Arc::new(AtomicBool::new(false));
+    let feed = observing(taking(1, Arc::new(AtomicUsize::new(0))), entered.clone());
+    let mut calls = JoinSet::new();
+    calls.spawn(async move { timed(link.call_with_stream(&to, &account, purpose, read, feed)).await });
+    let open = until(Duration::from_secs(15), || beta.lab.answering() == 1 && entered.load(Ordering::SeqCst)).await;
+    anyhow::ensure!(open.is_some() && calls.try_join_next().is_none(), "the quiet call ended before fault injection");
+    report.check(true, "both ends of a live quiet stream were observed before the fault", "");
+    let blocked = beta.line.blocked();
     let froze = Instant::now();
     beta.line.freeze(true);
-    let ended = tokio::time::timeout(SILENCE + NOTICED, call).await;
+    let ended = tokio::time::timeout(SILENCE + NOTICED, calls.join_next()).await;
     let took = froze.elapsed();
+    let injected = beta.line.blocked() > blocked;
     beta.line.freeze(false);
+    let answer = ended?.ok_or_else(|| anyhow::anyhow!("the quiet call task was missing"))??.0;
+    let failed = matches!(&answer, Err(_) | Ok(Err(_)));
     report.check(
-        ended.is_ok(),
+        injected && failed && took >= SILENCE / 2 && alpha.online(),
         "alpha took the quiet stream for gone within a silence once beta's line went dead, though the hub still answered its pings",
         seconds(took),
     );
@@ -500,39 +510,50 @@ pub async fn unread_stream(world: &World, report: &mut Report) -> anyhow::Result
     let read = lab::read_of(SENT);
     let (to, account, purpose) = (beta.name.clone(), world.account.clone(), read.purpose());
     let began = Instant::now();
-    let call = tokio::spawn(async move { link.call_with_stream(&to, &account, purpose, read, holding()).await });
+    let entered = Arc::new(AtomicBool::new(false));
+    let feed = observing(holding(), entered.clone());
+    let mut calls = JoinSet::new();
+    calls.spawn(async move { link.call_with_stream(&to, &account, purpose, read, feed).await });
     let gave_up = until(SILENCE * 3, || !beta.lab.reads().is_empty()).await;
     let reads = beta.lab.reads();
     report.check(
-        gave_up.is_some() && reads.first().is_some_and(|(_, outcome)| !outcome.starts_with("sent")),
-        "beta gave up sending to an end that took nothing though it kept saying it was there",
-        reads.first().map_or(format!("still sending after {}", seconds(began.elapsed())), |(took, outcome)| {
-            format!("{outcome}, after {}", seconds(*took))
-        }),
+        entered.load(Ordering::SeqCst)
+            && gave_up.is_some()
+            && reads.first().is_some_and(|read| {
+                read.sent > 0 && read.sent < SENT && read.took >= SILENCE && read.outcome.contains("took nothing")
+            }),
+        "beta made byte progress, then timed out writing to the observed non-reading end",
+        format!("reads: {reads:?}, elapsed {}", seconds(began.elapsed())),
     );
-    let answered = tokio::time::timeout(Duration::from_secs(60), call).await;
-    report.check(answered.is_ok(), "and alpha's call ended with it", "");
+    let answer = tokio::time::timeout(Duration::from_secs(60), calls.join_next())
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("the unread call task was missing"))??;
+    report.check(
+        fails_with(&answer, |why| why.contains("took nothing")),
+        "and alpha received that write failure",
+        format!("{answer:?}"),
+    );
     Ok(())
 }
 
 /// Asks `to` from `from` `count` questions at once, each given up after two
 /// seconds; how many were given up.
-pub async fn give_up(world: &World, from: &str, to: &str, count: usize) -> usize {
+pub async fn give_up(world: &World, from: &str, to: &str, count: usize) -> anyhow::Result<usize> {
     let link = world.machine(from).link();
     let to = world.machine(to).name.clone();
-    let mut asks = Vec::new();
+    let mut asks = JoinSet::new();
     for _ in 0..count {
         let (link, to, account) = (link.clone(), to.clone(), world.account.clone());
-        asks.push(tokio::spawn(async move {
+        asks.spawn(async move {
             let who = RemoteCall::Who { all: true, town: None, since: None };
             tokio::time::timeout(Duration::from_secs(2), link.call(&to, &account, who.purpose(), who)).await.is_err()
-        }));
+        });
     }
     let mut gave_up = 0;
-    for ask in asks {
-        gave_up += usize::from(ask.await.unwrap_or(false));
+    while let Some(ask) = asks.join_next().await {
+        gave_up += usize::from(ask?);
     }
-    gave_up
+    Ok(gave_up)
 }
 
 /// A call's answer and how long it took.
@@ -555,6 +576,13 @@ fn taking(bytes: usize, taken: Arc<AtomicUsize>) -> Feed {
                 .await?;
             stream.done().await
         })
+    })
+}
+
+fn observing(feed: Feed, entered: Arc<AtomicBool>) -> Feed {
+    Box::new(move |stream| {
+        entered.store(true, Ordering::SeqCst);
+        feed(stream)
     })
 }
 

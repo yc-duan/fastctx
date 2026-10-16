@@ -111,8 +111,9 @@ impl Hub {
                 command
             }
         };
-        let child = command.stdin(Stdio::null()).stdout(log.try_clone()?).stderr(log).spawn()?;
-        *self.child.lock().expect("never poisoned") = Some(child);
+        let mut owned = self.child.lock().expect("never poisoned");
+        anyhow::ensure!(owned.is_none(), "the hub already owns a child process");
+        *owned = Some(command.stdin(Stdio::null()).stdout(log.try_clone()?).stderr(log).spawn()?);
         Ok(())
     }
 
@@ -122,16 +123,13 @@ impl Hub {
     }
 
     /// Kills it where it stands, as a power cut does.
-    pub fn kill(&self) {
-        if let Some(mut child) = self.child.lock().expect("never poisoned").take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+    pub fn kill(&self) -> anyhow::Result<()> {
+        crate::process::stop(&mut self.child.lock().expect("never poisoned"))
     }
 
     /// Kills it and starts it again after `after`.
     pub async fn restart(&self, after: Duration) -> anyhow::Result<()> {
-        self.kill();
+        self.kill()?;
         tokio::time::sleep(after).await;
         self.restarts.fetch_add(1, Ordering::SeqCst);
         self.start()
@@ -140,7 +138,7 @@ impl Hub {
     /// Stops it and serves its directory with this release's hub, as
     /// updating a hub in place does.
     pub fn update(&self) -> anyhow::Result<()> {
-        self.kill();
+        self.kill()?;
         *self.program.lock().expect("never poisoned") = Program::This;
         self.restarts.fetch_add(1, Ordering::SeqCst);
         self.start()
@@ -169,7 +167,17 @@ impl Hub {
 
 impl Drop for Hub {
     fn drop(&mut self) {
-        self.kill();
+        if let Err(error) = self.kill() {
+            crate::process::failed(error);
+        }
+    }
+}
+
+impl Drop for Machine {
+    fn drop(&mut self) {
+        if let Some(link) = self.link.lock().expect("never poisoned").take() {
+            link.stop();
+        }
     }
 }
 
@@ -190,7 +198,11 @@ impl Machine {
     }
 
     pub fn stop(&self) {
-        self.link().stop();
+        let link = self.link();
+        if link.failed() {
+            crate::process::failed(format!("{}'s essential connection task failed", self.name));
+        }
+        link.stop();
     }
 
     /// Starts it again as itself, from what its directory keeps.
@@ -316,11 +328,30 @@ impl World {
     }
 
     /// Stops every machine, then the hub.
-    pub fn end(&self) {
+    pub async fn end(&self) -> anyhow::Result<()> {
+        let mut errors = Vec::new();
         for machine in &self.machines {
+            if machine.link().failed() {
+                errors.push(format!("{}'s connection task failed", machine.name));
+            }
             machine.stop();
         }
-        self.hub.kill();
+        for line in self.machines.iter().map(|machine| &machine.line).chain(std::iter::once(&self.spare)) {
+            if let Err(error) = line.end().await {
+                errors.push(format!("line shutdown: {error:#}"));
+            }
+        }
+        if let Err(error) = self.hub.kill() {
+            errors.push(format!("hub shutdown: {error:#}"));
+        }
+        if until(Duration::from_secs(10), || self.machines.iter().all(|machine| machine.lab.answering() == 0))
+            .await
+            .is_none()
+        {
+            errors.push("business handlers remained after shutdown".to_string());
+        }
+        anyhow::ensure!(errors.is_empty(), "{}", errors.join("; "));
+        Ok(())
     }
 }
 
@@ -406,14 +437,6 @@ impl Said {
 }
 
 /// Runs `command` with the drill's password as the first line it reads.
-pub fn with_password(mut command: Command) -> anyhow::Result<Said> {
-    use std::io::Write as _;
-    let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
-    child.stdin.take().expect("piped").write_all(format!("{PASSWORD}\n").as_bytes())?;
-    let output = child.wait_with_output()?;
-    Ok(Said {
-        status: output.status,
-        out: String::from_utf8_lossy(&output.stdout).to_string(),
-        err: String::from_utf8_lossy(&output.stderr).to_string(),
-    })
+pub fn with_password(command: Command) -> anyhow::Result<Said> {
+    crate::process::run(command, Some(format!("{PASSWORD}\n").as_bytes()), Duration::from_secs(60))
 }

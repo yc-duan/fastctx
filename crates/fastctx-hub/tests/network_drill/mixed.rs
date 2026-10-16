@@ -33,7 +33,7 @@ pub async fn earlier_hub(world: &World, report: &mut Report) -> anyhow::Result<(
     let (alpha, beta) = (world.machine("alpha"), world.machine("beta"));
     beta.lab.stall(true);
     let asked = Instant::now();
-    let gave_up = give_up(world, "alpha", "beta", 3).await;
+    let gave_up = give_up(world, "alpha", "beta", 3).await?;
     let link = alpha.link();
     let look = RemoteCall::Updates { update: UpdateCall::Look };
     let after = link.call(&beta.name, &world.account, look.purpose(), look).await;
@@ -64,7 +64,7 @@ pub async fn earlier_hub(world: &World, report: &mut Report) -> anyhow::Result<(
         }
     }
     world.hub.restart(Duration::from_millis(500)).await?;
-    sending.sent().await;
+    sending.sent().await?;
     let came = arrived(&gamma.lab, &sending.wanted, Duration::from_secs(180)).await;
     report.check(
         came.missing.is_empty(),
@@ -76,7 +76,7 @@ pub async fn earlier_hub(world: &World, report: &mut Report) -> anyhow::Result<(
     gamma.stop();
     let numbered_before = next_for(world, "gamma").unwrap_or(0);
     let mut waiting = send(world, &["alpha", "beta"], "gamma", "updated-before", 300);
-    waiting.sent().await;
+    waiting.sent().await?;
     let wanted = waiting.wanted.len() as u64;
     let held = until(Duration::from_secs(90), || {
         next_for(world, "gamma").is_some_and(|next| next >= numbered_before + wanted)
@@ -100,7 +100,7 @@ pub async fn earlier_hub(world: &World, report: &mut Report) -> anyhow::Result<(
     let moved = !world.hub.dir.join("outbox").exists() && world.hub.dir.join("outboxes").exists();
     report.check(moved, "and kept the letters waiting where this release keeps them", "");
     let mut after = send(world, &["alpha", "beta"], "gamma", "updated-after", 300);
-    after.sent().await;
+    after.sent().await?;
     gamma.start()?;
     let wanted: Vec<String> = waiting.wanted.iter().chain(&after.wanted).cloned().collect();
     let came = arrived(&gamma.lab, &wanted, Duration::from_secs(180)).await;
@@ -151,14 +151,14 @@ pub async fn earlier_node(world: &World, program: &Path, report: &mut Report) ->
         _ => None,
     };
     report.check(
-        version.as_deref().is_some_and(|version| version.starts_with("1.0.1-beta.")),
+        version.as_deref() == Some(crate::EXPECTED_EARLIER),
         "it answered a call from this release, saying its own release",
         format!("{:?}", version.unwrap_or_else(|| format!("{facts:?}"))),
     );
 
     let numbered_before = next_for(world, "delta").unwrap_or(0);
     let mut sending = letters::send_to(world, &["alpha", "beta"], &delta, "earlier-node", 300);
-    sending.sent().await;
+    sending.sent().await?;
     let wanted = sending.wanted.len() as u64;
     let numbered = until(Duration::from_secs(90), || {
         next_for(world, "delta").is_some_and(|next| next >= numbered_before + wanted)
@@ -180,9 +180,9 @@ pub async fn earlier_node(world: &World, program: &Path, report: &mut Report) ->
     );
 
     alpha.stop();
-    let gone = until(Duration::from_secs(30), || node.sees("alpha") == Some(false)).await;
+    let gone = node.sees("alpha", false, Duration::from_secs(30)).await?;
     alpha.start()?;
-    let back = until(Duration::from_secs(60), || node.sees("alpha") == Some(true)).await;
+    let back = node.sees("alpha", true, Duration::from_secs(60)).await?;
     report.check(
         gone.is_some() && back.is_some(),
         "it saw a machine of this release leave and come back",
@@ -193,8 +193,8 @@ pub async fn earlier_node(world: &World, program: &Path, report: &mut Report) ->
         ),
     );
 
-    node.kill();
-    let ended = !answers_at(&node.home.join("world").join("node.sock"));
+    node.kill()?;
+    let ended = !answers_at(&node.home.join("world").join("node.sock")).await;
     let left = world.sees("beta", &delta, false, Duration::from_secs(30)).await;
     node.start(&world.root.join("delta.log"))?;
     let ready = node.ready(Duration::from_secs(60)).await;
@@ -214,7 +214,7 @@ pub async fn earlier_node(world: &World, program: &Path, report: &mut Report) ->
     // read cut one.
     let its = world.hub.log().lines().filter(|line| line.contains("delta connected")).count();
     report.check(its == 2, "its session was never cut by anything it could not read", format!("{its} sessions of it"));
-    node.kill();
+    node.kill()?;
     Ok(())
 }
 
@@ -230,15 +230,23 @@ impl Earlier {
         let log = std::fs::OpenOptions::new().create(true).append(true).open(log)?;
         let mut command = earlier(&self.program, &self.home);
         command.arg("node").arg("--dir").arg(&self.home);
-        let child = command.stdin(Stdio::null()).stdout(log.try_clone()?).stderr(log).spawn()?;
-        *self.child.lock().expect("never poisoned") = Some(child);
+        let mut owned = self.child.lock().expect("never poisoned");
+        anyhow::ensure!(owned.is_none(), "the earlier node already owns a child process");
+        *owned = Some(command.stdin(Stdio::null()).stdout(log.try_clone()?).stderr(log).spawn()?);
         Ok(())
     }
 
     /// Waits for it to take calls from this machine's programs.
     async fn ready(&self, within: Duration) -> bool {
         let socket = self.home.join("world").join("node.sock");
-        until(within, || answers_at(&socket)).await.is_some()
+        let began = Instant::now();
+        while began.elapsed() < within {
+            if answers_at(&socket).await {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        false
     }
 
     fn login(&self, hub: SocketAddr, name: &str) -> anyhow::Result<Said> {
@@ -248,43 +256,57 @@ impl Earlier {
     }
 
     /// Whether it says `machine` is online, by `fastctx nodes`.
-    fn sees(&self, machine: &str) -> Option<bool> {
-        let output = earlier(&self.program, &self.home).arg("nodes").stdin(Stdio::null()).output().ok()?;
-        String::from_utf8_lossy(&output.stdout).lines().find_map(|line| {
-            let rest = line.strip_prefix(machine)?;
-            if !rest.starts_with(' ') {
-                return None;
+    async fn sees(&self, machine: &str, online: bool, within: Duration) -> anyhow::Result<Option<Duration>> {
+        let began = Instant::now();
+        while began.elapsed() < within {
+            let mut command = earlier(&self.program, &self.home);
+            command.arg("nodes");
+            let output = crate::process::run(
+                command,
+                None,
+                within.saturating_sub(began.elapsed()).min(Duration::from_secs(10)),
+            )?;
+            anyhow::ensure!(output.status.success(), "the earlier nodes command failed: {}", output.text());
+            let seen = output.out.lines().find_map(|line| {
+                let rest = line.strip_prefix(machine)?;
+                if !rest.starts_with(' ') {
+                    return None;
+                }
+                let state = rest.trim_start();
+                if state.starts_with("online") {
+                    Some(true)
+                } else if state.starts_with("offline") {
+                    Some(false)
+                } else {
+                    None
+                }
+            });
+            if seen == Some(online) {
+                return Ok(Some(began.elapsed()));
             }
-            let state = rest.trim_start();
-            if state.starts_with("online") {
-                Some(true)
-            } else if state.starts_with("offline") {
-                Some(false)
-            } else {
-                None
-            }
-        })
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        Ok(None)
     }
 
-    fn kill(&self) {
-        if let Some(mut child) = self.child.lock().expect("never poisoned").take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+    fn kill(&self) -> anyhow::Result<()> {
+        crate::process::stop(&mut self.child.lock().expect("never poisoned"))
     }
 }
 
 impl Drop for Earlier {
     fn drop(&mut self) {
-        self.kill();
+        if let Err(error) = self.kill() {
+            crate::process::failed(error);
+        }
     }
 }
 
 /// Whether something takes connections at the local socket `path`.
-fn answers_at(path: &Path) -> bool {
+async fn answers_at(path: &Path) -> bool {
     #[cfg(unix)]
     {
-        std::os::unix::net::UnixStream::connect(path).is_ok()
+        matches!(tokio::time::timeout(Duration::from_secs(1), tokio::net::UnixStream::connect(path)).await, Ok(Ok(_)))
     }
     #[cfg(not(unix))]
     {
