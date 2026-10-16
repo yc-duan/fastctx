@@ -394,7 +394,7 @@ impl Device {
                     Ok(Ok(_)) => return Err(failed(format!("{machine} answered something other than a relayed call"))),
                     Ok(Err(error)) => return Err(failed(format!("on {machine}: {error}"))),
                     Err(error @ CallFailure::NotConnected { .. }) => return Err(failed(error)),
-                    Err(error @ CallFailure::Unknown { .. }) if !repeatable => {
+                    Err(error @ (CallFailure::Unknown { .. } | CallFailure::Unreadable { .. })) if !repeatable => {
                         return Err(failed(format!("{error}; this write was not sent again")));
                     }
                     Err(error) => unanswered.push(error.to_string()),

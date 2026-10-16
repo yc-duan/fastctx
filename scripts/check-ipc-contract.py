@@ -4,7 +4,10 @@ Requires git history for the pinned revisions: the development history, which
 the public repository does not carry, so this runs in a clone that has it. Sources
 are materialized only under target; no historical production program is run.
 A protocol that ships adds its revision to REVISIONS, and a reply shape that
-changes adds a case to scripts/ipc-contract/samples.py.
+changes adds a case to scripts/ipc-contract/samples.py. A release that speaks
+the protocol this one does adds its revision to SHIPPED: its tool processes
+outlive their node's change of program, and read the new node's replies with
+the types they were built with (`world-versions.md`).
 """
 
 import json
@@ -24,17 +27,42 @@ REVISIONS = {
     9: "287bacbb4e59cf755eb0d2fdf4840705e1ebff61",
     10: "11b480d9efbaf949b3dad14e0fc9a80b1cbb22d2",
 }
+SHIPPED = {
+    "v13_beta1": "e297a8acb7428bf8b81e2ddbad1be4f4ab579831",
+    "v13_beta2": "6ba482b78ebcf9789a07a2087db75ec4f917f90d",
+}
 
 
 def git(*args):
     return subprocess.check_output(["git", *args], cwd=ROOT)
 
 
+# The dependencies every reader takes as the workspace gave them; the rest a
+# revision's type crate names itself.
+WORKSPACE = (
+    'serde = { version = "1", features = ["derive"] }\n'
+    'serde_json = "1"\n'
+    'jiff = { version = "0.2", features = ["serde"] }\n'
+    'thiserror = "2"\n'
+)
+
+
+def own_dependencies(revision):
+    """The type crate's dependencies at `revision` beyond the workspace's."""
+    manifest = git("show", f"{revision}:crates/fastctx-types/Cargo.toml").decode()
+    section = manifest.split("[dependencies]", 1)[1].split("\n[", 1)[0]
+    taken = {line.split("=", 1)[0].strip() for line in WORKSPACE.splitlines()}
+    lines = [line.strip() for line in section.splitlines()]
+    own = [line for line in lines if line and not line.startswith("#") and line.split("=", 1)[0].split(".", 1)[0].strip() not in taken]
+    return "".join(f"{line}\n" for line in own)
+
+
 def prepare():
     WORK.mkdir(parents=True, exist_ok=True)
     dependencies = []
-    for protocol, revision in REVISIONS.items():
-        directory = WORK / f"v{protocol}"
+    readers = {f"v{protocol}": revision for protocol, revision in REVISIONS.items()} | SHIPPED
+    for reader, revision in readers.items():
+        directory = WORK / reader
         for file in git("ls-tree", "-r", "--name-only", revision, "crates/fastctx-types/src").decode().splitlines():
             destination = directory / file.removeprefix("crates/fastctx-types/")
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -56,16 +84,12 @@ pub fn contract_welcome(value: serde_json::Value) -> serde_json::Value {
 }
 ''')
         (directory / "Cargo.toml").write_text(f'''[package]
-name = "ipc-reader-v{protocol}"
+name = "ipc-reader-{reader}"
 version = "0.0.0"
 edition = "2024"
 [dependencies]
-serde = {{ version = "1", features = ["derive"] }}
-serde_json = "1"
-jiff = {{ version = "0.2", features = ["serde"] }}
-thiserror = "2"
-''', encoding="utf-8")
-        dependencies.append(f'v{protocol} = {{ package = "ipc-reader-v{protocol}", path = "v{protocol}" }}')
+{WORKSPACE}{own_dependencies(revision)}''', encoding="utf-8")
+        dependencies.append(f'{reader} = {{ package = "ipc-reader-{reader}", path = "{reader}" }}')
     manifest = '''[package]
 name = "ipc-historical-readers"
 version = "0.0.0"
@@ -89,8 +113,8 @@ serde_json = "1"
     # them one at a time rather than keeping four copies of that compiler work
     # in memory; ordinary dependency compilation still has four cargo jobs.
     build = ["cargo", "build", "--offline", "-j", "4", "--manifest-path", str(WORK / "Cargo.toml")]
-    for protocol in REVISIONS:
-        subprocess.run([*build, "-p", f"ipc-reader-v{protocol}"], cwd=ROOT, env=env, check=True)
+    for reader in readers:
+        subprocess.run([*build, "-p", f"ipc-reader-{reader}"], cwd=ROOT, env=env, check=True)
     subprocess.run(build, cwd=ROOT, env=env, check=True)
     return TARGET / "debug" / ("ipc-historical-readers.exe" if os.name == "nt" else "ipc-historical-readers")
 
@@ -141,7 +165,7 @@ def verify(reader):
                 assert "facts" not in wire["reply"]["Ok"]["notices"][0]["notice"]["end"], (case, answer)
             if case.get("attached") and case["protocol"] >= 6:
                 assert wire["reply"]["Ok"]["notices"] == case["value"]["reply"]["Ok"]["notices"]
-    print(f"PASS: {len(corpus)} historical request/reply checks against protocols {', '.join(map(str, REVISIONS))}")
+    print(f"PASS: {len(corpus)} historical request/reply checks against protocols {', '.join(map(str, REVISIONS))} and the readers of {', '.join(SHIPPED)}")
 
 
 if __name__ == "__main__":

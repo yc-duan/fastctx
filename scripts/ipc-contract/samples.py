@@ -251,3 +251,16 @@ def samples(root):
                 continue
             yield {"mode": "request", "protocol": protocol, "peer": peer, "admitted": admitted,
                    "value": {"kind": "call", "id": 37, "call": call}}
+    # Releases that speak today's protocol read today's replies with the
+    # types they shipped: a tool process outlives its node's change of
+    # program, so a beta 1 or 2 tool reads a later node's answers as it is.
+    for reader in ["v13_beta1", "v13_beta2"]:
+        for lifetime in [None, fixtures["world"]["nodes"][0]["facts"]["node_lifetime"]]:
+            welcome = {"kind": "accepted", "machine": "desktop", "version": "1.0.0"}
+            if lifetime is not None:
+                welcome["node_lifetime"] = lifetime
+            yield {"mode": "welcome", "protocol": 13, "reader": reader, "value": welcome}
+        for reply in replies(fixtures):
+            yield {"mode": "reply", "protocol": 13, "reader": reader, "value": frame(reply)}
+        yield {"mode": "reply", "protocol": 13, "reader": reader,
+               "value": {"kind": "reply", "id": 37, "reply": {"Err": {"message": "not executed"}}}}

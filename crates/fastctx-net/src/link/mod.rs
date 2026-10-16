@@ -177,6 +177,11 @@ pub enum CallFailure {
     NotAllowed { name: MachineName, reason: String },
     #[error("{name} did not answer ({reason}); whether it did what was asked is not known")]
     Unknown { name: MachineName, reason: String },
+    /// It answered, in a form this release cannot read: a newer release's.
+    #[error(
+        "{name} answered in a form this Fastctx cannot read ({reason}): it may run a newer release; whether it did what was asked is not known"
+    )]
+    Unreadable { name: MachineName, reason: String },
     #[error("the call did not reach {name} ({reason}); nothing ran there")]
     Unreachable { name: MachineName, reason: String },
 }

@@ -57,5 +57,5 @@ fi
 cd "$repo/gui"
 npm ci
 npm run check:wire
-node scripts/release.mjs --unsigned
+node scripts/release.mjs
 python "$repo/scripts/linux-bundle.py" --target-dir "$CARGO_TARGET_DIR" --output "$repo/dist/gui"

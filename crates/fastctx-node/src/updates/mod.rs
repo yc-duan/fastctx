@@ -514,7 +514,15 @@ async fn kernel(node: &Arc<Node>, version: Option<&str>, asker: Option<Asker>) -
     }
     let target = fastctx_update::kernel::target();
     if offer.package(&target).is_none() {
-        return Err(format!("{} has no command-line program for {}", offer.version, fastctx_update::kernel::triple()));
+        // Releases carry command-line programs for Linux alone: elsewhere the
+        // World program comes with the application (`world-versions.md`).
+        let elsewhere =
+            if cfg!(target_os = "linux") { "" } else { "; on this system it comes with the Fastctx application" };
+        return Err(format!(
+            "{} has no command-line program for {}{elsewhere}",
+            offer.version,
+            fastctx_update::kernel::triple()
+        ));
     }
     {
         let mut held = node.updates.held.lock().expect("never poisoned");

@@ -113,7 +113,7 @@ fn ended(failure: CallFailure, began: &Began) -> Failure {
 /// A copy asked of `machine` that it did not answer: it may have reached
 /// the machine, which copies on, so the copy began.
 fn asked(failure: CallFailure, began: &Began) -> Failure {
-    if matches!(failure, CallFailure::Unknown { .. }) {
+    if matches!(failure, CallFailure::Unknown { .. } | CallFailure::Unreadable { .. }) {
         began.now();
     }
     ended(failure, began)

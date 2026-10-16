@@ -76,9 +76,10 @@ pub async fn read_attachment(
 /// unanswered; the machine's own refusals and absence are said as they are.
 fn call_failed(failure: CallFailure) -> Failure {
     match failure {
-        CallFailure::NotConnected { .. } | CallFailure::Unknown { .. } | CallFailure::Unreachable { .. } => {
-            Failure::unanswered(failure.to_string())
-        }
+        CallFailure::NotConnected { .. }
+        | CallFailure::Unknown { .. }
+        | CallFailure::Unreadable { .. }
+        | CallFailure::Unreachable { .. } => Failure::unanswered(failure.to_string()),
         other => Failure::new(other.to_string()),
     }
 }

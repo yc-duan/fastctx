@@ -20,6 +20,13 @@ import { buildKernel, toolchain } from "../../scripts/kernel.mjs";
 
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
+// A flag this script does not know fails it, rather than a release built as it was not asked.
+const takesValue = ["--kernel", "--target", "--out"];
+const known = [...takesValue, "--prepare", "--prepared", "--kernel-signed"];
+for (let at = 0; at < args.length; at += 1) {
+  if (!known.includes(args[at])) throw new Error(`release.mjs does not take ${args[at]}`);
+  if (takesValue.includes(args[at])) at += 1;
+}
 const option = (name) => {
   const at = args.indexOf(name);
   return at === -1 ? undefined : args[at + 1];

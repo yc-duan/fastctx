@@ -38,6 +38,13 @@ pub enum Channel {
     Beta,
 }
 
+/// A line a later release adds is read as the test releases': what it
+/// offers is not taken for a stable release.
+impl crate::tolerant::Tolerant for Channel {
+    const ALL: &'static [Self] = &[Channel::Stable, Channel::Beta];
+    const UNKNOWN: Self = Channel::Beta;
+}
+
 impl Channel {
     /// The line of `version`: a test release's is the beta line.
     pub fn of(version: &str) -> Self {
@@ -427,6 +434,7 @@ pub struct State {
     pub running: Option<String>,
     pub settings: Settings,
     /// The line it follows: that of the version it runs.
+    #[serde(deserialize_with = "crate::tolerant::read")]
     pub channel: Channel,
     /// Whether it takes new releases by itself now (`Settings::auto_for`).
     #[serde(default)]

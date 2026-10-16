@@ -179,7 +179,13 @@ impl Inner {
                     broken(format!("its answer was too large for a message, and fetching it failed: {reason}"))
                 }),
                 Ok(_) => Err(broken("what came back is not an answer".to_string())),
-                Err(error) => Err(broken(format!("its answer {error}"))),
+                Err(_) => Err(CallFailure::Unreadable {
+                    name: to.clone(),
+                    reason: serde_json::from_value::<Body>(reply.body.clone())
+                        .err()
+                        .map(|error| error.to_string())
+                        .unwrap_or_default(),
+                }),
             },
             kind => Err(broken(format!("it answered the call with {kind:?}"))),
         }

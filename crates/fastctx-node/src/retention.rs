@@ -22,7 +22,6 @@ use crate::Node;
 const DAY: u64 = 24 * 60 * 60;
 
 #[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Settings {
     command_artifact_days: u32,
 }

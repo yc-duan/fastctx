@@ -59,7 +59,7 @@ pub struct MoveTarget {
     /// `windows` or `linux`, when it answered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub os: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::tolerant::read_option")]
     pub form: Option<Form>,
     /// It goes to sleep on its own, as a laptop does: a hub there is away
     /// whenever it sleeps.

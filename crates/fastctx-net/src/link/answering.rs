@@ -176,7 +176,10 @@ async fn open_call(
     call: &Envelope,
     endpoint: &Endpoint,
 ) -> Result<(RemoteCall, Option<Stream>), String> {
-    let body: Body = call.body()?;
+    // A call this release does not know, as a newer one may make, is
+    // refused saying so.
+    let body: Body =
+        call.body().map_err(|error| format!("{error}; a newer Fastctx may make calls this one does not know"))?;
     let from_the_caller = || -> Result<u64, String> {
         let ticket = call.stream.as_ref().ok_or("it names no data connection")?;
         if ticket.source != call.from || !inner.view().is_me(&ticket.sink) {
@@ -199,7 +202,12 @@ async fn open_call(
             let bytes = crate::data::sink(endpoint, &inner.key, &carried)
                 .await
                 .map_err(|error| format!("fetching it, too large for a message: {error}"))?;
-            Ok((serde_json::from_slice(&bytes).map_err(|error| format!("it cannot be read: {error}"))?, None))
+            Ok((
+                serde_json::from_slice(&bytes).map_err(|error| {
+                    format!("it cannot be read: {error}; a newer Fastctx may make calls this one does not know")
+                })?,
+                None,
+            ))
         }
         Body::Answer { .. } | Body::LargeAnswer { .. } => Err("it is not a call".to_string()),
     }

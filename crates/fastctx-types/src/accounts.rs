@@ -33,6 +33,13 @@ impl MemberKind {
     }
 }
 
+/// A kind of device a later hub adds is read as a phone's: a device that
+/// signs in, with nothing run on it.
+impl crate::tolerant::Tolerant for MemberKind {
+    const ALL: &'static [Self] = &[MemberKind::Computer, MemberKind::Phone, MemberKind::Web];
+    const UNKNOWN: Self = MemberKind::Phone;
+}
+
 /// What an account is on its hub (`world-network.md`, 一个中枢，几个账号).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -52,6 +59,13 @@ pub enum Level {
     /// share with it, and the agents assisting it, it uses. Sent only to a
     /// device that says it reads it (`Intent::Session.roles`).
     Visitor,
+}
+
+/// A level a later hub adds is read as a visitor's: it is given no more here
+/// than a visitor is.
+impl crate::tolerant::Tolerant for Level {
+    const ALL: &'static [Self] = &[Level::Super, Level::Member, Level::Visitor];
+    const UNKNOWN: Self = Level::Visitor;
 }
 
 /// A relay a machine connected through before direct connections replaced
@@ -476,6 +490,7 @@ pub struct TokenSeen {
     pub account: AccountName,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    #[serde(deserialize_with = "crate::tolerant::read")]
     pub kind: MemberKind,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub managed: bool,
@@ -501,6 +516,7 @@ pub struct TokenSeen {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountSeen {
     pub name: AccountName,
+    #[serde(deserialize_with = "crate::tolerant::read")]
     pub level: Level,
     pub locked: bool,
     pub opened: Timestamp,
@@ -516,6 +532,7 @@ pub struct MemberSeen {
     /// The names it had before it was renamed, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub was: Vec<MachineName>,
+    #[serde(deserialize_with = "crate::tolerant::read")]
     pub kind: MemberKind,
     pub logins: Vec<AccountName>,
     /// The account it is registered under, when it is a machine.
