@@ -820,14 +820,16 @@ export class ConversationPage {
     this.update();
   }
 
-  /** Asks the agent to stop: the button says it is stopping until the turn
-   *  ends. A World that says no turn runs is believed: what still looked
-   *  under way here had ended. */
+  /** Asks the agent to stop: what runs shows stopped at once, and the
+   *  button says it is stopping until the turn ends. A World that says no
+   *  turn runs is believed: what still looked under way here had ended. A
+   *  stop that did not get there shows it going on again, and says why. */
   private stop(): void {
     const asked = this.options.stop();
     if (!asked) return;
     this.stopping = true;
-    this.drawAction();
+    this.options.conversation.halt();
+    this.update();
     asked.then(
       (stopped) => {
         if (stopped) return;
@@ -837,9 +839,10 @@ export class ConversationPage {
       },
       (error: unknown) => {
         this.stopping = false;
+        this.options.conversation.unhalt();
         const why = error instanceof Error ? error.message : String(error);
         this.say(this.options.words.turnNotStopped(why), why, true);
-        this.drawAction();
+        this.update();
       },
     );
   }
@@ -1934,7 +1937,9 @@ export class ConversationPage {
         : waiting
           ? words.waitingForYou
           : working
-            ? words.working
+            ? conversation.halting()
+              ? words.stopping
+              : words.working
             : words.idle);
     // A screen reader hears the conversation change state, once each time:
     // its words as they stream would be too many to hear.

@@ -546,6 +546,17 @@ export class Conversation {
   noTurnRuns(): void {
     this.live.noTurnRuns();
   }
+  /** The user asked what runs to stop: it shows stopped at once. */
+  halt(): void {
+    this.live.halt();
+  }
+  /** The stop did not reach the agent: it shows going on again. */
+  unhalt(): void {
+    this.live.unhalt();
+  }
+  halting(): boolean {
+    return this.live.halting();
+  }
   turning(): boolean {
     return this.live.turning();
   }

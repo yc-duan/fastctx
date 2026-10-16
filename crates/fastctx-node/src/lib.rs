@@ -101,6 +101,7 @@ mod since;
 mod speech;
 mod stats;
 mod stop;
+mod stops;
 mod stuck;
 mod talk;
 pub mod thumbnail;
@@ -200,6 +201,9 @@ pub(crate) struct Node {
     /// What went out with an answer of a World tool and is not yet known to
     /// have been taken: no other answer hands it over meanwhile.
     taking: std::sync::Mutex<std::collections::HashSet<(fastctx_types::ResidentId, fastctx_types::NoticeId)>>,
+    /// Stops asked for while words were on their way, kept until the turn
+    /// those words start is known (`stops`).
+    stops: stops::Stops,
     /// The `on` jobs here whose sender is following them now: their end
     /// goes to it, not in a letter, unless it leaves first (`on`).
     following: std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>,
@@ -537,6 +541,7 @@ pub async fn run_prepared(
         syncing: Default::default(),
         writing: Default::default(),
         taking: Default::default(),
+        stops: Default::default(),
         following: Default::default(),
         job_ends: gates::Gates::new(fastctx_platform::doing::Rank::JOB_END, "job end"),
         copying: gates::Gates::new(fastctx_platform::doing::Rank::COPYING, "copying"),

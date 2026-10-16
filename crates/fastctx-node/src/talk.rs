@@ -899,6 +899,19 @@ pub async fn stop_here(node: &Arc<Node>, resident: &ResidentId) -> Result<bool, 
         .residents
         .about(resident)
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))?;
+    // What its run calls wait for stops at once, here and on the machines it
+    // works on, not once its host has ended the turn.
+    node.interrupts.raise(&Address { machine: node.machine(), resident: resident.clone() });
+    // Words on their way start a turn whose id is not known yet: it stops as
+    // soon as it is.
+    let directory = node.world.conversation(resident);
+    let coming = tokio::task::spawn_blocking(move || crate::inbox::pending(&directory))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(format!("reading what is on its way: {error}")))?;
+    if node.stops.coming(node, resident, coming.into_iter().map(|pending| pending.delivery.id).collect()) {
+        return Ok(true);
+    }
     match (about.host.agent.as_str(), about.world_started, &about.session) {
         ("codex", true, Some(thread)) => node.codex.of(&about)?.interrupt(thread).await.map_err(Failure::new),
         ("claude", _, _) => crate::claude::stop(node, resident),

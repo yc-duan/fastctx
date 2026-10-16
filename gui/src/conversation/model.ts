@@ -242,6 +242,10 @@ export class Fold {
   private endings = 0;
   private lastEnding: TurnEnd | null = null;
   private replaying = false;
+  /** What the user asked to stop, while it has not ended (`halt`): the
+   *  turns then running, or, when none was, the turn the words on their way
+   *  start once it does. */
+  private halted: Set<string> | null = null;
   private derivedCache: Derived | null = null;
   private blocksCache: { clock: number; blocks: Block[] } | null = null;
 
@@ -301,6 +305,7 @@ export class Fold {
     const waiting = this.entries.filter((entry) => entry.kind === "ask" && entry.state.state === "waiting");
     const pending = this.entries.filter((entry): entry is Heard => entry.kind === "heard" && entry.sending !== undefined);
     const known = new Set(this.entries.filter((entry) => entry.kind === "heard").map((entry) => entry.key));
+    const halted = this.halted;
     this.entries = [];
     this.byKey.clear();
     this.byItem.clear();
@@ -310,6 +315,7 @@ export class Fold {
     this.stretches.clear();
     this.sequences.clear();
     this.stale = false;
+    this.halted = null;
     this.running.clear();
     this.began.clear();
     this.thoughtTokens.clear();
@@ -330,6 +336,9 @@ export class Fold {
     // holds: a change of history among its events is shown already, and is
     // no reason to read it again. One that comes after it is.
     this.stale = false;
+    // A stop asked of what still runs, or of words still on their way,
+    // stands through a reading again.
+    if (halted && (this.running.size > 0 || halted.size === 0)) this.halt();
     for (const ask of waiting) {
       if (ask.kind === "ask" && !this.entries.some((entry) => entry.kind === "ask" && askKey(entry.id) === askKey(ask.id))) this.add(ask);
     }
@@ -394,6 +403,7 @@ export class Fold {
     const at = Date.parse(event.at);
     switch (event.event) {
       case "turn_started":
+        if (!this.running.has(event.turn) && !this.replaying) this.started(event.turn);
         this.running.add(event.turn);
         if (!this.began.has(event.turn)) this.began.set(event.turn, at);
         this.clock += 1;
@@ -481,6 +491,14 @@ export class Fold {
       case "began":
       case "updated":
         this.underWay(event.turn, at);
+        // Asked to stop: what it writes no longer grows here, and what it
+        // starts shows cut off at once; its host's final words still come.
+        if (this.halted?.has(event.turn) && !this.replaying) {
+          if (writes(event.item)) return;
+          this.item(event.turn, event.item, at, false);
+          this.cutShort(event.turn, event.item.id, at);
+          return;
+        }
         this.item(event.turn, event.item, at, false);
         return;
       case "finished":
@@ -488,6 +506,7 @@ export class Fold {
         return;
       case "grew": {
         this.underWay(event.turn, at);
+        if (this.halted?.has(event.turn) && !this.replaying) return;
         const shown = this.find(event.turn, event.item);
         if (shown?.kind === "prose" && event.part === "text") {
           if (shown.prose === "thinking" && !this.thoughtWords) return;
@@ -531,6 +550,7 @@ export class Fold {
       case "turn_ended": {
         this.running.delete(event.turn);
         this.began.delete(event.turn);
+        if (this.halted?.delete(event.turn) && this.halted.size === 0) this.halted = null;
         this.clock += 1;
         if (this.endedTurns.has(event.turn)) return;
         if (!this.replaying) this.endings += 1;
@@ -657,9 +677,18 @@ export class Fold {
    *  told, and none of them is under way for that. */
   private underWay(turn: string, at: number): void {
     if (this.replaying || this.endedTurns.has(turn) || this.running.has(turn)) return;
+    this.started(turn);
     this.running.add(turn);
     if (!this.began.has(turn)) this.began.set(turn, at);
     this.clock += 1;
+  }
+
+  /** A turn is seen to start. The one words on their way start is the one
+   *  asked to stop; any other is new, and shown as it goes. */
+  private started(turn: string): void {
+    if (!this.halted) return;
+    if (this.halted.size === 0) this.halted.add(turn);
+    else if (!this.halted.has(turn)) this.halted = null;
   }
 
   private ask(id: JsonValue): Extract<Entry, { kind: "ask" }> | undefined {
@@ -997,6 +1026,9 @@ export class Fold {
 
   /** Words the user is sending, shown at once; returns their key. */
   sending(text: string, here: MachineName | null, attached: ShownAttachment[] = []): string {
+    // What the user says after asking to stop is shown as it goes, as is
+    // the turn it starts.
+    this.halted = null;
     const key = `s:${++this.sends}`;
     this.add({
       kind: "heard",
@@ -1099,6 +1131,7 @@ export class Fold {
   /** The World says no turn runs: what is still shown under way here
    *  ended unseen, and stands as cut off, whichever turn it was in. */
   noTurnRuns(): void {
+    this.halted = null;
     const at = Date.now();
     let changed = this.running.size > 0;
     for (const entry of this.entries) {
@@ -1116,6 +1149,45 @@ export class Fold {
     this.running.clear();
     this.began.clear();
     if (changed) this.clock += 1;
+  }
+
+  /** The user asked what runs to stop: it shows stopped at once, whatever
+   *  its host takes to end it (`world-gui.md`, 停止键). Until the turn ends,
+   *  what it writes no longer grows here and what it starts shows cut off;
+   *  its items' final words, as its host keeps them, still come. Words still
+   *  on their way stay as they are: the turn they start stops too. */
+  halt(): void {
+    this.halted = new Set(this.running);
+    const at = Date.now();
+    for (const entry of this.entries) {
+      if (entry.kind === "tool" && entry.ended === null) {
+        entry.ended = { at, use: "cut" };
+        this.touch(entry);
+      }
+      if (entry.kind === "prose" && entry.writing) {
+        entry.writing = false;
+        this.touch(entry);
+      }
+    }
+    this.clock += 1;
+  }
+
+  /** The stop did not reach the agent: it goes on, and what was held back
+   *  here is read again. */
+  unhalt(): void {
+    if (!this.halted) return;
+    this.halted = null;
+    this.stale = true;
+    this.clock += 1;
+  }
+
+  /** A tool shown under way, started after the user asked to stop: cut off. */
+  private cutShort(turn: string, item: string | undefined, at: number): void {
+    const shown = item ? this.find(turn, item) : undefined;
+    if (shown?.kind === "tool" && shown.ended === null) {
+      shown.ended = { at, use: "cut" };
+      this.touch(shown);
+    }
   }
 
   /** What the conversation's machine holds of it now (`world-concurrency.md`,
@@ -1148,6 +1220,11 @@ export class Fold {
    *  still happening. */
   busy(): boolean {
     return this.running.size > 0 || this.moving();
+  }
+
+  /** Whether the user asked what runs to stop, and it has not ended yet. */
+  halting(): boolean {
+    return this.halted !== null;
   }
 
   /** Whether a turn the World told of is under way. */
@@ -1374,6 +1451,12 @@ function taskOf(path: string): string {
 export function startsAgent(tool: Tool): boolean {
   if (tool.does.as === "agent") return tool.does.act === "start";
   return tool.does.as === "colleague" && (tool.name === "Agent" || tool.name === "Task" || tool.name === "spawnAgent");
+}
+
+/** Whether an item is words the agent writes: a message, its thinking, its
+ *  plan. */
+function writes(item: import("../world/events").Item): boolean {
+  return item.kind === "message" || item.kind === "thinking" || item.kind === "plan";
 }
 
 /** Whether an entry is the agent's thinking. */

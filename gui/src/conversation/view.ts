@@ -992,6 +992,8 @@ export class ConversationView {
   private lineSays(blocks: readonly Block[]): LineSays | null {
     if (!this.followed) return null;
     const conversation = this.conversation;
+    // Asked to stop, it is not said to go on while its host ends it.
+    if (conversation.halting()) return null;
     const waiting = conversation.waiting();
     const busy = conversation.busy();
     // The first words are on their way, and nothing has come back.

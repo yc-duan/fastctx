@@ -582,6 +582,19 @@ pub async fn bind(
         let active = owner.is_none() || node.residents.about(id).is_some_and(|(about, _)| about.session == owner);
         node.residents.owe(&node.world, id, turn, &readers, active).map_err(|error| Failure::new(error.to_string()))?;
     }
+    // A stop asked for while these words were on their way stops the turn
+    // they started, now that it is known.
+    if node.stops.started(id, handover.inputs.iter().map(|input| &input.delivery.id)) {
+        let (node, id) = (node.clone(), id.clone());
+        tokio::spawn(async move {
+            if let Err(failure) = crate::talk::stop_here(&node, &id).await {
+                node.log.line(format_args!(
+                    "stopping {id}'s turn, asked while its words were on their way: {}",
+                    failure.message
+                ));
+            }
+        });
+    }
     for input in &handover.inputs {
         crate::composer::bound(node, id, &input.delivery.id, turn).await?;
         heard(node, id, &input.delivery, turn);
