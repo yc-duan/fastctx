@@ -223,7 +223,14 @@ pub(crate) async fn session(
     // The letters it sends are kept in order by a task of their own, so a
     // slow disk holds up no heartbeat or answer on this connection.
     let (letters_in, letters_coming) = mpsc::channel(LETTERS_IN);
-    let intake = tokio::spawn(intake(hub.clone(), name.clone(), generation, out.clone(), letters_coming));
+    let intake = tokio::spawn(intake(
+        hub.clone(),
+        name.clone(),
+        generation,
+        out.clone(),
+        letters_coming,
+        crate::moving::Moving::hold(&hub),
+    ));
 
     // Whether the writer still has a refusal to deliver before closing.
     let mut heard = tokio::time::Instant::now();
@@ -320,6 +327,7 @@ async fn intake(
     generation: u64,
     out: Outq,
     mut coming: mpsc::Receiver<(u64, Envelope)>,
+    _held: crate::moving::Active,
 ) {
     // The last letter this session sent; it sends them in order, from the
     // first the welcome did not count.

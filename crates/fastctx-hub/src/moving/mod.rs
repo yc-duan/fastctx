@@ -367,6 +367,11 @@ impl Moving {
         self.frozen.load(Ordering::SeqCst)
     }
 
+    /// Refuses new work before existing connections and their children drain.
+    pub fn stop_taking(&self) {
+        self.frozen.store(true, Ordering::SeqCst);
+    }
+
     /// Counts a connection that may change the records, unless the hub
     /// takes nothing now.
     pub fn enter(hub: &std::sync::Arc<crate::Hub>) -> Option<Active> {
@@ -405,7 +410,7 @@ impl Moving {
     /// then: their writer may not have caught up with the last changes.
     /// What is not done within `SETTLING` holds the move back.
     pub async fn freeze(hub: &crate::Hub) -> Result<(), String> {
-        hub.moving.frozen.store(true, Ordering::SeqCst);
+        hub.moving.stop_taking();
         let sessions: Vec<_> = hub.sessions().values().map(|session| session.out.clone()).collect();
         for out in sessions {
             let _ = out.send(crate::Out::End(fastctx_net::wire::Refusal::ShuttingDown));

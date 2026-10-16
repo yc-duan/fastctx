@@ -606,10 +606,11 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
             Ok(()) = &mut switch => break true,
             why = &mut settled => {
                 hub.log.line(format_args!("{why}: the hub retires"));
-                // What was still answering a machine lets the data go.
+                hub.moving.stop_taking();
+                hub.moving.stop();
                 let deadline = tokio::time::Instant::now() + SILENCE;
-                while Arc::strong_count(&hub) > 1 && tokio::time::Instant::now() < deadline {
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                if !hub.moving.settled(deadline).await {
+                    anyhow::bail!("retirement did not finish: persistent work is still under way after {} s", SILENCE.as_secs());
                 }
                 return Ok(Next::Retire(why));
             }
@@ -622,6 +623,7 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         keep_letters_now(&hub);
         return Ok(Next::Again(Some(kept)));
     }
+    hub.moving.stop_taking();
     hub.log.line(format_args!("shutting down"));
     let sessions: Vec<outq::Outq> = hub.sessions().values().map(|session| session.out.clone()).collect();
     for out in &sessions {
@@ -634,9 +636,9 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     if !hub.moving.settled(deadline).await {
-        hub.log.line(format_args!("stopping with work still under way; what it leaves is settled at the next start"));
+        anyhow::bail!("shutdown did not finish: persistent work is still under way after {} s", SILENCE.as_secs());
     }
-    keep_letters_now(&hub);
+    hub.store().save_letters_now()?;
     Ok(Next::Stop)
 }
 
