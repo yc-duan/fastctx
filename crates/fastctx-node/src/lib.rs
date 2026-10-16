@@ -81,6 +81,7 @@ mod pages;
 mod program_collection;
 mod ranked;
 mod reach;
+mod recovery;
 mod removed;
 mod renewal;
 mod renewal_legacy;
@@ -463,24 +464,8 @@ pub async fn run_prepared(
 
     // An older World's records go into one directory per conversation before
     // anything reads them.
-    unpublished::collect(world.path()).context("collecting unpublished World records")?;
-    fastctx_platform::owned_directory::delete(&world.image_reading())
-        .context("collecting image reads left by the previous node")?;
-    let gathered = gather::gather(&world).context("gathering conversations into their directories")?;
-    for name in &gathered.moved {
-        log.line(format_args!("gathered {name} into its directory"));
-    }
-    for (path, error) in &gathered.problems {
-        log.line(format_args!("could not gather {}: {error}", path.display()));
-    }
-    unstarted::collect(&world).context("collecting preparations that never became jobs")?;
-    let reconciled = jobs::reconcile(&world)?;
-    for path in &reconciled.interrupted {
-        log.line(format_args!("marked interrupted: {}", path.display()));
-    }
-    for (path, error) in &reconciled.problems {
-        log.line(format_args!("could not check {}: {error}", path.display()));
-    }
+    recovery::prepare(&world, &log);
+    let jobs_reconciled = recovery::reconcile(&world, &log);
 
     let (residents, problems) = residents::Residents::load(&world)?;
     residents.set_here(machine.name.clone());
@@ -616,21 +601,11 @@ pub async fn run_prepared(
     unfinished.extend(node.residents.unfinished());
     turns::recover(&node, unfinished.into_iter().collect()).await;
     composer::recover(&node).await;
+    speech::recover(&node).await;
     node.effects_ready.store(true, std::sync::atomic::Ordering::Release);
     node.effects_changed.notify_waiters();
     composer::resume(&node);
-    speech::recover(&node).await;
-    // Deletions a stopped node left halfway finish in the background, once
-    // the rest is recovered: each holds its conversation's gates, so nothing
-    // new starts for it, while the node serves everything else; one that
-    // cannot finish now is tried again in a while (`world-concurrency.md`,
-    // 收尾从不挡节点起来).
-    let finishing = node.clone();
-    tokio::spawn(async move {
-        while data::delete::finish_interrupted(&finishing).await > 0 {
-            tokio::time::sleep(std::time::Duration::from_secs(300)).await;
-        }
-    });
+    recovery::start(&node, jobs_reconciled);
     on_delivery::resume(&node);
     retention::start(&node).context("starting command artifact retention")?;
     updates::start(&node);

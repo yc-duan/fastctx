@@ -65,7 +65,7 @@ pub(crate) fn collect(world: &WorldDir) -> io::Result<()> {
                 .and_then(|stem| stem.parse::<JobId>().ok());
             let package = name.starts_with("on-")
                 && ["state", "in"].iter().any(|extension| path.extension().is_some_and(|found| found == *extension));
-            if job.as_ref().is_some_and(|job| jobs.join(format!("{job}.json")).exists())
+            if job.as_ref().map(|job| jobs.join(format!("{job}.json")).try_exists()).transpose()?.unwrap_or(false)
                 || protected(&referenced, &path)?
             {
                 continue;

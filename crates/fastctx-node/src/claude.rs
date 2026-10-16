@@ -195,7 +195,17 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
         // Kept for as long as the node watches.
         let _watcher = watcher;
         look_all(&node, &sessions).await;
-        while let Some(first) = changes.recv().await {
+        let mut retry = tokio::time::interval(std::time::Duration::from_secs(300));
+        retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        retry.tick().await;
+        loop {
+            let first = tokio::select! {
+                first = changes.recv() => match first {
+                    Some(first) => first,
+                    None => break,
+                },
+                _ = retry.tick() => sessions.clone(),
+            };
             let mut directories = HashSet::from([first]);
             while let Ok(more) = changes.try_recv() {
                 directories.insert(more);
@@ -228,9 +238,7 @@ pub(crate) fn reading(node: &Node, session: &str) -> crate::leases::Lease<String
 
 pub async fn replay(node: &Arc<Node>) {
     let directory = exchange::sessions(node.world.path());
-    if directory.exists() {
-        look_all(node, &directory).await;
-    }
+    look_all(node, &directory).await;
 }
 
 pub(crate) fn recover_startups(node: &Arc<Node>) {
@@ -284,15 +292,24 @@ fn policy(node: &Node, resident: &ResidentId, directory: &Path) -> std::io::Resu
 }
 
 async fn look_all(node: &Arc<Node>, sessions: &Path) {
-    let directories: Vec<PathBuf> = match std::fs::read_dir(sessions) {
-        Ok(entries) => entries.filter_map(|entry| Some(entry.ok()?.path())).filter(|path| path.is_dir()).collect(),
+    let entries = match std::fs::read_dir(sessions) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
         Err(error) => {
             node.log.line(format_args!("looking at the Claude sessions: {error}"));
             return;
         }
     };
-    for directory in directories {
-        look_alone(node, directory).await;
+    for entry in entries {
+        let directory = entry.and_then(|entry| {
+            let path = entry.path();
+            std::fs::metadata(&path).map(|metadata| metadata.is_dir().then_some(path))
+        });
+        match directory {
+            Ok(Some(directory)) => look_alone(node, directory).await,
+            Ok(None) => {}
+            Err(error) => node.log.line(format_args!("listing a Claude session; will retry: {error}")),
+        }
     }
 }
 
@@ -1140,15 +1157,18 @@ async fn failed_wake(
     }
     let why = format!("the Claude command failed before identifying a consuming turn: {error}");
     if let Some(pending) = crate::inbox::read(directory, id).map_err(|error| Failure::new(error.to_string()))? {
-        crate::turns::unsettled(
+        let mut handover = crate::delivery::begin(directory, vec![pending])
+            .map_err(|error| Failure::new(format!("recording interrupted Claude startup: {error}")))?;
+        crate::turns::unresolved(
             node,
             resident,
             directory,
-            pending,
+            &mut handover,
             fastctx_types::session::TurnHow::Interrupted,
             why.clone(),
         )
-        .await;
+        .await
+        .map_err(|error| Failure::new(format!("settling interrupted Claude startup: {error}")))?;
     }
     Ok(Landed::Uncertain { why })
 }

@@ -202,6 +202,33 @@ fn restore(node: &Node, thread: &str, state: &mut Reports) -> std::io::Result<()
             Err(error) => return Err(error),
         }
     }
+    let legacy =
+        node.world.path().join("codex-reports").join(format!("{}.json", crate::speech::fixed_id("thread", &[thread])));
+    if legacy != pending_path(node, thread).with_extension("json") {
+        match std::fs::read(&legacy) {
+            Ok(bytes) => {
+                let kept: KeptReports = serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
+                if kept.thread != thread {
+                    return Err(std::io::Error::other(format!("{} belongs to another thread", legacy.display())));
+                }
+                let mut events = kept.events;
+                let mut seen: std::collections::HashSet<_> =
+                    events.iter().map(|event| serde_json::to_vec(event).expect("report serializes")).collect();
+                for event in state.queues.get(thread).into_iter().flatten() {
+                    if seen.insert(serde_json::to_vec(event).expect("report serializes")) {
+                        events.push(event.clone());
+                    }
+                }
+                save(node, thread, &events)?;
+                if !events.is_empty() {
+                    state.queues.insert(thread.to_string(), events);
+                }
+                std::fs::remove_file(&legacy)?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
     let path = pending_path(node, thread);
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
@@ -315,6 +342,9 @@ async fn drain(node: &Arc<Node>, thread: &str) {
     let _doing = fastctx_platform::doing::doing(format!("reading the reports of Codex thread {thread}"));
     let worker = working(node, thread);
     let _worker = worker.lock().await;
+    if node.residents.resident_of_thread(thread).is_none() {
+        return;
+    }
     if let Err(error) = restore(node, thread, &mut node.unclaimed.state.lock().expect("never poisoned")) {
         node.log.line(format_args!("restoring reports for {thread}: {error}"));
         return;
@@ -432,29 +462,7 @@ async fn drain(node: &Arc<Node>, thread: &str) {
 pub fn listen(node: Arc<Node>, mut events: mpsc::UnboundedReceiver<HostEvent>) {
     {
         let mut state = node.unclaimed.state.lock().expect("never poisoned");
-        match std::fs::read_dir(node.world.path().join("codex-reports")) {
-            Ok(entries) => {
-                for entry in entries {
-                    let restored = (|| -> std::io::Result<KeptReports> {
-                        let path = entry?.path();
-                        if path.extension().is_some_and(|extension| extension != "json") {
-                            return Ok(KeptReports { thread: String::new(), events: Vec::new() });
-                        }
-                        serde_json::from_slice(&std::fs::read(path)?).map_err(std::io::Error::other)
-                    })();
-                    match restored {
-                        Ok(kept) => {
-                            if !kept.events.is_empty() && node.residents.resident_of_thread(&kept.thread).is_some() {
-                                state.queues.insert(kept.thread, kept.events);
-                            }
-                        }
-                        Err(error) => node.log.line(format_args!("restoring Codex reports: {error}")),
-                    }
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => node.log.line(format_args!("restoring Codex reports: {error}")),
-        }
+
         for resident in node.residents.everyone() {
             if let Some(thread) = resident.about.session
                 && let Err(error) = restore(&node, &thread, &mut state)
@@ -556,7 +564,13 @@ pub async fn claim(node: &Arc<Node>, thread: &str, _id: &ResidentId) {
 }
 
 pub async fn replay(node: &Arc<Node>) {
-    let threads: Vec<String> = node.unclaimed.state.lock().expect("never poisoned").queues.keys().cloned().collect();
+    let mut threads: std::collections::BTreeSet<String> =
+        node.unclaimed.state.lock().expect("never poisoned").queues.keys().cloned().collect();
+    // A failed restore has no in-memory queue yet. Its durable reports must
+    // still be revisited even if the host never sends another event.
+    threads.extend(node.residents.everyone().filter_map(|resident| {
+        (resident.about.host.agent.as_str() == "codex").then_some(resident.about.session).flatten()
+    }));
     for thread in threads {
         drain(node, &thread).await;
     }

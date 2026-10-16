@@ -122,12 +122,29 @@ pub(super) fn measure(node: &Node) -> io::Result<Space> {
 
 /// Everything each conversation keeps here, by its directory's name.
 pub(super) fn conversations(node: &Node) -> io::Result<BTreeMap<String, Measured>> {
+    measure_conversations(node, None)
+}
+
+/// A deletion only depends on the records belonging to its own conversation.
+pub(super) fn conversation(node: &Node, name: &str) -> io::Result<Option<Measured>> {
+    Ok(measure_conversations(node, Some(name))?.remove(name))
+}
+
+fn measure_conversations(node: &Node, wanted: Option<&str>) -> io::Result<BTreeMap<String, Measured>> {
     let world = &node.world;
     let mut measured: BTreeMap<String, Measured> = BTreeMap::new();
     for kept in world.kept()? {
+        if wanted.is_some_and(|wanted| kept.name != wanted) {
+            continue;
+        }
         let one = measured.entry(kept.name.clone()).or_default();
         one.places.push(kept.directory.path().to_path_buf());
-        if let Ok(bytes) = std::fs::read(kept.directory.aliases()) {
+        let aliases = match std::fs::read(kept.directory.aliases()) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        if let Some(bytes) = aliases {
             let aliases: BTreeMap<PathBuf, PathBuf> = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
             for alias in aliases.into_keys() {
                 match std::fs::symlink_metadata(&alias) {
@@ -146,7 +163,7 @@ pub(super) fn conversations(node: &Node) -> io::Result<BTreeMap<String, Measured
             let Some(name) = directory.file_name().and_then(|name| name.to_str()).map(str::to_string) else {
                 continue;
             };
-            if Kind::of(&name).is_none() || !directory.is_dir() {
+            if wanted.is_some_and(|wanted| name != wanted) || Kind::of(&name).is_none() || !directory.is_dir() {
                 continue;
             }
             let one = measured.entry(name).or_default();
@@ -363,7 +380,12 @@ fn add_jobs(one: &mut Measured, jobs: &Path) -> io::Result<()> {
         if record.extension().is_none_or(|extension| extension != "json") {
             continue;
         }
-        let Ok(job) = fastctx_hands::run::record::read(&record) else { continue };
+        let job = match fastctx_hands::run::record::read(&record) {
+            Ok(job) => job,
+            // A record that cannot be read names no program to stop.
+            Err(error) if error.kind() == io::ErrorKind::InvalidData => continue,
+            Err(error) => return Err(error),
+        };
         if job.end.is_none() || fastctx_hands::run::program::in_use(&job)? {
             one.running.push(job.id.to_string());
         }

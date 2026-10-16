@@ -247,12 +247,16 @@ async fn finish_at(
     for handover in &accepted {
         readers.extend(handover.inputs.iter().flat_map(|input| input.readers.iter().cloned()));
     }
+    let current = node.residents.now(id).is_some_and(|now| {
+        now.turn.as_deref() == Some(turn)
+            || (turn.is_empty() && now.turn.is_none() && now.activity == fastctx_types::residents::Activity::Busy)
+    });
     let (finished, first) = crate::delivery::finish_at(&directory, turn, end, &readers, ended_at)?;
     if first {
         crate::usage::turn_ended(node, id, &about, &finished.end, ended_at.unwrap_or_else(Timestamp::now));
         // What its run calls wait for stops with an interrupted turn, here
         // and on the machines it works on.
-        if matches!(finished.end.how, TurnHow::Interrupted) {
+        if current && matches!(finished.end.how, TurnHow::Interrupted) {
             node.interrupts.raise(&fastctx_types::Address { machine: node.machine(), resident: id.clone() });
         }
     }
@@ -271,9 +275,7 @@ async fn finish_at(
         (how, Some(reason)) => Some(Trouble { at: finished.at, text: format!("turn {how}: {reason}") }),
         (how, None) => Some(Trouble { at: finished.at, text: format!("turn {how}") }),
     };
-    if let Err(error) = node.residents.take_owed(&node.world, id, turn, &node.machine(), trouble) {
-        node.log.line(format_args!("the end of {id}'s turn {turn} is durable, but updating now failed: {error}"));
-    }
+    node.residents.take_owed(&node.world, id, turn, &node.machine(), trouble)?;
     for handover in &accepted {
         for input in &handover.inputs {
             crate::speech::heard(node, id, &input.delivery, turn);
@@ -290,10 +292,12 @@ async fn finish_at(
         crate::codex_title::maybe(node, id, &about);
     }
     if first || recorded {
-        crate::desk::turn_ended(node, id, turn);
+        if current || !turn.is_empty() {
+            crate::desk::turn_ended(node, id, turn);
+        }
         node.watchers.publish(id, &event);
     }
-    crate::composer::turn_ended(node, id, turn, &finished.end.how).await.map_err(std::io::Error::other)?;
+    crate::composer::turn_ended(node, id, turn, &finished.end.how, current).await.map_err(std::io::Error::other)?;
     for handover in &accepted {
         for input in &handover.inputs {
             crate::inbox::settle(node, &directory, &input.delivery.id)?;
@@ -399,7 +403,10 @@ pub fn pay<'a>(
                     node.log.line(format_args!("reading the answers {id} owes: {error}"));
                     return;
                 }
-                Err(_) => return,
+                Err(error) => {
+                    node.log.line(format_args!("reading the answers {id} owes: {error}"));
+                    return;
+                }
             }
         };
         let _told = Told(owing.iter().map(|answer| answer.delivery.id.clone()).collect());
@@ -434,13 +441,16 @@ pub fn pay<'a>(
                 }
             }
             if landed.is_err() || matches!(landed, Ok(fastctx_types::residents::Landed::Uncertain { .. })) {
-                if landed.is_err()
-                    && node.is_me(&answer.to.machine)
-                    && !node.residents.knows(&answer.to.resident)
-                    && !node.world.conversation(&answer.to.resident).about().exists()
-                    && let Err(error) = crate::inbox::without_reader(directory, &answer)
-                {
-                    node.log.line(format_args!("settling the answer without a local recipient: {error}"));
+                if landed.is_err() && node.is_me(&answer.to.machine) && !node.residents.knows(&answer.to.resident) {
+                    match node.world.conversation(&answer.to.resident).about().try_exists() {
+                        Ok(false) => {
+                            if let Err(error) = crate::inbox::without_reader(directory, &answer) {
+                                node.log.line(format_args!("settling the answer without a local recipient: {error}"));
+                            }
+                        }
+                        Ok(true) => {}
+                        Err(error) => node.log.line(format_args!("checking the answer's local recipient: {error}")),
+                    }
                 }
                 continue;
             }
@@ -630,46 +640,65 @@ fn health_event(
     Ok(())
 }
 
-/// A turn stopped because something stopped under it.
-pub async fn stopped(node: &Arc<Node>, id: &ResidentId, turn: &str, reason: String) {
-    let end = TurnEnd {
-        facts: None,
-        error: None,
-        how: TurnHow::Interrupted,
-        reason: Some(reason),
-        duration_ms: None,
-        last_message: None,
-    };
-    ended(node, id, turn, end).await;
-}
-
 /// Ends the turns the node stopped under, now that it is up again, and
 /// tells whoever was owed them. A Claude session runs on under Claude Code's
 /// own supervisor while the node is away: its turn goes on and ends as it
 /// ends, its reports followed again; only one whose session is gone ended
 /// with the node (`specs/world-concurrency.md`, 宿主的会话比节点活得久).
 pub async fn recover(node: &Arc<Node>, unfinished: Vec<(ResidentId, String)>) {
-    let reason = format!("the node on {} restarted while it ran", node.machine());
     for (id, turn) in unfinished {
-        if let Some((about, _)) = node.residents.about(&id)
-            && about.host.agent.as_str() == "claude"
-            && node.residents.now(&id).and_then(|now| now.turn).as_deref() == Some(&turn)
-            && let Some(session) = &about.session
-            && claude_runs(node, session)
-        {
-            continue;
+        if let Err(error) = recover_one(node, &id, &turn).await {
+            node.log.line(format_args!("recovering {id}'s turn {turn}; will retry: {error}"));
+            let node = node.clone();
+            tokio::spawn(async move {
+                let (mut again, mut told) = (crate::again::Again::default(), error.to_string());
+                loop {
+                    tokio::time::sleep(again.next().max(std::time::Duration::from_secs(1))).await;
+                    let Err(error) = recover_one(&node, &id, &turn).await else { break };
+                    if error.to_string() != told {
+                        told = error.to_string();
+                        node.log.line(format_args!("recovering {id}'s turn {turn}; will retry: {told}"));
+                    }
+                }
+            });
         }
-        stopped(node, &id, &turn, reason.clone()).await;
     }
 }
 
-/// Whether the Claude session `session` still has the process it registered
-/// with.
-fn claude_runs(node: &Node, session: &str) -> bool {
+/// Only the turn observed at startup is retried; later turns are never
+/// classified as interrupted by this worker.
+async fn recover_one(node: &Arc<Node>, id: &ResidentId, turn: &str) -> std::io::Result<()> {
+    let Some(speaking) = node.residents.speaking(id) else { return Ok(()) };
+    let _speaking = speaking.lock().await;
+    if let Some((about, _)) = node.residents.about(id)
+        && about.host.agent.as_str() == "claude"
+        && node.residents.now(id).and_then(|now| now.turn).as_deref() == Some(turn)
+        && let Some(session) = &about.session
+        && claude_runs(node, session)?
+    {
+        return Ok(());
+    }
+    let end = TurnEnd {
+        facts: None,
+        error: None,
+        how: TurnHow::Interrupted,
+        reason: Some(format!("the node on {} restarted while it ran", node.machine())),
+        duration_ms: None,
+        last_message: None,
+    };
+    finish_locked(node, id, turn, end, &[]).await
+}
+
+/// An unreadable registration is not evidence of death. A process this
+/// user may not look at is another's that took its number: Claude Code runs
+/// as the user.
+fn claude_runs(node: &Node, session: &str) -> std::io::Result<bool> {
     let directory = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session);
-    matches!(
-        fastctx_hosts::claude::exchange::registration(&directory),
-        Ok(Some(registration))
-            if registration.process.as_ref().is_some_and(|process| fastctx_platform::is_alive(process).unwrap_or(false))
-    )
+    match fastctx_hosts::claude::exchange::registration(&directory)?.and_then(|registration| registration.process) {
+        Some(process) => match fastctx_platform::is_alive(&process) {
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(false),
+            alive => alive,
+        },
+        None => Ok(false),
+    }
 }

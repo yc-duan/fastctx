@@ -66,11 +66,15 @@ impl Tombstones {
                 }
             };
             if now.duration_since(tombstone.at) > KEPT {
-                match std::fs::remove_file(&path) {
-                    Err(error) if error.kind() != io::ErrorKind::NotFound => problems.push((path, error)),
-                    _ => {}
+                match remains(world, &id, &tombstone) {
+                    Ok(false) => match std::fs::remove_file(&path) {
+                        Ok(()) => continue,
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                        Err(error) => problems.push((path, error)),
+                    },
+                    Ok(true) => {}
+                    Err(error) => problems.push((path, error)),
                 }
-                continue;
             }
             tombstones.insert(id, tombstone);
         }
@@ -106,4 +110,24 @@ impl Tombstones {
     pub(super) fn all(&self) -> impl Iterator<Item = (&ResidentId, &Tombstone)> {
         self.by_id.iter()
     }
+}
+
+/// Expiry must not erase the only record of a deletion still to be finished.
+fn remains(world: &WorldDir, id: &ResidentId, tombstone: &Tombstone) -> io::Result<bool> {
+    let sessions = fastctx_hosts::claude::exchange::sessions(world.path());
+    let paths = std::iter::once(world.conversation(id).path().to_path_buf()).chain(
+        tombstone
+            .sessions
+            .iter()
+            .filter(|session| crate::claude::pairing::validate_session(session).is_ok())
+            .map(|session| sessions.join(session)),
+    );
+    for path in paths {
+        match std::fs::symlink_metadata(&path) {
+            Ok(_) => return Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(false)
 }

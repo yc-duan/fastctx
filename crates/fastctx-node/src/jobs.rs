@@ -667,20 +667,22 @@ pub struct Reconciled {
     pub problems: Vec<(PathBuf, std::io::Error)>,
 }
 
-/// Marks every job whose supervisor is gone, as after the machine
-/// restarted.
+/// Marks jobs whose supervisor is gone, excluding this node's launches:
+/// their records can precede the supervisor taking its lock.
 pub fn reconcile(world: &WorldDir) -> std::io::Result<Reconciled> {
     let mut found = Reconciled::default();
+    let starter = fastctx_platform::current_identity()?;
     for residents in world.job_parents()? {
         for resident in read_dir(&residents)? {
             for entry in read_dir(&resident.join("jobs"))? {
                 if entry.extension().is_none_or(|extension| extension != "json") {
                     continue;
                 }
-                let checked = record::read(&entry).and_then(|job| match job.end {
-                    Some(_) => Ok(false),
-                    None => interrupt_now(&entry, "its supervisor was gone when the node started")
-                        .map(|job| job.end.is_some()),
+                let checked = record::read(&entry).and_then(|job| {
+                    if job.end.is_some() || job.program.as_ref().is_some_and(|program| program.starter == starter) {
+                        return Ok(false);
+                    }
+                    interrupt_now(&entry, "its supervisor was gone when the node started").map(|job| job.end.is_some())
                 });
                 match checked {
                     Ok(true) => found.interrupted.push(entry),
