@@ -200,15 +200,22 @@ async fn work(
     };
     let accepting = match &body {
         Body::Call { call } | Body::StreamCall { call } => {
-            call.contract().within.unwrap_or(fastctx_types::contract::OPENED_WITHIN)
+            Some(call.contract().within.unwrap_or(fastctx_types::contract::OPENED_WITHIN))
         }
-        _ => Duration::from_secs(300),
+        _ => None,
+    };
+    let opening_deadline = came + fastctx_types::contract::OPENED_WITHIN + PAST_THE_CALLER;
+    let accepting_deadline = async {
+        match accepting {
+            Some(within) => tokio::time::sleep_until(came + within + PAST_THE_CALLER).await,
+            None => std::future::pending().await,
+        }
     };
     let opened = tokio::select! {
-        opened = open_call(inner, message, body, endpoint) => opened,
+        opened = open_call(inner, message, body, endpoint, opening_deadline) => opened,
         _ = stop.stopping() => return None,
-        () = tokio::time::sleep_until(came + accepting + PAST_THE_CALLER) => {
-            Err(format!("receiving the call did not finish within {} seconds", (accepting + PAST_THE_CALLER).as_secs()))
+        () = accepting_deadline => {
+            Err(format!("opening the call did not finish within {} seconds", (accepting.expect("finite opening") + PAST_THE_CALLER).as_secs()))
         },
     };
     let (remote, stream, received) = match opened {
@@ -314,6 +321,7 @@ async fn open_call(
     call: &Envelope,
     body: Body,
     endpoint: &Endpoint,
+    opening_deadline: tokio::time::Instant,
 ) -> Result<(RemoteCall, Option<Stream>, Option<crate::reassembly::Reservation>), String> {
     let from_the_caller = || -> Result<u64, String> {
         let ticket = call.stream.as_ref().ok_or("it names no data connection")?;
@@ -334,7 +342,7 @@ async fn open_call(
             if from_the_caller()? != carried.stream {
                 return Err("it names one data connection and carries another".to_string());
             }
-            let bytes = crate::data::sink(endpoint, &inner.key, &carried)
+            let bytes = crate::data::sink_until(endpoint, &inner.key, &carried, opening_deadline)
                 .await
                 .map_err(|error| format!("fetching it, too large for a message: {error}"))?;
             Ok((

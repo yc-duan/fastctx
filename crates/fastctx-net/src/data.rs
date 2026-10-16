@@ -352,6 +352,16 @@ pub async fn sink(
     key: &SecretKey,
     carried: &Carried,
 ) -> Result<crate::reassembly::Buffer, String> {
+    sink_until(endpoint, key, carried, tokio::time::Instant::now() + PAIRED_WITHIN).await
+}
+
+/// Bounds opening separately; the body is governed by actual byte progress.
+pub(crate) async fn sink_until(
+    endpoint: &Endpoint,
+    key: &SecretKey,
+    carried: &Carried,
+    opening_deadline: tokio::time::Instant,
+) -> Result<crate::reassembly::Buffer, String> {
     if carried.bytes > MAX_BODY as u64 {
         return Err(format!("the remote body is {} bytes; at most {MAX_BODY} can be assembled", carried.bytes));
     }
@@ -359,7 +369,9 @@ pub async fn sink(
     // the body; even an empty advertised body takes space before its stream opens.
     let overhead = 2 * wire::MAX_DATA_MESSAGE;
     let mut bytes = crate::reassembly::Buffer::new(carried.bytes as usize, overhead)?;
-    let mut stream = Stream::open(endpoint, key, carried.stream, End::Sink).await?;
+    let mut stream = tokio::time::timeout_at(opening_deadline, Stream::open(endpoint, key, carried.stream, End::Sink))
+        .await
+        .map_err(|_| "opening the body transfer exceeded its deadline".to_string())??;
     stream.take(carried.bytes, |piece| bytes.extend(piece)).await?;
     if Digest(sha256(&bytes)) != carried.sha256 {
         return Err("the bytes are not the ones the source said it sent".to_string());
