@@ -1,0 +1,105 @@
+//! One page of a ledger, read without keeping the member's frame reader or
+//! any hub lock waiting for disk. Entries are immutable and numbered in
+//! order, so the committed end is all a read needs to take under the lock.
+
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use fastctx_net::sign::Signed;
+use fastctx_net::wire::{self, Down, Told};
+use fastctx_types::MachineName;
+use fastctx_types::access::TownId;
+use tokio::sync::oneshot;
+
+use crate::outq::Outq;
+use crate::{Hub, Out};
+
+/// The committed end never advances during a page, even if new entries
+/// reach disk while it is being read.
+pub(super) struct Page {
+    pub dir: PathBuf,
+    pub town: TownId,
+    pub after: u64,
+    pub last: u64,
+}
+
+/// Answers a ledger read on this session's queue, independently of its
+/// next frame and of every project's writer.
+pub(crate) fn ask(hub: &Arc<Hub>, name: &MachineName, out: &Outq, id: u64, town: TownId, after: u64) {
+    if !hub.store().book.directory.member_in_project(name, &town) {
+        let answer = Err(format!("{name} acts for no account that may read {town}"));
+        let _ = out.send(Out::Frame(Down::Told { id, answer }));
+        return;
+    }
+    let page = hub.ledgers.lock().expect("never poisoned").page(town.clone(), after);
+    let (hub, name, out) = (hub.clone(), name.clone(), out.clone());
+    tokio::spawn(async move {
+        // Dropping the receiver stops a running read between files. Aborting
+        // its task also stops a read still waiting for a blocking thread.
+        let (wanted, reader) = oneshot::channel::<()>();
+        let mut reading = tokio::task::spawn_blocking(move || page.read(&wanted));
+        let answer = tokio::select! {
+            biased;
+            () = out.closed() => {
+                reading.abort();
+                return;
+            }
+            read = &mut reading => read
+                .map_err(|error| format!("reading {town}'s ledger: {error}"))
+                .and_then(|answer| answer),
+        };
+        drop(reader);
+        // Permission may have been withdrawn while the disk was being read.
+        let answer = if hub.store().book.directory.member_in_project(&name, &town) {
+            answer
+        } else {
+            Err(format!("{name} acts for no account that may read {town}"))
+        };
+        let _ = out.send(Out::Frame(Down::Told { id, answer }));
+    });
+}
+
+impl Page {
+    fn read(self, wanted: &oneshot::Sender<()>) -> Result<Told, String> {
+        // The longest id and `false` leave room for either value of `more`.
+        let mut size =
+            wire::encode(&Down::Told { id: u64::MAX, answer: Ok(Told::Entries { entries: Vec::new(), more: false }) })
+                .len();
+        let mut entries = Vec::new();
+        for previous in self.after..self.last {
+            if wanted.is_closed() {
+                return Err("the ledger reader ended".into());
+            }
+            let seq = previous + 1;
+            let path = self.dir.join(format!("{seq:020}.json"));
+            let signed = entry(&path).map_err(|error| format!("reading entry {seq} of {}: {error}", self.town))?;
+            let cost = wire::encode(&(seq, &signed)).len() + usize::from(!entries.is_empty());
+            if size + cost > wire::MAX_CONTROL_FRAME {
+                if entries.is_empty() {
+                    return Err(format!(
+                        "entry {seq} of {} needs {} bytes in an answer, more than one message holds ({})",
+                        self.town,
+                        size + cost,
+                        wire::MAX_CONTROL_FRAME
+                    ));
+                }
+                return Ok(Told::Entries { entries, more: true });
+            }
+            size += cost;
+            entries.push((seq, signed));
+        }
+        Ok(Told::Entries { entries, more: false })
+    }
+}
+
+/// Published entries use compact JSON and fit in a frame with their
+/// envelope. A damaged file must not make one read allocate without bound.
+fn entry(path: &Path) -> io::Result<Signed> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?.take(wire::MAX_CONTROL_FRAME as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > wire::MAX_CONTROL_FRAME {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "the entry file is larger than one message"));
+    }
+    serde_json::from_slice(&bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}

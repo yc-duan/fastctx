@@ -18,7 +18,9 @@
 //! The entries of one project are written one at a time, each checked and
 //! numbered under the store's lock and written to disk once that lock is
 //! let go (`write`); other projects, and everything else the hub does, do
-//! not wait on that disk.
+//! not wait on that disk. A read takes only the committed end under the
+//! ledger lock, then reads the numbered files off all locks and off the
+//! member's frame reader (`reading`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -35,6 +37,9 @@ use fastctx_types::access::TownId;
 
 use crate::Hub;
 use crate::store::Store;
+
+mod reading;
+pub(crate) use reading::ask;
 
 /// What the hub knows of one project's ledger.
 #[derive(Default)]
@@ -194,29 +199,10 @@ impl Ledgers {
         self.towns.iter().map(|(town, ledger)| (town.clone(), ledger.next - 1)).collect()
     }
 
-    /// The entries of `town` after `after` that fit in one answer.
-    pub fn read(&self, town: &TownId, after: u64) -> Result<(Vec<(u64, Signed)>, bool), String> {
-        if !self.towns.contains_key(town) {
-            return Ok((Vec::new(), false));
-        }
-        let files =
-            numbered(&self.dir.join(town.as_str())).map_err(|error| format!("reading {town}'s ledger: {error}"))?;
-        // An answer is its frame around the entries, each separated by a
-        // comma; it holds entries while that stays within one frame.
-        let empty =
-            wire::encode(&Down::Told { id: u64::MAX, answer: Ok(Told::Entries { entries: Vec::new(), more: true }) });
-        let mut size = empty.len();
-        let mut entries = Vec::new();
-        for (seq, file) in files.into_iter().filter(|(seq, _)| *seq > after) {
-            let signed: Signed = read(&file).map_err(|error| format!("reading entry {seq} of {town}: {error}"))?;
-            let cost = wire::encode(&(seq, &signed)).len() + 1;
-            if !entries.is_empty() && size + cost > wire::MAX_CONTROL_FRAME {
-                return Ok((entries, true));
-            }
-            size += cost;
-            entries.push((seq, signed));
-        }
-        Ok((entries, false))
+    /// The committed range to read, without listing or copying the ledger.
+    fn page(&self, town: TownId, after: u64) -> reading::Page {
+        let last = self.towns.get(&town).map_or(0, |ledger| ledger.next - 1);
+        reading::Page { dir: self.dir.join(town.as_str()), town, after, last }
     }
 }
 

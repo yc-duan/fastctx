@@ -633,6 +633,9 @@ fn handle(
         Up::Ask { id, question: Question::Package { version, target } } => {
             crate::updates::ask(hub, id, version, target, out.clone());
         }
+        Up::Ask { id, question: Question::LedgerRead { town, after } } => {
+            crate::ledger::ask(hub, name, out, id, town, after);
+        }
         // Written off the store's lock, one entry of a project at a time.
         Up::Ask { id, question: Question::LedgerWrite { town, entry } } => {
             let (hub, writer, out) = (hub.clone(), name.clone(), out.clone());
@@ -1135,13 +1138,7 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
         }
         Question::HubMove { account, request } => crate::moving::requests::ask(hub, name, &account, request),
         Question::HubArrival { request } => crate::moving::requests::arrival(hub, name, request),
-        Question::LedgerRead { town, after } => {
-            if !hub.store().book.directory.member_in_project(name, &town) {
-                return Err(format!("{name} acts for no account that may read {town}"));
-            }
-            let (entries, more) = hub.ledgers.lock().expect("never poisoned").read(&town, after)?;
-            Ok(Told::Entries { entries, more })
-        }
+        Question::LedgerRead { .. } => Err("ledger reads are dispatched asynchronously".into()),
         Question::Worked { to, account, purpose, resident } => {
             // What the hub notes of a call it passes on, for one made over
             // a direct link: only while that call is allowed.
