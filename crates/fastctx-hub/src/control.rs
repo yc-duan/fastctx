@@ -1096,11 +1096,16 @@ fn answer(hub: &Hub, name: &MachineName, generation: u64, call: u64, message: En
     if let Some(ticket) = &message.stream {
         crate::data::register(hub, ticket, &pending.standing, name, generation);
     }
-    let sessions = hub.sessions();
-    if let Some(caller) =
-        sessions.get(&pending.caller).filter(|session| session.generation == pending.caller_generation)
-    {
-        let _ = caller.out.send(Out::Frame(Down::Answered { id: pending.id, message }));
+    let stream = message.stream.as_ref().map(|ticket| ticket.stream);
+    let queued = {
+        let sessions = hub.sessions();
+        sessions
+            .get(&pending.caller)
+            .filter(|session| session.generation == pending.caller_generation)
+            .is_some_and(|caller| caller.out.send(Out::Frame(Down::Answered { id: pending.id, message })).is_ok())
+    };
+    if !queued && let Some(stream) = stream {
+        crate::data::forget(hub, stream, "its caller left before the answer could be queued");
     }
 }
 

@@ -569,6 +569,7 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         health: health::Health::default(),
     });
     tokio::spawn(health::keep(Arc::downgrade(&hub)));
+    tokio::spawn(data::expire(Arc::downgrade(&hub)));
     tokio::spawn(updates::look_every(Arc::downgrade(&hub)));
     tokio::spawn(tell_directory(Arc::downgrade(&hub), hub.directory_changed.clone(), hub.presence_changed.clone()));
     let letters_changed = hub.store().letters_changed.clone();

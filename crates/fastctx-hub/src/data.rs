@@ -13,11 +13,16 @@
 //! is in flight per direction, so the slower side sets the pace, and none
 //! may take longer than the silence to pass on.
 //!
-//! An end waits for the other a minute at most, and less once the call it
-//! goes with is over: its caller gave it up, or the machine that named it
-//! left the hub (`forget`). How many ends may wait and how many pairs may
-//! be relayed at once is bounded, for each member and for the hub, so one
+//! An end or a registration expires after a minute without pairing, even
+//! when neither end comes. It waits less once its call is over or the
+//! machine that named it left the hub (`forget`). A paired registration
+//! belongs to the relay until its ends close. How many ends may wait and
+//! how many pairs may be relayed at once is bounded, so one
 //! machine gone wrong cannot fill the hub with transfers.
+
+mod lifetime;
+
+pub(crate) use lifetime::expire;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -28,11 +33,12 @@ use fastctx_net::wire::{Down, End, Refusal, SILENCE, Ticket};
 use fastctx_types::MachineName;
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::sync::oneshot;
+use tokio::time::Instant;
 
 use crate::control::Standing;
 use crate::{Hub, Socket, refuse, send};
 
-/// How long an end waits for the other to come.
+/// How long a registration or an end waits for pairing.
 const PAIRING: Duration = Duration::from_secs(60);
 
 /// How many ends of one member may wait for the other at once.
@@ -45,11 +51,15 @@ const LIVE: usize = 8192;
 #[derive(Default)]
 pub(crate) struct Pairing {
     registered: HashMap<u64, Registration>,
-    waiting: HashMap<u64, Waiting>,
+    waiting: HashMap<u64, WaitingEnd>,
     live: HashMap<u64, Live>,
 }
 
 struct Registration {
+    /// Distinguishes a new registration using the same stream number.
+    serial: u64,
+    /// Set by the first mention; later mentions do not extend the wait.
+    deadline: Instant,
     source: MachineName,
     sink: MachineName,
     standings: Vec<Standing>,
@@ -57,17 +67,23 @@ struct Registration {
     by: Vec<(MachineName, u64)>,
 }
 
+#[derive(Clone)]
 struct Waiting {
     /// Tells this end apart from any other that came with its number.
     serial: u64,
     end: End,
     member: MachineName,
+}
+
+struct WaitingEnd {
+    waiting: Waiting,
     hand_over: oneshot::Sender<(Socket, oneshot::Receiver<String>)>,
     /// Tells the waiting end why it waits no longer.
     called_off: oneshot::Sender<String>,
 }
 
 struct Live {
+    serial: u64,
     standings: Vec<Standing>,
     cut: Option<oneshot::Sender<String>>,
 }
@@ -91,6 +107,8 @@ pub(crate) fn register(hub: &Hub, ticket: &Ticket, standing: &Standing, by: &Mac
     };
     let mut pairing = hub.data.lock().expect("never poisoned");
     let registration = pairing.registered.entry(ticket.stream).or_insert_with(|| Registration {
+        serial: hub.next(),
+        deadline: Instant::now() + PAIRING,
         source: source.clone(),
         sink: sink.clone(),
         standings: Vec::new(),
@@ -106,7 +124,10 @@ pub(crate) fn register(hub: &Hub, ticket: &Ticket, standing: &Standing, by: &Mac
     if !registration.standings.contains(standing) {
         registration.standings.push(standing.clone());
     }
-    registration.by.push((by.clone(), generation));
+    let owner = (by.clone(), generation);
+    if !registration.by.contains(&owner) {
+        registration.by.push(owner);
+    }
 }
 
 /// The call the data connection `stream` goes with is over before its ends
@@ -114,13 +135,27 @@ pub(crate) fn register(hub: &Hub, ticket: &Ticket, standing: &Standing, by: &Mac
 /// connection is no longer registered. A pair already relayed goes on until
 /// its ends close it, as they do once their call is over.
 pub(crate) fn forget(hub: &Hub, stream: u64, why: &str) {
-    let mut pairing = hub.data.lock().expect("never poisoned");
-    if pairing.live.contains_key(&stream) {
-        return;
+    hub.data.lock().expect("never poisoned").forget(stream, why);
+}
+
+impl Pairing {
+    fn forget(&mut self, stream: u64, why: &str) {
+        if self.live.contains_key(&stream) {
+            return;
+        }
+        self.registered.remove(&stream);
+        if let Some(waiting) = self.waiting.remove(&stream) {
+            let _ = waiting.called_off.send(why.to_string());
+        }
     }
-    pairing.registered.remove(&stream);
-    if let Some(waiting) = pairing.waiting.remove(&stream) {
-        let _ = waiting.called_off.send(why.to_string());
+
+    fn forget_waiting(&mut self, stream: u64, serial: u64, why: &str) -> bool {
+        if self.waiting.get(&stream).is_some_and(|waiting| waiting.waiting.serial == serial) {
+            self.forget(stream, why);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -196,27 +231,31 @@ pub(crate) async fn end(
             return;
         }
     };
-    // Taken out, or put in to wait, in one look: two ends that come at once
-    // find each other.
+    // Keep the first end visible until handover commits, so cancellation
+    // and expiry can still find it while the second checks the pair.
     let (hand_over, mut handed) = oneshot::channel();
     let (called_off, mut calling_off) = oneshot::channel();
     let serial = hub.next();
     let waiting = {
         let mut pairing = hub.data.lock().expect("never poisoned");
-        match pairing.waiting.remove(&stream) {
-            Some(found) => Ok(Some(found)),
-            None => {
-                let mine = pairing.waiting.values().filter(|waiting| waiting.member == me).count();
-                if pairing.waiting.len() >= WAITING || mine >= WAITING_FOR_ONE {
-                    Err(format!(
-                        "the hub has {} data connections waiting for their other end; try again",
-                        pairing.waiting.len()
-                    ))
-                } else {
-                    let waiting = Waiting { serial, end, member: me.clone(), hand_over, called_off };
-                    pairing.waiting.insert(stream, waiting);
-                    Ok(None)
-                }
+        if pairing.live.contains_key(&stream) {
+            Err("this data connection is already paired".to_string())
+        } else if let Some(found) = pairing.waiting.get(&stream) {
+            let registration = pairing.registered.get(&stream).map(|registration| registration.serial);
+            Ok(Some((found.waiting.clone(), registration)))
+        } else {
+            let mine = pairing.waiting.values().filter(|waiting| waiting.waiting.member == me).count();
+            if pairing.waiting.len() >= WAITING || mine >= WAITING_FOR_ONE {
+                let reason = format!(
+                    "the hub has {} data connections waiting for their other end; try again",
+                    pairing.waiting.len()
+                );
+                pairing.forget(stream, &reason);
+                Err(reason)
+            } else {
+                let waiting = Waiting { serial, end, member: me.clone() };
+                pairing.waiting.insert(stream, WaitingEnd { waiting, hand_over, called_off });
+                Ok(None)
             }
         }
     };
@@ -225,21 +264,37 @@ pub(crate) async fn end(
             hub.log.line(format_args!("refused a data connection of {me}: {reason}"));
             refuse(&mut socket, Refusal::Broken { reason }).await;
         }
-        Ok(Some(waiting)) => match pair(&hub, stream, &waiting, end, &me) {
+        Ok(Some((waiting, registration))) => match pair(&hub, stream, &waiting, end, &me) {
             Ok((source, sink, standings)) => {
-                // The first end relays; this one is handed over to it, with
-                // the means to cut the pair. Live and handed over in one
-                // look, or neither: the first end, giving up meanwhile, finds
-                // either.
+                // The first end relays. Capacity, ownership and handover
+                // are decided together, before either end can give up.
                 let (cut, cutting) = oneshot::channel();
                 let handed = {
                     let mut pairing = hub.data.lock().expect("never poisoned");
-                    if pairing.live.len() >= LIVE {
-                        Err((socket, format!("the hub relays {} transfers already; try again", pairing.live.len())))
+                    let current =
+                        pairing.waiting.get(&stream).is_some_and(|first| first.waiting.serial == waiting.serial);
+                    let registered = pairing
+                        .registered
+                        .get(&stream)
+                        .is_some_and(|found| Some(found.serial) == registration && found.deadline > Instant::now());
+                    let refused = if !current {
+                        Some("the other end is no longer waiting".to_string())
+                    } else if !registered {
+                        Some("the data connection's registration ended before pairing".to_string())
+                    } else if pairing.live.len() >= LIVE {
+                        Some(format!("the hub relays {} transfers already; try again", pairing.live.len()))
                     } else {
-                        pairing.live.insert(stream, Live { standings, cut: Some(cut) });
-                        waiting.hand_over.send((socket, cutting)).map_err(|(socket, _)| {
+                        None
+                    };
+                    if let Some(reason) = refused {
+                        pairing.forget_waiting(stream, waiting.serial, &reason);
+                        Err((socket, reason))
+                    } else {
+                        let first = pairing.waiting.remove(&stream).expect("still waiting under this lock");
+                        pairing.live.insert(stream, Live { serial: waiting.serial, standings, cut: Some(cut) });
+                        first.hand_over.send((socket, cutting)).map_err(|(socket, _)| {
                             pairing.live.remove(&stream);
+                            pairing.registered.remove(&stream);
                             (socket, "the other end left".to_string())
                         })
                     }
@@ -253,13 +308,15 @@ pub(crate) async fn end(
                 }
             }
             Err(reason) => {
+                hub.data.lock().expect("never poisoned").forget_waiting(stream, waiting.serial, &reason);
                 hub.log.line(format_args!("refused to pair a data connection of {me}: {reason}"));
                 refuse(&mut socket, Refusal::Broken { reason }).await;
             }
         },
         Ok(None) => {
+            let active = lifetime::Active::new(&hub, stream, serial);
             let peer = tokio::select! {
-                handed = &mut handed => handed.map_err(|_| "the other end left".to_string()),
+                handed = &mut handed => Ok(handed.map_err(|_| "the other end left".to_string())),
                 // The waiting end gave up or vanished.
                 _ = socket.next() => Err("this end left".to_string()),
                 () = tokio::time::sleep(PAIRING) => {
@@ -267,32 +324,23 @@ pub(crate) async fn end(
                 }
                 Ok(why) = &mut calling_off => Err(why),
             };
-            // Still waiting, it was never handed over; taken by a second end,
-            // that end decides at once whether it hands this one over.
+            // A simultaneous handover wins only if it committed before the
+            // wait was removed. Its sender was consumed under that lock.
             let peer = match peer {
                 Err(why) => {
-                    let still = {
-                        let mut pairing = hub.data.lock().expect("never poisoned");
-                        let mine = pairing.waiting.get(&stream).is_some_and(|waiting| waiting.serial == serial);
-                        if mine {
-                            pairing.waiting.remove(&stream);
-                        }
-                        mine
-                    };
+                    let still = hub.data.lock().expect("never poisoned").forget_waiting(stream, serial, &why);
                     if still { Err(why) } else { (&mut handed).await.map_err(|_| why) }
                 }
-                handed => handed,
+                Ok(handed) => handed,
             };
             match peer {
                 Ok((peer, cutting)) => {
                     let carried = relay(socket, peer, cutting).await;
-                    let mut pairing = hub.data.lock().expect("never poisoned");
-                    pairing.live.remove(&stream);
-                    pairing.registered.remove(&stream);
-                    drop(pairing);
+                    drop(active);
                     hub.log.line(format_args!("a transfer ended; {carried} bytes came from {me}"));
                 }
                 Err(reason) => {
+                    drop(active);
                     refuse(&mut socket, Refusal::Broken { reason }).await;
                 }
             }
