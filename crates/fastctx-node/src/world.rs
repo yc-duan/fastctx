@@ -960,8 +960,11 @@ impl fastctx_net::link::Node for Handler {
                     crate::hub_arrival::interfaces().map(|addresses| RemoteReply::Interfaces { addresses })
                 }
                 RemoteCall::CopySend { from: path, to } => {
+                    let accepted = crate::copy::accept(stream).await?;
                     let from = fastctx_types::copy::Place { machine: None, hub: None, path };
-                    Box::pin(crate::copy::copy(&node, &acting, from, to)).await.map(RemoteReply::Copied)
+                    let result = Box::pin(crate::copy::copy(&node, &acting, from, to)).await.map(RemoteReply::Copied);
+                    drop(accepted);
+                    result
                 }
                 RemoteCall::CopyFetch { from: path } => {
                     let stream = stream

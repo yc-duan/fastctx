@@ -75,6 +75,9 @@ pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelop
                 Ok(_place) => tokio::select! {
                     admitted = inner.admit(&message) => admitted,
                     _ = stop.stopping() => return,
+                    () = tokio::time::sleep_until(came + fastctx_types::contract::OPENED_WITHIN) => {
+                        Err("admitting the call did not finish within 60 seconds".to_string())
+                    },
                 },
                 Err(reason) => Err(reason),
             }
@@ -196,9 +199,18 @@ async fn work(
         Ok(place) => place,
         Err(failure) => return Some(Err(failure)),
     };
+    let accepting = match &body {
+        Body::Call { call } | Body::StreamCall { call } => {
+            call.contract().within.unwrap_or(fastctx_types::contract::OPENED_WITHIN)
+        }
+        _ => Duration::from_secs(300),
+    };
     let opened = tokio::select! {
         opened = open_call(inner, message, body, endpoint) => opened,
         _ = stop.stopping() => return None,
+        () = tokio::time::sleep_until(came + accepting + PAST_THE_CALLER) => {
+            Err(format!("receiving the call did not finish within {} seconds", (accepting + PAST_THE_CALLER).as_secs()))
+        },
     };
     let (remote, stream, received) = match opened {
         Ok(opened) => opened,

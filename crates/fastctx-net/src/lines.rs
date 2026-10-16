@@ -59,6 +59,7 @@ pub async fn open(
             feed,
         );
         tokio::pin!(call);
+        let deadline = tokio::time::Instant::now() + fastctx_types::contract::OPENED_WITHIN;
         let result = tokio::select! {
             opened = opening => match opened {
                 Ok(Ok(reply)) => Ok(reply),
@@ -68,14 +69,15 @@ pub async fn open(
                         Err(error) => Failure::new(error.to_string()),
                         Ok(Ok(_)) => unreachable!("an opened source returned above"),
                     };
-                    Err(match (&mut call).await {
-                        Ok(Err(failure)) => failure,
-                        Err(failure) => Failure::new(failure.to_string()),
-                        Ok(Ok(_)) => error,
+                    Err(match tokio::time::timeout_at(deadline, &mut call).await {
+                        Ok(Ok(Err(failure))) => failure,
+                        Ok(Err(failure)) => Failure::new(failure.to_string()),
+                        Ok(Ok(Ok(_))) => error,
+                        Err(_) => Failure::new(format!("{machine} did not answer its failed line opening within {} s", fastctx_types::contract::OPENED_WITHIN.as_secs())),
                     })
                 }
             },
-            () = tokio::time::sleep(fastctx_types::contract::OPENED_WITHIN) => Err(Failure::new(format!(
+            () = tokio::time::sleep_until(deadline) => Err(Failure::new(format!(
                 "{machine} did not open the line source within {} s",
                 fastctx_types::contract::OPENED_WITHIN.as_secs()
             ))),

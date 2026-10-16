@@ -51,6 +51,15 @@ use crate::Node;
 use crate::again::Again;
 use crate::learned::Holding;
 
+mod accepting;
+
+/// A new caller's optional stream acknowledges business admission before filesystem work.
+pub(crate) async fn accept(stream: Option<Stream>) -> Result<Option<Stream>, Failure> {
+    let Some(mut stream) = stream else { return Ok(None) };
+    stream.say(&accepting::ACCEPTED).await.map_err(Failure::new)?;
+    Ok(Some(stream))
+}
+
 /// What the destination says once it has the manifest.
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
@@ -204,12 +213,7 @@ async fn asked_of(
     to: Place,
     began: &Began,
 ) -> Result<CopyReport, Failure> {
-    let call = RemoteCall::CopySend { from, to };
-    match node.call(acting, source, Purpose::Hands, call).await.map_err(|failure| asked(failure, began))? {
-        Ok(RemoteReply::Copied(report)) => Ok(report),
-        Ok(_) => Err(Failure::new(format!("{source} answered something other than a copy"))),
-        Err(failure) => Err(failure),
-    }
+    accepting::ask(node, acting, source, from, to, began).await
 }
 
 fn same_machine(node: &Node, from: &Written, to: &Written) -> Result<bool, Failure> {

@@ -235,13 +235,17 @@ impl Stream {
 
     /// The next of `count` bytes still due, within `DUE_WITHIN`.
     async fn due(&mut self, count: u64) -> Result<Vec<u8>, String> {
-        let next = tokio::time::timeout(DUE_WITHIN, self.next())
-            .await
-            .map_err(|_| format!("{count} bytes were still due, and none came for {} s", DUE_WITHIN.as_secs()))?;
-        match next? {
-            Some(Message::Bytes(bytes)) => Ok(bytes),
-            Some(Message::Word(_)) => Err("the other end said something where bytes were due".to_string()),
-            None => Err(format!("the other end stopped with {count} bytes still due")),
+        let deadline = tokio::time::Instant::now() + DUE_WITHIN;
+        loop {
+            let next = tokio::time::timeout_at(deadline, self.next())
+                .await
+                .map_err(|_| format!("{count} bytes were still due, and none came for {} s", DUE_WITHIN.as_secs()))?;
+            match next? {
+                Some(Message::Bytes(bytes)) if bytes.is_empty() => continue,
+                Some(Message::Bytes(bytes)) => return Ok(bytes),
+                Some(Message::Word(_)) => return Err("the other end said something where bytes were due".to_string()),
+                None => return Err(format!("the other end stopped with {count} bytes still due")),
+            }
         }
     }
 
