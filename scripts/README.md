@@ -205,3 +205,25 @@ Unavailable architectures, including both on an empty Windows hub, produce a
 line that explains the missing architecture and the GitHub/manual-release
 alternatives. Invalid manual releases return the existing error channel before
 an invitation is issued, with their actual reason and placement directory.
+
+# Drills
+
+`smoke.py` installs a private network on the machine it runs on and walks a
+release through it; `update-drill.py` updates an installed application from
+one release to the next. Both run in CI.
+
+`concurrency.py` is the concurrency and lifecycle drill
+(`specs/world-concurrency.md`): one node in a fresh directory, its Codex
+login pointed at `model_mock.py`, so no request goes to any model vendor.
+Several conversations at once are spoken to, run commands of the World's
+`run`, are deleted while they work, and the node is ended at random moments;
+then it checks that nothing was stuck, no lock was taken out of order, every
+conversation settled and every deletion left nothing behind.
+
+```sh
+python scripts/concurrency.py PROGRAM --codex CODEX --minutes 4 --restarts
+```
+
+The node finds Codex on the user's PATH as the system keeps it, not on the
+drill's: CI installs `codex` there first. `model_mock.py` runs alone too, for
+trying a session by hand against it.

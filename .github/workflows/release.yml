@@ -169,6 +169,18 @@ jobs:
           path: dist/gui
       - name: Smoke test on an x64 machine
         run: python scripts/smoke.py kernel/fastctx.exe
+      # A real Codex app-server whose model is a mock on this machine: no
+      # request goes to any vendor (`scripts/concurrency.py`). The node finds
+      # Codex on the user's PATH as the system keeps it.
+      - name: Concurrency and lifecycle drill
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'codex-bin'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Invoke-WebRequest 'https://github.com/openai/codex/releases/download/rust-v0.160.0/codex-x86_64-pc-windows-msvc.exe' -OutFile (Join-Path $dir 'codex.exe')
+          [Environment]::SetEnvironmentVariable('Path', "$dir;" + [Environment]::GetEnvironmentVariable('Path', 'User'), 'User')
+          $env:Path = "$dir;$env:Path"
+          python scripts/concurrency.py kernel/fastctx.exe --codex (Join-Path $dir 'codex.exe') --minutes 4 --restarts --root $env:RUNNER_TEMP
       - name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams
         run: |
           python scripts/ripgrep.py verify
@@ -268,6 +280,15 @@ jobs:
           if-no-files-found: error
       - name: Smoke test on this machine
         run: python scripts/smoke.py kernel/fastctx --service
+      # A real Codex app-server whose model is a mock on this machine: no
+      # request goes to any vendor (`scripts/concurrency.py`). The node finds
+      # Codex on the login PATH.
+      - name: Concurrency and lifecycle drill
+        run: |
+          arch="$(uname -m)"
+          curl -fsSL "https://github.com/openai/codex/releases/download/rust-v0.160.0/codex-${arch}-unknown-linux-musl.tar.gz" | tar -xz -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/codex-${arch}-unknown-linux-musl" /usr/local/bin/codex
+          python scripts/concurrency.py kernel/fastctx --codex /usr/local/bin/codex --minutes 4 --restarts --root "$RUNNER_TEMP"
       - name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams
         run: |
           node scripts/kernel.mjs --tests '${{ matrix.target }}' tests
