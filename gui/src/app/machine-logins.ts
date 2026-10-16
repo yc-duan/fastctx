@@ -40,7 +40,13 @@ export function removerLoginOf(machine: Machine, world: WorldNow): Login | null 
   if (machine.here) return null;
   const owner = ownerLoginOf(machine, world);
   if (owner) return owner;
-  return loginsOf(world.accounts).find((login) => isSuper(world, login) && machine.on.some((on) => on.hub === login.hub)) ?? null;
+  return superLoginOver(machine, world) ?? null;
+}
+
+/** The login here that is the super administrator of a hub `machine` is
+ *  on, if any. */
+export function superLoginOver(machine: Machine, world: WorldNow): Login | undefined {
+  return loginsOf(world.accounts).find((login) => isSuper(world, login) && machine.on.some((on) => on.hub === login.hub));
 }
 
 /** Why Fastctx on `machine` is not uninstalled as `login` takes it off, or

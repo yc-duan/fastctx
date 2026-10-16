@@ -3,7 +3,9 @@
 // at least, picked from the window of versions and said to the machines
 // below it, never enforced; and whether its managed machines take new
 // releases by themselves. Which line a device follows is the line of the
-// version it runs: the network sets none.
+// version it runs: the network sets none. Devices of 1.0.1 beta 1 and 2 still
+// follow the line a hub keeps, so the policy names the test releases' line
+// for them, as a later hub tells them whatever it keeps.
 
 import { Sheet } from "./confirm";
 import { escape } from "../conversation/prose";
@@ -70,7 +72,7 @@ export class UpdatePolicySheet {
   private submit(sheet: Sheet): void {
     const note = sheet.body.querySelector<HTMLElement>(".sheet-note")!;
     sheet.busy = true;
-    this.save({ ...(this.minimum ? { minimum: this.minimum } : {}), managed_auto: this.managedAuto }).then(
+    this.save({ channel: "beta", ...(this.minimum ? { minimum: this.minimum } : {}), managed_auto: this.managedAuto }).then(
       () => {
         sheet.busy = false;
         sheet.close();

@@ -259,6 +259,8 @@ import { en, zh } from "./words";
 import { updates as updateSeam } from "./world/updates";
 import { Updates } from "./app/updates";
 import { UpdateCard } from "./app/update-card";
+import { updateOlder } from "./app/update-older";
+import { superLoginOver } from "./app/machine-logins";
 import { VersionWindow } from "./app/version-window";
 import { showAttachedWith } from "./conversation/attached-pictures";
 import { viewPictures } from "./conversation/pictures";
@@ -859,6 +861,19 @@ const appUpdates = (() => {
     );
   return updates;
 })();
+/** Has a machine of 1.0.1 beta 1 or 2 update itself, its line named first
+ *  under an earlier hub (`app/update-older.ts`). */
+const updateOlderMachine = (name: string) =>
+  updateOlder(name, {
+    network: () => appUpdates.state.peek()?.network,
+    superOver: (machine) => {
+      const world = store.world.peek();
+      const found = machinesOf(world).find((one) => one.name === machine);
+      return world && found ? superLoginOver(found, world) : undefined;
+    },
+    change,
+    machine: (one) => updatesAsked.machine(one),
+  });
 const updateCard = new UpdateCard(appUpdates, updateWords, live ? !onComputer() : params.has("phone"));
 const versionWindow = new VersionWindow(updateWords.versions);
 // A picture attached and not yet sent opens in the same viewer as the
@@ -1935,7 +1950,7 @@ function show(next: Place): void {
         replace: (to) => replacePlace(link(to)),
         updates: {
           state: appUpdates.state,
-          machine: (name) => updatesAsked.machine(name),
+          machine: updateOlderMachine,
           remote: (name, call) => updatesAsked.remote(name, call),
           versions: versionWindow,
           versionsHere,
@@ -1955,7 +1970,7 @@ function show(next: Place): void {
           minimum: minimumVersions,
           state: appUpdates.state,
           remote: (name, call) => updatesAsked.remote(name, call),
-          older: (name) => updatesAsked.machine(name),
+          older: updateOlderMachine,
           versions: versionWindow,
         },
         batch: english ? enBatch : zhBatch,
