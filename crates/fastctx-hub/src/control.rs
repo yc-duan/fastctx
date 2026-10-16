@@ -343,11 +343,19 @@ async fn intake(
         let mut receipts = Vec::new();
         // Whether the count moved: letters only sent again leave it as it is.
         let mut counted = false;
+        let mut full = false;
         for (seq, message) in batch {
             // A letter the member passes over, sending what comes after it,
             // it holds no more: why the hub refused it was heard and kept.
             refusals_heard(&hub, &name, generation, |refused| refused < seq && last.is_none_or(|last| refused > last));
             last = Some(seq);
+            // Old senders cannot report held in a heartbeat. Reconnecting proves
+            // which refusal receipts they kept without discarding any unheard result.
+            const UNHEARD: usize = 1024;
+            if hub.store().letters.get(&name).is_some_and(|entry| seq > entry.taken && entry.refused.len() >= UNHEARD) {
+                full = true;
+                break;
+            }
             let began = tokio::time::Instant::now();
             match keep(&hub, &name, generation, seq, message).await {
                 Ok(Kept::Held) => {
@@ -399,6 +407,14 @@ async fn intake(
         }
         if let Some((seq, false)) = last {
             let _ = out.send(Out::Frame(Down::Ack { seq, refused: None }));
+        }
+        if full {
+            let reason =
+                Refusal::Broken { reason: "reconnecting to confirm the refusal receipts this member kept".into() };
+            let _ = out.send(Out::End(reason));
+            // Keep the intake open until the writer has sent the preceding receipts.
+            out.closed().await;
+            return;
         }
     }
 }
