@@ -32,7 +32,7 @@ import { agentName, osName, titleOf } from "../world/names";
 import type { AccessWords, MachinesWords } from "./account-words";
 import type { Confirm } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
-import { AssistSheet, assistChange, assistancesIn, type Assistance } from "./assist-sheet";
+import { AssistSheet, assistChange, assistancesIn, namesOn, type Assistance } from "./assist-sheet";
 import { HubMoving, type HubMovingOptions } from "./hub-moving";
 import { holdUntilNamed, typedName } from "./typed-name";
 import { GiveSheet } from "./machine-sheets";
@@ -911,6 +911,7 @@ export class MachinesPage implements Page {
       },
       editing,
       agent === "claude",
+      namesOn(this.hubOf(login), login),
     );
   }
 

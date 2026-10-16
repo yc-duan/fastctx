@@ -29,7 +29,7 @@ import { foldersSection, foundOf, freshness, searching } from "./agent-folders";
 import { dirName, loginRow, planName, programLine } from "./agent-login-row";
 import type { AgentLoginsWords } from "./agent-logins-words";
 import { chosen, pickButton, pickMenu, pickables, type Pickable } from "./agent-machines";
-import { AssistSheet, assistChange, assistancesIn, type Assistance } from "./assist-sheet";
+import { AssistSheet, assistChange, assistancesIn, namesOn, type Assistance } from "./assist-sheet";
 import type { Confirm } from "./confirm";
 import { FolderSheet } from "./folder-sheet";
 import { redrawKeepingFocus } from "./focus";
@@ -515,6 +515,7 @@ export class AgentLoginsPage implements Page {
       },
       editing,
       agent === "claude",
+      namesOn(this.hubOf(owner, options.store.world.peek()), owner),
     );
   }
 

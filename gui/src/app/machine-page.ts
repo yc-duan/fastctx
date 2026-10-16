@@ -21,7 +21,7 @@ import { agentName, osName, titleOf } from "../world/names";
 import type { Card, MachineStats } from "../world/stats";
 import type { MachineFacts } from "../world/world";
 import type { AccessWords, MachinesWords } from "./account-words";
-import { AssistSheet, assistChange, assistancesIn, type Assistance } from "./assist-sheet";
+import { AssistSheet, assistChange, assistancesIn, namesOn, type Assistance } from "./assist-sheet";
 import type { Confirm } from "./confirm";
 import { bytesSaid } from "./data-page";
 import { redrawKeepingFocus } from "./focus";
@@ -1142,6 +1142,7 @@ export class MachinePage implements Page {
       },
       editing,
       agent === "claude",
+      namesOn(hubOf(options.store.world.peek(), login), login),
     );
   }
 

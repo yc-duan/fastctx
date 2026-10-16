@@ -1355,6 +1355,8 @@ export interface AccessWords {
   /** The assist sheet's own: whom it assists, until when, changing it and
    *  ending it. */
   assistWho: string;
+  /** The accounts listed under the name as it is typed. */
+  assistNames: string;
   assistUntil: string;
   endAssist: string;
   changeUntil: string;
@@ -1397,6 +1399,7 @@ export const zhAccess: AccessWords = {
   assisting: "正在协助",
   assistGo: "协助",
   assistWho: "协助谁",
+  assistNames: "对得上的账号",
   assistUntil: "截止",
   endAssist: "结束",
   changeUntil: "改截止时间",
@@ -1438,6 +1441,7 @@ export const enAccess: AccessWords = {
   assisting: "Assisting",
   assistGo: "Assist",
   assistWho: "Assist",
+  assistNames: "Matching accounts",
   assistUntil: "Ends",
   endAssist: "End",
   changeUntil: "Change when it ends",

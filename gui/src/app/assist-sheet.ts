@@ -1,17 +1,19 @@
 // One login of an agent assisting others (`world-gui.md`, 账号、机器、共享与
 // 协助): whom it assists now, each until when and, for Claude Code, up to
-// how much a week, changed or ended in place; then whom it assists next.
+// how much a week, changed or ended in place; then whom it assists next,
+// the network's accounts that match listed under the name as it is typed.
 // The hub ends an assistance by itself at its deadline; the login's
 // machine holds each account to its weekly amount (`world-agent-logins.md`,
 // 用量).
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
-import type { AccountChange, AssistSeen } from "../world/accounts";
+import type { AccountChange, AssistSeen, HubAccounts, Login } from "../world/accounts";
 import { wholeDollars } from "../world/money";
 import type { AccessWords } from "./account-words";
 import { Sheet } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
+import { NameSuggest } from "./name-suggest";
 import { WhenPicker } from "./when";
 
 const accountRule = "[a-z][a-z0-9\\-]{0,63}";
@@ -34,6 +36,12 @@ export function assistancesIn(assists: AssistSeen[], machine: string, agent: str
   return assists
     .filter((assist) => assist.machine === machine && assist.agent === agent && (assist.home ?? null) === home)
     .map((assist) => ({ to: assist.account, until: assist.until ?? null, weekly: assist.weekly ? assist.weekly / 1_000_000 : null }));
+}
+
+/** The accounts a login may have assisted, as its hub tells them: every
+ *  one it knows of but the login's own. */
+export function namesOn(hub: HubAccounts | null | undefined, login: Login): string[] {
+  return (hub?.accounts ?? []).map((account) => account.name).filter((name) => name !== login.account);
 }
 
 /** The change that has the login assist `to` as asked, or no longer. */
@@ -64,9 +72,13 @@ export class AssistSheet {
   /** The deadline for the next one assisted. */
   private fresh: WhenPicker;
   private editing: Editing = null;
+  /** The accounts that may be assisted, to list as a name is typed. */
+  private names: string[] = [];
+  private readonly suggest: NameSuggest;
 
   constructor(private readonly words: AccessWords) {
     this.fresh = new WhenPicker(words.when, null);
+    this.suggest = new NameSuggest(words.assistNames);
     this.sheet.body.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
       if (!button || button.disabled) return;
@@ -87,9 +99,11 @@ export class AssistSheet {
 
   /** Opens the sheet titled `title` on whom the login assists now;
    *  `editing` opens one assistance to be changed at once; `weekly` is
-   *  whether it can be held to an amount a week. */
-  open(title: string, assistances: Assistance[], assist: Assist, editing: string | null = null, weekly = false): void {
+   *  whether it can be held to an amount a week; `names` are the accounts
+   *  listed as one is typed. */
+  open(title: string, assistances: Assistance[], assist: Assist, editing: string | null = null, weekly = false, names: string[] = []): void {
     this.title = title;
+    this.names = names;
     this.assistances = assistances;
     this.assist = assist;
     this.weekly = weekly;
@@ -165,6 +179,9 @@ export class AssistSheet {
     else {
       sheet.body.querySelector(".assist-when")!.append(this.fresh.element);
       this.fresh.reveal();
+      // Those it assists already are not listed again.
+      const field = sheet.body.querySelector<HTMLInputElement>(".assist-new [name=to]");
+      if (field) this.suggest.attach(field, this.names.filter((name) => !this.assistances.some((one) => one.to === name)));
     }
   }
 

@@ -363,6 +363,51 @@
   color: var(--text-3);
 }
 
+/* Names that match what is typed, listed under the field (`name-suggest.ts`):
+   a solid card over what follows, the one the keys are on washed in clay. */
+.field:has(> .name-suggest) {
+  position: relative;
+}
+
+.name-suggest {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+}
+
+.name-suggest[hidden] {
+  display: none;
+}
+
+.name-option {
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border-radius: calc(var(--radius-m) - 2px);
+  color: var(--text);
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  text-align: left;
+}
+
+.name-option:hover {
+  background: var(--fill);
+}
+
+.name-option.active,
+.name-option.active:hover {
+  background: var(--accent-wash);
+}
+
 .field-hint {
   font-size: var(--size-small);
   color: var(--text-3);
