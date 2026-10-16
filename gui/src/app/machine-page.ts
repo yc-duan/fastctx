@@ -916,11 +916,13 @@ export class MachinePage implements Page {
     const block = this.fastctx;
     this.fastctxBox.hidden = !block;
     if (!block) return;
+    const manages = updaterLoginOf(machine, world);
     const subject: FastctxSubject = {
       machine,
       version: stats?.node.version ?? factsOf(machine)?.version ?? null,
       service: stats ? stats.node.service : null,
-      manages: updaterLoginOf(machine, world),
+      manages,
+      keeps: !!manages && !!world.accounts.hubs.find((hub) => hub.hub === manages.hub)?.due,
     };
     block.show(subject, this.tab === "manage" && document.visibilityState === "visible");
     this.put("fastctx", this.fastctxBox, block.html(subject));

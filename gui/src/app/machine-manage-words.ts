@@ -25,10 +25,14 @@ export interface ManageWords {
   appTakes(version: string): string;
   appClosed(version: string): string;
   appOpenThere(version: string): string;
+  /** A computer of an earlier release with the app: updated at it. */
+  olderApp(version: string): string;
   /** An update the hub keeps for it until it is back, and taking it back. */
   due(version: string, by: string): string;
   undue: string;
   offline: string;
+  /** Offline, where no update can be kept for it till it is back. */
+  away: string;
   /** Why a machine of an earlier release has no window of versions: it
    *  answers only the update to the newest on its line. */
   older: string;
@@ -101,9 +105,11 @@ export const zhManage: ManageWords = {
   appTakes: (version) => `应用开着，由应用自己更新到 ${version}`,
   appClosed: (version) => `应用没开，由本机服务装上 ${version}`,
   appOpenThere: (version) => `下次在那台打开 Fastctx 时更新到 ${version}`,
+  olderApp: (version) => `在那台电脑的 Fastctx 设置里更新到 ${version}`,
   due: (version, by) => `${by} 安排了上线后更新到 ${version}`,
   undue: "撤销",
   offline: "不在线：选的版本由中枢记下，上线后更新",
+  away: "不在线",
   older: "旧版本只能直接更新到最新，不能挑版本",
   olderGo: "更新",
   asking: "正在询问…",
@@ -169,9 +175,11 @@ export const enManage: ManageWords = {
   appTakes: (version) => `Its app is open and updates itself to ${version}`,
   appClosed: (version) => `Its app is closed; the local service installs ${version}`,
   appOpenThere: (version) => `Updates to ${version} when Fastctx next opens there`,
+  olderApp: (version) => `Update to ${version} in Fastctx's settings on that computer`,
   due: (version, by) => `${by} set it to update to ${version} once it's back`,
   undue: "Take back",
   offline: "Offline: the hub keeps the version picked, and it updates once back",
+  away: "Offline",
   older: "An older version updates only to the newest; no version can be picked",
   olderGo: "Update",
   asking: "Asking…",

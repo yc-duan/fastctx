@@ -70,8 +70,15 @@ export function planOf(machines: Machine[], world: WorldNow, version: string, lo
     const login = updaterLoginOf(machine, world);
     if (!login) return row({ kind: "skip", why: words.skipNotYours });
     if (running && compareVersions(running, version) >= 0) return row({ kind: "skip", why: words.skipTaken });
-    if (machine.online === false) return row({ kind: "due", login });
     const older = !!running && compareVersions(running, ASKED_SINCE) < 0;
+    // An update kept for a machine away is its own to make once back, from
+    // 1.0.1 beta 3 on, and only a hub that reads such records keeps one.
+    if (machine.online === false) {
+      if (older) return row({ kind: "skip", why: words.skipAwayOlder });
+      if (!world.accounts.hubs.find((hub) => hub.hub === login.hub)?.due) return row({ kind: "skip", why: words.skipHubOlder });
+      return row({ kind: "due", login });
+    }
+    if (older && local?.network?.machines?.[machine.name]?.app) return row({ kind: "skip", why: words.skipOlderApp });
     if (older && newestKnown(local, running!) !== version) return row({ kind: "skip", why: words.skipOlder });
     return row({ kind: "update", login, older });
   });

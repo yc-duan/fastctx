@@ -34,6 +34,11 @@ export interface BatchWords {
   skipNotYours: string;
   skipHere: string;
   skipOlder: string;
+  /** An older computer with the app, updated at it; one offline whose
+   *  release or hub keeps no update for it till it is back. */
+  skipOlderApp: string;
+  skipAwayOlder: string;
+  skipHubOlder: string;
   start(count: number): string;
   cancel: string;
   /** How each goes once started. */
@@ -84,6 +89,9 @@ export const zhBatch: BatchWords = {
   skipNotYours: "跳过：不是你能更新的",
   skipHere: "跳过：这台在设置里更新",
   skipOlder: "跳过：旧版本只能直接更新到最新",
+  skipOlderApp: "跳过：旧版本的电脑在它自己的 Fastctx 里更新",
+  skipAwayOlder: "跳过：不在线，旧版本上线后也不会照记下的更新",
+  skipHubOlder: "跳过：不在线，这个网络的中枢较旧，记不下上线就更新",
   start: (count) => `开始更新（${count} 台）`,
   cancel: "取消",
   queued: "排队中",
@@ -131,6 +139,9 @@ export const enBatch: BatchWords = {
   skipNotYours: "Skipped: not yours to update",
   skipHere: "Skipped: this device updates in its settings",
   skipOlder: "Skipped: an older version updates only to the newest",
+  skipOlderApp: "Skipped: an older computer with the app updates in its own Fastctx",
+  skipAwayOlder: "Skipped: offline, and an older version takes no update kept for it",
+  skipHubOlder: "Skipped: offline, and this network's hub is older and keeps no update for later",
   start: (count) => `Update ${count}`,
   cancel: "Cancel",
   queued: "Queued",

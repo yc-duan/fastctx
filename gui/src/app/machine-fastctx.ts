@@ -51,6 +51,9 @@ export interface FastctxSubject {
   service: boolean | null;
   /** The login that may update it and set its choices; none, to look only. */
   manages: Login | null;
+  /** Its hub keeps an update for it while it is away: one that reads such
+   *  records, which a machine takes from 1.0.1 beta 3 on. */
+  keeps: boolean;
 }
 
 /** The first release that answers about its updates (`RemoteCall::Updates`). */
@@ -160,10 +163,17 @@ export class FastctxBlock {
     if (this.said) return `<span class="fx-said">${escape(this.said)}</span>`;
     if (machine.online === false) {
       if (due) return `<span>${escape(words.due(due.version, due.by))}</span>${manages ? button("fx-undue", words.undue) : ""}`;
-      return manages ? `<span class="fx-quiet">${escape(words.offline)}</span>${button("fx-versions", words.update)}` : "";
+      if (!manages) return "";
+      return subject.keeps && !this.older(subject)
+        ? `<span class="fx-quiet">${escape(words.offline)}</span>${button("fx-versions", words.update)}`
+        : `<span class="fx-quiet">${escape(words.away)}</span>`;
     }
     if (this.older(subject)) {
-      return newest ? `<span>${escape(words.canTake(newest))}</span>${manages ? button("fx-older", words.olderGo, words.older) : ""}` : `<span>${escape(words.upToDate)}</span>`;
+      if (!newest) return `<span>${escape(words.upToDate)}</span>`;
+      // A release before 1.0.1 beta 3 changes only its World program from
+      // elsewhere; an application's computer updates at it.
+      if (local?.network?.machines?.[machine.name]?.app) return `<span>${escape(words.olderApp(newest))}</span>`;
+      return `<span>${escape(words.canTake(newest))}</span>${manages ? button("fx-older", words.olderGo, words.older) : ""}`;
     }
     if (!manages) return newest ? `<span>${escape(words.canTake(newest))}</span>` : `<span>${escape(words.upToDate)}</span>`;
     if (!state) return `<span class="fx-quiet">${escape(this.problem ?? words.asking)}</span>`;
