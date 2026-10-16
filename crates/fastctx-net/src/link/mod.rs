@@ -1022,7 +1022,7 @@ impl Inner {
 /// How long the hub may take to answer `question`: a package it may fetch
 /// from elsewhere and a move of the hub take minutes; everything else it
 /// answers from what it holds.
-fn within(question: &Question) -> std::time::Duration {
+pub(crate) fn within(question: &Question) -> std::time::Duration {
     std::time::Duration::from_secs(match question {
         Question::Package { .. } => 45 * 60,
         Question::HubMove { .. } => 10 * 60,

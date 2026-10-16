@@ -1547,68 +1547,64 @@ fn machines(
 /// this computer for an agent assisting an account that may not work on it
 /// (`world-network.md`, 一个居民替谁干活).
 async fn nodes(node: &Arc<Node>, acting: &fastctx_types::access::Acting) -> Result<NodesReply, Failure> {
+    use fastctx_net::around::{self, Heard, Reachable};
+
     let here = node.machine();
-    let links = node.links();
-    let mut hubs = Vec::new();
-    for link in links {
-        let logins = node.accounts_on(&link, acting);
-        if logins.is_empty() && !matches!(acting, fastctx_types::access::Acting::Here) {
-            continue;
-        }
-        let refreshed = link.refresh().await;
+    let links = node
+        .links()
+        .into_iter()
+        .filter(|link| {
+            !node.accounts_on(link, acting).is_empty() || matches!(acting, fastctx_types::access::Acting::Here)
+        })
+        .collect();
+    let hubs = around::on_hubs(links, |link, fresh| async move {
         let view = link.view();
-        let mut asks = Vec::new();
-        for machine in view.machines().filter(|machine| !view.is_me(&machine.name)) {
-            let rights: Vec<_> =
-                logins.iter().map(|account| (account.clone(), view.rights(account, &machine.name))).collect();
-            let Some(account) =
+        let logins = node.accounts_on(&link, acting);
+        let reachable = view
+            .machines()
+            .filter(|machine| !view.is_me(&machine.name))
+            .filter_map(|machine| {
                 view.account_for(&logins, &view.me, &machine.name, fastctx_types::access::Purpose::Hands)
-            else {
-                continue;
-            };
-            let online = refreshed.is_ok().then_some(machine.online);
-            let written = node.written(&link, &machine.name).to_string();
-            let unknown = refreshed.as_ref().err().cloned();
-            let allows_direct = !machine.direct.is_empty();
-            let path = Some(link.path_to(&machine.name));
-            let (link, name, since, through, owner, group) = (
-                link.clone(),
-                machine.name.clone(),
-                machine.since,
-                machine.through.clone(),
-                machine.home.clone(),
-                machine.group.clone(),
-            );
-            asks.push(tokio::spawn(async move {
-                let facts = match online {
-                    Some(true) => {
-                        match link.call(&name, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts).await
-                        {
-                            Ok(Ok(RemoteReply::Facts(facts))) => Ok(facts),
-                            Ok(Ok(_)) => Err("it answered something else".to_string()),
-                            Ok(Err(failure)) => Err(failure.message),
-                            Err(failure) => Err(failure.to_string()),
-                        }
-                    }
-                    Some(false) => Err("it is offline".to_string()),
-                    None => Err(format!("the hub could not be asked: {}", unknown.unwrap_or_default())),
+                    .map(|account| Reachable { link: link.clone(), name: machine.name.clone(), account })
+            })
+            .collect();
+        let online_known = fresh.is_ok();
+        let heard = around::ask_refreshed(reachable, |_| RemoteCall::Facts, fresh).await;
+        let machines = heard
+            .into_iter()
+            .map(|(name, heard)| {
+                let seen = view.member(&name).expect("a machine selected from this view");
+                let facts = match heard {
+                    Heard::Answered(RemoteReply::Facts(facts)) => Ok(facts),
+                    Heard::Answered(_) => Err("it answered something else".to_string()),
+                    Heard::Offline(_) => Err("it is offline".to_string()),
+                    Heard::NoAnswer(reason) => Err(reason),
                 };
-                NodeView { name, written, online, since, through, allows_direct, path, facts, owner, group, rights }
-            }));
-        }
-        let mut machines = Vec::new();
-        for ask in asks {
-            machines.push(ask.await.map_err(|error| Failure::new(format!("asking around: {error}")))?);
-        }
-        hubs.push(fastctx_types::world::HubNodes {
+                NodeView {
+                    written: node.written(&link, &name).to_string(),
+                    online: online_known.then_some(seen.online),
+                    since: seen.since,
+                    through: seen.through.clone(),
+                    allows_direct: !seen.direct.is_empty(),
+                    path: Some(link.path_to(&name)),
+                    facts,
+                    owner: seen.home.clone(),
+                    group: seen.group.clone(),
+                    rights: logins.iter().map(|account| (account.clone(), view.rights(account, &name))).collect(),
+                    name,
+                }
+            })
+            .collect();
+        fastctx_types::world::HubNodes {
             hub: link.membership().id.clone(),
             name: view.hub_name.clone(),
             link: link.state(),
             logins,
             home: view.me().and_then(|me| me.home.clone()),
             machines,
-        });
-    }
+        }
+    })
+    .await;
     let facts = node.works_here(acting).is_ok().then(|| crate::world::facts(node));
     Ok(NodesReply { machine: here, facts, hubs })
 }

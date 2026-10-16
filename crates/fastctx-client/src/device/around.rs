@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use fastctx_net::link::{CallFailure, Link};
+use fastctx_net::around::{self, Heard, Reachable};
 use fastctx_types::access::HubAccount;
 use fastctx_types::agents::{MachineAgents, WorldAgents};
 use fastctx_types::logins::{MachineLoginsHeard, WorldLogins};
@@ -21,21 +21,6 @@ use jiff::Timestamp;
 
 use super::{Device, Session, failed};
 use crate::Error;
-
-/// How one machine answered.
-enum Heard {
-    Answered(RemoteReply),
-    Offline(Option<Timestamp>),
-    NoAnswer(String),
-}
-
-/// A machine to ask, on the hub `link` reaches it through, with the
-/// device's account that may use it.
-struct Reachable {
-    link: Arc<Link>,
-    name: MachineName,
-    account: AccountName,
-}
 
 impl Device {
     /// The machines this device's accounts may use, on every hub it is on.
@@ -55,50 +40,6 @@ impl Device {
             }
         }
         reachable
-    }
-
-    /// Asks each of `machines` at once, the online ones by a call `call`
-    /// makes for each.
-    async fn ask_each(
-        &self,
-        machines: Vec<Reachable>,
-        call: impl Fn(&MachineName) -> RemoteCall,
-    ) -> Vec<(MachineName, Heard)> {
-        let mut heard = Vec::new();
-        let mut asks = Vec::new();
-        for Reachable { link, name, account } in machines {
-            if let Err(error) = link.refresh().await {
-                let reason = format!("whether it is connected is not known: the hub could not be asked ({error})");
-                heard.push((name, Heard::NoAnswer(reason)));
-                continue;
-            }
-            let seen = link.view().member(&name).cloned();
-            match seen {
-                Some(seen) if seen.online => {
-                    let call = call(&name);
-                    asks.push(tokio::spawn(async move {
-                        let purpose = call.purpose();
-                        let answer = match link.call(&name, &account, purpose, call).await {
-                            Ok(Ok(reply)) => Heard::Answered(reply),
-                            Ok(Err(failure)) => Heard::NoAnswer(failure.message),
-                            Err(CallFailure::Offline { last_seen, .. }) => Heard::Offline(last_seen),
-                            Err(failure) => Heard::NoAnswer(failure.to_string()),
-                        };
-                        (name, answer)
-                    }));
-                }
-                Some(seen) => heard.push((name, Heard::Offline(seen.since))),
-                None => heard.push((name, Heard::NoAnswer("the hub did not say whether it is connected".to_string()))),
-            }
-        }
-        for ask in asks {
-            match ask.await {
-                Ok(answer) => heard.push(answer),
-                Err(error) => heard.push((self.here(), Heard::NoAnswer(error.to_string()))),
-            }
-        }
-        heard.sort_by(|a, b| a.0.cmp(&b.0));
-        heard
     }
 
     pub(super) fn here(&self) -> MachineName {
@@ -143,7 +84,7 @@ impl Device {
             Some(town) => self.town(town).await?,
             None => WhoScope::World { towns: self.towns().await? },
         };
-        let heard = self.ask_each(self.asked(&scope), |_| RemoteCall::Who { all, town: town.clone(), since }).await;
+        let heard = around::ask_each(self.asked(&scope), |_| RemoteCall::Who { all, town: town.clone(), since }).await;
         let machines = heard
             .into_iter()
             .map(|(machine, heard)| match heard {
@@ -209,7 +150,7 @@ impl Device {
                 });
             }
         }
-        let heard = self.ask_each(asked, |_| RemoteCall::Since { since, town: town.clone() }).await;
+        let heard = around::ask_each(asked, |_| RemoteCall::Since { since, town: town.clone() }).await;
         let mut machines = Vec::new();
         for (machine, heard) in heard {
             machines.push(match heard {
@@ -247,7 +188,7 @@ impl Device {
     pub(super) async fn look(&self, ids: Vec<String>) -> Result<Vec<LookedUp>, Error> {
         let mut looked = Vec::new();
         for id in ids {
-            let heard = self.ask_each(self.reachable(), |_| RemoteCall::Look { id: id.clone() }).await;
+            let heard = around::ask_each(self.reachable(), |_| RemoteCall::Look { id: id.clone() }).await;
             let mut found = Vec::new();
             let mut jobs = Vec::new();
             let mut unasked = Vec::new();
@@ -281,8 +222,7 @@ impl Device {
             }
             None => reachable,
         };
-        let machines = self
-            .ask_each(asked, |_| RemoteCall::Agents)
+        let machines = around::ask_each(asked, |_| RemoteCall::Agents)
             .await
             .into_iter()
             .map(|(machine, heard)| match heard {
@@ -309,8 +249,7 @@ impl Device {
             }
             None => reachable,
         };
-        let machines = self
-            .ask_each(asked, |_| RemoteCall::AgentLogins)
+        let machines = around::ask_each(asked, |_| RemoteCall::AgentLogins)
             .await
             .into_iter()
             .map(|(machine, heard)| match heard {
@@ -329,30 +268,31 @@ impl Device {
     }
 
     pub(super) async fn nodes(&self) -> Result<NodesReply, Error> {
-        let mut hubs = Vec::new();
-        for session in self.sessions() {
-            let view = session.link.view();
+        let links = self.sessions().into_iter().map(|session| session.link.clone()).collect();
+        let hubs = around::on_hubs(links, |link, fresh| async move {
+            let view = link.view();
             let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
             // The machines its accounts may work on; one whose agents only
             // assist them is no machine of theirs to list.
             let reachable: Vec<Reachable> = self
                 .reachable()
                 .into_iter()
-                .filter(|one| Arc::ptr_eq(&one.link, &session.link))
+                .filter(|one| Arc::ptr_eq(&one.link, &link))
                 .filter(|one| logins.iter().any(|account| view.rights(account, &one.name).hands))
                 .collect();
-            let heard = self.ask_each(reachable, |_| RemoteCall::Facts).await;
+            let online_known = fresh.is_ok();
+            let heard = around::ask_refreshed(reachable, |_| RemoteCall::Facts, fresh).await;
             let machines = heard
                 .into_iter()
                 .map(|(name, heard)| {
                     let seen = view.member(&name);
                     NodeView {
                         written: name.to_string(),
-                        online: seen.map(|seen| seen.online),
+                        online: online_known.then(|| seen.map(|seen| seen.online)).flatten(),
                         since: seen.and_then(|seen| seen.since),
                         through: seen.and_then(|seen| seen.through.clone()),
                         allows_direct: seen.is_some_and(|seen| !seen.direct.is_empty()),
-                        path: Some(session.link.path_to(&name)),
+                        path: Some(link.path_to(&name)),
                         facts: match heard {
                             Heard::Answered(RemoteReply::Facts(facts)) => Ok(facts),
                             Heard::Answered(_) => Err("it answered something else".to_string()),
@@ -366,15 +306,16 @@ impl Device {
                     }
                 })
                 .collect();
-            hubs.push(HubNodes {
-                hub: session.link.membership().id.clone(),
+            HubNodes {
+                hub: link.membership().id.clone(),
                 name: view.hub_name.clone(),
-                link: session.link.state(),
+                link: link.state(),
                 logins,
                 home: None,
                 machines,
-            });
-        }
+            }
+        })
+        .await;
         Ok(NodesReply { machine: self.here(), facts: None, hubs })
     }
 }
