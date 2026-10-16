@@ -8,6 +8,11 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[[test]]
+name = "network_drill"
+path = "tests/network_drill/main.rs"
+harness = false
+
 [dependencies]
 anyhow.workspace = true
 fastctx-net = { path = "../fastctx-net" }
@@ -27,6 +32,10 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "signa
 tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 tokio-util = { version = "0.7", features = ["io"] }
+
+[dev-dependencies]
+# The network drill runs its machines on a pool of threads.
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

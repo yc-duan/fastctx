@@ -25,6 +25,9 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   TAURI_CLI: '@tauri-apps/cli@2.12.1'
+  # The release before this one: the network drill runs its hub with this one's machines, and its
+  # node on this one's hub, from its Linux package.
+  EARLIER_RELEASE: 1.0.1-beta.2
 
 jobs:
   notices:
@@ -138,6 +141,9 @@ jobs:
           tests/offline.exe
           tests/own_lifetime.exe
           tests/job_lifecycle.exe
+      - if: matrix.target == 'aarch64-pc-windows-msvc'
+        name: Network drill
+        run: tests/network_drill.exe --root "$(cygpath -m "$RUNNER_TEMP")"
 
   windows-x64:
     runs-on: windows-2025
@@ -189,6 +195,8 @@ jobs:
           tests/offline.exe
           tests/own_lifetime.exe
           tests/job_lifecycle.exe
+      - name: Network drill
+        run: tests/network_drill.exe --root "$(cygpath -m "$RUNNER_TEMP")"
       - name: Install it and open it
         shell: pwsh
         run: |
@@ -298,6 +306,17 @@ jobs:
           tests/offline
           tests/own_lifetime
           tests/job_lifecycle
+      # With the earlier release's hub and node too, where its Linux package runs.
+      - name: Network drill
+        run: |
+          earlier=()
+          if [[ "$(uname -m)" == x86_64 ]]; then
+            curl -fsSL -o "$RUNNER_TEMP/earlier.deb" \
+              "https://github.com/${{ github.repository }}/releases/download/v$EARLIER_RELEASE/Fastctx_${EARLIER_RELEASE}_amd64.deb"
+            dpkg-deb -x "$RUNNER_TEMP/earlier.deb" "$RUNNER_TEMP/earlier"
+            earlier=(--earlier "$RUNNER_TEMP/earlier/usr/bin/fastctx")
+          fi
+          tests/network_drill --root "$RUNNER_TEMP" "${earlier[@]}"
 
   kernel-macos:
     name: kernel ${{ matrix.target }}
@@ -367,6 +386,9 @@ jobs:
           tests/offline
           tests/own_lifetime
           tests/job_lifecycle
+      - if: matrix.target == 'aarch64-apple-darwin'
+        name: Network drill
+        run: tests/network_drill --root "$RUNNER_TEMP"
       - if: matrix.target == 'x86_64-apple-darwin'
         name: Upload the tests
         uses: actions/upload-artifact@v4
@@ -417,6 +439,8 @@ jobs:
           tests/offline
           tests/own_lifetime
           tests/job_lifecycle
+      - name: Network drill
+        run: tests/network_drill --root "$RUNNER_TEMP"
       - name: Open the application
         run: |
           tar -xzf dist/*.app.tar.gz -C "$RUNNER_TEMP"

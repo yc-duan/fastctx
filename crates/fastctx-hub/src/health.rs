@@ -17,10 +17,13 @@ use crate::Hub;
 
 /// Where it is written, in the hub's directory.
 pub(crate) const FILE: &str = "health.json";
-/// How often it is written.
+/// How often it is written, unless `EVERY_VARIABLE` says otherwise.
 const EVERY: Duration = Duration::from_secs(30);
-/// How many of the writings go by between lines in the log.
-const LOGGED: u32 = 10;
+/// Names a whole number of seconds to write it every instead, for whoever
+/// watches the hub closely: the network drill reads it after each scenario.
+const EVERY_VARIABLE: &str = "FASTCTX_HUB_HEALTH_SECONDS";
+/// How often a line of it goes in the log.
+const LOG_EVERY: Duration = Duration::from_secs(300);
 /// How long the comings of sessions are counted over.
 const RECENT: Duration = Duration::from_secs(300);
 /// How many of the latest letters kept are timed.
@@ -60,9 +63,14 @@ impl Health {
 
 /// Writes the hub's health while the hub runs.
 pub(crate) async fn keep(hub: Weak<Hub>) {
-    let mut written = 0_u32;
+    let every = std::env::var(EVERY_VARIABLE)
+        .ok()
+        .and_then(|seconds| seconds.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map_or(EVERY, Duration::from_secs);
+    let mut logged: Option<Instant> = None;
     loop {
-        tokio::time::sleep(EVERY).await;
+        tokio::time::sleep(every).await;
         let Some(hub) = hub.upgrade() else { return };
         let now = now(&hub);
         let path = hub.store().dir().join(FILE);
@@ -71,8 +79,8 @@ pub(crate) async fn keep(hub: Weak<Hub>) {
         if let Err(error) = publish(&path, &bytes, Permissions::Private) {
             hub.log.line(format_args!("writing how the hub is doing: {error}"));
         }
-        written += 1;
-        if written % LOGGED == 1 {
+        if logged.is_none_or(|at| at.elapsed() >= LOG_EVERY) {
+            logged = Some(Instant::now());
             hub.log.line(format_args!("health: {}", serde_json::to_string(&now).expect("health serializes")));
         }
     }
