@@ -37,6 +37,7 @@ pub mod peer;
 pub mod proxy;
 pub mod pulse;
 mod queue;
+pub mod reassembly;
 pub mod route;
 pub mod sign;
 pub mod tls;

@@ -330,17 +330,26 @@ pub async fn source(endpoint: &Endpoint, key: &SecretKey, stream: u64, bytes: &[
     stream.finish().await
 }
 
-/// Takes the bytes `carried` promised, as the sink of its transfer, and
-/// checks them.
-pub async fn sink(endpoint: &Endpoint, key: &SecretKey, carried: &Carried) -> Result<Vec<u8>, String> {
+/// The largest call or answer assembled from a data connection. File transfers
+/// use `Stream::take` or `Stream::forward` and are not subject to this limit.
+pub const MAX_BODY: usize = 64 * 1024 * 1024;
+
+/// Takes and checks `carried`, reserving its bytes before opening a connection.
+/// The returned buffer keeps the process reservation until decoding finishes.
+pub async fn sink(
+    endpoint: &Endpoint,
+    key: &SecretKey,
+    carried: &Carried,
+) -> Result<crate::reassembly::Buffer, String> {
+    if carried.bytes > MAX_BODY as u64 {
+        return Err(format!("the remote body is {} bytes; at most {MAX_BODY} can be assembled", carried.bytes));
+    }
+    // Cover the message waiting on the line and the one being read as well as
+    // the body; even an empty advertised body takes space before its stream opens.
+    let overhead = 2 * wire::MAX_DATA_MESSAGE;
+    let mut bytes = crate::reassembly::Buffer::new(carried.bytes as usize, overhead)?;
     let mut stream = Stream::open(endpoint, key, carried.stream, End::Sink).await?;
-    let mut bytes = Vec::new();
-    stream
-        .take(carried.bytes, |piece| {
-            bytes.extend_from_slice(piece);
-            Ok(())
-        })
-        .await?;
+    stream.take(carried.bytes, |piece| bytes.extend(piece)).await?;
     if Digest(sha256(&bytes)) != carried.sha256 {
         return Err("the bytes are not the ones the source said it sent".to_string());
     }

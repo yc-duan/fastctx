@@ -7,7 +7,6 @@
 //! ones now and then whether they take sessions again, and returns to the
 //! first that does.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -290,8 +289,15 @@ async fn connected(
 
     let generation = super::ways::connection_number();
     let (up, mut outgoing) = Outgoing::channel();
-    *inner.connection.lock().expect("never poisoned") =
-        Some(Connection { generation, up: up.clone(), upstream: upstream.clone(), address, tried: tried.to_vec() });
+    let (closed, closing) = tokio::sync::watch::channel(None);
+    *inner.connection.lock().expect("never poisoned") = Some(Connection {
+        generation,
+        closed: closing,
+        up: up.clone(),
+        upstream: upstream.clone(),
+        address,
+        tried: tried.to_vec(),
+    });
     let through = upstream.through().map(ToString::to_string);
     inner.status.send_replace(Status::Online { since: Timestamp::now(), address, through, route: route.clone() });
     inner.ways_changed();
@@ -305,7 +311,7 @@ async fn connected(
     // This guard also runs when a network event cancels connect(). Pending
     // callers must learn that their old connection ended before another
     // connection can be published.
-    let mut guard = Connected { inner, generation, reason: "the connection was interrupted".to_string() };
+    let mut guard = Connected { inner, generation, closed, reason: "the connection was interrupted".to_string() };
 
     let pulse = crate::transport::pulse_of(&socket);
     let (mut sink, mut stream) = socket.split();
@@ -380,8 +386,7 @@ async fn connected(
     // and when it was asked.
     let mut checking: Option<Instant> = None;
     let mut asked = Instant::now();
-    // The answers coming in parts, as they come (`Down::Part`).
-    let mut parts: HashMap<u64, Parts> = HashMap::new();
+
     let ended = loop {
         let next = tokio::select! {
             // Checked first, so that once nothing has come for the whole
@@ -511,12 +516,8 @@ async fn connected(
             Down::Answered { id, message } => {
                 inner.call_event(&CallOn::Hub(generation), id, CallEvent::Answered(message));
             }
-            Down::Told { id, answer } => told(inner, id, answer),
-            Down::Part { id, index, total, text } => {
-                if let Some(answer) = put_together(&mut parts, id, index, total, text) {
-                    told(inner, id, answer);
-                }
-            }
+            Down::Told { id, answer } => inner.asks.told(generation, id, answer),
+            Down::Part { id, index, total, text } => inner.asks.part(generation, id, index, total, text),
             Down::Presence { machine, presence, rev } => inner.heard_presence(machine, presence, rev),
             Down::DirectoryChanged => {
                 let inner = inner.clone();
@@ -571,6 +572,7 @@ async fn connected(
 struct Connected<'a> {
     inner: &'a Inner,
     generation: u64,
+    closed: tokio::sync::watch::Sender<Option<String>>,
     reason: String,
 }
 
@@ -592,7 +594,8 @@ impl Drop for Connected<'_> {
         self.inner.fail_calls_on(&CallOn::Hub(self.generation), &self.reason);
         // Nobody hears the answers to the calls that came on it.
         self.inner.answers.stop_all(&CallOn::Hub(self.generation), "the connection to the hub it came on ended");
-        self.inner.asks.lock().expect("never poisoned").clear();
+        self.inner.asks.end(self.generation);
+        self.closed.send_replace(Some(self.reason.clone()));
     }
 }
 
@@ -710,54 +713,6 @@ fn interface_addresses() -> Vec<std::net::IpAddr> {
 
 /// Records that the hub holds this machine's letters through `seq`, and
 /// wakes the sending of the next ones.
-/// Hands the answer to the question `id` to whoever asked it.
-fn told(inner: &Inner, id: u64, answer: Result<wire::Told, String>) {
-    if let Some(asker) = inner.asks.lock().expect("never poisoned").remove(&id) {
-        let _ = asker.send(answer);
-    }
-}
-
-/// An answer coming in parts: how many it comes in, how many came, and
-/// their text so far.
-struct Parts {
-    total: u32,
-    came: u32,
-    text: String,
-}
-
-/// The most answers that come in parts at once.
-const IN_PARTS: usize = 8;
-
-/// Puts the part `index` of `total` of the answer to `id` with those before
-/// it; the answer once the last came, or why it cannot be read: the parts do
-/// not fit together, or there are too many of them.
-fn put_together(
-    parts: &mut HashMap<u64, Parts>,
-    id: u64,
-    index: u32,
-    total: u32,
-    text: String,
-) -> Option<Result<wire::Told, String>> {
-    if !parts.contains_key(&id) && parts.len() >= IN_PARTS {
-        return Some(Err(format!("the hub sent more than {IN_PARTS} answers in parts at once")));
-    }
-    let whole = parts.entry(id).or_insert_with(|| Parts { total, came: 0, text: String::new() });
-    if whole.total != total || whole.came != index || whole.text.len() + text.len() > wire::PARTS_AT_MOST {
-        parts.remove(&id);
-        return Some(Err("the hub's answer came in parts that do not fit together".to_string()));
-    }
-    whole.text.push_str(&text);
-    whole.came += 1;
-    if whole.came < total {
-        return None;
-    }
-    let whole = parts.remove(&id).expect("just put together");
-    Some(
-        serde_json::from_str::<Result<wire::Told, String>>(&whole.text)
-            .unwrap_or_else(|error| Err(format!("the hub's answer cannot be read: {error}"))),
-    )
-}
-
 fn held(inner: &Inner, seq: u64) -> std::io::Result<()> {
     // Kept before the letters are deleted: a stop in between leaves letters
     // the next start deletes, never a number given out again to a letter

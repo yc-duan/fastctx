@@ -1,15 +1,19 @@
 //! Large letters retain their exact JSON text across independently durable
 //! transport frames. A recipient applies the reconstructed letter once.
 
+mod receiving;
+
+pub(crate) use receiving::receive;
+
 use std::io;
 use std::sync::Mutex;
 
 use fastctx_net::message::LetterId;
-use fastctx_platform::{Permissions, ensure_private_dir, publish_new};
+
+use fastctx_types::NoticeId;
 use fastctx_types::access::{Acting, Purpose, Written};
 use fastctx_types::remote::Letter;
 use fastctx_types::residents::Notice;
-use fastctx_types::{MachineName, NoticeId};
 
 use crate::Node;
 
@@ -44,6 +48,9 @@ pub fn send(node: &Node, acting: &Acting, to: &Written, id: NoticeId, mut letter
         return link.send_letter(to, &account, purpose, LetterId::try_from(id.to_string()).expect("notice id"), letter);
     }
     let text = serde_json::to_string(&letter).map_err(io::Error::other)?;
+    if text.len() > receiving::MAX_BYTES {
+        return Err(io::Error::other(format!("the fragmented letter exceeds its {}-byte limit", receiving::MAX_BYTES)));
+    }
     let mut rest = text.as_str();
     let mut parts = Vec::new();
     while !rest.is_empty() {
@@ -74,6 +81,9 @@ pub fn send(node: &Node, acting: &Acting, to: &Written, id: NoticeId, mut letter
         rest = &rest[length..];
     }
     let total = parts.len();
+    if total > receiving::MAX_PARTS {
+        return Err(io::Error::other(format!("the letter needs more than {} fragments", receiving::MAX_PARTS)));
+    }
     for (index, text) in parts.into_iter().enumerate() {
         let part = crate::speech::fixed_id("part", &[id.as_str(), &index.to_string()]);
         link.send_letter(
@@ -85,49 +95,4 @@ pub fn send(node: &Node, acting: &Acting, to: &Written, id: NoticeId, mut letter
         )?;
     }
     Ok(())
-}
-
-pub fn receive(
-    node: &Node,
-    from: &MachineName,
-    id: &NoticeId,
-    index: usize,
-    total: usize,
-    text: &str,
-) -> io::Result<Option<Letter>> {
-    if total == 0 || index >= total {
-        return Err(io::Error::other("invalid letter fragment numbering"));
-    }
-    let name = crate::speech::fixed_id("letter", &[from.key(), id.as_str()]);
-    let directory = node.world.path().join("letter-parts").join(name.as_str());
-    ensure_private_dir(&directory)?;
-    let path = directory.join(index.to_string());
-    let bytes = serde_json::to_vec(&(total, text)).map_err(io::Error::other)?;
-    match publish_new(&path, &bytes, Permissions::Private) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            if std::fs::read(&path)? != bytes {
-                return Err(io::Error::other("a letter fragment changed under the same id"));
-            }
-        }
-        Err(error) => return Err(error),
-    }
-    let mut whole = String::new();
-    for index in 0..total {
-        let bytes = match std::fs::read(directory.join(index.to_string())) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error),
-        };
-        let (count, text): (usize, String) = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
-        if count != total {
-            return Err(io::Error::other("letter fragments disagree about their total"));
-        }
-        whole.push_str(&text);
-    }
-    let letter: Letter = serde_json::from_str(&whole).map_err(io::Error::other)?;
-    if matches!(letter, Letter::Fragment { .. }) {
-        return Err(io::Error::other("nested letter fragments"));
-    }
-    Ok(Some(letter))
 }

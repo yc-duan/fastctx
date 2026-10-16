@@ -176,7 +176,7 @@ async fn work(
         opened = open_call(inner, message, body, endpoint) => opened,
         _ = stop.stopping() => return None,
     };
-    let (remote, stream) = match opened {
+    let (remote, stream, received) = match opened {
         Ok(opened) => opened,
         Err(reason) => return Some(refused(reason)),
     };
@@ -188,6 +188,11 @@ async fn work(
         };
     }
     held.push(place);
+    // A large call's bytes stay counted until its answer is written, past
+    // the receiving place it came in through.
+    if let Some(received) = received {
+        held.push(Box::new(received));
+    }
     match inner.node.answering(&remote) {
         Ok(Some(guard)) => held.push(guard),
         Ok(None) => {}
@@ -274,7 +279,7 @@ async fn open_call(
     call: &Envelope,
     body: Body,
     endpoint: &Endpoint,
-) -> Result<(RemoteCall, Option<Stream>), String> {
+) -> Result<(RemoteCall, Option<Stream>, Option<crate::reassembly::Reservation>), String> {
     let from_the_caller = || -> Result<u64, String> {
         let ticket = call.stream.as_ref().ok_or("it names no data connection")?;
         if ticket.source != call.from || !inner.view().is_me(&ticket.sink) {
@@ -283,12 +288,12 @@ async fn open_call(
         Ok(ticket.stream)
     };
     match body {
-        Body::Call { call } => Ok((call, None)),
+        Body::Call { call } => Ok((call, None, None)),
         Body::StreamCall { call: remote } => {
             let stream = Stream::open(endpoint, &inner.key, from_the_caller()?, End::Sink)
                 .await
                 .map_err(|error| format!("opening its data connection: {error}"))?;
-            Ok((remote, Some(stream)))
+            Ok((remote, Some(stream), None))
         }
         Body::LargeCall { carried } => {
             if from_the_caller()? != carried.stream {
@@ -302,6 +307,7 @@ async fn open_call(
                     format!("it cannot be read: {error}; a newer Fastctx may make calls this one does not know")
                 })?,
                 None,
+                Some(bytes.into_reservation()),
             ))
         }
         Body::Answer { .. } | Body::LargeAnswer { .. } => Err("it is not a call".to_string()),

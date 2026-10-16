@@ -67,6 +67,25 @@ impl Via {
         }
     }
 
+    /// The control connection ending also ends an answer still being fetched
+    /// over a separate data connection.
+    async fn ended(&self) -> String {
+        match self {
+            Via::Peer(conn) => conn.ended().await,
+            Via::Hub(connection) => {
+                let mut closed = connection.closed.clone();
+                loop {
+                    if let Some(reason) = closed.borrow_and_update().clone() {
+                        return reason;
+                    }
+                    if closed.changed().await.is_err() {
+                        return "the connection to the hub ended".to_string();
+                    }
+                }
+            }
+        }
+    }
+
     /// Where the data connections of a call made over it go.
     fn endpoint(&self, inner: &Arc<Inner>) -> Endpoint {
         match self {
@@ -383,13 +402,18 @@ impl Inner {
         to: &MachineName,
         answer: &Envelope,
         carried: &Carried,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<crate::reassembly::Buffer, String> {
         let ticket = answer.stream.as_ref().ok_or("the answer names no data connection")?;
         let view = self.view();
         if !view.same(&ticket.source, to) || !view.is_me(&ticket.sink) || ticket.stream != carried.stream {
             return Err(format!("its data connection is for {} to {}", ticket.source, ticket.sink));
         }
-        crate::data::sink(&via.endpoint(self), &self.key, carried).await
+        let endpoint = via.endpoint(self);
+        tokio::select! {
+            biased;
+            reason = via.ended() => Err(reason),
+            bytes = crate::data::sink(&endpoint, &self.key, carried) => bytes,
+        }
     }
 
     /// The next number this machine sends under, for something to `to`.

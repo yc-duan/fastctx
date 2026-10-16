@@ -32,6 +32,7 @@ mod machine_log;
 mod moving;
 mod outgoing;
 mod presence;
+mod questions;
 mod session;
 pub mod state;
 pub mod versions;
@@ -268,7 +269,7 @@ pub(crate) struct Inner {
     calls: Mutex<HashMap<u64, Waiter>>,
     /// The calls of other machines this one is answering (`answers`).
     answers: answers::Answers,
-    asks: Mutex<HashMap<u64, oneshot::Sender<Result<Told, String>>>>,
+    asks: questions::Questions,
     next_id: AtomicU64,
     /// Woken when a letter is put in the outbox.
     outbox_changed: Notify,
@@ -320,6 +321,7 @@ struct Letters {
 #[derive(Clone)]
 pub(crate) struct Connection {
     generation: u64,
+    closed: watch::Receiver<Option<String>>,
     up: outgoing::Outgoing,
     upstream: Upstream,
     /// The address it was dialed at: one of the hub's, or a forwarder's.
@@ -418,7 +420,7 @@ impl Link {
             connection: Mutex::new(None),
             calls: Mutex::new(HashMap::new()),
             answers: answers::Answers::default(),
-            asks: Mutex::new(HashMap::new()),
+            asks: questions::Questions::default(),
             next_id: AtomicU64::new(0),
             dissolved: std::sync::atomic::AtomicBool::new(false),
             then: Mutex::new(None),
@@ -990,20 +992,16 @@ impl Inner {
         let within = within(&question);
         let id = self.next_id();
         let (answer, answered) = oneshot::channel();
-        self.asks.lock().expect("never poisoned").insert(id, answer);
+        self.asks.insert(id, connection.generation, answer);
         struct Waiting<'a>(&'a Inner, u64);
         impl Drop for Waiting<'_> {
             fn drop(&mut self) {
-                let mut asks = self.0.asks.lock().expect("never poisoned");
-                asks.remove(&self.1);
-                if asks.is_empty() {
-                    *asks = Default::default();
-                }
+                self.0.asks.remove(self.1);
             }
         }
         let _waiting = Waiting(self, id);
         if connection.up.send(crate::wire::Up::Ask { id, question }).is_err() {
-            self.asks.lock().expect("never poisoned").remove(&id);
+            self.asks.remove(id);
             return Ok(None);
         }
         // The answer, or the end of the connection, which drops the sender.

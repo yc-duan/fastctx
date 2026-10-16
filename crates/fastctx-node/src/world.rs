@@ -1011,57 +1011,74 @@ impl fastctx_net::link::Node for Handler {
                 return Err(io::Error::other("the node is stopping"));
             };
             let _answering = node.handoff.call().ok_or_else(|| io::Error::other("the node is handing over"))?;
-            let (letter, delivery_id) = match letter {
+            let (letter, delivery_id, completion) = match letter {
                 Letter::Fragment { id, index, total, text } => {
                     match crate::letters::receive(&node, &from, &id, index, total, &text)? {
-                        Some(letter) => (letter, crate::speech::fixed_id("letter", &[from.key(), id.as_str()])),
-                        None => return Ok(Ok(())),
+                        Ok(Some((letter, completion))) => {
+                            (letter, crate::speech::fixed_id("letter", &[from.key(), id.as_str()]), Some(completion))
+                        }
+                        Ok(None) => return Ok(Ok(())),
+                        Err(reason) => return Ok(Err(reason)),
                     }
                 }
-                letter => (letter, delivery_id),
+                letter => (letter, delivery_id, None),
             };
             if let Err(refused) = crate::admission::letters::admit(&node, &hub, &caller, purpose, &letter) {
                 return Ok(Err(refused));
             }
-            match letter {
-                Letter::Fragment { .. } => unreachable!("nested fragments are rejected"),
-                Letter::JobFacts { to, update } => {
-                    crate::run_facts::receive(&node, &to, &update)?;
-                    Ok(Ok(()))
-                }
-                Letter::Notice { to, notice } => {
-                    let notice = *notice;
-                    if let Notice::JobEnded { job, machine, .. } = &notice {
-                        crate::here::ended_elsewhere(&node, &to, machine, job);
+            let result = async {
+                match letter {
+                    Letter::Fragment { .. } => unreachable!("nested fragments are rejected"),
+                    Letter::JobFacts { to, update } => {
+                        crate::run_facts::receive(&node, &to, &update)?;
+                        Ok(Ok(()))
                     }
-                    let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
-                    if crate::on_delivery::park(&node, &to, &delivery)? {
-                        return Ok(Ok(()));
+                    Letter::Notice { to, notice } => {
+                        let notice = *notice;
+                        if let Notice::JobEnded { job, machine, .. } = &notice {
+                            crate::here::ended_elsewhere(&node, &to, machine, job);
+                        }
+                        let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
+                        if crate::on_delivery::park(&node, &to, &delivery)? {
+                            return Ok(Ok(()));
+                        }
+                        match crate::speech::tell_here(&node, &to, delivery, Owed::Working).await {
+                            Ok(_) => Ok(Ok(())),
+                            Err(failure) => Err(io::Error::other(failure.message)),
+                        }
                     }
-                    match crate::speech::tell_here(&node, &to, delivery, Owed::Working).await {
-                        Ok(_) => Ok(Ok(())),
-                        Err(failure) => Err(io::Error::other(failure.message)),
+                    Letter::Speak { to, from: speaker, text, .. } => {
+                        let address = Address { machine: from, resident: speaker };
+                        node.residents.set_departed(
+                            &node.world,
+                            &address,
+                            false,
+                            Some((hub.as_str(), &delivery_id)),
+                        )?;
+                        let notice = Notice::Words { from: Speaker::Resident { address: address.clone() }, text };
+                        let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
+                        match crate::speech::tell_here(&node, &to, delivery, Owed::Speaker(address)).await {
+                            Ok(_) => Ok(Ok(())),
+                            Err(failure) => Err(io::Error::other(failure.message)),
+                        }
                     }
-                }
-                Letter::Speak { to, from: speaker, text, .. } => {
-                    let address = Address { machine: from, resident: speaker };
-                    node.residents.set_departed(&node.world, &address, false, Some((hub.as_str(), &delivery_id)))?;
-                    let notice = Notice::Words { from: Speaker::Resident { address: address.clone() }, text };
-                    let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
-                    match crate::speech::tell_here(&node, &to, delivery, Owed::Speaker(address)).await {
-                        Ok(_) => Ok(Ok(())),
-                        Err(failure) => Err(io::Error::other(failure.message)),
+                    Letter::Left { resident } => {
+                        crate::colleagues::departed(
+                            &node,
+                            Address { machine: from, resident },
+                            (hub.as_str(), &delivery_id),
+                        )?;
+                        Ok(Ok(()))
                     }
-                }
-                Letter::Left { resident } => {
-                    crate::colleagues::departed(
-                        &node,
-                        Address { machine: from, resident },
-                        (hub.as_str(), &delivery_id),
-                    )?;
-                    Ok(Ok(()))
                 }
             }
+            .await;
+            if matches!(result, Ok(Ok(())))
+                && let Some(completion) = completion
+            {
+                completion.finish()?;
+            }
+            result
         })
     }
 
