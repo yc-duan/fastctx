@@ -30,6 +30,7 @@ mod data;
 mod direct;
 pub mod dissolve;
 mod forget;
+mod health;
 mod ledger;
 mod log;
 mod login;
@@ -242,6 +243,8 @@ pub(crate) struct Hub {
     presence_changed: Arc<tokio::sync::Notify>,
     /// How many times who is online changed (`Hub::present`).
     presence: AtomicU64,
+    /// What the hub counts for its health (`health`).
+    health: health::Health,
 }
 
 /// A member's open control connection.
@@ -563,7 +566,9 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         directory_changed: Arc::new(tokio::sync::Notify::new()),
         presence_changed: Arc::new(tokio::sync::Notify::new()),
         presence: AtomicU64::new(0),
+        health: health::Health::default(),
     });
+    tokio::spawn(health::keep(Arc::downgrade(&hub)));
     tokio::spawn(updates::look_every(Arc::downgrade(&hub)));
     tokio::spawn(tell_directory(Arc::downgrade(&hub), hub.directory_changed.clone(), hub.presence_changed.clone()));
     let letters_changed = hub.store().letters_changed.clone();

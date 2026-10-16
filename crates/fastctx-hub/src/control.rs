@@ -89,6 +89,8 @@ pub(crate) struct Pending {
     /// The data connection the call came with, which waits no longer once
     /// the call is over.
     stream: Option<u64>,
+    /// When the hub passed it on.
+    pub(crate) at: tokio::time::Instant,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -137,6 +139,7 @@ pub(crate) async fn session(
         None => hub.log.line(format_args!("{name} connected from {peer}")),
     }
     // Whoever sees it sees it online now.
+    hub.health.opened();
     hub.present(&name);
 
     let pulse = crate::pulse_of(&socket);
@@ -293,8 +296,10 @@ async fn intake(
         // Whether the count moved: letters only sent again leave it as it is.
         let mut counted = false;
         for (seq, message) in batch {
+            let began = tokio::time::Instant::now();
             match keep(&hub, &name, generation, seq, message).await {
                 Ok(Kept::Held) => {
+                    hub.health.kept(began.elapsed());
                     receipts.push((seq, None));
                     counted = true;
                 }
@@ -1000,6 +1005,7 @@ fn call(hub: &Hub, name: &MachineName, generation: u64, id: u64, message: Envelo
         target_generation,
         standing,
         stream,
+        at: tokio::time::Instant::now(),
     };
     hub.calls.lock().expect("never poisoned").insert(key, pending);
     if target.send(Out::Frame(Down::Incoming { call: key, message })).is_err() {

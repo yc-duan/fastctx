@@ -49,6 +49,15 @@ pub(crate) enum Next {
     Overflowed(String),
 }
 
+/// How much waits in a queue, lane by lane.
+#[derive(Clone, Copy)]
+pub(crate) struct Sizes {
+    pub urgent: usize,
+    pub urgent_bytes: usize,
+    pub letters: usize,
+    pub notices: usize,
+}
+
 /// One member session's queue; clones share it.
 #[derive(Clone)]
 pub(crate) struct Outq(Arc<Shared>);
@@ -157,6 +166,17 @@ impl Outq {
         *self.0.state.lock().expect("never poisoned") = State { shut: true, ..State::default() };
         self.0.shut.send_replace(true);
         self.0.ready.notify_waiters();
+    }
+
+    /// How much waits in it now.
+    pub(crate) fn sizes(&self) -> Sizes {
+        let state = self.0.state.lock().expect("never poisoned");
+        Sizes {
+            urgent: state.urgent.len(),
+            urgent_bytes: state.urgent_bytes,
+            letters: state.letters.len(),
+            notices: state.notices.len() + state.spilled.len(),
+        }
     }
 
     /// Resolves once the queue is shut.

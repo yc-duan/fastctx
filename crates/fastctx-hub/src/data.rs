@@ -72,6 +72,13 @@ struct Live {
     cut: Option<oneshot::Sender<String>>,
 }
 
+/// How many ends wait for the other, pairs are relayed, and connections
+/// are registered, now.
+pub(crate) fn counts(hub: &Hub) -> (usize, usize, usize) {
+    let pairing = hub.data.lock().expect("never poisoned");
+    (pairing.waiting.len(), pairing.live.len(), pairing.registered.len())
+}
+
 /// Notes the data connection `ticket` names, allowed under `standing`, as
 /// the session `generation` of `by` asked.
 pub(crate) fn register(hub: &Hub, ticket: &Ticket, standing: &Standing, by: &MachineName, generation: u64) {

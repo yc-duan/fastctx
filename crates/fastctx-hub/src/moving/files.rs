@@ -32,8 +32,9 @@ pub(crate) struct Sum {
 /// Whether the top-level name `name` is the hub's own on the machine it
 /// runs on, never copied nor replaced by a move: its identity and settings
 /// (`hub.json`, `tls`, `login.secret`), which the new place makes from what
-/// it is given, the records of the move itself, its log and the releases
-/// put there for this machine, and the letters set aside to be deleted.
+/// it is given, the records of the move itself, its log and how it was
+/// doing, the releases put there for this machine, and the letters set
+/// aside to be deleted.
 pub(crate) fn local(name: &str) -> bool {
     matches!(
         name,
@@ -41,6 +42,7 @@ pub(crate) fn local(name: &str) -> bool {
             | "tls"
             | "login.secret"
             | "releases"
+            | crate::health::FILE
             | crate::store::TRASH
             | super::ARRIVING
             | super::OUTGOING

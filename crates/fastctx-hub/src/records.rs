@@ -68,6 +68,11 @@ impl Records {
         Ok(())
     }
 
+    /// The revision of the records written last.
+    pub(crate) fn written_revision(&self) -> u64 {
+        *self.said.borrow()
+    }
+
     /// Resolves once the records of `revision`, or newer ones, are written.
     pub(crate) async fn written(&self, revision: u64) {
         let mut said = self.said.subscribe();

@@ -92,6 +92,29 @@ impl Sending {
     }
 }
 
+/// How many letters wait for one member, for the hub's health.
+#[derive(Clone)]
+pub(crate) struct Backlog {
+    pub member: MachineName,
+    pub held: usize,
+    pub writing: usize,
+    pub on_way: usize,
+}
+
+/// How many letters wait for each member the hub knows of now.
+pub(crate) fn backlog(store: &Store) -> Vec<Backlog> {
+    store
+        .mailboxes
+        .iter()
+        .map(|(member, mailbox)| Backlog {
+            member: member.clone(),
+            held: mailbox.held.len(),
+            writing: mailbox.writing.len(),
+            on_way: mailbox.to.as_ref().map_or(0, |to| to.on_way.len()),
+        })
+        .collect()
+}
+
 /// The session `generation` of `name` opened, having taken the hub's
 /// letters through `taken`: those are deleted, and the next go to it.
 pub(crate) fn opened(hub: &Arc<Hub>, store: &mut Store, name: &MachineName, generation: u64, out: Outq, taken: u64) {
