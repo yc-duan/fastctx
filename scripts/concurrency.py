@@ -218,6 +218,8 @@ class Drill:
         self.rng = rng
         self.talks = []
         self.deleted = []
+        # The Codex thread of each conversation deleted, which goes with it.
+        self.threads = {}
         self.slow_calls = []
         self.outcomes = []
         # Conversations a deletion could not delete within its two minutes, and why it last heard.
@@ -247,6 +249,8 @@ class Drill:
         return code, out
 
     def delete(self, talk):
+        # Its Codex thread, from its record, so a deletion is checked to take that too.
+        thread = thread_of(self.lab, talk)
         code, out = self.lab.run("data", "delete", "--yes", talk, timeout=180)
         gone = code == 0 and "not deleted" not in out.lower() and "refused" not in out.lower()
         self.note(("delete", talk, code, out.strip()[-200:]))
@@ -255,6 +259,8 @@ class Drill:
                 if talk in self.talks:
                     self.talks.remove(talk)
                 self.deleted.append(talk)
+                if thread:
+                    self.threads[talk] = thread
         return gone
 
     def delete_working(self, talk):
@@ -265,7 +271,7 @@ class Drill:
                 return True
             with self.lock:
                 said = self.outcomes[-1][3] if self.outcomes and self.outcomes[-1][0] == "delete" else ""
-            for job in set(re.findall(r"j-[0-9a-z]{6}", said)):
+            for job in set(re.findall(r"\bj-[0-9a-z]{6}\b", said)):
                 code, out = self.lab.run("stop", job, timeout=60)
                 self.note(("stop", job, code, out.strip()[-120:]))
             time.sleep(self.rng.uniform(0.2, 1.5))
@@ -348,17 +354,34 @@ def settled(lab, talks):
     return True
 
 
-def left_of(lab, talk):
-    """What is still here of a deleted conversation."""
+def thread_of(lab, talk):
+    """The Codex thread a conversation's record names, if it can be read."""
+    try:
+        return json.loads((lab.conversations() / talk / "about").read_text(encoding="utf-8")).get("session")
+    except (OSError, ValueError):
+        return None
+
+
+def left_of(lab, talk, thread):
+    """What is still here of a deleted conversation: its directory, its listing, its Codex thread."""
     left = []
     if (lab.conversations() / talk).exists():
         left.append("its directory")
-    tombstone = lab.home / "world" / "deleted"
     code, out = lab.run("data", "list", "--json", timeout=120)
     if code == 0 and f'"{talk}"' in out:
         left.append("its listing")
-    del tombstone
+    if thread and any((lab.codex_home / "sessions").rglob(f"*{thread}*")):
+        left.append(f"its Codex thread {thread}")
     return left
+
+
+def halfway(lab):
+    """The conversations whose deletion was begun and is not done: their intent is still kept."""
+    try:
+        return sorted(directory.name for directory in lab.conversations().iterdir()
+                      if (directory / "deleting").exists() or (directory / "host-deleted").exists())
+    except OSError:
+        return []
 
 
 def main():
@@ -420,8 +443,10 @@ def main():
         except RuntimeError as error:
             check("every conversation settled: none working, no words on their way in", False, error)
         for talk in list(drill.deleted):
-            left = left_of(lab, talk)
+            left = left_of(lab, talk, drill.threads.get(talk))
             check(f"{talk}, deleted, left nothing behind", not left, left)
+        begun = halfway(lab)
+        check("no deletion is left halfway", not begun, begun[:10])
         bad = [line for line in lab.node_log().splitlines() if BAD_LINES.search(line)]
         check("the node's log has no lock out of order, nothing stuck, no circle", not bad, "\n".join(bad[:30]))
         unfinished = [line for line in lab.node_log().splitlines() if "finishing the deletion of" in line]
