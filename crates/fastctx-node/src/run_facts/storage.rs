@@ -4,7 +4,6 @@ use super::*;
 use fastctx_types::run_facts::JobFacts;
 use fastctx_types::{MachineName, ResidentId};
 use serde::{Deserialize, Serialize};
-use std::io::BufRead;
 
 #[derive(Serialize, Deserialize)]
 struct StoredCall {
@@ -103,16 +102,9 @@ fn apply(stored: &mut StoredCall, update: &JobFacts) -> io::Result<()> {
 
 fn loaded(path: &Path) -> io::Result<Option<StoredCall>> {
     let Some(mut stored) = read(path)? else { return Ok(None) };
-    let input = match std::fs::File::open(path.with_extension("updates")) {
-        Ok(input) => Some(input),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error),
-    };
-    if let Some(input) = input {
-        for line in io::BufReader::new(input).lines() {
-            apply(&mut stored, &serde_json::from_str(&line?).map_err(io::Error::other)?)?;
-        }
-    }
+    super::log::read(&path.with_extension("updates"), |row| {
+        apply(&mut stored, &serde_json::from_slice(row).map_err(io::Error::other)?)
+    })?;
     Ok(Some(stored))
 }
 
