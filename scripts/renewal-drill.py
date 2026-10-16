@@ -17,6 +17,7 @@ it.
 import hashlib
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -60,6 +61,16 @@ def bump(version):
     if not changed:
         raise SystemExit(f"no package of the workspace is at {version} in Cargo.lock")
     lock.write_bytes(f"{newline}[[package]]{newline}".join(blocks).encode("utf-8"))
+    # The notices are bound to the lockfile they were made from; the later
+    # release, never published, carries the same notices bound to its own.
+    notices = REPO / "dist" / "THIRD_PARTY_LICENSES.md"
+    if notices.is_file():
+        from license_text import input_marker
+        text = notices.read_bytes().decode("utf-8")
+        refreshed = re.sub(r"<!-- fastctx-notices-inputs: [0-9a-f]+ -->", input_marker(REPO), text, count=1)
+        if refreshed == text:
+            raise SystemExit("the notices carry no input marker to refresh")
+        notices.write_bytes(refreshed.encode("utf-8"))
     print(later)
 
 

@@ -110,8 +110,8 @@ pub fn gather(world: &WorldDir) -> io::Result<Gathered> {
             // yet: it is planned again below.
             if path.join(PLAN).exists() {
                 pending.insert(name.to_string());
-            } else {
-                fastctx_platform::owned_directory::delete(&path)?;
+            } else if let Err(error) = fastctx_platform::owned_directory::delete(&path) {
+                gathered.problems.push((path.clone(), error));
             }
         } else if path.join(PLAN).exists() {
             pending.insert(name.to_string());
@@ -145,7 +145,10 @@ pub fn gather(world: &WorldDir) -> io::Result<Gathered> {
         match result {
             Ok(()) => {
                 gathered.moved.push(id.to_string());
-                remove_file(&earlier.removed().join(format!("{id}.json")))?;
+                let removed = earlier.removed().join(format!("{id}.json"));
+                if let Err(error) = remove_file(&removed) {
+                    gathered.problems.push((removed, error));
+                }
             }
             Err(error) => {
                 gathered.problems.push((conversations.join(id.as_str()), error));
@@ -192,31 +195,50 @@ pub fn gather(world: &WorldDir) -> io::Result<Gathered> {
             Err(error) => gathered.problems.push((directories[0].clone(), error)),
         }
     }
-    gather_books(world, &failed, &mut gathered)?;
-    gather_queues(world, &failed, &mut gathered)?;
+    // What cannot be moved or removed now, a directory another program
+    // holds on Windows among it, is told and tried again at the next start:
+    // it never keeps the node from starting.
+    if let Err(error) = gather_books(world, &failed, &mut gathered) {
+        gathered.problems.push((world.path().to_path_buf(), error));
+    }
+    if let Err(error) = gather_queues(world, &failed, &mut gathered) {
+        gathered.problems.push((world.path().to_path_buf(), error));
+    }
     for kept in world.kept()? {
         let aliases = read_optional::<BTreeMap<PathBuf, PathBuf>>(&kept.directory.aliases())?.unwrap_or_default();
         for (alias, destination) in aliases {
-            if destination.is_dir() && !alias.exists() {
-                fastctx_platform::directory_alias::create(&destination, &alias)?;
+            if destination.is_dir()
+                && !alias.exists()
+                && let Err(error) = fastctx_platform::directory_alias::create(&destination, &alias)
+            {
+                gathered.problems.push((alias, error));
             }
         }
     }
     for session in entries(&fastctx_hosts::claude::exchange::sessions(world.path()))? {
-        if fastctx_platform::owned_directory::is_link(&std::fs::symlink_metadata(&session)?) {
-            continue;
-        }
-        if let Some(id) = read_optional::<ResidentId>(&session.join("resident.json"))?
-            && world.conversation(&id).about().exists()
-            && let Some(name) = session.file_name().and_then(|name| name.to_str())
-        {
-            claude_room(world, &id, name)?;
+        if let Err(error) = gather_session(world, &session) {
+            gathered.problems.push((session, error));
         }
     }
     if let Err(error) = sweep(world) {
         gathered.problems.push((world.path().to_path_buf(), error));
     }
     Ok(gathered)
+}
+
+/// A Claude session's directory left outside its conversation, as a session
+/// that was live at the last start left it: moved in now.
+fn gather_session(world: &WorldDir, session: &Path) -> io::Result<()> {
+    if fastctx_platform::owned_directory::is_link(&std::fs::symlink_metadata(session)?) {
+        return Ok(());
+    }
+    if let Some(id) = read_optional::<ResidentId>(&session.join("resident.json"))?
+        && world.conversation(&id).about().exists()
+        && let Some(name) = session.file_name().and_then(|name| name.to_str())
+    {
+        claude_room(world, &id, name)?;
+    }
+    Ok(())
 }
 
 /// The plan of a resident of this machine, from its earlier directories;
@@ -259,7 +281,7 @@ pub(crate) fn claude_room(world: &WorldDir, id: &ResidentId, session: &str) -> i
     aliases.insert(source.clone(), target.clone());
     publish(&home.aliases(), &json(&aliases)?, Permissions::Private)?;
     if !target.exists() {
-        std::fs::rename(&source, &target)?;
+        fastctx_platform::owned_directory::move_to(&source, &target)?;
     } else if source.exists() {
         move_record(&source, &target, &home.path().join("recovered").join("claude").join(session))?;
         fastctx_platform::owned_directory::delete(&source)?;
@@ -516,7 +538,7 @@ fn fill(world: &WorldDir, name: &str) -> io::Result<()> {
         }
     }
     publish(&staging.join("aliases.json"), &json(&aliases)?, Permissions::Private)?;
-    std::fs::rename(&staging, conversations.join(name))?;
+    fastctx_platform::owned_directory::move_to(&staging, &conversations.join(name))?;
     clean(world, name)
 }
 
@@ -731,7 +753,7 @@ fn move_one(from: &Path, to: &Path) -> io::Result<()> {
         )));
     }
     ensure_private_dir(to.parent().expect("a destination has a directory"))?;
-    std::fs::rename(from, to)
+    fastctx_platform::owned_directory::move_to(from, to)
 }
 
 /// Writes the lines of `actions`, `messages` and `seen` of every source in
@@ -845,7 +867,7 @@ fn place_copies(world: &WorldDir, id: &ResidentId, directories: &[PathBuf]) -> i
                 destination = room.attachments().join(format!("{slot_name}-{n}"));
                 n += 1;
             }
-            std::fs::rename(&slot, &destination)?;
+            fastctx_platform::owned_directory::move_to(&slot, &destination)?;
         }
         remove_dir(&directory.join("attachments"))?;
         for entry in entries(directory)? {

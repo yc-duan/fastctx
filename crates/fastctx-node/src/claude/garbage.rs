@@ -122,7 +122,10 @@ fn parts(directory: &Path, damaged: &Path) -> io::Result<()> {
                 if let Some(name) = manifest.file_name()
                     && damaged.join(name).try_exists()?
                 {
-                    std::fs::rename(&path, damaged.join(path.file_name().expect("parts name")))?;
+                    fastctx_platform::owned_directory::move_to(
+                        &path,
+                        &damaged.join(path.file_name().expect("parts name")),
+                    )?;
                     continue;
                 }
                 0

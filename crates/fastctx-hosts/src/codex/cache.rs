@@ -18,10 +18,9 @@ fn required<T>(result: Result<T, impl std::fmt::Display>, operation: &str) -> T 
 
 pub(super) fn fresh(root: &Path, name: &str) -> PathBuf {
     let path = root.join(name);
-    match std::fs::remove_dir_all(&path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => failed(&format!("resetting {}", path.display()), error),
+    // A node before this one may still be letting its files go.
+    if let Err(error) = fastctx_platform::owned_directory::remove_tree(&path) {
+        failed(&format!("resetting {}", path.display()), error)
     }
     required(ensure_private_dir(&path), "creating host runtime cache");
     path

@@ -72,10 +72,11 @@ fn wake(parent: &ProcessIdentity, session: &Path, root: &Path) -> io::Result<()>
         }
     })
     .map_err(io::Error::other)?;
-    for directory in [session, inbox.as_path(), controls.as_path(), root] {
-        notify::Watcher::watch(&mut watcher, directory, notify::RecursiveMode::NonRecursive)
-            .map_err(io::Error::other)?;
-    }
+    // One watch over the whole session directory, opened on that directory
+    // alone: the node may move it into its conversation, which Windows
+    // refuses while a watch is open on anything inside it.
+    notify::Watcher::watch(&mut watcher, session, notify::RecursiveMode::Recursive).map_err(io::Error::other)?;
+    notify::Watcher::watch(&mut watcher, root, notify::RecursiveMode::NonRecursive).map_err(io::Error::other)?;
     let parent = parent.clone();
     std::thread::spawn(move || {
         let _ = sender.send(Woken::Exited(fastctx_platform::host_process::wait_for_exit(&parent)));
@@ -284,7 +285,11 @@ fn wait(directory: &Path, question: Question) -> io::Result<Answer> {
         }
     })
     .map_err(io::Error::other)?;
-    notify::Watcher::watch(&mut watcher, directory, notify::RecursiveMode::Recursive).map_err(io::Error::other)?;
+    // On the session's directory itself, as the control helper's watch is:
+    // the node may move it, which Windows refuses while a watch is open on
+    // anything inside it.
+    let watched = directory.parent().unwrap_or(directory);
+    notify::Watcher::watch(&mut watcher, watched, notify::RecursiveMode::Recursive).map_err(io::Error::other)?;
     for (process, reason) in [
         (controller, "the World's node exited while the request waited"),
         (waiting.question.host.process.clone(), "the Claude control activation ended"),

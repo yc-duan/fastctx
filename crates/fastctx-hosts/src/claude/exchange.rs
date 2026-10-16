@@ -353,10 +353,13 @@ pub fn harvest(directory: &Path) -> io::Result<(Vec<Report>, Vec<String>)> {
             Ok(Err(error)) => {
                 let damaged = directory.join("damaged");
                 ensure_private_dir(&damaged)?;
-                std::fs::rename(&path, damaged.join(name))?;
+                fastctx_platform::owned_directory::move_to(&path, &damaged.join(name))?;
                 let parts = path.with_extension("parts");
                 if parts.try_exists()? {
-                    std::fs::rename(&parts, damaged.join(parts.file_name().expect("event parts")))?;
+                    fastctx_platform::owned_directory::move_to(
+                        &parts,
+                        &damaged.join(parts.file_name().expect("event parts")),
+                    )?;
                 }
                 remove(&done)?;
                 problems.push(format!("{} could not be read and was set aside: {error}", path.display()));

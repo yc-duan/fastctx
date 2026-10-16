@@ -8,6 +8,16 @@ const turns = new Map()
 const controlStarting = new Map()
 // What else a session's helper wakes besides its controls: world.js's look.
 const wakes = new Map()
+// The reservation of each session's directory, as world.js makes it. The
+// node moves the directory into its conversation as it reserves it, and
+// Windows refuses to move a directory while a watch is open inside it: the
+// controls make and watch nothing there before that is done.
+const reservations = new Map()
+
+async function controlReserved(sessionId) {
+  const reserving = reservations.get(sessionId)
+  if (reserving) await reserving.catch(() => {})
+}
 
 function controlWake(sessionId, look) {
   wakes.set(sessionId, look)
@@ -54,6 +64,7 @@ async function controlBegin($, sessions) {
 // started, whose program the removal must delete.
 async function controlOpen($, sessions, sessionId) {
   if (await removed($, true)) return null
+  await controlReserved(sessionId)
   const directory = WORLD + '/claude/' + sessionId + '/control'
   await $.fs.write(directory + '/inbox/.created', '')
   await $.fs.write(directory + '/replies/.created', '')
