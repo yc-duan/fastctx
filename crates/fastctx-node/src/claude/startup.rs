@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use fastctx_hosts::claude::{background, startup};
 use fastctx_types::ipc::Failure;
-use fastctx_types::residents::PendingState;
+use fastctx_types::residents::{Activity, PendingState};
 use fastctx_types::session::{Health, HealthKind};
 use fastctx_types::{NoticeId, ProcessIdentity, ResidentId};
 
@@ -63,7 +63,25 @@ pub(super) fn recover(node: &Arc<Node>) {
                 continue;
             }
         };
-        let Some(first) = kept.into_iter().find(|pending| pending.state == PendingState::Waking) else { continue };
+        let Some(first) = kept.into_iter().find(|pending| pending.state == PendingState::Waking) else {
+            // Born and stopped before its first words were kept: no session
+            // was asked for, and nothing will end the work it was shown at.
+            if about.session.is_none()
+                && node.residents.now(&about.id).is_some_and(|now| now.activity == Activity::Busy && now.turn.is_none())
+                && let Err(error) = node.residents.change_now(&node.world, &about.id, |now| {
+                    now.activity = Activity::Idle;
+                    now.since = jiff::Timestamp::now();
+                    now.trouble = Some(fastctx_types::residents::Trouble {
+                        at: jiff::Timestamp::now(),
+                        text: "the node stopped while this conversation was being started; say something to start it"
+                            .into(),
+                    });
+                })
+            {
+                node.log.line(format_args!("ending a start the node stopped during: {error}"));
+            }
+            continue;
+        };
         if about.session.is_none() {
             let node = node.clone();
             tokio::spawn(async move {

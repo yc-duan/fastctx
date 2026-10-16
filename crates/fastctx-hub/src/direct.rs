@@ -164,9 +164,15 @@ async fn allow(
     let _done = Done(hub, machine);
     // The machine sees the check in its view, listens, and says so.
     hub.changed();
+    // A machine that stays connected and never says so holds the check no
+    // longer than this.
+    const LISTENS_WITHIN: std::time::Duration = std::time::Duration::from_secs(60);
     let firewall = tokio::select! {
         ready = ready => ready.map_err(|_| format!("{machine} left before it said it listens"))?,
         () = hub.gone(machine) => return Err(format!("{machine} disconnected before it said it listens")),
+        () = tokio::time::sleep(LISTENS_WITHIN) => {
+            return Err(format!("{machine} did not say it listens within {} s", LISTENS_WITHIN.as_secs()));
+        }
     };
     let firewall = firewall.map_err(|why| format!("{machine} could not take direct connections: {why}"))?;
     let hub_id = hub.store().hub.id.clone();

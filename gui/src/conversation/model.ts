@@ -408,11 +408,16 @@ export class Fold {
         // Words sent from here are now heard: they keep their place. The
         // bubble shows them without the blank lines around them, while a
         // shared input sends them as typed (a phone's Enter adds a line).
+        // Words once said not to be known to have gone in did: the host
+        // tells them now (`world-concurrency.md`, 一句话从发出到落定).
+        if (heard.delivery) this.remove((entry) => entry.kind === "uncertain" && entry.key === `u:${heard.delivery}`);
         if (heard.from?.kind === "user") {
           const said = heard.text.trim();
-          const sent = this.entries.find(
-            (entry): entry is Heard => entry.kind === "heard" && entry.sending !== undefined && entry.text.trim() === said,
-          );
+          // Known by the id the World gave them where it did, else by what
+          // they say.
+          const sent =
+            this.entries.find((entry): entry is Heard => entry.kind === "heard" && entry.sending !== undefined && !!heard.delivery && entry.delivery === heard.delivery) ??
+            this.entries.find((entry): entry is Heard => entry.kind === "heard" && entry.sending !== undefined && entry.text.trim() === said);
           if (sent) {
             delete sent.sending;
             delete sent.intoTurn;

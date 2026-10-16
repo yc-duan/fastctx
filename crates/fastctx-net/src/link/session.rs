@@ -397,8 +397,18 @@ async fn connected(
             Some(Err(error)) => break Ended::Retry(dial::describe(&error)),
             Some(Ok(WsMessage::Binary(bytes))) => match serde_json::from_slice(&bytes) {
                 Ok(frame) => frame,
+                // A newer hub's frame this machine does not know is passed
+                // over: connecting again would hear it again.
                 Err(error) => {
-                    break Ended::Retry(format!("an unreadable frame from the hub: {error}"));
+                    let kind = serde_json::from_slice::<serde_json::Value>(&bytes)
+                        .ok()
+                        .and_then(|frame| frame["f"].as_str().map(str::to_string))
+                        .unwrap_or_else(|| "?".into());
+                    inner
+                        .node
+                        .log(format!("passing over a frame from the hub this version cannot read ({kind}): {error}"));
+                    heard = Instant::now();
+                    continue;
                 }
             },
             Some(Ok(_)) => {

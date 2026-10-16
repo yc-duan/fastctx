@@ -411,6 +411,7 @@ async fn look(node: &Arc<Node>, directory: &Path) {
                                 "the mod handed words over without identifying their turn",
                             ));
                         }
+                        crate::inbox::reclaim(&node.world.conversation(&resident), &ids)?;
                         taken(node, &resident, &session, &turn, |pending| {
                             ids.iter().any(|id| id == pending.delivery.id.as_str())
                         })
@@ -469,6 +470,11 @@ async fn look(node: &Arc<Node>, directory: &Path) {
     match exchange::receipts(directory) {
         Ok(receipts) => {
             for (id, turn) in receipts {
+                if let Err(error) =
+                    crate::inbox::reclaim(&node.world.conversation(&resident), std::slice::from_ref(&id))
+                {
+                    node.log.line(format_args!("taking back the doubt about {id}: {error}"));
+                }
                 if let Err(error) =
                     taken(node, &resident, &session, &turn, |pending| pending.delivery.id.as_str() == id).await
                 {

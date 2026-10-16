@@ -194,4 +194,19 @@ pub struct NodeSeen {
     /// Whether a system service keeps it running.
     #[serde(default)]
     pub service: bool,
+    /// What of its work has gone on too long, as it last looked at itself
+    /// (`world-concurrency.md`, 节点看着自己).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stuck: Vec<StuckWork>,
+}
+
+/// One piece of a node's work that has gone on too long.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StuckWork {
+    /// What it was doing, as the node says it.
+    pub doing: String,
+    /// What it waits for or holds.
+    pub what: String,
+    /// For how long, in seconds.
+    pub seconds: u64,
 }

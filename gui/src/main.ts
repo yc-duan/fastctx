@@ -1568,6 +1568,11 @@ function liveTalk(address: Address): KeepablePage {
   // it; what is new is shown at once. When the host replaced or removed
   // turns, or what came does not follow what is held, all of it is read
   // again.
+  // Whether its machine tells what holds of it now (`Fold.now`): one too old
+  // to is followed by the World's listing of it instead, once the page has
+  // heard nothing for a while.
+  let nowTold = false;
+  let heardAt = Date.now();
   const reading = watched.open(address, {
     window: (window, parts) => page.reopened(() => conversation.open(window, parts)),
     extended: (start, events) => {
@@ -1579,6 +1584,7 @@ function liveTalk(address: Address): KeepablePage {
       page.update({ read: true });
     },
     happened: (at, event) => {
+      heardAt = Date.now();
       if (!conversation.happened(at, event) || conversation.stale) reading.again();
       page.update();
     },
@@ -1598,6 +1604,7 @@ function liveTalk(address: Address): KeepablePage {
       page.update();
     },
     now: (busy, turn, kept) => {
+      nowTold = true;
       conversation.now(busy, turn, kept);
       page.update();
     },
@@ -1637,6 +1644,18 @@ function liveTalk(address: Address): KeepablePage {
         if (!left && presence === "deleted") queueMicrotask(gone);
         const known = residentAt(now, address);
         const who = someoneOf(now, address);
+        if (
+          !left &&
+          !nowTold &&
+          known?.now &&
+          known.now.activity !== "busy" &&
+          !known.now.turn &&
+          conversation.busy() &&
+          Date.now() - heardAt > QUIET_BEFORE_LISTED
+        ) {
+          conversation.now(false, null, []);
+          page.update();
+        }
         if (!known || !who || left) return;
         if (shown && who.agent === shown.agent && who.project === shown.project && who.model === shown.model && JSON.stringify(who.focus) === JSON.stringify(shown.focus)) return;
         shown = who;
@@ -1657,6 +1676,10 @@ function liveTalk(address: Address): KeepablePage {
     },
   };
 }
+
+/** How long a page whose machine does not tell what holds of it now hears
+ *  nothing before it holds to the World's listing instead. */
+const QUIET_BEFORE_LISTED = 10_000;
 
 /** The conversations looked at last, alive (`conversation/kept.ts`). */
 const keptTalks = new KeptPages();

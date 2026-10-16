@@ -232,6 +232,16 @@ pub(crate) async fn here(node: &Arc<Node>, after: Option<Timestamp>) -> Result<M
             version: env!("CARGO_PKG_VERSION").to_string(),
             started: node.started,
             service: node.lifetime.supervised,
+            stuck: node
+                .stuck
+                .now()
+                .into_iter()
+                .map(|stuck| fastctx_types::stats::StuckWork {
+                    doing: stuck.doing,
+                    what: stuck.what,
+                    seconds: stuck.since.as_secs(),
+                })
+                .collect(),
         },
     })
 }

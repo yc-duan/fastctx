@@ -226,6 +226,9 @@ pub(crate) struct Hub {
     /// Told when the network is dissolved, and as each machine on it is
     /// told so (`dissolve`).
     dissolution: tokio::sync::Notify,
+    /// Told when every member is to look at the directory again
+    /// (`tell_directory`).
+    directory_changed: Arc<tokio::sync::Notify>,
 }
 
 /// A member's open control connection.
@@ -335,11 +338,7 @@ impl Hub {
     /// Who is connected, or how they connect, changed: every member is told
     /// to look again.
     fn presence_changed(&self) {
-        let outs: Vec<mpsc::UnboundedSender<Out>> =
-            self.sessions().values().map(|session| session.out.clone()).collect();
-        for out in outs {
-            let _ = out.send(Out::Frame(Down::DirectoryChanged));
-        }
+        self.directory_changed.notify_one();
         afoot::settle(self);
     }
 
@@ -348,16 +347,35 @@ impl Hub {
     fn changed(&self) {
         self.machine_log_changed.notify_one();
         self.assists_changed.notify_one();
-        let outs: Vec<mpsc::UnboundedSender<Out>> =
-            self.sessions().values().map(|session| session.out.clone()).collect();
-        for out in outs {
-            let _ = out.send(Out::Frame(Down::DirectoryChanged));
-        }
+        self.directory_changed.notify_one();
         control::cut_calls(self);
         data::cut_streams(self);
         moving::follow::settle(self);
         forget::prune(self);
         afoot::settle(self);
+    }
+}
+
+/// How long the hub waits after telling every member the directory changed
+/// before it tells them again.
+const DIRECTORY_SPACING: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Tells every member to look at the directory again whenever it changed, at
+/// most once each `DIRECTORY_SPACING`: a machine that keeps coming and going
+/// does not have every member read it all again each time
+/// (`specs/world-concurrency.md`, 机器之间). What lost its standing is cut at
+/// once, by `Hub::changed` itself.
+async fn tell_directory(hub: std::sync::Weak<Hub>, changed: Arc<tokio::sync::Notify>) {
+    loop {
+        changed.notified().await;
+        let Some(hub) = hub.upgrade() else { return };
+        let outs: Vec<mpsc::UnboundedSender<Out>> =
+            hub.sessions().values().map(|session| session.out.clone()).collect();
+        drop(hub);
+        for out in outs {
+            let _ = out.send(Out::Frame(Down::DirectoryChanged));
+        }
+        tokio::time::sleep(DIRECTORY_SPACING).await;
     }
 }
 
@@ -466,8 +484,10 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         afoots: Mutex::new(afoot::Afoots::default()),
         updates: Mutex::new(updates::Updates::new(dir)),
         dissolution: tokio::sync::Notify::new(),
+        directory_changed: Arc::new(tokio::sync::Notify::new()),
     });
     tokio::spawn(updates::look_every(Arc::downgrade(&hub)));
+    tokio::spawn(tell_directory(Arc::downgrade(&hub), hub.directory_changed.clone()));
     if driven {
         moving::out::drive(&hub);
     }

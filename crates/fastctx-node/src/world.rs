@@ -36,6 +36,10 @@ fn hubs(world: &WorldDir) -> std::path::PathBuf {
     world.net()
 }
 
+/// The file in a hub's directory that says this computer is leaving it,
+/// naming the account it logged out of.
+const LEAVING: &str = "leaving";
+
 fn net_dir(world: &WorldDir, hub: &HubId) -> NetDir {
     NetDir::new(hub_dir(world, hub))
 }
@@ -63,6 +67,14 @@ pub fn load(world: &WorldDir) -> io::Result<Vec<Membership>> {
         else {
             continue;
         };
+        // A computer that began to leave this network and stopped before
+        // it was done leaves it now: what it told the hub was the last word
+        // (`specs/world-concurrency.md`, 多步的事).
+        if path.join(LEAVING).exists() {
+            let aside = world.path().join(format!("net-left-{}-{}", id, Timestamp::now().strftime("%Y%m%dT%H%M%SZ")));
+            std::fs::rename(&path, &aside)?;
+            continue;
+        }
         match fastctx_net::link::state::read::<Membership>(&path.join("membership.json")) {
             Ok(membership) if membership.id == id => memberships.push(membership),
             Ok(membership) => {
@@ -443,6 +455,16 @@ async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> R
         crate::managed::stays(node)?;
     }
     let last = link.view().me().is_none_or(|me| me.logins.iter().all(|login| login == account));
+    // Leaving for good is written down before the hub is told: a computer
+    // stopped in between finishes leaving when it starts (`load`).
+    if last {
+        fastctx_platform::publish(
+            &hub_dir(&node.world, &link.membership().id).join(LEAVING),
+            account.as_str().as_bytes(),
+            fastctx_platform::Permissions::Private,
+        )
+        .map_err(|error| Failure::new(format!("recording that this computer leaves: {error}")))?;
+    }
     let answer = link.manage(account, Change::Logout).await;
     if !last {
         return answer.map(|_| ()).map_err(Failure::new);
@@ -452,6 +474,7 @@ async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> R
     // that cannot be reached is not told, and the computer leaves it all
     // the same: there it stays a machine away until it is removed.
     if answer.is_err() && matches!(link.status(), Status::Online { .. }) {
+        let _ = std::fs::remove_file(hub_dir(&node.world, &link.membership().id).join(LEAVING));
         answer.map_err(Failure::new)?;
     }
     let aside = put_aside(node, link).await?;
@@ -612,6 +635,57 @@ pub(crate) fn native(path: &std::path::Path) -> String {
     text
 }
 
+/// How many calls from one machine are answered at once, besides those that
+/// go on for as long as they go on (`goes_on`): more is refused, so a machine
+/// gone wrong cannot bury this one (`specs/world-concurrency.md`, 机器之间).
+const CALLS_AT_ONCE: usize = 64;
+
+static CALLING: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<MachineName, usize>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// One call from a machine being answered.
+struct Calling(MachineName);
+
+impl Calling {
+    fn begin(from: &MachineName) -> Option<Self> {
+        let mut calling = CALLING.lock().expect("never poisoned");
+        let count = calling.entry(from.clone()).or_insert(0);
+        if *count >= CALLS_AT_ONCE {
+            return None;
+        }
+        *count += 1;
+        Some(Self(from.clone()))
+    }
+}
+
+impl Drop for Calling {
+    fn drop(&mut self) {
+        let mut calling = CALLING.lock().expect("never poisoned");
+        if let Some(count) = calling.get_mut(&self.0) {
+            *count -= 1;
+            if *count == 0 {
+                calling.remove(&self.0);
+            }
+        }
+    }
+}
+
+/// Whether a call goes on for as long as it goes on, as a watch does.
+fn goes_on(call: &RemoteCall) -> bool {
+    matches!(
+        call,
+        RemoteCall::Watch { .. }
+            | RemoteCall::CopySend { .. }
+            | RemoteCall::On { .. }
+            | RemoteCall::Follow { .. }
+            | RemoteCall::PipeOut { .. }
+            | RemoteCall::FindFiles { request: fastctx_types::file_search::FileSearchRequest::Open { .. } }
+            | RemoteCall::Lines {
+                request: fastctx_types::lines::Request::Open { .. } | fastctx_types::lines::Request::Changed { .. }
+            }
+    )
+}
+
 /// What one hub's link hands this node.
 struct Handler {
     node: Weak<Node>,
@@ -623,18 +697,7 @@ impl fastctx_net::link::Node for Handler {
         // A watch and an `on` go on for as long as they go on: a node
         // handing the World on does not wait for them. A copy asked of this
         // machine holds it back only while it moves bytes (`copy`).
-        if matches!(
-            call,
-            RemoteCall::Watch { .. }
-                | RemoteCall::CopySend { .. }
-                | RemoteCall::On { .. }
-                | RemoteCall::Follow { .. }
-                | RemoteCall::PipeOut { .. }
-                | RemoteCall::FindFiles { request: fastctx_types::file_search::FileSearchRequest::Open { .. } }
-                | RemoteCall::Lines {
-                    request: fastctx_types::lines::Request::Open { .. } | fastctx_types::lines::Request::Changed { .. }
-                }
-        ) {
+        if goes_on(call) {
             return Ok(None);
         }
         let node = self.node.upgrade().ok_or_else(|| Failure::new("the node is stopping"))?;
@@ -655,10 +718,21 @@ impl fastctx_net::link::Node for Handler {
         let node = self.node.upgrade();
         let hub = self.hub.clone();
         let doing = format!("{} from {}", crate::labels::call_of(&call), caller.machine);
+        let ongoing = goes_on(&call);
         Box::pin(async move {
             let _doing = fastctx_platform::doing::doing(doing);
             let Some(node) = node else {
                 return Err(Failure::new("the node is stopping"));
+            };
+            let _calling = match ongoing {
+                true => None,
+                false => Some(Calling::begin(&caller.machine).ok_or_else(|| {
+                    Failure::new(format!(
+                        "{} is answering {CALLS_AT_ONCE} calls from {} already; ask again in a moment",
+                        node.machine(),
+                        caller.machine
+                    ))
+                })?),
             };
             let link = node.link_of(&hub).ok_or_else(|| Failure::new("the link that brought the call is gone"))?;
             let asker = match crate::admission::admit(&node, &link, &caller, &call) {

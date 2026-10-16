@@ -83,7 +83,12 @@ pub fn fixtures() -> Fixtures {
                 LineChange::Up { at: at("2026-10-13T07:58:10Z") },
             ],
         }],
-        node: NodeSeen { version: "1.0.0".into(), started: at("2026-10-12T22:01:00Z"), service: true },
+        node: NodeSeen {
+            version: "1.0.0".into(),
+            started: at("2026-10-12T22:01:00Z"),
+            service: true,
+            stuck: Vec::new(),
+        },
     };
     let linux = MachineStats {
         machine: "server".parse().unwrap(),
@@ -112,7 +117,12 @@ pub fn fixtures() -> Fixtures {
             trips: vec![],
             changes: vec![],
         }],
-        node: NodeSeen { version: "1.0.0".into(), started: at("2026-10-01T00:00:00Z"), service: false },
+        node: NodeSeen {
+            version: "1.0.0".into(),
+            started: at("2026-10-01T00:00:00Z"),
+            service: false,
+            stuck: Vec::new(),
+        },
     };
     Fixtures { stats: vec![windows, linux] }
 }

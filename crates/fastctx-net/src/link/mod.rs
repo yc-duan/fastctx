@@ -932,8 +932,11 @@ impl Inner {
             .ok_or_else(|| "the connection to the hub ended before it answered".to_string())
     }
 
-    /// None means that the connection ended, distinct from a hub refusal.
+    /// None means that the connection ended, distinct from a hub refusal. A
+    /// hub that does not answer in time is said to (`within`): a caller may
+    /// hold a lock over many conversations while it asks.
     async fn ask_on(&self, connection: Connection, question: Question) -> Result<Option<Told>, String> {
+        let within = within(&question);
         let id = self.next_id();
         let (answer, answered) = oneshot::channel();
         self.asks.lock().expect("never poisoned").insert(id, answer);
@@ -953,13 +956,25 @@ impl Inner {
             return Ok(None);
         }
         // The answer, or the end of the connection, which drops the sender.
-        match answered.await {
-            Ok(answer) => answer.map(Some),
-            Err(_) => Ok(None),
+        match fastctx_platform::doing::outside("the hub's answer", within, answered).await {
+            Ok(Ok(answer)) => answer.map(Some),
+            Ok(Err(_)) => Ok(None),
+            Err(late) => Err(late.to_string()),
         }
     }
 
     fn letters(&self) -> MutexGuard<'_, Letters> {
         self.letters.lock().expect("never poisoned")
     }
+}
+
+/// How long the hub may take to answer `question`: a package it may fetch
+/// from elsewhere and a move of the hub take minutes; everything else it
+/// answers from what it holds.
+fn within(question: &Question) -> std::time::Duration {
+    std::time::Duration::from_secs(match question {
+        Question::Package { .. } => 45 * 60,
+        Question::HubMove { .. } => 10 * 60,
+        _ => 60,
+    })
 }

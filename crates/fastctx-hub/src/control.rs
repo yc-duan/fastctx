@@ -124,17 +124,31 @@ pub(crate) async fn session(
 
     let (mut sink, mut stream) = socket.split();
     let (stopped, mut writer_stopped) = tokio::sync::oneshot::channel::<()>();
-    let (telling, member) = (hub.clone(), key);
+    let (telling, member, member_name) = (hub.clone(), key, name.clone());
     let writer = tokio::spawn(async move {
         // Dropped when the writer returns, which the reader notices.
         let _stopped = stopped;
         while let Some(out) = outgoing.recv().await {
+            // A member that does not read what it is sent is let go: it
+            // comes back and reads on from where it was (`world-concurrency.md`,
+            // 机器之间).
+            if outgoing.len() > QUEUED {
+                telling.log.line(format_args!("{member_name}: more than {QUEUED} frames wait for it; letting it go"));
+                return;
+            }
             let (frame, last) = match out {
                 Out::Frame(frame) => (frame, false),
                 Out::End(reason) => (Down::Refused { reason }, true),
             };
-            if sink.send(WsMessage::Binary(wire::encode(&frame).into())).await.is_err() {
-                return;
+            match tokio::time::timeout(SILENCE, sink.send(WsMessage::Binary(wire::encode(&frame).into()))).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => return,
+                Err(_) => {
+                    telling
+                        .log
+                        .line(format_args!("{member_name}: took nothing in {} s; letting it go", SILENCE.as_secs()));
+                    return;
+                }
             }
             // A machine on the network, told it was dissolved.
             if let Down::Refused { reason } = &frame
@@ -164,7 +178,12 @@ pub(crate) async fn session(
             Ok(Some(Err(error))) => break (Some(fastctx_net::dial::describe(&error)), false),
             Ok(Some(Ok(WsMessage::Binary(bytes)))) => match serde_json::from_slice::<Up>(&bytes) {
                 Ok(frame) => frame,
-                Err(error) => break (Some(format!("an unreadable frame: {error}")), false),
+                // A newer machine's frame this hub does not know is passed
+                // over, a question it asks answered that it is not known.
+                Err(error) => {
+                    unreadable(&hub, &name, &out, &bytes, &error);
+                    continue;
+                }
             },
             Ok(Some(Ok(_))) => continue,
         };
@@ -188,6 +207,32 @@ pub(crate) async fn session(
         None => hub.log.line(format_args!("{name} disconnected")),
     }
     hub.changed();
+}
+
+/// How many frames may wait for a member before it is let go.
+const QUEUED: usize = 4096;
+
+/// A frame from `name` this hub cannot read: told once in the log for each
+/// kind; a question is answered that it is not known here.
+fn unreadable(
+    hub: &Hub,
+    name: &MachineName,
+    out: &mpsc::UnboundedSender<Out>,
+    bytes: &[u8],
+    error: &serde_json::Error,
+) {
+    let frame: serde_json::Value = serde_json::from_slice(bytes).unwrap_or_default();
+    let kind = frame["f"].as_str().unwrap_or("?");
+    hub.log.line(format_args!("{name}: a frame this hub cannot read ({kind}): {error}"));
+    if kind == "ask"
+        && let Some(id) = frame["id"].as_u64()
+    {
+        let answer = Err(format!(
+            "this hub, fastctx {}, does not know this question; it may be older than the machine asking",
+            env!("CARGO_PKG_VERSION")
+        ));
+        let _ = out.send(Out::Frame(Down::Told { id, answer }));
+    }
 }
 
 /// Registers the session, replacing an older one of the same member, and

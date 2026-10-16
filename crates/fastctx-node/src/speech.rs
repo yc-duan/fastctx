@@ -466,6 +466,8 @@ async fn submit_thread(
             if single {
                 crate::inbox::withdraw(directory, &pending.delivery.id)
                     .map_err(|error| Failure::new(error.to_string()))?;
+            } else {
+                again_later(node, id, &about, directory, pending.clone());
             }
             return Err(Failure::new(why));
         }
@@ -494,12 +496,45 @@ async fn submit_thread(
         crate::turns::health(node, id, Some(sent.turn.clone()), health)
             .map_err(|error| Failure::new(error.to_string()))?;
     }
+    AGAIN.lock().expect("never poisoned").remove(id);
     // What waited and could not go in with these goes in next, as they would
     // have, rather than waiting for something else to wake it.
     if let Some(next) = left.into_iter().next() {
         hand_over_later(node.clone(), id.clone(), about, directory.clone(), next);
     }
     Ok(Some(if sent.joined { Landed::JoinedTurn { turn: sent.turn } } else { Landed::NewTurn { turn: sent.turn } }))
+}
+
+/// How many times words Codex did not take have been offered again, for each
+/// resident, since it last took any.
+static AGAIN: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<ResidentId, u32>>> =
+    std::sync::LazyLock::new(Default::default);
+/// How many times they are offered again before they wait for the next
+/// words, or the node's next start, to take them in.
+const AGAIN_TRIES: u32 = 5;
+
+/// Words Codex did not take go in at its next chance, not only with the next
+/// words said (`specs/world-concurrency.md`, 一句话没交出去，下一个机会就交):
+/// they are offered again after a while, longer each time it still does not
+/// take them.
+fn again_later(node: &Arc<Node>, id: &ResidentId, about: &About, directory: &ConversationDir, pending: Pending) {
+    let tries = {
+        let mut again = AGAIN.lock().expect("never poisoned");
+        let tries = again.entry(id.clone()).or_insert(0);
+        if *tries >= AGAIN_TRIES {
+            return;
+        }
+        *tries += 1;
+        *tries
+    };
+    let delay = std::time::Duration::from_secs(5 * 3u64.pow(tries - 1));
+    let (node, id, about, directory) = (node.clone(), id.clone(), about.clone(), directory.clone());
+    tokio::spawn(async move {
+        tokio::time::sleep(delay).await;
+        if let Err(failure) = hand_over(&node, &id, &about, &directory, pending).await {
+            node.log.line(format_args!("words for {id} wait still: {}", failure.message));
+        }
+    });
 }
 
 /// Hands `pending` over in a task of its own.

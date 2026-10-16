@@ -66,6 +66,32 @@ pub fn retain_uncertain(directory: &ConversationDir, pending: &Pending) -> io::R
     }
 }
 
+/// Words judged not known to have gone in that their host now says it took:
+/// they are kept again, on their way, for the turn that took them to settle
+/// as any words do (`specs/world-concurrency.md`, 「不知是否送到」是暂时的判断).
+pub fn reclaim(directory: &ConversationDir, ids: &[String]) -> io::Result<()> {
+    let _transaction = crate::resident_storage::lock();
+    for id in ids {
+        let Ok(id) = NoticeId::try_from(id.as_str()) else { continue };
+        let uncertain = directory.uncertain().join(format!("{id}.json"));
+        let bytes = match std::fs::read(&uncertain) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        if delivered_here(directory, &id)? {
+            continue;
+        }
+        ensure_private_dir(&directory.inbox())?;
+        let kept = path(directory, &id);
+        if !kept.exists() {
+            publish(&kept, &bytes, Permissions::Private)?;
+        }
+        std::fs::remove_file(&uncertain)?;
+    }
+    Ok(())
+}
+
 /// Returns a definitely refused composer input to its own queue, before any host accepted it.
 pub fn withdraw(directory: &ConversationDir, id: &NoticeId) -> io::Result<()> {
     let _transaction = crate::resident_storage::lock();
