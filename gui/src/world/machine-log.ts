@@ -21,7 +21,14 @@ export type MachineLogAction =
   | { change: "relays"; machine: MachineName; relays: Relay[] }
   | { change: "relay_at"; machine: MachineName; addresses: string[] }
   | { change: "direct"; machine: MachineName; at: string[] }
-  | { change: "remove"; name: MachineName; reason: string }
+  /** Taken off; `then`, told to uninstall Fastctx as it heard so. */
+  | { change: "remove"; name: MachineName; reason: string; then?: "uninstall" | "everything" }
+  /** Taken off to uninstall Fastctx, it could not do all of it. */
+  | { change: "uninstall_left"; name: MachineName; left: string; by?: AccountName; home?: AccountName }
+  /** An update kept for a machine away, or, without a version, taken back. */
+  | { change: "update_due"; machine: MachineName; version?: string }
+  /** A machine updated as someone asked from elsewhere. */
+  | { change: "updated"; machine: MachineName; from: string; to: string; by: AccountName }
   | { change: "rename"; machine: MachineName; to: MachineName }
   | { change: "group"; machine: MachineName; group?: string }
   | { change: "rename_group"; owner: AccountName; from: string; to?: string }
@@ -36,7 +43,7 @@ export type MachineLogAction =
   | { change: "set_account"; name: AccountName; locked: boolean }
   | { change: "transfer"; to: AccountName }
   | { change: "settings"; self_registration: boolean }
-  | { change: "updates"; channel: "stable" | "beta"; minimum?: string }
+  | { change: "updates"; channel: "stable" | "beta"; minimum?: string; managed_auto?: boolean }
   | { change: "dissolve"; name: string }
   | { change: "open_project"; town: string; name: string }
   | { change: "share_project"; town: string; name: string | null; with: AccountName; shared: boolean }

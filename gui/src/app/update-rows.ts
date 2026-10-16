@@ -1,7 +1,9 @@
 // The settings' rows of new versions (`world-upgrade.md`, 界面上的样子): this
-// application's version with a look on GitHub and what it found or heard
-// from the network; and the device's three choices: automatic updates, test
-// releases, and, on a computer, passing packages to the network's devices.
+// application's version, and 「检查更新」, which opens the window of versions
+// and looks on GitHub; what was found or heard from the network, a newer
+// version opening that window too; and the device's choices: automatic
+// updates, and, on a computer, passing packages to the network's devices.
+// Which line it follows is the line of the version it runs: no choice.
 
 import { escape } from "../conversation/prose";
 import { effect } from "./signals";
@@ -10,7 +12,6 @@ import type { UpdateWords } from "./update-words";
 import type { UpdateSettings, UpdateState } from "../world/updates";
 
 export class UpdateRows {
-  private looking = false;
   private said = "";
   private readonly stop: () => void;
 
@@ -18,16 +19,16 @@ export class UpdateRows {
     private readonly element: HTMLElement,
     private readonly updates: Updates,
     private readonly words: UpdateWords,
-    /** The new version's card. */
-    private readonly open: () => void,
+    /** The window of versions, looking on GitHub again when asked. */
+    private readonly versions: (look: boolean) => void,
     /** Whether this device passes packages on: a computer does, a phone not. */
     private readonly relays: boolean,
   ) {
     element.hidden = false;
     element.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
-      if (target.closest("[data-update-look]")) this.look();
-      else if (target.closest("[data-update-open]")) this.open();
+      if (target.closest("[data-update-look]")) this.versions(true);
+      else if (target.closest("[data-update-open]")) this.versions(false);
       const choice = target.closest<HTMLButtonElement>("[data-update-choice]");
       if (choice) this.choose(choice.dataset.updateChoice!, choice.dataset.value!);
     });
@@ -41,32 +42,14 @@ export class UpdateRows {
     this.stop();
   }
 
-  private look(): void {
-    if (this.looking) return;
-    this.looking = true;
-    this.said = "";
-    this.draw(this.updates.state.peek());
-    this.updates
-      .look()
-      .catch((error: unknown) => {
-        this.said = String(error);
-      })
-      .finally(() => {
-        this.looking = false;
-        this.draw(this.updates.state.peek());
-      });
-  }
-
   private choose(kind: string, value: string): void {
     const state = this.updates.state.peek();
     if (!state) return;
     const settings: UpdateSettings = { ...state.settings };
-    if (kind === "auto") settings.auto = value === "on";
-    else if (kind === "relays") settings.relays = value === "on";
-    else if (kind === "beta") {
-      if (value === "network") delete settings.beta;
-      else settings.beta = value === "on";
-    }
+    if (kind === "auto") {
+      settings.auto = value === "on";
+      settings.chosen = true;
+    } else if (kind === "relays") settings.relays = value === "on";
     this.updates.set(settings).catch((error: unknown) => {
       this.said = String(error);
       this.draw(this.updates.state.peek());
@@ -77,8 +60,7 @@ export class UpdateRows {
     const { words } = this;
     const offered = this.updates.offered.peek();
     let line: string;
-    if (this.looking) line = escape(words.looking);
-    else if (this.said) line = escape(this.said);
+    if (this.said) line = escape(this.said);
     else if (offered)
       line = `<button class="text-button quiet-button" type="button" data-update-open>${escape(words.available(offered.manifest.version))}</button>`;
     else if (!state) line = "";
@@ -97,12 +79,15 @@ export class UpdateRows {
         .join("")}</div>`;
     const settings = state?.settings;
     const onOff: [string, string][] = [["on", words.on], ["off", words.off]];
-    const html = `<dt>${escape(words.updates)}</dt><dd><span>${escape(words.current(this.updates.version))}</span><button class="text-button quiet-button" type="button" data-update-look${this.looking ? " disabled" : ""}>${escape(words.look)}</button>${
+    const auto = state ? (state.auto ?? state.settings.auto) : false;
+    // Until the owner chooses, a computer with the application does not
+    // update by itself: it says so beside the choice.
+    const byDefault = settings && !settings.chosen ? `<span class="choice-note">${escape(words.autoByDefault)}</span>` : "";
+    const html = `<dt>${escape(words.updates)}</dt><dd><span>${escape(words.current(this.updates.version))}</span><button class="text-button quiet-button" type="button" data-update-look>${escape(words.look)}</button>${
       line ? `<p class="settings-said" role="status">${line}</p>` : ""
     }</dd>${
       settings
-        ? `<dt>${escape(words.auto)}</dt><dd>${choices("auto", onOff, settings.auto ? "on" : "off")}</dd>
-           <dt>${escape(words.betaChoice)}</dt><dd>${choices("beta", [["network", words.followNetwork], ...onOff], settings.beta === undefined || settings.beta === null ? "network" : settings.beta ? "on" : "off")}</dd>
+        ? `<dt>${escape(words.auto)}</dt><dd>${choices("auto", onOff, auto ? "on" : "off")}${byDefault}</dd>
            ${this.relays ? `<dt>${escape(words.relay)}</dt><dd>${choices("relays", onOff, settings.relays ? "on" : "off")}</dd>` : ""}`
         : ""
     }`;

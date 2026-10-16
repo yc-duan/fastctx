@@ -1,0 +1,195 @@
+/* The window of versions (`version-window.ts`): what a machine runs on the
+   first line, the filters and when it was looked, then a list of solid
+   rows, the newest first, each its version, a tag for a test release, its
+   day and size, and what can be done with it. The one in use is washed in
+   the accent; older ones are greyed. The window keeps its size, the list
+   scrolls inside it. */
+
+.version-sheet .sheet-body {
+  display: flex;
+  flex-direction: column;
+  width: min(620px, 100vw - 32px);
+  height: min(600px, 82dvh);
+  overflow: hidden;
+}
+
+.vw-running {
+  margin: 0 0 var(--space-3);
+  font-size: var(--size-ui);
+  color: var(--text-2);
+}
+
+.vw-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+/* When it was looked, and looking again, stay together. */
+.vw-looked {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.vw-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  list-style: none;
+}
+
+.vw-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: 6px var(--space-2) 6px var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+}
+
+.vw-row.now {
+  background: var(--accent-wash);
+}
+
+.vw-row.older {
+  color: var(--text-3);
+}
+
+.vw-name {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px var(--space-2);
+  min-width: 0;
+}
+
+.vw-version {
+  font-family: var(--font-emphasis);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+}
+
+.vw-row.older .vw-version {
+  color: var(--text-3);
+}
+
+.tag.vw-past {
+  color: var(--caution);
+}
+
+.vw-facts {
+  font-size: var(--size-small);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.vw-act {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 7.5em;
+}
+
+.vw-go {
+  height: 30px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  color: var(--text);
+  font-size: var(--size-small);
+  white-space: nowrap;
+  transition: background-color var(--hover) ease, color var(--hover) ease;
+}
+
+.vw-go:hover:not(:disabled) {
+  background: var(--accent-wash);
+}
+
+.vw-go.first {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.vw-go.first:hover:not(:disabled) {
+  background: var(--accent-bright);
+}
+
+.vw-go:disabled {
+  opacity: 0.6;
+}
+
+.vw-now,
+.vw-none {
+  padding-right: var(--space-2);
+  font-size: var(--size-small);
+  white-space: nowrap;
+}
+
+.vw-now {
+  color: var(--text);
+}
+
+.vw-none {
+  color: var(--text-3);
+}
+
+.vw-empty {
+  padding: var(--space-5) 0;
+  text-align: center;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.vw-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-3);
+}
+
+@media (max-width: 760px) {
+  .version-sheet .sheet-body {
+    width: 100%;
+    height: 82dvh;
+  }
+
+  /* The day and size go under the name; what can be done stays beside it. */
+  .vw-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    row-gap: 2px;
+    padding-top: var(--space-2);
+    padding-bottom: var(--space-2);
+  }
+
+  .vw-facts {
+    grid-row: 2;
+    grid-column: 1;
+  }
+
+  .vw-act {
+    grid-row: 1 / span 2;
+    grid-column: 2;
+    min-width: 0;
+  }
+
+  .vw-go {
+    height: 36px;
+  }
+}

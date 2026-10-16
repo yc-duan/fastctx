@@ -57,7 +57,7 @@ export interface SettingsOptions {
   } | undefined;
   /** New versions of the application: its rows, and the card a new one
    *  opens in; `relays` where this device passes packages to the network. */
-  updates?: { updates: Updates; words: UpdateWords; open(): void; relays: boolean } | undefined;
+  updates?: { updates: Updates; words: UpdateWords; versions(look: boolean): void; relays: boolean } | undefined;
   /** This is an Android phone: what it lets the World do in the background. */
   phone?: PhoneSeam | undefined;
   /** Whether calls are wanted changed, for where calls are made by more
@@ -135,7 +135,7 @@ export class SettingsPage implements Page {
         this.element.querySelector<HTMLElement>(".settings-app")!,
         updates.updates,
         updates.words,
-        updates.open,
+        updates.versions,
         updates.relays,
       );
     }

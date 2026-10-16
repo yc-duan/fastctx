@@ -1093,7 +1093,6 @@ export const zhComposer: ComposerWords = {
     retry: "重试",
     size: (bytes) => sizeOf(bytes, ["B", "KB", "MB", "GB"]),
     wait: "文件上传完成后再发送",
-    pictures: conversationZh.pictures,
   },
   asks: {
     waiting: "等待确认",
@@ -1309,7 +1308,6 @@ export const enComposer: ComposerWords = {
     retry: "Retry",
     size: (bytes) => sizeOf(bytes, ["B", "KB", "MB", "GB"]),
     wait: "Wait for uploads to finish",
-    pictures: conversationEn.pictures,
   },
   asks: {
     waiting: "Needs your approval",

@@ -6,7 +6,7 @@
 // nothing here is under way.
 
 import { signal, type Signal } from "./signals";
-import { compareVersions, type Manifest, type UpdateSeam, type UpdateSettings, type UpdateState } from "../world/updates";
+import { compareVersions, majorOf, type Manifest, type UpdateSeam, type UpdateSettings, type UpdateState } from "../world/updates";
 
 /** What the sidebar's button and the card show. */
 export interface Offered {
@@ -62,6 +62,16 @@ export class Updates {
 
   set(settings: UpdateSettings): Promise<void> {
     return this.seam.set(settings).then((state) => this.take(state));
+  }
+
+  /** Updates this device to `version`, newer than it and not only the
+   *  newest: it is offered from now on, and brought here as the newest
+   *  would be (`world-upgrade.md`, 版本窗). */
+  pick(version: string): Promise<void> {
+    return this.seam.choose(version).then((state) => {
+      this.take(state);
+      this.go();
+    });
   }
 
   /** Brings the offered version here, or installs it when it is here. */
@@ -122,14 +132,24 @@ export class Updates {
     this.later(state.fetching ? 1_000 : this.offered.peek()?.stage.kind === "waiting" ? 5_000 : 60_000);
   }
 
-  /** What is offered now, and what automatic updates do with it. */
+  /** What is offered now, and what automatic updates do with it: taken by
+   *  itself, a release never passes the hubs' major version; one asked
+   *  from elsewhere is taken as an automatic update is. */
   private refresh(): void {
     const state = this.state.peek();
     const offered = state ? this.offerOf(state) : null;
     this.offered.set(offered);
-    if (!state?.settings.auto || !offered || this.installing || this.failed) return;
+    if (!state || !offered || this.installing || this.failed) return;
+    const asked = state.take === offered.manifest.version;
+    const within = state.hub_major === undefined || majorOf(offered.manifest.version) <= state.hub_major;
+    if (!asked && !(this.automatic(state) && within)) return;
     if (offered.stage.kind === "offered") this.go();
     else if (offered.stage.kind === "waiting" && this.idle()) this.install(offered.manifest.version);
+  }
+
+  /** Whether this device takes new releases by itself, as its node says. */
+  private automatic(state: UpdateState): boolean {
+    return state.auto ?? state.settings.auto;
   }
 
   private offerOf(state: UpdateState): Offered | null {
@@ -152,7 +172,8 @@ export class Updates {
     }
     if (state.kept?.some((kept) => kept.version === manifest.version && kept.target === target)) {
       if (this.permission) return { ...base, stage: { kind: "permission" } };
-      return { ...base, stage: { kind: state.settings.auto ? "waiting" : "ready" } };
+      const waits = this.automatic(state) || state.take === manifest.version;
+      return { ...base, stage: { kind: waits ? "waiting" : "ready" } };
     }
     const failed = state.failed;
     if (failed && failed.version === manifest.version && failed.target === target) {

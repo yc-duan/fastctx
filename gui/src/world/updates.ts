@@ -1,7 +1,8 @@
 // New versions of the application (`world-upgrade.md`, 新版本自己往后怎样升级),
-// as this computer's node or this phone's device keeps them: the device's
-// choices, what GitHub and the network said, and the package on its way or
-// here. Installing a package that is here starts the new version.
+// as this computer's node or this phone's device keeps them, or another
+// machine's node: the device's choices, what GitHub and the network said,
+// and the package on its way or here. Installing a package that is here
+// starts the new version.
 
 import { invoke } from "@tauri-apps/api/core";
 
@@ -22,8 +23,11 @@ export interface Manifest {
 }
 
 export interface UpdateSettings {
+  /** Taking new releases by itself: what the owner chose, when `chosen`. */
   auto: boolean;
-  /** Test releases; absent follows the network. */
+  /** Whether the owner chose `auto`; until then the device's kind decides. */
+  chosen?: boolean;
+  /** What 1.0.1 beta 1 and 2 kept of test releases; read no more. */
   beta?: boolean;
   relays: boolean;
 }
@@ -32,13 +36,43 @@ export interface Running {
   kernel: string;
   app?: string;
   github?: boolean;
+  /** What it ran when it was last connected, while it is away. */
+  away?: boolean;
+  /** It runs the network's hub. */
+  hub_here?: boolean;
+}
+
+/** An update a machine away is to make once it is back. */
+export interface Due {
+  version: string;
+  by: string;
+  at: string;
+}
+
+export interface Policy {
+  /** What devices of 1.0.1 beta 1 and 2 follow; told them as the beta line. */
+  channel?: Channel;
+  minimum?: string;
+  /** Whether managed machines take new releases by themselves. */
+  managed_auto?: boolean;
 }
 
 export interface UpdateNetwork {
   stable?: Manifest;
   beta?: Manifest;
-  policy: { channel: Channel; minimum?: string };
+  policy: Policy;
   machines?: Record<string, Running>;
+  /** The version the hub runs; none from a hub before 1.0.1 beta 3. */
+  hub?: string;
+  due?: Record<string, Due>;
+}
+
+/** A release as GitHub lists it. */
+export interface Release {
+  version: string;
+  published?: string;
+  prerelease?: boolean;
+  manifest?: string;
 }
 
 export interface Looked {
@@ -47,6 +81,17 @@ export interface Looked {
   why?: string;
   stable?: Manifest;
   beta?: Manifest;
+  /** Every release with a manifest, the newest first. */
+  releases?: Release[];
+  /** The manifests of the releases newer than what runs there. */
+  newer?: Manifest[];
+}
+
+/** A change of a machine's World program, as it goes. */
+export interface Renewing {
+  version: string;
+  phase: import("./renewal").RenewalPhase;
+  error?: string;
 }
 
 export interface Fetching {
@@ -58,8 +103,19 @@ export interface Fetching {
 }
 
 export interface UpdateState {
+  /** The World program the node that answers runs; none from a node
+   *  before 1.0.1 beta 3. */
+  running?: string;
   settings: UpdateSettings;
+  /** The line it follows: that of the version it runs. */
   channel: Channel;
+  /** Whether it takes new releases by itself now. */
+  auto?: boolean;
+  /** The release its owner chose to update to, when not the newest. */
+  chosen?: Manifest;
+  /** The newest major version the hubs it is on run, which automatic
+   *  updates do not pass. */
+  hub_major?: number;
   looked: Looked;
   network?: UpdateNetwork;
   offer?: Manifest;
@@ -68,19 +124,39 @@ export interface UpdateState {
   kept?: { version: string; target: string; path: string }[];
   app?: { version: string; target: string };
   kernel_target: string;
+  /** The World program it changes to, while it does, or did not take. */
+  renewing?: Renewing;
+  /** A release asked from elsewhere that the application here takes. */
+  take?: string;
+  /** Whether an interface is open on that machine now. */
+  open?: boolean;
 }
+
+/** What an interface asks a machine's node about updates. */
+export type UpdateCall =
+  | { do: "state" }
+  | { do: "look" }
+  | { do: "set"; settings: UpdateSettings }
+  | { do: "kernel"; version?: string }
+  | { do: "choose"; version?: string };
 
 export interface UpdateSeam {
   state(): Promise<UpdateState>;
   look(): Promise<UpdateState>;
   set(settings: UpdateSettings): Promise<UpdateState>;
   fetch(version: string): Promise<UpdateState>;
+  /** What this application offers to update to from now on: `version`, or
+   *  the newest on its line again. */
+  choose(version: string | null): Promise<UpdateState>;
   /** Installs the version that is here; false when a phone first sent the
    *  user to allow installing apps. A computer starts again as the new
    *  version and does not come back from this. */
   install(version: string): Promise<boolean>;
-  /** Has another machine update its World program itself. */
+  /** Has another machine update its World program itself, to the newest
+   *  release on its line: what a machine before 1.0.1 beta 3 takes. */
   machine(name: string): Promise<UpdateState>;
+  /** Asks another machine about its updates. */
+  remote(name: string, call: UpdateCall): Promise<UpdateState>;
 }
 
 export const updates: UpdateSeam = {
@@ -88,9 +164,21 @@ export const updates: UpdateSeam = {
   look: () => invoke<UpdateState>("update_look"),
   set: (settings) => invoke<UpdateState>("update_set", { settings }),
   fetch: (version) => invoke<UpdateState>("update_fetch", { version }),
+  choose: (version) => invoke<UpdateState>("update_choose", { version }),
   install: (version) => invoke<boolean>("update_install", { version }),
   machine: (name) => invoke<UpdateState>("update_machine", { machineName: name }),
+  remote: (name, call) => invoke<UpdateState>("machine_updates", { machineName: name, update: call }),
 };
+
+/** Whether `version` is a test release. */
+export function isTest(version: string): boolean {
+  return version.includes("-");
+}
+
+/** A release's major version. */
+export function majorOf(version: string): number {
+  return Number(version.split(".")[0] ?? 0);
+}
 
 /** Semver precedence of two release versions: negative when `a` is older. */
 export function compareVersions(a: string, b: string): number {

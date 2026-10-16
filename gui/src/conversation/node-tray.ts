@@ -15,7 +15,8 @@
 
 import type { ComposerSession, ComposerSessionState } from "./composer";
 import type { ComposerDocument } from "./composer";
-import { viewAttached, type AttachWords } from "./attach";
+import type { AttachWords } from "./attach";
+import { viewAttached } from "./attached-pictures";
 import { glyph } from "./glyphs";
 import { escape } from "./prose";
 
@@ -62,7 +63,7 @@ export class NodeTray {
     this.element.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-remove], [data-retry]");
       if (!button) {
-        viewAttached(this.element, event.target as Element, this.words.pictures);
+        viewAttached(this.element, event.target as Element);
         return;
       }
       if (button.dataset.retry) {

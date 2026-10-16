@@ -1,71 +1,76 @@
 // The network's update policy, its super administrator's to set
-// (`world-upgrade.md`, 谁来更新): the channel its devices follow unless their
-// owners choose, and the version it asks each machine to run at least,
-// which is said to the machines below it, never enforced.
+// (`world-upgrade.md`, 谁来更新): the version it asks each machine to run
+// at least, picked from the window of versions and said to the machines
+// below it, never enforced; and whether its managed machines take new
+// releases by themselves. Which line a device follows is the line of the
+// version it runs: the network sets none.
 
 import { Sheet } from "./confirm";
 import { escape } from "../conversation/prose";
-import type { Channel } from "../world/updates";
+import type { Policy } from "../world/updates";
 import type { UpdateWords } from "./update-words";
 
-export interface Policy {
-  channel: Channel;
-  minimum?: string;
-}
+export type { Policy };
 
 export class UpdatePolicySheet {
   private sheet: Sheet | null = null;
-  private channel: Channel = "stable";
+  private minimum: string | null = null;
+  private managedAuto = true;
 
   constructor(
     private readonly words: UpdateWords,
     private readonly save: (policy: Policy) => Promise<void>,
+    /** Opens the window of versions to pick the lowest one, or none. */
+    private readonly versions: (current: string | null, pick: (version: string | null) => void) => void,
   ) {}
 
   open(current: Policy): void {
-    const { words } = this;
-    const sheet = this.sheet ?? new Sheet("update-policy-sheet");
-    if (!this.sheet) {
-      this.sheet = sheet;
-      sheet.body.addEventListener("click", (event) => {
-        const target = event.target as HTMLElement;
-        const choice = target.closest<HTMLButtonElement>("[data-policy-channel]");
-        if (choice) {
-          this.channel = choice.dataset.policyChannel as Channel;
-          for (const button of sheet.body.querySelectorAll<HTMLButtonElement>("[data-policy-channel]")) {
-            const chosen = button.dataset.policyChannel === this.channel;
-            button.classList.toggle("chosen", chosen);
-            button.setAttribute("aria-checked", String(chosen));
-          }
-        }
-        if (target.closest("[data-policy-save]")) this.submit(sheet);
-      });
-    }
-    this.channel = current.channel;
-    const choice = (value: Channel, name: string) =>
-      `<button type="button" class="choice${value === this.channel ? " chosen" : ""}" role="radio" aria-checked="${value === this.channel}" data-policy-channel="${value}">${escape(name)}</button>`;
+    this.minimum = current.minimum ?? null;
+    this.managedAuto = current.managed_auto ?? true;
+    const sheet = this.sheet ?? this.make();
+    this.draw();
+    sheet.show();
+  }
+
+  private make(): Sheet {
+    const sheet = new Sheet("update-policy-sheet");
+    this.sheet = sheet;
+    sheet.body.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement;
+      const choice = target.closest<HTMLButtonElement>("[data-policy-managed]");
+      if (choice) {
+        this.managedAuto = choice.dataset.policyManaged === "on";
+        this.draw();
+      }
+      if (target.closest("[data-policy-minimum]")) {
+        this.versions(this.minimum, (version) => {
+          this.minimum = version;
+          this.draw();
+        });
+      }
+      if (target.closest("[data-policy-save]")) this.submit(sheet);
+    });
+    return sheet;
+  }
+
+  private draw(): void {
+    const { words, sheet } = this;
+    if (!sheet) return;
+    const choice = (on: boolean, name: string) =>
+      `<button type="button" class="choice${on === this.managedAuto ? " chosen" : ""}" role="radio" aria-checked="${on === this.managedAuto}" data-policy-managed="${on ? "on" : "off"}">${escape(name)}</button>`;
     sheet.body.innerHTML = `${sheet.head(words.policy, words.close)}
       <div class="policy-rows">
-        <div class="choice-row" role="radiogroup" aria-label="${escape(words.channel)}"><span class="choice-label">${escape(words.channel)}</span><div class="choice-options">${choice("stable", words.stable)}${choice("beta", words.beta)}</div></div>
-        <label class="choice-row"><span class="choice-label">${escape(words.minimumField)}</span><input class="policy-minimum" type="text" spellcheck="false" autocomplete="off" placeholder="${escape(words.minimumNone)}" value="${escape(current.minimum ?? "")}"></label>
+        <div class="choice-row"><span class="choice-label">${escape(words.minimumField)}</span><div class="policy-minimum"><span class="policy-minimum-now">${escape(this.minimum ?? words.minimumNone)}</span><button class="text-button quiet-button" type="button" data-policy-minimum>${escape(words.minimumPick)}</button></div></div>
+        <div class="choice-row" role="radiogroup" aria-label="${escape(words.managedAuto)}"><span class="choice-label">${escape(words.managedAuto)}</span><div class="choice-options">${choice(true, words.on)}${choice(false, words.off)}</div></div>
       </div>
       <p class="sheet-note" role="alert" hidden></p>
       <div class="removal-go"><button class="sheet-go" type="button" data-policy-save>${escape(words.save)}</button></div>`;
-    sheet.show();
   }
 
   private submit(sheet: Sheet): void {
     const note = sheet.body.querySelector<HTMLElement>(".sheet-note")!;
-    const field = sheet.body.querySelector<HTMLInputElement>(".policy-minimum")!;
-    const minimum = field.value.trim().replace(/^v/, "");
-    if (minimum && !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(minimum)) {
-      note.hidden = false;
-      note.textContent = this.words.minimumInvalid;
-      field.focus();
-      return;
-    }
     sheet.busy = true;
-    this.save({ channel: this.channel, ...(minimum ? { minimum } : {}) }).then(
+    this.save({ ...(this.minimum ? { minimum: this.minimum } : {}), managed_auto: this.managedAuto }).then(
       () => {
         sheet.busy = false;
         sheet.close();

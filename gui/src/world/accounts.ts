@@ -254,6 +254,10 @@ export interface HubAccounts {
   dissolves?: boolean;
   /** Whether the hub keeps the network's versions and their policy. */
   versions?: boolean;
+  /** The hub keeps updates for machines away until they are back. */
+  due?: boolean;
+  /** The hub tells a machine it takes off to uninstall Fastctx. */
+  uninstalls?: boolean;
   logins: AccountName[];
   home: AccountName | null;
   self_registration: boolean;
@@ -298,7 +302,8 @@ export type AccountChange =
   /** The administrator's change: the server checks it reaches the machine
    *  at `at` before it counts; none, no longer. */
   | { change: "direct"; machine: MachineName; at: string[] }
-  | { change: "remove"; name: MachineName; reason: string }
+  /** Takes a machine off; `then` has it uninstall Fastctx as it hears so. */
+  | { change: "remove"; name: MachineName; reason: string; then?: "uninstall" | "everything" }
   /** Renames one of the account's machines, or, for the administrator,
    *  any; its names before keep naming it. */
   | { change: "rename"; machine: MachineName; to: MachineName }
@@ -322,7 +327,10 @@ export type AccountChange =
   | { change: "transfer"; to: AccountName }
   | { change: "delete_account"; name: AccountName }
   | { change: "settings"; self_registration: boolean }
-  | { change: "updates"; policy: { channel: "stable" | "beta"; minimum?: string } }
+  | { change: "updates"; policy: import("./updates").Policy }
+  /** A machine away updates to `version` once it is back; none takes
+   *  that back. */
+  | { change: "update_due"; machine: MachineName; version?: string }
   /** The super administrator dissolves the network named `name`, typed as
    *  it is. */
   | { change: "dissolve"; name: HubName }

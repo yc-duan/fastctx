@@ -133,7 +133,10 @@ pub(crate) fn start(node: &Arc<Node>) {
 
 /// Looks on GitHub now, and keeps what it found.
 async fn look(node: &Arc<Node>) {
-    let looked = fastctx_update::github::look().await;
+    // What can be taken here is newer than the application, when one
+    // carries the World program, or than the program itself.
+    let running = application(node).unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+    let looked = fastctx_update::github::look(Some(&running)).await;
     if let Some(why) = &looked.why {
         node.log.line(format_args!("looking for new versions on GitHub: {why}"));
     }
@@ -231,6 +234,7 @@ pub(crate) fn state(node: &Node) -> State {
     let auto = held.settings.auto_for(kind(node, &held), network.as_ref().map(|network| &network.policy));
     let hub_major = hub_major(node, network.as_ref());
     State {
+        running: Some(env!("CARGO_PKG_VERSION").to_string()),
         settings: held.settings.clone(),
         channel,
         auto,
@@ -377,6 +381,7 @@ async fn manifest_of(node: &Arc<Node>, version: &str) -> Result<Manifest, String
     let known = [state.offer.as_ref(), state.chosen.as_ref(), state.looked.stable.as_ref(), state.looked.beta.as_ref()]
         .into_iter()
         .flatten()
+        .chain(state.looked.newer.iter())
         .chain(state.network.as_ref().into_iter().flat_map(|network| network.stable.iter().chain(network.beta.iter())))
         .find(|manifest| manifest.version == version)
         .cloned()
@@ -394,6 +399,7 @@ fn fetch(node: &Arc<Node>, version: String, target: String) -> Result<(), String
         [state.offer.as_ref(), state.chosen.as_ref(), state.looked.stable.as_ref(), state.looked.beta.as_ref()]
             .into_iter()
             .flatten()
+            .chain(state.looked.newer.iter())
             .chain(
                 state.network.as_ref().into_iter().flat_map(|network| network.stable.iter().chain(network.beta.iter())),
             )

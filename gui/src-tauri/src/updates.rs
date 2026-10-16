@@ -169,6 +169,7 @@ pub(crate) async fn update_install(
                 state.network.as_ref().into_iter().flat_map(|network| network.stable.iter().chain(network.beta.iter())),
             )
             .chain(state.looked.stable.iter().chain(state.looked.beta.iter()))
+            .chain(state.looked.newer.iter())
             .find(|manifest| manifest.version == version)
             .ok_or("the new version's manifest is not known here")?;
         let package = manifest.package(&target).ok_or("the new version has no package for this computer")?;

@@ -237,7 +237,7 @@ pub(crate) async fn look_every(hub: Weak<Hub>) {
     // A hub just started lets its machines connect first.
     tokio::time::sleep(Duration::from_secs(60)).await;
     loop {
-        let looked = fastctx_update::github::look().await;
+        let looked = fastctx_update::github::look(None).await;
         let Some(hub) = hub.upgrade() else { return };
         if let Some(why) = &looked.why {
             hub.log.line(format_args!("looking for new versions on GitHub: {why}"));

@@ -8,6 +8,8 @@ use serde::Deserialize;
 
 /// How many releases one page of the list holds.
 const PAGE: usize = 100;
+/// The most manifests of newer releases read in one look.
+const NEWER: usize = 8;
 /// The most pages read: the newest thousand releases.
 const PAGES: usize = 10;
 
@@ -43,15 +45,44 @@ struct Asset {
     browser_download_url: String,
 }
 
-/// Looks on GitHub now.
-pub async fn look() -> Looked {
+/// Looks on GitHub now; with `running`, reads the manifests of the
+/// releases newer than it too, a few at most.
+pub async fn look(running: Option<&str>) -> Looked {
     let at = Some(Timestamp::now());
     match found().await {
-        Ok((stable, beta, releases)) => Looked { at, github: Some(true), why: None, stable, beta, releases },
-        Err(Failure { reached, why }) => {
-            Looked { at, github: Some(reached), why: Some(why), stable: None, beta: None, releases: Vec::new() }
+        Ok((stable, beta, releases)) => {
+            let newer = match running {
+                Some(running) => newer(&releases, running).await,
+                None => Vec::new(),
+            };
+            Looked { at, github: Some(true), why: None, stable, beta, releases, newer }
+        }
+        Err(Failure { reached, why }) => Looked {
+            at,
+            github: Some(reached),
+            why: Some(why),
+            stable: None,
+            beta: None,
+            releases: Vec::new(),
+            newer: Vec::new(),
+        },
+    }
+}
+
+/// The manifests of the releases newer than `running`, the newest first: a
+/// release whose manifest cannot be read now is left out, and read again at
+/// the next look.
+async fn newer(releases: &[Listed], running: &str) -> Vec<Manifest> {
+    let floor = fastctx_types::update::release(running);
+    let mut found = Vec::new();
+    for release in
+        releases.iter().filter(|release| fastctx_types::update::release(&release.version) > floor).take(NEWER)
+    {
+        if let Ok(manifest) = of(release).await {
+            found.push(manifest);
         }
     }
+    found
 }
 
 struct Failure {

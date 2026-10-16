@@ -3,7 +3,7 @@
     {
       "records": [
         {
-          "id": 38,
+          "id": 43,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -20,7 +20,7 @@
           }
         },
         {
-          "id": 37,
+          "id": 42,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -39,7 +39,7 @@
           }
         },
         {
-          "id": 36,
+          "id": 41,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -61,7 +61,7 @@
           }
         },
         {
-          "id": 35,
+          "id": 40,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -84,7 +84,7 @@
           }
         },
         {
-          "id": 34,
+          "id": 39,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -104,7 +104,7 @@
           }
         },
         {
-          "id": 33,
+          "id": 38,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -124,7 +124,7 @@
           }
         },
         {
-          "id": 32,
+          "id": 37,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -141,7 +141,7 @@
           }
         },
         {
-          "id": 31,
+          "id": 36,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -166,7 +166,7 @@
           }
         },
         {
-          "id": 30,
+          "id": 35,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -184,7 +184,7 @@
           }
         },
         {
-          "id": 29,
+          "id": 34,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -204,7 +204,7 @@
           }
         },
         {
-          "id": 28,
+          "id": 33,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -222,7 +222,7 @@
           }
         },
         {
-          "id": 27,
+          "id": 32,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": null,
@@ -234,6 +234,100 @@
             "change": "remove",
             "name": "laptop",
             "reason": "retired"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 31,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "remove",
+            "name": "laptop",
+            "reason": "retired",
+            "then": "everything"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 30,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "uninstall_left",
+            "name": "laptop",
+            "left": "the service needs an administrator to remove",
+            "by": "ada",
+            "home": "ada"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 29,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "update_due",
+            "machine": "laptop",
+            "version": "1.0.1"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 28,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "update_due",
+            "machine": "laptop"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 27,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "updated",
+            "machine": "laptop",
+            "from": "1.0.1-beta.3",
+            "to": "1.0.1",
+            "by": "ada"
           },
           "outcome": {
             "kind": "done"
@@ -1734,6 +1828,8 @@
             "groups": true,
             "dissolves": true,
             "versions": true,
+            "due": true,
+            "uninstalls": true,
             "logins": [
               "ada"
             ],
@@ -2026,6 +2122,21 @@
         "change": "remove",
         "name": "pixel",
         "reason": "lost"
+      },
+      {
+        "change": "remove",
+        "name": "server",
+        "reason": "retired",
+        "then": "uninstall"
+      },
+      {
+        "change": "update_due",
+        "machine": "server",
+        "version": "1.0.1"
+      },
+      {
+        "change": "update_due",
+        "machine": "server"
       },
       {
         "change": "rename",

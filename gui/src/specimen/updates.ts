@@ -1,41 +1,117 @@
-// New versions in the specimen, for a plain browser: a test release newer
-// than this one, whose package comes in a few seconds, through the network
-// when the specimen says GitHub cannot be reached. `?update=none` offers
-// nothing; `?update=ready` has the package here already; `?update=offline`
-// cannot reach GitHub and hears of the release from the network.
+// New versions in the specimen, for a plain browser: this device runs a test
+// release, GitHub lists newer ones, a test and a stable one with packages
+// and one whose package for this device is not there, and the package of
+// the one picked comes in a few seconds, through the network when the
+// specimen says GitHub cannot be reached. Other machines answer about their
+// own updates. `?update=none` offers nothing; `?update=ready` has the
+// package here already; `?update=offline` cannot reach GitHub and hears of
+// releases from the network; `?update=major` lists a release past the hub's
+// major version.
 
-import type { Manifest, UpdateSeam, UpdateSettings, UpdateState } from "../world/updates";
+import type { Manifest, Release, UpdateCall, UpdateSeam, UpdateSettings, UpdateState } from "../world/updates";
 
-const SIZE = 14_200_000;
 const TAKES = 6_000;
+const VERSION = "1.0.1-beta.3";
+
+/** The releases GitHub lists, the newest first, and the size of each one's
+ *  packages, absent where a release has none for a device. */
+const RELEASES: { version: string; day: string; size: number | null }[] = [
+  { version: "1.1.0-beta.1", day: "2026-11-05T09:00:00Z", size: 15_100_000 },
+  { version: "1.0.1", day: "2026-10-30T09:00:00Z", size: 14_600_000 },
+  { version: "1.0.1-beta.4", day: "2026-10-22T09:00:00Z", size: null },
+  { version: VERSION, day: "2026-10-17T09:00:00Z", size: 14_200_000 },
+  { version: "1.0.1-beta.2", day: "2026-10-16T06:33:00Z", size: 14_100_000 },
+  { version: "1.0.1-beta.1", day: "2026-10-15T13:26:00Z", size: 14_000_000 },
+];
+const MAJOR = { version: "2.0.0-beta.1", day: "2026-11-20T09:00:00Z", size: 16_000_000 };
+
+/** Other machines, by name: what each runs and is. */
+const MACHINES: Record<string, { running: string; app?: string; auto: boolean; relays: boolean }> = {
+  server: { running: "1.0.1-beta.2", auto: true, relays: true },
+  gpu: { running: VERSION, auto: false, relays: true },
+  studio: { running: "1.0.1-beta.1", app: "1.0.1-beta.1", auto: false, relays: true },
+};
+
+function manifestOf(version: string, size: number | null, target: string, triple: string): Manifest {
+  const pack = { signature: "", ...(size ? { size } : {}) };
+  return {
+    version,
+    notes: "Other machines are updated from here, and an update kept for a machine away is made once it is back.",
+    platforms: size ? { [target]: pack } : {},
+    ...(size ? { fastctx: { [triple]: { signature: "", size: Math.round(size * 0.6) } } } : {}),
+  };
+}
 
 export function specimenUpdates(params: URLSearchParams, phone: boolean): { seam: UpdateSeam; version: string } {
-  const version = "1.0.1-beta.1";
   const target = phone ? "android-apk" : "windows-x86_64-nsis";
+  const triple = "x86_64-unknown-linux-gnu";
   const offline = params.get("update") === "offline";
-  const offer: Manifest = {
-    version: "1.0.1-beta.2",
-    notes: "Updates come through the network, and the conversation's stop button stops at once.",
-    platforms: { [target]: { signature: "", size: SIZE } },
-  };
+  const listed = params.get("update") === "major" ? [MAJOR, ...RELEASES] : RELEASES;
+  const releases: Release[] = listed.map((one) => ({ version: one.version, published: one.day, prerelease: one.version.includes("-") }));
+  const after = (running: string) =>
+    listed.filter((one) => one.version !== running && listed.indexOf(one) < listed.findIndex((other) => other.version === running));
+  const newer = (running: string) => after(running).filter((one) => one.size).map((one) => manifestOf(one.version, one.size, target, triple));
+  const newest = (running: string) => newer(running).find((manifest) => !manifest.version.startsWith("2."));
   let settings: UpdateSettings = { auto: false, relays: !phone };
+  let chosen: Manifest | null = null;
   let started: number | null = params.get("update") === "ready" ? 0 : null;
+  const network = (): import("../world/updates").UpdateNetwork => ({
+    ...(newest(VERSION) ? { beta: newest(VERSION)! } : {}),
+    policy: { channel: "beta" as const, minimum: "1.0.1-beta.2", managed_auto: true },
+    machines: Object.fromEntries(Object.entries(MACHINES).map(([name, one]) => [name, { kernel: one.running, ...(one.app ? { app: one.app } : {}) }])),
+    hub: VERSION,
+  });
   const state = (): UpdateState => {
+    const offer = params.get("update") === "none" ? undefined : (chosen ?? newest(VERSION));
     const coming = started !== null && Date.now() - started < TAKES;
     const here = started !== null && !coming;
-    const none = params.get("update") === "none";
+    const size = offer?.platforms[target]?.size ?? 0;
     return {
+      running: VERSION,
       settings,
-      channel: settings.beta === false ? "stable" : "beta",
-      looked: { at: new Date().toISOString(), github: !offline, ...(offline ? { why: "GitHub did not answer" } : { beta: offer }) },
-      network: { beta: offer, policy: { channel: "beta" }, machines: {} },
-      ...(none || settings.beta === false ? {} : { offer }),
-      ...(coming
-        ? { fetching: { version: offer.version, target, via: offline ? "network" : "github", received: Math.floor(((Date.now() - started!) / TAKES) * SIZE), total: SIZE } }
+      channel: "beta",
+      auto: settings.chosen ? settings.auto : false,
+      hub_major: 1,
+      looked: offline
+        ? { at: new Date().toISOString(), github: false, why: "GitHub did not answer" }
+        : { at: new Date(Date.now() - 4 * 60_000).toISOString(), github: true, releases, newer: newer(VERSION) },
+      network: network(),
+      ...(offer ? { offer } : {}),
+      ...(chosen ? { chosen } : {}),
+      ...(coming && offer
+        ? { fetching: { version: offer.version, target, via: offline ? "network" : "github", received: Math.floor(((Date.now() - started!) / TAKES) * size), total: size } }
         : {}),
-      kept: here ? [{ version: offer.version, target, path: "" }] : [],
-      app: { version, target },
+      kept: here && offer ? [{ version: offer.version, target, path: "" }] : [],
+      app: { version: VERSION, target },
       kernel_target: "",
+    };
+  };
+  /** How another machine's updates stand, as its node would answer. */
+  const machines = new Map<string, { settings: UpdateSettings; asked: string | null; at: number }>();
+  const remote = (name: string): UpdateState => {
+    const one = MACHINES[name] ?? { running: VERSION, auto: false, relays: true };
+    const kept = machines.get(name) ?? { settings: { auto: one.auto, chosen: true, relays: one.relays }, asked: null, at: 0 };
+    machines.set(name, kept);
+    const running = one.app ?? one.running;
+    const asked = kept.asked ? newer(running).find((manifest) => manifest.version === kept.asked) : undefined;
+    const elapsed = Date.now() - kept.at;
+    const app = one.app ? { version: one.app, target: "windows-x86_64-nsis" } : undefined;
+    const offer = asked ?? newest(running);
+    return {
+      running: one.running,
+      settings: kept.settings,
+      channel: running.includes("-") ? "beta" : "stable",
+      auto: kept.settings.auto,
+      hub_major: 1,
+      looked: { at: new Date(Date.now() - 50 * 60_000).toISOString(), github: name !== "gpu", releases, newer: newer(running) },
+      network: network(),
+      ...(offer ? { offer } : {}),
+      ...(asked && elapsed < TAKES
+        ? { fetching: { version: asked.version, target: app ? app.target : `fastctx-${triple}`, via: "network", received: Math.floor((elapsed / TAKES) * 8_500_000), total: 8_500_000 } }
+        : {}),
+      ...(asked && elapsed >= TAKES ? { renewing: { version: asked.version, phase: "waiting_for_idle" } } : {}),
+      ...(app ? { app, open: false, ...(kept.asked ? { take: kept.asked } : {}) } : {}),
+      kernel_target: `fastctx-${triple}`,
     };
   };
   const seam: UpdateSeam = {
@@ -52,11 +128,26 @@ export function specimenUpdates(params: URLSearchParams, phone: boolean): { seam
       started ??= Date.now();
       return state();
     },
+    choose: async (version) => {
+      chosen = version ? (newer(VERSION).find((manifest) => manifest.version === version) ?? null) : null;
+      started = null;
+      return state();
+    },
     install: async () => {
       await new Promise((done) => setTimeout(done, 1_500));
       return true;
     },
-    machine: async () => state(),
+    machine: async (name) => remote(name),
+    remote: async (name, call: UpdateCall) => {
+      await new Promise((done) => setTimeout(done, 250));
+      const kept = machines.get(name) ?? (remote(name), machines.get(name)!);
+      if (call.do === "set") kept.settings = call.settings;
+      if (call.do === "kernel") {
+        kept.asked = call.version ?? newest(MACHINES[name]?.app ?? MACHINES[name]?.running ?? VERSION)?.version ?? null;
+        kept.at = Date.now();
+      }
+      return remote(name);
+    },
   };
-  return { seam, version };
+  return { seam, version: VERSION };
 }

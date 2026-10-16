@@ -85,7 +85,14 @@ export interface MachinesOptions {
   };
   /** The network's update policy, as this device last heard it, and the
    *  words of setting it. */
-  updates?: { policy(): Policy; words: UpdateWords } | undefined;
+  updates?:
+    | {
+        policy(): Policy;
+        words: UpdateWords;
+        /** The window of versions, picking the network's lowest one, or none. */
+        minimum(current: string | null, pick: (version: string | null) => void): void;
+      }
+    | undefined;
 }
 
 /** A group's box on the drawing: its name, its machines, and how each is
@@ -903,12 +910,16 @@ export class MachinesPage implements Page {
   private policy(login: Login): void {
     const updates = this.options.updates;
     if (!updates) return;
-    this.policySheet ??= new UpdatePolicySheet(updates.words, async (policy) => {
-      const top = this.policyLogin;
-      if (!top) return;
-      await this.options.change(top, { change: "updates", policy });
-      await this.options.store.refresh();
-    });
+    this.policySheet ??= new UpdatePolicySheet(
+      updates.words,
+      async (policy) => {
+        const top = this.policyLogin;
+        if (!top) return;
+        await this.options.change(top, { change: "updates", policy });
+        await this.options.store.refresh();
+      },
+      updates.minimum,
+    );
     this.policyLogin = login;
     this.policySheet.open(updates.policy());
   }

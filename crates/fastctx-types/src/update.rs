@@ -366,6 +366,11 @@ pub struct Looked {
     /// Every release with a manifest, the newest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub releases: Vec<Release>,
+    /// The manifests of the releases newer than what runs where it looked,
+    /// the newest first, a few at most: what a device can update to, with
+    /// the size of each package.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub newer: Vec<Manifest>,
 }
 
 impl Looked {
@@ -416,6 +421,10 @@ pub struct Kept {
 /// How updates stand on this machine, as its node keeps them.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct State {
+    /// The World program the node that answers runs; none from a node
+    /// before 1.0.1 beta 3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub running: Option<String>,
     pub settings: Settings,
     /// The line it follows: that of the version it runs.
     pub channel: Channel,

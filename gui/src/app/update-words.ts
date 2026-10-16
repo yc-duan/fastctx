@@ -1,7 +1,124 @@
 // The words of new versions: the sidebar's button, its card, the settings'
-// rows, another machine's update, and the network's policy.
+// rows, the window of versions, another machine's update, and the network's
+// policy.
+
+/** The window of versions (`version-window.ts`). */
+export interface VersionWords {
+  title: string;
+  close: string;
+  /** What `who` runs: none for this device. */
+  runs(who: string | null, version: string): string;
+  filterLabel: string;
+  filter: { all: string; stable: string; test: string };
+  /** A test release's tag. */
+  test: string;
+  /** A release past the major version of the hubs, and why it matters. */
+  pastHub: string;
+  pastHubWhy: string;
+  /** The day a release came, written as a day of the year. */
+  day(iso: string): string;
+  size(bytes: number): string;
+  running: string;
+  pick: string;
+  picking: string;
+  /** A newer release whose package for that machine cannot be had now. */
+  unavailable: string;
+  none: string;
+  looking: string;
+  looked(iso: string): string;
+  /** GitHub did not answer; what follows is what the network has. */
+  unreachable: string;
+  lookAgain: string;
+  failed(why: string): string;
+  /** Picking the network's lowest version. */
+  minimumTitle: string;
+  minimumNow(version: string | null): string;
+  ask: string;
+  asked: string;
+  askNone: string;
+}
+
+const ago = (iso: string, zh: boolean): string => {
+  const minutes = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60_000));
+  if (minutes < 1) return zh ? "刚才查过" : "Checked just now";
+  if (minutes < 60) return zh ? `查于 ${minutes} 分钟前` : `Checked ${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return zh ? `查于 ${hours} 小时前` : `Checked ${hours} h ago`;
+  const days = Math.round(hours / 24);
+  return zh ? `查于 ${days} 天前` : `Checked ${days} days ago`;
+};
+
+const megabytes = (bytes: number): string => `${(bytes / 1_000_000).toFixed(1)} MB`;
+
+export const zhVersions: VersionWords = {
+  title: "版本",
+  close: "关闭",
+  runs: (who, version) => (who === null ? `这台在跑 ${version}` : `${who} 在跑 ${version}`),
+  filterLabel: "筛选版本",
+  filter: { all: "全部", stable: "正式版", test: "测试版" },
+  test: "测试版",
+  pastHub: "超出中枢的大版本",
+  pastHubWhy: "中枢还在更早的大版本上：自动更新不会换到这一版，免得连不上网络；手动挑照样可以",
+  day: (iso) => {
+    const day = new Date(iso);
+    const year = day.getFullYear() === new Date().getFullYear() ? "" : `${day.getFullYear()}年`;
+    return `${year}${day.getMonth() + 1}月${day.getDate()}日`;
+  },
+  size: megabytes,
+  running: "正在用",
+  pick: "更新到这一版",
+  picking: "正在开始…",
+  unavailable: "现在拿不到",
+  none: "还没查到任何版本",
+  looking: "正在查…",
+  looked: (iso) => ago(iso, true),
+  unreachable: "连不上 GitHub，下面是网络里拿得到的版本",
+  lookAgain: "重新查",
+  failed: (why) => `没成：${why}`,
+  minimumTitle: "网络要求的最低版本",
+  minimumNow: (version) => (version ? `现在要求至少 ${version}` : "现在不要求最低版本"),
+  ask: "设为最低",
+  asked: "当前要求",
+  askNone: "不要求最低版本",
+};
+
+export const enVersions: VersionWords = {
+  title: "Versions",
+  close: "Close",
+  runs: (who, version) => (who === null ? `This device runs ${version}` : `${who} runs ${version}`),
+  filterLabel: "Filter versions",
+  filter: { all: "All", stable: "Stable", test: "Beta" },
+  test: "Beta",
+  pastHub: "Past the hub's major version",
+  pastHubWhy:
+    "The hub is on an earlier major version: automatic updates do not take this one, lest the machine no longer reach the network; picking it yourself still works",
+  day: (iso) => {
+    const day = new Date(iso);
+    const options: Intl.DateTimeFormatOptions =
+      day.getFullYear() === new Date().getFullYear() ? { month: "short", day: "numeric" } : { year: "numeric", month: "short", day: "numeric" };
+    return day.toLocaleDateString("en", options);
+  },
+  size: megabytes,
+  running: "In use",
+  pick: "Update to this",
+  picking: "Starting…",
+  unavailable: "Not available now",
+  none: "No versions found yet",
+  looking: "Checking…",
+  looked: (iso) => ago(iso, false),
+  unreachable: "Can't reach GitHub; these are the versions the network has",
+  lookAgain: "Check again",
+  failed: (why) => `Didn't work: ${why}`,
+  minimumTitle: "The network's minimum version",
+  minimumNow: (version) => (version ? `At least ${version} is asked for now` : "No minimum is asked for now"),
+  ask: "Set as minimum",
+  asked: "Asked for now",
+  askNone: "Ask for no minimum",
+};
 
 export interface UpdateWords {
+  /** The window of versions. */
+  versions: VersionWords;
   /** The sidebar's button. */
   bar: string;
   barFetching(percent: number | null): string;
@@ -34,8 +151,8 @@ export interface UpdateWords {
   unreachable: string;
   heardFromNetwork: string;
   auto: string;
-  betaChoice: string;
-  followNetwork: string;
+  /** Beside automatic updates the owner never chose. */
+  autoByDefault: string;
   on: string;
   off: string;
   relay: string;
@@ -45,15 +162,15 @@ export interface UpdateWords {
   machineUpdating: string;
   /** The network's policy. */
   policy: string;
-  channel: string;
-  stable: string;
   minimumField: string;
   minimumNone: string;
-  minimumInvalid: string;
+  minimumPick: string;
+  managedAuto: string;
   save: string;
 }
 
 export const zhUpdate: UpdateWords = {
+  versions: zhVersions,
   bar: "更新",
   barFetching: (percent) => (percent === null ? "下载中" : `下载中 ${percent}%`),
   barReady: "重启以更新",
@@ -83,8 +200,7 @@ export const zhUpdate: UpdateWords = {
   unreachable: "连不上 GitHub",
   heardFromNetwork: "经网络得知",
   auto: "自动更新",
-  betaChoice: "测试版",
-  followNetwork: "跟随网络",
+  autoByDefault: "默认",
   on: "开",
   off: "关",
   relay: "帮网络里的设备传更新包",
@@ -92,15 +208,15 @@ export const zhUpdate: UpdateWords = {
   machineBehind: (version) => `${version} 可用`,
   machineUpdating: "正在更新…",
   policy: "网络的更新",
-  channel: "通道",
-  stable: "正式版",
   minimumField: "最低版本",
   minimumNone: "不要求",
-  minimumInvalid: "写成 1.0.1 或 1.0.1-beta.2 这样",
+  minimumPick: "挑一版",
+  managedAuto: "受管机器自动更新",
   save: "保存",
 };
 
 export const enUpdate: UpdateWords = {
+  versions: enVersions,
   bar: "Update",
   barFetching: (percent) => (percent === null ? "Downloading" : `Downloading ${percent}%`),
   barReady: "Restart to update",
@@ -130,8 +246,7 @@ export const enUpdate: UpdateWords = {
   unreachable: "Can't reach GitHub",
   heardFromNetwork: "Heard from the network",
   auto: "Automatic updates",
-  betaChoice: "Beta versions",
-  followNetwork: "As the network",
+  autoByDefault: "By default",
   on: "On",
   off: "Off",
   relay: "Pass updates to the network's devices",
@@ -139,10 +254,9 @@ export const enUpdate: UpdateWords = {
   machineBehind: (version) => `${version} available`,
   machineUpdating: "Updating…",
   policy: "Network updates",
-  channel: "Channel",
-  stable: "Stable",
   minimumField: "Minimum version",
   minimumNone: "None",
-  minimumInvalid: "Write it as 1.0.1 or 1.0.1-beta.2",
+  minimumPick: "Pick one",
+  managedAuto: "Managed machines update by themselves",
   save: "Save",
 };

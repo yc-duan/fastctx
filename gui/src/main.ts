@@ -20,6 +20,7 @@ import "./longview/longview.css";
 import "./app/shell.css";
 import "./app/sheet.css";
 import "./app/updates.css";
+import "./app/versions.css";
 import "./app/pages.css";
 import "./app/accounts.css";
 import "./app/me.css";
@@ -254,6 +255,9 @@ import { en, zh } from "./words";
 import { updates as updateSeam } from "./world/updates";
 import { Updates } from "./app/updates";
 import { UpdateCard } from "./app/update-card";
+import { VersionWindow } from "./app/version-window";
+import { showAttachedWith } from "./conversation/attached-pictures";
+import { viewPictures } from "./conversation/pictures";
 import { enUpdate, zhUpdate } from "./app/update-words";
 import { specimenUpdates } from "./specimen/updates";
 import { getVersion } from "@tauri-apps/api/app";
@@ -852,6 +856,38 @@ const appUpdates = (() => {
   return updates;
 })();
 const updateCard = new UpdateCard(appUpdates, updateWords, live ? !onComputer() : params.has("phone"));
+const versionWindow = new VersionWindow(updateWords.versions);
+// A picture attached and not yet sent opens in the same viewer as the
+// conversation's pictures.
+showAttachedWith((images, index) => viewPictures(images, index, (english ? en : zh).pictures));
+
+/** The window of versions picking the network's lowest version, from the
+ *  releases this device knows. */
+function minimumVersions(current: string | null, pick: (version: string | null) => void): void {
+  const state = appUpdates.state.peek();
+  if (!state) return;
+  versionWindow.open(
+    { who: null, running: appUpdates.version, state, look: () => appUpdates.look().then(() => appUpdates.state.peek() ?? state) },
+    { kind: "minimum", current, pick: async (version) => pick(version) },
+  );
+}
+
+/** The window of versions for this device: a version picked comes as the
+ *  newest would, its card saying how. */
+function versionsHere(look: boolean): void {
+  const state = appUpdates.state.peek();
+  if (!state) return;
+  versionWindow.open(
+    {
+      who: null,
+      running: appUpdates.version,
+      state,
+      look: () => appUpdates.look().then(() => appUpdates.state.peek() ?? state),
+    },
+    { kind: "update", pick: (version) => appUpdates.pick(version).then(() => updateCard.open()) },
+    look,
+  );
+}
 
 const shell = new Shell({
   store,
@@ -1905,8 +1941,9 @@ function show(next: Place): void {
       page = new MachinesPage({
         store,
         updates: {
-          policy: () => appUpdates.state.peek()?.network?.policy ?? { channel: "stable" },
+          policy: () => appUpdates.state.peek()?.network?.policy ?? {},
           words: updateWords,
+          minimum: minimumVersions,
         },
         words: english ? enMachines : zhMachines,
         access: english ? enAccess : zhAccess,
@@ -2141,7 +2178,7 @@ function show(next: Place): void {
         updates: {
           updates: appUpdates,
           words: updateWords,
-          open: () => updateCard.open(),
+          versions: versionsHere,
           relays: live ? onComputer() : !params.has("phone"),
         },
         notifyChanged: (on) => {

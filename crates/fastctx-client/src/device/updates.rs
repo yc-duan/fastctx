@@ -93,7 +93,8 @@ impl Device {
     }
 
     async fn look_for_versions(self: &Arc<Self>) {
-        let looked = fastctx_update::github::look().await;
+        let running = self.updates.held.lock().expect("never poisoned").app.as_ref().map(|app| app.version.clone());
+        let looked = fastctx_update::github::look(Some(running.as_deref().unwrap_or(env!("CARGO_PKG_VERSION")))).await;
         {
             let mut held = self.updates.held.lock().expect("never poisoned");
             if looked.why.is_none() {
@@ -198,6 +199,7 @@ impl Device {
             .and_then(fastctx_types::update::release)
             .map(|version| version.major);
         State {
+            running: Some(running.clone()),
             settings: held.settings.clone(),
             channel,
             auto,
@@ -258,6 +260,7 @@ impl Device {
             [state.offer.as_ref(), state.chosen.as_ref(), state.looked.stable.as_ref(), state.looked.beta.as_ref()]
                 .into_iter()
                 .flatten()
+                .chain(state.looked.newer.iter())
                 .chain(
                     state
                         .network
@@ -280,6 +283,7 @@ impl Device {
             [state.offer.as_ref(), state.chosen.as_ref(), state.looked.stable.as_ref(), state.looked.beta.as_ref()]
                 .into_iter()
                 .flatten()
+                .chain(state.looked.newer.iter())
                 .chain(
                     state
                         .network

@@ -984,7 +984,17 @@ export const zhMachines: MachinesWords = {
       case "direct":
         return a.at.length ? `允许直接连到 ${a.machine}` : `不再允许直接连到 ${a.machine}`;
       case "remove":
-        return `移除 ${a.name}`;
+        return a.then === "everything"
+          ? `移除 ${a.name} 并彻底卸载`
+          : a.then === "uninstall"
+            ? `移除 ${a.name} 并卸载，保留数据`
+            : `移除 ${a.name}`;
+      case "uninstall_left":
+        return `${a.name} 没卸完：${a.left}`;
+      case "update_due":
+        return a.version ? `${a.machine} 上线就更新到 ${a.version}` : `撤销 ${a.machine} 上线就更新`;
+      case "updated":
+        return `${a.by} 把 ${a.machine} 从 ${a.from} 更新到 ${a.to}`;
       case "rename":
         return `把 ${a.machine} 改名为 ${a.to}`;
       case "group":
@@ -1015,7 +1025,9 @@ export const zhMachines: MachinesWords = {
       case "dissolve":
         return `解散网络 ${a.name}`;
       case "updates":
-        return `网络的更新改为${a.channel === "beta" ? "测试版" : "正式版"}${a.minimum ? `，至少 ${a.minimum}` : ""}`;
+        return a.managed_auto === undefined
+          ? `网络的更新改为${a.channel === "beta" ? "测试版" : "正式版"}${a.minimum ? `，至少 ${a.minimum}` : ""}`
+          : `网络的更新改为${a.minimum ? `至少 ${a.minimum}` : "不要求最低版本"}，受管机器${a.managed_auto ? "自动更新" : "不自动更新"}`;
       default:
         return null;
     }
@@ -1277,7 +1289,17 @@ export const enMachines: MachinesWords = {
       case "direct":
         return a.at.length ? `Allowed direct connections to ${a.machine}` : `No more direct connections to ${a.machine}`;
       case "remove":
-        return `Removed ${a.name}`;
+        return a.then === "everything"
+          ? `Removed ${a.name} and everything Fastctx wrote there`
+          : a.then === "uninstall"
+            ? `Removed ${a.name} and uninstalled Fastctx, keeping its data`
+            : `Removed ${a.name}`;
+      case "uninstall_left":
+        return `${a.name} did not finish uninstalling: ${a.left}`;
+      case "update_due":
+        return a.version ? `${a.machine} updates to ${a.version} once it is back` : `${a.machine} no longer updates once it is back`;
+      case "updated":
+        return `${a.by} updated ${a.machine} from ${a.from} to ${a.to}`;
       case "rename":
         return `Renamed ${a.machine} to ${a.to}`;
       case "group":
@@ -1308,7 +1330,9 @@ export const enMachines: MachinesWords = {
       case "dissolve":
         return `Dissolved the network ${a.name}`;
       case "updates":
-        return `Network updates set to ${a.channel === "beta" ? "beta" : "stable"}${a.minimum ? `, at least ${a.minimum}` : ""}`;
+        return a.managed_auto === undefined
+          ? `Network updates set to ${a.channel === "beta" ? "beta" : "stable"}${a.minimum ? `, at least ${a.minimum}` : ""}`
+          : `Network updates set to ${a.minimum ? `at least ${a.minimum}` : "no minimum"}; managed machines ${a.managed_auto ? "update by themselves" : "do not update by themselves"}`;
       default:
         return null;
     }
