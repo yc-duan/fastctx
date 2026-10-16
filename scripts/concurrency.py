@@ -5,11 +5,11 @@ request goes to any model vendor. For a few minutes several conversations at onc
 run commands through the World's `run`, are deleted while they work and opened again, while the node
 is ended at random moments and started again. Then the node is left to settle, and the drill checks:
 
-- the node answered a plain call within a few seconds whenever it was up;
+- sampled plain calls answered within a few seconds outside restarts;
 - its log has no lock taken out of order, nothing stuck, no tasks waiting on each other in a circle;
 - every conversation settles: none is left working, no words are left on their way in;
-- a deleted conversation leaves nothing behind: no record, no directory, no Codex thread;
-- every node that stopped halfway through something finished it once it was up again.
+- each confirmed deletion leaves no directory, data listing or Codex rollout file;
+- no deletion intent remains after the node has had time to recover.
 
     python scripts/concurrency.py PROGRAM [--codex CODEX] [--minutes N] [--restarts] [--seed N]
 
@@ -22,6 +22,7 @@ import os
 import random
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -36,6 +37,8 @@ RESULTS = []
 PRINTING = threading.Lock()
 # How long a plain call may take, outside the moments the node is being ended and started.
 ANSWERS_WITHIN = 5.0
+# Background deletion recovery retries every 300 s (fastctx-node/src/recovery.rs); allow its next attempt to finish.
+RECOVERY_OBSERVATION = 300 + 180
 # What the node's log must never say.
 BAD_LINES = re.compile(r"lock order:|stuck for \d+ s|in a circle|panicked at", re.I)
 
@@ -72,6 +75,7 @@ class Lab:
         self.node = None
         self.restarting = threading.Event()
         self.restarter = None
+        self.generation = 0
         self.lock = threading.Lock()
 
     def env(self):
@@ -94,11 +98,18 @@ class Lab:
         """What a fastctx command printed, and its exit code; a command that ran past `timeout` is -1.
         None starts while the node is being ended and started again: a command that found no node would
         start one of its own, with the user's environment and not this lab's."""
+        deadline = time.monotonic() + timeout
         while self.restarting.is_set() and threading.current_thread() is not self.restarter:
-            time.sleep(0.2)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return -1, "timed out waiting for the node to restart"
+            time.sleep(min(0.2, remaining))
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return -1, "command deadline expired"
         try:
             done = subprocess.run([str(self.program), *args], env=self.env(), capture_output=True,
-                                  stdin=subprocess.DEVNULL, timeout=timeout)
+                                  stdin=subprocess.DEVNULL, timeout=remaining)
         except subprocess.TimeoutExpired as late:
             return -1, (late.stdout or b"").decode("utf-8", "replace") + (late.stderr or b"").decode("utf-8", "replace")
         return done.returncode, done.stdout.decode("utf-8", "replace") + done.stderr.decode("utf-8", "replace")
@@ -125,9 +136,13 @@ class Lab:
         found = []
         if os.name == "nt":
             listed = subprocess.run(["powershell", "-NoProfile", "-Command",
+                                     "$ErrorActionPreference = 'Stop'; "
                                      "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine } | "
                                      "ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }"],
                                     capture_output=True, text=True, timeout=60, encoding="utf-8", errors="replace")
+            if listed.returncode != 0:
+                raise RuntimeError(f"listing this lab's processes failed ({listed.returncode}): "
+                                   f"{listed.stdout[-1000:]}{listed.stderr[-1000:]}")
             for line in listed.stdout.splitlines():
                 pid, _, command = line.partition("\t")
                 if root in command.lower() and pid.strip().isdigit():
@@ -138,7 +153,7 @@ class Lab:
                     continue
                 try:
                     command = (entry / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
-                except OSError:
+                except (FileNotFoundError, ProcessLookupError):
                     continue
                 if root in command.lower():
                     found.append((int(entry.name), command))
@@ -148,11 +163,14 @@ class Lab:
         """Ends everything of this lab still running."""
         for pid, _ in self.processes():
             self.kill(pid)
+        until("all of this lab's processes ended", lambda: not self.processes(), limit=30, every=0.2)
 
-    @staticmethod
-    def kill(pid):
+    def kill(self, pid):
         if os.name == "nt":
-            subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+            ended = subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, timeout=30)
+            if ended.returncode != 0 and any(found == pid for found, _ in self.processes()):
+                raise RuntimeError(f"ending this lab's process {pid} failed ({ended.returncode}): "
+                                   f"{ended.stdout!r} {ended.stderr!r}")
         else:
             try:
                 os.kill(pid, 9)
@@ -164,10 +182,7 @@ class Lab:
         for pid in self.node_pids():
             self.kill(pid)
         if self.node:
-            try:
-                self.node.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                pass
+            self.node.wait(timeout=30)
 
     def restart(self):
         """Ends the node and starts this lab's again at once. A command still running when the node went
@@ -176,6 +191,7 @@ class Lab:
         with self.lock:
             self.restarter = threading.current_thread()
             self.restarting.set()
+            self.generation += 1
             try:
                 for _ in range(5):
                     self.end_node()
@@ -197,19 +213,24 @@ class Lab:
 
     def node_log(self):
         path = self.home / "world" / "node.log"
-        return path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+        return path.read_text(encoding="utf-8", errors="replace")
 
 
 def until(label, probe, limit=90, every=0.5):
     deadline = time.monotonic() + limit
+    last = "no probe completed"
     while time.monotonic() < deadline:
         try:
             if probe():
-                return True
-        except Exception:  # noqa: BLE001 - a probe that fails is a probe not yet true
-            pass
-        time.sleep(every)
-    raise RuntimeError(f"{label} did not happen within {limit} s")
+                if time.monotonic() <= deadline:
+                    return True
+                last = "true only after the deadline"
+            else:
+                last = "not yet true"
+        except Exception as error:  # noqa: BLE001 - observation may recover on the next probe
+            last = f"{type(error).__name__}: {error}"
+        time.sleep(min(every, max(0, deadline - time.monotonic())))
+    raise RuntimeError(f"{label} did not happen within {limit} s; last probe: {last}")
 
 
 class Drill:
@@ -218,8 +239,11 @@ class Drill:
         self.rng = rng
         self.talks = []
         self.deleted = []
-        # The Codex thread of each conversation deleted, which goes with it.
+        # Capture each thread before deletion can remove its identity record.
         self.threads = {}
+        self.speakers = []
+        self.background_failures = []
+        self.plain_calls = 0
         self.slow_calls = []
         self.outcomes = []
         # Conversations a deletion could not delete within its two minutes, and why it last heard.
@@ -231,15 +255,29 @@ class Drill:
         with self.lock:
             self.outcomes.append(what)
 
+    def guarded(self, label, action, *args):
+        try:
+            action(*args)
+        except Exception as error:  # noqa: BLE001 - thread failures must reach the verdict
+            with self.lock:
+                self.background_failures.append((label, f"{type(error).__name__}: {error}"))
+            self.stop.set()
+
     def open(self):
         code, out = self.lab.run("talk", "--open", "codex", "hello", timeout=240)
         found = re.search(r"=== opened (\S+) on ", out)
         if code != 0 or not found:
             self.note(("open failed", code, out[-400:]))
             return None
+        talk = found.group(1)
+        thread = thread_of(self.lab, talk)
+        if not thread_files(self.lab, thread):
+            raise RuntimeError(f"{talk}: no Codex record observed for thread {thread}")
         with self.lock:
-            self.talks.append(found.group(1))
-        return found.group(1)
+            self.talks.append(talk)
+            self.threads[talk] = thread
+        self.note(("opened", talk))
+        return talk
 
     def speak(self, talk, words, timeout=240):
         started = time.monotonic()
@@ -248,36 +286,46 @@ class Drill:
         self.note(("said", talk, words[:30], code, round(took, 1), out.strip()[-160:] if code else ""))
         return code, out
 
-    def delete(self, talk):
-        # Its Codex thread, from its record, so a deletion is checked to take that too.
-        thread = thread_of(self.lab, talk)
-        code, out = self.lab.run("data", "delete", "--yes", talk, timeout=180)
-        gone = code == 0 and "not deleted" not in out.lower() and "refused" not in out.lower()
+    def delete(self, talk, timeout=180):
+        thread = self.threads[talk]
+        deadline = time.monotonic() + timeout
+        # A failed command may have left an intent that recovery has since completed.
+        if not present(self.lab.conversations() / talk) and not left_of(self.lab, talk, thread, timeout=timeout):
+            code, out = 0, f"{talk}: deleted by recovery"
+            gone = True
+        else:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False, "deletion deadline expired while checking recovery"
+            code, out = self.lab.run("data", "delete", "--yes", talk, timeout=remaining)
+            gone = code == 0 and any(line.startswith(f"{talk}: deleted, ") for line in out.splitlines())
         self.note(("delete", talk, code, out.strip()[-200:]))
         if gone:
             with self.lock:
                 if talk in self.talks:
                     self.talks.remove(talk)
                 self.deleted.append(talk)
-                if thread:
-                    self.threads[talk] = thread
-        return gone
+        return gone, out
 
     def delete_working(self, talk):
         """Deletes a conversation that may be working, stopping what it runs, within two minutes."""
         deadline = time.monotonic() + 120
-        while time.monotonic() < deadline:
-            if self.delete(talk):
+        last = "no deletion tried"
+        while (remaining := deadline - time.monotonic()) > 0:
+            gone, out = self.delete(talk, timeout=remaining)
+            if gone and time.monotonic() <= deadline:
                 return True
-            with self.lock:
-                said = self.outcomes[-1][3] if self.outcomes and self.outcomes[-1][0] == "delete" else ""
-            for job in set(re.findall(r"\bj-[0-9a-z]{6}\b", said)):
-                code, out = self.lab.run("stop", job, timeout=60)
-                self.note(("stop", job, code, out.strip()[-120:]))
-            time.sleep(self.rng.uniform(0.2, 1.5))
+            last = out
+            for job in sorted(set(re.findall(r"\bfastctx stop (j-[0-9a-z]{6})\b", out))):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                code, stopped = self.lab.run("stop", job, timeout=min(60, remaining))
+                self.note(("stop", job, code, stopped.strip()[-120:]))
+            time.sleep(min(self.rng.uniform(0.2, 1.5), max(0, deadline - time.monotonic())))
+        state = self.state_of(talk)
         with self.lock:
-            last = self.outcomes[-1] if self.outcomes else None
-            self.undeleted.append((talk, self.state_of(talk), last))
+            self.undeleted.append((talk, state, last[-2000:]))
         return False
 
     def state_of(self, talk):
@@ -312,7 +360,10 @@ class Drill:
                 # of it runs, as a user would, its command is stopped and the
                 # deletion asked again until it goes.
                 words = self.rng.choice(["[[run: sleep 8]]", "[[slow: 3]]", "hello"])
-                speaking = threading.Thread(target=self.speak, args=(talk, words), daemon=True)
+                speaking = threading.Thread(target=self.guarded, args=(f"speaking to {talk}", self.speak, talk, words),
+                                            daemon=True)
+                with self.lock:
+                    self.speakers.append(speaking)
                 speaking.start()
                 time.sleep(self.rng.uniform(0.2, 4))
                 if self.delete_working(talk):
@@ -325,63 +376,129 @@ class Drill:
             if self.lab.restarting.is_set():
                 time.sleep(0.5)
                 continue
+            generation = self.lab.generation
             started = time.monotonic()
-            code, _ = self.lab.run("w", timeout=60)
+            code, out = self.lab.run("w", timeout=60)
             took = time.monotonic() - started
-            if not self.lab.restarting.is_set() and (code != 0 or took > ANSWERS_WITHIN):
+            if not self.lab.restarting.is_set() and self.lab.generation == generation:
                 with self.lock:
-                    self.slow_calls.append((round(took, 1), code))
+                    self.plain_calls += 1
+                    if code != 0 or took > ANSWERS_WITHIN:
+                        self.slow_calls.append((round(took, 1), code, out[-400:]))
             time.sleep(2)
 
     def chaos(self):
         while not self.stop.wait(self.rng.uniform(40, 80)):
             say("  ending the node and starting it again")
             self.lab.restart()
+            self.note(("restarted",))
+
+
+def present(path):
+    """Whether a path exists; an unreadable path is not evidence of absence."""
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def entries(directory, missing_ok=False):
+    try:
+        return list(directory.iterdir())
+    except FileNotFoundError:
+        if missing_ok:
+            return []
+        raise
 
 
 def settled(lab, talks):
     """Whether every conversation kept here is idle with no words on their way in."""
-    for talk in talks:
+    # An open command can fail after creating its conversation.
+    talks = set(talks) | {directory.name for directory in entries(lab.conversations())}
+    for talk in sorted(talks):
         directory = lab.conversations() / talk
-        now = directory / "now"
-        if now.exists():
-            state = json.loads(now.read_text(encoding="utf-8"))
-            if state.get("activity") == "busy" or state.get("turn"):
-                return False
-        inbox = directory / "inbox"
-        if inbox.exists() and any(path.suffix == ".json" for path in inbox.iterdir()):
+        state = json.loads((directory / "now").read_text(encoding="utf-8"))
+        if (not isinstance(state, dict) or state.get("activity") not in ("busy", "idle", "asleep")
+                or "turn" not in state or (state["turn"] is not None and not isinstance(state["turn"], str))):
+            raise ValueError(f"{talk}: invalid activity record: {state!r}")
+        if state["activity"] == "busy" or state.get("turn"):
+            return False
+        if any(path.suffix == ".json" for path in entries(directory / "inbox", missing_ok=True)):
             return False
     return True
 
 
 def thread_of(lab, talk):
-    """The Codex thread a conversation's record names, if it can be read."""
-    try:
-        return json.loads((lab.conversations() / talk / "about").read_text(encoding="utf-8")).get("session")
-    except (OSError, ValueError):
-        return None
+    """The recorded Codex thread, before anything of the conversation can be deleted."""
+    about = json.loads((lab.conversations() / talk / "about").read_text(encoding="utf-8"))
+    if not isinstance(about, dict) or not isinstance(about.get("session"), str) or not about["session"]:
+        raise ValueError(f"{talk}: no Codex thread in its identity record")
+    if about.get("home") is not None and Path(about["home"]).resolve() != lab.codex_home.resolve():
+        raise ValueError(f"{talk}: Codex home differs from this lab's: {about['home']}")
+    return about["session"]
 
 
-def left_of(lab, talk, thread):
-    """What is still here of a deleted conversation: its directory, its listing, its Codex thread."""
+def thread_files(lab, thread):
+    """Find a thread's rollouts in both Codex stores, surfacing every scan error."""
+    if not thread:
+        raise ValueError("cannot check a Codex thread whose identity was not captured")
+    pending = [path for path in entries(lab.codex_home) if path.name in ("sessions", "archived_sessions")]
+    found = []
+    while pending:
+        for path in entries(pending.pop(), missing_ok=True):
+            try:
+                metadata = path.lstat()
+            except FileNotFoundError:
+                # Another worker can finish deleting an unrelated thread during this scan.
+                continue
+            if stat.S_ISDIR(metadata.st_mode):
+                pending.append(path)
+            elif thread in path.name:
+                found.append(path)
+    return found
+
+
+def listed(lab, timeout=120):
+    code, out = lab.run("data", "list", "--json", timeout=timeout)
+    if code != 0:
+        raise RuntimeError(f"data list failed ({code}): {out[-2000:]}")
+    space = json.loads(out)
+    if not isinstance(space, dict) or not isinstance(space.get("conversations"), list):
+        raise ValueError(f"data list has no conversation list: {out[-2000:]}")
+    names = []
+    for conversation in space["conversations"]:
+        if not isinstance(conversation, dict) or not isinstance(conversation.get("name"), str):
+            raise ValueError(f"data list has an invalid conversation: {conversation!r}")
+        names.append(conversation["name"])
+    return names
+
+
+def left_of(lab, talk, thread, timeout=120):
+    """What is still here of a deleted conversation: its directory, its listing, its Codex rollouts."""
     left = []
-    if (lab.conversations() / talk).exists():
+    if present(lab.conversations() / talk):
         left.append("its directory")
-    code, out = lab.run("data", "list", "--json", timeout=120)
-    if code == 0 and f'"{talk}"' in out:
+    if talk in listed(lab, timeout=timeout):
         left.append("its listing")
-    if thread and any((lab.codex_home / "sessions").rglob(f"*{thread}*")):
-        left.append(f"its Codex thread {thread}")
+    files = thread_files(lab, thread)
+    if files:
+        left.append(f"its Codex thread {thread}: {files[:5]}")
     return left
 
 
 def halfway(lab):
     """The conversations whose deletion was begun and is not done: their intent is still kept."""
+    return sorted(directory.name for directory in entries(lab.conversations())
+                  if present(directory / "deleting") or present(directory / "host-deleted"))
+
+
+def check_empty(label, probe):
     try:
-        return sorted(directory.name for directory in lab.conversations().iterdir()
-                      if (directory / "deleting").exists() or (directory / "host-deleted").exists())
-    except OSError:
-        return []
+        left = probe()
+    except Exception as error:  # noqa: BLE001 - an observation failure is a failed check
+        return check(label, False, f"{type(error).__name__}: {error}")
+    return check(label, not left, left)
 
 
 def main():
@@ -407,23 +524,32 @@ def main():
         if not check("the Codex login gets the World's tools", code == 0, out):
             return 1
         drill = Drill(lab, rng)
-        threads = [threading.Thread(target=drill.worker, args=(index,), daemon=True) for index in range(args.workers)]
-        threads.append(threading.Thread(target=drill.probe, daemon=True))
+        threads = [threading.Thread(target=drill.guarded, args=(f"worker {index}", drill.worker, index), daemon=True)
+                   for index in range(args.workers)]
+        threads.append(threading.Thread(target=drill.guarded, args=("plain-call probe", drill.probe), daemon=True))
         if args.restarts:
-            threads.append(threading.Thread(target=drill.chaos, daemon=True))
+            threads.append(threading.Thread(target=drill.guarded, args=("node restarter", drill.chaos), daemon=True))
         for thread in threads:
             thread.start()
-        time.sleep(args.minutes * 60)
+        drill.stop.wait(args.minutes * 60)
         drill.stop.set()
         for thread in threads:
             thread.join(timeout=360)
-        check("every worker came back", all(not thread.is_alive() for thread in threads))
+        if not check("every worker came back", all(not thread.is_alive() for thread in threads)):
+            return 1
+        for thread in drill.speakers:
+            thread.join(timeout=300)
+        if not check("every concurrent speaker came back", all(not thread.is_alive() for thread in drill.speakers)):
+            return 1
+        check("no background thread failed", not drill.background_failures, drill.background_failures)
         say(f"  {len(drill.outcomes)} things done, {len(drill.deleted)} conversations deleted, {len(mock.requests)} model requests")
-        opened = sum(1 for outcome in drill.outcomes if outcome[0] == "said")
+        opened = sum(1 for outcome in drill.outcomes if outcome[0] == "opened")
         failures = [outcome for outcome in drill.outcomes if outcome[0] == "open failed"]
         check("conversations opened and were spoken to", opened > 0 and len(mock.requests) > 0, failures[:3])
         check("every deletion went through within two minutes of stopping what its conversation ran",
-              not drill.undeleted, drill.undeleted[:5])
+              bool(drill.deleted) and not drill.undeleted, drill.undeleted[:5] or "no deletion completed")
+        if args.restarts:
+            check("the node was restarted", any(outcome[0] == "restarted" for outcome in drill.outcomes))
         unsaid = [outcome for outcome in drill.outcomes if outcome[0] == "said" and outcome[3] != 0]
         reasons = {}
         for outcome in unsaid:
@@ -435,29 +561,38 @@ def main():
         say(f"  {len(deletes)} deletions tried, {len(drill.deleted)} done")
         for outcome in deletes[:6]:
             say(f"    {outcome}")
-        check("the node answered a plain call within a few seconds whenever it was up", not drill.slow_calls,
-              drill.slow_calls[:20])
+        check("sampled plain calls answered within a few seconds outside restarts",
+              drill.plain_calls > 0 and not drill.slow_calls, drill.slow_calls[:20] or "no plain call observed")
         try:
             until("every conversation settles", lambda: settled(lab, list(drill.talks)), limit=180, every=2)
             check("every conversation settled: none working, no words on their way in", True)
         except RuntimeError as error:
             check("every conversation settled: none working, no words on their way in", False, error)
+        try:
+            until("no deletion is left halfway", lambda: not halfway(lab), limit=RECOVERY_OBSERVATION, every=2)
+            check("deletions a stopped node began were finished: no deletion is left halfway", True)
+        except RuntimeError as error:
+            check("deletions a stopped node began were finished: no deletion is left halfway", False, error)
         for talk in list(drill.deleted):
-            left = left_of(lab, talk, drill.threads.get(talk))
-            check(f"{talk}, deleted, left nothing behind", not left, left)
-        begun = halfway(lab)
-        check("no deletion is left halfway", not begun, begun[:10])
-        bad = [line for line in lab.node_log().splitlines() if BAD_LINES.search(line)]
-        check("the node's log has no lock out of order, nothing stuck, no circle", not bad, "\n".join(bad[:30]))
-        unfinished = [line for line in lab.node_log().splitlines() if "finishing the deletion of" in line]
-        check("deletions a stopped node began were finished", not unfinished, "\n".join(unfinished[:10]))
+            check_empty(f"{talk}, deleted, left no directory, listing or Codex rollout",
+                        lambda: left_of(lab, talk, drill.threads[talk]))
+        check_empty("the node's log has no lock out of order, nothing stuck, no circle",
+                    lambda: [line for line in lab.node_log().splitlines() if BAD_LINES.search(line)])
+    except Exception as error:  # noqa: BLE001 - keep the lab and a failed verdict on setup or inspection errors
+        check("the drill completed", False, f"{type(error).__name__}: {error}")
     finally:
-        lab.end_all()
-        mock.close()
-        failed = not all(RESULTS)
-        if failed:
+        try:
+            lab.end_all()
+        except Exception as error:  # noqa: BLE001 - cleanup failure must not erase the verdict
+            check("the lab's processes could be ended", False, error)
+        finally:
+            mock.close()
+        if not all(RESULTS):
             say("--- node.log (last 80 lines) ---")
-            say("\n".join(lab.node_log().splitlines()[-80:]))
+            try:
+                say("\n".join(lab.node_log().splitlines()[-80:]))
+            except OSError as error:
+                say(f"could not read node.log: {error}")
         say(f"lab: {root}")
     return 0 if all(RESULTS) else 1
 
