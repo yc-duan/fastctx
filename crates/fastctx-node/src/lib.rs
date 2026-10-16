@@ -603,9 +603,8 @@ pub async fn run_prepared(
     codex::replay(&node).await;
     let mut unfinished: std::collections::BTreeSet<_> = unfinished.into_iter().collect();
     unfinished.extend(node.residents.unfinished());
-    // Before Claude's sessions are looked at: a deletion a stopped node left
-    // halfway leaves directories of sessions that are no one's now.
-    data::delete::finish_interrupted(&node).await;
+    // The sessions of a conversation a stopped node left deleted halfway
+    // are passed over: what they report is no one's now.
     claude::replay(&node).await;
     claude::recover_startups(&node);
     claude::start(&node).context("writing the World's Claude Code plugin")?;
@@ -621,6 +620,17 @@ pub async fn run_prepared(
     node.effects_changed.notify_waiters();
     composer::resume(&node);
     speech::recover(&node).await;
+    // Deletions a stopped node left halfway finish in the background, once
+    // the rest is recovered: each holds its conversation's gates, so nothing
+    // new starts for it, while the node serves everything else; one that
+    // cannot finish now is tried again in a while (`world-concurrency.md`,
+    // 收尾从不挡节点起来).
+    let finishing = node.clone();
+    tokio::spawn(async move {
+        while data::delete::finish_interrupted(&finishing).await > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+        }
+    });
     on_delivery::resume(&node);
     retention::start(&node).context("starting command artifact retention")?;
     updates::start(&node);

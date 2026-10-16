@@ -222,8 +222,10 @@ pub(crate) async fn delete_one(node: &Arc<Node>, name: &str) -> Result<u64, Stop
 
 /// Finishes the deletions a node stopped halfway: what is left of a
 /// conversation whose tombstone is written goes, with the directories of
-/// its Claude sessions, which may no longer say whose they are.
-pub(crate) async fn finish_interrupted(node: &Arc<Node>) {
+/// its Claude sessions, which may no longer say whose they are. Says how
+/// many could not be finished now.
+pub(crate) async fn finish_interrupted(node: &Arc<Node>) -> usize {
+    let mut unfinished = 0;
     // Deletions that began outside and stopped before their tombstone.
     let begun: Vec<String> = match node.world.kept() {
         Ok(kept) => kept
@@ -243,7 +245,10 @@ pub(crate) async fn finish_interrupted(node: &Arc<Node>) {
         match delete_one(node, &name).await {
             Ok(_) => node.log.line(format_args!("finished deleting {name}, which a stopped node began")),
             Err(Stop::Nothing(_)) => {}
-            Err(stop) => node.log.line(format_args!("finishing the deletion of {name}: {}", stop.why())),
+            Err(stop) => {
+                unfinished += 1;
+                node.log.line(format_args!("finishing the deletion of {name}: {}", stop.why()));
+            }
         }
     }
     let root = fastctx_hosts::claude::exchange::sessions(node.world.path());
@@ -262,6 +267,7 @@ pub(crate) async fn finish_interrupted(node: &Arc<Node>) {
         match delete_one(node, id.as_str()).await {
             Ok(_) | Err(Stop::Nothing(_)) => {}
             Err(stop) => {
+                unfinished += 1;
                 node.log.line(format_args!("finishing the deletion of {id}: {}", stop.why()));
                 continue;
             }
@@ -272,10 +278,17 @@ pub(crate) async fn finish_interrupted(node: &Arc<Node>) {
         .await;
         match removed {
             Ok(Ok(())) => node.log.line(format_args!("finished deleting {id}, which a stopped node left halfway")),
-            Ok(Err(error)) => node.log.line(format_args!("finishing the deletion of {id}: {error}")),
-            Err(error) => node.log.line(format_args!("finishing the deletion of {id}: {error}")),
+            Ok(Err(error)) => {
+                unfinished += 1;
+                node.log.line(format_args!("finishing the deletion of {id}: {error}"));
+            }
+            Err(error) => {
+                unfinished += 1;
+                node.log.line(format_args!("finishing the deletion of {id}: {error}"));
+            }
         }
     }
+    unfinished
 }
 
 async fn measure(node: &Arc<Node>, name: &str) -> Result<Measured, Stop> {
