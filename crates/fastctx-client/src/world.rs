@@ -800,8 +800,8 @@ impl World {
     }
 
     /// A verified hub-hosted installation line that registers a Linux
-    /// server as a machine of `account`. Missing releases fail before the
-    /// node makes a token.
+    /// server, or a Windows computer when `windows`, as a machine of
+    /// `account`. Missing releases fail before the node makes a token.
     #[allow(clippy::too_many_arguments)]
     pub async fn server_command(
         &self,
@@ -812,8 +812,9 @@ impl World {
         managed: bool,
         uses: Option<u32>,
         label: Option<String>,
+        windows: bool,
     ) -> Result<String, Error> {
-        match self.ask(Call::ServerCommand { hub, account, name, expires, managed, uses, label }).await? {
+        match self.ask(Call::ServerCommand { hub, account, name, expires, managed, uses, label, windows }).await? {
             Reply::ServerInvitation { command } => Ok(command),
             other => Err(unexpected(other)),
         }

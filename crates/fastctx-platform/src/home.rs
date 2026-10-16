@@ -2,7 +2,7 @@
 
 use std::ffi::OsString;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Whether this program was built by the release scripts, which set
 /// `FASTCTX_RELEASE` (`scripts/kernel.mjs`, `gui/scripts/release.mjs`,
@@ -28,6 +28,13 @@ pub fn fastctx_root() -> io::Result<PathBuf> {
         Some(root) => absolute("FASTCTX_HOME", root),
         None => Ok(user_home()?.join(if RELEASED { ".fastctx" } else { ".fastctx-dev" })),
     }
+}
+
+/// Where fastctx keeps everything for the user whose home is `home`, as
+/// `fastctx_root` finds it for that user when `FASTCTX_HOME` is unset: for
+/// an account another one installs a World for.
+pub fn fastctx_root_in(home: &Path) -> PathBuf {
+    home.join(if RELEASED { ".fastctx" } else { ".fastctx-dev" })
 }
 
 /// The user's home directory. On Unix it is `HOME`, as every program there

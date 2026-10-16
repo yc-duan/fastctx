@@ -571,9 +571,9 @@ pub enum Call {
     RenameHere {
         to: MachineName,
     },
-    /// An enrollment token that registers a Linux server as a machine of
-    /// `account`, and the line that installs it there with this node's
-    /// version.
+    /// An enrollment token that registers a Linux server, or a Windows
+    /// computer, as a machine of `account`, and the line that installs it
+    /// there with this node's version.
     ServerCommand {
         hub: Option<crate::HubName>,
         account: crate::AccountName,
@@ -590,6 +590,9 @@ pub enum Call {
         /// What the code in it is called; for several servers, their group.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         label: Option<String>,
+        /// The line is for Windows computers, not Linux servers.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        windows: bool,
     },
     /// Moving the hub named `hub`, or the one hub, as `account`, its super
     /// administrator (`crate::hub_move`).

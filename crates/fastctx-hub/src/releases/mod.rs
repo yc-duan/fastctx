@@ -9,7 +9,9 @@ use std::fs::File;
 use std::io::{self, Read as _};
 use std::path::Path;
 
-use fastctx_types::kernel::{AARCH64_ARCHIVE, KernelRelease, SUMS, X86_64_ARCHIVE, release_version};
+use fastctx_types::kernel::{
+    AARCH64_ARCHIVE, KernelRelease, SUMS, WINDOWS_X86_64_ARCHIVE, X86_64_ARCHIVE, release_version,
+};
 use sha2::{Digest as _, Sha256};
 
 pub(crate) struct Releases {
@@ -80,7 +82,10 @@ impl Releases {
         if !allow_partial && (x86_64_sha256.is_none() || aarch64_sha256.is_none()) {
             return Err("this caller requires both x86_64 and aarch64 archives".into());
         }
-        Ok(KernelRelease { version: version.to_owned(), x86_64_sha256, aarch64_sha256 })
+        // The Windows archive is never required: placed here, or else held
+        // among the update packages (`crate::updates::windows_digest`).
+        let windows_x86_64_sha256 = self.archive(version, WINDOWS_X86_64_ARCHIVE, sums.as_deref())?;
+        Ok(KernelRelease { version: version.to_owned(), x86_64_sha256, aarch64_sha256, windows_x86_64_sha256 })
     }
 
     fn archive(&self, version: &str, name: &str, sums: Option<&str>) -> Result<Option<String>, String> {

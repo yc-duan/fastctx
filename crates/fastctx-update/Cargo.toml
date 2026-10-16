@@ -13,7 +13,8 @@ base64 = "0.22"
 fastctx-net = { path = "../fastctx-net" }
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
-# The command-line program comes as a .tar.gz with its notices.
+# The command-line program comes as a .tar.gz with its notices, on Windows
+# as a .zip.
 flate2 = "1"
 jiff.workspace = true
 # The minisign signatures every package carries, as the official updater checks them.
@@ -22,4 +23,5 @@ semver = "1"
 serde.workspace = true
 serde_json.workspace = true
 tar = "0.4"
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt", "sync", "time"] }

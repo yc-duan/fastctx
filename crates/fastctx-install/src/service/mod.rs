@@ -43,6 +43,8 @@ pub use local_network::{install_local_network, keep_local_network};
 #[cfg(windows)]
 #[path = "windows_guardian/mod.rs"]
 mod windows;
+#[cfg(windows)]
+pub use windows::managed;
 
 /// A node owns a fastctx root; a hub owns its hub directory.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

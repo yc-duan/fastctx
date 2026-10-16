@@ -1,14 +1,20 @@
-//! The public Linux release contract shared by the hub and its callers.
+//! The public release contract of the command-line program, shared by the
+//! hub and its callers: the archives a one-line installation downloads.
 
 use serde::{Deserialize, Serialize};
 
 pub const RELEASE_PATH: &str = "/fastctx/releases";
 pub const X86_64_ARCHIVE: &str = "fastctx-x86_64-unknown-linux-gnu.tar.gz";
 pub const AARCH64_ARCHIVE: &str = "fastctx-aarch64-unknown-linux-gnu.tar.gz";
+/// Windows on x64; Windows on Arm runs it as it runs any x64 program.
+pub const WINDOWS_X86_64_ARCHIVE: &str = "fastctx-x86_64-pc-windows-msvc.zip";
+/// What the update packages call that archive (`crate::update`).
+pub const WINDOWS_X86_64_PACKAGE: &str = "fastctx-x86_64-pc-windows-msvc";
 pub const SUMS: &str = "SHA256SUMS";
 
-/// Available Linux archive digests. Missing digests are sent only to callers
-/// that explicitly accept a partial release.
+/// Available archive digests. Missing Linux digests are sent only to callers
+/// that explicitly accept a partial release; the Windows one is sent when the
+/// hub has that archive, which an earlier hub never says.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct KernelRelease {
     pub version: String,
@@ -16,6 +22,8 @@ pub struct KernelRelease {
     pub x86_64_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aarch64_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub windows_x86_64_sha256: Option<String>,
 }
 
 /// A released version: `major.minor.patch`, or a test release of it with a

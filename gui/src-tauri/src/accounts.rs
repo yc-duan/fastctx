@@ -172,9 +172,10 @@ pub(crate) async fn rename_here(shell: tauri::State<'_, Shell>, name: String) ->
     shell.world().rename_here(to).await.map_err(|error| error.to_string())
 }
 
-/// The line that installs fastctx on a Linux server and registers it as a
-/// machine of `account`, valid until `expires`: for `uses` servers, one when
-/// none, any number at zero, its code called `label`.
+/// The line that installs fastctx on a Linux server, or on a Windows computer
+/// when `windows`, and registers it as a machine of `account`, valid until
+/// `expires`: for `uses` of them, one when none, any number at zero, its code
+/// called `label`.
 #[fastctx_gui_command::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn server_command(
@@ -186,6 +187,7 @@ pub(crate) async fn server_command(
     managed: Option<bool>,
     uses: Option<u32>,
     label: Option<String>,
+    windows: Option<bool>,
 ) -> Result<String, String> {
     shell
         .world()
@@ -197,6 +199,7 @@ pub(crate) async fn server_command(
             managed.unwrap_or(false),
             uses,
             label,
+            windows.unwrap_or(false),
         )
         .await
         .map_err(|error| error.to_string())

@@ -1,4 +1,5 @@
-//! A short POSIX bootstrap command for a machine invited by a GUI.
+//! A short bootstrap command for a machine invited by a GUI: a POSIX line for
+//! a Linux server, a cmd line for a Windows computer.
 //! The invitation is opaque here; only the installed kernel interprets it.
 
 use anyhow::{bail, ensure};
@@ -81,6 +82,59 @@ pub fn command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> anyh
         architecture(kernel.aarch64_sha256, kernel.version),
         quote(&directory),
         quote(invitation),
+    ))
+}
+
+/// Builds the one line for a Windows computer, pasted into an
+/// administrator's Command Prompt or PowerShell: in a working folder of its
+/// own, it downloads the x64 archive (which Windows on Arm runs too), checks
+/// its SHA-256, unpacks it and runs `fastctx server install`. It needs only
+/// what Windows 10 1803 and later carry: cmd, curl, certutil and tar. Its one
+/// pair of quotes is cmd's own, so either prompt passes it on as it is.
+pub fn windows_command(
+    version: &str,
+    sha256: Option<&str>,
+    invitation: &str,
+    source: Source<'_>,
+) -> anyhow::Result<String> {
+    ensure!(
+        fastctx_types::kernel::release_version(version),
+        "the release version must be major.minor.patch, with at most a pre-release"
+    );
+    // A word cmd reads as it is: nothing it expands, joins or redirects by.
+    ensure!(
+        !invitation.is_empty() && invitation.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'),
+        "a Windows line carries an invitation of letters, digits and hyphens only"
+    );
+    let sha256 = sha256.ok_or_else(|| {
+        anyhow::anyhow!(
+            "fastctx {version} for Windows is not on this hub yet; it is being brought in, so make the line again in a few minutes, or place {} with {} on the hub",
+            fastctx_types::kernel::WINDOWS_X86_64_ARCHIVE,
+            fastctx_types::kernel::SUMS
+        )
+    })?;
+    digest(sha256)?;
+    let (directory, pin) = match source {
+        Source::GitHub => (format!("https://github.com/yc-duan/fastctx/releases/download/v{version}"), String::new()),
+        Source::Hub { release_directory, spki_sha256 } => {
+            ensure!(release_directory.starts_with("https://"), "a hub release directory must use HTTPS");
+            ensure!(
+                release_directory.bytes().all(|byte| byte.is_ascii_alphanumeric() || b":/.-[]_".contains(&byte)),
+                "invalid hub release directory for a Windows line"
+            );
+            let bytes = STANDARD.decode(spki_sha256)?;
+            ensure!(
+                bytes.len() == 32 && STANDARD.encode(&bytes) == spki_sha256,
+                "SPKI SHA-256 must be a canonical base64-encoded 32-byte digest"
+            );
+            (release_directory.trim_end_matches('/').to_owned(), format!(" -k --pinnedpubkey sha256//{spki_sha256}"))
+        }
+    };
+    let folder = r"%ProgramData%\fastctx-install";
+    Ok(format!(
+        "cmd /c \"rd /s /q {folder} 2>nul & mkdir {folder} && cd /d {folder} && curl.exe --proto =https -fL --retry 5 --retry-delay 3 -o fastctx.zip{pin} {directory}/{archive} && certutil -hashfile fastctx.zip SHA256 | findstr /i /x {hash} >nul && tar -xf fastctx.zip && fastctx.exe server install {invitation}\"",
+        archive = fastctx_types::kernel::WINDOWS_X86_64_ARCHIVE,
+        hash = sha256.to_ascii_lowercase(),
     ))
 }
 

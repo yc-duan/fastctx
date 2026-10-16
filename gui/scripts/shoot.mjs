@@ -45,7 +45,7 @@ const widths = [
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? only.split(",") : ["welcome", "create", "created", "home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "share", "lend", "relays", "palette", "login", "account", "admin", "home-2", "machines-2", "new-2", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-plan", "asks-claude-form", "stop", "new-codex", "new-attach", "new-lent-2", "new-pick-2", "find", "attach", "queue", "rewind", "usage", "service", "remove-keep", "remove-erase", "remove-run", "mention", "decision", "log", "written", "page", "page-ask", "page-versions"];
+const sessions = only ? only.split(",") : ["welcome", "create", "created", "home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "invite-windows", "invite-windows-made", "share", "lend", "relays", "palette", "login", "account", "admin", "home-2", "machines-2", "new-2", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-plan", "asks-claude-form", "stop", "new-codex", "new-attach", "new-lent-2", "new-pick-2", "find", "attach", "queue", "rewind", "usage", "service", "remove-keep", "remove-erase", "remove-run", "mention", "decision", "log", "written", "page", "page-ask", "page-versions"];
 const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
@@ -141,7 +141,7 @@ for (const session of sessions) {
       const loaded = once("Page.loadEventFired");
       const two = session.endsWith("-2");
       const named = two ? session.slice(0, -2) : session;
-      const shown = named === "stop" ? "claude" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "lend" || named === "relays" ? "machines" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named;
+      const shown = named.startsWith("invite-") ? "invite" : named === "stop" ? "claude" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "lend" || named === "relays" ? "machines" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named;
       // `welcome` and `create` are a computer's first open, in no World yet.
       const alone = named === "welcome" || named === "create" || named === "created";
       const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "");
@@ -285,6 +285,11 @@ for (const session of sessions) {
           awaitPromise: true,
           expression: "new Promise(r => setTimeout(r, 500)).then(() => { const set = (n, v) => { const f = document.querySelector(`[name=${n}]`); f.value = v; }; set('world', 'home'); set('account', 'me'); set('password', 'Quiet-harbor-7'); set('again', 'Quiet-harbor-7'); document.querySelector('.create-form').requestSubmit(); return new Promise(r => setTimeout(r, 1800)); })",
         });
+      }
+      // A managed Windows computer's line: the way chosen, then the line made.
+      if (session === "invite-windows" || session === "invite-windows-made") {
+        const made = session === "invite-windows-made" ? "return new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('.token-sheet .sheet-go')?.click()).then(() => new Promise(r => setTimeout(r, 600)));" : "";
+        await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise(r => setTimeout(r, 200)).then(() => { document.querySelector('.token-sheet [data-face=managed]')?.click(); return new Promise(r => setTimeout(r, 200)); }).then(() => { document.querySelector('.token-sheet [data-managed-way=windows]')?.click(); ${made} })` });
       }
       if (session === "invite") {
         await send("Runtime.evaluate", { awaitPromise: true, expression: "new Promise(r => setTimeout(r, 200)).then(() => document.querySelector('.token-sheet .sheet-go')?.click())" });

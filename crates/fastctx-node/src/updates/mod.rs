@@ -523,8 +523,9 @@ async fn kernel(node: &Arc<Node>, version: Option<&str>, asker: Option<Asker>) -
     }
     let target = fastctx_update::kernel::target();
     if offer.package(&target).is_none() {
-        // Releases carry command-line programs for Linux alone: elsewhere the
-        // World program comes with the application (`world-versions.md`).
+        // Releases carry command-line programs for Linux and Windows on x64:
+        // elsewhere the World program comes with the application
+        // (`world-versions.md`).
         let elsewhere =
             if cfg!(target_os = "linux") { "" } else { "; on this system it comes with the Fastctx application" };
         return Err(format!(
@@ -581,10 +582,19 @@ async fn take(node: &Arc<Node>, offer: &Manifest, target: &str, asker: Option<As
     }
     let root = node.root.clone();
     let unpacking = dir(node).join("unpacked");
+    // The release's signature goes beside the program, as an interface's
+    // carried one has it: the Windows guardian takes a program in by it,
+    // with no administrator (`world-upgrade.md`).
+    let signature = offer.package(target).map(|package| package.signature.clone());
     tokio::task::spawn_blocking(move || -> Result<(), String> {
         let _ = std::fs::remove_dir_all(&unpacking);
         std::fs::create_dir_all(&unpacking).map_err(|error| error.to_string())?;
         let program = fastctx_update::kernel::unpack(&archive, &unpacking)?;
+        if let Some(signature) = signature {
+            let mut beside = program.clone().into_os_string();
+            beside.push(".sig");
+            std::fs::write(&beside, signature).map_err(|error| format!("keeping the program's signature: {error}"))?;
+        }
         let staged = stage(&root, &program);
         let _ = std::fs::remove_dir_all(&unpacking);
         staged

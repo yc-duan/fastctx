@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use fastctx_net::wire;
-use fastctx_types::kernel::{AARCH64_ARCHIVE, RELEASE_PATH, SUMS, X86_64_ARCHIVE, release_version};
+use fastctx_types::kernel::{AARCH64_ARCHIVE, RELEASE_PATH, SUMS, WINDOWS_X86_64_ARCHIVE, X86_64_ARCHIVE, release_version};
 use futures_util::TryStreamExt as _;
 use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt as _, Full, StreamBody};
@@ -141,14 +141,24 @@ async fn respond(
     if !release_version(version) {
         return Ok(text(StatusCode::NOT_FOUND, "Not found"));
     }
-    let gzip = match name {
-        SUMS => false,
-        X86_64_ARCHIVE | AARCH64_ARCHIVE => true,
+    let kind = match name {
+        SUMS => "text/plain; charset=utf-8",
+        X86_64_ARCHIVE | AARCH64_ARCHIVE => "application/gzip",
+        WINDOWS_X86_64_ARCHIVE => "application/zip",
         _ => return Ok(text(StatusCode::NOT_FOUND, "Not found")),
     };
     let (version, name) = (version.to_owned(), name.to_owned());
     let releases = hub.releases.clone();
-    let opened = tokio::task::spawn_blocking(move || releases.file(&version, &name)).await;
+    // The Windows archive placed by hand comes first, as Linux ones do; else
+    // the one held among the update packages, checked when it came.
+    let held = (name == WINDOWS_X86_64_ARCHIVE).then(|| crate::updates::windows_archive(&hub, &version)).flatten();
+    let opened = tokio::task::spawn_blocking(move || match releases.file(&version, &name) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound && held.is_some() => {
+            std::fs::File::open(held.expect("checked above"))
+        }
+        opened => opened,
+    })
+    .await;
     let file = match opened {
         Ok(Ok(file)) => file,
         Ok(Err(error)) => {
@@ -194,7 +204,7 @@ async fn respond(
     };
     let mut response = Response::builder()
         .status(status)
-        .header("Content-Type", if gzip { "application/gzip" } else { "text/plain; charset=utf-8" })
+        .header("Content-Type", kind)
         .header("Content-Length", sending)
         .header("Accept-Ranges", "bytes");
     if status == StatusCode::PARTIAL_CONTENT {

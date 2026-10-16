@@ -44,6 +44,8 @@ export interface CodeAsked {
   name: string | null;
   /** The computers that use it become managed machines. */
   managed: boolean;
+  /** A Windows computer comes in by the line, not by the code pasted. */
+  windows?: boolean;
 }
 
 export interface TokensOptions {
@@ -117,6 +119,9 @@ export class Tokens {
   private span: Span = 1;
   /** Whether a Linux host comes in as a managed machine. */
   private managed = false;
+  /** How a managed machine comes in: the code pasted into its Fastctx, or
+   *  the line run on a Windows computer that has none. */
+  private managedWay: "code" | "windows" = "code";
   /** Codes revoked here, gone from the list before the network says so. */
   private readonly revoked = new Set<string>();
   /** Whether a way in was given this time the sheet was open. */
@@ -149,6 +154,12 @@ export class Tokens {
           this.managed = !this.managed;
           managed.setAttribute("aria-checked", String(this.managed));
         }
+        return;
+      }
+      const managedWay = target.closest<HTMLButtonElement>("[data-managed-way]");
+      if (managedWay) {
+        this.managedWay = managedWay.dataset.managedWay as "code" | "windows";
+        this.draw();
         return;
       }
       const way = target.closest<HTMLButtonElement>("[data-server-way]");
@@ -292,7 +303,11 @@ export class Tokens {
         ? `<div class="segmented device-ways" role="radiogroup" aria-label="${escape(words.kinds.server)}">${(["ssh", "line"] as const)
             .map((way) => `<button class="segment${way === this.way ? " chosen" : ""}" type="button" role="radio" aria-checked="${way === this.way}" data-server-way="${way}">${escape(words.ways[way])}</button>`)
             .join("")}</div>`
-        : "";
+        : this.face === "managed"
+          ? `<div class="segmented device-ways" role="radiogroup" aria-label="${escape(words.kinds.managed)}">${(["code", "windows"] as const)
+              .map((way) => `<button class="segment${way === this.managedWay ? " chosen" : ""}" type="button" role="radio" aria-checked="${way === this.managedWay}" data-managed-way="${way}">${escape(words.managedWays[way])}</button>`)
+              .join("")}</div>`
+          : "";
     // A Linux host may come in as a managed machine, over SSH or by its line.
     const managed =
       this.face === "server"
@@ -318,9 +333,9 @@ export class Tokens {
           <input name="label" maxlength="40" autocomplete="off" spellcheck="false" placeholder="${escape(words.labelHint)}"></label>
         ${this.usesField()}
         ${this.spanField()}
-        <div class="device-middle">${this.storyboard("managed")}</div>
+        <div class="device-middle">${this.storyboard(this.managedWay === "windows" ? "windows" : "managed")}</div>
         <p class="sheet-note" role="alert" hidden></p>
-        <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(words.makeManaged)}</button></footer>`;
+        <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(this.managedWay === "windows" ? words.makeCommand : words.makeManaged)}</button></footer>`;
     } else {
       const server = this.face === "server";
       body = `
@@ -454,18 +469,19 @@ export class Tokens {
     go.disabled = true;
     go.textContent = words.making;
     try {
-      const asked: CodeAsked = { uses, expires, label: codeName, name, managed: face === "managed" || (face === "server" && this.managed) };
-      const made = face === "server" ? await this.options.server(login, asked) : await this.options.code(login, face === "phone" ? "phone" : "computer", asked);
+      const windows = face === "managed" && this.managedWay === "windows";
+      const asked: CodeAsked = { uses, expires, label: codeName, name, managed: face === "managed" || (face === "server" && this.managed), ...(windows ? { windows } : {}) };
+      const made = face === "server" || windows ? await this.options.server(login, asked) : await this.options.code(login, face === "phone" ? "phone" : "computer", asked);
       this.given = true;
       const valid = this.validSaid(expires, uses);
       // The code to scan stands where the drawings stood; a line to copy
       // and a managed machine's code are read from the top.
       sheet.body.querySelector(".device-body")!.innerHTML = `${
-        face === "managed"
+        face === "managed" && !windows
           ? this.managedCode(made, codeName, valid)
           : face === "phone"
             ? `<div class="device-middle"><div class="invitation"><div class="qr-frame">${qrSvg(made, words.qr)}</div><p class="field-hint">${escape(valid)}</p></div></div>`
-            : `<div class="device-made"><p class="field-label">${escape(words.command)}</p><div class="code-box"><p class="invite-code mono">${escape(made)}</p>${this.copy(made)}</div><p class="field-hint">${escape(valid)}</p></div>`
+            : `<div class="device-made"><p class="field-label">${escape(windows ? words.windowsCommand : words.command)}</p><div class="code-box"><p class="invite-code mono">${escape(made)}</p>${this.copy(made)}</div><p class="field-hint">${escape(valid)}</p></div>`
       }
         <footer class="sheet-foot"><span></span><button class="text-button make-again" type="button">${escape(words.again)}</button></footer>`;
       // The codes made, with this one, are beside the title.
@@ -497,9 +513,9 @@ export class Tokens {
 
   /** How the device comes in by what this sheet gives it, in three small
    *  drawings and a line each. */
-  private storyboard(way: "computer" | "phone" | "line" | "managed"): string {
+  private storyboard(way: "computer" | "phone" | "line" | "windows" | "managed"): string {
     const { words } = this.options;
-    const art = way === "managed" ? managedSteps() : joinSteps(way);
+    const art = way === "managed" ? managedSteps() : joinSteps(way === "windows" ? "line" : way);
     const steps = way === "managed" ? words.steps : words.joinSteps[way];
     return `<ol class="managed-steps">${steps.map((step, index) => `<li class="managed-step">${art[index]}<span><b>${index + 1}</b>${escape(step)}</span></li>`).join("")}</ol>`;
   }

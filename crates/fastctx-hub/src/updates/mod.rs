@@ -8,8 +8,8 @@
 //! machines' reports only what each ran is kept past its session, in
 //! memory: each tells the rest again.
 
-mod obtain;
 mod cleanup;
+mod obtain;
 mod transfer;
 
 use std::collections::HashMap;
@@ -26,10 +26,46 @@ use fastctx_types::update::{Asked, Channel, Due, Held, Looked, Manifest, Network
 use fastctx_update::Cache;
 use tokio::sync::oneshot;
 
-pub(crate) use obtain::{ask, unfetched};
+pub(crate) use obtain::{ask, bring_in, unfetched};
 pub(crate) use transfer::{deliver, serve};
 
 use crate::{Hub, Out};
+
+/// The Windows archive of `version` as the hub holds it among its update
+/// packages, checked when it was brought in: where it is.
+pub(crate) fn windows_archive(hub: &Hub, version: &str) -> Option<std::path::PathBuf> {
+    let cache = hub.updates.lock().expect("never poisoned").cache.clone();
+    cache.get(version, fastctx_types::kernel::WINDOWS_X86_64_PACKAGE)
+}
+
+/// The SHA-256 of the Windows archive of `version` the hub holds, for the
+/// line that downloads it; none while it does not, and it is brought in
+/// then, so that a line made a few minutes later finds it.
+pub(crate) async fn windows_digest(hub: &Arc<Hub>, version: &str) -> Option<String> {
+    let Some(path) = windows_archive(hub, version) else {
+        bring_in(hub, version.to_owned(), fastctx_types::kernel::WINDOWS_X86_64_PACKAGE.to_owned());
+        return None;
+    };
+    let hashed = tokio::task::spawn_blocking(move || -> std::io::Result<String> {
+        use sha2::Digest as _;
+        let mut file = std::fs::File::open(path)?;
+        let mut hash = sha2::Sha256::new();
+        std::io::copy(&mut file, &mut hash)?;
+        Ok(format!("{:x}", hash.finalize()))
+    })
+    .await;
+    match hashed {
+        Ok(Ok(digest)) => Some(digest),
+        Ok(Err(error)) => {
+            hub.log.line(format_args!("reading the Windows archive of {version}: {error}"));
+            None
+        }
+        Err(error) => {
+            hub.log.line(format_args!("reading the Windows archive of {version}: {error}"));
+            None
+        }
+    }
+}
 
 /// How often the hub looks on GitHub itself.
 const LOOK_EVERY: Duration = Duration::from_secs(6 * 3600);

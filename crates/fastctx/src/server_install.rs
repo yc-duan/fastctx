@@ -1,4 +1,5 @@
-//! Installing a verified release as a Linux machine of an account.
+//! Installing a verified release as a machine of an account, on a Linux
+//! server or a Windows computer, from the line made for it.
 //! Each operation is repeatable: atomic placement, the node's enrollment,
 //! and the system service manager's registration. No enrollment receipt is needed.
 
@@ -7,6 +8,7 @@ use std::path::Path;
 #[cfg(target_os = "linux")]
 use std::process::{Command, Stdio};
 
+#[cfg(not(windows))]
 use anyhow::bail;
 #[cfg(target_os = "linux")]
 use anyhow::{Context as _, ensure};
@@ -25,17 +27,103 @@ pub enum ServerCommand {
         code: String,
         #[arg(long)]
         name: Option<MachineName>,
+        /// On Windows, the part done as the account SYSTEM installs for:
+        /// placing its program and joining, the service being SYSTEM's.
+        #[arg(long, hide = true)]
+        account_part: bool,
     },
 }
 
 pub fn run(command: ServerCommand) -> anyhow::Result<()> {
-    let ServerCommand::Install { code, name } = command;
+    let ServerCommand::Install { code, name, account_part } = command;
     #[cfg(target_os = "linux")]
-    return install(code, name);
-    #[cfg(not(target_os = "linux"))]
     {
-        let _ = (code, name);
-        bail!("server installation requires Linux with systemd 249 or newer")
+        let _ = account_part;
+        install(code, name)
+    }
+    #[cfg(windows)]
+    return windows::install(code, name, account_part);
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        let _ = (code, name, account_part);
+        bail!("server installation requires Linux with systemd 249 or newer, or Windows")
+    }
+}
+
+/// A Windows computer comes in by its line (`world-network.md`, 受管机器):
+/// run by a person in an administrator's prompt, its World is that person's
+/// account's, as on Linux; run by SYSTEM, as a remote management tool runs
+/// it, it is an account's of its own (`fastctx_install::service::managed`).
+#[cfg(windows)]
+mod windows {
+    use std::ffi::OsString;
+
+    use anyhow::{Context as _, bail, ensure};
+    use fastctx_install::service::{Kind, Service, managed};
+    use fastctx_types::{Call, MachineName, Reply};
+
+    const SYSTEM: &str = "S-1-5-18";
+
+    pub fn install(code: String, name: Option<MachineName>, account_part: bool) -> anyhow::Result<()> {
+        if fastctx_platform::current_user_sid()? == SYSTEM {
+            ensure!(!account_part, "the account's part is never SYSTEM's");
+            return as_system(code, name);
+        }
+        let root = fastctx_platform::fastctx_root()?;
+        // The program is placed for this account and runs from there; one
+        // already there and newer stays (`world-upgrade.md`, 版本只往前走).
+        if let Some(result) = crate::program::deliver(&root)? {
+            return result;
+        }
+        // The same code again, from this computer, finds it logged in already.
+        match crate::ask::call(Call::LoginWithToken { token: code, name })?.0 {
+            Reply::LoggedIn { hub, name, account } => {
+                println!("This machine is {name}, a machine of {account} on the hub {hub}")
+            }
+            other => bail!("the node answered something else: {other:?}"),
+        }
+        if account_part {
+            // SYSTEM installs the service; once it has, the node this
+            // account started hands the World to the service's.
+            if fastctx_types::layout::WorldDir::under(&root).node_service().exists() {
+                crate::ask::call(Call::HandOver)?;
+            }
+            return Ok(());
+        }
+        crate::keep::keep_connected()
+    }
+
+    /// As SYSTEM: the account is made or found, what belongs to its World
+    /// is done as it, and the service that keeps its node is installed for
+    /// it; then the node the account started hands the World over.
+    fn as_system(code: String, name: Option<MachineName>) -> anyhow::Result<()> {
+        let sid = managed::account()?;
+        println!("Fastctx lives in the account {} on this computer", managed::ACCOUNT);
+        let program = std::env::current_exe()?;
+        let mut args: Vec<OsString> = vec!["server".into(), "install".into(), code.into()];
+        if let Some(name) = name {
+            args.extend(["--name".into(), name.as_str().into()]);
+        }
+        args.push("--account-part".into());
+        let (code, home) = managed::run(&sid, &program, &args)?;
+        ensure!(
+            code == 0,
+            "placing and joining as {} failed (exit {code}); run the line again to resume",
+            managed::ACCOUNT
+        );
+        let root = fastctx_platform::fastctx_root_in(&home);
+        let installed = fastctx_install::renewal::installed(&root);
+        let mut service = Service::new(Kind::Node, &installed, &root);
+        service.user_sid = Some(sid.clone());
+        service.install().context("installing the boot service")?;
+        println!("The system service is enabled at boot and keeps this World running without a login.");
+        // The second time only hands over; the code finds it logged in.
+        let (code, _) = managed::run(&sid, &installed, &args)?;
+        ensure!(
+            code == 0,
+            "handing the World to its service failed (exit {code}); it hands over when the computer starts again"
+        );
+        Ok(())
     }
 }
 

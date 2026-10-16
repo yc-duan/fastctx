@@ -6,6 +6,7 @@ mod adopt;
 mod child;
 mod config;
 mod firewall;
+pub mod managed;
 mod host;
 mod owner;
 mod policy;

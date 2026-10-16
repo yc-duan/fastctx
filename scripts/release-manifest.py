@@ -32,7 +32,11 @@ def packages(version):
     }
 
 
-KERNELS = ['x86_64-unknown-linux-gnu', 'aarch64-unknown-linux-gnu']
+# The command-line programs a release carries, with their archives' kind:
+# Linux servers' and Windows computers' lines download them (Windows on Arm
+# runs the x64 one), and machines without the application update by them.
+KERNELS = [('x86_64-unknown-linux-gnu', 'tar.gz'), ('aarch64-unknown-linux-gnu', 'tar.gz'),
+           ('x86_64-pc-windows-msvc', 'zip')]
 
 
 def signature(path, version):
@@ -61,8 +65,8 @@ def main():
             platforms[target] = entry
     fastctx = {}
     sums = []
-    for triple in KERNELS:
-        path = args.assets/f'fastctx-{triple}.tar.gz'
+    for triple, kind in KERNELS:
+        path = args.assets/f'fastctx-{triple}.{kind}'
         if not path.is_file():
             raise ValueError(f'the release has no {path.name}')
         fastctx[triple] = {'url': f'{base}/{path.name}', 'signature': signature(path, args.version),

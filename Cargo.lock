@@ -1633,6 +1633,7 @@ dependencies = [
  "serde_json",
  "tar",
  "tokio",
+ "zip",
 ]
 
 [[package]]

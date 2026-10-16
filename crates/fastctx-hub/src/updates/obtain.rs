@@ -45,6 +45,16 @@ pub(crate) fn ask(hub: &Arc<Hub>, id: u64, version: String, target: String, out:
     });
 }
 
+/// Brings the package `target` of `version` in with nobody waiting for it:
+/// whoever asks next finds it held, or joins the bringing in still going.
+pub(crate) fn bring_in(hub: &Arc<Hub>, version: String, target: String) {
+    let hub = hub.clone();
+    tokio::spawn(async move {
+        // Why it could not is in the hub's log already.
+        let _ = obtain(&hub, Held { version, target }).await;
+    });
+}
+
 /// `name` could not fetch the package of the request `id`.
 pub(crate) fn unfetched(hub: &Hub, name: &MachineName, id: u64, why: String) {
     let mut updates = hub.updates.lock().expect("never poisoned");

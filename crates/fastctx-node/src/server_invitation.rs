@@ -1,12 +1,12 @@
-//! The one line that installs fastctx on a Linux server and registers it as
-//! a machine of an account (`world-network.md`, 登录与入网), or as a managed
+//! The one line that installs fastctx on a Linux server, or a Windows
+//! computer, and registers it as a machine of an account (`world-network.md`, 登录与入网), or as a managed
 //! machine of it (受管机器): a token is made only after the offered archives
 //! and bootstrap inputs have been checked. One line may serve several
 //! servers, each taking its own name, as its code says.
 
 use std::sync::Arc;
 
-use fastctx_install::server::{Kernel, Source, certificate_pin, command as line};
+use fastctx_install::server::{Kernel, Source, certificate_pin, command as linux_line, windows_command};
 use fastctx_types::accounts::{AccountChange, MemberKind, TokenWay};
 use fastctx_types::ipc::Failure;
 use fastctx_types::{AccountName, HubName, MachineName};
@@ -23,6 +23,8 @@ pub struct Code {
     pub managed: bool,
     pub uses: Option<u32>,
     pub label: Option<String>,
+    /// For Windows computers rather than Linux servers.
+    pub windows: bool,
 }
 
 pub async fn command(
@@ -31,7 +33,7 @@ pub async fn command(
     account: &AccountName,
     code: Code,
 ) -> Result<String, Failure> {
-    let Code { name, expires, managed, uses, label } = code;
+    let Code { name, expires, managed, uses, label, windows } = code;
     let link = crate::world::hub_link(node, hub)?;
     let version = env!("CARGO_PKG_VERSION");
     let (release, certificate) = link.kernel_release(version).await.map_err(Failure::new)?;
@@ -51,8 +53,15 @@ pub async fn command(
         aarch64_sha256: release.aarch64_sha256.as_deref(),
     };
     let source = Source::Hub { release_directory: &directory, spki_sha256: &pin };
+    let line = |token: &str| {
+        if windows {
+            windows_command(version, release.windows_x86_64_sha256.as_deref(), token, source)
+        } else {
+            linux_line(kernel, token, source)
+        }
+    };
     // Every input of the line is checked before a token is spent on it.
-    line(kernel, "token", source).map_err(|error| Failure::new(error.to_string()))?;
+    line("FX5TOKEN").map_err(|error| Failure::new(error.to_string()))?;
     let change = AccountChange::Token {
         register: true,
         name,
@@ -68,5 +77,5 @@ pub async fn command(
         .await
         .map_err(Failure::new)?
         .ok_or_else(|| Failure::new("the hub made no token"))?;
-    line(kernel, &token, source).map_err(|error| Failure::new(error.to_string()))
+    line(&token).map_err(|error| Failure::new(error.to_string()))
 }

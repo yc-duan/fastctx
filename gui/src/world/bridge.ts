@@ -531,8 +531,8 @@ export function accountChange(hub: string | null, account: string, change: Accou
 /** The line that installs fastctx on Linux servers and registers each as a
  *  machine of `account`, valid until `expires`: for `uses` of them, one when
  *  null, any number at zero; its code called `label`. */
-export function serverCommand(hub: string | null, account: string, name: string | null, expires: string, managed = false, uses: number | null = null, label: string | null = null): Promise<string> {
-  return invoke("server_command", { hubName: hub, accountName: account, name, expires, managed, uses, label });
+export function serverCommand(hub: string | null, account: string, name: string | null, expires: string, managed = false, uses: number | null = null, label: string | null = null, windows = false): Promise<string> {
+  return invoke("server_command", { hubName: hub, accountName: account, name, expires, managed, uses, label, windows });
 }
 
 /** Turns asking for colleagues on for a conversation, with the machine

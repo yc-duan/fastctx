@@ -467,7 +467,7 @@ jobs:
           if-no-files-found: ignore
 
   sign-kernels:
-    needs: kernel-linux
+    needs: [kernel-linux, kernel-windows]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
@@ -475,25 +475,33 @@ jobs:
           pattern: archive-*-unknown-linux-gnu
           merge-multiple: true
           path: kernels
+      # Windows computers installed by their line take their updates as the
+      # Linux ones do; Windows on Arm runs the x64 program.
+      - uses: actions/download-artifact@v4
+        with:
+          name: archive-x86_64-pc-windows-msvc
+          path: kernels
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - uses: actions/checkout@v4
         with:
           path: source
-      - name: Sign the Linux command-line programs
+      - name: Sign the Linux and Windows command-line programs
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("source/Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
-          for archive in kernels/fastctx-*-unknown-linux-gnu.tar.gz; do
+          for archive in kernels/fastctx-*-unknown-linux-gnu.tar.gz kernels/fastctx-x86_64-pc-windows-msvc.zip; do
             npx --yes "$TAURI_CLI" signer sign --app-version "$version" "$archive"
           done
       - uses: actions/upload-artifact@v4
         with:
           name: signed-kernels
-          path: kernels/fastctx-*-unknown-linux-gnu.tar.gz*
+          path: |
+            kernels/fastctx-*-unknown-linux-gnu.tar.gz*
+            kernels/fastctx-x86_64-pc-windows-msvc.zip*
           if-no-files-found: error
 
   gui-windows:
@@ -1073,6 +1081,7 @@ jobs:
             assets/latest.json
             assets/SHA256SUMS
             assets/fastctx-*-unknown-linux-gnu.tar.gz
+            assets/fastctx-x86_64-pc-windows-msvc.zip
             assets/*-setup.exe
             assets/*.dmg
             assets/*.app.tar.gz

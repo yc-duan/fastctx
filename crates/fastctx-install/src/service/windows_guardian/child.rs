@@ -244,7 +244,7 @@ impl Drop for Child {
     }
 }
 
-fn private_pipe(user: Option<&str>) -> anyhow::Result<(PipeReader, PipeWriter)> {
+pub(super) fn private_pipe(user: Option<&str>) -> anyhow::Result<(PipeReader, PipeWriter)> {
     let user = user.map(|sid| format!("(A;;GRGW;;;{sid})")).unwrap_or_default();
     let descriptor = Descriptor::new(&format!("D:P(A;;GA;;;SY)(A;;GA;;;BA){user}S:(ML;;NW;;;ME)"))?;
     let (mut read, mut write) = (ptr::null_mut(), ptr::null_mut());
@@ -382,9 +382,9 @@ impl Drop for Impersonation {
     }
 }
 
-struct Attributes(Vec<usize>);
+pub(super) struct Attributes(Vec<usize>);
 impl Attributes {
-    fn new() -> anyhow::Result<Self> {
+    pub(super) fn new() -> anyhow::Result<Self> {
         let mut size = 0;
         unsafe {
             InitializeProcThreadAttributeList(ptr::null_mut(), 2, 0, &mut size);
@@ -395,10 +395,10 @@ impl Attributes {
         }
         Ok(Self(buffer))
     }
-    fn pointer(&mut self) -> LPPROC_THREAD_ATTRIBUTE_LIST {
+    pub(super) fn pointer(&mut self) -> LPPROC_THREAD_ATTRIBUTE_LIST {
         self.0.as_mut_ptr().cast()
     }
-    fn set<T>(&mut self, kind: usize, data: &[T]) -> anyhow::Result<()> {
+    pub(super) fn set<T>(&mut self, kind: usize, data: &[T]) -> anyhow::Result<()> {
         if unsafe {
             UpdateProcThreadAttribute(
                 self.pointer(),
@@ -424,7 +424,7 @@ impl Drop for Attributes {
     }
 }
 
-fn wide(value: &OsStr) -> anyhow::Result<Vec<u16>> {
+pub(super) fn wide(value: &OsStr) -> anyhow::Result<Vec<u16>> {
     let units: Vec<u16> = value.encode_wide().collect();
     if units.contains(&0) {
         bail!("a Windows argument cannot contain NUL");
@@ -432,7 +432,7 @@ fn wide(value: &OsStr) -> anyhow::Result<Vec<u16>> {
     Ok(units.into_iter().chain([0]).collect())
 }
 
-fn command_line(program: &OsStr, args: &[OsString]) -> anyhow::Result<Vec<u16>> {
+pub(super) fn command_line(program: &OsStr, args: &[OsString]) -> anyhow::Result<Vec<u16>> {
     let mut line = vec![u16::from(b'"')];
     let program = wide(program)?;
     if program.contains(&u16::from(b'"')) {

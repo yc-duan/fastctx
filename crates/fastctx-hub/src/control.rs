@@ -746,10 +746,16 @@ fn handle(
         Up::Ask { id, question: Question::KernelRelease { version, allow_partial } } => {
             let releases = hub.releases.clone();
             let out = out.clone();
+            let hub = hub.clone();
             tokio::spawn(async move {
                 let read = releases.clone();
                 let answer = match tokio::task::spawn_blocking(move || read.ready(&version, allow_partial)).await {
-                    Ok(Ok(release)) => Ok(Told::KernelRelease { release, certificate: releases.certificate.clone() }),
+                    Ok(Ok(mut release)) => {
+                        if release.windows_x86_64_sha256.is_none() {
+                            release.windows_x86_64_sha256 = crate::updates::windows_digest(&hub, &release.version).await;
+                        }
+                        Ok(Told::KernelRelease { release, certificate: releases.certificate.clone() })
+                    }
                     Ok(Err(reason)) => Err(reason),
                     Err(error) => Err(format!("reading the kernel release: {error}")),
                 };
