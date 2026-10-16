@@ -529,6 +529,11 @@ impl Store {
             .collect();
         let strays: Vec<MachineName> =
             self.letters.keys().filter(|name| self.book.directory.member(name).is_none()).cloned().collect();
+        let abandoned: std::collections::BTreeSet<String> = strays
+            .iter()
+            .filter_map(|name| self.letters.get(name))
+            .map(|entry| format!("{:016x}", entry.out_epoch))
+            .collect();
         for name in strays {
             self.letters.remove(&name);
             said.push(format!("forgot the letter records of {name}, no member of the hub"));
@@ -601,9 +606,18 @@ impl Store {
                     if numbering.starts_with('.') || numberings.contains(&numbering) {
                         continue;
                     }
-                    match self.set_aside(&entry.path(), &numbering) {
-                        Ok(()) => said.push(format!("set aside the letters numbered {numbering}, no member's")),
-                        Err(error) => said.push(format!("setting aside the letters numbered {numbering}: {error}")),
+                    if abandoned.contains(&numbering) {
+                        match self.set_aside(&entry.path(), &numbering) {
+                            Ok(()) => {
+                                said.push(format!("set aside the letters numbered {numbering}, its member removed"))
+                            }
+                            Err(error) => said.push(format!("setting aside the letters numbered {numbering}: {error}")),
+                        }
+                    } else {
+                        said.push(format!(
+                            "preserved {}: its numbering has no recorded owner; it may be an interrupted migration",
+                            entry.path().display()
+                        ));
                     }
                 }
             }
@@ -995,31 +1009,62 @@ fn rehouse(dir: &Path, directory: &Directory, letters: &mut BTreeMap<MachineName
     for member in &directory.members {
         let recorded =
             letters.keys().any(|kept| directory.member(kept).is_some_and(|recorded| recorded.key == member.key));
-        if !recorded && std::fs::exists(member.name.entry_in(&outbox)?)? {
-            letters.insert(member.name.clone(), Letters::fresh(read_taken(dir, &member.name)?)?);
-            changed = true;
+        if !recorded {
+            let mut found = false;
+            for name in std::iter::once(&member.name).chain(&member.was) {
+                found |= std::fs::exists(name.entry_in(&outbox)?)?;
+            }
+            if found {
+                letters.insert(member.name.clone(), Letters::fresh(read_taken(dir, &member.name)?)?);
+                changed = true;
+            }
         }
     }
+    if changed {
+        // A moved directory must already have a durable owner on the next start.
+        publish(&dir.join("letters.json"), &json(letters)?, Permissions::Private)?;
+    }
     for (name, entry) in letters.iter() {
-        let now = directory.member(name).map(|member| &member.name).filter(|now| *now != name);
-        for name in std::iter::once(name).chain(now) {
+        let names: std::collections::BTreeSet<&MachineName> = std::iter::once(name)
+            .chain(
+                directory.member(name).into_iter().flat_map(|member| std::iter::once(&member.name).chain(&member.was)),
+            )
+            .collect();
+        for name in names {
             let old = name.entry_in(&outbox)?;
             if !std::fs::exists(&old)? {
                 continue;
             }
             let new = box_path(dir, entry.out_epoch);
-            ensure_private_dir(&dir.join(BOXES))?;
-            if !std::fs::exists(&new)? {
-                std::fs::rename(&old, &new)?;
-                continue;
-            }
+            ensure_private_dir(&new)?;
             for (seq, path) in numbered_in(&old)? {
                 let to = new.join(format!("{seq:020}"));
-                if !std::fs::exists(&to)? {
-                    std::fs::rename(&path, &to)?;
+                let bytes = std::fs::read(&path)?;
+                match std::fs::read(&to) {
+                    Ok(kept) if kept != bytes => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "migrating {}: {} holds different bytes under the same letter number; both were preserved",
+                                path.display(),
+                                to.display()
+                            ),
+                        ));
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
                 }
+                // Reconfirm an existing copy too: visibility after an interrupted
+                // publication does not prove the durability needed to delete its source.
+                publish(&to, &bytes, Permissions::Private)?;
+                std::fs::remove_file(&path)?;
             }
-            let _ = std::fs::remove_dir(&old);
+            // Only hidden temporary files may remain; startup cleanup owns those.
+            match std::fs::remove_dir(&old) {
+                Err(error) if error.kind() != io::ErrorKind::DirectoryNotEmpty => return Err(error),
+                _ => {}
+            }
         }
     }
     Ok(changed)
