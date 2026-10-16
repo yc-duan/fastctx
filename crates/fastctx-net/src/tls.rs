@@ -66,6 +66,46 @@ impl HubCertificate {
     }
 }
 
+impl HubCertificate {
+    /// What answers a downloader whose TLS stops at 1.2, as the curl and
+    /// .NET of Windows 10 and Windows Server do: TLS 1.2 with an ECDHE
+    /// exchange and an AEAD cipher, for the release files alone. Nothing
+    /// else is served over it (`fastctx-hub`'s releases); every session is
+    /// TLS 1.3.
+    pub fn download_config(&self) -> Result<Arc<rustls::ServerConfig>, String> {
+        let key = PrivateKeyDer::try_from(self.key.clone()).map_err(|error| format!("the hub's TLS key: {error}"))?;
+        let mut provider = rustls::crypto::ring::default_provider();
+        provider.cipher_suites.retain(|suite| {
+            matches!(
+                suite.suite(),
+                rustls::CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+                    | rustls::CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+                    | rustls::CipherSuite::TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
+            )
+        });
+        let mut config = rustls::ServerConfig::builder_with_provider(Arc::new(provider))
+            .with_protocol_versions(&[&rustls::version::TLS12])
+            .map_err(|error| format!("configuring TLS 1.2 for downloads: {error}"))?
+            .with_no_client_auth()
+            .with_single_cert(vec![CertificateDer::from(self.certificate.clone())], key)
+            .map_err(|error| format!("the hub's certificate: {error}"))?;
+        config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        Ok(Arc::new(config))
+    }
+}
+
+/// Whether a client's hello offers TLS 1.3: every Fastctx program's does.
+pub fn offers_tls13(hello: &rustls::server::ClientHello<'_>) -> bool {
+    hello.cipher_suites().iter().any(|suite| {
+        matches!(
+            suite,
+            rustls::CipherSuite::TLS13_AES_128_GCM_SHA256
+                | rustls::CipherSuite::TLS13_AES_256_GCM_SHA384
+                | rustls::CipherSuite::TLS13_CHACHA20_POLY1305_SHA256
+        )
+    })
+}
+
 /// A client configuration that accepts the one certificate `pin` names, or,
 /// without a pin, any certificate whose key signs the handshake.
 pub fn client_config(pin: Option<CertPin>) -> Arc<rustls::ClientConfig> {

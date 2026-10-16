@@ -156,7 +156,7 @@ pub(crate) async fn run(
         certificate: std::fs::read(Store::certificate_file(dir))?,
         key: std::fs::read(Store::key_file(dir))?,
     };
-    let tls = tokio_rustls::TlsAcceptor::from(certificate.server_config().map_err(anyhow::Error::msg)?);
+    let tls = crate::releases::http::Tls::of(&certificate).map_err(anyhow::Error::msg)?;
     let kept = crate::bind(kept, hub.listen).await?;
     log.line(format_args!(
         "hub {} ({}) {} stands by on {} to take over from {} by the move {}; certificate {}",

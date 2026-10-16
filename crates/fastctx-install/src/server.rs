@@ -91,6 +91,13 @@ pub fn command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> anyh
 /// its SHA-256, unpacks it and runs `fastctx server install`. It needs only
 /// what Windows 10 1803 and later carry: cmd, curl, certutil and tar. Its one
 /// pair of quotes is cmd's own, so either prompt passes it on as it is.
+///
+/// From a hub it does not pin the hub's key as the Linux line does: the curl
+/// of many Windows releases cannot (Windows Server 2022's answers that the
+/// option is not built in). The digest the line carries is what holds: an
+/// archive that is not the one meant is never unpacked, whoever served it,
+/// and the code goes nowhere until the program uses it over its own pinned
+/// connection.
 pub fn windows_command(
     version: &str,
     sha256: Option<&str>,
@@ -116,18 +123,13 @@ pub fn windows_command(
     digest(sha256)?;
     let (directory, pin) = match source {
         Source::GitHub => (format!("https://github.com/yc-duan/fastctx/releases/download/v{version}"), String::new()),
-        Source::Hub { release_directory, spki_sha256 } => {
+        Source::Hub { release_directory, .. } => {
             ensure!(release_directory.starts_with("https://"), "a hub release directory must use HTTPS");
             ensure!(
                 release_directory.bytes().all(|byte| byte.is_ascii_alphanumeric() || b":/.-[]_".contains(&byte)),
                 "invalid hub release directory for a Windows line"
             );
-            let bytes = STANDARD.decode(spki_sha256)?;
-            ensure!(
-                bytes.len() == 32 && STANDARD.encode(&bytes) == spki_sha256,
-                "SPKI SHA-256 must be a canonical base64-encoded 32-byte digest"
-            );
-            (release_directory.trim_end_matches('/').to_owned(), format!(" -k --pinnedpubkey sha256//{spki_sha256}"))
+            (release_directory.trim_end_matches('/').to_owned(), " -k".to_owned())
         }
     };
     let folder = r"%ProgramData%\fastctx-install";

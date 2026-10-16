@@ -522,7 +522,7 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         key: std::fs::read(Store::key_file(dir))?,
     };
     let secrets = HubSecrets::from_bytes(&std::fs::read(Store::secrets_file(dir))?).map_err(anyhow::Error::msg)?;
-    let tls = tokio_rustls::TlsAcceptor::from(certificate.server_config().map_err(anyhow::Error::msg)?);
+    let tls = releases::http::Tls::of(&certificate).map_err(anyhow::Error::msg)?;
     let ledgers = ledger::Ledgers::open(dir)?;
     let listen = store.hub.listen;
     let kept = bind(kept, listen).await?;
