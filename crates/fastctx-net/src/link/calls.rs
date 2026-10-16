@@ -317,6 +317,7 @@ impl Inner {
                     CallEvent::Status(CallStatus::Delivered) => {}
                     CallEvent::Status(CallStatus::Offline { last_seen }) => {
                         waiting.answered = true;
+                        let last_seen = last_seen.map(|at| self.local(at));
                         return Err(CallFailure::Offline { name: to.clone(), last_seen });
                     }
                     CallEvent::Status(CallStatus::NotMember) => {

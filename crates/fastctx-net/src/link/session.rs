@@ -451,7 +451,7 @@ async fn connected(
         heard = Instant::now();
         answered(inner, &mut checking);
         match frame {
-            Down::Pong { n } => {
+            Down::Pong { n, at } => {
                 if n > last_ping {
                     last_ping = n;
                     let mut pinged = pinged.lock().expect("never poisoned");
@@ -459,6 +459,9 @@ async fn connected(
                         let ms = super::line::millis(sent.elapsed());
                         *inner.hub_ms.lock().expect("never poisoned") = Some(ms);
                         inner.trip(ms);
+                        if let Some(at) = at {
+                            inner.heard_time(at, sent.elapsed());
+                        }
                     }
                     pinged.retain(|sent, _| *sent > n);
                 }

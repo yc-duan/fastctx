@@ -15,7 +15,8 @@ use crate::directory::{Presence, View};
 impl Inner {
     /// The hub told how `machine` is connected now, its `rev`th change of
     /// who is online.
-    pub(super) fn heard_presence(&self, machine: MachineName, presence: Presence, rev: u64) {
+    pub(super) fn heard_presence(&self, machine: MachineName, mut presence: Presence, rev: u64) {
+        presence.since = presence.since.map(|at| self.local(at));
         {
             let mut presences = self.presences.lock().expect("never poisoned");
             if presences.get(&machine).is_some_and(|(told, _)| *told >= rev) {

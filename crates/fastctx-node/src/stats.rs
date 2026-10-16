@@ -178,7 +178,9 @@ pub(crate) async fn here(node: &Arc<Node>, after: Option<Timestamp>) -> Result<M
             )
             .then((b.received + b.sent).cmp(&(a.received + a.sent)))
     });
-    let fresh = |when: Timestamp| after.is_none_or(|after| when > after);
+    // What came after the reading before; all of it again when that reading
+    // is later than now, this machine's clock having gone back since.
+    let fresh = |when: Timestamp| after.is_none_or(|after| when > after || after > at);
     let lines = node
         .links()
         .iter()

@@ -23,6 +23,11 @@ export interface Kept {
   last: MachineStats | null;
   /** When this device last heard from it, by this device's clock. */
   heard: number;
+  /** How many readings were asked for, and which of them was taken last:
+   *  the order they were asked in says which is newer, whatever the
+   *  machine's clock says. */
+  asked: number;
+  taken: number;
 }
 
 /** How far back the drawings of rates reach: sixty readings, two seconds
@@ -40,7 +45,7 @@ const kept = new Map<string, Kept>();
 export function keptOf(machine: string): Kept {
   let one = kept.get(machine);
   if (!one) {
-    one = { samples: [], last: null, heard: 0 };
+    one = { samples: [], last: null, heard: 0, asked: 0, taken: 0 };
     kept.set(machine, one);
   }
   return one;
@@ -48,16 +53,18 @@ export function keptOf(machine: string): Kept {
 
 const time = (at: string) => Date.parse(at);
 
-/** Takes a reading of `machine` in: its rates join the drawings, and, when
- *  it was asked for what came after the last one, its lines' round trips
- *  and changes join those kept. The reading kept is returned. */
-export function take(machine: string, stats: MachineStats, added: boolean): MachineStats {
+/** Takes in a reading of `machine`, the `asked`th asked for: its rates
+ *  join the drawings, and, when it was asked for what came after the last
+ *  one, its lines' round trips and changes join those kept. The reading kept
+ *  is returned. */
+export function take(machine: string, stats: MachineStats, added: boolean, asked: number): MachineStats {
   const one = keptOf(machine);
+  // One asked before the reading taken last crossed it on the way.
+  if (one.last && asked < one.taken) return one.last;
+  one.taken = asked;
   const at = time(stats.at);
   const lines = added && one.last ? stats.lines.map((line) => merged(line, one.last!.lines.find((before) => before.hub === line.hub), at)) : stats.lines.map((line) => merged(line, undefined, at));
   const whole: MachineStats = { ...stats, lines };
-  // A reading older than the last is one that crossed another on the way.
-  if (one.last && at <= time(one.last.at)) return one.last;
   one.last = whole;
   one.heard = Date.now();
   one.samples.push(sampleOf(whole, at));

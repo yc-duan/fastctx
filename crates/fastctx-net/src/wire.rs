@@ -338,6 +338,10 @@ pub enum Down {
     },
     Pong {
         n: u64,
+        /// The hub's time as it answered, by its clock (`crate::link`'s
+        /// clock); an older hub says none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at: Option<jiff::Timestamp>,
     },
     /// The hub holds this machine's letter `seq` and all before it; when
     /// the hub cannot deliver it, `refused` says why and the letter is gone.

@@ -21,6 +21,7 @@ mod answering;
 mod answers;
 mod calls;
 mod changes;
+mod clock;
 mod collab;
 mod direct;
 mod kernel;
@@ -276,6 +277,8 @@ pub(crate) struct Inner {
     /// What this session was last told of how each machine is connected,
     /// and when among the hub's changes (`presence`).
     presences: Mutex<HashMap<MachineName, (u64, crate::directory::Presence)>>,
+    /// The hub's clock beside this machine's (`clock`).
+    clock: Mutex<clock::Clock>,
     /// An application knows when its network changed or it returned to the foreground.
     reconnect: Notify,
     /// The session on now is to be asked at once whether the hub still
@@ -422,6 +425,7 @@ impl Link {
             outbox_changed: Notify::new(),
             taking: Arc::default(),
             presences: Mutex::new(HashMap::new()),
+            clock: Mutex::default(),
             reconnect: Notify::new(),
             check: Notify::new(),
             checks: watch::channel(0).0,
@@ -906,7 +910,9 @@ impl Inner {
         let Told::Directory { mut view } = self.ask(Question::Directory).await? else {
             return Err("the hub answered something else".to_string());
         };
-        // Who came or went since the hub made it.
+        // Its times by this machine's clock, and who came or went since the
+        // hub made it.
+        self.localize(&mut view);
         self.with_presences(&mut view);
         if view.hub != self.hub {
             return Err(format!("the hub gave a view of {}, not of {}", view.hub, self.hub));

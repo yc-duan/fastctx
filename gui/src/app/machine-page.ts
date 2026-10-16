@@ -334,8 +334,9 @@ export class MachinePage implements Page {
     const began = Date.now();
     const kept = keptOf(machine.name);
     try {
+      const asked = ++kept.asked;
       const stats = await this.options.stats(machine.here ? null : machine.name, kept.last?.at ?? null);
-      take(machine.name, stats, !!kept.last);
+      take(machine.name, stats, !!kept.last, asked);
       this.problem = null;
     } catch (error) {
       this.problem = detailOf(error);

@@ -572,7 +572,7 @@ fn handle(hub: &Arc<Hub>, name: &MachineName, generation: u64, out: &Outq, frame
     match frame {
         Up::Ping { n, paths } => {
             crate::assists::heard(hub);
-            reply(Down::Pong { n });
+            reply(Down::Pong { n, at: Some(Timestamp::now()) });
             if let Some(paths) = paths {
                 lines(hub, name, generation, paths);
             }
