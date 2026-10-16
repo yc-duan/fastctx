@@ -130,28 +130,65 @@ pub(crate) fn view_for(
         tokens,
         hub_addresses: crate::moving::addresses_for(store, me),
         hub_moves: crate::moving::requests::told(hub, store, me, whole),
+        presence: 0,
         directory,
     }
 }
 
-fn cut(all: &Directory, me: &MachineName, mine: &BTreeSet<AccountName>) -> Directory {
-    let users: BTreeSet<AccountName> = all
-        .accounts
+/// How `machine` is connected now as `reader`'s view has it, when the view
+/// has it at all: the same as `view_for` puts in the whole view.
+pub(crate) fn presence_for(
+    store: &Store,
+    online: &HashMap<MachineName, Presence>,
+    reader: &MachineName,
+    machine: &MachineName,
+) -> Option<fastctx_net::directory::Presence> {
+    let all = &store.book.directory;
+    let mine = all.acts_for(reader);
+    let whole = mine.iter().any(|account| all.logged_in(reader, account) && all.is_super(account));
+    let member = all.member(machine)?;
+    if !whole && !sees(all, reader, &mine, &users_of(all, reader), member) {
+        return None;
+    }
+    let others = member.name != *reader
+        && member.home.as_ref().is_some_and(|owner| all.is_visitor(owner) && !mine.contains(owner));
+    let reach = (whole && !others) || member.name == *reader;
+    let mut member = member.clone();
+    present(store, online, &mut member, reach);
+    if others {
+        member.through = None;
+        member.paths = None;
+    }
+    Some(fastctx_net::directory::Presence::of(&member))
+}
+
+/// The accounts that may use `me` or are logged in on it.
+fn users_of(all: &Directory, me: &MachineName) -> BTreeSet<AccountName> {
+    all.accounts
         .iter()
         .filter(|account| all.rights(&account.name, me).any() || all.logged_in(me, &account.name))
         .map(|account| account.name.clone())
-        .collect();
+        .collect()
+}
+
+/// Whether `me`, acting for `mine` and used by `users`, sees `member`.
+fn sees(
+    all: &Directory,
+    me: &MachineName,
+    mine: &BTreeSet<AccountName>,
+    users: &BTreeSet<AccountName>,
+    member: &Member,
+) -> bool {
+    member.name == *me
+        || mine.iter().any(|account| all.rights(account, &member.name).any() || member.logins.contains(account))
+        || users.iter().any(|account| all.may_act_for(account, &member.name))
+}
+
+fn cut(all: &Directory, me: &MachineName, mine: &BTreeSet<AccountName>) -> Directory {
+    let users = users_of(all, me);
     let accounts: BTreeSet<AccountName> = mine.union(&users).cloned().collect();
-    let members: Vec<Member> = all
-        .members
-        .iter()
-        .filter(|member| {
-            member.name == *me
-                || mine.iter().any(|account| all.rights(account, &member.name).any() || member.logins.contains(account))
-                || users.iter().any(|account| all.may_act_for(account, &member.name))
-        })
-        .cloned()
-        .collect();
+    let members: Vec<Member> =
+        all.members.iter().filter(|member| sees(all, me, mine, &users, member)).cloned().collect();
     let seen: BTreeSet<&MachineName> = members.iter().map(|member| &member.name).collect();
     // What concerns this member: given to the accounts it sees, of itself,
     // or of a machine one of its accounts owns.

@@ -83,6 +83,44 @@ pub struct Member {
     pub paths: Option<Paths>,
 }
 
+/// How a member is connected, as the hub sees it now, as one member's view
+/// has it (`Member::online` and what goes with it): told as it changes to a
+/// member whose session reads it (`crate::wire::Down::Presence`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Presence {
+    pub online: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub through: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reach: Option<Reach>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paths: Option<Paths>,
+}
+
+impl Presence {
+    /// `member`'s, as its view has it.
+    pub fn of(member: &Member) -> Self {
+        Self {
+            online: member.online,
+            since: member.since,
+            through: member.through.clone(),
+            reach: member.reach.clone(),
+            paths: member.paths.clone(),
+        }
+    }
+
+    /// Puts it in `member`.
+    pub fn apply(&self, member: &mut Member) {
+        member.online = self.online;
+        member.since = self.since;
+        member.through = self.through.clone();
+        member.reach = self.reach.clone();
+        member.paths = self.paths.clone();
+    }
+}
+
 impl Member {
     pub fn is_machine(&self) -> bool {
         self.home.is_some()
@@ -644,8 +682,17 @@ pub struct View {
     /// its own.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hub_moves: Vec<fastctx_types::hub_move::HubMove>,
+    /// How many times who is online changed on the hub before it made this
+    /// view: a change told after it (`crate::wire::Down::Presence`) counts
+    /// past this. An older hub gives none.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub presence: u64,
     #[serde(flatten)]
     pub directory: Directory,
+}
+
+fn is_zero(count: &u64) -> bool {
+    *count == 0
 }
 
 impl View {
@@ -674,6 +721,7 @@ impl View {
             tokens: Vec::new(),
             hub_addresses: Vec::new(),
             hub_moves: Vec::new(),
+            presence: 0,
             directory: Directory::default(),
         }
     }

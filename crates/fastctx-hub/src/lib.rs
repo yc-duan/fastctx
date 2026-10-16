@@ -237,6 +237,11 @@ pub(crate) struct Hub {
     /// Told when every member is to look at the directory again
     /// (`tell_directory`).
     directory_changed: Arc<tokio::sync::Notify>,
+    /// Told when who is online changed, for the members whose sessions do
+    /// not read that as it changes (`tell_directory`).
+    presence_changed: Arc<tokio::sync::Notify>,
+    /// How many times who is online changed (`Hub::present`).
+    presence: AtomicU64,
 }
 
 /// A member's open control connection.
@@ -263,6 +268,8 @@ pub(crate) struct Session {
     versions: bool,
     /// Whether it reads that a call it answers is over for its caller.
     cancels: bool,
+    /// Whether it reads who is online as it changes (`Down::Presence`).
+    presence: bool,
 }
 
 pub(crate) enum Out {
@@ -320,8 +327,19 @@ impl Hub {
 
     /// `name`'s view of the directory now.
     fn view_for(&self, name: &MachineName) -> View {
-        let presence: HashMap<MachineName, views::Presence> = self
-            .sessions()
+        // Counted before who is online is read: a change after that is told
+        // past the view, and told again if the view holds it already.
+        let rev = self.presence.load(Ordering::SeqCst);
+        let presence = self.online();
+        let trial = self.trial_of(name);
+        let mut view = views::view_for(self, &self.store(), &presence, name, trial);
+        view.presence = rev;
+        view
+    }
+
+    /// Who is connected, and how, as the hub sees it now.
+    fn online(&self) -> HashMap<MachineName, views::Presence> {
+        self.sessions()
             .iter()
             .map(|(name, session)| {
                 let seen = session.through.is_none().then(|| session.peer.ip());
@@ -333,9 +351,7 @@ impl Hub {
                 };
                 (name.clone(), presence)
             })
-            .collect();
-        let trial = self.trial_of(name);
-        views::view_for(self, &self.store(), &presence, name, trial)
+            .collect()
     }
 
     /// Resolves once `name`'s session ends, at once when it has none.
@@ -346,11 +362,40 @@ impl Hub {
         }
     }
 
-    /// Who is connected, or how they connect, changed: every member is told
-    /// to look again.
-    fn presence_changed(&self) {
-        self.directory_changed.notify_one();
-        afoot::settle(self);
+    /// Whether `name` is connected, or how, changed: a member whose session
+    /// reads that is told how it is now, as it may see it; the others look
+    /// at the whole directory again. Nothing of who may do what changed, so
+    /// no call or transfer is cut; a session just come is told what is
+    /// afoot.
+    fn present(&self, name: &MachineName) {
+        let rev = self.presence.fetch_add(1, Ordering::SeqCst) + 1;
+        let online = self.online();
+        let readers: Vec<(MachineName, outq::Outq, bool)> = self
+            .sessions()
+            .iter()
+            .map(|(reader, session)| (reader.clone(), session.out.clone(), session.presence))
+            .collect();
+        let mut older = false;
+        {
+            let store = self.store();
+            for (reader, out, reads) in readers {
+                if !reads {
+                    older = true;
+                } else if reader != *name
+                    && let Some(presence) = views::presence_for(&store, &online, &reader, name)
+                {
+                    let _ = out.send(Out::Frame(Down::Presence { machine: name.clone(), presence, rev }));
+                }
+            }
+        }
+        if older {
+            self.presence_changed.notify_one();
+        }
+        self.machine_log_changed.notify_one();
+        self.assists_changed.notify_one();
+        moving::follow::settle(self);
+        forget::prune(self);
+        afoot::came(self);
     }
 
     /// The directory changed, or who is online did: every member is told to
@@ -371,16 +416,29 @@ impl Hub {
 /// before it tells them again.
 const DIRECTORY_SPACING: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// Tells every member to look at the directory again whenever it changed, at
-/// most once each `DIRECTORY_SPACING`: a machine that keeps coming and going
-/// does not have every member read it all again each time
-/// (`specs/world-concurrency.md`, 机器之间). What lost its standing is cut at
-/// once, by `Hub::changed` itself.
-async fn tell_directory(hub: std::sync::Weak<Hub>, changed: Arc<tokio::sync::Notify>) {
+/// Tells every member to look at the directory again whenever it changed,
+/// and the members whose sessions do not read who is online as it changes
+/// whenever that did, at most once each `DIRECTORY_SPACING`: a machine that
+/// keeps coming and going does not have every member read it all again each
+/// time (`specs/world-concurrency.md`, 机器之间). What lost its standing is cut
+/// at once, by `Hub::changed` itself.
+async fn tell_directory(
+    hub: std::sync::Weak<Hub>,
+    changed: Arc<tokio::sync::Notify>,
+    present: Arc<tokio::sync::Notify>,
+) {
     loop {
-        changed.notified().await;
+        let every = tokio::select! {
+            () = changed.notified() => true,
+            () = present.notified() => false,
+        };
         let Some(hub) = hub.upgrade() else { return };
-        let outs: Vec<outq::Outq> = hub.sessions().values().map(|session| session.out.clone()).collect();
+        let outs: Vec<outq::Outq> = hub
+            .sessions()
+            .values()
+            .filter(|session| every || !session.presence)
+            .map(|session| session.out.clone())
+            .collect();
         drop(hub);
         for out in outs {
             let _ = out.send(Out::Frame(Down::DirectoryChanged));
@@ -503,9 +561,11 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         updates: Mutex::new(updates),
         dissolution: tokio::sync::Notify::new(),
         directory_changed: Arc::new(tokio::sync::Notify::new()),
+        presence_changed: Arc::new(tokio::sync::Notify::new()),
+        presence: AtomicU64::new(0),
     });
     tokio::spawn(updates::look_every(Arc::downgrade(&hub)));
-    tokio::spawn(tell_directory(Arc::downgrade(&hub), hub.directory_changed.clone()));
+    tokio::spawn(tell_directory(Arc::downgrade(&hub), hub.directory_changed.clone(), hub.presence_changed.clone()));
     let letters_changed = hub.store().letters_changed.clone();
     tokio::spawn(mailbox::keep_records(Arc::downgrade(&hub), letters_changed));
     if driven {
@@ -671,6 +731,8 @@ async fn intended(
                 due,
                 left,
                 cancels,
+                presence,
+                parts,
             },
         ) => {
             let said = control::Said {
@@ -687,6 +749,8 @@ async fn intended(
                 due,
                 left,
                 cancels,
+                presence,
+                parts,
             };
             control::session(hub, socket, peer, binding, key, proof, letters, said).await;
         }

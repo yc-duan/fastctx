@@ -86,6 +86,8 @@ async fn open_saying(
         dialed: Some(connection.address),
         any_names: true,
         cancels: false,
+        presence: false,
+        parts: false,
     };
     dial::send(
         &mut connection.socket,

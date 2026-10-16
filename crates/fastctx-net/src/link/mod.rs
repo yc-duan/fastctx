@@ -30,6 +30,7 @@ mod line;
 mod machine_log;
 mod moving;
 mod outgoing;
+mod presence;
 mod session;
 pub mod state;
 pub mod versions;
@@ -272,6 +273,9 @@ pub(crate) struct Inner {
     outbox_changed: Notify,
     /// Held while one of the hub's letters is taken (`session::take_letters`).
     taking: Arc<tokio::sync::Mutex<()>>,
+    /// What this session was last told of how each machine is connected,
+    /// and when among the hub's changes (`presence`).
+    presences: Mutex<HashMap<MachineName, (u64, crate::directory::Presence)>>,
     /// An application knows when its network changed or it returned to the foreground.
     reconnect: Notify,
     /// The session on now is to be asked at once whether the hub still
@@ -417,6 +421,7 @@ impl Link {
             then: Mutex::new(None),
             outbox_changed: Notify::new(),
             taking: Arc::default(),
+            presences: Mutex::new(HashMap::new()),
             reconnect: Notify::new(),
             check: Notify::new(),
             checks: watch::channel(0).0,
@@ -898,9 +903,11 @@ impl Inner {
 
     async fn refresh(&self) -> Result<(), String> {
         let _one = self.refreshing.lock().await;
-        let Told::Directory { view } = self.ask(Question::Directory).await? else {
+        let Told::Directory { mut view } = self.ask(Question::Directory).await? else {
             return Err("the hub answered something else".to_string());
         };
+        // Who came or went since the hub made it.
+        self.with_presences(&mut view);
         if view.hub != self.hub {
             return Err(format!("the hub gave a view of {}, not of {}", view.hub, self.hub));
         }

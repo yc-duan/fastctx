@@ -178,6 +178,14 @@ pub enum Intent {
         /// so, and end their session at a frame they cannot read.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         cancels: bool,
+        /// The member reads `Down::Presence`: who is online, as it changes,
+        /// in place of looking at the whole directory again.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        presence: bool,
+        /// The member reads `Down::Part`: an answer too large for one frame,
+        /// in parts. One that does not is told such an answer is too large.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        parts: bool,
     },
     /// A password login to `account`: the first OPAQUE message. The hub
     /// answers `Down::LoginResponse`; the device finishes with
@@ -405,7 +413,31 @@ pub enum Down {
     Cancelled {
         call: u64,
     },
+    /// How `machine` is connected now, as the member may see it, the
+    /// hub's `rev`th change in who is online (`crate::directory::View::presence`).
+    /// Sent only to a member whose session says it reads this.
+    Presence {
+        machine: MachineName,
+        presence: crate::directory::Presence,
+        rev: u64,
+    },
+    /// The part `index` of `total` of the answer to the question `id`, as
+    /// JSON text, when the whole is too large for one frame: put together,
+    /// they are what `Told` would carry. Sent only to a member whose session
+    /// says it reads this.
+    Part {
+        id: u64,
+        index: u32,
+        total: u32,
+        text: String,
+    },
 }
+
+/// The most bytes of text one `Down::Part` carries.
+pub const PART: usize = 192 * 1024;
+
+/// The most bytes an answer in parts may take in all.
+pub const PARTS_AT_MOST: usize = 16 * 1024 * 1024;
 
 /// A conversation the hub has its members delete what they keep of
 /// (`world-colleagues.md`, 用户在任何地方和居民说话).

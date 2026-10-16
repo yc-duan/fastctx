@@ -58,6 +58,9 @@ struct Shared {
     ready: Notify,
     /// Set once the session's writer is done.
     shut: watch::Sender<bool>,
+    /// Whether the member reads an answer too large for one frame in parts
+    /// (`fastctx_net::wire::Down::Part`).
+    parts: bool,
 }
 
 #[derive(Default)]
@@ -86,13 +89,16 @@ enum Notice {
     Ledger(TownId),
     Versions,
     Afoot(MachineName),
+    Presence(MachineName),
     Forget(u64),
     Fetch(u64),
 }
 
 impl Outq {
-    pub(crate) fn new() -> Self {
-        Self(Arc::new(Shared { state: Mutex::default(), ready: Notify::new(), shut: watch::channel(false).0 }))
+    /// A queue for a member that reads an answer too large for one frame in
+    /// parts, or not.
+    pub(crate) fn new(parts: bool) -> Self {
+        Self(Arc::new(Shared { state: Mutex::default(), ready: Notify::new(), shut: watch::channel(false).0, parts }))
     }
 
     /// Queues the welcome, which goes before anything else.
@@ -111,6 +117,11 @@ impl Outq {
             }
             match out {
                 Out::Frame(Down::Deliver { seq, message }) => state.letters.push_back(Down::Deliver { seq, message }),
+                Out::Frame(Down::Told { id, answer }) => {
+                    for frame in told(id, answer, self.0.parts) {
+                        state.urge(Out::Frame(frame))?;
+                    }
+                }
                 Out::Frame(frame) => match notice(&frame) {
                     Some(notice) => state.notify(notice, frame)?,
                     None => state.urge(Out::Frame(frame))?,
@@ -243,10 +254,51 @@ fn notice(frame: &Down) -> Option<Notice> {
         Down::LedgerChanged { town } => Notice::Ledger(town.clone()),
         Down::Versions { .. } => Notice::Versions,
         Down::Afoot { machine, .. } => Notice::Afoot(machine.clone()),
+        Down::Presence { machine, .. } => Notice::Presence(machine.clone()),
         Down::Forget { forgetting } => Notice::Forget(forgetting.id),
         Down::Fetch { fetch } => Notice::Fetch(fetch.id),
         _ => return None,
     })
+}
+
+/// The answer to the question `id` as the frames it goes in: one when it
+/// fits in a frame; else in parts for a member that reads them, and for one
+/// that does not, that the answer is too large for its release.
+fn told(id: u64, answer: Result<fastctx_net::wire::Told, String>, parts: bool) -> Vec<Down> {
+    let whole = Down::Told { id, answer };
+    if fastctx_net::wire::encode(&whole).len() <= fastctx_net::wire::MAX_CONTROL_FRAME {
+        return vec![whole];
+    }
+    let Down::Told { answer, .. } = whole else { unreachable!("made above") };
+    let text = serde_json::to_string(&answer).expect("answers serialize");
+    let too_large = |why: String| vec![Down::Told { id, answer: Err(why) }];
+    if !parts {
+        return too_large(format!(
+            "the hub's answer is {} bytes, more than this release of Fastctx reads in one frame; update it",
+            text.len()
+        ));
+    }
+    if text.len() > fastctx_net::wire::PARTS_AT_MOST {
+        return too_large(format!(
+            "the hub's answer is {} bytes, more than {} it sends in parts",
+            text.len(),
+            fastctx_net::wire::PARTS_AT_MOST
+        ));
+    }
+    // Cut at character boundaries, each part well within a frame.
+    let mut pieces = Vec::new();
+    let mut rest = text.as_str();
+    while !rest.is_empty() {
+        let mut end = rest.len().min(fastctx_net::wire::PART);
+        while !rest.is_char_boundary(end) {
+            end -= 1;
+        }
+        let (piece, after) = rest.split_at(end);
+        pieces.push(piece.to_string());
+        rest = after;
+    }
+    let total = u32::try_from(pieces.len()).expect("parts are few");
+    pieces.into_iter().enumerate().map(|(index, text)| Down::Part { id, index: index as u32, total, text }).collect()
 }
 
 /// A notice as the frames it goes in: what is afoot on a machine, merged

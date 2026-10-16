@@ -53,6 +53,10 @@ pub(crate) struct Said {
     pub left: Option<String>,
     /// Whether it reads that a call it answers is over for its caller.
     pub cancels: bool,
+    /// Whether it reads who is online as it changes.
+    pub presence: bool,
+    /// Whether it reads an answer too large for one frame in parts.
+    pub parts: bool,
 }
 
 /// What a call or a data connection was allowed under: `from` saying it to
@@ -115,7 +119,7 @@ pub(crate) async fn session(
         }
     };
     let generation = hub.next();
-    let out = Outq::new();
+    let out = Outq::new(said.parts);
     if let Err(reason) = open(&hub, &name, generation, out.clone(), letters, peer, said) {
         hub.log.line(format_args!("{peer}: the session of {name} could not open: {reason}"));
         refuse(&mut socket, reason).await;
@@ -133,7 +137,7 @@ pub(crate) async fn session(
         None => hub.log.line(format_args!("{name} connected from {peer}")),
     }
     // Whoever sees it sees it online now.
-    hub.changed();
+    hub.present(&name);
 
     let pulse = crate::pulse_of(&socket);
     let (mut sink, mut stream) = socket.split();
@@ -255,7 +259,7 @@ pub(crate) async fn session(
         Some(reason) => hub.log.line(format_args!("{name} disconnected: {reason}")),
         None => hub.log.line(format_args!("{name} disconnected")),
     }
-    hub.changed();
+    hub.present(&name);
 }
 
 /// How many letters from a member may wait to be kept before its
@@ -436,6 +440,7 @@ fn open(
         forgets: said.forgets,
         versions: said.versions,
         cancels: said.cancels,
+        presence: said.presence,
     };
     let replaced = hub.sessions().insert(name.clone(), session);
     drop(store);
@@ -865,7 +870,7 @@ fn lines(hub: &Hub, name: &MachineName, generation: u64, paths: fastctx_net::dir
         changed
     };
     if changed {
-        hub.presence_changed();
+        hub.present(name);
     }
 }
 
