@@ -158,10 +158,18 @@ impl Search {
         Ok(Self { shared, worker: Some(worker) })
     }
 
+    /// Stop scanning and matching, even while queries still hold this search.
+    /// Dropping the last owner joins the scanner and releases its watches.
+    pub fn close(&self) {
+        self.shared.closed.store(true, Ordering::Release);
+        let _ = self.shared.wake.try_send(());
+    }
+
     /// Rank without rescanning directories. A refresh can serve its prior
     /// snapshot, with each returned path and policy rechecked. Filesystem errors are errors,
     /// including unreadable or malformed ignore rules, never empty success.
     pub fn query(&self, query: String, limit: usize) -> io::Result<FileSearchResult> {
+        check_open(&self.shared.closed)?;
         let pending = || FileSearchResult::Matches { query: query.clone(), ready: false, total: 0, files: vec![] };
         let (index, revision, complete) = {
             let state = self.shared.state.lock().expect("search state poisoned");
@@ -179,7 +187,7 @@ impl Search {
             };
             (index, state.revision, !state.dirty)
         };
-        let Some((total, files)) = rank::query(&index, &query, limit)? else {
+        let Some((total, files)) = rank::query(&index, &query, limit, &self.shared.closed)? else {
             self.shared.request_refresh();
             return Ok(pending());
         };
@@ -190,15 +198,23 @@ impl Search {
         if state.policy_dirty {
             return Ok(pending());
         }
+        check_open(&self.shared.closed)?;
         let ready = complete && !state.dirty && state.revision == revision;
         Ok(FileSearchResult::Matches { query, ready, total, files })
     }
 }
 
+fn check_open(closed: &AtomicBool) -> io::Result<()> {
+    if closed.load(Ordering::Acquire) {
+        Err(io::Error::new(io::ErrorKind::Interrupted, "file search closed"))
+    } else {
+        Ok(())
+    }
+}
+
 impl Drop for Search {
     fn drop(&mut self) {
-        self.shared.closed.store(true, Ordering::Release);
-        let _ = self.shared.wake.try_send(());
+        self.close();
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }

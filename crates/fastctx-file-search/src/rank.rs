@@ -3,14 +3,21 @@ use std::collections::{BinaryHeap, HashSet};
 use std::io;
 use std::ops::Range;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 
 use fastctx_types::file_search::FileMatch;
 use nucleo_matcher::pattern::{Atom, AtomKind, CaseMatching, Normalization};
 use nucleo_matcher::{Config, Matcher};
 
-use crate::{index::Index, paths, rules};
+use crate::{check_open, index::Index, paths, rules};
 
-pub(crate) fn query(index: &Index, query: &str, limit: usize) -> io::Result<Option<(usize, Vec<FileMatch>)>> {
+pub(crate) fn query(
+    index: &Index,
+    query: &str,
+    limit: usize,
+    closed: &AtomicBool,
+) -> io::Result<Option<(usize, Vec<FileMatch>)>> {
+    check_open(closed)?;
     if rules::changed(&index.outer_rules)? {
         return Ok(None);
     }
@@ -19,7 +26,7 @@ pub(crate) fn query(index: &Index, query: &str, limit: usize) -> io::Result<Opti
     let lower = pattern_text.to_lowercase();
     let path_query = pattern_text.contains('/');
     let (total, best) = if index.entries.is_empty() || std::thread::available_parallelism()?.get() == 1 {
-        ranked(index, &atom, &lower, path_query, 0..index.entries.len(), limit)
+        ranked(index, &atom, &lower, path_query, 0..index.entries.len(), limit, closed)?
     } else {
         // One helper shares the scoring pass without a machine-wide pool:
         // the node also runs residents and other concurrent pickers.
@@ -28,11 +35,12 @@ pub(crate) fn query(index: &Index, query: &str, limit: usize) -> io::Result<Opti
             let (needle, lowercase) = (&atom, lower.as_str());
             let helper =
                 std::thread::Builder::new().name("file-search-match".into()).spawn_scoped(scope, move || {
-                    ranked(index, needle, lowercase, path_query, middle..index.entries.len(), limit)
+                    ranked(index, needle, lowercase, path_query, middle..index.entries.len(), limit, closed)
                 })?;
-            let (mut total, mut best) = ranked(index, &atom, &lower, path_query, 0..middle, limit);
-            let (other_total, other_best) =
-                helper.join().map_err(|_| io::Error::other("file matching worker panicked"))?;
+            let result = ranked(index, &atom, &lower, path_query, 0..middle, limit, closed);
+            let other = helper.join().map_err(|_| io::Error::other("file matching worker panicked"))?;
+            let (mut total, mut best) = result?;
+            let (other_total, other_best) = other?;
             total += other_total;
             for Reverse(rank) in other_best {
                 retain(&mut best, rank, limit);
@@ -40,12 +48,14 @@ pub(crate) fn query(index: &Index, query: &str, limit: usize) -> io::Result<Opti
             Ok((total, best))
         })?
     };
+    check_open(closed)?;
     let mut ordered = best.into_vec();
     ordered.sort_unstable_by(|a, b| b.0.cmp(&a.0));
     let mut files = Vec::with_capacity(ordered.len());
     let mut checked = HashSet::new();
     let mut ancestors = HashSet::new();
     for Reverse((_, _, _, _, _, position)) in ordered {
+        check_open(closed)?;
         let entry = &index.entries[position];
         let root = &index.roots[entry.root];
         let path = index.path(entry);
@@ -57,6 +67,7 @@ pub(crate) fn query(index: &Index, query: &str, limit: usize) -> io::Result<Opti
     if rules::changed(&index.outer_rules)? {
         return Ok(None);
     }
+    check_open(closed)?;
     Ok(Some((total, files)))
 }
 
@@ -69,12 +80,15 @@ fn ranked<'a>(
     path_query: bool,
     range: Range<usize>,
     limit: usize,
-) -> (usize, BinaryHeap<Reverse<Rank<'a>>>) {
+    closed: &AtomicBool,
+) -> io::Result<(usize, BinaryHeap<Reverse<Rank<'a>>>)> {
+    check_open(closed)?;
     let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
     let mut best = BinaryHeap::new();
     let mut total = 0;
     let mut name_scores = vec![None; index.names.len()];
     for position in range {
+        check_open(closed)?;
         let entry = &index.entries[position];
         let name = &index.names[entry.name];
         let name_score = if path_query {
@@ -110,7 +124,7 @@ fn ranked<'a>(
         );
         retain(&mut best, rank, limit);
     }
-    (total, best)
+    Ok((total, best))
 }
 
 fn retain<'a>(best: &mut BinaryHeap<Reverse<Rank<'a>>>, rank: Rank<'a>, limit: usize) {

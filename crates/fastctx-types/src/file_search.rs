@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{MachineName, ResidentId};
 
+/// Legacy `Start` searches expire this long after creation or their last
+/// accepted query. Connection-owned `Open` searches do not expire while idle.
+pub const START_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "scope")]
 pub enum FileSearchScope {
@@ -19,10 +23,11 @@ pub enum FileSearchScope {
 #[serde(rename_all = "snake_case", tag = "do")]
 pub enum FileSearchRequest {
     /// Start when opening the conversation's composer, before the first `@`.
-    /// Keep the index across its popovers; indexing runs in the background.
+    /// The receiver owns the index until Close or five minutes without a query,
+    /// including when the caller leaves before receiving its ID.
     Start { scope: FileSearchScope },
     /// Own an index through this connection. Closing the connection releases it.
-    /// Interfaces use this form; Start remains the explicit-close legacy contract.
+    /// Interfaces use this form; Start remains available for legacy callers.
     Open { scope: FileSearchScope },
     /// Ask on each edit, and again while `ready` is false. Queries are literal
     /// fuzzy text (including spaces and punctuation), not a query language.

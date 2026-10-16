@@ -24,7 +24,8 @@ pub struct Contract {
     /// Which places it takes where it is answered.
     pub pool: Pool,
     /// Whether the machine answering it stops at once when its caller gives
-    /// it up: it only reads, so nothing is left half done.
+    /// it up. Dropping its future must stop the actual work as well as leave
+    /// no state half done; blocking readers must finish while holding their place.
     pub cancellable: bool,
     /// Whether a node handing the World to its successor answers it before
     /// it goes; a stream instead goes on with the successor.
@@ -104,11 +105,13 @@ impl RemoteCall {
             | Self::OnReceipt { .. }
             | Self::Thumbnail { .. }
             | Self::AttachmentThumbnail { .. }
-            | Self::Lines { request: Lines::Read { .. } | Lines::Close { .. } }
-            | Self::FindFiles {
+            | Self::Lines { request: Lines::Read { .. } | Lines::Close { .. } } => Contract::QUERY,
+            // Start transfers ownership to an idle lease; Query and Close
+            // join blocking work before giving their admission place back.
+            Self::FindFiles {
                 request:
                     FileSearchRequest::Start { .. } | FileSearchRequest::Query { .. } | FileSearchRequest::Close { .. },
-            } => Contract::QUERY,
+            } => Contract { cancellable: false, ..Contract::QUERY },
             Self::Agents
             | Self::PreviewAgentChange { .. }
             | Self::ReadAgentLimits { .. }
@@ -208,7 +211,7 @@ impl RemoteCall {
 pub enum Leaving {
     /// Stops: it only reads or waits, and nobody is left to answer.
     Stop,
-    /// Finishes: it changes something, which is not left half done.
+    /// Finishes: it changes something or joins blocking work before releasing resources.
     Finish,
 }
 
@@ -232,7 +235,7 @@ impl Call {
             | Self::Lines { .. }
             | Self::ReadLines { .. }
             | Self::ReadLineNotes { .. }
-            | Self::FindFiles { .. }
+            | Self::FindFiles { request: FileSearchRequest::Open { .. }, .. }
             | Self::Folders { .. }
             | Self::Stats { .. }
             | Self::WatchTools { .. }
@@ -250,7 +253,12 @@ impl Call {
             | Self::AgentActivity { .. }
             | Self::Nodes { .. }
             | Self::Machines { .. } => Leaving::Stop,
-            Self::CollabWrite { .. }
+            Self::FindFiles {
+                request:
+                    FileSearchRequest::Start { .. } | FileSearchRequest::Query { .. } | FileSearchRequest::Close { .. },
+                ..
+            }
+            | Self::CollabWrite { .. }
             | Self::SetFeature { .. }
             | Self::SetLanguage { .. }
             | Self::Reopened { .. }
