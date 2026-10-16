@@ -43,7 +43,11 @@ pub struct Elsewhere {
 impl Inner {
     /// What is afoot on this machine is `afoot` now: told to the hub as the
     /// session there takes it.
-    pub(crate) fn tell_afoot(&self, afoot: Afoot) {
+    pub(crate) fn tell_afoot(&self, mut afoot: Afoot) {
+        if let Err(reason) = crate::afoot::bounded::state(&mut afoot) {
+            self.node.log(format!("status was not published: {reason}"));
+            return;
+        }
         let mut here = self.afoots.here.lock().expect("never poisoned");
         if here.latest.as_ref() == Some(&afoot) {
             return;
@@ -88,10 +92,8 @@ impl Inner {
         }
         let (frames, too_large) = crate::afoot::frames(change, crate::afoot::FRAME_ROOM);
         if !too_large.is_empty() {
-            self.node.log(format!(
-                "what is afoot on this machine leaves out {}: each is larger than a frame to the hub",
-                too_large.join(", ")
-            ));
+            self.node.log(format!("status was not published: {} cannot fit in a control frame", too_large.join(", ")));
+            return;
         }
         for change in frames {
             if connection.up.send(Up::Afoot { change: Box::new(change) }).is_err() {

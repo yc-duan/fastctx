@@ -60,7 +60,14 @@ enum Scope<'a> {
 }
 
 /// `machine` told how what is afoot on it changed.
-pub(crate) fn heard(hub: &Hub, machine: &MachineName, change: AfootChange<AfootResident, AfootJob>) {
+pub(crate) fn heard(hub: &Hub, machine: &MachineName, mut change: AfootChange<AfootResident, AfootJob>) {
+    if let Err(reason) = fastctx_net::afoot::bounded::change(&mut change) {
+        hub.log.line(format_args!("status from {machine} was not published: {reason}"));
+        if let Some(session) = hub.sessions().get(machine) {
+            let _ = session.out.send(Out::End(fastctx_net::wire::Refusal::Broken { reason }));
+        }
+        return;
+    }
     hub.afoots().told.entry(machine.clone()).or_default().apply(change);
     tell(hub, Scope::Machine(machine));
 }
@@ -153,6 +160,10 @@ fn tell(hub: &Hub, scope: Scope<'_>) {
                     "what is afoot on {machine} leaves out {} for {reader}: each is larger than a frame",
                     too_large.join(", ")
                 ));
+                let _ = out.send(Out::End(fastctx_net::wire::Refusal::Broken {
+                    reason: "a status record could not be represented; its sending baseline was not advanced".into(),
+                }));
+                continue;
             }
             // A change of the count alone goes as a change of nothing.
             let frames = if frames.is_empty() { vec![AfootChange::default()] } else { frames };

@@ -3,6 +3,8 @@
 //! when it fits, and as several when it does not, the first of them `anew`
 //! when the change is.
 
+pub mod bounded;
+
 use fastctx_types::town::{Afloat, AfootChange};
 use serde::Serialize;
 
