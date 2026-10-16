@@ -767,7 +767,7 @@ fn refused_letter(inner: &Inner, seq: u64, reason: &str) -> std::io::Result<()> 
     let outbox = Outbox::new(&inner.dir);
     match outbox.get(seq)? {
         Some(message) => {
-            let path = letters::record_failure(&inner.dir, "out", reason, &message)?;
+            let path = letters::record_failure(&inner.dir, "out", reason, &message, |line| inner.node.log(line))?;
             inner.node.log(format!("the hub refused letter {seq}: {reason}; kept in {}", path.display()));
         }
         None => inner.node.log(format!("the hub refused letter {seq}: {reason}")),
@@ -904,7 +904,7 @@ async fn take_letters(
 /// machine's own disk is an error, and the hub sends the letter again.
 async fn take_letter(inner: &Inner, message: &Envelope) -> std::io::Result<()> {
     let set_aside = |reason: String| -> std::io::Result<()> {
-        let path = letters::record_failure(&inner.dir, "in", &reason, message)?;
+        let path = letters::record_failure(&inner.dir, "in", &reason, message, |line| inner.node.log(line))?;
         inner.node.log(format!("a letter was set aside: {reason}; kept in {}", path.display()));
         Ok(())
     };

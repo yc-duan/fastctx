@@ -1,6 +1,9 @@
 //! Letters on this machine: those waiting to reach the hub, the receipts
 //! of those taken, and the ones that could not be delivered or opened.
 
+mod failures;
+pub use failures::record_failure;
+
 use std::io;
 use std::path::PathBuf;
 
@@ -140,17 +143,4 @@ pub struct Failure {
     pub direction: String,
     pub reason: String,
     pub message: Envelope,
-}
-
-pub fn record_failure(net: &NetDir, direction: &str, reason: &str, message: &Envelope) -> io::Result<PathBuf> {
-    let at = Timestamp::now();
-    let failure =
-        Failure { at, direction: direction.to_string(), reason: reason.to_string(), message: message.clone() };
-    let stamp = at.strftime("%Y%m%dT%H%M%S%.fZ").to_string().replace('.', "");
-    let suffix = u32::from_le_bytes(crate::sign::random::<4>()?);
-    let path = net.failures().join(format!("{stamp}-{direction}-{suffix:08x}.json"));
-    let mut bytes = serde_json::to_vec_pretty(&failure).map_err(io::Error::other)?;
-    bytes.push(b'\n');
-    publish_new(&path, &bytes, Permissions::Private)?;
-    Ok(path)
 }
