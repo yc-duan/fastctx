@@ -98,9 +98,13 @@ pub async fn refused(world: &World, report: &mut Report) -> anyhow::Result<()> {
     const CUTS: usize = 4;
     let alpha = world.machine("alpha");
     let nobody = fastctx_types::MachineName::try_from("nobody".to_string()).map_err(anyhow::Error::msg)?;
+    // A sender's count is kept by the numbering of its records, never its name.
     let counted = || {
-        std::fs::read(world.hub.dir.join("taken").join("alpha"))
-            .ok()
+        world
+            .hub
+            .letters()
+            .and_then(|letters| letters["alpha"]["out_epoch"].as_u64())
+            .and_then(|epoch| std::fs::read(world.hub.dir.join("counts").join(format!("{epoch:016x}"))).ok())
             .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
             .and_then(|count| count["taken"].as_u64())
             .unwrap_or(0)
