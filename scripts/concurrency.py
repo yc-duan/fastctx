@@ -175,7 +175,9 @@ class Lab:
                             continue
                         environment = (entry / "environ").read_bytes().split(b"\0")
                         owned = f"FASTCTX_DRILL_OWNER={self.root}".encode() in environment
-                    except (FileNotFoundError, ProcessLookupError):
+                    # One of this user's processes may still keep its environment from it, as one
+                    # with capabilities of its own does; nothing the lab started is such.
+                    except (FileNotFoundError, ProcessLookupError, PermissionError):
                         continue
                 if owned:
                     found.append((int(entry.name), command))
