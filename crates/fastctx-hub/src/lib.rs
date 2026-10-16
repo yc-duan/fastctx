@@ -461,6 +461,14 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
     for line in &store.upgraded {
         log.line(format_args!("took up the directory of an earlier fastctx: {line}"));
     }
+    for line in &store.tidied {
+        log.line(format_args!("on opening, {line}"));
+    }
+    let mut left = Vec::new();
+    let updates = updates::Updates::new(dir, &mut left);
+    for line in left {
+        log.line(format_args!("on opening, {line}"));
+    }
     // A move under way goes on; one called off is told to the new place.
     let driven = store.outgoing.as_ref().is_some_and(|outgoing| {
         outgoing.pending() || (outgoing.stage == fastctx_types::hub_move::MoveStage::Cancelled && outgoing.prepared)
@@ -484,7 +492,7 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         assists_changed: tokio::sync::Notify::new(),
         next_assist_end: assists::NextEnd::default(),
         afoots: Mutex::new(afoot::Afoots::default()),
-        updates: Mutex::new(updates::Updates::new(dir)),
+        updates: Mutex::new(updates),
         dissolution: tokio::sync::Notify::new(),
         directory_changed: Arc::new(tokio::sync::Notify::new()),
     });
@@ -700,10 +708,12 @@ pub(crate) async fn send(socket: &mut Socket, frame: &Down) -> Result<(), String
     socket.send(WsMessage::Binary(wire::encode(frame).into())).await.map_err(|error| error.to_string())
 }
 
-/// Says why the hub will not go on, and closes; whether it was said.
+/// Says why the hub will not go on, and closes; whether it was said. Neither
+/// waits longer than the silence on a machine that does not read.
 pub(crate) async fn refuse(socket: &mut Socket, reason: Refusal) -> bool {
-    let said = send(socket, &Down::Refused { reason }).await.is_ok();
-    let _ = socket.close(None).await;
+    let said =
+        tokio::time::timeout(SILENCE, send(socket, &Down::Refused { reason })).await.is_ok_and(|sent| sent.is_ok());
+    let _ = tokio::time::timeout(SILENCE, socket.close(None)).await;
     said
 }
 

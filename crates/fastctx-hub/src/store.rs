@@ -10,6 +10,7 @@
 //!                             and 90 days of machine-layer change records
 //! <hub>/letters.json          where each member's letters stand
 //! <hub>/outbox/<name>/<seq>   letters waiting for a member, one file each
+//! <hub>/outbox-trash/         the letters of members taken off, set aside to be deleted
 //! <hub>/ledger/<town>/<seq>.json   the projects' ledgers (`crate::ledger`)
 //! <hub>/moves.json            the moves that brought the hub here (`crate::moving`)
 //! <hub>/moving-out.json       a move of the hub away from here, while and after it goes
@@ -18,7 +19,10 @@
 //!
 //! Every file is replaced whole, so a crash leaves the old state or the new
 //! one. Letters are written before the numbers that count them; a hub that
-//! stops in between finds the letter files and counts from the highest.
+//! stops in between finds the letter files and counts from the highest. A
+//! member taken off loses its letters only once the directory without it is
+//! kept; a hub that stops in between deletes them when it opens, as it does
+//! any letters kept for no member.
 
 use std::collections::BTreeMap;
 use std::io;
@@ -145,6 +149,9 @@ pub struct TokenRecord {
 
 /// The most devices one code lets in, short of any number.
 pub const MOST_USES: u32 = 9999;
+
+/// Where the letters of members taken off wait to be deleted.
+pub(crate) const TRASH: &str = "outbox-trash";
 
 /// How long a code no device comes in by any more is kept before it is
 /// forgotten: its maker still sees which machines came in by it, and a
@@ -290,6 +297,9 @@ pub struct Store {
     /// What reading a directory kept in an earlier shape into today's
     /// changed, when this opening did it (`crate::upgrade`).
     pub upgraded: Vec<String>,
+    /// What this opening cleared that a stop had left: letters kept for no
+    /// member, and what could not be cleared.
+    pub tidied: Vec<String>,
     /// A move of the hub away from here (`crate::moving`).
     pub outgoing: Option<crate::moving::Outgoing>,
     /// The moves that brought the hub here, oldest first.
@@ -366,8 +376,18 @@ impl Store {
         };
         let moves = read_or_default(&dir.join(crate::moving::MOVES))?;
         let called_off = read_or_default(&dir.join(crate::moving::CALLED_OFF))?;
-        let mut store =
-            Self { dir: dir.to_path_buf(), hub, book, letters, worked, upgraded, outgoing, moves, called_off };
+        let mut store = Self {
+            dir: dir.to_path_buf(),
+            hub,
+            book,
+            letters,
+            worked,
+            upgraded,
+            tidied: Vec::new(),
+            outgoing,
+            moves,
+            called_off,
+        };
         if changed {
             store.save_letters()?;
         }
@@ -375,7 +395,77 @@ impl Store {
         // for the machine finishes that now.
         let moved = store.settle_names()?;
         store.upgraded.extend(moved);
+        // And one stopped between keeping a removal and setting the letters
+        // aside sets them aside now; nothing of it keeps the hub from opening.
+        store.tidied = store.forget_strays();
+        if let Err(error) = Self::clear_trash(dir) {
+            store.tidied.push(format!("emptying the letters set aside: {error}; tried again when the hub opens next"));
+        }
         Ok(store)
+    }
+
+    /// Sets aside the letters kept for no member of the directory, and
+    /// forgets the records of those letters; says what it did.
+    fn forget_strays(&mut self) -> Vec<String> {
+        let mut said = Vec::new();
+        let members: std::collections::BTreeSet<String> = self
+            .book
+            .directory
+            .members
+            .iter()
+            .flat_map(|member| [member.name.file_name().into_owned(), member.name.key().to_string()])
+            .collect();
+        let strays: Vec<MachineName> =
+            self.letters.keys().filter(|name| self.book.directory.member(name).is_none()).cloned().collect();
+        for name in strays {
+            self.letters.remove(&name);
+            said.push(format!("forgot the letter records of {name}, no member of the hub"));
+        }
+        if !said.is_empty()
+            && let Err(error) = self.save_letters()
+        {
+            said.push(format!("recording that: {error}"));
+        }
+        let outbox = self.dir.join("outbox");
+        let entries = match std::fs::read_dir(&outbox) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return said,
+            Err(error) => {
+                said.push(format!("reading {}: {error}", outbox.display()));
+                return said;
+            }
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || members.contains(&name) {
+                continue;
+            }
+            match self.set_aside(&entry.path(), &name) {
+                Ok(()) => said.push(format!("set aside the letters kept for {name}, no member of the hub")),
+                Err(error) => said.push(format!("setting aside the letters kept for {name}: {error}")),
+            }
+        }
+        said
+    }
+
+    /// Moves the letters at `path`, kept for `name`, to the trash.
+    fn set_aside(&self, path: &Path, name: &str) -> io::Result<()> {
+        let trash = self.dir.join(TRASH);
+        ensure_private_dir(&trash)?;
+        let unique = u64::from_le_bytes(fastctx_net::sign::random::<8>()?);
+        match std::fs::rename(path, trash.join(format!("{name}.{unique:016x}"))) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            other => other,
+        }
+    }
+
+    /// Deletes the letters set aside. A long removal is not done under any
+    /// lock: whoever sets letters aside empties the trash after letting go.
+    pub fn clear_trash(dir: &Path) -> io::Result<()> {
+        match std::fs::remove_dir_all(dir.join(TRASH)) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        }
     }
 
     /// Moves what is kept for a member under a name it had to its name now:
@@ -601,14 +691,14 @@ impl Store {
         Ok(())
     }
 
-    /// Drops every letter waiting for `name` and its letter records, as
-    /// when it is taken off the hub.
+    /// Sets aside every letter waiting for `name` and forgets its letter
+    /// records, once it is taken off the hub and the directory that says so
+    /// is kept (`clear_trash` deletes them).
     pub fn forget_letters(&mut self, name: &MachineName) -> io::Result<()> {
         self.letters.remove(name);
-        match std::fs::remove_dir_all(name.entry_in(&self.dir.join("outbox"))?) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-            _ => Ok(()),
-        }
+        self.save_letters()?;
+        let path = name.entry_in(&self.dir.join("outbox"))?;
+        self.set_aside(&path, &name.file_name())
     }
 }
 

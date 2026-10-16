@@ -275,6 +275,89 @@ impl Action {
     pub fn of_conversation(&self) -> bool {
         matches!(self, Self::Forget { .. } | Self::Forgotten { .. })
     }
+
+    /// What a reader must say it reads to be given a record of this kind: a
+    /// release reads a page whole, and one kind it does not know fails all
+    /// of it (`world-versions.md`). A kind added later names here what its
+    /// readers say, before any record of it is kept.
+    pub fn needs(&self) -> Needs {
+        match self {
+            Self::Rename { .. } => Needs::Renames,
+            Self::Forget { .. } | Self::Forgotten { .. } => Needs::Forgets,
+            Self::Updates { .. } => Needs::Versions,
+            Self::UpdateDue { .. } | Self::Updated { .. } | Self::UninstallLeft { .. } => Needs::Due,
+            Self::Collab { .. }
+            | Self::Share { .. }
+            | Self::Assist { .. }
+            | Self::AssistEnded { .. }
+            | Self::Plan { .. }
+            | Self::StopActing { .. }
+            | Self::Relays { .. }
+            | Self::RelayAt { .. }
+            | Self::Direct { .. }
+            | Self::Remove { .. }
+            | Self::Logout
+            | Self::Token { .. }
+            | Self::RevokeToken { .. }
+            | Self::PasswordStart { .. }
+            | Self::PasswordFinish { .. }
+            | Self::OpenAccount { .. }
+            | Self::SetRole { .. }
+            | Self::AcceptRole { .. }
+            | Self::SetAccount { .. }
+            | Self::Transfer { .. }
+            | Self::DeleteAccount { .. }
+            | Self::Settings { .. }
+            | Self::Dissolve { .. }
+            | Self::OpenProject { .. }
+            | Self::ShareProject { .. }
+            | Self::MoveProject { .. }
+            | Self::Joined { .. }
+            | Self::AllowActing { .. }
+            | Self::ActingStopped { .. }
+            | Self::Group { .. }
+            | Self::RenameGroup { .. }
+            | Self::Left { .. } => Needs::Nothing,
+        }
+    }
+}
+
+/// What reading a kind of record takes (`Action::needs`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Needs {
+    /// Every release reads it.
+    Nothing,
+    /// A reader that takes new names the hub gives.
+    Renames,
+    /// A reader that deletes what it keeps of a conversation when told.
+    Forgets,
+    /// A reader of the network's versions.
+    Versions,
+    /// A reader of the records of updates due and made as asked, which came
+    /// in 1.0.1-beta.3 with the other kinds that release keeps.
+    Due,
+}
+
+/// What one reader of the machine log says it reads.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Reads {
+    pub renames: bool,
+    pub forgets: bool,
+    pub versions: bool,
+    pub due: bool,
+}
+
+impl Reads {
+    /// Whether this reader reads a record that `needs` this.
+    pub fn covers(self, needs: Needs) -> bool {
+        match needs {
+            Needs::Nothing => true,
+            Needs::Renames => self.renames,
+            Needs::Forgets => self.forgets,
+            Needs::Versions => self.versions,
+            Needs::Due => self.due,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

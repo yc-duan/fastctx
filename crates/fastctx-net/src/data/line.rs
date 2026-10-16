@@ -8,6 +8,12 @@
 //! the other end's own: on a connection the hub relays, the hub answers
 //! pings itself whether the far end is there or not.
 //!
+//! The two directions end together: once reading stops, for silence, a
+//! break or a cut, writing stops too and whatever waits to be written is
+//! told why; and nothing written may take longer than the silence, as an
+//! end that does not take what it is sent is as gone as one that says
+//! nothing.
+//!
 //! An end of an older fastctx answers pings without sending any, so a
 //! connection to one that stays quiet past `SILENCE` ends; whoever holds
 //! the stream opens it again.
@@ -39,6 +45,8 @@ pub(super) struct Line {
     incoming: mpsc::Receiver<Received>,
     /// Why reading stopped, once it has; none when the other end closed.
     stopped: Arc<Mutex<Option<String>>>,
+    /// Set once the connection is over, by whichever direction ended it.
+    over: watch::Receiver<bool>,
     outgoing: mpsc::UnboundedSender<Out>,
     reader: tokio::task::JoinHandle<()>,
     writer: tokio::task::JoinHandle<()>,
@@ -54,20 +62,28 @@ impl Line {
         let (received, incoming) = mpsc::channel(1);
         let (outgoing, sending) = mpsc::unbounded_channel();
         let stopped = Arc::new(Mutex::new(None));
+        let (ending, over) = watch::channel(false);
+        let ending = Arc::new(ending);
         Self {
             incoming,
             stopped: stopped.clone(),
+            over: over.clone(),
             outgoing,
-            reader: tokio::spawn(read(stream, received, stopped, cut)),
-            writer: tokio::spawn(write(sink, sending)),
+            reader: tokio::spawn(read(stream, received, stopped.clone(), cut, ending.clone())),
+            writer: tokio::spawn(write(sink, sending, over, stopped, ending)),
         }
     }
 
-    /// Sends `message`; returns once it is written.
+    /// Sends `message`; returns once it is written, or once the connection
+    /// is over, whichever comes first.
     pub(super) async fn send(&self, message: WsMessage) -> Result<(), String> {
         let (sent, written) = oneshot::channel();
         self.outgoing.send(Out::Message(message, sent)).map_err(|_| self.gone())?;
-        written.await.map_err(|_| self.gone())?
+        let mut over = self.over.clone();
+        tokio::select! {
+            written = written => written.map_err(|_| self.gone())?,
+            _ = over.wait_for(|over| *over) => Err(self.gone()),
+        }
     }
 
     /// The next thing the other end sent; none once it closed the
@@ -103,12 +119,26 @@ impl Drop for Line {
     }
 }
 
+/// Notes why the connection ended, unless a reason is noted already, and
+/// tells both directions it is over.
+fn end(stopped: &Mutex<Option<String>>, ending: &watch::Sender<bool>, why: Option<String>) {
+    {
+        let mut stopped = stopped.lock().expect("never poisoned");
+        if stopped.is_none() {
+            *stopped = why;
+        }
+    }
+    ending.send_replace(true);
+}
+
 async fn read(
     mut stream: SplitStream<HubSocket>,
     received: mpsc::Sender<Received>,
     stopped: Arc<Mutex<Option<String>>>,
     mut cut: Option<watch::Receiver<Option<String>>>,
+    ending: Arc<watch::Sender<bool>>,
 ) {
+    let mut over = ending.subscribe();
     let mut heard = Instant::now();
     let why = loop {
         let next = tokio::select! {
@@ -117,6 +147,8 @@ async fn read(
                 break Some(format!("nothing came from the other end for {} s", SILENCE.as_secs()));
             }
             why = was_cut(&mut cut) => break Some(why),
+            // Writing ended it: it says why itself.
+            _ = over.wait_for(|over| *over) => break None,
         };
         let message = match next {
             None | Some(Ok(WsMessage::Close(_))) => break None,
@@ -135,7 +167,7 @@ async fn read(
         // Waiting for the holder to take it is not the other end's silence.
         heard = Instant::now();
     };
-    *stopped.lock().expect("never poisoned") = why;
+    end(&stopped, &ending, why);
 }
 
 /// The reason this machine cut the call, once it does.
@@ -148,34 +180,64 @@ async fn was_cut(cut: &mut Option<watch::Receiver<Option<String>>>) -> String {
     }
 }
 
-async fn write(mut sink: SplitSink<HubSocket, WsMessage>, mut sending: mpsc::UnboundedReceiver<Out>) {
+/// Writes `message`, no longer than the silence lets it take.
+async fn put(sink: &mut SplitSink<HubSocket, WsMessage>, message: WsMessage) -> Result<(), String> {
+    match tokio::time::timeout(SILENCE, sink.send(message)).await {
+        Ok(sent) => sent.map_err(|error| format!("sending: {}", dial::describe(&error))),
+        Err(_) => Err(format!("the other end took nothing for {} s", SILENCE.as_secs())),
+    }
+}
+
+async fn write(
+    mut sink: SplitSink<HubSocket, WsMessage>,
+    mut sending: mpsc::UnboundedReceiver<Out>,
+    mut over: watch::Receiver<bool>,
+    stopped: Arc<Mutex<Option<String>>>,
+    ending: Arc<watch::Sender<bool>>,
+) {
     let mut beat = tokio::time::interval_at(Instant::now() + HEARTBEAT, HEARTBEAT);
     beat.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
-        tokio::select! {
-            out = sending.recv() => match out {
-                Some(Out::Message(message, sent)) => {
-                    let result = sink.send(message).await.map_err(|error| format!("sending: {}", dial::describe(&error)));
-                    let failed = result.is_err();
-                    let _ = sent.send(result);
-                    if failed {
-                        return;
-                    }
-                }
-                Some(Out::Close(closed)) => {
-                    // A close waits on the other end only as long as any
-                    // silence is allowed to last.
-                    let _ = tokio::time::timeout(SILENCE, sink.close()).await;
-                    let _ = closed.send(());
-                    return;
-                }
-                None => return,
-            },
-            _ = beat.tick() => {
-                if sink.send(WsMessage::Ping(Default::default())).await.is_err() {
+        // A write under way is given up once the connection is over.
+        let next = tokio::select! {
+            out = sending.recv() => Some(out),
+            _ = beat.tick() => None,
+            _ = over.wait_for(|over| *over) => return,
+        };
+        let Some(next) = next else {
+            let beating = put(&mut sink, WsMessage::Ping(Default::default()));
+            let result = tokio::select! {
+                result = beating => result,
+                _ = over.wait_for(|over| *over) => return,
+            };
+            if let Err(why) = result {
+                end(&stopped, &ending, Some(why));
+                return;
+            }
+            continue;
+        };
+        match next {
+            Some(Out::Message(message, sent)) => {
+                let writing = put(&mut sink, message);
+                let result = tokio::select! {
+                    result = writing => result,
+                    _ = over.wait_for(|over| *over) => return,
+                };
+                let failed = result.as_ref().err().cloned();
+                let _ = sent.send(result);
+                if let Some(why) = failed {
+                    end(&stopped, &ending, Some(why));
                     return;
                 }
             }
+            Some(Out::Close(closed)) => {
+                // A close waits on the other end only as long as any
+                // silence is allowed to last.
+                let _ = tokio::time::timeout(SILENCE, sink.close()).await;
+                let _ = closed.send(());
+                return;
+            }
+            None => return,
         }
     }
 }

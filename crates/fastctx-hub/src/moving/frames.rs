@@ -148,14 +148,20 @@ pub(crate) async fn send<S, T: Serialize>(socket: &mut S, frame: &T) -> Result<(
 where
     S: Sink<WsMessage, Error = WsError> + Unpin,
 {
-    socket.send(WsMessage::Binary(fastctx_net::wire::encode(frame).into())).await.map_err(|error| error.to_string())
+    send_bytes(socket, fastctx_net::wire::encode(frame)).await
 }
 
+/// Writes one message, taking no longer than the silence: the other hub
+/// that takes nothing is as gone as one that says nothing, and a write that
+/// waits on it would keep its side from hearing that.
 pub(crate) async fn send_bytes<S>(socket: &mut S, bytes: Vec<u8>) -> Result<(), String>
 where
     S: Sink<WsMessage, Error = WsError> + Unpin,
 {
-    socket.send(WsMessage::Binary(bytes.into())).await.map_err(|error| error.to_string())
+    match tokio::time::timeout(SILENCE, socket.send(WsMessage::Binary(bytes.into()))).await {
+        Ok(sent) => sent.map_err(|error| error.to_string()),
+        Err(_) => Err(format!("the other hub took nothing for {} s", SILENCE.as_secs())),
+    }
 }
 
 /// The next frame or piece of a file, past any `Working`; an error when the

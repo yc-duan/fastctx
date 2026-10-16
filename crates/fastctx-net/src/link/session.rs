@@ -305,17 +305,20 @@ async fn connected(
 
     let (mut sink, mut stream) = socket.split();
     let (writer_done, mut writer_stopped) = oneshot::channel::<()>();
+    // No frame takes longer than the silence to write: a hub that takes
+    // nothing is as gone as one that says nothing.
     let writer = tokio::spawn(async move {
         let _done = writer_done;
         while let Some(frame) = outgoing.recv().await {
-            if sink.send(WsMessage::Binary(wire::encode(&frame.value).into())).await.is_err() {
+            let message = WsMessage::Binary(wire::encode(&frame.value).into());
+            if !tokio::time::timeout(SILENCE, sink.send(message)).await.is_ok_and(|sent| sent.is_ok()) {
                 return;
             }
             if let Some(written) = frame.written {
                 let _ = written.send(());
             }
         }
-        let _ = sink.close().await;
+        let _ = tokio::time::timeout(SILENCE, sink.close()).await;
     });
     let (letter_failed, mut letters_failed) = oneshot::channel::<String>();
     let (outbox_failed, mut outbox_failure) = oneshot::channel::<String>();

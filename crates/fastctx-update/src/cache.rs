@@ -1,10 +1,14 @@
 //! The packages a machine holds: `v<version>/<target>`, each put in place
 //! only once its signature checked out, with the manifest of its release
-//! beside it. A package still coming is `<target>.part`.
+//! beside it. A package still coming is `<target>.part`; one a hub brings in
+//! by several tries in turn, `<target>.<try>.part` for each.
 
 use std::path::{Path, PathBuf};
 
 use fastctx_types::update::{Held, Kept, MANIFEST, Manifest, target_name};
+
+/// What ends the name of a package one try is bringing in (`Cache::attempt`).
+const ATTEMPT: &str = ".part";
 
 #[derive(Clone, Debug)]
 pub struct Cache {
@@ -53,6 +57,36 @@ impl Cache {
         let dir = path.parent().expect("a package has a directory");
         std::fs::create_dir_all(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
         Ok(fastctx_net::link::versions::partial(&path))
+    }
+
+    /// Where the try numbered `attempt` of bringing a package in writes it
+    /// before it is checked; its directory made. Each try has its own, so
+    /// two tries never write, cut or delete one file.
+    pub fn attempt(&self, version: &str, target: &str, attempt: u64) -> Result<PathBuf, String> {
+        let path = self.path(version, target)?;
+        let dir = path.parent().expect("a package has a directory");
+        std::fs::create_dir_all(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+        Ok(dir.join(format!("{target}.{attempt}{ATTEMPT}")))
+    }
+
+    /// Deletes what tries of bringing packages in left: none outlives the
+    /// process that made it. Says what it could not delete.
+    pub fn clear_attempts(&self) -> Vec<String> {
+        let mut failed = Vec::new();
+        for (_, dir) in self.versions() {
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                let left = name.strip_suffix(ATTEMPT).and_then(|rest| rest.rsplit_once('.'));
+                if left.is_some_and(|(_, number)| number.parse::<u64>().is_ok())
+                    && let Err(error) = std::fs::remove_file(entry.path())
+                {
+                    failed.push(format!("{}: {error}", entry.path().display()));
+                }
+            }
+        }
+        failed
     }
 
     /// Keeps the manifest of a release whose package is kept here.

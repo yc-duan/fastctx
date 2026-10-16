@@ -33,11 +33,18 @@ pub(crate) struct Sum {
 /// runs on, never copied nor replaced by a move: its identity and settings
 /// (`hub.json`, `tls`, `login.secret`), which the new place makes from what
 /// it is given, the records of the move itself, its log and the releases
-/// put there for this machine.
+/// put there for this machine, and the letters set aside to be deleted.
 pub(crate) fn local(name: &str) -> bool {
     matches!(
         name,
-        "hub.json" | "tls" | "login.secret" | "releases" | super::ARRIVING | super::OUTGOING | super::RETIRED
+        "hub.json"
+            | "tls"
+            | "login.secret"
+            | "releases"
+            | crate::store::TRASH
+            | super::ARRIVING
+            | super::OUTGOING
+            | super::RETIRED
     ) || name.starts_with("hub.log")
 }
 

@@ -316,14 +316,22 @@ async fn serve(
     let (finish, mut finishing) = tokio::sync::oneshot::channel::<String>();
     // The writer outlives the link by as long as it takes to say why it
     // ended, so whoever ends it is not held up by a peer that went silent.
-    tokio::spawn(async move {
+    // No write takes longer than the silence, and the link's end stops one
+    // under way: what it began is then not finished, and nothing follows.
+    let writer = tokio::spawn(async move {
         let _done = writer_done;
         loop {
             tokio::select! {
                 frame = frames.recv() => match frame {
                     Some(frame) => {
-                        if sink.send(WsMessage::Binary(peer::encode(&frame).into())).await.is_err() {
-                            return;
+                        let message = WsMessage::Binary(peer::encode(&frame).into());
+                        tokio::select! {
+                            written = tokio::time::timeout(SILENCE, sink.send(message)) => {
+                                if !written.is_ok_and(|written| written.is_ok()) {
+                                    return;
+                                }
+                            }
+                            _ = &mut finishing => return,
                         }
                     }
                     None => break,
@@ -364,6 +372,8 @@ async fn serve(
         network.mark_unchanged();
     }
     let mut moved = false;
+    // The kinds of frame this machine passed over, each said once.
+    let mut unread = std::collections::BTreeSet::new();
     let reason = loop {
         let next = tokio::select! {
             biased;
@@ -383,7 +393,22 @@ async fn serve(
             Some(Err(error)) => break crate::dial::describe(&error),
             Some(Ok(WsMessage::Binary(bytes))) => match serde_json::from_slice(&bytes) {
                 Ok(frame) => frame,
-                Err(error) => break format!("an unreadable frame from it: {error}"),
+                // A newer machine's frame this one does not know is passed
+                // over: the link stays, as the line to the hub does.
+                Err(error) => {
+                    heard = Instant::now();
+                    let kind = serde_json::from_slice::<serde_json::Value>(&bytes)
+                        .ok()
+                        .and_then(|frame| frame["f"].as_str().map(str::to_string))
+                        .unwrap_or_else(|| "?".to_string());
+                    if unread.insert(kind.clone()) {
+                        inner.node.log(format!(
+                            "passing over a frame from {} this version cannot read ({kind}): {error}",
+                            conn.name
+                        ));
+                    }
+                    continue;
+                }
             },
             Some(Ok(_)) => {
                 heard = Instant::now();
@@ -426,6 +451,14 @@ async fn serve(
     heartbeat.abort();
     conn.close(reason.clone());
     let _ = finish.send(reason.clone());
+    // The writer says why and closes, or gives up within its own bounds;
+    // past them it is stopped, so no task outlives its link for long.
+    let stopping = writer.abort_handle();
+    tokio::spawn(async move {
+        if tokio::time::timeout(SILENCE * 3, writer).await.is_err() {
+            stopping.abort();
+        }
+    });
     (reason, moved)
 }
 

@@ -79,6 +79,9 @@ pub(crate) struct Pending {
     target: MachineName,
     target_generation: u64,
     pub standing: Standing,
+    /// The data connection the call came with, which waits no longer once
+    /// the call is over.
+    stream: Option<u64>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -370,6 +373,9 @@ fn fail_calls_of(hub: &Hub, name: &MachineName, generation: u64) {
         keys.into_iter().filter_map(|key| calls.remove(&key)).collect()
     };
     for pending in ended {
+        if let Some(stream) = pending.stream {
+            crate::data::forget(hub, stream, &format!("{name}, a party to its call, left the hub"));
+        }
         if pending.target == *name {
             hub.tell(&pending.caller, Down::Status { id: pending.id, status: CallStatus::Lost });
         }
@@ -451,10 +457,20 @@ fn handle(
             crate::updates::ask(hub, id, version, target, out.clone());
         }
         Up::Cancel { id } => {
-            hub.calls
-                .lock()
-                .expect("never poisoned")
-                .retain(|_, pending| !(pending.caller == *name && pending.id == id));
+            let given_up: Vec<Pending> = {
+                let mut calls = hub.calls.lock().expect("never poisoned");
+                let keys: Vec<u64> = calls
+                    .iter()
+                    .filter(|(_, pending)| pending.caller == *name && pending.id == id)
+                    .map(|(key, _)| *key)
+                    .collect();
+                keys.into_iter().filter_map(|key| calls.remove(&key)).collect()
+            };
+            for pending in given_up {
+                if let Some(stream) = pending.stream {
+                    crate::data::forget(hub, stream, "its caller gave the call up");
+                }
+            }
         }
         // The answer goes out before any session the change ends, the
         // asker's own among them: a machine that renamed or removed itself
@@ -728,6 +744,7 @@ fn call(hub: &Hub, name: &MachineName, generation: u64, id: u64, message: Envelo
     if let Some(ticket) = &message.stream {
         crate::data::register(hub, ticket, &standing, name, generation);
     }
+    let stream = message.stream.as_ref().map(|ticket| ticket.stream);
     let pending = Pending {
         caller: name.clone(),
         caller_generation: generation,
@@ -735,10 +752,14 @@ fn call(hub: &Hub, name: &MachineName, generation: u64, id: u64, message: Envelo
         target: to.clone(),
         target_generation,
         standing,
+        stream,
     };
     hub.calls.lock().expect("never poisoned").insert(key, pending);
     if target.send(Out::Frame(Down::Incoming { call: key, message })).is_err() {
         hub.calls.lock().expect("never poisoned").remove(&key);
+        if let Some(stream) = stream {
+            crate::data::forget(hub, stream, &format!("{to} left the hub before it was called"));
+        }
         return CallStatus::Offline { last_seen: Some(Timestamp::now()) };
     }
     CallStatus::Delivered
@@ -780,9 +801,13 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
     match question {
         Question::MachineLog { account, before } => {
             let store = hub.store();
-            let reads = store.letters.get(name).map_or((false, false, false, false), |letters| {
-                (letters.renames, letters.forgets, letters.versions, letters.due)
-            });
+            let reads =
+                store.letters.get(name).map_or_else(Default::default, |letters| fastctx_types::machine_log::Reads {
+                    renames: letters.renames,
+                    forgets: letters.forgets,
+                    versions: letters.versions,
+                    due: letters.due,
+                });
             store
                 .book
                 .machine_log

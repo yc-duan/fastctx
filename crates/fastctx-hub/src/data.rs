@@ -10,19 +10,37 @@
 //! The hub pairs two ends only when both are the machines the registration
 //! names, and only while what the call was allowed under still holds; when
 //! the directory takes it back, the pair is cut (`cut_streams`). One message
-//! is in flight per direction, so the slower side sets the pace.
+//! is in flight per direction, so the slower side sets the pace, and none
+//! may take longer than the silence to pass on.
+//!
+//! An end waits for the other a minute at most, and less once the call it
+//! goes with is over: its caller gave it up, or the machine that named it
+//! left the hub (`forget`). How many ends may wait and how many pairs may
+//! be relayed at once is bounded, for each member and for the hub, so one
+//! machine gone wrong cannot fill the hub with transfers.
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use fastctx_net::sign::{PublicKey, Signature};
-use fastctx_net::wire::{Down, End, Refusal, Ticket};
+use fastctx_net::wire::{Down, End, Refusal, SILENCE, Ticket};
 use fastctx_types::MachineName;
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::sync::oneshot;
 
 use crate::control::Standing;
 use crate::{Hub, Socket, refuse, send};
+
+/// How long an end waits for the other to come.
+const PAIRING: Duration = Duration::from_secs(60);
+
+/// How many ends of one member may wait for the other at once.
+const WAITING_FOR_ONE: usize = 256;
+/// How many ends may wait at once in all.
+const WAITING: usize = 8192;
+/// How many pairs the hub relays at once.
+const LIVE: usize = 8192;
 
 #[derive(Default)]
 pub(crate) struct Pairing {
@@ -43,6 +61,8 @@ struct Waiting {
     end: End,
     member: MachineName,
     hand_over: oneshot::Sender<(Socket, oneshot::Receiver<String>)>,
+    /// Tells the waiting end why it waits no longer.
+    called_off: oneshot::Sender<String>,
 }
 
 struct Live {
@@ -80,27 +100,48 @@ pub(crate) fn register(hub: &Hub, ticket: &Ticket, standing: &Standing, by: &Mac
     registration.by.push((by.clone(), generation));
 }
 
+/// The call the data connection `stream` goes with is over before its ends
+/// were paired: an end waiting for the other is told `why`, and the
+/// connection is no longer registered. A pair already relayed goes on until
+/// its ends close it, as they do once their call is over.
+pub(crate) fn forget(hub: &Hub, stream: u64, why: &str) {
+    let mut pairing = hub.data.lock().expect("never poisoned");
+    if pairing.live.contains_key(&stream) {
+        return;
+    }
+    pairing.registered.remove(&stream);
+    if let Some(waiting) = pairing.waiting.remove(&stream) {
+        let _ = waiting.called_off.send(why.to_string());
+    }
+}
+
 /// Forgets what the session `generation` of `name` registered and nobody
-/// paired yet.
+/// paired yet; an end waiting for the other end of one is told so.
 pub(crate) fn member_left(hub: &Hub, name: &MachineName, generation: u64) {
     let mut pairing = hub.data.lock().expect("never poisoned");
-    let Pairing { registered, live, .. } = &mut *pairing;
+    let Pairing { registered, live, waiting } = &mut *pairing;
     registered.retain(|stream, registration| {
         registration.by.retain(|by| *by != (name.clone(), generation));
-        live.contains_key(stream) || !registration.by.is_empty()
+        let kept = live.contains_key(stream) || !registration.by.is_empty();
+        if !kept && let Some(waiting) = waiting.remove(stream) {
+            let _ = waiting.called_off.send(format!("{name}, whose call it goes with, left the hub"));
+        }
+        kept
     });
 }
 
-/// Cuts every pair whose standing lapsed.
+/// Cuts every pair whose standing lapsed, and calls off the ends waiting
+/// for a connection whose call lapsed.
 pub(crate) fn cut_streams(hub: &Hub) {
-    let standings: Vec<(u64, Vec<Standing>)> = hub
-        .data
-        .lock()
-        .expect("never poisoned")
-        .live
-        .iter()
-        .map(|(stream, live)| (*stream, live.standings.clone()))
-        .collect();
+    let standings: Vec<(u64, Vec<Standing>)> = {
+        let pairing = hub.data.lock().expect("never poisoned");
+        pairing
+            .live
+            .iter()
+            .map(|(stream, live)| (*stream, live.standings.clone()))
+            .chain(pairing.registered.iter().map(|(stream, registration)| (*stream, registration.standings.clone())))
+            .collect()
+    };
     let lapsed: Vec<(u64, String)> = {
         let store = hub.store();
         let directory = &store.book.directory;
@@ -120,6 +161,11 @@ pub(crate) fn cut_streams(hub: &Hub) {
     for (stream, why) in lapsed {
         if let Some(cut) = pairing.live.get_mut(&stream).and_then(|live| live.cut.take()) {
             let _ = cut.send(why);
+        } else if !pairing.live.contains_key(&stream) {
+            pairing.registered.remove(&stream);
+            if let Some(waiting) = pairing.waiting.remove(&stream) {
+                let _ = waiting.called_off.send(format!("the right its call was made under was taken back: {why}"));
+            }
         }
     }
 }
@@ -143,17 +189,32 @@ pub(crate) async fn end(
     };
     // Taken out, or put in to wait, in one look: two ends that come at once
     // find each other.
-    let (hand_over, handed) = oneshot::channel();
+    let (hand_over, mut handed) = oneshot::channel();
+    let (called_off, mut calling_off) = oneshot::channel();
     let waiting = {
         let mut pairing = hub.data.lock().expect("never poisoned");
-        let found = pairing.waiting.remove(&stream);
-        if found.is_none() {
-            pairing.waiting.insert(stream, Waiting { end, member: me.clone(), hand_over });
+        match pairing.waiting.remove(&stream) {
+            Some(found) => Ok(Some(found)),
+            None => {
+                let mine = pairing.waiting.values().filter(|waiting| waiting.member == me).count();
+                if pairing.waiting.len() >= WAITING || mine >= WAITING_FOR_ONE {
+                    Err(format!(
+                        "the hub has {} data connections waiting for their other end; try again",
+                        pairing.waiting.len()
+                    ))
+                } else {
+                    pairing.waiting.insert(stream, Waiting { end, member: me.clone(), hand_over, called_off });
+                    Ok(None)
+                }
+            }
         }
-        found
     };
     match waiting {
-        Some(waiting) => {
+        Err(reason) => {
+            hub.log.line(format_args!("refused a data connection of {me}: {reason}"));
+            refuse(&mut socket, Refusal::Broken { reason }).await;
+        }
+        Ok(Some(waiting)) => {
             let (cut, cutting) = oneshot::channel();
             match pair(&hub, stream, &waiting, end, &me, cut) {
                 Ok((source, sink)) => {
@@ -171,15 +232,28 @@ pub(crate) async fn end(
                 }
             }
         }
-        None => {
+        Ok(None) => {
             let peer = tokio::select! {
-                handed = handed => handed.ok(),
+                handed = &mut handed => handed.map_err(|_| "the other end left".to_string()),
                 // The waiting end gave up or vanished.
-                _ = socket.next() => None,
+                _ = socket.next() => Err("this end left".to_string()),
+                () = tokio::time::sleep(PAIRING) => {
+                    Err(format!("the other end did not come within {} s", PAIRING.as_secs()))
+                }
+                Ok(why) = &mut calling_off => Err(why),
             };
-            hub.data.lock().expect("never poisoned").waiting.remove(&stream);
+            // A pairing that came meanwhile hands its end over still.
+            let peer = match peer {
+                Err(why) => {
+                    let mut pairing = hub.data.lock().expect("never poisoned");
+                    pairing.waiting.remove(&stream);
+                    drop(pairing);
+                    handed.try_recv().map_err(|_| why)
+                }
+                handed => handed,
+            };
             match peer {
-                Some((peer, cutting)) => {
+                Ok((peer, cutting)) => {
                     let carried = relay(socket, peer, cutting).await;
                     let mut pairing = hub.data.lock().expect("never poisoned");
                     pairing.live.remove(&stream);
@@ -187,8 +261,8 @@ pub(crate) async fn end(
                     drop(pairing);
                     hub.log.line(format_args!("a transfer ended; {carried} bytes came from {me}"));
                 }
-                None => {
-                    refuse(&mut socket, Refusal::Broken { reason: "the other end did not come".to_string() }).await;
+                Err(reason) => {
+                    refuse(&mut socket, Refusal::Broken { reason }).await;
                 }
             }
         }
@@ -223,6 +297,9 @@ fn pair(
                 registration.source, registration.sink
             ));
         }
+        if pairing.live.len() >= LIVE {
+            return Err(format!("the hub relays {} transfers already; try again", pairing.live.len()));
+        }
         registration.standings.clone()
     };
     let covers =
@@ -244,9 +321,11 @@ fn pair(
 }
 
 /// Relays between the two ends until either is done or the pair is cut;
-/// returns how many bytes passed from the first end to the second.
+/// returns how many bytes passed from the first end to the second. An end
+/// that does not take a message within the silence ends the pair, as one
+/// that says nothing ends it at its own end.
 async fn relay(mut first: Socket, mut second: Socket, cutting: oneshot::Receiver<String>) -> u64 {
-    if send(&mut first, &Down::Paired).await.is_err() || send(&mut second, &Down::Paired).await.is_err() {
+    if !paired(&mut first).await || !paired(&mut second).await {
         return 0;
     }
     let mut carried = 0_u64;
@@ -255,14 +334,18 @@ async fn relay(mut first: Socket, mut second: Socket, cutting: oneshot::Receiver
     let forward = async {
         while let Some(Ok(message)) = first_stream.next().await {
             carried += message.len() as u64;
-            if message.is_close() || second_sink.send(message).await.is_err() {
+            if message.is_close()
+                || !tokio::time::timeout(SILENCE, second_sink.send(message)).await.is_ok_and(|sent| sent.is_ok())
+            {
                 break;
             }
         }
     };
     let backward = async {
         while let Some(Ok(message)) = second_stream.next().await {
-            if message.is_close() || first_sink.send(message).await.is_err() {
+            if message.is_close()
+                || !tokio::time::timeout(SILENCE, first_sink.send(message)).await.is_ok_and(|sent| sent.is_ok())
+            {
                 break;
             }
         }
@@ -280,7 +363,12 @@ async fn relay(mut first: Socket, mut second: Socket, cutting: oneshot::Receiver
         () = backward => {}
         () = cut => {}
     }
-    let _ = first_sink.close().await;
-    let _ = second_sink.close().await;
+    let _ = tokio::time::timeout(SILENCE, first_sink.close()).await;
+    let _ = tokio::time::timeout(SILENCE, second_sink.close()).await;
     carried
+}
+
+/// Tells an end it is paired; whether it took that within the silence.
+async fn paired(socket: &mut Socket) -> bool {
+    tokio::time::timeout(SILENCE, send(socket, &Down::Paired)).await.is_ok_and(|sent| sent.is_ok())
 }

@@ -253,19 +253,17 @@ impl History {
         Ok(())
     }
 
-    /// The records `me` reads for `account`, newest first. Renames, and the
-    /// records of conversations deleted, are left out for a member whose
-    /// release does not read them (`reads`, renames and deletions): it
-    /// could read nothing of a page with one. The super administrator reads
-    /// every record but those of conversations, which only their account
-    /// reads.
+    /// The records `me` reads for `account`, newest first. A kind of record
+    /// its release does not read is left out (`Action::needs`): it could
+    /// read nothing of a page with one. The super administrator reads every
+    /// record but those of conversations, which only their account reads.
     pub(crate) fn read(
         &self,
         directory: &Directory,
         me: &MachineName,
         account: &AccountName,
         before: Option<u64>,
-        (renames, forgets, versions, due): (bool, bool, bool, bool),
+        reads: fastctx_types::machine_log::Reads,
     ) -> Result<Page, String> {
         if !directory.may_act_for(account, me) {
             return Err(format!("{me} may not read the machine log of the account {account}"));
@@ -287,10 +285,7 @@ impl History {
             .filter(|kept| {
                 let private = kept.record.action.of_conversation();
                 before.is_none_or(|before| kept.record.id < before)
-                    && (renames || !matches!(kept.record.action, Action::Rename { .. }))
-                    && (versions || !matches!(kept.record.action, Action::Updates { .. }))
-                    && (due || !matches!(kept.record.action, Action::UpdateDue { .. } | Action::Updated { .. }))
-                    && (forgets || !private)
+                    && reads.covers(kept.record.action.needs())
                     && kept.record.at.checked_add(RETENTION).expect("timestamp in range") > now
                     && ((whole && !private)
                         || kept.accounts.get(account).copied().is_some_and(|kept| Some(kept) == opened)

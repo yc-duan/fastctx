@@ -58,10 +58,9 @@ pub(crate) struct Direct {
     seen: Mutex<BTreeMap<MachineName, LinkSeen>>,
     /// Calls other machines made over direct links that this one answers.
     answering: Mutex<HashMap<u64, Answering>>,
-    /// Data connections other machines opened that no call here took yet.
-    arrived: Mutex<HashMap<(MachineName, u64), data::Arrived>>,
-    /// Calls here waiting for another machine to open their data connection.
-    awaited: Mutex<HashMap<(MachineName, u64), data::Awaited>>,
+    /// The data connections other machines opened that no call here took
+    /// yet, and the calls here waiting for one, in one lock (`data`).
+    pairing: Mutex<data::Pairing>,
     /// How many calls a phone has in flight to each machine.
     demand: Mutex<HashMap<MachineName, usize>>,
     /// What this machine noted of its direct calls, not yet told to the hub.

@@ -39,6 +39,16 @@ pub(crate) fn change(
         Ok(told) => told,
         Err(reason) => return (Err(reason), Vec::new()),
     };
+    if ended.iter().any(|(_, refusal)| matches!(refusal, Refusal::Removed { .. })) {
+        let (dir, log) = (hub.store().dir().to_path_buf(), hub.log.clone());
+        tokio::task::spawn_blocking(move || {
+            if let Err(error) = crate::store::Store::clear_trash(&dir) {
+                log.line(format_args!(
+                    "deleting the letters of machines taken off: {error}; done when the hub opens next"
+                ));
+            }
+        });
+    }
     hub.changed();
     if dissolving {
         crate::dissolve::changed(hub);
@@ -111,6 +121,18 @@ fn made(
                         Err(error) => hub.log.line(format_args!(
                             "moving what is kept for a renamed machine: {error}; it is moved when the hub starts again"
                         )),
+                    }
+                }
+                // Only now that the directory without them is kept do the
+                // letters waiting for machines taken off go: a change that
+                // was not kept leaves every letter where it was.
+                for (name, refusal) in ended.iter() {
+                    if matches!(refusal, Refusal::Removed { .. })
+                        && let Err(error) = store.forget_letters(name)
+                    {
+                        hub.log.line(format_args!(
+                            "setting aside the letters of {name}, taken off: {error}; done when the hub opens next"
+                        ));
                     }
                 }
                 Ok(told)
@@ -736,7 +758,7 @@ fn remove_member(
         then,
         left: None,
     });
-    store.forget_letters(name).map_err(|error| format!("dropping the letters of {name}: {error}"))?;
+    // Its letters go once the change is kept (`made`).
     let refusal = Refusal::Removed { by: by.cloned(), at, reason: reason.to_string(), dissolved, then };
     ended.push((name.clone(), refusal));
     Ok(())

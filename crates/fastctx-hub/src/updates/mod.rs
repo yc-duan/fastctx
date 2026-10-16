@@ -47,17 +47,55 @@ pub(crate) struct Updates {
     /// The requests machines were sent to fetch a package (`Down::Fetch`).
     fetches: HashMap<u64, Fetching>,
     cache: Cache,
+    /// Places for the packages handed to machines at once, so updates leave
+    /// the hub's line to everything else that passes on it.
+    handing: Arc<tokio::sync::Semaphore>,
 }
+
+/// How many packages the hub hands to machines at once; the rest wait.
+const HANDED_AT_ONCE: usize = 4;
 
 struct Fetching {
     helper: MachineName,
     generation: u64,
     held: Held,
     done: Option<oneshot::Sender<Result<(), String>>>,
+    attempt: Arc<Attempt>,
+}
+
+/// One try of bringing a package in: its own file, and the means to stop
+/// its transfer and to hear that it stopped, so the next try starts only
+/// once this one is over (`obtain`).
+pub(super) struct Attempt {
+    /// Numbers the try's file (`fastctx_update::Cache::attempt`).
+    id: u64,
+    /// Set once the hub gives the try up.
+    stop: tokio::sync::watch::Sender<bool>,
+    /// Whether a transfer of it is running.
+    running: tokio::sync::watch::Sender<bool>,
+    /// The bytes it brought so far, which say whether it moves.
+    brought: std::sync::atomic::AtomicU64,
+}
+
+impl Attempt {
+    fn new(id: u64) -> Self {
+        Self {
+            id,
+            stop: tokio::sync::watch::channel(false).0,
+            running: tokio::sync::watch::channel(false).0,
+            brought: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
 }
 
 impl Updates {
-    pub fn new(dir: &Path) -> Self {
+    /// The hub's record of updates; what tries of an earlier run of the hub
+    /// left of packages coming is deleted, and said in `left`.
+    pub fn new(dir: &Path, left: &mut Vec<String>) -> Self {
+        let cache = Cache::new(dir.join("updates"));
+        left.extend(
+            cache.clear_attempts().into_iter().map(|failed| format!("deleting a package left coming: {failed}")),
+        );
         Self {
             reports: HashMap::new(),
             last: HashMap::new(),
@@ -65,7 +103,8 @@ impl Updates {
             told: None,
             obtaining: HashMap::new(),
             fetches: HashMap::new(),
-            cache: Cache::new(dir.join("updates")),
+            cache,
+            handing: Arc::new(tokio::sync::Semaphore::new(HANDED_AT_ONCE)),
         }
     }
 

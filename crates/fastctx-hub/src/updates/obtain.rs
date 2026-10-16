@@ -4,18 +4,35 @@
 //! reach GitHub and fetch for others, one after another.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use fastctx_net::wire::{Down, Told};
 use fastctx_types::MachineName;
 use fastctx_types::update::{Fetch, Held};
 use tokio::sync::{mpsc, oneshot};
+use tokio::time::Instant;
 
-use super::Fetching;
+use super::{Attempt, Fetching};
 use crate::{Hub, Out};
 
 /// How long a machine asked to fetch a package has to deliver it.
 const HELPER_PATIENCE: Duration = Duration::from_secs(30 * 60);
+
+/// How long a machine asked to fetch a package may bring nothing more of
+/// it before the next is asked.
+const STALLED: Duration = Duration::from_secs(5 * 60);
+
+/// How long the hub may download a package from where its release is
+/// published before it asks the machines instead.
+const DOWNLOAD_PATIENCE: Duration = Duration::from_secs(20 * 60);
+
+/// How long bringing one package in may take in all, however it is
+/// brought: as long as whoever asks for it waits (`fastctx_net::link`).
+const BUDGET: Duration = Duration::from_secs(45 * 60);
+
+/// How long a try given up has to end its transfer before the next starts.
+const SETTLE: Duration = Duration::from_secs(30);
 
 /// `asker` asks, as its question `id`, for the package `target` of
 /// `version`: answered once the hub holds it, or with why it cannot.
@@ -82,27 +99,40 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
         .cloned()
         .ok_or_else(|| format!("the release {} has no package for {}", held.version, held.target))?;
     let mut failures = Vec::new();
+    let deadline = Instant::now() + BUDGET;
     if let Some(url) = &package.url {
-        let incoming = cache.incoming(&held.version, &held.target)?;
-        let _ = std::fs::remove_file(&incoming);
-        match fastctx_update::download::from_url(url, &incoming, &mut |_, _| {}).await {
-            Ok(()) => match super::transfer::take_in(hub, &cache, &manifest, &held.target, &incoming).await {
+        let incoming = cache.attempt(&held.version, &held.target, hub.next())?;
+        let patience = DOWNLOAD_PATIENCE.min(deadline.saturating_duration_since(Instant::now()));
+        let mut quiet = |_, _| {};
+        let downloaded = tokio::time::timeout(patience, fastctx_update::download::from_url(url, &incoming, &mut quiet));
+        match downloaded.await {
+            Ok(Ok(())) => match super::transfer::take_in(hub, &cache, &manifest, &held.target, &incoming).await {
                 Ok(size) => return Ok(size),
                 Err(why) => failures.push(why),
             },
-            Err(why) => failures.push(why),
+            Ok(Err(why)) => failures.push(why),
+            Err(_) => failures.push(format!("downloading it took more than {} minutes", patience.as_secs() / 60)),
         }
+        let _ = std::fs::remove_file(&incoming);
     }
     let mut tried = Vec::new();
     while let Some((helper, generation)) = choose(hub, held, &tried) {
+        if Instant::now() >= deadline {
+            failures.push(format!("no machine brought it within {} minutes in all", BUDGET.as_secs() / 60));
+            break;
+        }
         tried.push(helper.clone());
         let id = hub.next();
+        let attempt = Arc::new(Attempt::new(id));
         let (done, delivered) = oneshot::channel();
-        hub.updates
-            .lock()
-            .expect("never poisoned")
-            .fetches
-            .insert(id, Fetching { helper: helper.clone(), generation, held: held.clone(), done: Some(done) });
+        let fetching = Fetching {
+            helper: helper.clone(),
+            generation,
+            held: held.clone(),
+            done: Some(done),
+            attempt: attempt.clone(),
+        };
+        hub.updates.lock().expect("never poisoned").fetches.insert(id, fetching);
         let fetch = Fetch { id, version: held.version.clone(), target: held.target.clone(), package: package.clone() };
         let sent = hub
             .sessions()
@@ -111,15 +141,24 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
             .is_some_and(|session| session.out.send(Out::Frame(Down::Fetch { fetch: Box::new(fetch) })).is_ok());
         let outcome = if sent {
             hub.log.line(format_args!("asked {helper} to fetch {} of {}", held.target, held.version));
-            match tokio::time::timeout(HELPER_PATIENCE, delivered).await {
-                Ok(Ok(outcome)) => outcome,
-                Ok(Err(_)) => Err("the request was dropped".to_string()),
-                Err(_) => Err(format!("it did not deliver within {} minutes", HELPER_PATIENCE.as_secs() / 60)),
-            }
+            watch_attempt(&attempt, delivered, deadline).await
         } else {
             Err("it left before it was asked".to_string())
         };
+        // The try is over before the next begins: its transfer is told to
+        // stop and given a moment to, and what it left is deleted.
+        attempt.stop.send_replace(true);
+        let mut running = attempt.running.subscribe();
+        if tokio::time::timeout(SETTLE, running.wait_for(|running| !*running)).await.is_err() {
+            hub.log.line(format_args!(
+                "the transfer from {helper} did not end within {} s of being stopped",
+                SETTLE.as_secs()
+            ));
+        }
         hub.updates.lock().expect("never poisoned").fetches.remove(&id);
+        if let Ok(left) = cache.attempt(&held.version, &held.target, id) {
+            let _ = std::fs::remove_file(left);
+        }
         match outcome {
             Ok(()) => {
                 if let Some(size) = size_of(&cache, held)? {
@@ -134,6 +173,46 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
         return Err("no machine of the network can reach GitHub or holds the package now".to_string());
     }
     Err(failures.join("; "))
+}
+
+/// What came of the try a machine was asked to make: what it said, or why
+/// it was given up: it took longer than its patience or than what is left
+/// of `deadline`, or its transfer brought nothing more for `STALLED`. Before
+/// its transfer starts the machine may be fetching the package itself,
+/// which the hub does not see, so only its patience counts then.
+async fn watch_attempt(
+    attempt: &Attempt,
+    mut delivered: oneshot::Receiver<Result<(), String>>,
+    deadline: Instant,
+) -> Result<(), String> {
+    let started = Instant::now();
+    let patience = (started + HELPER_PATIENCE).min(deadline);
+    let mut seen: Option<u64> = None;
+    let mut moved = started;
+    loop {
+        let look = (Instant::now() + Duration::from_secs(15)).min(patience);
+        tokio::select! {
+            outcome = &mut delivered => return outcome.unwrap_or_else(|_| Err("the request was dropped".to_string())),
+            () = tokio::time::sleep_until(look) => {}
+        }
+        let now = Instant::now();
+        if *attempt.running.borrow() || seen.is_some() {
+            let brought = attempt.brought.load(Ordering::Relaxed);
+            if seen != Some(brought) {
+                seen = Some(brought);
+                moved = now;
+            }
+            if now.duration_since(moved) >= STALLED {
+                return Err(format!("its transfer brought nothing more for {} minutes", STALLED.as_secs() / 60));
+            }
+        }
+        if now >= patience {
+            return Err(format!(
+                "it did not deliver within {} minutes",
+                patience.duration_since(started).as_secs() / 60
+            ));
+        }
+    }
 }
 
 /// The next machine to ask, not one in `tried`: one that holds the package
