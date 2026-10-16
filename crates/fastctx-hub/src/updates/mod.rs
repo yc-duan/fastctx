@@ -63,28 +63,98 @@ struct Fetching {
     attempt: Arc<Attempt>,
 }
 
-/// One try of bringing a package in: its own file, and the means to stop
-/// its transfer and to hear that it stopped, so the next try starts only
-/// once this one is over (`obtain`).
+/// One try of bringing a package in: its own file, and where it stands,
+/// so the next try starts only once this one is over (`obtain`).
 pub(super) struct Attempt {
     /// Numbers the try's file (`fastctx_update::Cache::attempt`).
     id: u64,
-    /// Set once the hub gives the try up.
-    stop: tokio::sync::watch::Sender<bool>,
-    /// Whether a transfer of it is running.
-    running: tokio::sync::watch::Sender<bool>,
+    /// Where it stands: every change is one step of this, so a transfer
+    /// cannot start once the try is given up, nor be given up once it puts
+    /// its package in place.
+    state: tokio::sync::watch::Sender<Try>,
     /// The bytes it brought so far, which say whether it moves.
     brought: std::sync::atomic::AtomicU64,
 }
 
+/// Where a try stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Try {
+    /// Asked of a machine; nothing of it came yet.
+    Asked,
+    /// Its transfer runs.
+    Running,
+    /// Given up while its transfer runs: the transfer stops.
+    Stopping,
+    /// It has the whole package and puts it in place, which it finishes.
+    Keeping,
+    /// Over: given up, failed, or kept.
+    Over,
+}
+
 impl Attempt {
     fn new(id: u64) -> Self {
-        Self {
-            id,
-            stop: tokio::sync::watch::channel(false).0,
-            running: tokio::sync::watch::channel(false).0,
-            brought: std::sync::atomic::AtomicU64::new(0),
-        }
+        Self { id, state: tokio::sync::watch::channel(Try::Asked).0, brought: std::sync::atomic::AtomicU64::new(0) }
+    }
+
+    /// Starts its transfer, unless it is given up or one runs already:
+    /// whether it started.
+    pub(super) fn begin(&self) -> bool {
+        self.step(Try::Asked, Try::Running)
+    }
+
+    /// Its transfer has the whole package: whether it may put it in place,
+    /// not given up meanwhile.
+    pub(super) fn keep(&self) -> bool {
+        self.step(Try::Running, Try::Keeping)
+    }
+
+    fn step(&self, from: Try, to: Try) -> bool {
+        self.state.send_if_modified(|state| {
+            let stepped = *state == from;
+            if stepped {
+                *state = to;
+            }
+            stepped
+        })
+    }
+
+    /// Its transfer is over, whatever came of it.
+    pub(super) fn over(&self) {
+        self.state.send_replace(Try::Over);
+    }
+
+    /// Gives the try up: one not begun is over at once, a transfer running
+    /// is told to stop, and one putting its package in place finishes.
+    pub(super) fn give_up(&self) {
+        self.state.send_if_modified(|state| {
+            let next = match *state {
+                Try::Asked => Try::Over,
+                Try::Running => Try::Stopping,
+                other => other,
+            };
+            let changed = next != *state;
+            *state = next;
+            changed
+        });
+    }
+
+    /// Resolves once its transfer is to stop.
+    pub(super) async fn stopping(&self) {
+        let _ = self.state.subscribe().wait_for(|state| *state == Try::Stopping).await;
+    }
+
+    /// Resolves once it is over.
+    pub(super) async fn ended(&self) {
+        let _ = self.state.subscribe().wait_for(|state| *state == Try::Over).await;
+    }
+
+    /// Whether a transfer of it runs.
+    pub(super) fn moving(&self) -> bool {
+        matches!(*self.state.borrow(), Try::Running | Try::Stopping | Try::Keeping)
+    }
+
+    pub(super) fn is_over(&self) -> bool {
+        *self.state.borrow() == Try::Over
     }
 }
 

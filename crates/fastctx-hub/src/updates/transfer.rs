@@ -132,6 +132,15 @@ pub(crate) async fn serve(
     }
 }
 
+/// Has a try over once its transfer is, however it ends.
+struct Over<'a>(&'a Attempt);
+
+impl Drop for Over<'_> {
+    fn drop(&mut self) {
+        self.0.over();
+    }
+}
+
 /// Takes the package of the request `id` from the member it was asked of.
 pub(crate) async fn deliver(
     hub: Arc<Hub>,
@@ -162,13 +171,15 @@ pub(crate) async fn deliver(
         return;
     };
     // One transfer a try, and none once the hub gave the try up.
-    if *attempt.stop.borrow() || attempt.running.send_replace(true) {
+    if !attempt.begin() {
         let reason = format!("the hub takes no more of request {id} from {me}");
         refuse(&mut socket, Refusal::Broken { reason }).await;
         return;
     }
-    let outcome = take(&hub, socket, &held, &attempt).await;
-    attempt.running.send_replace(false);
+    let outcome = {
+        let _over = Over(&attempt);
+        take(&hub, socket, &held, &attempt).await
+    };
     if let Err(why) = &outcome {
         hub.log.line(format_args!("taking {} of {} from {me}: {why}", held.target, held.version));
     }
@@ -228,16 +239,15 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Attempt
             }
         }
     };
-    let mut stop = attempt.stop.subscribe();
     let received: Result<(), String> = tokio::select! {
         received = received => received,
         () = pinging => unreachable!("pinging never ends"),
-        _ = stop.wait_for(|stop| *stop) => Err("the hub gave this request up and asked another machine".to_string()),
+        () = attempt.stopping() => Err("the hub gave this request up and asked another machine".to_string()),
     };
-    // A try given up while it checked its last byte does not put its
-    // package in place: the next try owns that.
+    // A try given up before it had its last byte does not put its package
+    // in place: the next try owns that. Once it has them, it finishes.
     let kept = match received {
-        Ok(()) if !*attempt.stop.borrow() => take_in(hub, &cache, &manifest, &held.target, &incoming).await.map(|_| ()),
+        Ok(()) if attempt.keep() => take_in(hub, &cache, &manifest, &held.target, &incoming).await.map(|_| ()),
         Ok(()) => Err("the hub gave this request up and asked another machine".to_string()),
         Err(why) => Err(why),
     };

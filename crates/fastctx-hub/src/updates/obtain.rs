@@ -68,7 +68,15 @@ async fn obtain(hub: &Arc<Hub>, held: Held) -> Result<u64, String> {
                 updates.obtaining.insert(held.clone(), vec![waiting]);
                 let (hub, held) = (hub.clone(), held.clone());
                 tokio::spawn(async move {
-                    let brought = bring(&hub, &held).await;
+                    // However long its parts take, among them checking what
+                    // came, it is over within its budget.
+                    let brought =
+                        tokio::time::timeout(BUDGET + 2 * SETTLE, bring(&hub, &held)).await.unwrap_or_else(|_| {
+                            Err(format!(
+                                "bringing it in took more than {} minutes",
+                                (BUDGET + 2 * SETTLE).as_secs() / 60
+                            ))
+                        });
                     if let Err(why) = &brought {
                         hub.log.line(format_args!("bringing in {} of {}: {why}", held.target, held.version));
                     }
@@ -146,17 +154,20 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
             Err("it left before it was asked".to_string())
         };
         // The try is over before the next begins: its transfer is told to
-        // stop and given a moment to, and what it left is deleted.
-        attempt.stop.send_replace(true);
-        let mut running = attempt.running.subscribe();
-        if tokio::time::timeout(SETTLE, running.wait_for(|running| !*running)).await.is_err() {
+        // stop and given a moment to, and what it left is deleted. One that
+        // does not end in that moment can no longer put its package in
+        // place, and deletes what it left itself.
+        attempt.give_up();
+        if tokio::time::timeout(SETTLE, attempt.ended()).await.is_err() {
             hub.log.line(format_args!(
                 "the transfer from {helper} did not end within {} s of being stopped",
                 SETTLE.as_secs()
             ));
         }
         hub.updates.lock().expect("never poisoned").fetches.remove(&id);
-        if let Ok(left) = cache.attempt(&held.version, &held.target, id) {
+        if attempt.is_over()
+            && let Ok(left) = cache.attempt(&held.version, &held.target, id)
+        {
             let _ = std::fs::remove_file(left);
         }
         match outcome {
@@ -196,7 +207,7 @@ async fn watch_attempt(
             () = tokio::time::sleep_until(look) => {}
         }
         let now = Instant::now();
-        if *attempt.running.borrow() || seen.is_some() {
+        if attempt.moving() || seen.is_some() {
             let brought = attempt.brought.load(Ordering::Relaxed);
             if seen != Some(brought) {
                 seen = Some(brought);

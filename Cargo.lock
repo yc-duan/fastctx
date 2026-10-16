@@ -1623,6 +1623,7 @@ version = "1.0.1-beta.3"
 dependencies = [
  "base64 0.22.1",
  "fastctx-net",
+ "fastctx-platform",
  "fastctx-types",
  "flate2",
  "jiff",

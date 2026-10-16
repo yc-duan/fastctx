@@ -95,9 +95,9 @@ impl Cache {
         std::fs::create_dir_all(&dir).map_err(|error| format!("{}: {error}", dir.display()))?;
         let text = serde_json::to_vec_pretty(manifest).map_err(|error| error.to_string())?;
         let path = dir.join(MANIFEST);
-        let temporary = dir.join(format!("{MANIFEST}.part"));
-        std::fs::write(&temporary, text).map_err(|error| format!("{}: {error}", temporary.display()))?;
-        std::fs::rename(&temporary, &path).map_err(|error| format!("{}: {error}", path.display()))
+        // Two packages of one release kept at once each write their own.
+        fastctx_platform::publish(&path, &text, fastctx_platform::Permissions::Private)
+            .map_err(|error| format!("{}: {error}", path.display()))
     }
 
     /// The manifests kept, newest first.

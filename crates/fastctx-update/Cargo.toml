@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 base64 = "0.22"
 fastctx-net = { path = "../fastctx-net" }
+fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
 # The command-line program comes as a .tar.gz with its notices.
 flate2 = "1"
