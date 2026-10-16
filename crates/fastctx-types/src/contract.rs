@@ -12,14 +12,25 @@ use crate::lines::Request as Lines;
 use crate::remote::RemoteCall;
 use crate::update::UpdateCall;
 
+/// How long a stream whose machine speaks first, as a line source or a file
+/// search opened through its own connection, is waited for to say it is
+/// open: past that its caller gives it up, which ends it there too. Once
+/// open it lasts as long as it lasts.
+pub const OPENED_WITHIN: Duration = Duration::from_secs(60);
+
 /// What a call between machines is, for whoever makes it and whoever
 /// answers it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Contract {
-    /// How long its caller waits for the answer once the call is made; none
-    /// for work that goes on for as long as it goes on, kept alive by its
-    /// line's heartbeat and its data connection's own. Past it the caller
-    /// gives the call up: whether what it asked was done is then not known.
+    /// How long its caller waits for the answer from the moment the call is
+    /// made, the wait for a connection to send it on included; none for work
+    /// that goes on for as long as it goes on, kept alive by its line's
+    /// heartbeat and its data connection's own, its bytes due coming within
+    /// their own time (`fastctx_net::data::DUE_WITHIN`), and a stream that
+    /// speaks first saying it is open within `OPENED_WITHIN`. Past it the
+    /// caller gives the call up: whether what it asked was done is then not
+    /// known. A copy asked of another machine (`RemoteCall::CopySend`) is
+    /// taken on by the transfer that machine starts, and waited for as that is.
     pub within: Option<Duration>,
     /// Which places it takes where it is answered.
     pub pool: Pool,

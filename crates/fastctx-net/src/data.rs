@@ -32,6 +32,10 @@ const DONE: &str = "\"done\"";
 /// for the other end, and says so within a silence.
 const PAIRED_WITHIN: std::time::Duration = std::time::Duration::from_secs(90);
 
+/// How long bytes the other end said it sends may stop coming before it is
+/// given up: a quiet stream may wait for ever, bytes due may not.
+pub const DUE_WITHIN: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// The most bytes one message carries. The other end counts only whole
 /// messages as hearing from this one, so each must arrive well within
 /// `SILENCE`: a transfer's messages grow to this only on a line that takes
@@ -204,13 +208,7 @@ impl Stream {
     ) -> Result<(), String> {
         while count > 0 {
             if self.pending.is_empty() {
-                match self.next().await? {
-                    Some(Message::Bytes(bytes)) => self.pending = bytes,
-                    Some(Message::Word(_)) => {
-                        return Err("the other end said something where bytes were due".to_string());
-                    }
-                    None => return Err(format!("the other end stopped with {count} bytes still due")),
-                }
+                self.pending = self.due(count).await?;
             }
             let here = (self.pending.len() as u64).min(count) as usize;
             take(&self.pending[..here])?;
@@ -225,13 +223,7 @@ impl Stream {
     pub async fn forward(&mut self, to: &mut Stream, mut count: u64) -> Result<(), String> {
         while count > 0 {
             if self.pending.is_empty() {
-                match self.next().await? {
-                    Some(Message::Bytes(bytes)) => self.pending = bytes,
-                    Some(Message::Word(_)) => {
-                        return Err("the other end said something where bytes were due".to_string());
-                    }
-                    None => return Err(format!("the other end stopped with {count} bytes still due")),
-                }
+                self.pending = self.due(count).await?;
             }
             let here = (self.pending.len() as u64).min(count) as usize;
             to.send(&self.pending[..here]).await?;
@@ -239,6 +231,18 @@ impl Stream {
             count -= here as u64;
         }
         Ok(())
+    }
+
+    /// The next of `count` bytes still due, within `DUE_WITHIN`.
+    async fn due(&mut self, count: u64) -> Result<Vec<u8>, String> {
+        let next = tokio::time::timeout(DUE_WITHIN, self.next())
+            .await
+            .map_err(|_| format!("{count} bytes were still due, and none came for {} s", DUE_WITHIN.as_secs()))?;
+        match next? {
+            Some(Message::Bytes(bytes)) => Ok(bytes),
+            Some(Message::Word(_)) => Err("the other end said something where bytes were due".to_string()),
+            None => Err(format!("the other end stopped with {count} bytes still due")),
+        }
     }
 
     /// Says something to the other end.

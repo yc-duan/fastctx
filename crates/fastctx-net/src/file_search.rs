@@ -51,6 +51,10 @@ pub async fn open(
         tokio::pin!(call);
         let result = tokio::select! {
             reply = opening => reply.map_err(|error| Failure::new(format!("opening the file search: {error}"))),
+            () = tokio::time::sleep(fastctx_types::contract::OPENED_WITHIN) => Err(Failure::new(format!(
+                "{machine} did not open the file search within {} s",
+                fastctx_types::contract::OPENED_WITHIN.as_secs()
+            ))),
             result = &mut call => Err(match result {
                 Ok(Err(error)) => error,
                 Err(error) => Failure::new(error.to_string()),

@@ -57,7 +57,30 @@ pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelop
         reply(&inner, &replier, &message, Kind::Refused, None, serde_json::Value::String(reason)).await;
         return;
     }
-    let caller = match inner.admit(&message).await {
+    // Its time here runs from now, not from when its work begins: what it
+    // takes to admit it and bring its bytes in is waited for in it.
+    let came = tokio::time::Instant::now();
+    let admitted = match inner.admits_now(&message) {
+        Ok(caller) => Ok(caller),
+        Err(_) => {
+            // The view may not hold a grant made just now. Asking the hub
+            // waits in one of the few places kept for what comes in before
+            // it is known, and stops with the call.
+            let account = message.standing().map(|(account, _)| account.clone());
+            let waiting = account.and_then(|account| {
+                let caller = Caller { machine: message.from.clone(), account, sent_as: message.from.clone() };
+                inner.node.place(&caller, Pool::Receiving).map_err(|failure| failure.message)
+            });
+            match waiting {
+                Ok(_place) => tokio::select! {
+                    admitted = inner.admit(&message) => admitted,
+                    _ = stop.stopping() => return,
+                },
+                Err(reason) => Err(reason),
+            }
+        }
+    };
+    let caller = match admitted {
         Ok(caller) => caller,
         Err(reason) => {
             inner.node.log(format!("refused a call from {}: {reason}", message.from));
@@ -84,7 +107,7 @@ pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelop
     };
     // Kept until the answer has gone, or is given up.
     let mut held: Vec<Box<dyn Send>> = Vec::new();
-    let Some(result) = work(&inner, &caller, &message, &endpoint, &mut stop, &mut held).await else {
+    let Some(result) = work(&inner, &caller, &message, &endpoint, &mut stop, &mut held, came).await else {
         // Nobody is left to hear the answer.
         return;
     };
@@ -151,6 +174,7 @@ async fn work(
     endpoint: &Endpoint,
     stop: &mut Answer,
     held: &mut Vec<Box<dyn Send>>,
+    came: tokio::time::Instant,
 ) -> Option<RemoteResult> {
     let refused = |reason: String| {
         inner.node.log(format!("refused a call from {}: {reason}", caller.machine));
@@ -212,7 +236,7 @@ async fn work(
     }
     let past = async {
         match contract.within {
-            Some(within) => tokio::time::sleep(within + PAST_THE_CALLER).await,
+            Some(within) => tokio::time::sleep_until(came + within + PAST_THE_CALLER).await,
             None => std::future::pending().await,
         }
     };

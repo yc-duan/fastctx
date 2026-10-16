@@ -266,8 +266,11 @@ pub(crate) struct Inner {
     letters: Mutex<Letters>,
     /// Replaced whole on each refresh, so a reader holds it as it was.
     view: Mutex<Arc<View>>,
-    /// One refresh of the view at a time; others wait for it.
-    refreshing: tokio::sync::Mutex<()>,
+    /// One refresh of the view at a time, or one change to it; others wait,
+    /// and one that waited takes what a refresh begun meanwhile found.
+    refreshing: tokio::sync::Mutex<Refreshed>,
+    /// How many refreshes of the view began.
+    refreshes: AtomicU64,
     status: watch::Sender<Status>,
     connection: Mutex<Option<Connection>>,
     calls: Mutex<HashMap<u64, Waiter>>,
@@ -318,6 +321,12 @@ struct Letters {
     file: LettersFile,
     /// The number the next letter gets.
     next: u64,
+}
+
+/// What the last refresh of the view found, by its number.
+#[derive(Default)]
+pub(crate) struct Refreshed {
+    last: Option<(u64, Result<(), String>)>,
 }
 
 /// The current connection: where to put frames to send on it, and the way
@@ -419,7 +428,8 @@ impl Link {
             counter,
             letters: Mutex::new(Letters { file: letters_file, next }),
             view: Mutex::new(Arc::new(view)),
-            refreshing: tokio::sync::Mutex::new(()),
+            refreshing: tokio::sync::Mutex::new(Refreshed::default()),
+            refreshes: AtomicU64::new(0),
             status,
             connection: Mutex::new(None),
             calls: Mutex::new(HashMap::new()),
@@ -911,8 +921,25 @@ impl Inner {
         CallFailure::NotMember { name: name.clone(), machines }
     }
 
+    /// Asks the hub for the view again. Of the many that may ask at once, as
+    /// calls from a machine the view does not know yet do, those that waited
+    /// for one begun after they asked take what it found, so that a hub slow
+    /// to answer is waited for once, not once each.
     async fn refresh(&self) -> Result<(), String> {
-        let _one = self.refreshing.lock().await;
+        let asked = self.refreshes.load(Ordering::SeqCst);
+        let mut one = self.refreshing.lock().await;
+        if let Some((began, found)) = &one.last
+            && *began > asked
+        {
+            return found.clone();
+        }
+        let began = self.refreshes.fetch_add(1, Ordering::SeqCst) + 1;
+        let found = self.refresh_now().await;
+        one.last = Some((began, found.clone()));
+        found
+    }
+
+    async fn refresh_now(&self) -> Result<(), String> {
         let Told::Directory { mut view } = self.ask(Question::Directory).await? else {
             return Err("the hub answered something else".to_string());
         };
@@ -957,33 +984,37 @@ impl Inner {
     /// view again once when it does not: a grant the hub just made may not
     /// be in the view yet.
     async fn admit(&self, envelope: &Envelope) -> Result<Caller, String> {
-        if envelope.hub != self.hub {
-            return Err(format!("it is for {} on {}", envelope.to, envelope.hub));
-        }
-        let (account, purpose) = envelope.standing()?;
-        // A name this machine or the sender had before the hub renamed it
-        // names it all the same, as in a letter kept since; the sender is
-        // known by its name now.
-        let check = |view: &View| -> Result<MachineName, String> {
-            if !view.is_me(&envelope.to) {
-                return Err(format!("it is for {} on {}", envelope.to, envelope.hub));
-            }
-            match (envelope.kind, purpose) {
-                (Kind::Letter, Purpose::Echo) => view.admits_echo(&envelope.from, account, &view.me),
-                _ => view.admits(&envelope.from, account, &view.me, purpose),
-            }?;
-            Ok(view.canonical(&envelope.from).clone())
-        };
-        let from = match check(&self.view()) {
-            Ok(from) => from,
+        match self.admits_now(envelope) {
+            Ok(caller) => Ok(caller),
             Err(_) => {
                 if let Err(error) = self.refresh().await {
                     self.node.log(format!("asking the hub for the view: {error}"));
                 }
-                check(&self.view())?
+                self.admits_now(envelope)
             }
-        };
-        Ok(Caller { machine: from, account: account.clone(), sent_as: envelope.from.clone() })
+        }
+    }
+
+    /// Who said `envelope`, by the view as it is now: why not, when it does
+    /// not let them, which a grant made just now may not be in yet.
+    pub(super) fn admits_now(&self, envelope: &Envelope) -> Result<Caller, String> {
+        if envelope.hub != self.hub {
+            return Err(format!("it is for {} on {}", envelope.to, envelope.hub));
+        }
+        let (account, purpose) = envelope.standing()?;
+        let view = self.view();
+        if !view.is_me(&envelope.to) {
+            return Err(format!("it is for {} on {}", envelope.to, envelope.hub));
+        }
+        // A name this machine or the sender had before the hub renamed it
+        // names it all the same, as in a letter kept since; the sender is
+        // known by its name now.
+        match (envelope.kind, purpose) {
+            (Kind::Letter, Purpose::Echo) => view.admits_echo(&envelope.from, account, &view.me),
+            _ => view.admits(&envelope.from, account, &view.me, purpose),
+        }?;
+        let machine = view.canonical(&envelope.from).clone();
+        Ok(Caller { machine, account: account.clone(), sent_as: envelope.from.clone() })
     }
 
     async fn ask(&self, question: Question) -> Result<Told, String> {

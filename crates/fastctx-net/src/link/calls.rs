@@ -111,7 +111,7 @@ impl Inner {
         account: &AccountName,
         purpose: Purpose,
         call: RemoteCall,
-        mut feed: Option<Feed>,
+        feed: Option<Feed>,
     ) -> Result<RemoteResult, CallFailure> {
         // What a name the machine had before it was renamed names is called
         // by its name now.
@@ -122,10 +122,32 @@ impl Inner {
         let to = &view.canonical(to).clone();
         drop(view);
         // How long the answer is waited for, as the call says
-        // (`fastctx_types::contract`): past that it is given up, and the
-        // machine answering it told so.
-        let contract = call.contract();
+        // (`fastctx_types::contract`), from now, a connection to send it on
+        // waited for included: past that it is given up, and the machine
+        // answering it told so.
+        let within = call.contract().within;
         let what = format!("{to}'s answer to {}", call.kind());
+        let calling = self.calling(to, account, purpose, call, feed);
+        match within {
+            Some(within) => match fastctx_platform::doing::outside(what, within, calling).await {
+                Ok(answer) => answer,
+                Err(late) => Err(CallFailure::Unknown {
+                    name: to.clone(),
+                    reason: format!("it gave no answer within {} s", late.within.as_secs()),
+                }),
+            },
+            None => calling.await,
+        }
+    }
+
+    async fn calling(
+        self: &Arc<Self>,
+        to: &MachineName,
+        account: &AccountName,
+        purpose: Purpose,
+        call: RemoteCall,
+        mut feed: Option<Feed>,
+    ) -> Result<RemoteResult, CallFailure> {
         // A phone links directly with a machine only while it has calls to
         // it; the first goes through the hub while the link comes up.
         let _demand = self.demand(to);
@@ -200,20 +222,8 @@ impl Inner {
         };
         // The answer, a large one fetched too, within the one time the call
         // is waited for.
-        let answered = async {
-            let reply = self.route(&via, to, n, message, side, &mut feed).await?;
-            self.answer_of(&via, to, reply).await
-        };
-        match contract.within {
-            Some(within) => match fastctx_platform::doing::outside(what, within, answered).await {
-                Ok(answer) => answer,
-                Err(late) => Err(CallFailure::Unknown {
-                    name: to.clone(),
-                    reason: format!("it gave no answer within {} s", late.within.as_secs()),
-                }),
-            },
-            None => answered.await,
-        }
+        let reply = self.route(&via, to, n, message, side, &mut feed).await?;
+        self.answer_of(&via, to, reply).await
     }
 
     /// What `reply`, from `to`, says of the call it answers; a large answer

@@ -75,6 +75,10 @@ pub async fn open(
                     })
                 }
             },
+            () = tokio::time::sleep(fastctx_types::contract::OPENED_WITHIN) => Err(Failure::new(format!(
+                "{machine} did not open the line source within {} s",
+                fastctx_types::contract::OPENED_WITHIN.as_secs()
+            ))),
             result = &mut call => Err(match result { Ok(Err(error)) => error, Err(error) => Failure::new(error.to_string()), Ok(Ok(_)) => Failure::new("line source ended before opening") }),
         };
         let failed = result.is_err();
