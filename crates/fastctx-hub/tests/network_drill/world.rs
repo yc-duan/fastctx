@@ -37,7 +37,7 @@ pub enum Program {
 pub struct Hub {
     pub dir: PathBuf,
     pub listen: SocketAddr,
-    program: Program,
+    program: Mutex<Program>,
     /// Where the earlier release keeps what it keeps outside the hub.
     home: PathBuf,
     log: PathBuf,
@@ -83,7 +83,7 @@ impl Hub {
         let hub = Self {
             dir,
             listen,
-            program,
+            program: Mutex::new(program),
             home,
             log: root.join("hub.log"),
             child: Mutex::new(None),
@@ -96,7 +96,8 @@ impl Hub {
     /// Starts it serving.
     pub fn start(&self) -> anyhow::Result<()> {
         let log = std::fs::OpenOptions::new().create(true).append(true).open(&self.log)?;
-        let mut command = match &self.program {
+        let program = self.program.lock().expect("never poisoned").clone();
+        let mut command = match &program {
             Program::This => {
                 let mut command = Command::new(std::env::current_exe()?);
                 command.arg("hub").arg(&self.dir);
@@ -134,6 +135,20 @@ impl Hub {
         tokio::time::sleep(after).await;
         self.restarts.fetch_add(1, Ordering::SeqCst);
         self.start()
+    }
+
+    /// Stops it and serves its directory with this release's hub, as
+    /// updating a hub in place does.
+    pub fn update(&self) -> anyhow::Result<()> {
+        self.kill();
+        *self.program.lock().expect("never poisoned") = Program::This;
+        self.restarts.fetch_add(1, Ordering::SeqCst);
+        self.start()
+    }
+
+    /// Whether this release's hub serves it now.
+    pub fn serves_this(&self) -> bool {
+        matches!(*self.program.lock().expect("never poisoned"), Program::This)
     }
 
     /// What it last wrote of how it is doing; this release's only.
@@ -192,6 +207,23 @@ impl Machine {
 
     pub fn online(&self) -> bool {
         matches!(self.link().status(), Status::Online { .. })
+    }
+
+    /// How many times each of its letters is recorded as one the hub
+    /// refused, by the letter's id.
+    pub fn refused(&self) -> std::collections::HashMap<String, usize> {
+        let mut refused = std::collections::HashMap::new();
+        let Ok(entries) = std::fs::read_dir(self.net.join("failures")) else { return refused };
+        for entry in entries.flatten() {
+            let Ok(bytes) = std::fs::read(entry.path()) else { continue };
+            let Ok(failure) = serde_json::from_slice::<serde_json::Value>(&bytes) else { continue };
+            if failure["direction"] == "out"
+                && let Some(id) = failure["message"]["body"]["id"].as_str()
+            {
+                *refused.entry(id.to_string()).or_default() += 1;
+            }
+        }
+        refused
     }
 }
 

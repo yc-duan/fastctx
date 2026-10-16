@@ -87,6 +87,76 @@ pub async fn cuts(world: &World, report: &mut Report) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Letters the hub refuses, for a machine that is no member: a window of
+/// them refused while nothing the hub says reaches their sender, its line
+/// then cut, so every receipt saying why is lost, and cut again and again
+/// after: each is recorded at its sender as refused, once; and the hub keeps
+/// why no longer than the sender takes to hear it.
+pub async fn refused(world: &World, report: &mut Report) -> anyhow::Result<()> {
+    const COUNT: usize = 600;
+    const CUTS: usize = 4;
+    let alpha = world.machine("alpha");
+    let nobody = fastctx_types::MachineName::try_from("nobody".to_string()).map_err(anyhow::Error::msg)?;
+    let counted = || {
+        std::fs::read(world.hub.dir.join("taken").join("alpha"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .and_then(|count| count["taken"].as_u64())
+            .unwrap_or(0)
+    };
+    let before = (counted(), alpha.lab.connections());
+    alpha.line.freeze_to_machine(true);
+    let mut sending = crate::letters::send_to(world, &["alpha"], &nobody, "refused", COUNT);
+    sending.sent().await;
+    let refusing = until(Duration::from_secs(30), || counted() >= before.0 + 200).await;
+    let unheard = alpha.refused().is_empty();
+    alpha.line.cut();
+    alpha.line.freeze_to_machine(false);
+    report.check(
+        refusing.is_some() && unheard,
+        "the hub refused a window of alpha's letters, and none of what it said of them reached alpha before its line was cut",
+        format!("counted {} of them; {} recorded", counted() - before.0, alpha.refused().len()),
+    );
+    let mut rng = crate::Rng(0x6a09_e667_f3bc_c908);
+    for _ in 0..CUTS {
+        tokio::time::sleep(Duration::from_millis(rng.between(150, 700))).await;
+        alpha.line.cut();
+    }
+    let recorded = until(DRAIN, || sending.wanted.iter().all(|id| alpha.refused().contains_key(id))).await;
+    let refused = alpha.refused();
+    let missing = sending.wanted.iter().filter(|id| !refused.contains_key(*id)).count();
+    let twice = sending.wanted.iter().filter(|id| refused.get(*id).is_some_and(|count| *count > 1)).count();
+    report.check(
+        alpha.lab.connections() - before.1 >= 2,
+        format!("alpha connected again after its line was cut {} times", CUTS + 1),
+        format!("connected again {} times", alpha.lab.connections() - before.1),
+    );
+    report.check(
+        recorded.is_some(),
+        format!("every one of the {COUNT} letters is recorded at alpha as refused, with why"),
+        format!("{missing} missing after {}", seconds(recorded.unwrap_or(DRAIN))),
+    );
+    report.check(twice == 0, "none recorded twice", format!("{twice} twice"));
+
+    // Once alpha's heartbeat said how far it heard, the next letter it sends
+    // has its count kept with no refusal left to tell.
+    tokio::time::sleep(fastctx_net::wire::HEARTBEAT + Duration::from_secs(2)).await;
+    let gamma = world.machine("gamma");
+    let mut after = send(world, &["alpha"], "gamma", "refused-after", 1);
+    after.sent().await;
+    let came = arrived(&gamma.lab, &after.wanted, DRAIN).await;
+    let count = std::fs::read(world.hub.dir.join("taken").join("alpha"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+    let kept = count.as_ref().map(|count| count["refused"].as_object().map_or(0, serde_json::Map::len));
+    report.check(
+        came.missing.is_empty() && kept == Some(0),
+        "and the hub keeps why it refused none of them once alpha heard",
+        format!("{}; {kept:?} kept", came.first_missing()),
+    );
+    Ok(())
+}
+
 /// The hub killed where it stands, again and again, while letters are on
 /// their way.
 pub async fn crash(world: &World, report: &mut Report) -> anyhow::Result<()> {

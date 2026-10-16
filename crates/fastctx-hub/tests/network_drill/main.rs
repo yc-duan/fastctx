@@ -34,10 +34,11 @@ use report::Report;
 use world::{Program, World};
 
 /// Every scenario, in the order they run.
-const SCENARIOS: [&str; 14] = [
+const SCENARIOS: [&str; 15] = [
     "answers",
     "backlog",
     "cuts",
+    "refused",
     "crash",
     "restart",
     "freeze",
@@ -179,6 +180,7 @@ async fn scenario(name: &'static str, dir: &Path, earlier: Option<&Path>) -> Rep
             "answers" => scenarios::answers(&world, &mut report).await,
             "backlog" => scenarios::backlog(&world, &mut report).await,
             "cuts" => scenarios::cuts(&world, &mut report).await,
+            "refused" => scenarios::refused(&world, &mut report).await,
             "crash" => scenarios::crash(&world, &mut report).await,
             "restart" => scenarios::restart(&world, &mut report).await,
             "freeze" => scenarios::freeze(&world, &mut report).await,
@@ -205,7 +207,7 @@ async fn scenario(name: &'static str, dir: &Path, earlier: Option<&Path>) -> Rep
             report.check(false, "the scenario ended within its time", report::seconds(LONGEST));
         }
     }
-    if matches!(program, Program::This) {
+    if world.hub.serves_this() {
         let online = world.all_online(Duration::from_secs(90)).await;
         let since = jiff::Timestamp::now();
         let settled = health::settled(&world.hub, since, names.len() as u64, Duration::from_secs(30)).await;

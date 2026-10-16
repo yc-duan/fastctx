@@ -1,6 +1,7 @@
 //! The scenarios with an earlier release, as a network has them while its
 //! machines update one by one: an earlier hub serving this release's
-//! machines, and an earlier node on this release's hub.
+//! machines, then updated in place, and an earlier node on this release's
+//! hub.
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -25,7 +26,9 @@ const QUESTION: Duration = Duration::from_secs(60);
 /// An earlier hub serving this release's machines: what it does not pass
 /// on, giving a question up, the machine answering stops by itself; who is
 /// online comes in whole directories; letters, answers of every size, cuts
-/// and a crash go as with this release's hub.
+/// and a crash go as with this release's hub. Then it is updated in place
+/// while letters wait for a machine away: they are kept where this release
+/// keeps them, those after numbered on past them, and every one comes once.
 pub async fn earlier_hub(world: &World, report: &mut Report) -> anyhow::Result<()> {
     let (alpha, beta) = (world.machine("alpha"), world.machine("beta"));
     beta.lab.stall(true);
@@ -66,6 +69,44 @@ pub async fn earlier_hub(world: &World, report: &mut Report) -> anyhow::Result<(
     report.check(
         came.missing.is_empty(),
         "every letter reached gamma through cuts and a crash of the earlier hub",
+        format!("{} in {}", came.first_missing(), seconds(came.took)),
+    );
+    report.check(came.twice == 0, "none came twice", format!("{} twice", came.twice));
+
+    gamma.stop();
+    let numbered_before = next_for(world, "gamma").unwrap_or(0);
+    let mut waiting = send(world, &["alpha", "beta"], "gamma", "updated-before", 300);
+    waiting.sent().await;
+    let wanted = waiting.wanted.len() as u64;
+    let held = until(Duration::from_secs(90), || {
+        next_for(world, "gamma").is_some_and(|next| next >= numbered_before + wanted)
+    })
+    .await;
+    report.check(
+        held.is_some(),
+        format!("the earlier hub held all {wanted} letters for gamma, away"),
+        format!("numbered {:?} from {numbered_before}", next_for(world, "gamma")),
+    );
+    world.hub.update()?;
+    let serving = until(Duration::from_secs(60), || {
+        world.hub.health().is_some_and(|health| health["sessions"].as_u64() == Some(2))
+    })
+    .await;
+    report.check(
+        serving.is_some(),
+        "this release's hub served the earlier one's directory, alpha and beta connected",
+        serving.map_or("not within 60 s".to_string(), seconds),
+    );
+    let moved = !world.hub.dir.join("outbox").exists() && world.hub.dir.join("outboxes").exists();
+    report.check(moved, "and kept the letters waiting where this release keeps them", "");
+    let mut after = send(world, &["alpha", "beta"], "gamma", "updated-after", 300);
+    after.sent().await;
+    gamma.start()?;
+    let wanted: Vec<String> = waiting.wanted.iter().chain(&after.wanted).cloned().collect();
+    let came = arrived(&gamma.lab, &wanted, Duration::from_secs(180)).await;
+    report.check(
+        came.missing.is_empty(),
+        "every letter for gamma came once it was back, those held before the update and after",
         format!("{} in {}", came.first_missing(), seconds(came.took)),
     );
     report.check(came.twice == 0, "none came twice", format!("{} twice", came.twice));
