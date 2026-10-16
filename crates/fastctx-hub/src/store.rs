@@ -37,6 +37,7 @@ use fastctx_net::sign::{Bytes, PublicKey};
 use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
 use fastctx_types::{AccountName, HubName, MachineName};
 use jiff::Timestamp;
+mod conflicts;
 mod counts;
 
 use serde::de::DeserializeOwned;
@@ -448,10 +449,12 @@ impl Store {
 
     pub fn open(dir: &Path) -> io::Result<Self> {
         let hub: HubFile = read(&Self::hub_file(dir))?;
-        let (book, upgraded) = Self::read_book(dir)?;
+        let (book, mut upgraded) = Self::read_book(dir)?;
         let mut letters: BTreeMap<MachineName, Letters> = read_or_default(&dir.join("letters.json"))?;
         let mut changed = counts::migrate(dir, &book.directory, &mut letters)?;
-        changed |= rehouse(dir, &book.directory, &mut letters)?;
+        let (rehoused, conflicts) = rehouse(dir, &book.directory, &mut letters)?;
+        changed |= rehoused;
+        upgraded.extend(conflicts);
         for entry in letters.values_mut() {
             // A member connected when the hub stopped left at a time the
             // hub never saw.
@@ -1003,12 +1006,17 @@ pub(crate) fn read_letter(directory: &Path, seq: u64) -> io::Result<Option<Envel
 /// rename stopped halfway may have left them under; and those of a member
 /// with no records yet, as a stop before its first were kept left, which it
 /// gets now. Whether the records changed.
-fn rehouse(dir: &Path, directory: &Directory, letters: &mut BTreeMap<MachineName, Letters>) -> io::Result<bool> {
+fn rehouse(
+    dir: &Path,
+    directory: &Directory,
+    letters: &mut BTreeMap<MachineName, Letters>,
+) -> io::Result<(bool, Vec<String>)> {
     let outbox = dir.join(OUTBOX);
     if !std::fs::exists(&outbox)? {
-        return Ok(false);
+        return Ok((false, Vec::new()));
     }
     let mut changed = false;
+    let mut conflicts = Vec::new();
     for member in &directory.members {
         let recorded =
             letters.keys().any(|kept| directory.member(kept).is_some_and(|recorded| recorded.key == member.key));
@@ -1050,14 +1058,13 @@ fn rehouse(dir: &Path, directory: &Directory, letters: &mut BTreeMap<MachineName
                 let bytes = std::fs::read(&path)?;
                 match std::fs::read(&to) {
                     Ok(kept) if kept != bytes => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!(
-                                "migrating {}: {} holds different bytes under the same letter number; both were preserved",
-                                path.display(),
-                                to.display()
-                            ),
+                        let record = conflicts::keep(dir, entry.out_epoch, seq, &path, &bytes, &to, &kept)?;
+                        conflicts.push(format!(
+                            "{} and {} disagree under letter {seq}; both copies and their locations are preserved in {}",
+                            path.display(), to.display(), record.display()
                         ));
+                        std::fs::remove_file(&path)?;
+                        continue;
                     }
                     Ok(_) => {}
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -1075,7 +1082,7 @@ fn rehouse(dir: &Path, directory: &Directory, letters: &mut BTreeMap<MachineName
             }
         }
     }
-    Ok(changed)
+    Ok((changed, conflicts))
 }
 
 fn box_entries(dir: &Path, epoch: u64) -> io::Result<Vec<(u64, PathBuf)>> {
