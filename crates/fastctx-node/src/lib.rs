@@ -54,6 +54,7 @@ mod homes;
 mod hub_arrival;
 mod hub_moving;
 mod inbox;
+mod intake;
 mod job_reader;
 mod job_receipts;
 mod job_watch;

@@ -635,57 +635,6 @@ pub(crate) fn native(path: &std::path::Path) -> String {
     text
 }
 
-/// How many calls from one machine are answered at once, besides those that
-/// go on for as long as they go on (`goes_on`): more is refused, so a machine
-/// gone wrong cannot bury this one (`specs/world-concurrency.md`, 机器之间).
-const CALLS_AT_ONCE: usize = 64;
-
-static CALLING: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<MachineName, usize>>> =
-    std::sync::LazyLock::new(Default::default);
-
-/// One call from a machine being answered.
-struct Calling(MachineName);
-
-impl Calling {
-    fn begin(from: &MachineName) -> Option<Self> {
-        let mut calling = CALLING.lock().expect("never poisoned");
-        let count = calling.entry(from.clone()).or_insert(0);
-        if *count >= CALLS_AT_ONCE {
-            return None;
-        }
-        *count += 1;
-        Some(Self(from.clone()))
-    }
-}
-
-impl Drop for Calling {
-    fn drop(&mut self) {
-        let mut calling = CALLING.lock().expect("never poisoned");
-        if let Some(count) = calling.get_mut(&self.0) {
-            *count -= 1;
-            if *count == 0 {
-                calling.remove(&self.0);
-            }
-        }
-    }
-}
-
-/// Whether a call goes on for as long as it goes on, as a watch does.
-fn goes_on(call: &RemoteCall) -> bool {
-    matches!(
-        call,
-        RemoteCall::Watch { .. }
-            | RemoteCall::CopySend { .. }
-            | RemoteCall::On { .. }
-            | RemoteCall::Follow { .. }
-            | RemoteCall::PipeOut { .. }
-            | RemoteCall::FindFiles { request: fastctx_types::file_search::FileSearchRequest::Open { .. } }
-            | RemoteCall::Lines {
-                request: fastctx_types::lines::Request::Open { .. } | fastctx_types::lines::Request::Changed { .. }
-            }
-    )
-}
-
 /// What one hub's link hands this node.
 struct Handler {
     node: Weak<Node>,
@@ -693,11 +642,17 @@ struct Handler {
 }
 
 impl fastctx_net::link::Node for Handler {
+    fn place(&self, from: &Caller, pool: fastctx_types::contract::Pool) -> Result<Box<dyn Send>, Failure> {
+        let node = self.node.upgrade().ok_or_else(|| Failure::new("the node is stopping"))?;
+        crate::intake::take(&node.machine(), &self.hub, from, pool).map(|place| Box::new(place) as Box<dyn Send>)
+    }
+
     fn answering(&self, call: &RemoteCall) -> Result<Option<Box<dyn Send>>, Failure> {
-        // A watch and an `on` go on for as long as they go on: a node
-        // handing the World on does not wait for them. A copy asked of this
-        // machine holds it back only while it moves bytes (`copy`).
-        if goes_on(call) {
+        // A stream, such as a watch or an `on`, goes on for as long as it
+        // goes on: a node handing the World on does not wait for it. A copy
+        // asked of this machine holds it back only while it moves bytes
+        // (`copy`).
+        if !call.contract().held {
             return Ok(None);
         }
         let node = self.node.upgrade().ok_or_else(|| Failure::new("the node is stopping"))?;
@@ -718,21 +673,10 @@ impl fastctx_net::link::Node for Handler {
         let node = self.node.upgrade();
         let hub = self.hub.clone();
         let doing = format!("{} from {}", crate::labels::call_of(&call), caller.machine);
-        let ongoing = goes_on(&call);
         Box::pin(async move {
             let _doing = fastctx_platform::doing::doing(doing);
             let Some(node) = node else {
                 return Err(Failure::new("the node is stopping"));
-            };
-            let _calling = match ongoing {
-                true => None,
-                false => Some(Calling::begin(&caller.machine).ok_or_else(|| {
-                    Failure::new(format!(
-                        "{} is answering {CALLS_AT_ONCE} calls from {} already; ask again in a moment",
-                        node.machine(),
-                        caller.machine
-                    ))
-                })?),
             };
             let link = node.link_of(&hub).ok_or_else(|| Failure::new("the link that brought the call is gone"))?;
             let asker = match crate::admission::admit(&node, &link, &caller, &call) {

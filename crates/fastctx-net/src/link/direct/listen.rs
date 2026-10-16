@@ -158,7 +158,7 @@ async fn connected(inner: Weak<Inner>, tcp: tokio::net::TcpStream, from: SocketA
         return refuse(&mut socket, format!("this machine takes direct connections for another hub than {hub}")).await;
     }
     let me = inner.me();
-    let welcome = Frame::Welcome { name: me.clone(), proof: inner.key.sign(Domain::Peer, &binding) };
+    let welcome = Frame::Welcome { name: me.clone(), proof: inner.key.sign(Domain::Peer, &binding), cancels: true };
     // Who connects, by the key it proves it holds, from the roster this
     // machine last had: also while it cannot reach the hub.
     let member = |key: &crate::sign::PublicKey,
@@ -178,10 +178,10 @@ async fn connected(inner: Weak<Inner>, tcp: tokio::net::TcpStream, from: SocketA
             let _ = socket.close(None).await;
             log("the hub, or someone, checked that this machine is reached here".to_string());
         }
-        (peer::LINK_PATH, Intent::Link { key, proof }) => match member(&key, &proof) {
+        (peer::LINK_PATH, Intent::Link { key, proof, cancels }) => match member(&key, &proof) {
             Ok(name) => {
                 if peer::send(&mut socket, &welcome).await.is_ok() {
-                    super::peer::taken(inner, name, key, socket, from).await;
+                    super::peer::taken(inner, name, key, cancels, socket, from).await;
                 }
             }
             Err(reason) => refuse(&mut socket, reason).await,

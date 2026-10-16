@@ -51,11 +51,19 @@ impl Via {
         }
     }
 
-    /// Tells the hub the caller gave up the call `id`. Over a direct link
-    /// an answer nobody waits for is dropped where it arrives.
+    /// Tells the machine answering the call `id` that its caller gave it
+    /// up: through the hub, which tells it in turn, or over the direct link
+    /// when the other machine reads that. An answer nobody waits for is
+    /// dropped where it arrives.
     fn cancel(&self, id: u64) {
-        if let Via::Hub(connection) = self {
-            let _ = connection.up.send(Up::Cancel { id });
+        match self {
+            Via::Hub(connection) => {
+                let _ = connection.up.send(Up::Cancel { id });
+            }
+            Via::Peer(conn) if conn.cancels => {
+                let _ = conn.send(crate::peer::Frame::Cancel { id });
+            }
+            Via::Peer(_) => {}
         }
     }
 
@@ -94,6 +102,11 @@ impl Inner {
         }
         let to = &view.canonical(to).clone();
         drop(view);
+        // How long the answer is waited for, as the call says
+        // (`fastctx_types::contract`): past that it is given up, and the
+        // machine answering it told so.
+        let contract = call.contract();
+        let what = format!("{to}'s answer to {}", call.kind());
         // A phone links directly with a machine only while it has calls to
         // it; the first goes through the hub while the link comes up.
         let _demand = self.demand(to);
@@ -166,7 +179,19 @@ impl Inner {
                 (message, Side::Sending(task))
             }
         };
-        let reply = self.route(&via, to, n, message, side, &mut feed).await?;
+        let routed = self.route(&via, to, n, message, side, &mut feed);
+        let reply = match contract.within {
+            Some(within) => match fastctx_platform::doing::outside(what, within, routed).await {
+                Ok(reply) => reply?,
+                Err(late) => {
+                    return Err(CallFailure::Unknown {
+                        name: to.clone(),
+                        reason: format!("it gave no answer within {} s", late.within.as_secs()),
+                    });
+                }
+            },
+            None => routed.await?,
+        };
         let broken = |reason: String| CallFailure::Unknown { name: to.clone(), reason };
         match reply.kind {
             Kind::Refused => {

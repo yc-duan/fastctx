@@ -255,6 +255,8 @@ pub(crate) struct Session {
     forgets: bool,
     /// Whether it reads the network's versions.
     versions: bool,
+    /// Whether it reads that a call it answers is over for its caller.
+    cancels: bool,
 }
 
 pub(crate) enum Out {
@@ -662,6 +664,7 @@ async fn intended(
                 versions,
                 due,
                 left,
+                cancels,
             },
         ) => {
             let said = control::Said {
@@ -677,6 +680,7 @@ async fn intended(
                 versions,
                 due,
                 left,
+                cancels,
             };
             control::session(hub, socket, peer, binding, key, proof, letters, said).await;
         }

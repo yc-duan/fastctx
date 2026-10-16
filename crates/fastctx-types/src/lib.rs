@@ -15,6 +15,7 @@ pub mod calls;
 pub mod collab;
 pub mod collab_prompt;
 pub mod composer;
+pub mod contract;
 pub mod copy;
 pub mod data;
 pub mod device;

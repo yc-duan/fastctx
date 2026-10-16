@@ -395,6 +395,10 @@ impl Handler {
 }
 
 impl fastctx_net::link::Node for Handler {
+    fn place(&self, _: &Caller, _: fastctx_types::contract::Pool) -> Result<Box<dyn Send>, Failure> {
+        Err(Failure::new("this member is a device; nothing runs on it"))
+    }
+
     fn answering(&self, _: &RemoteCall) -> Result<Option<Box<dyn Send>>, Failure> {
         Err(Failure::new("this member is a device; nothing runs on it"))
     }

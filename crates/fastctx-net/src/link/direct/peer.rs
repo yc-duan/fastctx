@@ -39,6 +39,8 @@ pub(crate) struct PeerConn {
     pub dialed: bool,
     /// Where the other machine was reached, when this one dialed it.
     pub at: Vec<SocketAddr>,
+    /// Whether the other machine reads `Frame::Cancel`.
+    pub cancels: bool,
     out: crate::queue::Sender<Frame>,
     ms: Mutex<Option<u32>>,
     closed: watch::Sender<Option<String>>,
@@ -50,6 +52,7 @@ impl PeerConn {
         key: PublicKey,
         dialed: bool,
         at: Vec<SocketAddr>,
+        cancels: bool,
     ) -> (Arc<Self>, crate::queue::Receiver<Frame>) {
         let (out, frames) = crate::queue::bounded(QUEUED);
         let (closed, _) = watch::channel(None);
@@ -59,6 +62,7 @@ impl PeerConn {
             generation: super::super::ways::connection_number(),
             dialed,
             at,
+            cancels,
             out,
             ms: Mutex::new(None),
             closed,
@@ -173,6 +177,7 @@ impl Inner {
             if let Some(conn) = call.conn.upgrade() {
                 self.node.log(format!("cut a direct call from {}: {why}", conn.name));
                 let _ = conn.send(Frame::Cut { id: call.id, reason: reason.clone() });
+                self.answers.stop(&conn.on(), call.id, &reason);
             }
             call.cut.send_replace(Some(reason));
         }
@@ -235,27 +240,40 @@ async fn dial(inner: &Inner, peer: &MachineName, at: &[SocketAddr]) -> Result<Li
         protocol: peer::PROTOCOL,
         version: env!("CARGO_PKG_VERSION").to_string(),
         hub: inner.hub.clone(),
-        intent: Intent::Link { key: inner.key.public(), proof: inner.key.sign(Domain::Peer, &dialed.binding) },
+        intent: Intent::Link {
+            key: inner.key.public(),
+            proof: inner.key.sign(Domain::Peer, &dialed.binding),
+            cancels: true,
+        },
     };
     peer::send(&mut socket, &hello).await?;
-    match peer::next(&mut socket).await? {
-        Frame::Welcome { name, proof } => {
+    let cancels = match peer::next(&mut socket).await? {
+        Frame::Welcome { name, proof, cancels } => {
             if name != *peer {
                 return Err(format!("{name} answered at {}, not {peer}", dialed.address));
             }
             key.verify(Domain::Peer, &dialed.binding, &proof)
                 .map_err(|_| format!("what answered at {} does not hold {peer}'s key", dialed.address))?;
+            cancels
         }
         Frame::Refused { reason } => return Err(format!("{peer} refused the link: {reason}")),
         _ => return Err(format!("{peer} answered the link with something other than a welcome")),
-    }
-    let (conn, frames) = PeerConn::new(peer.clone(), key, true, at.to_vec());
+    };
+    let (conn, frames) = PeerConn::new(peer.clone(), key, true, at.to_vec(), cancels);
     Ok((conn, socket, frames, dialed.address, dialed.route))
 }
 
-/// A link another machine opened to this one, once it proved who it is.
-pub(super) async fn taken(inner: Arc<Inner>, name: MachineName, key: PublicKey, socket: Socket, from: SocketAddr) {
-    let (conn, frames) = PeerConn::new(name.clone(), key, false, Vec::new());
+/// A link another machine opened to this one, once it proved who it is;
+/// `cancels`, whether it reads `Frame::Cancel`.
+pub(super) async fn taken(
+    inner: Arc<Inner>,
+    name: MachineName,
+    key: PublicKey,
+    cancels: bool,
+    socket: Socket,
+    from: SocketAddr,
+) {
+    let (conn, frames) = PeerConn::new(name.clone(), key, false, Vec::new(), cancels);
     inner.node.log(format!("a direct link from {name} came in from {from}"));
     inner.direct_up(&conn);
     // The machine that dialled keeps the link and dials again, so a change
@@ -436,16 +454,19 @@ async fn serve(
                 }
             }
             Frame::Call { id, message } => {
+                let stop = inner.answers.open(&inner, conn.on(), id);
                 tokio::spawn(super::super::answering::answer(
                     inner.clone(),
                     super::super::Replier::Peer(conn.clone(), id),
                     message,
+                    stop,
                 ));
             }
             Frame::Answer { id, message } => inner.call_event(&conn.on(), id, CallEvent::Answered(message)),
             Frame::Cut { id, reason } => {
                 inner.call_event(&conn.on(), id, CallEvent::Status(CallStatus::Cut { reason }));
             }
+            Frame::Cancel { id } => inner.answers.stop(&conn.on(), id, "its caller gave it up"),
             Frame::Refused { reason } => break format!("it ended the link: {reason}"),
             Frame::Hello { .. } | Frame::Welcome { .. } => {
                 let _ = conn.send(Frame::Refused { reason: "a second hello on one link".to_string() });
@@ -455,6 +476,8 @@ async fn serve(
     };
     heartbeat.abort();
     conn.close(reason.clone());
+    // Nobody hears the answers to the calls that came on it.
+    inner.answers.stop_all(&conn.on(), "the direct link it came on ended");
     let _ = finish.send(reason.clone());
     // The writer says why and closes, or gives up within its own bounds;
     // past them it is stopped, so no task outlives its link for long.

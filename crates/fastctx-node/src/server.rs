@@ -444,15 +444,10 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             continue;
         }
         let arriving = matches!(&call, Call::Arrive { host, hints } if host.agent.as_str() != "claude" && hints.tool_use_id.is_none());
-        // A copy goes on through every break while its caller waits for it.
-        let cancellable = matches!(
-            &call,
-            Call::Offers { .. }
-                | Call::Lines { .. }
-                | Call::Thumbnail { .. }
-                | Call::AttachmentThumbnail { .. }
-                | Call::Copy { .. }
-        );
+        // What only reads or waits stops once its client is gone; a change
+        // is done whole (`Call::on_leaving`). A copy goes on through every
+        // break while its caller waits for it, and stops once it is gone.
+        let cancellable = call.on_leaving() == fastctx_types::contract::Leaving::Stop;
         let run_resident = match &call {
             Call::Run { resident, .. } => Some(resident.clone()),
             _ => None,

@@ -18,6 +18,7 @@ mod accounts;
 mod addresses;
 mod afoot;
 mod answering;
+mod answers;
 mod calls;
 mod changes;
 mod collab;
@@ -43,6 +44,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use fastctx_types::access::{Purpose, TownId};
+use fastctx_types::contract::Pool;
 use fastctx_types::remote::{Letter, RemoteCall, RemoteResult};
 use fastctx_types::{AccountName, MachineName};
 use jiff::Timestamp;
@@ -77,6 +79,15 @@ pub struct Caller {
 
 /// What the link hands the node: calls to answer and letters to keep.
 pub trait Node: Send + Sync + 'static {
+    /// Takes the place a call from `from` takes here while it is answered,
+    /// of the kind `pool` (`fastctx_types::contract::Pool`), before anything
+    /// waits on it; or says why there is none: this machine is answering as
+    /// many of that kind as it takes. The place is let go when the guard is
+    /// dropped.
+    fn place(&self, from: &Caller, pool: Pool) -> Result<Box<dyn Send>, fastctx_types::ipc::Failure> {
+        let _ = (from, pool);
+        Ok(Box::new(()))
+    }
     /// Admits a call and keeps its work alive through writing the reply,
     /// including a large reply's data transfer. Streams may return no guard.
     fn answering(&self, call: &RemoteCall) -> Result<Option<Box<dyn Send>>, fastctx_types::ipc::Failure>;
@@ -211,7 +222,7 @@ pub struct Link {
 
 /// What a call went out on, so the end of that connection ends only the
 /// calls on it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum CallOn {
     /// The control connection to the hub of this generation.
     Hub(u64),
@@ -253,6 +264,8 @@ pub(crate) struct Inner {
     status: watch::Sender<Status>,
     connection: Mutex<Option<Connection>>,
     calls: Mutex<HashMap<u64, Waiter>>,
+    /// The calls of other machines this one is answering (`answers`).
+    answers: answers::Answers,
     asks: Mutex<HashMap<u64, oneshot::Sender<Result<Told, String>>>>,
     next_id: AtomicU64,
     /// Woken when a letter is put in the outbox.
@@ -388,6 +401,7 @@ impl Link {
             status,
             connection: Mutex::new(None),
             calls: Mutex::new(HashMap::new()),
+            answers: answers::Answers::default(),
             asks: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(0),
             dissolved: std::sync::atomic::AtomicBool::new(false),

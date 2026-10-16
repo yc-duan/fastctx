@@ -95,7 +95,7 @@ impl DataWay {
             format!("{} did not answer the data connection within {} s", self.conn.name, crate::wire::SILENCE.as_secs())
         })??;
         match answered {
-            Frame::Welcome { name, proof } if name == self.conn.name => {
+            Frame::Welcome { name, proof, .. } if name == self.conn.name => {
                 self.conn
                     .key
                     .verify(Domain::Peer, &dialed.binding, &proof)

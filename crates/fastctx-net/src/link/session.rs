@@ -215,6 +215,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             versions: true,
             due: true,
             left: None,
+            cancels: true,
         },
     };
     match tokio::time::timeout(SILENCE, dial::send(&mut socket, &hello)).await {
@@ -451,7 +452,11 @@ async fn connected(
                 let _ = deliveries.send((seq, message));
             }
             Down::Incoming { call, message } => {
-                tokio::spawn(super::answering::answer(inner.clone(), Replier::Hub(up.clone(), call), message));
+                let stop = inner.answers.open(inner, CallOn::Hub(generation), call);
+                tokio::spawn(super::answering::answer(inner.clone(), Replier::Hub(up.clone(), call), message, stop));
+            }
+            Down::Cancelled { call } => {
+                inner.answers.stop(&CallOn::Hub(generation), call, "its caller gave it up");
             }
             Down::Status { id, status } => inner.call_event(&CallOn::Hub(generation), id, CallEvent::Status(status)),
             Down::Answered { id, message } => {
@@ -534,6 +539,8 @@ impl Drop for Connected<'_> {
             self.inner.ways_changed();
         }
         self.inner.fail_calls_on(&CallOn::Hub(self.generation), &self.reason);
+        // Nobody hears the answers to the calls that came on it.
+        self.inner.answers.stop_all(&CallOn::Hub(self.generation), "the connection to the hub it came on ended");
         self.inner.asks.lock().expect("never poisoned").clear();
     }
 }

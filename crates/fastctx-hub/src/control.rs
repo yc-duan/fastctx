@@ -51,6 +51,8 @@ pub(crate) struct Said {
     pub due: bool,
     /// What a machine taken off could not do of the uninstall it was asked.
     pub left: Option<String>,
+    /// Whether it reads that a call it answers is over for its caller.
+    pub cancels: bool,
 }
 
 /// What a call or a data connection was allowed under: `from` saying it to
@@ -388,6 +390,7 @@ fn open(
         afoot: said.afoot,
         forgets: said.forgets,
         versions: said.versions,
+        cancels: said.cancels,
     };
     let replaced = hub.sessions().insert(name.clone(), session);
     drop(store);
@@ -431,7 +434,7 @@ pub(crate) fn close(hub: &Hub, name: &MachineName, generation: u64) {
 
 /// Ends every call this session made or was to answer.
 fn fail_calls_of(hub: &Hub, name: &MachineName, generation: u64) {
-    let ended: Vec<Pending> = {
+    let ended: Vec<(u64, Pending)> = {
         let mut calls = hub.calls.lock().expect("never poisoned");
         let keys: Vec<u64> = calls
             .iter()
@@ -441,15 +444,30 @@ fn fail_calls_of(hub: &Hub, name: &MachineName, generation: u64) {
             })
             .map(|(key, _)| *key)
             .collect();
-        keys.into_iter().filter_map(|key| calls.remove(&key)).collect()
+        keys.into_iter().filter_map(|key| calls.remove(&key).map(|pending| (key, pending))).collect()
     };
-    for pending in ended {
+    for (key, pending) in ended {
         if let Some(stream) = pending.stream {
             crate::data::forget(hub, stream, &format!("{name}, a party to its call, left the hub"));
         }
         if pending.target == *name {
             hub.tell(&pending.caller, Down::Status { id: pending.id, status: CallStatus::Lost });
+        } else {
+            over(hub, key, &pending);
         }
+    }
+}
+
+/// Tells the machine answering the call the hub numbered `key` that it is
+/// over for its caller, when the session it came on is still there and
+/// reads that.
+fn over(hub: &Hub, key: u64, pending: &Pending) {
+    let sessions = hub.sessions();
+    if let Some(target) = sessions
+        .get(&pending.target)
+        .filter(|session| session.generation == pending.target_generation && session.cancels)
+    {
+        let _ = target.out.send(Out::Frame(Down::Cancelled { call: key }));
     }
 }
 
@@ -477,14 +495,15 @@ pub(crate) fn cut_calls(hub: &Hub) {
             })
             .collect()
     };
-    let lapsed: Vec<(Pending, String)> = {
+    let lapsed: Vec<(u64, Pending, String)> = {
         let mut calls = hub.calls.lock().expect("never poisoned");
-        keys.into_iter().filter_map(|(key, why)| calls.remove(&key).map(|pending| (pending, why))).collect()
+        keys.into_iter().filter_map(|(key, why)| calls.remove(&key).map(|pending| (key, pending, why))).collect()
     };
-    for (pending, why) in lapsed {
+    for (key, pending, why) in lapsed {
         hub.log.line(format_args!("cut a call from {} to {}: {why}", pending.caller, pending.target));
         let status = CallStatus::Cut { reason: format!("the right it was made under was taken back: {why}") };
         hub.tell(&pending.caller, Down::Status { id: pending.id, status });
+        over(hub, key, &pending);
     }
 }
 
@@ -528,19 +547,22 @@ fn handle(hub: &Arc<Hub>, name: &MachineName, generation: u64, out: &Outq, frame
             });
         }
         Up::Cancel { id } => {
-            let given_up: Vec<Pending> = {
+            let given_up: Vec<(u64, Pending)> = {
                 let mut calls = hub.calls.lock().expect("never poisoned");
                 let keys: Vec<u64> = calls
                     .iter()
-                    .filter(|(_, pending)| pending.caller == *name && pending.id == id)
+                    .filter(|(_, pending)| {
+                        pending.caller == *name && pending.caller_generation == generation && pending.id == id
+                    })
                     .map(|(key, _)| *key)
                     .collect();
-                keys.into_iter().filter_map(|key| calls.remove(&key)).collect()
+                keys.into_iter().filter_map(|key| calls.remove(&key).map(|pending| (key, pending))).collect()
             };
-            for pending in given_up {
+            for (key, pending) in given_up {
                 if let Some(stream) = pending.stream {
                     crate::data::forget(hub, stream, "its caller gave the call up");
                 }
+                over(hub, key, &pending);
             }
         }
         // The answer goes out before any session the change ends, the

@@ -85,6 +85,7 @@ async fn open_saying(
         left: left.map(str::to_string),
         dialed: Some(connection.address),
         any_names: true,
+        cancels: false,
     };
     dial::send(
         &mut connection.socket,

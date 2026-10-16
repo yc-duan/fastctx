@@ -174,6 +174,10 @@ pub enum Intent {
         /// keeps it for its machine log, and refuses the session as before.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         left: Option<String>,
+        /// The member reads `Down::Cancelled`. Earlier releases do not say
+        /// so, and end their session at a frame they cannot read.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        cancels: bool,
     },
     /// A password login to `account`: the first OPAQUE message. The hub
     /// answers `Down::LoginResponse`; the device finishes with
@@ -393,6 +397,13 @@ pub enum Down {
     /// the package.
     Fetch {
         fetch: Box<fastctx_types::update::Fetch>,
+    },
+    /// The call `call` the hub passed on (`Incoming`) is over for its
+    /// caller, who gave it up, left the hub, or lost the right it was made
+    /// under: one that only reads stops (`fastctx_types::contract`). Sent
+    /// only to a member whose session says it reads this.
+    Cancelled {
+        call: u64,
     },
 }
 

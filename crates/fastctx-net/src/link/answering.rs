@@ -5,26 +5,41 @@
 //! and that the view lets its sender ask it, for the account it names
 //! (`Inner::admit`); over a direct link, also that it says it is from the
 //! machine at the other end. A call that does not check out is refused in a
-//! short word that names the reason; one that does goes to the node, which
-//! checks again what the call asks of this machine. A call over a direct
-//! link is registered while it is answered, so that taking back the right
-//! it was made under cuts it (`Inner::cut_lapsed`).
+//! short word that names the reason; one that does takes its place here
+//! (`Node::place`) before anything waits on it, and goes to the node, which
+//! checks again what the call asks. A call over a direct link is registered
+//! while it is answered, so that taking back the right it was made under
+//! cuts it (`Inner::cut_lapsed`).
+//!
+//! What each call is (`fastctx_types::contract`) says what stops it. Until
+//! the node takes it on, anything does: its caller giving it up, or the
+//! connection it came on ending. Once taken on, a call that only reads stops
+//! too, and also on its own a little past the time its caller waits; a
+//! change is done whole, whoever is left to hear of it.
 
 use std::sync::Arc;
+use std::time::Duration;
 
+use fastctx_types::contract::Pool;
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteResult};
 
+use super::answers::Answer;
 use super::direct::DataWay;
-use super::{Inner, Replier};
+use super::{Caller, Inner, Replier};
 use crate::data::{Endpoint, Stream};
 use crate::envelope::{Envelope, Kind};
 use crate::message::Body;
 use crate::sign::sha256;
 use crate::wire::{self, Carried, End, Ticket, Up};
 
+/// How long past the time its caller waits a call that only reads is
+/// answered, for a caller whose giving up never came: past that it is
+/// given up here too.
+const PAST_THE_CALLER: Duration = Duration::from_secs(5);
+
 /// Checks a call from another machine, and does what it asks.
-pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelope) {
+pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelope, mut stop: Answer) {
     if message.kind != Kind::Call {
         inner.node.log(format!("dropped what came from {} as a call: it is a {:?}", message.from, message.kind));
         return;
@@ -62,22 +77,13 @@ pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelop
             registered.as_ref().map(|registered| registered.cut.clone()),
         )),
     };
-    let mut _answering = None;
-    let result: RemoteResult = match open_call(&inner, &message, &endpoint).await {
-        Ok((remote, stream)) => match inner.node.answering(&remote) {
-            Ok(guard) => {
-                _answering = guard;
-                inner.node.call(caller.clone(), remote, stream).await
-            }
-            Err(failure) => Err(failure),
-        },
-        Err(reason) => {
-            inner.node.log(format!("refused a call from {}: {reason}", caller.machine));
-            Err(Failure::new(format!("{} refused the call: {reason}", inner.me())))
-        }
+    let Some(result) = work(&inner, &caller, &message, &endpoint, &mut stop).await else {
+        // Nobody is left to hear the answer.
+        return;
     };
-    if registered.as_ref().is_some_and(|registered| !registered.wanted()) {
-        // Cut while it ran: the caller was told, and the answer is dropped.
+    if stop.stopped().is_some() || registered.as_ref().is_some_and(|registered| !registered.wanted()) {
+        // Given up or cut while it ran: the caller was told, and the answer
+        // is dropped.
         return;
     }
     let small = Body::Answer { result: result.clone() };
@@ -120,6 +126,85 @@ pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelop
     }
     if let Err(error) = crate::data::source(&endpoint, &inner.key, stream, &bytes).await {
         inner.node.log(format!("sending a large answer to {}: {error}", caller.machine));
+    }
+}
+
+/// Takes the call `message` holds on and does it, holding its place here
+/// all the while; none when it was stopped first.
+async fn work(
+    inner: &Arc<Inner>,
+    caller: &Caller,
+    message: &Envelope,
+    endpoint: &Endpoint,
+    stop: &mut Answer,
+) -> Option<RemoteResult> {
+    let refused = |reason: String| {
+        inner.node.log(format!("refused a call from {}: {reason}", caller.machine));
+        Err(Failure::new(format!("{} refused the call: {reason}", inner.me())))
+    };
+    // A call this release does not know, as a newer one may make, is
+    // refused saying so.
+    let body: Body = match message.body() {
+        Ok(body) => body,
+        Err(error) => return Some(refused(format!("{error}; a newer Fastctx may make calls this one does not know"))),
+    };
+    // A large call's own kind is known only once it is in: it comes in in
+    // a short place, and then takes its own.
+    let pool = match &body {
+        Body::Call { call } | Body::StreamCall { call } => call.contract().pool,
+        Body::LargeCall { .. } | Body::Answer { .. } | Body::LargeAnswer { .. } => Pool::Short,
+    };
+    let mut place = match inner.node.place(caller, pool) {
+        Ok(place) => place,
+        Err(failure) => return Some(Err(failure)),
+    };
+    let opened = tokio::select! {
+        opened = open_call(inner, message, body, endpoint) => opened,
+        _ = stop.stopping() => return None,
+    };
+    let (remote, stream) = match opened {
+        Ok(opened) => opened,
+        Err(reason) => return Some(refused(reason)),
+    };
+    let contract = remote.contract();
+    if contract.pool != pool {
+        place = match inner.node.place(caller, contract.pool) {
+            Ok(place) => place,
+            Err(failure) => return Some(Err(failure)),
+        };
+    }
+    let _place = place;
+    let _answering = match inner.node.answering(&remote) {
+        Ok(guard) => guard,
+        Err(failure) => {
+            // Its data connection is closed, not dropped: the other end
+            // then waits for this answer, which says why.
+            if let Some(stream) = stream {
+                stream.close().await;
+            }
+            return Some(Err(failure));
+        }
+    };
+    let kind = remote.kind();
+    let doing = inner.node.call(caller.clone(), remote, stream);
+    if !contract.cancellable {
+        return Some(doing.await);
+    }
+    let past = async {
+        match contract.within {
+            Some(within) => tokio::time::sleep(within + PAST_THE_CALLER).await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::select! {
+        result = doing => Some(result),
+        _ = stop.stopping() => None,
+        () = past => {
+            let waited = contract.within.unwrap_or_default() + PAST_THE_CALLER;
+            let reason = format!("gave up answering its {kind}: no answer within {} s", waited.as_secs());
+            inner.node.log(format!("{reason}, for {}", caller.machine));
+            Some(Err(Failure::new(format!("{} {reason}", inner.me()))))
+        }
     }
 }
 
@@ -169,17 +254,14 @@ async fn reply(
     }
 }
 
-/// The call an envelope holds, fetched or with its data connection opened
-/// when it comes with one.
+/// The call `body`, which came in `call`, fetched or with its data
+/// connection opened when it comes with one.
 async fn open_call(
     inner: &Inner,
     call: &Envelope,
+    body: Body,
     endpoint: &Endpoint,
 ) -> Result<(RemoteCall, Option<Stream>), String> {
-    // A call this release does not know, as a newer one may make, is
-    // refused saying so.
-    let body: Body =
-        call.body().map_err(|error| format!("{error}; a newer Fastctx may make calls this one does not know"))?;
     let from_the_caller = || -> Result<u64, String> {
         let ticket = call.stream.as_ref().ok_or("it names no data connection")?;
         if ticket.source != call.from || !inner.view().is_me(&ticket.sink) {
