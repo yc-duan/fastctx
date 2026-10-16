@@ -22,9 +22,11 @@ use crate::sign::{Domain, PublicKey};
 use crate::transport::Socket;
 use crate::wire::{CallStatus, HEARTBEAT, SILENCE};
 
-/// The most frames that wait for a direct link's writer: past that the
-/// other machine takes nothing, and the link ends (`crate::queue`).
+/// The most frames that wait for a direct link's writer, and the most
+/// bytes of them: past that the other machine takes nothing, and the link
+/// ends (`crate::queue`).
 const QUEUED: usize = 8192;
+const QUEUED_BYTES: usize = 64 * 1024 * 1024;
 
 /// One live direct link.
 pub(crate) struct PeerConn {
@@ -41,7 +43,8 @@ pub(crate) struct PeerConn {
     pub at: Vec<SocketAddr>,
     /// Whether the other machine reads `Frame::Cancel`.
     pub cancels: bool,
-    out: crate::queue::Sender<Frame>,
+    /// Frames for the writer, as they are written.
+    out: crate::queue::Sender<Vec<u8>>,
     ms: Mutex<Option<u32>>,
     closed: watch::Sender<Option<String>>,
 }
@@ -53,8 +56,8 @@ impl PeerConn {
         dialed: bool,
         at: Vec<SocketAddr>,
         cancels: bool,
-    ) -> (Arc<Self>, crate::queue::Receiver<Frame>) {
-        let (out, frames) = crate::queue::bounded(QUEUED);
+    ) -> (Arc<Self>, crate::queue::Receiver<Vec<u8>>) {
+        let (out, frames) = crate::queue::bounded(QUEUED, QUEUED_BYTES);
         let (closed, _) = watch::channel(None);
         let conn = Self {
             name,
@@ -71,7 +74,9 @@ impl PeerConn {
     }
 
     pub fn send(&self, frame: Frame) -> Result<(), ()> {
-        self.out.send(frame).map_err(|_| ())
+        let bytes = peer::encode(&frame);
+        let size = bytes.len();
+        self.out.send(bytes, size).map_err(|_| ())
     }
 
     /// The round trip as last measured.
@@ -230,7 +235,7 @@ pub(super) async fn keep(inner: Arc<Inner>, peer: MachineName, at: Vec<SocketAdd
     }
 }
 
-type Linked = (Arc<PeerConn>, Socket, crate::queue::Receiver<Frame>, SocketAddr, fastctx_types::world::Route);
+type Linked = (Arc<PeerConn>, Socket, crate::queue::Receiver<Vec<u8>>, SocketAddr, fastctx_types::world::Route);
 
 /// Dials `peer` at `at` and has it prove who it is.
 async fn dial(inner: &Inner, peer: &MachineName, at: &[SocketAddr]) -> Result<Linked, String> {
@@ -358,7 +363,7 @@ async fn serve(
     inner: Arc<Inner>,
     conn: Arc<PeerConn>,
     socket: Socket,
-    mut frames: crate::queue::Receiver<Frame>,
+    mut frames: crate::queue::Receiver<Vec<u8>>,
     mut network: Option<&mut watch::Receiver<u64>>,
 ) -> (String, bool) {
     let (mut sink, mut stream) = socket.split();
@@ -374,7 +379,7 @@ async fn serve(
             tokio::select! {
                 frame = frames.recv() => match frame {
                     Some(frame) => {
-                        let message = WsMessage::Binary(peer::encode(&frame).into());
+                        let message = WsMessage::Binary(frame.into());
                         tokio::select! {
                             written = tokio::time::timeout(SILENCE, sink.send(message)) => {
                                 if !written.is_ok_and(|written| written.is_ok()) {

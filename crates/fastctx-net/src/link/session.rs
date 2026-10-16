@@ -311,7 +311,7 @@ async fn connected(
     let writer = tokio::spawn(async move {
         let _done = writer_done;
         while let Some(frame) = outgoing.recv().await {
-            let message = WsMessage::Binary(wire::encode(&frame.value).into());
+            let message = WsMessage::Binary(frame.bytes.into());
             if !tokio::time::timeout(SILENCE, sink.send(message)).await.is_ok_and(|sent| sent.is_ok()) {
                 return;
             }
