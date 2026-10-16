@@ -19,6 +19,8 @@ export interface ManageWords {
   fetching(received: string, total: string | null, network: boolean): string;
   phase: Record<RenewalPhase, string>;
   failed(why: string): string;
+  /** Before the line its own terminal runs, stopped for an administrator. */
+  adminThere: string;
   /** An update asked of a computer an application carries Fastctx on. */
   appTakes(version: string): string;
   appClosed(version: string): string;
@@ -56,6 +58,19 @@ export interface ManageWords {
   removeOffline: string;
   removeGo: string;
   removeFailed(why: string): string;
+  /** Once taken off, how the uninstall goes on each machine told to: under
+   *  way, waiting for one offline, quiet till the end, or not all done, said
+   *  in its own words with the line to run there. */
+  removedTitle: string;
+  uninstalling: string;
+  uninstallAway: string;
+  uninstallQuiet: string;
+  uninstallLeft: string;
+  /** Before the line a machine said to run there as an administrator. */
+  runThere: string;
+  copy: string;
+  copied: string;
+  done: string;
   /** The machine that runs the network's hub. */
   hubHere: string;
   hubGo: string;
@@ -82,6 +97,7 @@ export const zhManage: ManageWords = {
     failed: "更新失败",
   },
   failed: (why) => `更新失败：${why}`,
+  adminThere: "在那台上运行这一行，它会请求一次管理员权限",
   appTakes: (version) => `应用开着，由应用自己更新到 ${version}`,
   appClosed: (version) => `应用没开，由本机服务装上 ${version}`,
   appOpenThere: (version) => `下次在那台打开 Fastctx 时更新到 ${version}`,
@@ -115,6 +131,15 @@ export const zhManage: ManageWords = {
   removeOffline: "不在线：移出立即生效，卸载在它下次连上时进行",
   removeGo: "移除",
   removeFailed: (why) => `没能移除：${why}`,
+  removedTitle: "已移出",
+  uninstalling: "正在那台上卸载…",
+  uninstallAway: "不在线：下次连上时卸载",
+  uninstallQuiet: "没有报告问题",
+  uninstallLeft: "没卸完",
+  runThere: "在那台上以管理员身份运行",
+  copy: "复制",
+  copied: "已复制",
+  done: "完成",
   hubHere: "这台跑着网络的中枢：要卸载它，先在机器图上搬走中枢或解散网络",
   hubGo: "到机器图上",
 };
@@ -140,6 +165,7 @@ export const enManage: ManageWords = {
     failed: "Update failed",
   },
   failed: (why) => `Update failed: ${why}`,
+  adminThere: "Run this there; it asks for an administrator once",
   appTakes: (version) => `Its app is open and updates itself to ${version}`,
   appClosed: (version) => `Its app is closed; the local service installs ${version}`,
   appOpenThere: (version) => `Updates to ${version} when Fastctx next opens there`,
@@ -173,6 +199,15 @@ export const enManage: ManageWords = {
   removeOffline: "Offline: it is taken off at once, and uninstalls when it next connects",
   removeGo: "Remove",
   removeFailed: (why) => `Couldn't remove it: ${why}`,
+  removedTitle: "Taken off",
+  uninstalling: "Uninstalling there…",
+  uninstallAway: "Offline: uninstalls once it is back",
+  uninstallQuiet: "No problem reported",
+  uninstallLeft: "Not all uninstalled",
+  runThere: "Run on that machine as an administrator",
+  copy: "Copy",
+  copied: "Copied",
+  done: "Done",
   hubHere: "It runs the network's hub: to uninstall it, move the hub or dissolve the network on the machines map first",
   hubGo: "To the map",
 };

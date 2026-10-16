@@ -47,6 +47,12 @@ export class Sheet {
   close(): void {
     if (!this.busy) this.dialog.close();
   }
+
+  /** What it holds became another stage, as a sheet opened anew: it takes
+   *  its size from what is drawn now. */
+  anew(): void {
+    if (this.dialog.open) this.steady.hold();
+  }
 }
 
 export interface ConfirmWords {

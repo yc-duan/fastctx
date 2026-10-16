@@ -1940,6 +1940,7 @@ function show(next: Place): void {
         stats: (machine, after) => (live ? machineStats(machine, after) : specimenStats(machine, after)),
         nameProblem: (text) => (live ? nameProblem("machine", text) : specimenNameProblem("machine", text)),
         change,
+        log: live ? machineLog : specimenMachineLog,
         renameHere: async (to) => {
           if (live) return renameHere(to);
           const renamed = specimenRenameHere(store.world.peek(), to);

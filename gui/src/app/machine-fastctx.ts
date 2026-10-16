@@ -9,6 +9,7 @@
 // window its settings open.
 
 import { escape } from "../conversation/prose";
+import { copyButton, copyFrom } from "./copy-button";
 import type { Login } from "../world/accounts";
 import { compareVersions, newestKnown, type UpdateCall, type UpdateSettings, type UpdateState } from "../world/updates";
 import type { ManageWords } from "./machine-manage-words";
@@ -54,6 +55,9 @@ export interface FastctxSubject {
 
 /** The first release that answers about its updates (`RemoteCall::Updates`). */
 const ASKED_SINCE = "1.0.1-beta.3";
+/** What a machine's own terminal runs to hand its boot service the new
+ *  program, asking for an administrator once. */
+const ADMIN_LINE = "fastctx renew guardian";
 
 export class FastctxBlock {
   private name: string | null = null;
@@ -172,7 +176,9 @@ export class FastctxBlock {
     if (state.renewing) {
       const { version, phase, error } = state.renewing;
       const said = phase === "failed" ? words.failed(error ?? words.phase.failed) : words.phase[phase];
-      return `<span${phase === "failed" ? ` class="fx-wrong"` : ""}>${escape(`${version} · ${said}`)}</span>`;
+      const step = `<span${phase === "failed" ? ` class="fx-wrong"` : ""}>${escape(`${version} · ${said}`)}</span>`;
+      if (phase !== "awaiting_administrator") return step;
+      return `${step}<span class="fx-admin"><span>${escape(words.adminThere)}</span><code class="mono">${escape(ADMIN_LINE)}</code>${copyButton(ADMIN_LINE, words.copy, `data-act="fx-copy"`)}</span>`;
     }
     if (state.failed) return `<span class="fx-wrong" title="${escape(state.failed.why)}">${escape(words.failed(state.failed.why))}</span>${button("fx-versions", words.update)}`;
     if (state.take && state.app) {
@@ -214,6 +220,9 @@ export class FastctxBlock {
     switch (act) {
       case "fx-versions-here":
         this.options.versionsHere(true);
+        return true;
+      case "fx-copy":
+        void copyFrom(target, this.options.words.copied);
         return true;
       case "fx-versions":
         this.versions(subject);

@@ -15,6 +15,25 @@
   color: var(--wrong);
 }
 
+/* Stopped for an administrator there: the line its own terminal runs. */
+.fx-admin {
+  display: flex;
+  flex: 1 0 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.fx-admin code {
+  padding: 4px 8px;
+  border-radius: var(--radius-s);
+  background: var(--field);
+  font-size: var(--size-small);
+  color: var(--text);
+}
+
 .fx-bar {
   flex: 1 1 8em;
   align-self: center;
@@ -102,4 +121,80 @@
   display: flex;
   justify-content: flex-end;
   margin-top: var(--space-4);
+}
+
+/* Once taken off: each machine told to uninstall, and how that goes there. */
+.mr-follow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: var(--space-2);
+}
+
+.mr-follow-row {
+  display: grid;
+  grid-template-columns: minmax(6em, max-content) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 4px var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+}
+
+.mr-follow-row.left {
+  background: color-mix(in srgb, var(--caution) 14%, transparent);
+}
+
+.mr-follow-name {
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}
+
+.mr-follow-state {
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.mr-follow-row.going .mr-follow-state {
+  color: var(--text-3);
+}
+
+.mr-follow-row.left .mr-follow-state {
+  color: var(--caution);
+}
+
+.mr-follow-why,
+.mr-follow-line {
+  grid-column: 1 / -1;
+}
+
+.mr-follow-why {
+  font-size: var(--size-small);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.mr-follow-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin-top: 2px;
+}
+
+.mr-follow-lead {
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.mr-follow-line code {
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: var(--radius-s);
+  background: var(--field);
+  font-size: var(--size-small);
+  overflow-wrap: anywhere;
 }

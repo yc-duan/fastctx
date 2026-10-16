@@ -54,10 +54,11 @@ enum RenewalAction {
         #[arg(long)]
         retry: bool,
     },
-    /// Update the protected guardian, requesting administrator rights once.
+    /// Update the protected guardian, requesting administrator rights once:
+    /// of this machine's World, or the one `--dir` names.
     Guardian {
         #[arg(long, value_parser = crate::paths::parser())]
-        dir: PathBuf,
+        dir: Option<PathBuf>,
         #[arg(long, hide = true)]
         graphical: bool,
     },
@@ -94,7 +95,13 @@ pub fn run(args: RenewalArgs) -> anyhow::Result<()> {
         RenewalAction::Status { dir } => println!("{}", serde_json::to_string(&runtime.block_on(status(&dir))?)?),
         RenewalAction::Now { dir } => store::request(&dir, true)?,
         RenewalAction::Run { dir, retry } => runtime.block_on(worker(&dir, retry))?,
-        RenewalAction::Guardian { dir, graphical } => runtime.block_on(guardian(&dir, graphical))?,
+        RenewalAction::Guardian { dir, graphical } => {
+            let dir = match dir {
+                Some(dir) => dir,
+                None => fastctx_platform::fastctx_root()?,
+            };
+            runtime.block_on(guardian(&dir, graphical))?
+        }
         RenewalAction::GuardianApply { dir, user_sid, uid } => runtime.block_on(guardian_apply(&dir, user_sid, uid))?,
     }
     Ok(())

@@ -90,9 +90,12 @@ export function specimenUpdates(params: URLSearchParams, phone: boolean): { seam
   const machines = new Map<string, { settings: UpdateSettings; asked: string | null; at: number }>();
   const remote = (name: string): UpdateState => {
     const one = MACHINES[name] ?? { running: VERSION, auto: false, relays: true };
-    const kept = machines.get(name) ?? { settings: { auto: one.auto, chosen: true, relays: one.relays }, asked: null, at: 0 };
-    machines.set(name, kept);
     const running = one.app ?? one.running;
+    // `renewal=admin`: lab was updated and stopped for an
+    // administrator there.
+    const stopped = params.get("renewal") === "admin" && name === "lab" ? (newest(running)?.version ?? null) : null;
+    const kept = machines.get(name) ?? { settings: { auto: one.auto, chosen: true, relays: one.relays }, asked: stopped, at: 0 };
+    machines.set(name, kept);
     const asked = kept.asked ? newer(running).find((manifest) => manifest.version === kept.asked) : undefined;
     const elapsed = Date.now() - kept.at;
     const app = one.app ? { version: one.app, target: "windows-x86_64-nsis" } : undefined;
@@ -109,7 +112,7 @@ export function specimenUpdates(params: URLSearchParams, phone: boolean): { seam
       ...(asked && elapsed < TAKES
         ? { fetching: { version: asked.version, target: app ? app.target : `fastctx-${triple}`, via: "network", received: Math.floor((elapsed / TAKES) * 8_500_000), total: 8_500_000 } }
         : {}),
-      ...(asked && elapsed >= TAKES ? { renewing: { version: asked.version, phase: "waiting_for_idle" } } : {}),
+      ...(asked && elapsed >= TAKES ? { renewing: { version: asked.version, phase: stopped ? "awaiting_administrator" : "waiting_for_idle" } } : {}),
       ...(app ? { app, open: false, ...(kept.asked ? { take: kept.asked } : {}) } : {}),
       kernel_target: `fastctx-${triple}`,
     };

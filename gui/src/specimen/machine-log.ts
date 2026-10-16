@@ -18,6 +18,26 @@ const records: MachineLogRecord[] = [
   { id: 1, at: "2026-10-03T17:00:00Z", actor: { account: "me", authenticated: true, member: null, peer: null }, action: { change: "joined", name: "desktop", kind: "computer", registered: true, via: "password" }, outcome: { kind: "done" } },
 ];
 
+/** A machine the specimen took off, told to uninstall Fastctx as `then`:
+ *  logged at once; `lab`, whose node is not an administrator, then says a
+ *  moment later what it could not do. */
+export function specimenRemoved(name: string, then: "uninstall" | "everything" | undefined): void {
+  const next = () => Math.max(0, ...records.map((record) => record.id)) + 1;
+  const actor = { account: "me", authenticated: true, member: "desktop", peer: null };
+  records.unshift({ id: next(), at: new Date().toISOString(), actor, action: { change: "remove", name, reason: "", ...(then ? { then } : {}) }, outcome: { kind: "done" } });
+  if (!then || name !== "lab") return;
+  const everything = then === "everything" ? " --everything" : "";
+  window.setTimeout(() => {
+    records.unshift({
+      id: next(),
+      at: new Date().toISOString(),
+      actor: { account: null, authenticated: true, member: null, peer: null },
+      action: { change: "uninstall_left", name, left: `the boot service needs an administrator: run \`fastctx uninstall run${everything}\` on this machine as one`, by: "me", home: "me" },
+      outcome: { kind: "done" },
+    });
+  }, 1500);
+}
+
 export async function specimenMachineLog(_hub: string, _account: string, before: number | null): Promise<MachineLogPage> {
   const older = records.filter((record) => before === null || record.id < before);
   const page = older.slice(0, 6);

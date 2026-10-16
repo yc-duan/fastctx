@@ -16,6 +16,7 @@ import type { AccessWords, MachinesWords } from "./account-words";
 import { planOf, UpdateBatch, type BatchRow } from "./machine-batch";
 import type { BatchWords } from "./machine-batch-words";
 import { groupingOf } from "./machine-groups";
+import type { ReadLog } from "./machine-log";
 import { ownerLoginOf, removerLoginOf, updaterLoginOf } from "./machine-logins";
 import type { ManageWords } from "./machine-manage-words";
 import type { RemoveMachineSheet } from "./machine-remove";
@@ -46,6 +47,8 @@ export interface FramedOptions {
   change(login: Login, change: AccountChange): Promise<void>;
   refresh(): Promise<void>;
   removing: RemoveMachineSheet;
+  /** A hub's log, to follow the machines told to uninstall. */
+  log: ReadLog;
   ways: WaysSheet;
   /** Shares `machines`, all `login`'s, with the same accounts. */
   share(machines: Machine[], login: Login): void;
@@ -289,6 +292,7 @@ export class FramedPanel {
       sheet: this.options.removing,
       running: (name) => this.options.updates?.state.peek()?.network?.machines?.[name],
       change: this.options.change,
+      log: this.options.log,
       done: () => {
         void this.options.refresh();
         this.options.clear();

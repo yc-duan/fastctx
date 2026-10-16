@@ -9,6 +9,7 @@ import type { About, Action, HubNodes, LinkState, MachineFacts, Node, ProjectRec
 import type { Away, WorldState } from "../home/model";
 import type { AgentFacts, WorldAgents } from "../world/agents";
 import type { WorldNow } from "../world/bridge";
+import { specimenRemoved } from "./machine-log";
 import { runningOn } from "./versions";
 
 const at = (time: string) => `2026-10-04T${time}Z`;
@@ -695,6 +696,7 @@ function peopleChanged(world: WorldNow, hub: string, made: AccountChange): World
     case "seen":
       return change((one) => ({ ...one, arrivals: one.arrivals.filter((arrival) => arrival.name !== made.name) }));
     case "remove":
+      specimenRemoved(made.name, made.then);
       return change((one) => ({ ...one, members: one.members.filter((member) => member.name !== made.name), arrivals: one.arrivals.filter((arrival) => arrival.name !== made.name) }));
     case "share_project":
       return change((one) => ({

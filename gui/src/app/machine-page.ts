@@ -29,6 +29,7 @@ import { diskBar, Ring, Spark, Strip, type LineMark, type LineSpan } from "./mac
 import { daysOf, heldOf, keptOf, SPAN_MS, take, tripsHeld, type Sample } from "./machine-history";
 import type { MachinePageWords } from "./machine-page-words";
 import { FastctxBlock, type FastctxSubject } from "./machine-fastctx";
+import type { ReadLog } from "./machine-log";
 import { ownerLoginOf, removerLoginOf, updaterLoginOf } from "./machine-logins";
 import type { ManageWords } from "./machine-manage-words";
 import { RemoveMachineSheet } from "./machine-remove";
@@ -65,6 +66,8 @@ export interface MachinePageOptions {
   stats(machine: string | null, after: string | null): Promise<MachineStats>;
   nameProblem(text: string): Promise<NameProblem | null>;
   change(login: Login, change: AccountChange): Promise<void>;
+  /** A hub's log, to follow the machine told to uninstall as it is taken off. */
+  log?: ReadLog;
   renameHere(to: string): Promise<void>;
   /** Opens a new conversation with an agent on `machine`, as written. */
   talk(machine: string): void;
@@ -1185,6 +1188,7 @@ export class MachinePage implements Page {
       sheet: this.removing,
       running: (name) => this.options.updates?.state.peek()?.network?.machines?.[name],
       change: this.options.change,
+      ...(this.options.log ? { log: this.options.log } : {}),
       done: () => {
         void this.options.store.refresh();
         this.options.replace({ kind: "machines" });

@@ -273,6 +273,7 @@ export class MachinesPage implements Page {
       change: options.change,
       refresh: () => options.store.refresh(),
       removing: this.removing,
+      log: options.log,
       ways: new WaysSheet(options.batch, options.manage.close),
       share: (machines, login) => this.shareMachines(machines, login),
       group: (machines) => this.groupMachines(machines),
@@ -861,6 +862,7 @@ export class MachinesPage implements Page {
       sheet: this.removing,
       running: (one) => this.options.updates?.state.peek()?.network?.machines?.[one],
       change: this.options.change,
+      log: this.options.log,
       done: () => void this.options.store.refresh(),
     });
   }
