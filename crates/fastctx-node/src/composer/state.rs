@@ -149,6 +149,8 @@ pub struct Stored {
     pub sending: Option<Flight>,
     pub pending: Vec<Flight>,
     pub opportunity: Option<String>,
+    #[serde(default)]
+    pub settled_through: u64,
     pub ended: HashSet<String>,
     pub receipts: HashMap<String, Receipt>,
     pub uploads: HashMap<String, super::uploads::UploadRecord>,

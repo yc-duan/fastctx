@@ -10,7 +10,7 @@ mod watching;
 pub use storage::recover;
 use storage::{event, load, publish};
 pub use submissions::resume;
-pub use submissions::{bound, turn_ended, uncertain};
+pub use submissions::{awaits_turn, bound, turn_ended, uncertain};
 use submissions::{dispatch, schedule};
 pub use watching::{Lease, snapshot, watch};
 

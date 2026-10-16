@@ -251,7 +251,8 @@ async fn finish_at(
         now.turn.as_deref() == Some(turn)
             || (turn.is_empty() && now.turn.is_none() && now.activity == fastctx_types::residents::Activity::Busy)
     });
-    let (finished, first) = crate::delivery::finish_at(&directory, turn, end, &readers, ended_at)?;
+    let settles_queue = current || crate::composer::awaits_turn(node, id, turn).await.map_err(std::io::Error::other)?;
+    let (finished, first) = crate::delivery::finish_at(&directory, turn, end, &readers, ended_at, settles_queue)?;
     if first {
         crate::usage::turn_ended(node, id, &about, &finished.end, ended_at.unwrap_or_else(Timestamp::now));
         // What its run calls wait for stops with an interrupted turn, here
@@ -297,7 +298,9 @@ async fn finish_at(
         }
         node.watchers.publish(id, &event);
     }
-    crate::composer::turn_ended(node, id, turn, &finished.end.how, current).await.map_err(std::io::Error::other)?;
+    crate::composer::turn_ended(node, id, turn, &finished.end.how, finished.settles_queue, finished.queue_order)
+        .await
+        .map_err(std::io::Error::other)?;
     for handover in &accepted {
         for input in &handover.inputs {
             crate::inbox::settle(node, &directory, &input.delivery.id)?;

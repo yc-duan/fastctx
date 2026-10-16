@@ -31,6 +31,17 @@ pub struct Finished {
     pub at: Timestamp,
     pub end: TurnEnd,
     pub readers: Vec<Address>,
+    /// Whether this terminal outcome owns a queue transition, fixed on first publication.
+    #[serde(default = "legacy_queue")]
+    pub settles_queue: bool,
+    /// Orders terminal queue transitions without depending on the wall clock.
+    #[serde(default)]
+    pub queue_order: u64,
+}
+
+fn legacy_queue() -> bool {
+    // Published beta.2 terminals always settled their composer's queue.
+    true
 }
 
 pub fn begin(directory: &ConversationDir, inputs: Vec<Pending>) -> io::Result<Handover> {
@@ -149,7 +160,7 @@ pub fn finish(
     end: TurnEnd,
     readers: &[Address],
 ) -> io::Result<(Finished, bool)> {
-    finish_at(directory, turn, end, readers, None)
+    finish_at(directory, turn, end, readers, None, false)
 }
 
 pub fn finish_at(
@@ -158,17 +169,32 @@ pub fn finish_at(
     end: TurnEnd,
     readers: &[Address],
     ended_at: Option<Timestamp>,
+    settles_queue: bool,
 ) -> io::Result<(Finished, bool)> {
     let _transaction = crate::resident_storage::lock();
     let prior = terminal_here(directory, turn)?;
     let first = prior.is_none();
-    let mut finished = prior.unwrap_or_else(|| Finished {
-        turn: turn.to_string(),
-        at: Timestamp::now(),
-        ended_at,
-        end,
-        readers: Vec::new(),
-    });
+    let mut finished = match prior {
+        Some(finished) => finished,
+        None => {
+            let counter = directory.turns().join("order");
+            let order = optional::<u64>(&counter)?
+                .unwrap_or(0)
+                .checked_add(1)
+                .ok_or_else(|| io::Error::other("terminal order exhausted"))?;
+            // A stop after this reservation leaves a harmless gap, never a reused order.
+            write(&counter, &order)?;
+            Finished {
+                turn: turn.to_string(),
+                at: Timestamp::now(),
+                ended_at,
+                end,
+                readers: Vec::new(),
+                settles_queue,
+                queue_order: order,
+            }
+        }
+    };
     let before = finished.readers.clone();
     finished.readers.extend_from_slice(readers);
     finished.readers.sort();
