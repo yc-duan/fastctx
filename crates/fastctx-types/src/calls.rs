@@ -399,6 +399,9 @@ pub enum Call {
         /// history then comes as segments, only those it does not hold.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         held: Option<crate::session::held::Held>,
+        /// The viewer reads `session::Watched::Now`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        now: bool,
     },
     /// Opens a session for the user: a resident of `agent` started on this
     /// machine or on `node`, in `town`, with the user's words as its first.
@@ -676,6 +679,10 @@ pub enum Reply {
     Spoken {
         to: Address,
         landed: Landed,
+        /// The words' id on the machine they went to, where the device that
+        /// sent them named them (`Watched::Now`'s `kept`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delivery: Option<crate::NoticeId>,
     },
     Opened {
         resident: Address,

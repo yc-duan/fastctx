@@ -58,6 +58,7 @@ mod job_reader;
 mod job_receipts;
 mod job_watch;
 mod jobs;
+mod labels;
 mod learned;
 mod leases;
 mod ledger;
@@ -77,6 +78,7 @@ mod on_stop;
 mod own_collab;
 mod pages;
 mod program_collection;
+mod ranked;
 mod reach;
 mod renewal;
 mod renewal_legacy;
@@ -96,6 +98,7 @@ mod since;
 mod speech;
 mod stats;
 mod stop;
+mod stuck;
 mod talk;
 pub mod thumbnail;
 mod town;
@@ -143,7 +146,8 @@ pub(crate) struct Node {
     jobs: jobs::Jobs,
     job_watches: job_watch::Watches,
     disk: std::sync::Mutex<()>,
-    data_operations: tokio::sync::RwLock<()>,
+    /// Each conversation's place here, deleted alone (`data::places`).
+    places: data::places::Places,
     disk_changed: tokio::sync::Notify,
     disk_due: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     job_readers: std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>,
@@ -181,13 +185,15 @@ pub(crate) struct Node {
     facts: facts::Facts,
     /// Deletions of conversations still to be asked of hubs (`forget`).
     forget_asks: forget::Asks,
+    /// What of the node's work is stuck, as it last looked at itself.
+    stuck: stuck::Stuck,
     /// What the agents' logins here were used for (`usage`).
     usage: usage::Usage,
     /// Held while the projects' ledgers are taken or written, one at a time.
-    syncing: tokio::sync::Mutex<()>,
+    syncing: ranked::Syncing,
     /// Held while a town's record or journals are written from here, from
     /// reading what is there to writing what comes next.
-    writing: tokio::sync::Mutex<()>,
+    writing: ranked::Writing,
     /// What went out with an answer of a World tool and is not yet known to
     /// have been taken: no other answer hands it over meanwhile.
     taking: std::sync::Mutex<std::collections::HashSet<(fastctx_types::ResidentId, fastctx_types::NoticeId)>>,
@@ -505,7 +511,7 @@ pub async fn run_prepared(
         jobs: jobs::Jobs::new(),
         job_watches: Default::default(),
         disk: Default::default(),
-        data_operations: Default::default(),
+        places: Default::default(),
         disk_changed: Default::default(),
         disk_due: Default::default(),
         job_readers: Default::default(),
@@ -527,13 +533,14 @@ pub async fn run_prepared(
         shown: tokio::sync::watch::channel(0).0,
         facts: facts::Facts::default(),
         forget_asks: forget::Asks::default(),
+        stuck: Default::default(),
         usage: usage::Usage::default(),
-        syncing: tokio::sync::Mutex::new(()),
-        writing: tokio::sync::Mutex::new(()),
+        syncing: Default::default(),
+        writing: Default::default(),
         taking: Default::default(),
         following: Default::default(),
-        job_ends: Default::default(),
-        copying: Default::default(),
+        job_ends: gates::Gates::new(fastctx_platform::doing::Rank::JOB_END, "job end"),
+        copying: gates::Gates::new(fastctx_platform::doing::Rank::COPYING, "copying"),
         learned: Default::default(),
         words: Default::default(),
         interrupts: Default::default(),
@@ -595,7 +602,7 @@ pub async fn run_prepared(
     speech::restore(&node).await;
     unfinished.extend(node.residents.unfinished());
     turns::recover(&node, unfinished.into_iter().collect()).await;
-    composer::recover(&node).await.map_err(anyhow::Error::from)?;
+    composer::recover(&node).await;
     node.effects_ready.store(true, std::sync::atomic::Ordering::Release);
     node.effects_changed.notify_waiters();
     composer::resume(&node);
@@ -665,6 +672,7 @@ pub async fn run_prepared(
         _ => {}
     }
 
+    stuck::start(&node);
     let watchdog = watchdog::Watchdog::start(node.log.clone()).context("starting the control-loop watchdog")?;
     loop {
         let accepted = tokio::select! {

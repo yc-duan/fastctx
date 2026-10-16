@@ -206,6 +206,8 @@ async fn watch(
             }
             Ok(fastctx_client::Update::Moment(moment)) => Data::Event(moment.event),
             Ok(fastctx_client::Update::History(history)) => Data::History(history),
+            // The listing says whether it works; the feed shows the session.
+            Ok(fastctx_client::Update::Now { .. }) => continue,
             Ok(fastctx_client::Update::Extended(history)) => {
                 for event in history {
                     if sender.send((page, Data::Event(event))).is_err() {

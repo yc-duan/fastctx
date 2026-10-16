@@ -28,7 +28,7 @@ use crate::Node;
 #[derive(Default)]
 pub(crate) struct Keeping {
     writing: std::sync::Mutex<()>,
-    carrying: tokio::sync::Mutex<()>,
+    carrying: crate::ranked::Carrying,
 }
 
 /// What this computer kept once its settings went into an account.

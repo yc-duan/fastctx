@@ -60,7 +60,7 @@ impl World {
                                     && sender.send(Ok(*composer)).is_err() { return; }
                             }
                             // A composer has no history; nothing of one is asked for.
-                            Ok(Some(Watched::History { .. } | Watched::Unchanged { .. } | Watched::Segments { .. })) => {},
+                            Ok(Some(Watched::History { .. } | Watched::Unchanged { .. } | Watched::Segments { .. } | Watched::Now { .. })) => {},
                             Ok(None) => return,
                             Err(error) => { let _ = sender.send(Err(error.into())); return; }
                         }

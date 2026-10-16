@@ -97,18 +97,29 @@ pub fn transcript(directory: &Path) -> io::Result<Option<PathBuf>> {
     }
 }
 
+/// The models a session's mod last observed its login to offer.
+#[derive(Deserialize)]
+struct Reading {
+    at: Timestamp,
+    #[serde(default = "available")]
+    available: bool,
+    models: Vec<fastctx_types::session::control::ModelOffer>,
+}
+
+fn available() -> bool {
+    true
+}
+
+/// The model aliases the mod of the session in `directory` last observed
+/// its login to offer, which hold while the session sleeps.
+pub fn observed_aliases(directory: &Path) -> io::Result<Option<Vec<String>>> {
+    Ok(super::control::read_mod::<Reading>(&directory.join("models.json"))?
+        .filter(|reading| reading.available)
+        .map(|reading| reading.models.into_iter().map(|model| model.id).collect()))
+}
+
 /// The models each session's login offers, from the aliases its mod observed, attributed by transcript home.
 pub fn models(world: &Path) -> io::Result<Vec<(PathBuf, Timestamp, Vec<fastctx_types::agents::AgentModel>)>> {
-    #[derive(Deserialize)]
-    struct Reading {
-        at: Timestamp,
-        #[serde(default = "available")]
-        available: bool,
-        models: Vec<fastctx_types::session::control::ModelOffer>,
-    }
-    fn available() -> bool {
-        true
-    }
     let mut readings = Vec::new();
     let entries = match std::fs::read_dir(sessions(world)) {
         Ok(entries) => entries,

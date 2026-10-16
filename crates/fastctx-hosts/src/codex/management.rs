@@ -43,10 +43,13 @@ impl CodexHost {
         if self.lock().threads.get(thread).is_some_and(|entry| entry.turn.is_some() || entry.submitted) {
             return Err("this Codex thread is running a turn".into());
         }
+        // Codex says it does not know the thread in either of these ways:
+        // 0.160 names the thread, later versions the rollout it lacks.
         let deleted = match server.ask("thread/delete", json!({"threadId":thread})).await {
             Ok(_) => true,
             Err(super::server::Unanswered::Rpc { code: -32600, message, .. })
-                if message == format!("thread not found: {thread}") =>
+                if message == format!("thread not found: {thread}")
+                    || message == format!("no rollout found for thread id {thread}") =>
             {
                 false
             }

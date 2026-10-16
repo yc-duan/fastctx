@@ -81,6 +81,10 @@ pub fn set_state(directory: &ConversationDir, id: &NoticeId, state: PendingState
     let _transaction = crate::resident_storage::lock();
     let Some(mut pending) = read_here(directory, id)? else { return Ok(()) };
     pending.state = state;
+    // Which host activation has them is told by when they went to it.
+    if matches!(state, PendingState::Handed | PendingState::Waking) {
+        pending.since = Some(jiff::Timestamp::now());
+    }
     publish(&path(directory, id), &json(&pending)?, Permissions::Private)
 }
 
@@ -290,7 +294,7 @@ fn parse_pending(directory: &ConversationDir, path: &Path, bytes: &[u8]) -> io::
     } else {
         PendingState::Waiting
     };
-    let pending = Pending { delivery, readers, state, working, session: None };
+    let pending = Pending { delivery, readers, state, working, session: None, since: None };
     publish(&self::path(directory, &pending.delivery.id), &json(&pending)?, Permissions::Private)?;
     Ok(pending)
 }

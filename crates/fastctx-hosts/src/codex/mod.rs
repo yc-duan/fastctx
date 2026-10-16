@@ -151,6 +151,13 @@ pub struct ThreadSpec {
     pub choices: PathBuf,
 }
 
+impl ThreadSpec {
+    /// A setting it was started with, such as its model, where it gives one.
+    pub(super) fn started(&self, key: &str) -> Option<String> {
+        self.config[key].as_str().map(str::to_string)
+    }
+}
+
 /// Words for a thread.
 #[derive(Clone, Debug)]
 pub enum Input {
@@ -282,11 +289,11 @@ pub struct CodexHost {
     // A notification and replacement of its server are one transition.
     generation: Mutex<()>,
     /// Starting the app-server is done by one caller at a time.
-    starting: tokio::sync::Mutex<()>,
+    starting: fastctx_platform::doing::Mutex<()>,
     /// Resuming is done one thread at a time: a second resume of a loaded
     /// thread starts none of its tool servers again, so nothing would say
     /// how they started.
-    loading: tokio::sync::Mutex<()>,
+    loading: fastctx_platform::doing::Mutex<()>,
     /// Woken whenever the app-server says how a thread's World tools
     /// started.
     tools_changed: Notify,
@@ -395,6 +402,7 @@ impl CodexHost {
         let (events, receiver) = mpsc::unbounded_channel();
         let threads = cache::Threads::new(&workdir);
         let finished = cache::Finished::new(&workdir);
+        let login = codex_home.display().to_string();
         let host = Arc::new(Self {
             codex_home,
             program_home,
@@ -412,8 +420,18 @@ impl CodexHost {
             }),
             finished,
             generation: Mutex::new(()),
-            starting: tokio::sync::Mutex::new(()),
-            loading: tokio::sync::Mutex::new(()),
+            starting: fastctx_platform::doing::Mutex::new(
+                fastctx_platform::doing::Rank::CODEX_STARTING,
+                "starting Codex",
+                login.clone(),
+                (),
+            ),
+            loading: fastctx_platform::doing::Mutex::new(
+                fastctx_platform::doing::Rank::CODEX_LOADING,
+                "loading a Codex thread",
+                login,
+                (),
+            ),
             tools_changed: Notify::new(),
             limits: Mutex::new(None),
         });
@@ -687,7 +705,14 @@ impl CodexHost {
             return Ok(Vec::new());
         }
         let running = self.running_turn(thread);
-        history::read(&server, thread, running.as_deref(), Some(owner)).await
+        match history::read(&server, thread, running.as_deref(), Some(owner)).await {
+            // One a Codex of another version wrote reads once it is loaded.
+            Err(error) if error == not_loaded(thread) => {
+                self.ensure_loaded(&server, thread).await?;
+                history::read(&server, thread, running.as_deref(), Some(owner)).await
+            }
+            read => read,
+        }
     }
 
     /// What the thread is like now, as Codex says without reading its turns:
@@ -695,7 +720,15 @@ impl CodexHost {
     /// is as it was. A turn this host runs in it is part of it.
     pub async fn stamp(self: &Arc<Self>, thread: &str) -> Result<String, String> {
         let server = self.server().await?;
-        let answer = server.request("thread/read", json!({"threadId": thread, "includeTurns": false})).await?;
+        let asking = json!({"threadId": thread, "includeTurns": false});
+        let answer = match server.request("thread/read", asking.clone()).await {
+            // One a Codex of another version wrote reads once it is loaded.
+            Err(error) if error == not_loaded(thread) => {
+                self.ensure_loaded(&server, thread).await?;
+                server.request("thread/read", asking).await?
+            }
+            answer => answer?,
+        };
         Ok(format!("{}|{:?}", answer["thread"], self.running_turn(thread)))
     }
 
@@ -1537,6 +1570,12 @@ fn millis(value: Option<&Value>) -> Timestamp {
         .and_then(Value::as_i64)
         .and_then(|millis| Timestamp::from_millisecond(millis).ok())
         .unwrap_or_else(Timestamp::now)
+}
+
+/// What the app-server answers for a thread it has not loaded, which some
+/// versions say on reading one another version wrote.
+fn not_loaded(thread: &str) -> String {
+    format!("thread not loaded: {thread}")
 }
 
 /// The plugins whose tools work the screen and the browser of the machine

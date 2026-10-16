@@ -25,16 +25,25 @@ pub fn timed<T>(step: &str, run: impl FnOnce() -> T) -> (T, ProbeTime) {
     (value, ProbeTime { step: step.into(), elapsed_ms: elapsed(start) })
 }
 
+/// How long a probe may take before it counts as not answering.
+const PROBE: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub fn output(program: &Path, args: &[&str], cwd: &Path, env: &[(OsString, OsString)]) -> Result<Output, String> {
     let mut command = Command::new(program);
     command.args(args).current_dir(cwd).env_clear().envs(env.iter().map(|(k, v)| (k, v)));
-    command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    command.stdin(Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
         command.creation_flags(0x0800_0000);
     }
-    command.output().map_err(|error| format!("running {} {}: {error}", program.display(), args.join(" ")))
+    let what = format!("{} {}", program.display(), args.join(" "));
+    fastctx_platform::bounded::output(command, &what, PROBE).map_err(|error| match fastctx_platform::bounded::ran_late(
+        &error,
+    ) {
+        true => format!("{what} did not answer within {} s", PROBE.as_secs()),
+        false => format!("running {what}: {error}"),
+    })
 }
 
 pub fn version(program: &Path, cwd: &Path, env: &[(OsString, OsString)]) -> Fact<String> {

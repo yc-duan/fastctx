@@ -23,6 +23,10 @@ use tokio_tungstenite::tungstenite::{
 
 use super::Log;
 
+/// How long the app-server may take to listen, and then to take the node's
+/// connection (`specs/world-concurrency.md`, 等外面的事都有期限).
+const STARTING: std::time::Duration = std::time::Duration::from_secs(60);
+
 const LISTENER_TARGET: &str = "codex_app_server_transport::transport::unix_socket";
 const LISTENING: &str = "app-server control socket listening";
 
@@ -96,7 +100,10 @@ pub fn spawn(
         let run = async {
             let mut stopping = stopping;
             tokio::select! {
-                ready = listening => ready.map_err(|_| "app-server stderr closed before its socket was listening".to_string())?,
+                ready = tokio::time::timeout(STARTING, listening) => match ready {
+                    Ok(ready) => ready.map_err(|_| "app-server stderr closed before its socket was listening".to_string())?,
+                    Err(_) => return Err(format!("the app-server did not listen within {} s", STARTING.as_secs())),
+                },
                 _ = stopping.wait_for(|stopped| *stopped) => return Ok(()),
             }
             let connect = async {
@@ -109,7 +116,10 @@ pub fn spawn(
                     .await.map_err(|error| format!("upgrading socket connection: {error}"))
             };
             let (socket, response) = tokio::select! {
-                result = connect => result?,
+                result = tokio::time::timeout(STARTING, connect) => match result {
+                    Ok(result) => result?,
+                    Err(_) => return Err(format!("the app-server did not take the connection within {} s", STARTING.as_secs())),
+                },
                 _ = stopping.wait_for(|stopped| *stopped) => return Ok(()),
             };
             let frame_limit = response.headers().get("x-codex-websocket-max-unfragmented-message-bytes")

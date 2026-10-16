@@ -32,7 +32,7 @@ use crate::data::delete::Stop;
 #[derive(Default)]
 pub(crate) struct Asks {
     /// Held while the kept asks are read and written.
-    file: tokio::sync::Mutex<()>,
+    file: crate::ranked::Forgetting,
     wake: Arc<tokio::sync::Notify>,
 }
 

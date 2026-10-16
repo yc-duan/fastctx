@@ -81,7 +81,6 @@ pub async fn upload(
     composer: Option<fastctx_types::composer::UploadScope>,
     mut source: FrameReader,
 ) -> Result<Uploaded, Failure> {
-    let _operation = node.data_operations.read().await;
     validate_file(&file)?;
     let machine = match machine {
         Some(machine) => machine,
@@ -93,6 +92,7 @@ pub async fn upload(
         None => node.machine(),
     };
     if node.is_me(&machine) {
+        let _place = using_target(node, &target).await;
         let (mut arriving, mut guard) =
             match arrival(node, &node.machine(), target, file, composer.as_ref(), true).await? {
                 Arrival::Ended(uploaded) => return Ok(uploaded),
@@ -304,7 +304,7 @@ pub async fn receive(
     resumes: bool,
     mut stream: Stream,
 ) -> Result<Uploaded, Failure> {
-    let _operation = node.data_operations.read().await;
+    let _place = using_target(node, &target).await;
     validate_file(&file)?;
     let size = file.size;
     let (mut arriving, mut guard) = match arrival(node, from, target, file, composer.as_ref(), resumes).await? {
@@ -353,6 +353,17 @@ fn validate_file(file: &UploadFile) -> Result<(), Failure> {
         return Err(failure("sha256 must be 64 lowercase hexadecimal digits"));
     }
     Ok(())
+}
+
+/// Shares the place an upload for `target` lands in: the conversation's, or
+/// the draft's; a new draft's is its own, which nothing else knows yet.
+async fn using_target(node: &Arc<Node>, target: &UploadTarget) -> Option<crate::data::places::Using> {
+    match target {
+        UploadTarget::Resident { resident } | UploadTarget::Draft { resident, .. } => {
+            Some(node.places.using(resident.as_str()).await)
+        }
+        UploadTarget::New { .. } => None,
+    }
 }
 
 async fn prepare(node: &Arc<Node>, target: UploadTarget, file: UploadFile) -> Result<Arriving, Failure> {
@@ -844,9 +855,12 @@ pub async fn take_placed(
     attachment: Attachment,
     mut stream: Stream,
 ) -> Result<Attachment, Failure> {
-    let _operation = node.data_operations.read().await;
     validate_file(&attachment.file)?;
     let origin = Address { machine: from.clone(), resident: resident.clone() };
+    let _place = match crate::data::places::of_owner(node, &origin) {
+        Some(place) => Some(node.places.using(&place).await),
+        None => None,
+    };
     if attachment.owner != origin {
         return Err(Failure::not_run(format!("{from} places files only of its own sessions")));
     }

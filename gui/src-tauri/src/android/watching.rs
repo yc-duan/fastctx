@@ -165,10 +165,7 @@ pub(crate) async fn stream(
                     conversation = Some(fresh);
                 }
                 Err(error) => {
-                    let _ = pieces.send(match error.deleted {
-                        true => Piece::Deleted { error: error.message },
-                        false => Piece::Ended { error: Some(error.message) },
-                    });
+                    let _ = pieces.send(error.piece());
                     return;
                 }
             }
@@ -193,7 +190,7 @@ pub(crate) async fn stream(
                         let piece = transcript.lock().expect("transcript").take(update).unwrap_or_else(|error| Some(Piece::Ended { error: Some(error) }));
                         if !deliver(&pieces, piece) { return; }
                     }
-                    Err(error) if error.is_deleted() => {
+                    Err(error) if error.is_deleted() || error.is_refused() => {
                         let _ = pieces.send(Piece::failed(&error));
                         return;
                     }

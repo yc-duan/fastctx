@@ -35,6 +35,11 @@ pub(super) fn reported(node: &Node, resident: &ResidentId, thread: &str, event: 
 pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, Failure> {
     let (codex, thread) = thread(node, resident)?;
     let mut offers = codex.offers(&thread).await.map_err(Failure::new)?;
+    // A thread Codex has not reported on since it restarted has the model
+    // it last reported in the resident's record.
+    if offers.model.is_none() {
+        offers.model = node.residents.about(resident).and_then(|(about, _)| about.model);
+    }
     let dir = codex.config_home().to_path_buf();
     let kept = {
         let node = node.clone();
@@ -231,15 +236,9 @@ async fn fork(
 ) -> Result<Controlled, Failure> {
     let (source, town) = node.residents.about(parent).ok_or_else(|| Failure::new("unknown source resident"))?;
     let id = node.residents.new_id(&source.host.agent)?;
-    let (spec, heard) = crate::colleagues::thread_spec(
-        node,
-        &id,
-        &Origin::User,
-        town.as_ref(),
-        &source.acting,
-        source.home.as_deref(),
-    )
-    .await?;
+    let (spec, heard) =
+        crate::colleagues::thread_spec(node, &id, &Origin::User, town.as_ref(), &source.acting, source.home.as_deref())
+            .await?;
     // Until it is claimed below, reports of threads nobody claims are kept.
     let _starting = crate::codex::starting(node);
     let (fork, model) = codex.fork(thread, through.as_deref(), spec).await.map_err(Failure::new)?;

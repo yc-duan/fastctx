@@ -101,11 +101,11 @@ impl Residents {
     pub fn management(
         &self,
         id: &ResidentId,
-    ) -> Result<crate::leases::Lease<ResidentId, tokio::sync::RwLock<()>>, Failure> {
+    ) -> Result<crate::leases::Lease<ResidentId, fastctx_platform::doing::RwLock<()>>, Failure> {
         self.lock()
             .live
             .contains_key(id)
-            .then(|| self.management.get_or_insert_with(id, Default::default))
+            .then(|| self.management.get_or_insert_with(id, || crate::ranked::management(id)))
             .ok_or_else(|| Failure::new(format!("no resident {id} lives here")))
     }
 

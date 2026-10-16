@@ -49,6 +49,12 @@ impl Error {
     pub fn is_deleted(&self) -> bool {
         matches!(self, Error::Call(CallError::Failed(failure)) if failure.is_deleted())
     }
+
+    /// Whether the machine refused this account: a watch that was refused
+    /// is not opened again on a timer.
+    pub fn is_refused(&self) -> bool {
+        matches!(self, Error::Call(CallError::Failed(failure)) if failure.is_refused())
+    }
 }
 
 /// A World reached through a local node or an application's device identity.
@@ -76,6 +82,8 @@ pub struct Said {
     /// Where the resident lives.
     pub to: Address,
     pub landed: Landed,
+    /// The words' id on that machine, when the device named them.
+    pub delivery: Option<fastctx_types::NoticeId>,
 }
 
 /// A town's record as its latest version says, and who opened it.
@@ -468,7 +476,7 @@ impl World {
     /// The user's words to a resident on any machine.
     pub async fn talk(&self, to: ResidentId, machine: Option<MachineName>, text: String) -> Result<Said, Error> {
         match self.ask(Call::Talk { to, machine, text, attachments: Vec::new(), files_on: None, id: None }).await? {
-            Reply::Spoken { to, landed } => Ok(Said { to, landed }),
+            Reply::Spoken { to, landed, delivery } => Ok(Said { to, landed, delivery }),
             other => Err(unexpected(other)),
         }
     }
@@ -521,7 +529,7 @@ impl World {
             })
             .await?
         {
-            Reply::Opened { resident, landed } => Ok(Said { to: resident, landed }),
+            Reply::Opened { resident, landed } => Ok(Said { to: resident, landed, delivery: None }),
             other => Err(unexpected(other)),
         }
     }
@@ -620,7 +628,19 @@ impl World {
         machine: Option<MachineName>,
         held: fastctx_types::session::held::Held,
     ) -> Result<Watching, Error> {
-        self.watch_as(resident, machine, None, Some(held)).await
+        self.watch_as(resident, machine, None, Some(held), false).await
+    }
+
+    /// Watches a resident for an interface: as [`World::watch_held`], or from
+    /// its whole history without `held`, and told whether it works now
+    /// (`Watched::Now`) where its machine tells that.
+    pub(crate) async fn watch_shown(
+        &self,
+        resident: ResidentId,
+        machine: Option<MachineName>,
+        held: Option<fastctx_types::session::held::Held>,
+    ) -> Result<Watching, Error> {
+        self.watch_as(resident, machine, None, held, true).await
     }
 
     pub(crate) async fn watch_with_composer(
@@ -629,7 +649,7 @@ impl World {
         machine: Option<MachineName>,
         composer: Option<String>,
     ) -> Result<Watching, Error> {
-        self.watch_as(resident, machine, composer, None).await
+        self.watch_as(resident, machine, composer, None, false).await
     }
 
     async fn watch_as(
@@ -638,11 +658,12 @@ impl World {
         machine: Option<MachineName>,
         composer: Option<String>,
         held: Option<fastctx_types::session::held::Held>,
+        now: bool,
     ) -> Result<Watching, Error> {
         if let Some(device) = &self.device {
-            return Ok(Watching::device(device.watch(resident, machine, composer, held).await?));
+            return Ok(Watching::device(device.watch(resident, machine, composer, held, now).await?));
         }
-        Ok(self.connect().await?.watch(Call::Watch { resident, machine, composer, held }).await?)
+        Ok(self.connect().await?.watch(Call::Watch { resident, machine, composer, held, now }).await?)
     }
 
     pub async fn copy(&self, from: Place, to: Place) -> Result<CopyReport, Error> {

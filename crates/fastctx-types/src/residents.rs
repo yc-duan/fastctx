@@ -512,6 +512,12 @@ pub struct Pending {
     /// /clear must not move them into the replacement conversation.
     #[serde(default)]
     pub session: Option<String>,
+    /// When they were last handed to the session's running host, or sent to
+    /// wake it: the host activation that has them is the one running then,
+    /// or the one that comes up after a wake. Records kept before this was
+    /// written have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<jiff::Timestamp>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

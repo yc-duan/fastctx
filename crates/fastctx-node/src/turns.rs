@@ -385,19 +385,27 @@ pub fn pay<'a>(
     Box::pin(async move {
         node.ready().await;
         let Some(paying) = node.residents.paying(id) else { return };
-        let _paying = paying.lock().await;
+        // The lock is held only to take what is owed: telling another
+        // conversation takes its locks, never while this one's is held
+        // (`specs/world-concurrency.md`, 锁只管落账). What is being told
+        // is not taken again by a payment that comes meanwhile.
         let owing = {
+            let _paying = paying.lock().await;
             let directory = directory.clone();
-            tokio::task::spawn_blocking(move || crate::inbox::owing(&directory)).await
-        };
-        let owing = match owing {
-            Ok(Ok(owing)) => owing,
-            Ok(Err(error)) => {
-                node.log.line(format_args!("reading the answers {id} owes: {error}"));
-                return;
+            let owing = tokio::task::spawn_blocking(move || crate::inbox::owing(&directory)).await;
+            match owing {
+                Ok(Ok(owing)) => {
+                    let mut telling = TELLING.lock().expect("never poisoned");
+                    owing.into_iter().filter(|answer| telling.insert(answer.delivery.id.clone())).collect::<Vec<_>>()
+                }
+                Ok(Err(error)) => {
+                    node.log.line(format_args!("reading the answers {id} owes: {error}"));
+                    return;
+                }
+                Err(_) => return,
             }
-            Err(_) => return,
         };
+        let _told = Told(owing.iter().map(|answer| answer.delivery.id.clone()).collect());
         let about = node.residents.about(id).map(|(about, _)| about);
         let colleague = about.as_ref().is_some_and(|about| matches!(about.origin, Origin::Colleague { .. }));
         let acting = about.map(|about| about.acting).unwrap_or_default();
@@ -444,6 +452,22 @@ pub fn pay<'a>(
             }
         }
     })
+}
+
+/// The answers a payment is telling now.
+static TELLING: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<fastctx_types::NoticeId>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Answers a payment took to tell: free to be taken again once it is done.
+struct Told(Vec<fastctx_types::NoticeId>);
+
+impl Drop for Told {
+    fn drop(&mut self) {
+        let mut telling = TELLING.lock().expect("never poisoned");
+        for id in &self.0 {
+            telling.remove(id);
+        }
+    }
 }
 
 /// Words kept for a resident whose fate will not be told by any turn's end:
@@ -623,25 +647,32 @@ pub async fn stopped(node: &Arc<Node>, id: &ResidentId, turn: &str, reason: Stri
 }
 
 /// Ends the turns the node stopped under, now that it is up again, and
-/// tells whoever was owed them.
+/// tells whoever was owed them. A Claude session runs on under Claude Code's
+/// own supervisor while the node is away: its turn goes on and ends as it
+/// ends, its reports followed again; only one whose session is gone ended
+/// with the node (`specs/world-concurrency.md`, 宿主的会话比节点活得久).
 pub async fn recover(node: &Arc<Node>, unfinished: Vec<(ResidentId, String)>) {
     let reason = format!("the node on {} restarted while it ran", node.machine());
     for (id, turn) in unfinished {
         if let Some((about, _)) = node.residents.about(&id)
             && about.host.agent.as_str() == "claude"
             && node.residents.now(&id).and_then(|now| now.turn).as_deref() == Some(&turn)
+            && let Some(session) = &about.session
+            && claude_runs(node, session)
         {
-            let directory = node.world.conversation(&id);
-            if crate::delivery::terminal(&directory, &turn).is_ok_and(|end| end.is_none())
-                && let Some(session) = about.session
-                && let Err(error) = fastctx_hosts::claude::exchange::stop(
-                    &fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session),
-                    &turn,
-                )
-            {
-                node.log.line(format_args!("stopping the Claude turn interrupted by restart: {error}"));
-            }
+            continue;
         }
         stopped(node, &id, &turn, reason.clone()).await;
     }
+}
+
+/// Whether the Claude session `session` still has the process it registered
+/// with.
+fn claude_runs(node: &Node, session: &str) -> bool {
+    let directory = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session);
+    matches!(
+        fastctx_hosts::claude::exchange::registration(&directory),
+        Ok(Some(registration))
+            if registration.process.as_ref().is_some_and(|process| fastctx_platform::is_alive(process).unwrap_or(false))
+    )
 }

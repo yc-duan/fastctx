@@ -8,6 +8,7 @@ use fastctx_types::session::control::{
 };
 use serde_json::{Value, json};
 
+use super::controls::Selection;
 use super::{CodexHost, Input, Sent, server::AppServer};
 
 pub(super) const COMMANDS: &[(&str, &str, Option<&str>, CommandArguments)] = &[
@@ -158,11 +159,26 @@ impl CodexHost {
                 path: Some(string(&skill, "path")?),
             });
         }
+        // A thread not loaded since this app-server started knows the
+        // choices made for it only where they were kept: it offers them as
+        // a loaded one does, whatever its session is doing.
+        let kept = {
+            let mut state = self.lock();
+            let entry = state.threads.get(thread).ok_or("unknown Codex thread")?;
+            entry.spec.as_ref().filter(|_| !entry.loaded).map(|spec| spec.choices.clone())
+        };
+        let kept = kept.map(|choices| Selection::read(&choices)).transpose()?;
         let mut state = self.lock();
         let entry = state.threads.get(thread).ok_or("unknown Codex thread")?;
-        let selected_model = entry.selection.model.as_ref().or(entry.model.as_ref());
-        if let Some(model) = models.iter().find(|model| Some(&model.id) == selected_model) {
-            for tier in &model.service_tiers {
+        let chosen = kept.as_ref().unwrap_or(&entry.selection);
+        // What it was started with stands until Codex or a choice says more.
+        let started = |key: &str| entry.spec.as_ref().and_then(|spec| spec.started(key));
+        let model = chosen.model.clone().or_else(|| entry.model.clone()).or_else(|| started("model"));
+        let effort =
+            chosen.effort.clone().or_else(|| entry.effort.clone()).or_else(|| started("model_reasoning_effort"));
+        let service_tier = chosen.service_tier.clone().or_else(|| entry.service_tier.clone());
+        if let Some(found) = models.iter().find(|offer| Some(&offer.id) == model.as_ref()) {
+            for tier in &found.service_tiers {
                 let name = tier.name.to_lowercase();
                 // A tier name becomes a slash command only when it is a word
                 // and cannot shadow another host command or a named skill.
@@ -214,9 +230,9 @@ impl CodexHost {
             controls,
             commands,
             models,
-            model: entry.selection.model.clone().or_else(|| entry.model.clone()),
-            effort: entry.selection.effort.clone().or_else(|| entry.effort.clone()),
-            service_tier: entry.selection.service_tier.clone().or_else(|| entry.service_tier.clone()),
+            model,
+            effort,
+            service_tier,
             usage: Some(usage),
         })
     }

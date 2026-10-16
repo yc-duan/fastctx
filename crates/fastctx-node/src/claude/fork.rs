@@ -103,7 +103,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         let selected_model = model.clone();
         let selected_effort = effort.clone();
         let _birth = node.claude.births.read().await;
-        let printed = tokio::task::spawn_blocking(move || {
+        let printed = tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
             let start = background::Start {
                 plugin: &plugin,
                 settings: &settings,
@@ -115,7 +115,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
             };
             super::trust(&[world.as_path(), cwd.as_path()], &env)?;
             background::claude(&program, &background::fork_args(&source_session, &start), &cwd, &env)
-        })
+        }))
         .await
         .map_err(|error| Failure::new(error.to_string()))?
         .map_err(Failure::new)?;

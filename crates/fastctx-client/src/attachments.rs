@@ -167,7 +167,7 @@ impl World {
         id: Option<String>,
     ) -> Result<Said, Error> {
         match self.call(Call::Talk { to, machine, text, attachments, files_on, id }).await?.0 {
-            Reply::Spoken { to, landed } => Ok(Said { to, landed }),
+            Reply::Spoken { to, landed, delivery } => Ok(Said { to, landed, delivery }),
             other => Err(Error::Unexpected(format!("{other:?}"))),
         }
     }
@@ -194,7 +194,7 @@ impl World {
             choices,
         };
         match self.call(call).await?.0 {
-            Reply::Opened { resident, landed } => Ok(Said { to: resident, landed }),
+            Reply::Opened { resident, landed } => Ok(Said { to: resident, landed, delivery: None }),
             other => Err(Error::Unexpected(format!("{other:?}"))),
         }
     }

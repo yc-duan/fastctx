@@ -204,6 +204,40 @@ pub enum Watched {
         segments: Vec<held::Segment>,
         complete: bool,
     },
+    /// For a viewer that asked for it (the `now` of its watch): whether the
+    /// session's machine says it works now, in which turn, and which words
+    /// it still keeps on their way in. Told once the history is told and
+    /// whenever it changes; what the viewer shows under way gives way to it,
+    /// so one end it missed holds nothing up. A viewer that did not ask, as
+    /// one from before this, is never sent it.
+    Now {
+        busy: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        kept: Vec<KeptWords>,
+    },
+}
+
+/// Words a conversation's machine keeps that no turn has taken yet, and how
+/// far they came (`Watched::Now`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeptWords {
+    pub id: crate::NoticeId,
+    pub state: WordsState,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WordsState {
+    /// They wait for a way in: the host is busy, asleep or not reached.
+    Waiting,
+    /// They are being handed to the host now, or the host has them and has
+    /// not said which turn takes them.
+    Handing,
+    /// A state of a newer version.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Who said words that went into a session.

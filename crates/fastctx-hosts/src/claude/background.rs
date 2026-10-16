@@ -106,18 +106,26 @@ pub fn wake_args(session: &str, words: &str) -> Vec<OsString> {
 }
 
 /// Runs `claude` with `args` in `cwd` and the environment `env`, and
-/// returns what it printed, or why it failed.
+/// returns what it printed, or why it failed: past its deadline (`within`)
+/// the command is ended and that is said (`specs/world-concurrency.md`).
 pub fn claude(program: &Path, args: &[OsString], cwd: &Path, env: &[(OsString, OsString)]) -> Result<String, String> {
     let mut command = Command::new(program);
     command.args(args).current_dir(cwd).env_clear().envs(env.iter().map(|(name, value)| (name, value)));
-    command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    command.stdin(Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
         // No console window for a command run from the node.
         command.creation_flags(0x0800_0000);
     }
-    let output = command.output().map_err(|error| format!("running {}: {error}", program.display()))?;
+    let what = format!("`claude {}`", first(args));
+    let output = fastctx_platform::bounded::output(command, &what, within(args)).map_err(|error| {
+        if fastctx_platform::bounded::ran_late(&error) {
+            format!("Claude Code did not answer {what} within {} s", within(args).as_secs())
+        } else {
+            format!("running {}: {error}", program.display())
+        }
+    })?;
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     if output.status.success() {
         Ok(stdout)
@@ -125,6 +133,19 @@ pub fn claude(program: &Path, args: &[OsString], cwd: &Path, env: &[(OsString, O
         let stderr = String::from_utf8_lossy(&output.stderr);
         Err(format!("claude {} ({}): {}", first(args), output.status, format!("{stdout}{stderr}").trim()))
     }
+}
+
+/// How long a `claude` command may take before it counts as not answering:
+/// starting, waking or forking a session waits for Claude Code's daemon to
+/// spawn it; stopping one waits for it to end; listing and reading are quick.
+fn within(args: &[OsString]) -> std::time::Duration {
+    let starts = args.iter().any(|arg| arg == "--bg" || arg == "--resume" || arg == "--fork-session");
+    let seconds = match args.first().and_then(|arg| arg.to_str()) {
+        _ if starts => 120,
+        Some("stop" | "rm" | "plugin") => 60,
+        _ => 30,
+    };
+    std::time::Duration::from_secs(seconds)
 }
 
 /// Whether the background session `session` has a running process, from

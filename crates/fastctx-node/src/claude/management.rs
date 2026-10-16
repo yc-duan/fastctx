@@ -9,10 +9,12 @@ use std::sync::Arc;
 
 async fn run(node: &Arc<Node>, home: Option<&Path>, args: Vec<OsString>) -> Result<String, Failure> {
     let super::Command { program, cwd, env } = super::command(node, home)?;
-    tokio::task::spawn_blocking(move || background::claude(&program, &args, &cwd, &env))
-        .await
-        .map_err(|error| Failure::new(error.to_string()))?
-        .map_err(Failure::new)
+    tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+        background::claude(&program, &args, &cwd, &env)
+    }))
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
+    .map_err(Failure::new)
 }
 
 /// Only supervisor records have a background management ID. The same CLI

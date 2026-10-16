@@ -136,7 +136,7 @@ pub(crate) async fn tell_here_locked(
             }
         }
     }
-    let pending = Pending { delivery, readers, state: PendingState::Waiting, working, session: None };
+    let pending = Pending { delivery, readers, state: PendingState::Waiting, working, session: None, since: None };
     let kept = {
         let (directory, pending) = (directory.clone(), pending.clone());
         tokio::task::spawn_blocking(move || crate::inbox::keep(&directory, &pending))
@@ -212,6 +212,10 @@ pub async fn hand_over(
     directory: &ConversationDir,
     pending: Pending,
 ) -> Result<Landed, Failure> {
+    let _doing = fastctx_platform::doing::doing(format!("handing {} to {to}", pending.delivery.id));
+    // Startup's recovery may need the gate alone, as to finish a deletion:
+    // nothing waits for it holding the gate.
+    node.ready().await;
     let gate = node.residents.management(to)?;
     let _reading = gate.read().await;
     hand_over_locked(node, to, about, directory, pending).await
@@ -299,8 +303,14 @@ pub async fn send_composer(
         let Some(_answering) = node.handoff.call() else {
             return Err(Failure::new(crate::handoff::WAITING));
         };
-        let pending =
-            Pending { delivery, readers: Vec::new(), state: PendingState::Waiting, working: false, session: None };
+        let pending = Pending {
+            delivery,
+            readers: Vec::new(),
+            state: PendingState::Waiting,
+            working: false,
+            session: None,
+            since: None,
+        };
         return submit_thread(node, id, thread, &directory, pending, true, idle_only).await;
     }
     if idle_only && node.residents.now(id).is_some_and(|now| now.activity == fastctx_types::residents::Activity::Busy) {

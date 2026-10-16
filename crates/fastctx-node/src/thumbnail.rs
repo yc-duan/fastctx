@@ -12,8 +12,10 @@ use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::thumbnail::{Thumbnail, ThumbnailRequest};
 
-static DECODING: std::sync::LazyLock<Arc<tokio::sync::Mutex<()>>> =
-    std::sync::LazyLock::new(|| Arc::new(tokio::sync::Mutex::new(())));
+static DECODING: std::sync::LazyLock<crate::ranked::Decoding> = std::sync::LazyLock::new(Default::default);
+
+/// How long one picture may take to decode.
+const DECODER: std::time::Duration = std::time::Duration::from_secs(60);
 
 struct Cancel(Arc<AtomicBool>);
 impl Drop for Cancel {
@@ -83,7 +85,7 @@ async fn here(
     mut request: ThumbnailRequest,
     attachment: Option<fastctx_types::attachments::AttachmentSource>,
 ) -> Result<Thumbnail, Failure> {
-    let _guard = DECODING.clone().lock_owned().await;
+    let _guard = DECODING.lock().await;
     let program = node.fastctx.clone();
     let node = node.clone();
     let cancelled = Cancel(Arc::new(AtomicBool::new(false)));
@@ -160,8 +162,13 @@ async fn here(
         stderr.read_to_end(&mut bytes).map(|_| bytes)
     });
     let waiting = tokio::task::spawn_blocking(move || child.wait());
-    let (output, errors, status) =
-        tokio::try_join!(reading, errors, waiting).map_err(|error| Failure::new(error.to_string()))?;
+    // Past this, the worker guard ends the decoder as this returns.
+    let joined = fastctx_platform::doing::outside("the image decoder", DECODER, async {
+        tokio::try_join!(reading, errors, waiting)
+    })
+    .await
+    .map_err(|late| Failure::new(late.to_string()))?;
+    let (output, errors, status) = joined.map_err(|error| Failure::new(error.to_string()))?;
     let status = status.map_err(|error| Failure::new(error.to_string()))?;
     let errors = errors.map_err(|error| Failure::new(error.to_string()))?;
     let output = output.map_err(|error| Failure::new(error.to_string()))?;

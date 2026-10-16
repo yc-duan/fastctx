@@ -11,8 +11,7 @@ use std::sync::{Arc, atomic::AtomicBool};
 
 mod record_read;
 
-static READING: std::sync::LazyLock<Arc<tokio::sync::Mutex<()>>> =
-    std::sync::LazyLock::new(|| Arc::new(tokio::sync::Mutex::new(())));
+static READING: std::sync::LazyLock<crate::ranked::Pictures> = std::sync::LazyLock::new(Default::default);
 
 pub(crate) struct File {
     pub path: PathBuf,
@@ -131,7 +130,7 @@ pub(crate) async fn resolve(
     };
     let temporary = node.world.image_reading();
     let agent = about.host.agent.clone();
-    let serial = READING.clone().lock_owned().await;
+    let serial = READING.lock_owned().await;
     tokio::task::spawn_blocking(move || {
         let _serial = serial;
         fastctx_platform::ensure_private_dir(&temporary).map_err(failed)?;

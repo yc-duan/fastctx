@@ -28,11 +28,11 @@ use fastctx_types::{MachineName, ResidentId};
 use crate::Node;
 use state::{Entry, Flight, Receipt, Stored};
 
-type Cell = crate::leases::Lease<ResidentId, tokio::sync::Mutex<Option<Stored>>>;
+type Cell = crate::leases::Lease<ResidentId, fastctx_platform::doing::Mutex<Option<Stored>>>;
 
 #[derive(Default)]
 pub struct Composers {
-    cells: crate::leases::Registry<ResidentId, tokio::sync::Mutex<Option<Stored>>>,
+    cells: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<Option<Stored>>>,
     watches: Mutex<HashMap<String, ResidentId>>,
     failed: Mutex<HashMap<ResidentId, Cell>>,
 }
@@ -53,7 +53,7 @@ pub fn deleted(node: &Node, id: &ResidentId) {
 
 impl Composers {
     fn cell(&self, id: &ResidentId) -> Cell {
-        self.cells.get_or_insert_with(id, Default::default)
+        self.cells.get_or_insert_with(id, || crate::ranked::composer(id))
     }
 }
 

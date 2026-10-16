@@ -258,6 +258,7 @@ pub async fn ask_here(
         state: PendingState::Waiting,
         working: false,
         session: None,
+        since: None,
     };
     crate::inbox::keep(&directory, &first).map_err(|error| Failure::new(format!("keeping the request: {error}")))?;
     let (node, colleague) = (node.clone(), id.clone());

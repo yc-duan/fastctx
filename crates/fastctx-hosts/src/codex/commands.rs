@@ -57,8 +57,12 @@ impl CodexHost {
         // A thread not loaded since its app-server started knows its earlier
         // choices only from where they were kept.
         let kept = if entry.loaded { entry.selection.clone() } else { super::controls::Selection::read(&choices)? };
-        let model =
-            kept.model.clone().or_else(|| entry.model.clone()).ok_or("Codex has not reported this thread's model")?;
+        let model = kept
+            .model
+            .clone()
+            .or_else(|| entry.model.clone())
+            .or_else(|| entry.spec.as_ref().and_then(|spec| spec.started("model")))
+            .ok_or("Codex has not reported this thread's model")?;
         if let Some(models) = &models {
             let model =
                 models.iter().find(|offer| offer.id == model).ok_or("the selected model is absent from the catalog")?;

@@ -67,6 +67,25 @@ pub enum Unanswered {
     Stopped(String),
 }
 
+/// How long a request may wait for its answer: greeting and what only reads
+/// are quick; what changes a thread or starts something may first wait for
+/// the app-server to load what it needs.
+fn deadline(method: &str) -> std::time::Duration {
+    const READS: &[&str] = &[
+        "initialize",
+        "thread/read",
+        "thread/list",
+        "thread/items/list",
+        "account/read",
+        "account/rateLimits/read",
+        "account/usage/read",
+        "model/list",
+        "config/read",
+        "skills/list",
+    ];
+    std::time::Duration::from_secs(if READS.contains(&method) { 60 } else { 120 })
+}
+
 impl std::fmt::Display for Unanswered {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -173,7 +192,19 @@ impl AppServer {
             self.pending.lock().expect("never poisoned").waiting.remove(&id);
             return Err(Unanswered::Refused(error));
         }
-        answered.await.unwrap_or_else(|_| Err(Unanswered::Stopped("the Codex app-server stopped".to_string())))
+        // Past its deadline, whether it acted is not known, as when it stops
+        // (`specs/world-concurrency.md`, 等外面的事都有期限).
+        let within = deadline(method);
+        let _outside = fastctx_platform::doing::waiting_outside(format!("Codex's {method}"), within);
+        match tokio::time::timeout(within, answered).await {
+            Ok(answer) => {
+                answer.unwrap_or_else(|_| Err(Unanswered::Stopped("the Codex app-server stopped".to_string())))
+            }
+            Err(_) => Err(Unanswered::Stopped(format!(
+                "the Codex app-server did not answer {method} within {} s",
+                within.as_secs()
+            ))),
+        }
     }
 
     pub fn notify(&self, method: &str, params: Value) -> Result<(), String> {

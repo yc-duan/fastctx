@@ -62,7 +62,9 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
     // is free to be handed over again then.
     let mut arrived =
         Arrived { node, residents: Vec::new(), collected: Vec::new(), notes: Vec::new(), completed: None };
+    let caller = calling(&hello.peer);
     while let Some(frame) = reader.recv().await? {
+        let _doing = fastctx_platform::doing::doing(format!("{} from {caller}", crate::labels::call_in(&frame)));
         let ClientFrame::Call { id, call } = match parse(&frame) {
             Ok(call) => call,
             Err(error) => {
@@ -85,7 +87,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 .await?;
             return writer.drain().await;
         }
-        if let Call::Watch { resident, machine, composer, held } = call {
+        if let Call::Watch { resident, machine, composer, held, now } = call {
             // Watching a conversation anywhere is the user's, with this
             // computer's logins.
             if let Err(failure) = users_voice(node, &hello.peer) {
@@ -94,7 +96,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             }
             // A watch keeps the connection until one end leaves.
             let opening = tokio::select! {
-                result = crate::talk::watch(node, resident, machine, composer, held) => result,
+                result = crate::talk::watch(node, resident, machine, composer, held, now) => result,
                 _ = reader.recv() => return Ok(()),
             };
             let ended = match opening {
@@ -861,9 +863,12 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::Talk { to, machine, text, attachments, files_on, id } => {
             users_voice(node, peer)?;
+            // Named as the machine they go to names them: by the machine
+            // they were typed on and the device's own id for them.
+            let delivery = id.as_deref().map(|id| crate::speech::fixed_id("talk", &[node.machine().as_str(), id]));
             crate::talk::talk(node, to, machine, text, attachments, files_on, id)
                 .await
-                .map(|(to, landed)| Reply::Spoken { to, landed })
+                .map(|(to, landed)| Reply::Spoken { to, landed, delivery })
         }
         Call::Agents { machine } => {
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
@@ -1068,7 +1073,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             present(node, &resident)?;
             crate::colleagues::message(node, resident, to, machine, text, login.as_ref())
                 .await
-                .map(|(to, landed)| Reply::Spoken { to, landed })
+                .map(|(to, landed)| Reply::Spoken { to, landed, delivery: None })
         }
         Call::Project(call) => {
             let caller = caller::of(node, peer)?;
@@ -1601,6 +1606,17 @@ async fn blocking<T: Send + 'static>(
         .await
         .map_err(|error| Failure::new(format!("{what}: {error}")))?
         .map_err(|error| Failure::new(format!("{what}: {error}")))
+}
+
+/// Who is on the other end of a connection, as a task answering it says.
+fn calling(peer: &Peer) -> String {
+    match peer {
+        Peer::Page { .. } => "a page's job".to_string(),
+        Peer::Command { resident: Some(address), .. } => format!("a command {} ran", address.resident),
+        Peer::Command { .. } => "a command on this machine".to_string(),
+        Peer::Supervisor { job } => format!("the supervisor of {job}"),
+        Peer::Session { .. } => "an agent session's tools".to_string(),
+    }
 }
 
 fn parse<T: serde::de::DeserializeOwned>(frame: &[u8]) -> std::io::Result<T> {

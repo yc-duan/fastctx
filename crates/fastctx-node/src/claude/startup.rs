@@ -17,7 +17,8 @@ use crate::Node;
 
 type Exit = Pin<Box<dyn Future<Output = std::io::Result<Option<u32>>> + Send>>;
 
-pub(super) type Listings = crate::leases::Registry<(PathBuf, Option<OsString>), tokio::sync::Mutex<Option<Listed>>>;
+pub(super) type Listings =
+    crate::leases::Registry<(PathBuf, Option<OsString>), fastctx_platform::doing::Mutex<Option<Listed>>>;
 
 pub(super) struct Listed {
     at: Instant,
@@ -90,13 +91,15 @@ pub(super) fn recover(node: &Arc<Node>) {
 
 async fn run(command: &super::Command, args: Vec<OsString>) -> Result<String, String> {
     let command = command.clone();
-    tokio::task::spawn_blocking(move || background::claude(&command.program, &args, &command.cwd, &command.env))
-        .await
-        .map_err(|error| format!("observing Claude startup: {error}"))?
+    tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+        background::claude(&command.program, &args, &command.cwd, &command.env)
+    }))
+    .await
+    .map_err(|error| format!("observing Claude startup: {error}"))?
 }
 
 async fn agents(
-    listing: &tokio::sync::Mutex<Option<Listed>>,
+    listing: &fastctx_platform::doing::Mutex<Option<Listed>>,
     command: &super::Command,
     after: Option<Instant>,
 ) -> Result<String, String> {
@@ -177,7 +180,12 @@ async fn watch(node: &Arc<Node>, resident: &ResidentId, id: &NoticeId, command: 
         .iter()
         .find(|(name, _)| name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR"))
         .map(|(_, home)| home.clone());
-    let listing = node.claude.startup_listings.get_or_insert_with(&(command.program.clone(), home), Default::default);
+    let login =
+        home.as_ref().map_or_else(|| command.program.display().to_string(), |home| home.to_string_lossy().into_owned());
+    let listing = node
+        .claude
+        .startup_listings
+        .get_or_insert_with(&(command.program.clone(), home), || crate::ranked::listing(&login));
     let mut process: Option<ProcessIdentity> = None;
     let mut exited: Option<Exit> = None;
     let mut code = None;

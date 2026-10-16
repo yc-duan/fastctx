@@ -48,9 +48,9 @@ pub struct Residents {
     /// This machine's name now, which every resident living here is told as
     /// living on, whatever the machine was called when it was born.
     here: std::sync::RwLock<Option<fastctx_types::MachineName>>,
-    speaking: crate::leases::Registry<ResidentId, tokio::sync::Mutex<()>>,
-    paying: crate::leases::Registry<ResidentId, tokio::sync::Mutex<()>>,
-    management: crate::leases::Registry<ResidentId, tokio::sync::RwLock<()>>,
+    speaking: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<()>>,
+    paying: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<()>>,
+    management: crate::leases::Registry<ResidentId, fastctx_platform::doing::RwLock<()>>,
 }
 
 struct State {
@@ -645,12 +645,18 @@ impl Residents {
         self.lock().current_sessions.get(session).unwrap_or(0)
     }
 
-    pub fn speaking(&self, id: &ResidentId) -> Option<crate::leases::Lease<ResidentId, tokio::sync::Mutex<()>>> {
-        self.lock().live.contains_key(id).then(|| self.speaking.get_or_insert_with(id, Default::default))
+    pub fn speaking(
+        &self,
+        id: &ResidentId,
+    ) -> Option<crate::leases::Lease<ResidentId, fastctx_platform::doing::Mutex<()>>> {
+        self.lock().live.contains_key(id).then(|| self.speaking.get_or_insert_with(id, || crate::ranked::speaking(id)))
     }
 
-    pub fn paying(&self, id: &ResidentId) -> Option<crate::leases::Lease<ResidentId, tokio::sync::Mutex<()>>> {
-        self.lock().live.contains_key(id).then(|| self.paying.get_or_insert_with(id, Default::default))
+    pub fn paying(
+        &self,
+        id: &ResidentId,
+    ) -> Option<crate::leases::Lease<ResidentId, fastctx_platform::doing::Mutex<()>>> {
+        self.lock().live.contains_key(id).then(|| self.paying.get_or_insert_with(id, || crate::ranked::paying(id)))
     }
 
     /// Every resident on record.

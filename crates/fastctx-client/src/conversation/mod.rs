@@ -51,6 +51,8 @@ pub struct Conversation {
     recording: Option<Recording>,
     refresh_due: bool,
     current_due: bool,
+    /// Whether the resident works now, as last told and not yet handed over.
+    now_due: Option<Now>,
 }
 
 type Working = tokio::task::JoinHandle<(kept::Keeping, Result<Option<Vec<SessionEvent>>, Error>)>;
@@ -62,6 +64,8 @@ struct Source {
     world: World,
     resident: ResidentId,
     machine: Option<MachineName>,
+    /// Opened for an interface, which is told whether the resident works.
+    shown: bool,
 }
 
 /// What [`Conversation::update`] hands over.
@@ -79,6 +83,10 @@ pub enum Update {
     History(Vec<SessionEvent>),
     /// New history after what was handed over; the preceding history agrees.
     Extended(Vec<SessionEvent>),
+    /// Whether the resident works now, on which turn, and which words its
+    /// machine keeps on their way in: after every event handed over before
+    /// it. Only a machine that tells this sends it.
+    Now { busy: bool, turn: Option<String>, kept: Vec<fastctx_types::session::KeptWords> },
 }
 
 /// What [`Conversation::next`] hands over.
@@ -91,6 +99,14 @@ pub enum Next {
     /// The watch is back after an interruption; what happened meanwhile
     /// follows.
     Resumed,
+}
+
+/// Whether the resident works now, as a machine told it.
+#[derive(Clone, Debug)]
+struct Now {
+    busy: bool,
+    turn: Option<String>,
+    kept: Vec<fastctx_types::session::KeptWords>,
 }
 
 /// What the latest words are waiting on.
@@ -118,16 +134,28 @@ impl Conversation {
         resident: ResidentId,
         machine: Option<MachineName>,
     ) -> Result<(Self, Vec<SessionEvent>), Error> {
-        let mut watching = world.watch(resident.clone(), machine.clone()).await?;
-        let history = match watching.next().await? {
-            Some(Watched::History { events }) => events,
-            Some(Watched::Live { event }) => vec![event],
-            Some(Watched::Unchanged { .. } | Watched::Segments { .. }) => {
-                return Err(Error::Unexpected("segments of a history no one asked for".into()));
-            }
-            None => Vec::new(),
+        Self::watching(Source { world: world.clone(), resident, machine, shown: false }).await
+    }
+
+    async fn watching(source: Source) -> Result<(Self, Vec<SessionEvent>), Error> {
+        let mut watching = source.whole().await?;
+        let mut now = None;
+        let history = loop {
+            break match watching.next().await? {
+                Some(Watched::History { events }) => events,
+                Some(Watched::Live { event }) => vec![event],
+                Some(Watched::Now { busy, turn, kept }) => {
+                    now = Some(Now { busy, turn, kept });
+                    continue;
+                }
+                Some(Watched::Unchanged { .. } | Watched::Segments { .. }) => {
+                    return Err(Error::Unexpected("segments of a history no one asked for".into()));
+                }
+                None => Vec::new(),
+            };
         };
-        let mut conversation = Self::reading(watching, Source { world: world.clone(), resident, machine });
+        let mut conversation = Self::reading(watching, source);
+        conversation.now_due = now;
         conversation.reset(&history);
         conversation.current_due = true;
         conversation.again.came();
@@ -156,11 +184,16 @@ impl Conversation {
     }
 
     async fn opening(world: &World, address: Address, whole: bool) -> Result<(Self, Vec<SessionEvent>), Error> {
+        let source = Source {
+            world: world.clone(),
+            resident: address.resident.clone(),
+            machine: Some(address.machine.clone()),
+            shown: true,
+        };
         let Some(cache) = world.cache().cloned() else {
-            return Self::watch(world, address.resident, Some(address.machine)).await;
+            return Self::watching(source).await;
         };
         let (mut keeping, latest) = kept::Keeping::open(cache, address.clone(), whole).await?;
-        let source = Source { world: world.clone(), resident: address.resident, machine: Some(address.machine) };
         let watching = source.held(keeping.held());
         if let Some(latest) = latest {
             let mut conversation = Self::reading_after(watching, source);
@@ -172,6 +205,9 @@ impl Conversation {
         let history = loop {
             match conversation.pieces.recv().await {
                 Some(Ok(Some(Watched::Live { event }))) => conversation.queued.push_back(event),
+                Some(Ok(Some(Watched::Now { busy, turn, kept }))) => {
+                    conversation.now_due = Some(Now { busy, turn, kept })
+                }
                 Some(Ok(Some(watched))) => {
                     conversation.again.came();
                     let watched = conversation.pending_from(watched);
@@ -281,10 +317,20 @@ impl Conversation {
                 }
                 return Ok(Update::Moment(moment));
             }
+            if self.queued.is_empty()
+                && let Some(Now { busy, turn, kept }) = self.now_due.take()
+            {
+                return Ok(Update::Now { busy, turn, kept });
+            }
             let watched = match self.pieces.recv().await {
                 Some(Ok(Some(Watched::Live { event }))) => {
                     self.current_due |= self.again.came();
                     self.queued.push_back(event);
+                    continue;
+                }
+                // Told after what came before it: handed over once that is.
+                Some(Ok(Some(Watched::Now { busy, turn, kept }))) => {
+                    self.now_due = Some(Now { busy, turn, kept });
                     continue;
                 }
                 Some(Ok(Some(watched))) => {
@@ -292,8 +338,8 @@ impl Conversation {
                     watched
                 }
                 Some(Ok(None)) | None => return Ok(Update::Interrupted(self.broke("the watch ended".into()))),
-                // Deleted: there is nothing more to watch.
-                Some(Err(error)) if error.is_deleted() => return Err(error),
+                // Deleted, or this account refused: watching again changes nothing.
+                Some(Err(error)) if error.is_deleted() || error.is_refused() => return Err(error),
                 Some(Err(error)) => return Ok(Update::Interrupted(self.broke(error.to_string()))),
             };
             let watched = self.pending_from(watched);
@@ -400,6 +446,7 @@ impl Conversation {
             recording: None,
             refresh_due: false,
             current_due: false,
+            now_due: None,
         }
     }
 
@@ -476,8 +523,9 @@ impl Conversation {
                 Some(Ok(Some(Watched::Unchanged { .. } | Watched::Segments { .. }))) => {
                     return Err(Error::Unexpected("segments of a history no one asked for".into()));
                 }
+                Some(Ok(Some(Watched::Now { .. }))) => {}
                 Some(Ok(None)) | None => return Ok(Next::Interrupted(self.broke("the watch ended".into()))),
-                Some(Err(error)) if error.is_deleted() => return Err(error),
+                Some(Err(error)) if error.is_deleted() || error.is_refused() => return Err(error),
                 Some(Err(error)) => return Ok(Next::Interrupted(self.broke(error.to_string()))),
             }
         }
@@ -558,14 +606,24 @@ impl Conversation {
 impl Source {
     /// Watches it again, telling its machine what this device holds.
     fn held(&self, held: fastctx_types::session::held::Held) -> Opening {
-        let (world, resident, machine) = (self.world.clone(), self.resident.clone(), self.machine.clone());
-        Box::pin(async move { world.watch_held(resident, machine, held).await })
+        self.opening(Some(held))
     }
 
     /// Watches it again from its whole history.
     fn whole(&self) -> Opening {
-        let (world, resident, machine) = (self.world.clone(), self.resident.clone(), self.machine.clone());
-        Box::pin(async move { world.watch(resident, machine).await })
+        self.opening(None)
+    }
+
+    fn opening(&self, held: Option<fastctx_types::session::held::Held>) -> Opening {
+        let (world, resident, machine, shown) =
+            (self.world.clone(), self.resident.clone(), self.machine.clone(), self.shown);
+        Box::pin(async move {
+            match (shown, held) {
+                (true, held) => world.watch_shown(resident, machine, held).await,
+                (false, Some(held)) => world.watch_held(resident, machine, held).await,
+                (false, None) => world.watch(resident, machine).await,
+            }
+        })
     }
 }
 

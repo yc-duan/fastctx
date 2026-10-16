@@ -577,10 +577,9 @@ fn shell() -> &'static String {
             Ok(bash) => bash,
             Err(error) => return format!("no bash: {error}"),
         };
-        let version = std::process::Command::new(&bash)
-            .arg("--version")
-            .stdin(std::process::Stdio::null())
-            .output()
+        let mut asking = std::process::Command::new(&bash);
+        asking.arg("--version").stdin(std::process::Stdio::null());
+        let version = fastctx_platform::bounded::output(asking, "bash --version", std::time::Duration::from_secs(10))
             .ok()
             .and_then(|output| {
                 // "GNU bash, version 5.2.37(1)-release (x86_64-pc-msys)"
@@ -655,7 +654,9 @@ impl fastctx_net::link::Node for Handler {
     ) -> BoxFuture<RemoteResult> {
         let node = self.node.upgrade();
         let hub = self.hub.clone();
+        let doing = format!("{} from {}", crate::labels::call_of(&call), caller.machine);
         Box::pin(async move {
+            let _doing = fastctx_platform::doing::doing(doing);
             let Some(node) = node else {
                 return Err(Failure::new("the node is stopping"));
             };
@@ -797,10 +798,10 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(|landed| RemoteReply::Said { landed })
                 }
-                RemoteCall::Watch { resident, watch, composer, held } => {
+                RemoteCall::Watch { resident, watch, composer, held, now } => {
                     let stream = stream
                         .ok_or_else(|| Failure::new("a watch comes with a data connection, and this one had none"))?;
-                    crate::talk::serve_watch(&node, &link, &from, resident, watch, composer, held, stream).await
+                    crate::talk::serve_watch(&node, &link, &from, resident, watch, composer, held, now, stream).await
                 }
                 RemoteCall::Agents => crate::agents::here(&node)
                     .await

@@ -278,7 +278,9 @@ impl Keeping {
                 let fresh = cut.segments.into_iter().map(|segment| (segment.id, segment.events)).collect();
                 self.keep(None, layout, fresh).await
             }
-            Watched::Live { .. } => Err(Error::Unexpected("a live event where the history was due".into())),
+            Watched::Live { .. } | Watched::Now { .. } => {
+                Err(Error::Unexpected("a live piece where the history was due".into()))
+            }
         }
     }
 

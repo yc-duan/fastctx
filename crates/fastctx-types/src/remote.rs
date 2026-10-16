@@ -325,6 +325,10 @@ pub enum RemoteCall {
         /// `history::pack`) and the history comes as segments.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         held: Option<crate::session::held::Held>,
+        /// The viewer reads `session::Watched::Now`; a machine from before
+        /// it reads past this and sends none.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        now: bool,
     },
     /// Open a session there for the user, as `Call::Open`.
     Open {

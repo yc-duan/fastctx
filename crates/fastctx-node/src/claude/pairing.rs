@@ -23,14 +23,15 @@ pub(crate) async fn directory(
     conversation: Option<String>,
     process: Option<fastctx_types::ProcessIdentity>,
 ) -> Result<String, fastctx_types::ipc::Failure> {
-    let _operation = node.data_operations.read().await;
+    let _place = match conversation.as_deref() {
+        Some(conversation) => Some(node.places.using(conversation).await),
+        None => None,
+    };
     if let Some(deleted) = node.residents.deleted_session(&session) {
         return Err(fastctx_types::ipc::Failure::new(format!(
             "the Claude session was {deleted}, a conversation deleted here"
         )));
     }
-    let reading = super::reading(node, &session);
-    let _reading = reading.lock().await;
     let started_here = |id: &ResidentId| {
         node.residents.about(id).is_some_and(|(about, _)| about.world_started && about.host.agent.as_str() == "claude")
     };
@@ -57,7 +58,10 @@ pub(crate) async fn directory(
     };
     // A World launch holds births.read until the background CLI returns.
     // Its settings already name its conversation, independently of that ID.
+    // Births come before the session's own lock (`fastctx_platform::doing::Rank`).
     let _births = if known.is_none() { Some(node.claude.births.write().await) } else { None };
+    let reading = super::reading(node, &session);
+    let _reading = reading.lock().await;
     let observing = process.clone();
     let reserve = || -> io::Result<String> {
         validate_session(&session)?;
@@ -302,11 +306,21 @@ fn same_activation(a: &Registration, b: &Registration) -> bool {
     a.session == b.session && a.instance == b.instance && a.process == b.process && a.at == b.at
 }
 
+/// Whether the end of the activation `registration` was settled already.
+pub(super) fn ended_already(node: &Node, registration: &Registration) -> io::Result<bool> {
+    let path = exchange::sessions(node.world.path()).join(&registration.session).join("node-ended.json");
+    Ok(fastctx_hosts::claude::control::read::<Registration>(&path)?
+        .is_some_and(|ended| same_activation(&ended, registration)))
+}
+
+/// Records that the activation `registration` ended, so that it is settled
+/// once: its process may have exited long before, as Claude Code retires an
+/// idle background session without telling the World. Older mods can also
+/// report session end while their shared host process stays alive.
 pub(super) fn record_ended(node: &Node, registration: &Registration) -> io::Result<()> {
-    if !present(node, registration)? {
+    if ended_already(node, registration)? {
         return Ok(());
     }
-    // Older mods can report session end while their shared host process stays alive.
     fastctx_platform::publish(
         &exchange::sessions(node.world.path()).join(&registration.session).join("node-ended.json"),
         &serde_json::to_vec(registration).map_err(io::Error::other)?,

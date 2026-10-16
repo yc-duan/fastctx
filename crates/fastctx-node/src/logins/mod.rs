@@ -46,7 +46,7 @@ pub(crate) struct Logins {
     /// started: its agent, directory and steps.
     changes: Mutex<Vec<(AgentName, PathBuf, LoginChange)>>,
     /// Changes of the list happen one at a time, as `fastctx apply` does.
-    changing: tokio::sync::Mutex<()>,
+    changing: crate::ranked::LoginChanges,
     /// The listed logins whose tools were not brought up to date by
     /// themselves, and why (`refresh`).
     drift: Mutex<Vec<(AgentName, PathBuf, fastctx_types::logins::Drift)>>,

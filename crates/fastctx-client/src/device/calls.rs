@@ -279,7 +279,7 @@ impl Device {
                 Reply::ClaudeConsent { machine: machine.clone(), accepted, changed }
             }
             (RemoteCall::Talk { .. }, RemoteReply::Said { landed }) => {
-                Reply::Spoken { to: address.expect("talk resident"), landed }
+                Reply::Spoken { to: address.expect("talk resident"), landed, delivery: None }
             }
             (RemoteCall::Open { .. }, RemoteReply::Opened { resident, landed }) => {
                 Reply::Opened { resident: Address { machine: machine.clone(), resident }, landed }

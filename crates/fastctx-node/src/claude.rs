@@ -58,13 +58,13 @@ pub struct Claude {
     thoughts: thoughts::Thoughts,
     state: Mutex<State>,
     bridge: control::Bridge,
-    delivering: crate::leases::Registry<ResidentId, tokio::sync::Mutex<()>>,
-    reading: crate::leases::Registry<String, tokio::sync::Mutex<()>>,
+    delivering: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<()>>,
+    reading: crate::leases::Registry<String, fastctx_platform::doing::Mutex<()>>,
     startup_listings: startup::Listings,
     changed: tokio::sync::Notify,
     /// Held to read while the World starts a session and learns its id;
     /// to write, while a mod registration is assigned to a resident.
-    pub births: tokio::sync::RwLock<()>,
+    pub births: crate::ranked::Births,
     /// The user's words handed to each resident's session as the user's,
     /// until Claude Code reports keeping them (`said_by_world`).
     handed: Mutex<HashMap<ResidentId, Vec<String>>>,
@@ -220,8 +220,8 @@ async fn look_alone(node: &Arc<Node>, directory: PathBuf) {
 }
 
 /// Held while what one session reported is read and applied.
-pub(crate) fn reading(node: &Node, session: &str) -> crate::leases::Lease<String, tokio::sync::Mutex<()>> {
-    node.claude.reading.get_or_insert_with(&session.to_string(), Default::default)
+pub(crate) fn reading(node: &Node, session: &str) -> crate::leases::Lease<String, fastctx_platform::doing::Mutex<()>> {
+    node.claude.reading.get_or_insert_with(&session.to_string(), || crate::ranked::reading(session))
 }
 
 pub async fn replay(node: &Arc<Node>) {
@@ -299,6 +299,7 @@ async fn look(node: &Arc<Node>, directory: &Path) {
     let Some(session) = directory.file_name().and_then(|name| name.to_str()).map(str::to_string) else {
         return;
     };
+    let _doing = fastctx_platform::doing::doing(format!("reading the reports of Claude session {session}"));
     // A session of a conversation deleted here: what it still reports is
     // dropped, and it is taken for nothing new.
     if node.residents.deleted_session(&session).is_some() {
@@ -379,7 +380,7 @@ async fn look(node: &Arc<Node>, directory: &Path) {
                     exchange::Reported::Uncertain { ids, text } => {
                         let Some(speaking) = node.residents.speaking(&resident) else { return Ok(()) };
                         let _speaking = speaking.lock().await;
-                        uncertain_inputs(node, &resident, &session, Some(&ids), text).await?;
+                        uncertain_inputs(node, &resident, &session, Some(&ids), text, None).await?;
                     }
                     exchange::Reported::Happened(event) => {
                         if let Happened::TurnStarted { turn } = &event.happened {
@@ -484,7 +485,11 @@ async fn look(node: &Arc<Node>, directory: &Path) {
     if let Err(error) = exchange::handed_over(directory) {
         node.log.line(format_args!("clearing what {session}'s mod handed over: {error}"));
     }
+    // Births come before the session's own lock: it is let go and taken
+    // again behind them (`fastctx_platform::doing::Rank`).
+    drop(_reading);
     let _births = node.claude.births.write().await;
+    let _reading = reading.lock().await;
     let registration = node
         .claude
         .state
@@ -522,6 +527,7 @@ async fn look(node: &Arc<Node>, directory: &Path) {
 // watcher having run. Registration, alias persistence and publication are one
 // serialized operation; report consumption holds a separate per-session lock.
 async fn hear(node: &Arc<Node>, registration: exchange::Registration) {
+    let _doing = fastctx_platform::doing::doing(format!("registering Claude session {}", registration.session));
     if let Err(error) = pairing::validate_session(&registration.session) {
         node.log.line(format_args!("registering a Claude session: {error}"));
         return;
@@ -674,12 +680,16 @@ async fn taken(
         .map_err(|error| std::io::Error::other(error.message))
 }
 
+/// Words entrusted to `session` whose acceptance is unknown now: those
+/// named by `ids`, or, as the host activation that registered at `ended`
+/// ended, the words that activation had.
 async fn uncertain_inputs(
     node: &Arc<Node>,
     resident: &ResidentId,
     session: &str,
     ids: Option<&[String]>,
     why: String,
+    ended: Option<Timestamp>,
 ) -> std::io::Result<()> {
     if !node.residents.knows(resident) {
         return Ok(());
@@ -695,6 +705,7 @@ async fn uncertain_inputs(
         .filter(|pending| pending.session.as_deref() == Some(session) || (pending.session.is_none() && ids.is_some()))
         .filter(|pending| !known.contains(&pending.delivery.id))
         .filter(|pending| ids.is_none_or(|ids| ids.iter().any(|id| id == pending.delivery.id.as_str())))
+        .filter(|pending| had(pending, ended))
         .collect::<Vec<_>>();
     if pending.is_empty() {
         return Ok(());
@@ -716,6 +727,19 @@ async fn uncertain_inputs(
         .await?;
     }
     Ok(())
+}
+
+/// Whether the host activation that registered at `registered` had the
+/// words `pending`: words handed to a running host are the activation's
+/// running then, words sent to wake the session the one that came up after.
+/// The session keeps its id across activations, so the id alone does not
+/// tell; words kept before this was recorded go with the session.
+fn had(pending: &Pending, registered: Option<Timestamp>) -> bool {
+    match (pending.state, pending.since, registered) {
+        (PendingState::Waking, Some(since), Some(registered)) => since <= registered,
+        (PendingState::Handed, Some(since), Some(registered)) => since >= registered,
+        _ => true,
+    }
 }
 
 /// The resident's session ended: a turn it ran ends with it, and it sleeps
@@ -760,6 +784,14 @@ async fn ended_for_process(
     {
         return Ok(());
     }
+    // An activation is settled once: the next one registering finds the
+    // previous already ended, as when its process was retired idle.
+    if let Some(registration) = &registration
+        && pairing::ended_already(node, registration)?
+    {
+        control::ended(node, session);
+        return Ok(());
+    }
     control::ended(node, session);
     let Some((about, _)) = node.residents.about(resident) else { return Ok(()) };
     let directory = node.world.conversation(resident);
@@ -788,8 +820,16 @@ async fn ended_for_process(
         };
         crate::turns::finish_locked(node, resident, &turn, end, &[]).await?;
     }
-    uncertain_inputs(node, resident, session, None,
-        "the conversation ended before the host identified which turn consumed these words; their acceptance is unknown".to_string()).await?;
+    uncertain_inputs(
+        node,
+        resident,
+        session,
+        None,
+        "the conversation ended before the host identified which turn consumed these words; their acceptance is unknown"
+            .to_string(),
+        registration.as_ref().and_then(|registration| registration.at),
+    )
+    .await?;
     if current {
         let departed = node.residents.set_claude_here(resident, false);
         node.residents.change_now(&node.world, resident, |now| {
@@ -1005,7 +1045,7 @@ pub async fn deliver(
     directory: &ConversationDir,
     pending: &Pending,
 ) -> Option<Result<Landed, Failure>> {
-    let delivering = node.claude.delivering.get_or_insert_with(to, Default::default);
+    let delivering = node.claude.delivering.get_or_insert_with(to, || crate::ranked::delivering(to));
     let _delivering = delivering.lock().await;
     let session: String = node.claude.state.lock().expect("never poisoned").paired.get(to)?;
     if let Err(error) = crate::inbox::target(directory, &pending.delivery.id, &session) {
@@ -1183,11 +1223,11 @@ async fn alive(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Result<b
 async fn running(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Result<bool, Failure> {
     let Command { program, cwd, env } = command(node, home)?;
     let session = session.to_string();
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         let args: Vec<OsString> = vec!["agents".into(), "--json".into(), "--all".into()];
         let listed = background::claude(&program, &args, &cwd, &env)?;
         background::running(&listed, &session)
-    })
+    }))
     .await
     .map_err(|error| Failure::new(format!("asking Claude Code about its sessions: {error}")))?
     .map_err(Failure::new)
@@ -1205,9 +1245,9 @@ async fn wake(
     let world = node.world.path().to_path_buf();
     // Not tried twice: a resume refused for trust may already have queued
     // the words.
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         trust(&[world.as_path()], &env).and_then(|()| background::claude(&program, &args, &cwd, &env))
-    })
+    }))
     .await
     .map_err(|error| Failure::new(format!("waking the session: {error}")))?
     .map_err(Failure::new)?;
@@ -1337,6 +1377,8 @@ pub async fn open_here(
         state: PendingState::Waking,
         working: false,
         session: None,
+        // The session it starts is the first to have them.
+        since: Some(Timestamp::now()),
     };
     crate::inbox::keep(&directory, &first)
         .map_err(|error| Failure::new(format!("keeping the first words: {error}")))?;
@@ -1346,7 +1388,7 @@ pub async fn open_here(
     // Until the World knows which session this is, a Claude session's MCP
     // connection it cannot place waits, rather than becoming someone new.
     let _birth = node.claude.births.read().await;
-    let started = tokio::task::spawn_blocking(move || {
+    let started = tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         let start = background::Start {
             plugin: &plugin,
             settings: &settings,
@@ -1368,7 +1410,7 @@ pub async fn open_here(
             }
             started => started,
         }
-    })
+    }))
     .await
     .map_err(|error| Failure::new(format!("starting the session: {error}")))
     .and_then(|result| result.map_err(Failure::new))

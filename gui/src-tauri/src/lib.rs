@@ -233,12 +233,25 @@ enum Piece {
         at: usize,
         event: Box<serde_json::value::RawValue>,
     },
+    /// Whether the conversation works now, and on which turn, as its
+    /// machine holds it; told after every event before it. A machine too
+    /// old to tell this never sends it.
+    Now {
+        busy: bool,
+        turn: Option<String>,
+        kept: Vec<fastctx_types::session::KeptWords>,
+    },
     /// The watch is over: the node ended it, or the connection broke.
     Ended {
         error: Option<String>,
     },
     /// The conversation was deleted: nothing more of it comes.
     Deleted {
+        error: String,
+    },
+    /// Its machine refused this account: watching again changes nothing
+    /// until the account may see it.
+    Refused {
         error: String,
     },
 }
@@ -250,35 +263,54 @@ impl Piece {
 
     /// How a watch that failed for `error` is over.
     fn failed(error: &fastctx_client::Error) -> Self {
-        match error.is_deleted() {
-            true => Piece::Deleted { error: error.to_string() },
-            false => Piece::Ended { error: Some(error.to_string()) },
+        if error.is_deleted() {
+            Piece::Deleted { error: error.to_string() }
+        } else if error.is_refused() {
+            Piece::Refused { error: error.to_string() }
+        } else {
+            Piece::Ended { error: Some(error.to_string()) }
         }
     }
 
     /// Whether nothing comes after it.
     fn last(&self) -> bool {
-        matches!(self, Piece::Ended { .. } | Piece::Deleted { .. })
+        matches!(self, Piece::Ended { .. } | Piece::Deleted { .. } | Piece::Refused { .. })
     }
 }
 
 /// Why a conversation could not be watched: `deleted` when it was deleted,
-/// so the page asks no more.
+/// `refused` when its machine refused this account, so the page asks no
+/// more.
 #[derive(Serialize)]
 pub(crate) struct NotWatched {
     message: String,
     deleted: bool,
+    refused: bool,
 }
 
 impl From<fastctx_client::Error> for NotWatched {
     fn from(error: fastctx_client::Error) -> Self {
-        Self { deleted: error.is_deleted(), message: error.to_string() }
+        Self { deleted: error.is_deleted(), refused: error.is_refused(), message: error.to_string() }
+    }
+}
+
+impl NotWatched {
+    /// How a watch that could not be opened again is over.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    fn piece(self) -> Piece {
+        if self.deleted {
+            Piece::Deleted { error: self.message }
+        } else if self.refused {
+            Piece::Refused { error: self.message }
+        } else {
+            Piece::Ended { error: Some(self.message) }
+        }
     }
 }
 
 impl From<String> for NotWatched {
     fn from(message: String) -> Self {
-        Self { message, deleted: false }
+        Self { message, deleted: false, refused: false }
     }
 }
 
@@ -298,6 +330,9 @@ struct Watch {
 struct Spoken {
     to: Address,
     landed: Landed,
+    /// The words' id where they went, to know them among what that machine
+    /// keeps (`Piece::Now`).
+    delivery: Option<fastctx_types::NoticeId>,
 }
 
 /// Why words were not said: `again` when no answer came, so the page says
@@ -414,7 +449,7 @@ async fn talk(
         )
         .await
         .map_err(|error| NotSaid { message: error.to_string(), again: World::unanswered(&error) })?;
-    Ok(Spoken { to: said.to, landed: said.landed })
+    Ok(Spoken { to: said.to, landed: said.landed, delivery: said.delivery })
 }
 
 /// Carries a file on this computer to a machine, for words to an agent
@@ -535,7 +570,7 @@ async fn open(
         .open_with_attachments(agent, town, machine(machine_name)?, text, options, attachments, choices)
         .await
         .map_err(|error| error.to_string())?;
-    Ok(Spoken { to: said.to, landed: said.landed })
+    Ok(Spoken { to: said.to, landed: said.landed, delivery: said.delivery })
 }
 
 /// What happened in the World after a moment, as each machine's records

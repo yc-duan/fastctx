@@ -199,6 +199,7 @@ impl Transcript {
                 Piece::Event { at, event: self.events[at].clone() }
             }
             Update::History(history) => return self.history(&history),
+            Update::Now { busy, turn, kept } => Piece::Now { busy, turn, kept },
             Update::Extended(history) => {
                 let start = self.events.len();
                 for event in &history {

@@ -82,7 +82,10 @@ impl Jobs {
         registration: Option<crate::on::Registration>,
         account: Option<fastctx_types::access::HubAccount>,
     ) -> Result<run::Launched, Failure> {
-        let _operation = node.data_operations.read().await;
+        let _place = match owner.resident().and_then(|address| crate::data::places::of_owner(node, address)) {
+            Some(place) => Some(node.places.using(&place).await),
+            None => None,
+        };
         if let Some(address) = owner.resident()
             && node.is_me(&address.machine)
         {

@@ -260,7 +260,7 @@ async fn gpus() -> Vec<Gpu> {
             const NO_WINDOW: u32 = 0x0800_0000;
             command.creation_flags(NO_WINDOW);
         }
-        command.output()
+        fastctx_platform::bounded::output(command, "nvidia-smi", std::time::Duration::from_secs(10))
     })
     .await;
     let gpus = match read {

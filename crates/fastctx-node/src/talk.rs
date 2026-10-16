@@ -99,6 +99,7 @@ pub async fn watch(
     machine: Option<MachineName>,
     composer: Option<String>,
     held: Option<Held>,
+    now: bool,
 ) -> Result<mpsc::UnboundedReceiver<Result<Watched, Failure>>, Failure> {
     let machine = match machine {
         Some(machine) => machine,
@@ -106,11 +107,13 @@ pub async fn watch(
     };
     let (sender, receiver) = mpsc::unbounded_channel();
     if node.is_me(&machine) {
+        let mut told = Told::new(node, &resident, now && composer.is_none());
         let (lease, opened) = opening(node, &resident, composer, held.as_ref()).await?;
         let Opening { pieces, mut events, slim } = opened;
-        for piece in pieces {
+        for piece in pieces.into_iter().chain(told.first()) {
             let _ = sender.send(Ok(piece));
         }
+        let node = node.clone();
         tokio::spawn(async move {
             let _lease = lease;
             loop {
@@ -122,6 +125,9 @@ pub async fn watch(
                         }
                         None => return,
                     },
+                    now = told.changed(&node) => {
+                        if let Some(now) = now && sender.send(Ok(now)).is_err() { return }
+                    }
                     () = sender.closed() => return,
                 }
             }
@@ -167,7 +173,7 @@ pub async fn watch(
         Some(_) => format!("the watch of {resident}'s shared input on {machine}"),
         None => format!("the watch of {resident} on {machine}"),
     };
-    let call = RemoteCall::Watch { resident, watch, composer, held };
+    let call = RemoteCall::Watch { resident, watch, composer, held, now };
     let node = node.clone();
     tokio::spawn(async move {
         let started = std::time::Instant::now();
@@ -531,6 +537,7 @@ pub async fn serve_watch(
     watch: u64,
     composer: Option<String>,
     held: Option<Held>,
+    now: bool,
     mut stream: Stream,
 ) -> Result<RemoteReply, Failure> {
     let what = match &composer {
@@ -543,6 +550,7 @@ pub async fn serve_watch(
         Ok(RemoteReply::Watched)
     };
     let packed = held.is_some();
+    let mut told = Told::new(node, &resident, now && composer.is_none());
     let (_lease, opened) = tokio::select! {
         result = opening(node, &resident, composer, held.as_ref()) => match result {
             Ok(opened) => opened,
@@ -560,6 +568,7 @@ pub async fn serve_watch(
     let Opening { pieces, mut events, slim } = opened;
     let mut n = 0;
     let mut next: std::collections::VecDeque<Watched> = pieces.into();
+    next.extend(told.first());
     loop {
         while let Some(watched) = next.pop_front() {
             let piece = Piece { watch, n, watched };
@@ -588,9 +597,85 @@ pub async fn serve_watch(
                 Some(event) => next.extend(live(event, slim.as_ref()).map(|event| Watched::Live { event })),
                 None => return ended("this machine stopped telling its events"),
             },
+            now = told.changed(node) => next.extend(now),
             why = stream.ended() => return ended(why.as_deref().unwrap_or("it closed the watch")),
         }
     }
+}
+
+/// What a watch tells of whether its resident works now
+/// (`Watched::Now`), for a viewer that asked: once the history is told, then
+/// on each change. The residents' change count wakes it for any of them; it
+/// tells only when this one's changed.
+struct Told {
+    resident: ResidentId,
+    changes: Option<tokio::sync::watch::Receiver<u64>>,
+    last: Option<(bool, Option<String>, Vec<fastctx_types::session::KeptWords>)>,
+}
+
+impl Told {
+    fn new(node: &Node, resident: &ResidentId, asked: bool) -> Self {
+        Self { resident: resident.clone(), changes: asked.then(|| node.residents.changes()), last: None }
+    }
+
+    /// The resident's state as its first telling, when asked for.
+    fn first(&mut self) -> Option<Watched> {
+        self.changes.as_ref()?;
+        self.last = None;
+        None
+    }
+
+    /// The next telling: waits for a change of any resident, and is `Some`
+    /// once this one's state is not what was told last. Never ready when
+    /// the viewer did not ask.
+    async fn changed(&mut self, node: &Node) -> Option<Watched> {
+        let Some(changes) = &mut self.changes else { return std::future::pending().await };
+        if self.last.is_some() {
+            // A change of words kept moves no resident: while some are kept
+            // or it works, it is looked at again every few seconds too.
+            let unsettled = self.last.as_ref().is_some_and(|(busy, _, kept)| *busy || !kept.is_empty());
+            let again =
+                async { if unsettled { tokio::time::sleep(LOOK_AGAIN).await } else { std::future::pending().await } };
+            tokio::select! {
+                changed = changes.changed() => if changed.is_err() { return std::future::pending().await },
+                () = again => {}
+            }
+        }
+        let (busy, turn) = node.residents.now(&self.resident).map_or((false, None), |now| {
+            (now.activity == fastctx_types::residents::Activity::Busy || now.turn.is_some(), now.turn)
+        });
+        let kept = kept(node, &self.resident);
+        let state = (busy, turn, kept);
+        if self.last.as_ref() == Some(&state) {
+            return None;
+        }
+        self.last = Some(state.clone());
+        let (busy, turn, kept) = state;
+        Some(Watched::Now { busy, turn, kept })
+    }
+}
+
+/// While a resident works or words are kept for it, how often a watch that
+/// tells it looks again.
+const LOOK_AGAIN: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The words kept for `resident` here that no turn has taken yet, and how far
+/// each came.
+fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptWords> {
+    use fastctx_types::residents::PendingState;
+    use fastctx_types::session::{KeptWords, WordsState};
+    let directory = node.world.conversation(resident);
+    let Ok(pending) = crate::inbox::pending(&directory) else { return Vec::new() };
+    pending
+        .into_iter()
+        .map(|pending| KeptWords {
+            id: pending.delivery.id,
+            state: match pending.state {
+                PendingState::Waiting => WordsState::Waiting,
+                PendingState::Sending | PendingState::Handed | PendingState::Waking => WordsState::Handing,
+            },
+        })
+        .collect()
 }
 
 /// How long something lasted, as a log line says it.

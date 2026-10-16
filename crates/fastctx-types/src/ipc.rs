@@ -143,6 +143,10 @@ pub enum FailureCode {
     /// The conversation asked about is not on the machine that was its
     /// home: it was deleted there. Asking again will not find it.
     Deleted,
+    /// The machine asked refused the caller's account: asking again the
+    /// same way is refused the same way until that account's rights there
+    /// change.
+    Refused,
     /// A code of a newer version, which this one does not know.
     #[serde(other)]
     Unknown,
@@ -190,5 +194,15 @@ impl Failure {
     /// come of it.
     pub fn is_deleted(&self) -> bool {
         self.code == Some(FailureCode::Deleted)
+    }
+
+    pub fn refused(message: impl Into<String>) -> Self {
+        Self { message: message.into(), not_run: true, code: Some(FailureCode::Refused) }
+    }
+
+    /// Whether the machine refused the caller's account: asking again on
+    /// a timer will not change that.
+    pub fn is_refused(&self) -> bool {
+        self.code == Some(FailureCode::Refused)
     }
 }

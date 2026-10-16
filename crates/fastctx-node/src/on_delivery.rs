@@ -23,7 +23,7 @@ type Job = (Address, MachineName, JobId, Option<NoticeId>);
 #[derive(Default)]
 pub(crate) struct Deliveries {
     state: Mutex<State>,
-    draining: tokio::sync::Mutex<()>,
+    draining: crate::ranked::Draining,
 }
 
 #[derive(Default)]

@@ -8,6 +8,7 @@
 
 pub mod atomic;
 pub mod awake;
+pub mod bounded;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod child;
 #[cfg(target_os = "macos")]
@@ -16,6 +17,7 @@ pub mod detach;
 pub mod directory_alias;
 pub mod disk_usage;
 pub mod disks;
+pub mod doing;
 pub mod elevation;
 pub mod environment;
 pub mod file_read;

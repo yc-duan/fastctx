@@ -1,0 +1,194 @@
+//! What this process's tasks are doing and what each waits for
+//! (`specs/world-concurrency.md`).
+//!
+//! The locks that guard more than a leaf of bookkeeping are made here. Each
+//! knows its place in the order locks are taken in (`Rank`); a task that takes
+//! one while holding one of the same or a later place is told about
+//! (`set_reporter`), as that is how two tasks come to wait on each other.
+//! Every such lock held or waited for, and every wait on something outside
+//! the process (`outside`), is kept in one registry with what its task is
+//! doing (`doing`, `labeled`), so the process can say at any moment who waits for
+//! what, who holds it and since when, and find tasks that wait on each other
+//! in a circle (`snapshot`).
+
+mod lock;
+mod registry;
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::fmt;
+use std::future::Future;
+use std::sync::{Arc, LazyLock, Mutex as StdMutex};
+use std::time::Duration;
+
+pub use lock::{
+    Mutex, MutexGuard, OwnedMutexGuard, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, RwLockReadGuard,
+    RwLockWriteGuard,
+};
+pub use registry::{Cycle, OutsideWait, Snapshot, Stuck, set_reporter, snapshot, violations};
+
+/// A lock's place in the order locks are taken in: a task holding a lock
+/// takes only locks of later places, or of the same place with a later
+/// subject.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Rank(u16);
+
+impl Rank {
+    // Locks that let a whole round of work run once at a time: taken before
+    // any conversation's, and never while holding one.
+    /// One drain of the deliveries this machine owes other machines.
+    pub const DRAINING: Rank = Rank(10);
+    /// Sending the deletions asked of other machines.
+    pub const FORGETTING: Rank = Rank(12);
+    /// Scanning or changing the agents' logins.
+    pub const LOGINS: Rank = Rank(14);
+    /// Carrying an account's collaboration files.
+    pub const CARRYING: Rank = Rank(16);
+    /// Claiming a command's end, once.
+    pub const JOB_END: Rank = Rank(20);
+    /// Writing one copy's destination.
+    pub const COPYING: Rank = Rank(30);
+    /// Claude sessions being born and claimed: a launch holds it shared
+    /// until it knows its session, a registration alone while it is placed.
+    pub const BIRTHS: Rank = Rank(95);
+
+    // A conversation's locks, in the order they are taken.
+    /// Its place on this machine: deleting it holds it alone; starting a
+    /// command for it, reading a command's output there, receiving a file
+    /// for it and a session claiming its directory share it.
+    pub const PLACE: Rank = Rank(90);
+    /// Its management gate: what changes its life holds it alone, what
+    /// uses it shares it.
+    pub const LIFECYCLE: Rank = Rank(100);
+    /// The reports of one of its Claude sessions.
+    pub const SESSION: Rank = Rank(200);
+    /// The reports of its Codex thread.
+    pub const THREAD: Rank = Rank(210);
+    /// Handing its words to its Claude session.
+    pub const DELIVERING: Rank = Rank(250);
+    /// Its words and turns.
+    pub const SPEAKING: Rank = Rank(300);
+    /// Paying out its answers.
+    pub const PAYING: Rank = Rank(320);
+    /// Its shared input.
+    pub const COMPOSER: Rank = Rank(400);
+
+    // Bookkeeping over many conversations, after every conversation's lock.
+    /// One login's listing of Claude Code's background sessions.
+    pub const LISTING: Rank = Rank(510);
+    /// Decoding a picture into a thumbnail.
+    pub const DECODING: Rank = Rank(520);
+    /// Reading an attached picture's record.
+    pub const PICTURES: Rank = Rank(530);
+    /// Loading a thread into one login's Codex app-server.
+    pub const CODEX_LOADING: Rank = Rank(600);
+    /// Starting one login's Codex app-server.
+    pub const CODEX_STARTING: Rank = Rank(610);
+    /// Writing a project's or a page's records.
+    pub const WRITING: Rank = Rank(700);
+    /// Syncing the ledger with the network.
+    pub const SYNCING: Rank = Rank(710);
+}
+
+/// What each task says it does, latest last, by the token of each saying.
+type Labels = HashMap<tokio::task::Id, Vec<(u64, Arc<str>)>>;
+
+static LABELS: LazyLock<StdMutex<Labels>> = LazyLock::new(Default::default);
+
+thread_local! {
+    static THREAD: RefCell<Option<Arc<str>>> = const { RefCell::new(None) };
+}
+
+/// What a task does from here until this is dropped: the locks it waits for
+/// and holds, and its waits outside, say so. Set within one, a later one says
+/// it until it is dropped.
+pub struct Doing {
+    task: Option<tokio::task::Id>,
+    token: u64,
+}
+
+/// Says what the current task does from here, until the result is dropped.
+pub fn doing(label: impl Into<Arc<str>>) -> Doing {
+    let task = tokio::task::try_id();
+    let token = registry::next();
+    if let Some(task) = task {
+        let mut labels = LABELS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        labels.entry(task).or_default().push((token, label.into()));
+    }
+    Doing { task, token }
+}
+
+impl Drop for Doing {
+    fn drop(&mut self) {
+        let Some(task) = self.task else { return };
+        let mut labels = LABELS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(said) = labels.get_mut(&task) {
+            said.retain(|(token, _)| *token != self.token);
+            if said.is_empty() {
+                labels.remove(&task);
+            }
+        }
+    }
+}
+
+/// Runs `work` as doing `label`.
+pub async fn labeled<F: Future>(label: impl Into<Arc<str>>, work: F) -> F::Output {
+    let _doing = doing(label);
+    work.await
+}
+
+/// `work`, to run on a blocking thread as doing what the current task does.
+pub fn carried<R>(work: impl FnOnce() -> R) -> impl FnOnce() -> R {
+    let label = label();
+    move || {
+        THREAD.with(|said| *said.borrow_mut() = Some(label));
+        let result = work();
+        THREAD.with(|said| *said.borrow_mut() = None);
+        result
+    }
+}
+
+/// What the current task, or blocking thread, is doing, as it was said.
+pub fn label() -> Arc<str> {
+    match tokio::task::try_id() {
+        Some(task) => {
+            let labels = LABELS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            labels
+                .get(&task)
+                .and_then(|said| said.last())
+                .map(|(_, label)| label.clone())
+                .unwrap_or_else(|| Arc::from(format!("task {task}")))
+        }
+        None => THREAD.with(|said| said.borrow().clone()).unwrap_or_else(|| Arc::from("a blocking thread")),
+    }
+}
+
+/// Something outside the process did not answer in time.
+#[derive(Clone, Debug)]
+pub struct Late {
+    pub what: String,
+    pub within: Duration,
+}
+
+impl fmt::Display for Late {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} did not answer within {} s", self.what, self.within.as_secs())
+    }
+}
+
+impl std::error::Error for Late {}
+
+/// Waits for `work`, something outside the process named by `what`, for at
+/// most `within`; kept in the registry while it lasts.
+pub async fn outside<F: Future>(what: impl Into<String>, within: Duration, work: F) -> Result<F::Output, Late> {
+    let what = what.into();
+    let _wait = OutsideWait::begin(what.clone(), within);
+    tokio::time::timeout(within, work).await.map_err(|_| Late { what, within })
+}
+
+/// Keeps a wait outside the process in the registry until dropped, for code
+/// that enforces its own deadline, such as a blocking call that ends a
+/// program it started.
+pub fn waiting_outside(what: impl Into<String>, within: Duration) -> OutsideWait {
+    OutsideWait::begin(what.into(), within)
+}

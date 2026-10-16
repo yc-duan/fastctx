@@ -32,11 +32,11 @@ fn look() -> Firewall {
         return Firewall::Other { name: "ufw".to_string() };
     }
     for service in ["firewalld", "nftables"] {
-        let active = std::process::Command::new("systemctl")
-            .args(["is-active", "--quiet", service])
-            .stdin(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success());
+        let mut asking = std::process::Command::new("systemctl");
+        asking.args(["is-active", "--quiet", service]).stdin(std::process::Stdio::null());
+        let active =
+            fastctx_platform::bounded::output(asking, "systemctl is-active", std::time::Duration::from_secs(10))
+                .is_ok_and(|answer| answer.status.success());
         if active {
             return Firewall::Other { name: service.to_string() };
         }

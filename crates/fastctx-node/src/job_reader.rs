@@ -17,7 +17,10 @@ pub(crate) fn hold(node: &Arc<Node>, path: &Path) -> Lease {
 }
 
 pub(crate) async fn open(node: &Arc<Node>, path: &Path) -> Result<Lease, fastctx_types::ipc::Failure> {
-    let _operation = node.data_operations.read().await;
+    let _place = match crate::data::places::of_path(node, path) {
+        Some(place) => Some(node.places.using(&place).await),
+        None => None,
+    };
     let (node, path) = (node.clone(), path.to_path_buf());
     tokio::task::spawn_blocking(move || {
         let _gate = node.disk.lock().expect("never poisoned");

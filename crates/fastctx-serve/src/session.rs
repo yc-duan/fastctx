@@ -412,7 +412,7 @@ impl Session {
         }
         .await;
         let mut answer = match reply {
-            Ok(Reply::Spoken { to, landed }) => {
+            Ok(Reply::Spoken { to, landed, .. }) => {
                 let how = match landed {
                     Landed::Uncertain { why } => format!(
                         "acceptance is unknown: {why}; the words remain recorded and will not be submitted again"

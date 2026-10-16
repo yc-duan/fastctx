@@ -5,6 +5,7 @@
 
 pub(crate) mod delete;
 mod host;
+pub(crate) mod places;
 mod space;
 
 use std::sync::Arc;

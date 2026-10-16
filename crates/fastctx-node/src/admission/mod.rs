@@ -82,7 +82,7 @@ fn town_of(call: &RemoteCall) -> Option<&TownName> {
 pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteCall) -> Result<Asker, Failure> {
     let here = node.machine();
     // Nothing of a call turned away here ran.
-    let refuse = |why: String| Failure::not_run(format!("{here} refused {}: {why}", caller.machine));
+    let refuse = |why: String| Failure::refused(format!("{here} refused {}: {why}", caller.machine));
     if let RemoteCall::AttachmentThumbnail { attachment, .. } | RemoteCall::ReadAttachment { attachment, .. } = call
         && !node.is_me(&attachment.owner().machine)
     {

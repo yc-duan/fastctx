@@ -63,7 +63,10 @@ impl CodexHost {
         // choices only from where they were kept.
         let kept = if entry.loaded { entry.selection.clone() } else { Selection::read(&choices)? };
         let selection = Selection {
-            model: model.or_else(|| kept.model.clone()).or_else(|| entry.model.clone()),
+            model: model
+                .or_else(|| kept.model.clone())
+                .or_else(|| entry.model.clone())
+                .or_else(|| entry.spec.as_ref().and_then(|spec| spec.started("model"))),
             effort: effort.or_else(|| kept.effort.clone()).or_else(|| entry.effort.clone()),
             service_tier: kept.service_tier.clone().or_else(|| entry.service_tier.clone()),
         };

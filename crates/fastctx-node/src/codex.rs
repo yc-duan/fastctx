@@ -92,13 +92,13 @@ pub async fn adopt(node: &Arc<Node>) {
 #[derive(Default)]
 pub struct Unclaimed {
     state: std::sync::Mutex<Reports>,
-    workers: crate::leases::Registry<String, tokio::sync::Mutex<()>>,
+    workers: crate::leases::Registry<String, fastctx_platform::doing::Mutex<()>>,
     starting: std::sync::Mutex<usize>,
 }
 
 /// Held while what a thread reported is applied (`drain`).
-pub(crate) fn working(node: &Node, thread: &str) -> crate::leases::Lease<String, tokio::sync::Mutex<()>> {
-    node.unclaimed.workers.get_or_insert_with(&thread.to_string(), Default::default)
+pub(crate) fn working(node: &Node, thread: &str) -> crate::leases::Lease<String, fastctx_platform::doing::Mutex<()>> {
+    node.unclaimed.workers.get_or_insert_with(&thread.to_string(), || crate::ranked::working(thread))
 }
 
 /// Its conversation was deleted: what its thread reported and is still
@@ -312,6 +312,7 @@ async fn drain(node: &Arc<Node>, thread: &str) {
     if node.residents.resident_of_thread(thread).is_none() {
         return;
     }
+    let _doing = fastctx_platform::doing::doing(format!("reading the reports of Codex thread {thread}"));
     let worker = working(node, thread);
     let _worker = worker.lock().await;
     if let Err(error) = restore(node, thread, &mut node.unclaimed.state.lock().expect("never poisoned")) {
@@ -537,15 +538,8 @@ pub async fn moved(node: &Arc<Node>, id: &ResidentId) {
         return;
     }
     let Some(thread) = &about.session else { return };
-    match crate::colleagues::thread_spec(
-        node,
-        id,
-        &about.origin,
-        town.as_ref(),
-        &about.acting,
-        about.home.as_deref(),
-    )
-    .await
+    match crate::colleagues::thread_spec(node, id, &about.origin, town.as_ref(), &about.acting, about.home.as_deref())
+        .await
     {
         Ok((spec, _)) => match node.codex.of(&about) {
             Ok(codex) => codex.adopt(thread, spec),

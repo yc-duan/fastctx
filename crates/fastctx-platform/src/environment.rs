@@ -24,9 +24,15 @@ pub fn user_environment() -> io::Result<Vec<(OsString, OsString)>> {
 /// node, a supervisor): the user's, plus what of this process's says which
 /// World it is, so the new process belongs to the same one: `FASTCTX_HOME`,
 /// and `FASTCTX_UPDATE_RELEASES`, where a drill's World looks for releases.
+/// A development build also carries which agents' homes it was given: one
+/// runs in a sandbox of its own, and a node a command of it starts must
+/// never fall back to the user's own Codex or Claude Code login
+/// (`crate::home::RELEASED`).
 pub fn world_process_environment() -> io::Result<Vec<(OsString, OsString)>> {
     let mut env = user_environment()?;
-    for carried in ["FASTCTX_HOME", "FASTCTX_UPDATE_RELEASES"] {
+    let sandboxed: &[&str] = if crate::home::RELEASED { &[] } else { &["CODEX_HOME", "CLAUDE_CONFIG_DIR"] };
+    for carried in ["FASTCTX_HOME", "FASTCTX_UPDATE_RELEASES"].iter().chain(sandboxed) {
+        let carried = *carried;
         if let Some(value) = std::env::var_os(carried) {
             env.retain(|(name, _)| name != carried);
             env.push((carried.into(), value));

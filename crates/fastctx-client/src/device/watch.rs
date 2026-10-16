@@ -35,11 +35,12 @@ impl Device {
         machine: Option<MachineName>,
         composer: Option<String>,
         held: Option<fastctx_types::session::held::Held>,
+        now: bool,
     ) -> Result<Watching, Error> {
         let machine = self.find(&resident, machine).await?;
         let session = self.reaching(&machine)?;
         let account = session.account_for(&machine, fastctx_types::access::Purpose::Agents)?;
-        Watching::start(session, machine, account, resident, composer, held)
+        Watching::start(session, machine, account, resident, composer, held, now)
     }
 }
 
@@ -51,6 +52,7 @@ impl Watching {
         resident: ResidentId,
         composer: Option<String>,
         held: Option<fastctx_types::session::held::Held>,
+        now: bool,
     ) -> Result<Self, Error> {
         let watch = u64::from_le_bytes(fastctx_net::sign::random::<8>()?);
         let (sender, pieces) = mpsc::unbounded_channel();
@@ -59,7 +61,7 @@ impl Watching {
         let task = tokio::spawn(async move {
             let ended = tokio::select! {
                 () = sender.closed() => return,
-                result = session.link.call_with_stream(&machine, &account, fastctx_types::access::Purpose::Agents, RemoteCall::Watch { resident, watch, composer, held }, feed) => result,
+                result = session.link.call_with_stream(&machine, &account, fastctx_types::access::Purpose::Agents, RemoteCall::Watch { resident, watch, composer, held, now }, feed) => result,
             };
             let failure = match ended {
                 Ok(Ok(RemoteReply::Watched)) => return,

@@ -171,7 +171,23 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => return Err(failure(error)),
         };
+        // A sleeping session's model is chosen as a running one's is: kept
+        // for its next turn, among the models its login was last seen to
+        // offer. Before Claude Code names the session there is nowhere to
+        // keep a choice, for the few seconds it starts.
+        let aliases = about
+            .session
+            .as_ref()
+            .map(|session| {
+                fastctx_hosts::claude::exchange::observed_aliases(
+                    &fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session),
+                )
+            })
+            .transpose()
+            .map_err(failure)?
+            .flatten();
         Offers {
+            controls: if about.session.is_some() { vec![ControlKind::Model] } else { Vec::new() },
             checkpoints: checkpoints.as_ref().map(|value| {
                 value["turns"]
                     .as_object()
@@ -201,7 +217,7 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
                 .and_then(|value| value["effort"].as_str())
                 .map(str::to_owned)
                 .or(initial.reasoning_effort),
-            models: fastctx_hosts::claude::models::model_offers(None),
+            models: fastctx_hosts::claude::models::model_offers(aliases.as_deref()),
             ..Default::default()
         }
     };
