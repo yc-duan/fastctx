@@ -49,7 +49,7 @@ pub async fn prior(
 ) -> Result<Prior, Failure> {
     node.ready().await;
     let gate = node.residents.management(id)?;
-    let _reading = gate.read().await;
+    let _reading = crate::gate_waits::shared(node, id, &gate).await?;
     node.residents.active(id)?;
     let cell = node.composers.cell(id);
     let mut cell = cell.lock().await;
@@ -94,7 +94,7 @@ pub async fn begin(
     attachment: &Attachment,
 ) -> Result<Guard, Failure> {
     let gate = node.residents.management(id)?;
-    let _reading = gate.read().await;
+    let _reading = crate::gate_waits::shared(node, id, &gate).await?;
     node.residents.active(id)?;
     let cell = node.composers.cell(id);
     let mut cell = cell.lock().await;

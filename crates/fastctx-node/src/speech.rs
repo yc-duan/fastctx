@@ -81,7 +81,17 @@ pub async fn tell(
 /// the way its host lets the World in.
 pub async fn tell_here(node: &Arc<Node>, to: &ResidentId, delivery: Delivery, owed: Owed) -> Result<Landed, Failure> {
     let gate = node.residents.management(to)?;
-    let _reading = gate.read().await;
+    // Someone's words are asked from outside: one being deleted refuses
+    // them at once, and they wait for what changes its life no longer than
+    // anything else asked. What comes of work waits as long as it takes.
+    let _reading = if matches!(delivery.notice, Notice::Words { .. } | Notice::Attached { .. }) {
+        if node.residents.is_deleting(to) {
+            return Err(Failure::new(format!("{to} is being deleted")));
+        }
+        crate::gate_waits::shared(node, to, &gate).await?
+    } else {
+        gate.read().await
+    };
     tell_here_locked(node, to, delivery, owed).await
 }
 

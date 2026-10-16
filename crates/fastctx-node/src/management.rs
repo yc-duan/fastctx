@@ -54,7 +54,7 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
     if matches!(action, Management::Archive) && node.residents.removed(id).is_none() {
         crate::talk::stop_and_wait(node, id).await?;
     }
-    let _exclusive = gate.write().await;
+    let _exclusive = crate::gate_waits::alone(node, id, &gate).await?;
     if !matches!(action, Management::Archive | Management::Restore) {
         node.residents.active(id)?;
     }

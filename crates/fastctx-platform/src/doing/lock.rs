@@ -3,6 +3,7 @@
 
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
+use std::time::Duration;
 
 use super::Rank;
 use super::registry::{self, Hold, Wait};
@@ -136,10 +137,31 @@ impl<T: ?Sized> RwLock<T> {
         OwnedRwLockWriteGuard { _guard: guard, _hold: wait.held() }
     }
 
+    /// As `read`, waiting at most `within`.
+    pub async fn read_within(&self, within: Duration) -> Result<RwLockReadGuard<'_, T>, Busy> {
+        tokio::time::timeout(within, self.read()).await.map_err(|_| self.busy())
+    }
+
+    /// As `write`, waiting at most `within`.
+    pub async fn write_within(&self, within: Duration) -> Result<RwLockWriteGuard<'_, T>, Busy> {
+        tokio::time::timeout(within, self.write()).await.map_err(|_| self.busy())
+    }
+
+    fn busy(&self) -> Busy {
+        Busy { doing: registry::keeping(self.identity.id).filter(|label| super::said(label)) }
+    }
+
     pub fn try_write(&self) -> Result<RwLockWriteGuard<'_, T>, tokio::sync::TryLockError> {
         let guard = self.inner.try_write()?;
         Ok(RwLockWriteGuard { guard, _hold: registry::taken(self.identity.lock(), true) })
     }
+}
+
+/// A lock not taken in the time it was waited for.
+#[derive(Clone, Debug)]
+pub struct Busy {
+    /// What the task keeping it was doing then, as it said (`super::doing`).
+    pub doing: Option<Arc<str>>,
 }
 
 /// A share of a read-write lock held to read, owning its share of the lock.

@@ -22,7 +22,7 @@ use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 use std::time::Duration;
 
 pub use lock::{
-    Mutex, MutexGuard, OwnedMutexGuard, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, RwLockReadGuard,
+    Busy, Mutex, MutexGuard, OwnedMutexGuard, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, RwLockReadGuard,
     RwLockWriteGuard,
 };
 pub use registry::{Cycle, OutsideWait, Snapshot, Stuck, set_reporter, snapshot, violations};
@@ -157,10 +157,20 @@ pub fn label() -> Arc<str> {
                 .get(&task)
                 .and_then(|said| said.last())
                 .map(|(_, label)| label.clone())
-                .unwrap_or_else(|| Arc::from(format!("task {task}")))
+                .unwrap_or_else(|| Arc::from(format!("{UNSAID_TASK}{task}")))
         }
-        None => THREAD.with(|said| said.borrow().clone()).unwrap_or_else(|| Arc::from("a blocking thread")),
+        None => THREAD.with(|said| said.borrow().clone()).unwrap_or_else(|| Arc::from(UNSAID_THREAD)),
     }
+}
+
+/// What `label` names a task or thread by when it said nothing it does.
+const UNSAID_TASK: &str = "task ";
+const UNSAID_THREAD: &str = "a blocking thread";
+
+/// Whether `label` is something a task said it does (`doing`), not only
+/// which task it is.
+fn said(label: &str) -> bool {
+    label != UNSAID_THREAD && !label.strip_prefix(UNSAID_TASK).is_some_and(|id| id.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Something outside the process did not answer in time.

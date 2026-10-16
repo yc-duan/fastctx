@@ -285,6 +285,22 @@ pub(crate) fn subscribe(
 /// Starts watching a resident of this machine, then reads its history: what
 /// the World kept of it, merged with what its host keeps.
 pub(crate) async fn history_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRead, Failure> {
+    read_here(node, resident).await.map_err(|failure| as_deleted(node, resident, failure))
+}
+
+/// A read that failed as the conversation was being deleted, or once it is
+/// gone, says so, not what its host or its files said as they went.
+fn as_deleted(node: &Node, resident: &ResidentId, failure: Failure) -> Failure {
+    if node.residents.is_deleting(resident) {
+        Failure::new(format!("{resident} is being deleted"))
+    } else if node.residents.about(resident).is_none() {
+        crate::forget::gone(node, resident)
+    } else {
+        failure
+    }
+}
+
+async fn read_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRead, Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| crate::forget::gone(node, resident))?;
     let mut events = node.watchers.watch(resident);
     let directory = node.world.conversation(resident);

@@ -90,7 +90,7 @@ pub async fn request(
 pub async fn here(node: &Arc<Node>, from: &MachineName, id: &ResidentId, request: Request) -> Result<Updated, Failure> {
     node.ready().await;
     let gate = node.residents.management(id)?;
-    let _reading = gate.read().await;
+    let _reading = crate::gate_waits::shared(node, id, &gate).await?;
     node.residents.active(id)?;
     let cell = node.composers.cell(id);
     let mut cell = cell.lock().await;

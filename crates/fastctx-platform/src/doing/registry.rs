@@ -174,6 +174,21 @@ pub(super) fn taken(lock: Lock<'_>, alone: bool) -> Hold {
     Hold { token }
 }
 
+/// What the task keeping others from `lock` is doing: one holding it alone,
+/// else one waiting to hold it alone, which those after it wait behind, else
+/// one holding a share of it.
+pub(super) fn keeping(lock: u64) -> Option<Arc<str>> {
+    let state = state();
+    let of = |entries: &HashMap<u64, Entry>, alone: bool| {
+        entries
+            .values()
+            .filter(|entry| entry.lock == lock && entry.alone == alone)
+            .min_by_key(|entry| entry.since)
+            .map(|entry| entry.label.clone())
+    };
+    of(&state.held, true).or_else(|| of(&state.waiting, true)).or_else(|| of(&state.held, false))
+}
+
 /// A ranked lock held; dropping it lets the registry forget it.
 pub(super) struct Hold {
     token: u64,

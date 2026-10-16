@@ -45,6 +45,7 @@ mod file_search;
 mod firewall;
 mod focus;
 mod forget;
+mod gate_waits;
 mod gates;
 mod gather;
 pub mod handoff;
