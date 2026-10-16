@@ -1,7 +1,9 @@
 // Builds World's installer for this computer's platform, carrying a checked release kernel: the one
 // `--kernel` names, as the release workflow builds and tests it in a job of its own, or one built
 // here. Nothing is signed for the updater here: the release's signing step signs each package bound
-// to its version. A macOS application is signed ad hoc, so it runs where its owner allows it.
+// to its version. A macOS application and the kernel it carries are signed with the identity
+// FASTCTX_MACOS_IDENTITY names, the release's fixed certificate, so the privacy a Mac's user grants
+// Fastctx holds from one version to the next (`world-upgrade.md`); without one, ad hoc.
 //   node scripts/release.mjs [--kernel PATH] [--target TRIPLE] [--out DIR]
 //   node scripts/release.mjs --prepare [--target TRIPLE]
 //   node scripts/release.mjs --prepared --kernel PATH [--target TRIPLE] [--out DIR]
@@ -65,7 +67,7 @@ const resources = Object.keys(config.bundle.resources ?? {}).map(resource => joi
 if (platform === "win32") config.bundle.targets = ["nsis"];
 if (platform === "darwin") {
   config.bundle.targets = ["app", "dmg"];
-  config.bundle.macOS = { signingIdentity: "-" };
+  config.bundle.macOS = { signingIdentity: process.env.FASTCTX_MACOS_IDENTITY || "-" };
 }
 if (platform === "linux") {
   config.bundle.targets = ["deb", "appimage"];

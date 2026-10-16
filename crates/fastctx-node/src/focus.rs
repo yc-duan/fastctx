@@ -71,7 +71,6 @@ pub(crate) async fn folders_here(machine: MachineName, path: Option<String>) -> 
     tokio::task::spawn_blocking(move || fastctx_hands::folders::list(machine, path.as_deref()))
         .await
         .map_err(|error| Failure::new(error.to_string()))?
-        .map_err(Failure::not_run)
 }
 
 /// What each folder of this machine holds, read within `within`: each

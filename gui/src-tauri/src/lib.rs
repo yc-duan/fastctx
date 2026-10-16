@@ -629,13 +629,40 @@ async fn find_files(
 
 /// The folders in a folder of `machine_name` (this node when absent), for
 /// pointing a conversation at some; with no `path`, where a choice starts.
+/// A failure keeps its code: a folder macOS keeps private is said so.
 #[fastctx_gui_command::command]
 async fn folders(
     shell: tauri::State<'_, Shell>,
     machine_name: Option<String>,
     path: Option<String>,
-) -> Result<fastctx_types::focus::Folders, String> {
-    shell.world().folders(machine(machine_name)?, path).await.map_err(|error| error.to_string())
+) -> Result<fastctx_types::focus::Folders, fastctx_types::ipc::Failure> {
+    let machine = machine(machine_name).map_err(fastctx_types::ipc::Failure::new)?;
+    shell.world().folders(machine, path).await.map_err(|error| match error {
+        fastctx_client::world::Error::Call(fastctx_client::CallError::Failed(failure)) => failure,
+        other => fastctx_types::ipc::Failure::new(other.to_string()),
+    })
+}
+
+/// Where a Mac's user lets Fastctx into what macOS keeps private: System
+/// Settings at Full Disk Access, and the World program shown in the Finder
+/// beside it, to be put on that list (`world-gui.md`, 设置).
+#[fastctx_gui_command::command]
+async fn allow_privacy(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use tauri_plugin_opener::OpenerExt as _;
+        let program = fastctx_platform::fastctx_root().map_err(|error| error.to_string())?.join("bin").join("fastctx");
+        std::process::Command::new("/usr/bin/open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
+            .status()
+            .map_err(|error| error.to_string())?;
+        app.opener().reveal_item_in_dir(program).map_err(|error| error.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("only macOS keeps folders private from a program this way".to_string())
+    }
 }
 
 /// How `machine_name` (this computer when absent) is doing, for its details
@@ -1254,6 +1281,7 @@ pub fn run() {
             save_as,
             pick_folder,
             reveal,
+            allow_privacy,
             read_binary,
             control,
             offers,

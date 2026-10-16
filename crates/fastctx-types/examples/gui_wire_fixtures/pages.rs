@@ -109,6 +109,7 @@ pub fn fixtures() -> Fixtures {
         PageResult::Run(Box::new(RunReply {
             run: None,
             consumed: None,
+            privacy: Vec::new(),
             machine: machine.clone(),
             job: "j-abc123".parse().unwrap(),
             state: RunState::Ended { status: ExitStatus::Code(0) },

@@ -198,6 +198,17 @@ pub struct NodeSeen {
     /// (`world-concurrency.md`, 节点看着自己).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stuck: Vec<StuckWork>,
+    /// The last place macOS kept private from it while it runs, and when
+    /// (`world-gui.md`, 设置).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused: Option<Refused>,
+}
+
+/// A place macOS kept private from a node.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Refused {
+    pub path: String,
+    pub at: Timestamp,
 }
 
 /// One piece of a node's work that has gone on too long.

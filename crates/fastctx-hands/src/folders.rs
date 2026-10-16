@@ -6,17 +6,19 @@ use std::path::Path;
 
 use fastctx_types::MachineName;
 use fastctx_types::focus::{Folder, Folders};
+use fastctx_types::ipc::Failure;
 
 use crate::run::present::display_path;
 
 /// The folders in `path`, or with none the places a choice starts from: the
 /// user's home, and each local disk (`/` on Unix).
-pub fn list(machine: MachineName, path: Option<&str>) -> Result<Folders, String> {
-    let home = fastctx_platform::user_home().map_err(|error| format!("finding the home folder: {error}"))?;
+pub fn list(machine: MachineName, path: Option<&str>) -> Result<Folders, Failure> {
+    let home =
+        fastctx_platform::user_home().map_err(|error| Failure::not_run(format!("finding the home folder: {error}")))?;
     let home = written(&home);
     let Some(path) = path else {
         let mut folders = vec![Folder { name: home.clone(), path: home.clone(), hidden: false }];
-        for root in roots()? {
+        for root in roots().map_err(Failure::not_run)? {
             if !folders.iter().any(|folder| same(&folder.path, &root)) {
                 folders.push(Folder { name: root.clone(), path: root, hidden: false });
             }
@@ -25,12 +27,20 @@ pub fn list(machine: MachineName, path: Option<&str>) -> Result<Folders, String>
     };
     let folder = Path::new(path);
     if !folder.is_absolute() {
-        return Err(format!("{path} is not an absolute path"));
+        return Err(Failure::not_run(format!("{path} is not an absolute path")));
     }
-    let entries = std::fs::read_dir(folder).map_err(|error| format!("{path}: {error}"))?;
+    // A folder macOS keeps private is said as that, with where to allow it.
+    let unread = |error: std::io::Error| {
+        if fastctx_platform::privacy::refused(path, &error) {
+            Failure::mac_privacy(fastctx_platform::privacy::said(path))
+        } else {
+            Failure::not_run(format!("{path}: {error}"))
+        }
+    };
+    let entries = std::fs::read_dir(folder).map_err(unread)?;
     let mut folders = Vec::new();
     for entry in entries {
-        let entry = entry.map_err(|error| format!("{path}: {error}"))?;
+        let entry = entry.map_err(unread)?;
         // A link to a folder is followed, as a file manager does.
         if !entry.path().is_dir() {
             continue;

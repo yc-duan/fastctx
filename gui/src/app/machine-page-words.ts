@@ -101,6 +101,11 @@ export interface MachinePageWords {
   fastctxBehind(newer: string): string;
   /** Work of its own that is stuck, as it says, and for how long. */
   stuck(doing: string, what: string, span: string): string;
+  /** A place macOS kept private from it: on that Mac with the way to allow
+   *  Fastctx in, elsewhere where it is allowed. */
+  privacyHere(path: string): string;
+  privacyThere(path: string): string;
+  privacyGo: string;
 
   reading: string;
   failed: string;
@@ -201,6 +206,9 @@ export const zhMachinePage: MachinePageWords = {
   fastctxLatest: "已是最新",
   fastctxBehind: (newer) => `可更新到 ${newer}`,
   stuck: (doing, what, span) => `卡住 ${span}：${doing} 在等 ${what}`,
+  privacyHere: (path) => `macOS 没让 Fastctx 进 ${path}：在「完全磁盘访问权限」里打开 Fastctx，授权一次，换版也有效`,
+  privacyThere: (path) => `macOS 没让 Fastctx 进 ${path}：在那台 mac 的「系统设置 › 隐私与安全性 › 完全磁盘访问权限」里打开 Fastctx`,
+  privacyGo: "去授权",
 
   reading: "读取中…",
   failed: "读取失败",
@@ -294,6 +302,9 @@ export const enMachinePage: MachinePageWords = {
   fastctxLatest: "Up to date",
   fastctxBehind: (newer) => `${newer} available`,
   stuck: (doing, what, span) => `Stuck ${span}: ${doing} waits for ${what}`,
+  privacyHere: (path) => `macOS keeps ${path} from Fastctx: turn Fastctx on in Full Disk Access; once is enough, across versions`,
+  privacyThere: (path) => `macOS keeps ${path} from Fastctx: turn Fastctx on in System Settings › Privacy & Security › Full Disk Access on that Mac`,
+  privacyGo: "Allow",
 
   reading: "Reading…",
   failed: "Couldn't read",

@@ -86,6 +86,8 @@ export interface MachinePageOptions {
       }
     | undefined;
   manage: ManageWords;
+  /** On a Mac, where Fastctx is let into what macOS keeps private. */
+  allowPrivacy?: () => void;
 }
 
 type Tab = "now" | "net" | "manage";
@@ -145,6 +147,9 @@ export class MachinePage implements Page {
   private readonly tabsBox: HTMLElement;
   private readonly sheet: HTMLElement;
   private readonly panes: Record<Tab, HTMLElement>;
+  private readonly privacyBox: HTMLElement;
+  /** The vitals' part of 「状况」, and the grid they stand in. */
+  private readonly vitalsSec: HTMLElement;
   private readonly vitalsBox: HTMLElement;
   private readonly disksBox: HTMLElement;
   private readonly presentBox: HTMLElement;
@@ -218,7 +223,8 @@ export class MachinePage implements Page {
         <div class="mp-tabs" role="tablist" aria-label="${escape(words.tabsLabel)}" hidden>${TABS.map(tab).join("")}</div>
         <div class="mp-sheet" hidden>
           <div class="mp-pane" id="mp-pane-now" role="tabpanel" aria-labelledby="mp-tab-now" data-pane="now" hidden>
-            <section class="mp-sec mp-vitals" hidden></section>
+            <section class="mp-sec mp-privacy" hidden></section>
+            <section class="mp-sec mp-vitals-sec" hidden><div class="mp-vitals"></div></section>
             <section class="mp-sec mp-disks" hidden></section>
             <section class="mp-sec mp-present" hidden></section>
           </div>
@@ -247,6 +253,8 @@ export class MachinePage implements Page {
     this.tabsBox = part(".mp-tabs");
     this.sheet = part(".mp-sheet");
     this.panes = { now: part("[data-pane=now]"), net: part("[data-pane=net]"), manage: part("[data-pane=manage]") };
+    this.privacyBox = part(".mp-privacy");
+    this.vitalsSec = part(".mp-vitals-sec");
     this.vitalsBox = part(".mp-vitals");
     this.disksBox = part(".mp-disks");
     this.presentBox = part(".mp-present");
@@ -397,7 +405,7 @@ export class MachinePage implements Page {
     this.drawTabs();
     this.drawIdentity(machine, stats);
     this.drawNote(machine, stats, kept.heard);
-    this.vitalsBox.hidden = !stats;
+    this.vitalsSec.hidden = !stats;
     if (stats) {
       this.drawVitals(stats, kept.samples);
       this.drawCards(stats, kept.samples);
@@ -408,6 +416,7 @@ export class MachinePage implements Page {
       this.disksBox.hidden = true;
       this.linesBox.hidden = true;
     }
+    this.drawPrivacy(machine, stats);
     this.drawPresent(machine, stats, world);
     this.drawWhere(machine, world);
     this.drawDirect(machine, world);
@@ -963,6 +972,23 @@ export class MachinePage implements Page {
     );
   }
 
+  /** What macOS kept private from its node: on this Mac with the way to
+   *  allow Fastctx in (`world-gui.md`, 设置). */
+  private drawPrivacy(machine: Machine, stats: MachineStats | null): void {
+    const { words } = this.options;
+    const refused = stats?.node.refused;
+    this.privacyBox.hidden = !refused;
+    if (!refused) return;
+    const allow = machine.here ? this.options.allowPrivacy : undefined;
+    this.put(
+      "privacy",
+      this.privacyBox,
+      `<div class="mp-privacy-card"><span>${escape(machine.here ? words.privacyHere(refused.path) : words.privacyThere(refused.path))}</span>${
+        allow ? `<button class="text-button quiet-button" type="button" data-act="allow-privacy">${escape(words.privacyGo)}</button>` : ""
+      }</div>`,
+    );
+  }
+
   /** Its direct links, in 「网络」. */
   private drawDirect(machine: Machine, world: WorldNow): void {
     const { words, machines } = this.options;
@@ -1109,6 +1135,9 @@ export class MachinePage implements Page {
         return;
       case "undo":
         void this.undo();
+        return;
+      case "allow-privacy":
+        this.options.allowPrivacy?.();
         return;
     }
   }

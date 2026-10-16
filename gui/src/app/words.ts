@@ -92,6 +92,9 @@ export interface FocusWords {
   path: string;
   choose: string;
   back: string;
+  /** A folder macOS keeps private, and going to allow Fastctx in. */
+  privacy: string;
+  privacyGo: string;
   done: string;
   /** How many more are chosen than the chip names. */
   more(count: number): string;
@@ -113,6 +116,8 @@ export const zhFocus: FocusWords = {
   path: "路径",
   choose: "选这个文件夹",
   back: "返回",
+  privacy: "macOS 没让 Fastctx 进这个文件夹：在「系统设置 › 隐私与安全性 › 完全磁盘访问权限」里打开 Fastctx，授权一次，换版也有效",
+  privacyGo: "去授权",
   done: "完成",
   more: (count) => `+${count}`,
   saving: "保存中…",
@@ -133,6 +138,8 @@ export const enFocus: FocusWords = {
   path: "Path",
   choose: "Choose this folder",
   back: "Back",
+  privacy: "macOS keeps this folder from Fastctx: turn Fastctx on in System Settings › Privacy & Security › Full Disk Access; once is enough, across versions",
+  privacyGo: "Allow",
   done: "Done",
   more: (count) => `+${count}`,
   saving: "Saving…",

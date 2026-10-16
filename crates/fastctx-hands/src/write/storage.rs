@@ -233,7 +233,11 @@ impl Target {
 }
 
 fn error(path: &Path, e: io::Error) -> String {
-    format!("{}: {e}", path.display())
+    let written = path.display().to_string();
+    if fastctx_platform::privacy::refused(&written, &e) {
+        return fastctx_platform::privacy::said(&written);
+    }
+    format!("{written}: {e}")
 }
 
 const LEDGER: &str = "A project's journal and record files are read-only copies; add to journals with `fastctx journal`, and change the record with `fastctx project edit`";

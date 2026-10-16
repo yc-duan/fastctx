@@ -87,6 +87,10 @@ pub struct RunReply {
     /// Why the call answered, when the job still ran then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answered: Option<Answered>,
+    /// The private places macOS refused Fastctx on that machine, as its node
+    /// found once what the command did was refused (`world-gui.md`, 设置).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub privacy: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -85,6 +85,15 @@ fn render(reply: &RunReply, project: bool) -> (Vec<Content>, Vec<ModelSpan>) {
         _ if partial => answer.line(&format!("=== all of its output is in {log} ===")),
         _ => {}
     }
+    // What macOS kept from it, as the node found: the user allows it there.
+    if !reply.privacy.is_empty() {
+        let places: Vec<String> = reply.privacy.iter().map(|place| display_path(place)).collect();
+        answer.line(&format!(
+            "=== macOS keeps {} private from Fastctx on {}; its user allows Fastctx in System Settings → Privacy & Security → Full Disk Access ===",
+            places.join(", "),
+            reply.machine
+        ));
+    }
     (answer.blocks, answer.regions)
 }
 

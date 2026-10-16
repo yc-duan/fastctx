@@ -89,3 +89,9 @@ export function openLocal(path: string): Promise<void> {
 export function reveal(path: string): Promise<void> {
   return invoke("reveal", { path });
 }
+
+/** On a Mac, System Settings where Fastctx is let into what macOS keeps
+ *  private, with the World program shown beside it to put on the list. */
+export function allowPrivacy(): Promise<void> {
+  return invoke("allow_privacy");
+}

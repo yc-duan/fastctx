@@ -242,6 +242,9 @@ pub(crate) async fn here(node: &Arc<Node>, after: Option<Timestamp>) -> Result<M
                     seconds: stuck.since.as_secs(),
                 })
                 .collect(),
+            refused: fastctx_platform::privacy::last().and_then(|(path, at)| {
+                Some(fastctx_types::stats::Refused { path, at: jiff::Timestamp::try_from(at).ok()? })
+            }),
         },
     })
 }

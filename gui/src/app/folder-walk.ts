@@ -2,7 +2,9 @@
 // a choice starts from (its home and disks), then each folder's folders a
 // level at a time, by name only, read by that machine's node; or a path
 // typed straight in. Serves the machines and folders a conversation is
-// pointed at, and the folders the agents page searches for logins.
+// pointed at, and the folders the agents page searches for logins. A folder
+// macOS keeps private from Fastctx says so, and on that Mac itself goes to
+// where it is allowed.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -16,6 +18,9 @@ export interface FolderWalkWords {
   path: string;
   choose: string;
   back: string;
+  /** A folder macOS keeps private, and going to allow Fastctx in. */
+  privacy: string;
+  privacyGo: string;
 }
 
 export interface FolderWalkOptions {
@@ -27,6 +32,9 @@ export interface FolderWalkOptions {
   /** Back where the walk was opened from; none where the walk is all there
    *  is, as in a sheet of its own. */
   back?: () => void;
+  /** Goes to where Fastctx is allowed in: only where the machine walked is
+   *  this one. */
+  allow?: () => void;
 }
 
 export class FolderWalk {
@@ -34,6 +42,8 @@ export class FolderWalk {
   private path: string | null = null;
   private listing: Folders | null = null;
   private error: string | null = null;
+  /** The folder failed is one macOS keeps private. */
+  private keptPrivate = false;
   /** The latest ask; an answer to an earlier one is dropped. */
   private asks = 0;
 
@@ -56,6 +66,9 @@ export class FolderWalk {
         case "pick":
           if (this.listing?.path) this.options.chosen(this.listing.path);
           break;
+        case "allow":
+          this.options.allow?.();
+          break;
       }
     });
     // The walk may stand inside the input's own form, so a typed path goes
@@ -75,6 +88,7 @@ export class FolderWalk {
     const asked = ++this.asks;
     this.path = path;
     this.error = null;
+    this.keptPrivate = false;
     this.listing = null;
     this.draw();
     this.options
@@ -86,7 +100,9 @@ export class FolderWalk {
       })
       .catch((error: unknown) => {
         if (this.asks !== asked) return;
-        this.error = error instanceof Error ? error.message : String(error);
+        const failure = typeof error === "object" && error !== null ? (error as { message?: unknown; code?: unknown }) : null;
+        this.error = error instanceof Error ? error.message : typeof failure?.message === "string" ? failure.message : String(error);
+        this.keptPrivate = failure?.code === "mac_privacy";
       })
       .finally(() => {
         if (this.asks === asked) this.draw();
@@ -98,7 +114,10 @@ export class FolderWalk {
     const listing = this.listing;
     let rows = "";
     if (this.path !== null) rows += `<button type="button" class="pop-row folder-walk-up" data-walk="up">${glyph("back", 14)}<span class="pop-label">${escape(words.up)}</span></button>`;
-    if (this.error) rows += `<span class="choice-none">${escape(this.error)}</span>`;
+    if (this.keptPrivate) {
+      const go = this.options.allow ? `<button type="button" class="text-button quiet-button" data-walk="allow">${escape(words.privacyGo)}</button>` : "";
+      rows += `<div class="walk-privacy" title="${escape(this.error ?? "")}"><span>${escape(words.privacy)}</span>${go}</div>`;
+    } else if (this.error) rows += `<span class="choice-none">${escape(this.error)}</span>`;
     else if (!listing) rows += `<span class="choice-none quiet">${escape(words.reading)}</span>`;
     else if (!listing.folders.length) rows += `<span class="choice-none quiet">${escape(words.noFolders)}</span>`;
     else

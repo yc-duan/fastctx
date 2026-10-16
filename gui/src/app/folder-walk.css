@@ -65,6 +65,26 @@
   margin-top: var(--space-3);
 }
 
+/* A folder macOS keeps private: said on a solid card, and on that Mac the
+   way to allow Fastctx in. */
+.walk-privacy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-m);
+  background: color-mix(in srgb, var(--caution) 14%, transparent);
+  font-size: var(--size-small);
+  line-height: var(--leading-ui);
+  color: var(--text);
+}
+
+.walk-privacy .text-button {
+  margin-left: calc(-1 * var(--space-3));
+}
+
 @media (max-width: 760px) {
   .folder-walk-list .pop-row {
     min-height: 44px;

@@ -655,11 +655,44 @@ jobs:
           pattern: archive-*-unknown-linux-gnu
           merge-multiple: true
           path: gui/src-tauri/linux
+      # The fixed certificate the application and its kernel are signed with every version, so the
+      # privacy a Mac's user grants Fastctx holds across versions: in a keychain of this job alone,
+      # trusted for code signing here.
+      - name: Take the signing certificate
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          lock="$(openssl rand -hex 16)"
+          security create-keychain -p "$lock" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$lock" "$keychain"
+          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/fastctx.p12"
+          security import "$RUNNER_TEMP/fastctx.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/fastctx.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$lock" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security find-certificate -c Fastctx -p "$keychain" > "$RUNNER_TEMP/fastctx.pem"
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$RUNNER_TEMP/fastctx.pem" \
+            || echo "::warning::the certificate is not trusted on this runner; codesign signs with it all the same"
+          security find-identity -p codesigning "$keychain" | grep -q '"Fastctx"'
       - name: Build the application
         working-directory: gui
+        env:
+          FASTCTX_MACOS_IDENTITY: Fastctx
         run: |
           chmod +x ../kernel/fastctx
           node scripts/release.mjs --prepared --kernel ../kernel/fastctx --target '${{ matrix.target }}' --out ../dist/gui
+      - name: Check the application and its kernel carry the fixed certificate
+        run: |
+          app=gui/src-tauri/target/${{ matrix.target }}/release/bundle/macos/Fastctx.app
+          test -d "$app" || app=gui/src-tauri/target/release/bundle/macos/Fastctx.app
+          for program in "$app" "$app/Contents/MacOS/fastctx"; do
+            codesign -dvv "$program" 2>&1 | grep -qx 'Authority=Fastctx'
+            codesign -d -r- "$program" 2>&1 | grep -Eq 'certificate (leaf|root)'
+          done
+          codesign --verify --verbose "$app"
       - name: Sign the application for the updater
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

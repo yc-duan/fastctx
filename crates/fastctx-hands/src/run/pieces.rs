@@ -124,6 +124,7 @@ mod tests {
         present(&RunReply {
             run: None,
             consumed: None,
+            privacy: Vec::new(),
             machine: "probe".try_into().unwrap(),
             job: "j-aaaaaa".try_into().unwrap(),
             state: RunState::Ended { status: ExitStatus::Code(0) },

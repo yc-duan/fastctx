@@ -107,6 +107,8 @@ export interface RunReply {
     /** Lines holding bytes no known encoding decodes. */
     escaped_lines: number;
   };
+  /** The private places macOS refused Fastctx there, as its node found. */
+  privacy?: string[];
 }
 
 export type PageResult =

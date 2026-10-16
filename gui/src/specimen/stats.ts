@@ -234,6 +234,12 @@ export async function specimenStats(machine: string | null, after: string | null
         changes: changes.filter((change) => Date.parse(change.at) > since),
       };
     }),
-    node: { version: runningOn(name), started: iso(now - profile.started * 3_600_000), service: profile.service },
+    node: {
+      version: runningOn(name),
+      started: iso(now - profile.started * 3_600_000),
+      service: profile.service,
+      // `?refused=1`: macOS kept a folder of this computer's from its node.
+      ...(name === "desktop" && new URLSearchParams(location.search).has("refused") ? { refused: { path: "/Users/me/Desktop", at: iso(now - 60_000) } } : {}),
+    },
   };
 }

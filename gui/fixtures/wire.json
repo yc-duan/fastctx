@@ -20593,7 +20593,11 @@
         "node": {
           "version": "1.0.0",
           "started": "2026-10-01T00:00:00Z",
-          "service": false
+          "service": false,
+          "refused": {
+            "path": "/Users/me/Desktop",
+            "at": "2026-10-01T08:00:00Z"
+          }
         }
       }
     ]

@@ -104,7 +104,7 @@ pub fn view(paths: &[PathBuf], options: &Options, out: &mut impl Write) -> io::R
             // This file's own note is no longer needed if it is shown.
             let (section, observed) = match look(path, options, left + note.cost, explore::Limits::alone()) {
                 Ok(result) => result,
-                Err(error) => (Section::error(path, options, &describe_error(&error)), None),
+                Err(error) => (Section::error(path, options, &describe_error(path, &error)), None),
             };
             if section.partial {
                 stopped = true;
@@ -146,7 +146,7 @@ fn explore_several(paths: &[PathBuf], options: &Options, out: &mut impl Write) -
         let note = not_shown(path, options);
         let looked = |budget, limits| {
             look(path, options, budget, limits)
-                .unwrap_or_else(|error| (Section::error(path, options, &describe_error(&error)), None))
+                .unwrap_or_else(|error| (Section::error(path, options, &describe_error(path, &error)), None))
         };
         if image {
             let part = looked(pictures.max(note.cost), explore::Limits::alone());
@@ -268,22 +268,22 @@ fn head(path: &Path, options: &Options, facts: &str) -> String {
 fn not_shown(path: &Path, options: &Options) -> Section {
     let native = match fastctx_platform::local_path(path) {
         Ok(path) => path,
-        Err(error) => return Section::error(path, options, &describe_error(&error)),
+        Err(error) => return Section::error(path, options, &describe_error(path, &error)),
     };
     match std::fs::metadata(&native) {
         Ok(metadata) => Section::note(&native, options, &format!("not shown: {}", size(metadata.len()))),
-        Err(error) => Section::error(&native, options, &describe_error(&error)),
+        Err(error) => Section::error(&native, options, &describe_error(&native, &error)),
     }
 }
 
 fn look(path: &Path, options: &Options, budget: usize, limits: explore::Limits) -> io::Result<(Section, Option<Seen>)> {
     let native = match fastctx_platform::local_path(path) {
         Ok(path) => path,
-        Err(error) => return Ok((Section::error(path, options, &describe_error(&error)), None)),
+        Err(error) => return Ok((Section::error(path, options, &describe_error(path, &error)), None)),
     };
     let resolved = match std::path::absolute(&native).and_then(|path| crate::files::canonical_path(&path)) {
         Ok(path) => path,
-        Err(error) => return Ok((Section::error(&native, options, &describe_error(&error)), None)),
+        Err(error) => return Ok((Section::error(&native, options, &describe_error(&native, &error)), None)),
     };
     let (section, mut seen) = look_file(&native, &resolved, options, budget, limits)?;
     if let Some(seen) = &mut seen {
@@ -301,7 +301,7 @@ fn look_file(
 ) -> io::Result<(Section, Option<Seen>)> {
     let metadata = match std::fs::metadata(resolved) {
         Ok(metadata) => metadata,
-        Err(error) => return Ok((Section::error(path, options, &describe_error(&error)), None)),
+        Err(error) => return Ok((Section::error(path, options, &describe_error(path, &error)), None)),
     };
     if metadata.is_dir() {
         return Ok((Section::error(path, options, "a directory; list it with ls or find"), None));
@@ -312,7 +312,7 @@ fn look_file(
     }
     let mut file = match File::open(resolved) {
         Ok(file) => file,
-        Err(error) => return Ok((Section::error(path, options, &describe_error(&error)), None)),
+        Err(error) => return Ok((Section::error(path, options, &describe_error(path, &error)), None)),
     };
     let mut start = vec![0u8; 512];
     let read = read_up_to(&mut file, &mut start)?;
@@ -428,7 +428,10 @@ fn read_up_to(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
     Ok(filled)
 }
 
-fn describe_error(error: &io::Error) -> String {
+fn describe_error(path: &Path, error: &io::Error) -> String {
+    if fastctx_platform::privacy::refused(&path.to_string_lossy(), error) {
+        return fastctx_platform::privacy::REFUSAL.to_string();
+    }
     match error.kind() {
         io::ErrorKind::NotFound => "no such file".to_string(),
         io::ErrorKind::PermissionDenied => format!("not readable: {error}"),

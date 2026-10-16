@@ -40,6 +40,7 @@ pub mod owned_directory;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod owned_images;
 pub mod parent;
+pub mod privacy;
 pub mod private;
 #[cfg(target_os = "linux")]
 pub mod procfs;

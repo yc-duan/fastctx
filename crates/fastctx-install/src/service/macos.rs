@@ -14,6 +14,9 @@ use super::{Kind, Service, Status, checked};
 
 /// The first line of a definition this module wrote.
 const MARKER: &str = "<!-- fastctx service v1 -->";
+/// The application a user's node belongs to: its bundle identifier
+/// (`gui/src-tauri/tauri.conf.json`).
+const APPLICATION: &str = "dev.fastctx.world";
 
 pub(super) fn status(service: &Service) -> anyhow::Result<Status> {
     let installed = definition_path(service)?.try_exists()?;
@@ -154,8 +157,16 @@ fn definition(service: &Service) -> anyhow::Result<String> {
     let log = service.directory.join(format!("service-{}.log", service.role()));
     let log = log.to_str().context("the log's path is not UTF-8")?;
     let arguments: String = words.iter().map(|word| format!("\t\t<string>{}</string>\n", escape(word))).collect();
+    // A user's node belongs to the application: System Settings names it
+    // Fastctx among what runs in the background.
+    let belongs = match service.kind {
+        Kind::Node => format!(
+            "\t<key>AssociatedBundleIdentifiers</key>\n\t<array>\n\t\t<string>{APPLICATION}</string>\n\t</array>\n"
+        ),
+        Kind::Hub => String::new(),
+    };
     Ok(format!(
-        "{MARKER}\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>Label</key>\n\t<string>{}</string>\n\t<key>ProgramArguments</key>\n\t<array>\n{arguments}\t</array>\n\t<key>RunAtLoad</key>\n\t<true/>\n\t<key>KeepAlive</key>\n\t<true/>\n\t<key>ThrottleInterval</key>\n\t<integer>1</integer>\n\t<key>ProcessType</key>\n\t<string>Standard</string>\n\t<key>StandardInPath</key>\n\t<string>/dev/null</string>\n\t<key>StandardOutPath</key>\n\t<string>{}</string>\n\t<key>StandardErrorPath</key>\n\t<string>{}</string>\n</dict>\n</plist>\n",
+        "{MARKER}\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>Label</key>\n\t<string>{}</string>\n\t<key>ProgramArguments</key>\n\t<array>\n{arguments}\t</array>\n\t<key>RunAtLoad</key>\n\t<true/>\n\t<key>KeepAlive</key>\n\t<true/>\n\t<key>ThrottleInterval</key>\n\t<integer>1</integer>\n\t<key>ProcessType</key>\n\t<string>Standard</string>\n\t<key>StandardInPath</key>\n\t<string>/dev/null</string>\n\t<key>StandardOutPath</key>\n\t<string>{}</string>\n\t<key>StandardErrorPath</key>\n\t<string>{}</string>\n{belongs}</dict>\n</plist>\n",
         escape(&label(service)),
         escape(log),
         escape(log),

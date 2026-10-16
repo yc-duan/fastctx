@@ -88,6 +88,7 @@ pub fn fixtures() -> Fixtures {
             started: at("2026-10-12T22:01:00Z"),
             service: true,
             stuck: Vec::new(),
+            refused: None,
         },
     };
     let linux = MachineStats {
@@ -122,6 +123,10 @@ pub fn fixtures() -> Fixtures {
             started: at("2026-10-01T00:00:00Z"),
             service: false,
             stuck: Vec::new(),
+            refused: Some(fastctx_types::stats::Refused {
+                path: "/Users/me/Desktop".into(),
+                at: at("2026-10-01T08:00:00Z"),
+            }),
         },
     };
     Fixtures { stats: vec![windows, linux] }

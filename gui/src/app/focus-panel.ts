@@ -10,6 +10,7 @@
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { folderName, type Focus, type Folders } from "../world/focus";
+import { allowPrivacy } from "../world/files";
 import { FolderWalk } from "./folder-walk";
 import type { FocusWords } from "./words";
 
@@ -115,6 +116,7 @@ export class FocusPanel {
       words: this.options.words,
       machine: place.written,
       folders: (path) => this.options.folders(place.name, path),
+      ...(place.here ? { allow: () => void allowPrivacy() } : {}),
       chosen: (path) => {
         let chosen = this.focus.machines.find((one) => one.machine === place.written);
         if (!chosen) {
