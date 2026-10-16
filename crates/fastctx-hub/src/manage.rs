@@ -743,9 +743,10 @@ fn remove_member(
 }
 
 /// Checks `account` may have `member` uninstall Fastctx as it is taken off
-/// (`world-network.md`, 移出网络与卸载): its own machine with no application
-/// on it, or a managed machine of its own or, for the super administrator,
-/// any; never the machine that runs this hub.
+/// (`world-network.md`, 移出网络与卸载): its own machine, or a managed
+/// machine of its own or, for the super administrator, any; never one an
+/// application carries Fastctx on, managed or not, which whoever sits at it
+/// uninstalls once it is off, nor the machine that runs this hub.
 fn may_uninstall(
     hub: &Hub,
     member: &fastctx_net::directory::Member,
@@ -763,8 +764,10 @@ fn may_uninstall(
     if running.as_ref().is_some_and(|running| running.hub_here) {
         return Err(format!("{name} runs this network's hub: move the hub elsewhere or dissolve the network first"));
     }
-    if !member.managed && running.as_ref().is_some_and(|running| running.app.is_some()) {
-        return Err(format!("Fastctx on {name} is an application: whoever sits at it uninstalls it there"));
+    if running.as_ref().is_some_and(|running| running.app.is_some()) {
+        return Err(format!(
+            "Fastctx on {name} is an application: whoever sits at it uninstalls it there once it is off the network"
+        ));
     }
     Ok(())
 }

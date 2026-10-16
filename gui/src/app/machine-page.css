@@ -1,12 +1,13 @@
 /* A machine's own page (`machine-page.ts`): what it is and how long it has
-   been up across the top, then its vitals in a row of quiet tiles, each a
-   ring the pen draws round and the trace of the last minutes; under them
-   the lines to its hubs and its cards in the wider column, its disks, who
-   is on it, its sharing and what it is in the narrower one. On a phone the
-   columns fall into one and the vitals sit two by two. Nothing is
-   outlined: tiles and cards are fills a shade off the paper, the drawings
-   are the pen's, and every number is set in figures of one width so it
-   does not jitter as it changes. */
+   been up across the top, then three tabs like a folder's on one solid
+   sheet: a tab not chosen is a word, the chosen one a small block of the
+   sheet's own fill, its top corners round, grown out of the sheet. On the
+   sheet the parts follow one another down, set apart by space and a line
+   ruled by hand; its vitals are a row of rings the pen draws round, each
+   with the trace of the last minutes. On a phone the vitals sit two by
+   two. Nothing is outlined: the sheet is a fill a shade off the paper, the
+   drawings are the pen's, and every number is set in figures of one width
+   so it does not jitter as it changes. */
 
 .machine-page {
   position: relative;
@@ -190,6 +191,11 @@
   color: var(--text-3);
 }
 
+.mp-id-bit {
+  display: inline-block;
+  max-width: 100%;
+}
+
 .mp-id-hardware .sep,
 .mp-net-at .sep {
   margin: 0 6px;
@@ -232,12 +238,19 @@
   cursor: default;
 }
 
-/* The vitals: as many to a row as fit, never narrower than a ring and a
-   trace beside it. */
+/* The vitals: one row of equal blocks across the sheet while four fit, no
+   narrower than a ring and a trace beside it; more than four, as many to a
+   row as fit. */
 .mp-vitals {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: var(--gap);
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: var(--space-5);
+}
+
+.mp-vitals:has(> :nth-child(5)) {
+  grid-auto-flow: row;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
 }
 
 .mp-vitals[hidden] {
@@ -249,9 +262,6 @@
   flex-direction: column;
   gap: var(--space-2);
   min-width: 0;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-l);
-  background: var(--fill);
 }
 
 .mp-vital-head {
@@ -401,33 +411,6 @@
   fill: color-mix(in srgb, var(--pen-graphite) 14%, transparent);
 }
 
-/* The card's bytes a second, received above sent. */
-.mp-rates {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 7.2em;
-}
-
-.mp-rate {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.mp-rates .mp-rate.down {
-  font-size: 17px;
-  color: var(--text-strong);
-}
-
-.mp-rates .mp-rate.up {
-  font-size: var(--size-ui);
-  color: var(--text-2);
-}
-
 .mp-arrow {
   color: var(--pen-clay);
 }
@@ -436,57 +419,89 @@
   color: var(--pen-graphite);
 }
 
-/* Under the vitals: the lines and the cards in the wider column, the
-   rest in the narrower. */
-.mp-columns {
-  display: grid;
-  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
-  gap: var(--gap);
-  align-items: start;
-}
-
-.mp-main,
-.mp-side {
+/* The tabs: a word each; the chosen one a block of the sheet's fill, its
+   top corners round, standing on the sheet. */
+.mp-tabs {
   display: flex;
-  flex-direction: column;
-  gap: var(--gap);
-  min-width: 0;
+  gap: 2px;
+  margin-top: var(--space-2);
+  margin-bottom: calc(-1 * var(--gap));
 }
 
-/* Nothing drawn: no wider column, the cards side by side across the page. */
-.mp-columns.single {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.mp-columns.single .mp-main {
+.mp-tabs[hidden] {
   display: none;
 }
 
-.mp-columns.single .mp-side {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  align-items: start;
+.mp-tab {
+  min-height: 38px;
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-m) var(--radius-m) 0 0;
+  color: var(--text-3);
+  font-size: var(--size-ui);
+  transition: color var(--hover) ease;
 }
 
-.mp-card {
+.mp-tab:hover {
+  color: var(--text);
+}
+
+.mp-tab[aria-selected="true"] {
+  background: var(--fill);
+  color: var(--text-strong);
+}
+
+.mp-tab:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+/* The sheet the chosen tab stands on: under the first tab, its corner is
+   the tab's. */
+.mp-sheet {
+  --mp-label: 6.5rem;
+  --mp-gap: var(--space-6);
+  container: mp-sheet / inline-size;
   min-width: 0;
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-5) var(--space-6) var(--space-6);
   border-radius: var(--radius-l);
   background: var(--fill);
 }
 
-.mp-card[hidden] {
+.mp-sheet.first {
+  border-top-left-radius: 0;
+}
+
+.mp-sheet[hidden],
+.mp-pane[hidden],
+.mp-sec[hidden] {
   display: none;
 }
 
-.mp-card-title {
+/* The parts of a tab, one under another: each after the first set apart by
+   a line ruled by hand. */
+.mp-sec {
+  min-width: 0;
+}
+
+.mp-sec:not([hidden]) ~ .mp-sec:not([hidden])::before {
+  content: "";
+  display: block;
+  height: 8px;
+  margin: var(--space-5) 0 var(--space-5);
+  background: var(--pen-rule);
+  opacity: 0.6;
+  -webkit-mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
+}
+
+.mp-sec-title {
   margin: 0 0 var(--space-3);
   font-size: var(--size-small);
   font-weight: 400;
   color: var(--text-3);
 }
 
-.mp-card-head {
+.mp-sec-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -494,13 +509,92 @@
   margin-bottom: var(--space-3);
 }
 
-.mp-card-head .mp-card-title {
+.mp-sec-head .mp-sec-title {
   margin: 0;
 }
 
 /* What is drawn from an answer that is no longer new stands back. */
 .mp-board.stale :is(.mp-vitals, .mp-lines, .mp-cards, .mp-disks) {
   opacity: 0.5;
+}
+
+/* Rows of a name and its value, the names in a column of their own, as
+   wide in every part of the sheet so the values start in one place. */
+.mp-rows {
+  display: grid;
+  grid-template-columns: minmax(var(--mp-label), max-content) minmax(0, 1fr);
+  column-gap: var(--mp-gap);
+  row-gap: 10px;
+  align-items: baseline;
+  margin: 0;
+}
+
+.mp-rows dt {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.mp-rows dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px var(--space-3);
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+  color: var(--text-2);
+}
+
+.mp-rows dd.code {
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+}
+
+.mp-rows dd[title] {
+  cursor: default;
+}
+
+/* A button among the values: its words where a value's would start when
+   it begins a line. */
+.mp-rows .text-button {
+  margin: -4px 0 -4px calc(-1 * var(--space-3));
+}
+
+.mp-rows .sep {
+  margin: 0 6px;
+  color: var(--text-3);
+}
+
+/* At the foot of 「管理」: taking it off, and on the hub's machine, the way
+   to the hub. */
+.mp-danger-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+.mp-danger-note {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.mp-danger-acts .text-button {
+  margin-left: calc(-1 * var(--space-3));
+}
+
+/* What of its own work is stuck, as it says. */
+.mp-stuck {
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--size-small);
+  color: var(--caution);
 }
 
 .mp-list {
@@ -512,7 +606,32 @@
   list-style: none;
 }
 
-/* A network card. */
+/* A network card; the one followed has its trace beside what it says,
+   under its rates. */
+.mp-net.mp-net-followed {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(140px, 300px);
+  column-gap: var(--space-6);
+}
+
+.mp-net.mp-net-followed .mp-net-head {
+  grid-column: 1 / -1;
+}
+
+.mp-net.mp-net-followed .mp-net-at,
+.mp-net.mp-net-followed .mp-net-moved {
+  grid-column: 1;
+}
+
+.mp-spark.mp-spark-flow {
+  grid-column: 2;
+  grid-row: 2 / span 2;
+  align-self: stretch;
+  height: auto;
+  min-height: 40px;
+  margin-top: 4px;
+}
+
 .mp-net-head {
   display: flex;
   align-items: center;
@@ -640,6 +759,10 @@
   padding: 2px;
   border-radius: var(--radius-full);
   background: var(--fill);
+}
+
+.mp-sheet .mp-ranges {
+  background: var(--fill-strong);
 }
 
 .mp-range {
@@ -783,57 +906,6 @@
   color: var(--text-2);
 }
 
-/* What it is: one fact a row, the names in a narrow column of their own and
-   the values beside them on one edge; a value of several lines keeps to
-   its column. */
-.mp-facts {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  margin: 0;
-}
-
-.mp-fact {
-  display: grid;
-  grid-template-columns: 5.5em minmax(0, 1fr);
-  column-gap: var(--space-3);
-  align-items: baseline;
-}
-
-.mp-fact dt {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.mp-fact dd {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  margin: 0;
-  overflow-wrap: anywhere;
-  font-size: var(--size-ui);
-  line-height: var(--leading-ui);
-  color: var(--text-2);
-}
-
-.mp-fact dd.code {
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
-  font-size: var(--size-code);
-}
-
-.mp-fact dd[title] {
-  cursor: default;
-}
-
-.mp-own {
-  margin: var(--space-3) 0 0 calc(-1 * var(--space-3));
-}
-
 .mp-present .machine-agents,
 .mp-present .machine-jobs {
   padding-left: 0;
@@ -847,8 +919,23 @@
   margin-top: 0;
 }
 
-.mp-sharing .panel-direct {
-  margin-top: var(--space-3);
+.mp-sharing .given-label {
+  flex: none;
+  min-width: calc(var(--mp-label) + var(--mp-gap) - 6px);
+  margin-right: 0;
+}
+
+.mp-sharing .given-label + .text-button {
+  margin-left: calc(-1 * var(--space-2));
+}
+
+.mp-direct .panel-direct {
+  display: block;
+  margin-top: 0;
+}
+
+.mp-direct .panel-direct-at {
+  margin-top: 4px;
 }
 
 /* For a moment after something is taken back: what, and undoing it. */
@@ -873,18 +960,19 @@
   display: none;
 }
 
-/* Narrower: the columns fall into one, and the head keeps only its icons. */
-@container machine-page (max-width: 900px) {
-  .mp-columns {
-    grid-template-columns: minmax(0, 1fr);
+/* Where four vitals no longer sit across one row, they go two by two
+   rather than leaving one stranded on a line of its own; three keep their
+   row while they fit. */
+@container mp-sheet (max-width: 927px) {
+  .mp-vitals[data-count="4"] {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-/* Where four vitals no longer sit across one row, they go two by two
-   rather than leaving one stranded on a line of its own. Above this they
-   fit four across; below, the phone's two already hold. */
-@container machine-page (max-width: 1000px) {
+@container mp-sheet (max-width: 691px) {
   .mp-vitals {
+    grid-auto-flow: row;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -934,11 +1022,7 @@
   }
 
   .mp-vitals {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .mp-vital {
-    padding: var(--space-3);
+    gap: var(--space-4);
   }
 
   .mp-vital-body {
@@ -958,13 +1042,24 @@
     height: 34px;
   }
 
-  .mp-rates {
-    min-width: 0;
-    padding: 6px 0;
+  .mp-net.mp-net-followed {
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .mp-card {
-    padding: var(--space-3) var(--space-4);
+  .mp-spark.mp-spark-flow {
+    grid-column: 1;
+    grid-row: auto;
+    height: 40px;
+  }
+
+  .mp-sheet {
+    --mp-label: 5rem;
+    --mp-gap: var(--space-4);
+    padding: var(--space-4);
+  }
+
+  .mp-tab {
+    padding: 0 var(--space-4);
   }
 
   .mp-id {

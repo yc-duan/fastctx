@@ -29,6 +29,7 @@ import "./app/assist.css";
 import "./app/machines.css";
 import "./app/machine-list.css";
 import "./app/machine-page.css";
+import "./app/machine-manage.css";
 import "./app/agents.css";
 import "./app/features.css";
 import "./app/removal.css";
@@ -83,6 +84,7 @@ import { ProjectForm } from "./app/project-form";
 import { link, placeOf, talkLink, type Place } from "./app/places";
 import { MachinePage } from "./app/machine-page";
 import { enMachinePage, zhMachinePage } from "./app/machine-page-words";
+import { enManage, zhManage } from "./app/machine-manage-words";
 import { enNameSaid, zhNameSaid } from "./app/name-words";
 import { specimenStats } from "./specimen/stats";
 import { SettingsPage } from "./app/settings";
@@ -841,18 +843,18 @@ function idleHere(): boolean {
 }
 
 const updateWords = english ? enUpdate : zhUpdate;
+/** Where updates are asked: this device's node or device, or the specimen's
+ *  stand-in, one for the page's whole life so what it keeps holds. */
+const specimenUpdate = live ? null : specimenUpdates(params, params.has("phone"));
+const updatesAsked = specimenUpdate ? specimenUpdate.seam : updateSeam;
 const appUpdates = (() => {
-  if (live) {
-    const updates = new Updates(updateSeam, idleHere);
+  const updates = new Updates(updatesAsked, idleHere);
+  if (specimenUpdate) updates.know(specimenUpdate.version);
+  else
     void getVersion().then(
       (version) => updates.know(version),
       (error: unknown) => console.error("reading this application's version", error),
     );
-    return updates;
-  }
-  const specimen = specimenUpdates(params, params.has("phone"));
-  const updates = new Updates(specimen.seam, idleHere);
-  updates.know(specimen.version);
   return updates;
 })();
 const updateCard = new UpdateCard(appUpdates, updateWords, live ? !onComputer() : params.has("phone"));
@@ -1931,9 +1933,13 @@ function show(next: Place): void {
         replace: (to) => replacePlace(link(to)),
         updates: {
           state: appUpdates.state,
-          machine: (name) => (live ? updateSeam.machine(name) : specimenUpdates(params, false).seam.machine(name)),
+          machine: (name) => updatesAsked.machine(name),
+          remote: (name, call) => updatesAsked.remote(name, call),
+          versions: versionWindow,
+          versionsHere,
           words: updateWords,
         },
+        manage: english ? enManage : zhManage,
       });
       break;
     }

@@ -1,0 +1,167 @@
+// The words of a machine's 「管理」 (`machine-fastctx.ts`, `machine-remove.ts`):
+// the Fastctx on it, how an update of it goes, and taking it off the network
+// three ways.
+
+import type { RenewalPhase } from "../world/renewal";
+
+export interface ManageWords {
+  close: string;
+  fastctx: string;
+  /** The application that carries its World program: of the same version,
+   *  or of its own. */
+  withApp: string;
+  app(version: string): string;
+  upToDate: string;
+  /** The newest it can take, on its own line. */
+  canTake(version: string): string;
+  update: string;
+  /** A package on its way there: what came of how much, and from where. */
+  fetching(received: string, total: string | null, network: boolean): string;
+  phase: Record<RenewalPhase, string>;
+  failed(why: string): string;
+  /** An update asked of a computer an application carries Fastctx on. */
+  appTakes(version: string): string;
+  appClosed(version: string): string;
+  appOpenThere(version: string): string;
+  /** An update the hub keeps for it until it is back, and taking it back. */
+  due(version: string, by: string): string;
+  undue: string;
+  offline: string;
+  /** Why a machine of an earlier release has no window of versions: it
+   *  answers only the update to the newest on its line. */
+  older: string;
+  olderGo: string;
+  asking: string;
+  auto: string;
+  autoByDefault: string;
+  relays: string;
+  on: string;
+  off: string;
+
+  remove: string;
+  removeTitle(machine: string): string;
+  ways: { uninstall: { title: string; what: string }; everything: { title: string; what: string }; leave: { title: string; what: string } };
+  /** Why it cannot uninstall Fastctx from here. */
+  notMember: string;
+  notApp: string;
+  /** A managed computer: taken off, it is unlocked and uninstalled at it. */
+  managedApp: string;
+  notHub: string;
+  hubOlder: string;
+  removeOffline: string;
+  removeGo: string;
+  removeFailed(why: string): string;
+  /** The machine that runs the network's hub. */
+  hubHere: string;
+  hubGo: string;
+}
+
+export const zhManage: ManageWords = {
+  close: "关闭",
+  fastctx: "Fastctx",
+  withApp: "带应用",
+  app: (version) => `应用 ${version}`,
+  upToDate: "已是最新",
+  canTake: (version) => `可更新到 ${version}`,
+  update: "更新…",
+  fetching: (received, total, network) => `下载中 ${total ? `${received} / ${total}` : received}${network ? " · 经网络" : ""}`,
+  phase: {
+    staged: "新版本已就绪",
+    preparing: "正在准备…",
+    waiting_for_idle: "等待当前工作告一段落…",
+    awaiting_administrator: "等那台的管理员确认",
+    awaiting_legacy_exit: "等待旧版本退出，那台重启后完成",
+    updating_guardian: "正在更新开机服务…",
+    returning_to_service: "正在交回开机服务…",
+    complete: "已更新",
+    failed: "更新失败",
+  },
+  failed: (why) => `更新失败：${why}`,
+  appTakes: (version) => `应用开着，由应用自己更新到 ${version}`,
+  appClosed: (version) => `应用没开，由本机服务装上 ${version}`,
+  appOpenThere: (version) => `下次在那台打开 Fastctx 时更新到 ${version}`,
+  due: (version, by) => `${by} 安排了上线后更新到 ${version}`,
+  undue: "撤销",
+  offline: "不在线：选的版本由中枢记下，上线后更新",
+  older: "旧版本只能直接更新到最新，不能挑版本",
+  olderGo: "更新",
+  asking: "正在询问…",
+  auto: "自动更新",
+  autoByDefault: "默认",
+  relays: "帮网络传包",
+  on: "开",
+  off: "关",
+
+  remove: "移除…",
+  removeTitle: (machine) => `移除 ${machine}？`,
+  ways: {
+    uninstall: { title: "移出并卸载，保留数据", what: "那台上的 Fastctx 卸掉，世界的记录、登录与身份留着，重新装上还能接着用" },
+    everything: { title: "移出并彻底移除", what: "把 Fastctx 写在那台上的一切清掉" },
+    leave: { title: "只移出网络", what: "那台上的 Fastctx 留着，只是连不上这个网络" },
+  },
+  notMember: "成员的机器由成员自己卸载，这里只能移出网络",
+  notApp: "带应用的电脑由坐在它前面的人在它自己的设置里卸载",
+  managedApp: "受管电脑移出之后，由坐在它前面的人在那台上卸载",
+  notHub: "这台跑着网络的中枢，先搬走中枢或解散网络",
+  hubOlder: "这个网络的中枢版本较旧，还不能替它卸载",
+  removeOffline: "不在线：移出立即生效，卸载在它下次连上时进行",
+  removeGo: "移除",
+  removeFailed: (why) => `没能移除：${why}`,
+  hubHere: "这台跑着网络的中枢：要卸载它，先在机器图上搬走中枢或解散网络",
+  hubGo: "到机器图上",
+};
+
+export const enManage: ManageWords = {
+  close: "Close",
+  fastctx: "Fastctx",
+  withApp: "With the app",
+  app: (version) => `App ${version}`,
+  upToDate: "Up to date",
+  canTake: (version) => `${version} available`,
+  update: "Update…",
+  fetching: (received, total, network) => `Downloading ${total ? `${received} of ${total}` : received}${network ? " · through the network" : ""}`,
+  phase: {
+    staged: "Update ready",
+    preparing: "Preparing…",
+    waiting_for_idle: "Waiting for current work to pause…",
+    awaiting_administrator: "Waiting for an administrator there",
+    awaiting_legacy_exit: "Waiting for the old version to exit; finishes after it restarts",
+    updating_guardian: "Updating startup service…",
+    returning_to_service: "Handing back to the startup service…",
+    complete: "Updated",
+    failed: "Update failed",
+  },
+  failed: (why) => `Update failed: ${why}`,
+  appTakes: (version) => `Its app is open and updates itself to ${version}`,
+  appClosed: (version) => `Its app is closed; the local service installs ${version}`,
+  appOpenThere: (version) => `Updates to ${version} when Fastctx next opens there`,
+  due: (version, by) => `${by} set it to update to ${version} once it's back`,
+  undue: "Take back",
+  offline: "Offline: the hub keeps the version picked, and it updates once back",
+  older: "An older version updates only to the newest; no version can be picked",
+  olderGo: "Update",
+  asking: "Asking…",
+  auto: "Automatic updates",
+  autoByDefault: "By default",
+  relays: "Pass packages on",
+  on: "On",
+  off: "Off",
+
+  remove: "Remove…",
+  removeTitle: (machine) => `Remove ${machine}?`,
+  ways: {
+    uninstall: { title: "Remove and uninstall, keeping its data", what: "Fastctx goes from it; its World's records, logins and identity stay, to carry on once installed again" },
+    everything: { title: "Remove and erase", what: "Everything Fastctx wrote there goes" },
+    leave: { title: "Only take it off the network", what: "Fastctx stays on it, and no longer reaches this network" },
+  },
+  notMember: "A member's machine is the member's to uninstall; here it is only taken off",
+  notApp: "A computer with the app is uninstalled by whoever sits at it, in its own settings",
+  managedApp: "Once taken off, a managed computer is uninstalled by whoever sits at it",
+  notHub: "It runs the network's hub: move the hub or dissolve the network first",
+  hubOlder: "This network's hub is older and cannot uninstall it yet",
+  removeOffline: "Offline: it is taken off at once, and uninstalls when it next connects",
+  removeGo: "Remove",
+  removeFailed: (why) => `Couldn't remove it: ${why}`,
+  hubHere: "It runs the network's hub: to uninstall it, move the hub or dissolve the network on the machines map first",
+  hubGo: "To the map",
+};

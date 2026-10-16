@@ -1,0 +1,100 @@
+/* The parts of a machine's 「管理」 that are its own (`machine-fastctx.ts`,
+   `machine-remove.ts`): the Fastctx on it, what it can take and how an
+   update of it goes; and the sheet that takes it off the network, its three
+   ways solid fills, the chosen one washed in clay. */
+
+.fx-facts {
+  color: var(--text);
+}
+
+.fx-status .fx-quiet {
+  color: var(--text-3);
+}
+
+.fx-status .fx-wrong {
+  color: var(--wrong);
+}
+
+.fx-bar {
+  flex: 1 1 8em;
+  align-self: center;
+  max-width: 16em;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  overflow: hidden;
+}
+
+.fx-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+
+.mr-ways {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: var(--space-2);
+}
+
+.mr-way {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  text-align: left;
+  transition: background-color var(--hover) ease;
+}
+
+.mr-way:hover:not(:disabled) {
+  background: var(--fill-strong);
+}
+
+.mr-way.chosen,
+.mr-way.chosen:hover:not(:disabled) {
+  background: var(--accent-wash);
+}
+
+.mr-way.erase.chosen,
+.mr-way.erase.chosen:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--wrong) 16%, transparent);
+}
+
+.mr-way:disabled {
+  cursor: default;
+  background: color-mix(in srgb, var(--fill) 50%, transparent);
+}
+
+.mr-way-title {
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+  color: var(--text-strong);
+}
+
+.mr-way-what {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.mr-way:disabled .mr-way-title {
+  color: var(--text-3);
+}
+
+.mr-note {
+  margin: var(--space-3) 0 0;
+  font-size: var(--size-small);
+  color: var(--caution);
+}
+
+.mr-go {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-4);
+}

@@ -1,11 +1,13 @@
-// A machine's own page (`world-gui.md`, 机器的详情): how it is doing now,
-// drawn — how busy its processors and graphics cards are, how full its
-// memory is, how fast its busiest card moves bytes — how long it has been
-// up, each card and disk, and how its lines to the hubs held over a day, a
-// week or a month; then what it is, who is at work on it, and whom it is
-// shared with. Its name is changed where it is written. Only a machine the
-// account may work on has a page: one whose agent only assists stays on
-// the drawing (`world-network.md`).
+// A machine's own page (`world-gui.md`, 机器的详情): what it is on one line
+// under its head, then three tabs on one solid sheet. 「状况」 is how it is
+// doing now, drawn — how busy its processors and graphics cards are, how
+// full its memory is — each disk, and who is at work on it; 「网络」 where it
+// stands in each network, how its lines to the hubs held over a day, a
+// week or a month, its cards and direct links; 「管理」 what can be done to
+// it: the Fastctx on it, its name and group, whom it is shared with, the
+// facts of it, and taking it off. Its name is changed where it is written.
+// Only a machine the account may work on has a page: one whose agent only
+// assists stays on the drawing (`world-network.md`).
 //
 // While the page is in view it asks the machine every two seconds, and
 // nothing while it is not; the machine sends its lines' history whole once,
@@ -26,6 +28,9 @@ import { redrawKeepingFocus } from "./focus";
 import { diskBar, Ring, Spark, Strip, type LineMark, type LineSpan } from "./machine-draw";
 import { daysOf, heldOf, keptOf, SPAN_MS, take, tripsHeld, type Sample } from "./machine-history";
 import type { MachinePageWords } from "./machine-page-words";
+import { FastctxBlock, type FastctxSubject } from "./machine-fastctx";
+import type { ManageWords } from "./machine-manage-words";
+import { RemoveMachineSheet, type RemoveWay } from "./machine-remove";
 import { GiveSheet } from "./machine-sheets";
 import { linkSaid, linkWhy } from "./machines";
 import { formerNames, mapOf } from "./map-of";
@@ -37,8 +42,9 @@ import { assistantsOn, groupsOf, inNoNetwork, isSuper, isVisitor, machineActsFor
 import { RenameField, renamerOf, type Renamer } from "./rename";
 import type { Page } from "./shell";
 import { effect, type Signal } from "./signals";
-import { compareVersions, type UpdateState } from "../world/updates";
+import { compareVersions, type UpdateCall, type UpdateState } from "../world/updates";
 import type { UpdateWords } from "./update-words";
+import type { VersionWindow } from "./version-window";
 import { jobsOf, residentsOf, type Store } from "./store";
 
 export interface MachinePageOptions {
@@ -64,10 +70,24 @@ export interface MachinePageOptions {
   /** Goes to `place` in this page's stead: the machine renamed, removed, or
    *  one with no page of its own. */
   replace(place: Place): void;
-  /** What the network says of versions, and having a machine that runs no
-   *  application update its World program itself. */
-  updates?: { state: Signal<UpdateState | null>; machine(name: string): Promise<UpdateState>; words: UpdateWords } | undefined;
+  /** What this device knows of versions and the network's machines, and
+   *  asking another machine about its updates. */
+  updates?:
+    | {
+        state: Signal<UpdateState | null>;
+        /** A machine of an earlier release updates to its newest. */
+        machine(name: string): Promise<UpdateState>;
+        remote(name: string, call: UpdateCall): Promise<UpdateState>;
+        versions: VersionWindow;
+        versionsHere(look: boolean): void;
+        words: UpdateWords;
+      }
+    | undefined;
+  manage: ManageWords;
 }
+
+type Tab = "now" | "net" | "manage";
+const TABS: Tab[] = ["now", "net", "manage"];
 
 type Range = "day" | "week" | "month";
 const RANGES: Record<Range, number> = { day: 86_400_000, week: 7 * 86_400_000, month: 30 * 86_400_000 };
@@ -91,14 +111,12 @@ const UNDO_MS = 6_000;
 const SETTLE_MS = 4_000;
 
 interface Vital {
-  kind: "cpu" | "memory" | "gpu" | "network";
+  kind: "cpu" | "memory" | "gpu";
   element: HTMLElement;
   note: HTMLElement;
   sub: HTMLElement;
-  ring: Ring | null;
+  ring: Ring;
   spark: Spark;
-  down: HTMLElement | null;
-  up: HTMLElement | null;
 }
 
 interface LineView {
@@ -121,28 +139,39 @@ export class MachinePage implements Page {
   private readonly acts: HTMLElement;
   private readonly board: HTMLElement;
   private readonly id: HTMLElement;
-  private readonly vitalsBox: HTMLElement;
   private readonly note: HTMLElement;
-  private readonly cardsBox: HTMLElement;
+  private readonly tabsBox: HTMLElement;
+  private readonly sheet: HTMLElement;
+  private readonly panes: Record<Tab, HTMLElement>;
+  private readonly vitalsBox: HTMLElement;
   private readonly disksBox: HTMLElement;
-  private readonly linesBox: HTMLElement;
-  private readonly aboutBox: HTMLElement;
   private readonly presentBox: HTMLElement;
+  private readonly whereBox: HTMLElement;
+  private readonly linesBox: HTMLElement;
+  private readonly cardsBox: HTMLElement;
+  private readonly directBox: HTMLElement;
+  private readonly fastctxBox: HTMLElement;
+  private readonly namingBox: HTMLElement;
   private readonly sharingBox: HTMLElement;
-  private readonly columns: HTMLElement;
+  private readonly factsBox: HTMLElement;
+  private readonly dangerBox: HTMLElement;
   private readonly undoBar: HTMLElement;
   private readonly giving: GiveSheet;
   private readonly assistSheet: AssistSheet;
+  private readonly removing: RemoveMachineSheet;
+  private readonly fastctx: FastctxBlock | null;
   private readonly stop: () => void;
   private readonly born = Date.now();
   private machine: Machine | null = null;
-  /** How having this machine update itself stands, while it is asked. */
-  private machineUpdate: string | null = null;
+  /** The tab shown; none until the machine is known, which decides it. */
+  private tab: Tab | null = null;
   private vitals: Vital[] = [];
   private vitalsShape = "";
   private lines: LineView[] = [];
   private linesShape: string | null = null;
   private cardsShape = "";
+  /** The trace of what the card it follows receives and sends. */
+  private flow: Spark | null = null;
   private range: Range = keptRange();
   private timer = 0;
   private readonly moving: number;
@@ -159,16 +188,51 @@ export class MachinePage implements Page {
     this.title = options.name;
     this.giving = new GiveSheet(options.access);
     this.assistSheet = new AssistSheet(options.access);
+    this.removing = new RemoveMachineSheet(options.manage);
+    const updates = options.updates;
+    this.fastctx = updates
+      ? new FastctxBlock({
+          words: options.manage,
+          versions: updates.versions,
+          local: updates.state,
+          remote: updates.remote,
+          older: updates.machine,
+          versionsHere: updates.versionsHere,
+          due: (login, machine, version) =>
+            options.change(login, { change: "update_due", machine, ...(version ? { version } : {}) }).then(() => options.store.refresh()),
+          kept: (service) => (service ? options.words.service : options.words.noService),
+          changed: () => this.render(),
+        })
+      : null;
     this.element = document.createElement("div");
     this.element.className = "machine-page";
+    const { words } = options;
+    const tab = (one: Tab) =>
+      `<button class="mp-tab" type="button" role="tab" id="mp-tab-${one}" aria-controls="mp-pane-${one}" aria-selected="false" tabindex="-1" data-tab="${one}">${escape(words.tabs[one])}</button>`;
     this.element.innerHTML = `${options.head(`<div class="mp-heading"></div>`, `<div class="mp-acts"></div>`)}
       <div class="mp-body scroller"><div class="mp-board">
         <section class="mp-id"></section>
         <p class="mp-note" hidden></p>
-        <section class="mp-vitals" hidden></section>
-        <div class="mp-columns">
-          <div class="mp-main"><section class="mp-card mp-lines" hidden></section><section class="mp-card mp-cards" hidden></section></div>
-          <div class="mp-side"><section class="mp-card mp-disks" hidden></section><section class="mp-card mp-present" hidden></section><section class="mp-card mp-sharing" hidden></section><section class="mp-card mp-about" hidden></section></div>
+        <div class="mp-tabs" role="tablist" aria-label="${escape(words.tabsLabel)}" hidden>${TABS.map(tab).join("")}</div>
+        <div class="mp-sheet" hidden>
+          <div class="mp-pane" id="mp-pane-now" role="tabpanel" aria-labelledby="mp-tab-now" data-pane="now" hidden>
+            <section class="mp-sec mp-vitals" hidden></section>
+            <section class="mp-sec mp-disks" hidden></section>
+            <section class="mp-sec mp-present" hidden></section>
+          </div>
+          <div class="mp-pane" id="mp-pane-net" role="tabpanel" aria-labelledby="mp-tab-net" data-pane="net" hidden>
+            <section class="mp-sec mp-where" hidden></section>
+            <section class="mp-sec mp-lines" hidden></section>
+            <section class="mp-sec mp-cards" hidden></section>
+            <section class="mp-sec mp-direct" hidden></section>
+          </div>
+          <div class="mp-pane" id="mp-pane-manage" role="tabpanel" aria-labelledby="mp-tab-manage" data-pane="manage" hidden>
+            <section class="mp-sec mp-fastctx" hidden></section>
+            <section class="mp-sec mp-naming" hidden></section>
+            <section class="mp-sec mp-sharing" hidden></section>
+            <section class="mp-sec mp-about" hidden></section>
+            <section class="mp-sec mp-danger" hidden></section>
+          </div>
         </div>
       </div></div>
       <div class="mp-undo" role="status" hidden></div>`;
@@ -177,20 +241,40 @@ export class MachinePage implements Page {
     this.acts = part(".mp-acts");
     this.board = part(".mp-board");
     this.id = part(".mp-id");
-    this.vitalsBox = part(".mp-vitals");
     this.note = part(".mp-note");
-    this.cardsBox = part(".mp-cards");
+    this.tabsBox = part(".mp-tabs");
+    this.sheet = part(".mp-sheet");
+    this.panes = { now: part("[data-pane=now]"), net: part("[data-pane=net]"), manage: part("[data-pane=manage]") };
+    this.vitalsBox = part(".mp-vitals");
     this.disksBox = part(".mp-disks");
-    this.linesBox = part(".mp-lines");
-    this.aboutBox = part(".mp-about");
     this.presentBox = part(".mp-present");
+    this.whereBox = part(".mp-where");
+    this.linesBox = part(".mp-lines");
+    this.cardsBox = part(".mp-cards");
+    this.directBox = part(".mp-direct");
+    this.fastctxBox = part(".mp-fastctx");
+    this.namingBox = part(".mp-naming");
     this.sharingBox = part(".mp-sharing");
-    this.columns = part(".mp-columns");
+    this.factsBox = part(".mp-about");
+    this.dangerBox = part(".mp-danger");
     this.undoBar = part(".mp-undo");
     this.heading.innerHTML = `<h1 class="page-title mp-name">${escape(options.name)}</h1>`;
     this.element.addEventListener("click", (event) => this.click(event));
+    this.tabsBox.addEventListener("keydown", (event) => this.tabKey(event));
     document.addEventListener("visibilitychange", this.visible);
-    this.stop = effect(() => this.draw(options.store.world.get()));
+    // What this device knows of releases and of the network's machines can
+    // come after the World: the page is drawn again when it does.
+    const stopWorld = effect(() => this.draw(options.store.world.get()));
+    const stopUpdates = updates
+      ? effect(() => {
+          updates.state.get();
+          this.render();
+        })
+      : () => {};
+    this.stop = () => {
+      stopWorld();
+      stopUpdates();
+    };
     this.moving = window.setInterval(() => {
       if (document.visibilityState === "visible") this.drawLines();
     }, STRIP_MS);
@@ -205,10 +289,12 @@ export class MachinePage implements Page {
     if (this.undoing) clearTimeout(this.undoing.timer);
     document.removeEventListener("visibilitychange", this.visible);
     this.renaming?.dispose();
+    this.fastctx?.leave();
     for (const vital of this.vitals) {
-      vital.ring?.dispose();
+      vital.ring.dispose();
       vital.spark.dispose();
     }
+    this.flow?.dispose();
     for (const line of this.lines) {
       line.strip.dispose();
       line.spark.dispose();
@@ -292,18 +378,27 @@ export class MachinePage implements Page {
       const gone = Date.now() - this.born > SETTLE_MS;
       this.note.hidden = !gone;
       this.note.textContent = this.options.words.gone;
-      for (const box of [this.id, this.vitalsBox, this.cardsBox, this.disksBox, this.linesBox, this.aboutBox, this.presentBox, this.sharingBox]) box.hidden = true;
+      this.id.hidden = true;
+      this.tabsBox.hidden = true;
+      this.sheet.hidden = true;
+      this.fastctx?.show(null, false);
       return;
     }
     const kept = keptOf(machine.name);
     const stats = kept.last;
     this.id.hidden = false;
+    this.tabsBox.hidden = false;
+    this.sheet.hidden = false;
+    // A machine too old to say how it is doing opens on what can be done to
+    // it: its update is then before the user's eyes.
+    this.tab ??= askable(machine) || machine.online === false ? "now" : "manage";
+    this.drawTabs();
     this.drawIdentity(machine, stats);
     this.drawNote(machine, stats, kept.heard);
     this.vitalsBox.hidden = !stats;
     if (stats) {
       this.drawVitals(stats, kept.samples);
-      this.drawCards(stats);
+      this.drawCards(stats, kept.samples);
       this.drawDisks(stats);
       this.drawLines();
     } else {
@@ -311,11 +406,47 @@ export class MachinePage implements Page {
       this.disksBox.hidden = true;
       this.linesBox.hidden = true;
     }
-    this.drawAbout(machine, stats, world);
-    this.drawPresent(machine, world);
+    this.drawPresent(machine, stats, world);
+    this.drawWhere(machine, world);
+    this.drawDirect(machine, world);
+    this.drawFastctx(machine, stats, world);
+    this.drawNaming(machine, world);
     this.drawSharing(machine, world);
-    // With nothing in the wider column, the rest spreads across the page.
-    this.columns.classList.toggle("single", this.linesBox.hidden && this.cardsBox.hidden);
+    this.drawFacts(machine, stats);
+    this.drawDanger(machine, world);
+  }
+
+  /** The three tabs, the one shown on the sheet as its own top. */
+  private drawTabs(): void {
+    const shown = this.tab ?? "now";
+    for (const button of this.tabsBox.querySelectorAll<HTMLButtonElement>("[data-tab]")) {
+      const on = button.dataset.tab === shown;
+      button.setAttribute("aria-selected", String(on));
+      button.tabIndex = on ? 0 : -1;
+    }
+    for (const one of TABS) this.panes[one].hidden = one !== shown;
+    // The sheet's corner under the first tab is the tab's own.
+    this.sheet.classList.toggle("first", shown === TABS[0]);
+  }
+
+  private choose(tab: Tab, focus: boolean): void {
+    if (this.tab === tab) return;
+    this.tab = tab;
+    this.drawTabs();
+    this.render();
+    if (focus) this.tabsBox.querySelector<HTMLElement>(`[data-tab=${tab}]`)?.focus();
+  }
+
+  /** The left and right keys go from tab to tab, as Home and End go to the
+   *  first and the last. */
+  private tabKey(event: KeyboardEvent): void {
+    const at = TABS.indexOf(this.tab ?? "now");
+    const to =
+      event.key === "ArrowRight" ? (at + 1) % TABS.length : event.key === "ArrowLeft" ? (at + TABS.length - 1) % TABS.length : event.key === "Home" ? 0 : event.key === "End" ? TABS.length - 1 : -1;
+    if (to === -1) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.choose(TABS[to]!, true);
   }
 
   /** Replaces `box`'s markup when it changed. */
@@ -386,18 +517,22 @@ export class MachinePage implements Page {
     );
   }
 
-  /** What it is and how long it has been up; when it says nothing of
-   *  itself, what the World knows and whether it is online. */
+  /** What it is and how long it has been up, and the Fastctx on it and
+   *  whether that is the newest; when it says nothing of itself, what the
+   *  World knows and whether it is online. */
   private drawIdentity(machine: Machine, stats: MachineStats | null): void {
     const { words } = this.options;
     const facts = factsOf(machine);
     const form = facts?.form ?? (facts?.os === "linux" ? "server" : "desktop");
     const system = stats?.system || (facts ? osName(facts.os) : "");
+    const version = stats?.node.version ?? facts?.version ?? this.options.updates?.state.peek()?.network?.machines?.[machine.name]?.kernel ?? null;
+    const fastctx = version ? this.fastctxSaid(version) : [];
     const hardware = stats
-      ? [stats.cpu.model, words.threads(stats.cpu.threads), stats.memory.total ? bytesSaid(stats.memory.total) : "", stats.arch]
-      : facts
-        ? [facts.arch, `fastctx ${facts.version}`]
-        : [];
+      ? [stats.cpu.model, words.threads(stats.cpu.threads), stats.memory.total ? bytesSaid(stats.memory.total) : "", stats.arch, ...fastctx]
+      : [facts?.arch ?? "", ...fastctx];
+    // Each fact keeps to itself on a narrow screen: the line breaks between
+    // them, the dot after the one before.
+    const bits = hardware.filter(Boolean);
     let right: string;
     if (stats?.boot) {
       const at = Date.parse(stats.at);
@@ -410,10 +545,9 @@ export class MachinePage implements Page {
     this.put(
       "id",
       this.id,
-      `<span class="mp-id-mark" aria-hidden="true">${glyph(form, 28)}</span><div class="mp-id-text"><p class="mp-id-system"${stats?.kernel ? ` title="${escape(stats.kernel)}"` : ""}>${escape(system)}</p><p class="mp-id-hardware">${hardware
-        .filter(Boolean)
-        .map(escape)
-        .join(`<span class="sep">·</span>`)}</p></div>${right}`,
+      `<span class="mp-id-mark" aria-hidden="true">${glyph(form, 28)}</span><div class="mp-id-text"><p class="mp-id-system"${stats?.kernel ? ` title="${escape(stats.kernel)}"` : ""}>${escape(system)}</p><p class="mp-id-hardware">${bits
+        .map((bit, at) => `<span class="mp-id-bit">${escape(bit)}${at < bits.length - 1 ? `<span class="sep">·</span>` : ""}</span>`)
+        .join("")}</p></div>${right}`,
     );
   }
 
@@ -438,23 +572,21 @@ export class MachinePage implements Page {
   }
 
   /** The rings and traces of how busy and how full it is: its processors,
-   *  its memory, each graphics card, and the bytes of the card it uses. */
+   *  its memory and each graphics card, in one row while four fit. */
   private drawVitals(stats: MachineStats, samples: Sample[]): void {
     const { words } = this.options;
-    const card = mainCard(stats.cards);
     const gpus = stats.gpus ?? [];
-    const shape = `${stats.machine}|${gpus.length}|${card?.name ?? ""}`;
+    const shape = `${stats.machine}|${gpus.length}`;
     if (shape !== this.vitalsShape) {
       this.vitalsShape = shape;
       for (const vital of this.vitals) {
-        vital.ring?.dispose();
+        vital.ring.dispose();
         vital.spark.dispose();
       }
       this.vitals = [
         this.vital("cpu", words.cpu, `${stats.machine}:cpu`),
         this.vital("memory", words.memory, `${stats.machine}:memory`),
         ...gpus.map((_, index) => this.vital("gpu", words.gpu, `${stats.machine}:gpu:${index}`)),
-        ...(card ? [this.vital("network", words.network, `${stats.machine}:network`)] : []),
       ];
       this.vitalsBox.replaceChildren(...this.vitals.map((vital) => vital.element));
       this.vitalsBox.dataset.count = String(this.vitals.length);
@@ -468,7 +600,7 @@ export class MachinePage implements Page {
       switch (vital.kind) {
         case "cpu": {
           const busy = stats.cpu.busy ?? null;
-          vital.ring!.set(busy, percentHtml(busy));
+          vital.ring.set(busy, percentHtml(busy));
           set(vital.note, words.threads(stats.cpu.threads));
           const load = stats.cpu.load;
           const points = series((sample) => sample.cpu);
@@ -483,7 +615,7 @@ export class MachinePage implements Page {
         case "memory": {
           const { total, used, swap_total, swap_used } = stats.memory;
           const share = total ? used / total : null;
-          vital.ring!.set(share, percentHtml(share));
+          vital.ring.set(share, percentHtml(share));
           set(vital.note, swap_total ? words.swap(windows, bytesSaid(swap_used), bytesSaid(swap_total)) : "");
           set(vital.sub, words.of(bytesSaid(used), bytesSaid(total)));
           vital.spark.draw([{ points: series((sample) => sample.memory), max: 1, kind: "clay", area: true, gap: READ_GAP_MS }], from, at);
@@ -495,61 +627,26 @@ export class MachinePage implements Page {
           const one = gpus[index];
           if (!one) break;
           const busy = one.busy ?? null;
-          vital.ring!.set(busy, percentHtml(busy));
+          vital.ring.set(busy, percentHtml(busy));
           set(vital.note, one.name);
           vital.note.title = one.name;
           set(vital.sub, one.memory_total ? words.vram(bytesSaid(one.memory_used), bytesSaid(one.memory_total)) : "");
           vital.spark.draw([{ points: series((sample) => sample.gpus[index] ?? null), max: 1, kind: "clay", area: true, gap: READ_GAP_MS }], from, at);
           break;
         }
-        case "network": {
-          if (!card) break;
-          set(vital.down!, card.receiving === undefined ? "—" : rate(card.receiving));
-          set(vital.up!, card.sending === undefined ? "—" : rate(card.sending));
-          set(vital.note, [card.name, card.speed ? bits(card.speed) : ""].filter(Boolean).join(" · "));
-          set(vital.sub, words.moved(bytesSaid(card.received), bytesSaid(card.sent)));
-          const downs = series((sample) => sample.cards[card.name]?.[0] ?? null);
-          const ups = series((sample) => sample.cards[card.name]?.[1] ?? null);
-          let top = 1024;
-          for (const [when, value] of [...downs, ...ups]) if (when >= from && value !== null && value > top) top = value;
-          vital.spark.draw(
-            [
-              { points: downs, max: top * 1.15, kind: "clay", area: true, gap: READ_GAP_MS },
-              { points: ups, max: top * 1.15, kind: "graphite", area: false, gap: READ_GAP_MS },
-            ],
-            from,
-            at,
-          );
-          break;
-        }
       }
     }
   }
 
-  /** One of the vitals: its name and a note on its line, its ring (or the
-   *  rates of a card), its trace, and a line under it. */
+  /** One of the vitals: its name and a note on its line, its ring, its
+   *  trace, and a line under it. */
   private vital(kind: Vital["kind"], label: string, seed: string): Vital {
     const element = document.createElement("article");
     element.className = `mp-vital mp-vital-${kind}`;
     element.innerHTML = `<header class="mp-vital-head"><h2 class="mp-vital-label">${escape(label)}</h2><span class="mp-vital-note"></span></header><div class="mp-vital-body"></div><p class="mp-vital-sub"></p>`;
-    const body = element.querySelector<HTMLElement>(".mp-vital-body")!;
-    const spark = new Spark(kind === "network" ? "mp-spark-flow" : "");
-    let ring: Ring | null = null;
-    let down: HTMLElement | null = null;
-    let up: HTMLElement | null = null;
-    if (kind === "network") {
-      const rates = document.createElement("div");
-      rates.className = "mp-rates";
-      rates.innerHTML = `<span class="mp-rate down"><span class="mp-arrow" aria-hidden="true">↓</span><span class="mp-rate-value"></span></span><span class="mp-rate up"><span class="mp-arrow" aria-hidden="true">↑</span><span class="mp-rate-value"></span></span>`;
-      const values = rates.querySelectorAll<HTMLElement>(".mp-rate-value");
-      down = values[0]!;
-      up = values[1]!;
-      body.append(rates);
-    } else {
-      ring = new Ring(seed);
-      body.append(ring.element);
-    }
-    body.append(spark.element);
+    const ring = new Ring(seed);
+    const spark = new Spark();
+    element.querySelector<HTMLElement>(".mp-vital-body")!.append(ring.element, spark.element);
     return {
       kind,
       element,
@@ -557,24 +654,26 @@ export class MachinePage implements Page {
       sub: element.querySelector<HTMLElement>(".mp-vital-sub")!,
       ring,
       spark,
-      down,
-      up,
     };
   }
 
   /** Each network card: its name, its link's speed, whether a program made
-   *  it, where it is reached, and what it moves now and has moved. */
-  private drawCards(stats: MachineStats): void {
+   *  it, where it is reached, and what it moves now and has moved; the one
+   *  it uses most with a trace of what it received and sent. */
+  private drawCards(stats: MachineStats, samples: Sample[]): void {
     const { words } = this.options;
     const cards = stats.cards;
     this.cardsBox.hidden = !cards.length;
     if (!cards.length) return;
-    const shape = cards.map((card) => [card.name, card.up, card.hardware, card.speed, (card.addresses ?? []).join(",")].join("|")).join(";");
+    const main = mainCard(cards);
+    const shape = `${main?.name ?? ""};${cards.map((card) => [card.name, card.up, card.hardware, card.speed, (card.addresses ?? []).join(",")].join("|")).join(";")}`;
     if (shape !== this.cardsShape) {
       this.cardsShape = shape;
-      this.cardsBox.innerHTML = `<h2 class="mp-card-title">${escape(words.cards)}</h2><ul class="mp-list">${cards
+      this.flow?.dispose();
+      this.flow = null;
+      this.cardsBox.innerHTML = `<h2 class="mp-sec-title">${escape(words.cards)}</h2><ul class="mp-list">${cards
         .map(
-          (card, index) => `<li class="mp-net${card.up ? "" : " off"}" data-card="${index}">
+          (card, index) => `<li class="mp-net${card.up ? "" : " off"}${card === main ? " mp-net-followed" : ""}" data-card="${index}">
             <div class="mp-net-head"><span class="mp-net-name" title="${escape(card.name)}">${escape(card.name)}</span>${card.speed ? `<span class="tag">${escape(bits(card.speed))}</span>` : ""}${
               card.hardware ? "" : `<span class="tag mp-tag-quiet">${escape(words.virtualCard)}</span>`
             }${card.up ? `<span class="mp-net-rates"><span class="mp-rate down"><span class="mp-arrow" aria-hidden="true">↓</span><span class="mp-rate-value"></span></span><span class="mp-rate up"><span class="mp-arrow" aria-hidden="true">↑</span><span class="mp-rate-value"></span></span></span>` : `<span class="mp-net-off">${escape(words.cardOff)}</span>`}</div>
@@ -583,6 +682,10 @@ export class MachinePage implements Page {
           </li>`,
         )
         .join("")}</ul>`;
+      if (main) {
+        this.flow = new Spark("mp-spark-flow");
+        this.cardsBox.querySelector(".mp-net-followed")?.append(this.flow.element);
+      }
     }
     cards.forEach((card, index) => {
       if (!card.up) return;
@@ -594,6 +697,22 @@ export class MachinePage implements Page {
       const moved = row.querySelector<HTMLElement>(".mp-net-moved");
       if (moved) set(moved, words.moved(bytesSaid(card.received), bytesSaid(card.sent)));
     });
+    if (!main || !this.flow) return;
+    const at = Date.parse(stats.at);
+    const from = at - SPAN_MS;
+    const series = (side: 0 | 1): [number, number | null][] => samples.map((sample) => [sample.at, sample.cards[main.name]?.[side] ?? null]);
+    const downs = series(0);
+    const ups = series(1);
+    let top = 1024;
+    for (const [when, value] of [...downs, ...ups]) if (when >= from && value !== null && value > top) top = value;
+    this.flow.draw(
+      [
+        { points: downs, max: top * 1.15, kind: "clay", area: true, gap: READ_GAP_MS },
+        { points: ups, max: top * 1.15, kind: "graphite", area: false, gap: READ_GAP_MS },
+      ],
+      from,
+      at,
+    );
   }
 
   /** Each disk as a bar of how full it is, with what is free. */
@@ -609,7 +728,7 @@ export class MachinePage implements Page {
         )}</span></div>${diskBar(used, `${stats.machine}:${disk.at}`)}</li>`;
       })
       .join("");
-    this.put("disks", this.disksBox, `<h2 class="mp-card-title">${escape(words.disks)}</h2><ul class="mp-list">${rows}</ul>`);
+    this.put("disks", this.disksBox, `<h2 class="mp-sec-title">${escape(words.disks)}</h2><ul class="mp-list">${rows}</ul>`);
   }
 
   /** Each line to a hub: up or down and for how long, its round trip now
@@ -676,7 +795,7 @@ export class MachinePage implements Page {
       view.strip.dispose();
       view.spark.dispose();
     }
-    this.linesBox.innerHTML = `<header class="mp-card-head"><h2 class="mp-card-title">${escape(words.connection)}</h2><div class="mp-ranges" role="radiogroup" aria-label="${escape(words.connection)}">${(Object.keys(RANGES) as Range[])
+    this.linesBox.innerHTML = `<header class="mp-sec-head"><h2 class="mp-sec-title">${escape(words.connection)}</h2><div class="mp-ranges" role="radiogroup" aria-label="${escape(words.connection)}">${(Object.keys(RANGES) as Range[])
       .map((range) => `<button type="button" class="mp-range" role="radio" data-range="${range}">${escape(words.ranges[range])}</button>`)
       .join("")}</div></header><div class="mp-line-list"></div>`;
     const list = this.linesBox.querySelector<HTMLElement>(".mp-line-list")!;
@@ -723,59 +842,98 @@ export class MachinePage implements Page {
     return marks.join("");
   }
 
-  /** What it is that the head of the page does not say, one fact a row,
-   *  the names in one column and the values in the next: its own host
-   *  name, its kernel, its home, when it started, the fastctx on it, and
-   *  where it stands in each network; last, removing it, for its owner. */
-  private drawAbout(machine: Machine, stats: MachineStats | null, world: WorldNow): void {
-    const { words, machines } = this.options;
+  /** The Fastctx on it as its identity line says it: the version, and
+   *  whether a newer one is out on its line, as this device knows. */
+  private fastctxSaid(version: string): string[] {
+    const { words } = this.options;
+    const state = this.options.updates?.state.peek();
+    if (!state) return [words.fastctxRuns(version)];
+    const beta = version.includes("-");
+    const known = [state.offer, state.looked.stable, state.looked.beta, state.network?.stable, state.network?.beta, ...(state.looked.newer ?? [])];
+    const newer = known
+      .filter((manifest) => manifest && (beta || !manifest.version.includes("-")) && compareVersions(manifest.version, version) > 0)
+      .map((manifest) => manifest!.version)
+      .sort((a, b) => compareVersions(b, a))[0];
+    return [words.fastctxRuns(version), newer ? words.fastctxBehind(newer) : words.fastctxLatest];
+  }
+
+  /** Facts the head does not say, one a row, the names in one column and
+   *  the values in the next: its own host name, its kernel, its home and
+   *  when it started. */
+  private drawFacts(machine: Machine, stats: MachineStats | null): void {
+    const { words } = this.options;
     const facts = factsOf(machine);
-    const rows: { label: string; lines: string[]; title?: string; code?: boolean; act?: string }[] = [];
-    if (stats?.host) rows.push({ label: words.host, lines: [stats.host] });
-    if (stats?.kernel) rows.push({ label: words.kernel, lines: [stats.kernel] });
-    if (facts?.home) rows.push({ label: words.home, lines: [facts.home], code: true });
-    if (stats?.boot) rows.push({ label: words.booted, lines: [words.stamp(new Date(stats.boot), new Date(stats.at))] });
-    const version = stats?.node.version ?? facts?.version;
-    if (version) {
-      const kept = stats ? (stats.node.service ? words.service : words.noService) : "";
-      const running = stats ? words.nodeFor(words.span(Date.parse(stats.at) - Date.parse(stats.node.started))) : "";
-      rows.push({ label: words.version, lines: [[version, kept].filter(Boolean).join(" · ")], title: running, act: this.updateAct(machine, version, world) });
-    }
-    // Where it stands in each network: how this computer reaches each hub
-    // and as whom, or whose machine another is there.
+    const rows: { label: string; value: string; code?: boolean; title?: string }[] = [];
+    if (stats?.host) rows.push({ label: words.host, value: stats.host });
+    if (stats?.kernel) rows.push({ label: words.kernel, value: stats.kernel });
+    if (facts?.home) rows.push({ label: words.home, value: facts.home, code: true });
+    if (stats?.boot) rows.push({ label: words.booted, value: words.stamp(new Date(stats.boot), new Date(stats.at)) });
+    if (stats) rows.push({ label: words.node, value: words.nodeFor(words.span(Date.parse(stats.at) - Date.parse(stats.node.started))) });
+    this.factsBox.hidden = !rows.length;
+    this.put("facts", this.factsBox, `<h2 class="mp-sec-title">${escape(words.about)}</h2>${factRows(rows)}`);
+  }
+
+  /** Where it stands in each network: how this computer reaches each hub
+   *  and as whom, or whose machine another is there. */
+  private drawWhere(machine: Machine, world: WorldNow): void {
+    const { words, machines } = this.options;
     const networks = machine.here
       ? world.nodes.hubs.map((hub) => {
           const stand = hub.home ? machines.registeredUnder(hub.home) : hub.logins.length ? machines.onlyLogins(hub.logins.join(machines.separator)) : "";
-          return { line: [hub.name, linkSaid(hub.link, machines), stand].filter(Boolean).join(" · "), why: linkWhy(hub.link) };
+          return { label: hub.name, value: [linkSaid(hub.link, machines), stand].filter(Boolean).join(" · "), title: linkWhy(hub.link) };
         })
-      : machine.on.filter((on) => on.owner).map((on) => ({ line: `${on.hubName} · ${machines.registeredUnder(on.owner!)}`, why: "" }));
-    if (networks.length) rows.push({ label: words.networks, lines: networks.map((one) => one.line), title: networks.map((one) => one.why).filter(Boolean).join("\n") });
-    // The group its owner put it in, on each hub that says so.
+      : machine.on.filter((on) => on.owner).map((on) => ({ label: on.hubName, value: machines.registeredUnder(on.owner!), title: "" }));
+    this.whereBox.hidden = !networks.length;
+    this.put("where", this.whereBox, `<h2 class="mp-sec-title">${escape(words.networks)}</h2>${factRows(networks)}`);
+  }
+
+  /** Its name and the group its owner put it in, on each hub that says so. */
+  private drawNaming(machine: Machine, world: WorldNow): void {
+    const { words } = this.options;
     const grouped = [...new Set(world.accounts.hubs.flatMap((hub) => hub.members.filter((member) => member.kind === "computer" && names(member, machine.name) && member.group).map((member) => member.group!)))];
-    if (grouped.length) rows.push({ label: words.group, lines: grouped });
-    const owner = this.ownerLogin(machine, world);
-    const remove =
-      owner && !machine.here
-        ? `<div class="mp-own"><button class="text-button quiet-button danger" type="button" data-act="remove">${glyph("close", 14)}<span>${escape(machines.remove)}</span></button></div>`
-        : "";
-    this.aboutBox.hidden = !rows.length && !remove;
-    this.put(
-      "about",
-      this.aboutBox,
-      `<h2 class="mp-card-title">${escape(words.about)}</h2><dl class="mp-facts">${rows
-        .map(
-          (row) =>
-            `<div class="mp-fact"><dt>${escape(row.label)}</dt><dd${row.title ? ` title="${escape(row.title)}"` : ""}${row.code ? ` class="code"` : ""}>${row.lines
-              .map((line) => `<span>${escape(line)}</span>`)
-              .join("")}${row.act ?? ""}</dd></div>`,
-        )
-        .join("")}</dl>${remove}`,
-    );
+    const rename = this.renamer(machine, world)
+      ? `<button class="text-button quiet-button" type="button" data-act="rename">${glyph("edit", 14)}<span>${escape(words.rename)}</span></button>`
+      : "";
+    const rows = [
+      `<dt>${escape(words.name)}</dt><dd><span>${escape(machine.written)}</span>${rename}</dd>`,
+      grouped.length ? `<dt>${escape(words.group)}</dt><dd><span>${escape(grouped.join(" · "))}</span></dd>` : "",
+    ].join("");
+    this.namingBox.hidden = false;
+    this.put("naming", this.namingBox, `<dl class="mp-rows">${rows}</dl>`);
+  }
+
+  /** The Fastctx on it: what it runs and can take, its update and choices. */
+  private drawFastctx(machine: Machine, stats: MachineStats | null, world: WorldNow): void {
+    const block = this.fastctx;
+    this.fastctxBox.hidden = !block;
+    if (!block) return;
+    const subject: FastctxSubject = {
+      machine,
+      version: stats?.node.version ?? factsOf(machine)?.version ?? null,
+      service: stats ? stats.node.service : null,
+      manages: this.updaterLogin(machine, world),
+    };
+    block.show(subject, this.tab === "manage" && document.visibilityState === "visible");
+    this.put("fastctx", this.fastctxBox, block.html(subject));
+  }
+
+  /** At the foot of 「管理」: taking it off, for whoever may; on the machine
+   *  that runs the network's hub, the way to move the hub or dissolve the
+   *  network instead of uninstalling it. */
+  private drawDanger(machine: Machine, world: WorldNow): void {
+    const { manage } = this.options;
+    const remover = this.removerLogin(machine, world);
+    const hub = this.options.updates?.state.peek()?.network?.machines?.[machine.name]?.hub_here === true;
+    const parts: string[] = [];
+    if (hub) parts.push(`<p class="mp-danger-note">${escape(manage.hubHere)}</p><a class="text-button quiet-button" href="${link({ kind: "machines" })}">${escape(manage.hubGo)}</a>`);
+    if (remover && !machine.here) parts.push(`<button class="text-button quiet-button danger" type="button" data-act="remove">${glyph("close", 14)}<span>${escape(manage.remove)}</span></button>`);
+    this.dangerBox.hidden = !parts.length;
+    this.put("danger", this.dangerBox, `<div class="mp-danger-acts">${parts.join("")}</div>`);
   }
 
   /** Who is at work on it now and what runs there, as this device's
-   *  logins see it. */
-  private drawPresent(machine: Machine, world: WorldNow): void {
+   *  logins see it; and what of its own work is stuck, as it says. */
+  private drawPresent(machine: Machine, stats: MachineStats | null, world: WorldNow): void {
     const { words, machines } = this.options;
     const viewer = loginsOf(world.accounts).find((login) => machine.on.some((on) => on.hub === login.hub)) ?? null;
     const group = viewer ? (groupsOf(world).find((one) => sameLogin(one.login, viewer)) ?? null) : null;
@@ -788,7 +946,11 @@ export class MachinePage implements Page {
     const answered = world.who.machines.find((one) => one.kind === "answered" && one.reply.machine === machine.name);
     const busy = answered?.kind === "answered" ? (answered.reply.busy ?? 0) : 0;
     const others = Math.max(0, busy - residents.length);
-    this.presentBox.hidden = !residents.length && !jobs.length && !others;
+    const stuck = stats?.node.stuck ?? [];
+    this.presentBox.hidden = !residents.length && !jobs.length && !others && !stuck.length;
+    const stuckSaid = stuck.length
+      ? `<ul class="mp-stuck">${stuck.map((one) => `<li title="${escape(one.what)}">${escape(words.stuck(one.doing, one.what, words.span(one.seconds * 1000)))}</li>`).join("")}</ul>`
+      : "";
     const agents = residents
       .map(
         (r) =>
@@ -800,18 +962,25 @@ export class MachinePage implements Page {
     this.put(
       "present",
       this.presentBox,
-      `<h2 class="mp-card-title">${escape(words.present)}</h2>${agents ? `<ul class="machine-agents">${agents}</ul>` : ""}${others ? `<p class="machine-jobs">${escape(words.othersAtWork(others))}</p>` : ""}${jobs.length ? `<p class="machine-jobs">${escape(machines.jobs(jobs.length))}</p>` : ""}`,
+      `<h2 class="mp-sec-title">${escape(words.present)}</h2>${agents ? `<ul class="machine-agents">${agents}</ul>` : ""}${others ? `<p class="machine-jobs">${escape(words.othersAtWork(others))}</p>` : ""}${jobs.length ? `<p class="machine-jobs">${escape(machines.jobs(jobs.length))}</p>` : ""}${stuckSaid}`,
     );
   }
 
+  /** Its direct links, in 「网络」. */
+  private drawDirect(machine: Machine, world: WorldNow): void {
+    const { words, machines } = this.options;
+    const direct = directSaid(machine, world, machines);
+    this.directBox.hidden = !direct;
+    if (direct) this.put("direct", this.directBox, `<h2 class="mp-sec-title">${escape(words.direct)}</h2>${direct}`);
+  }
+
   /** Whom it is shared with and whom its agents assist, for its owner,
-   *  each taken back with its cross; and its direct links. */
+   *  each taken back with its cross. */
   private drawSharing(machine: Machine, world: WorldNow): void {
     const { words, machines, access } = this.options;
     const owner = this.ownerLogin(machine, world);
-    const direct = directSaid(machine, world, machines);
-    this.sharingBox.hidden = !owner && !direct;
-    if (!owner && !direct) return;
+    this.sharingBox.hidden = !owner;
+    if (!owner) return;
     const now = this.options.store.clock.peek();
     const chip = (label: string, take: string) =>
       `<span class="chip">${escape(label)}<button class="chip-x" type="button" ${take} aria-label="${escape(machines.takeBack(label))}" title="${escape(machines.takeBack(label))}">${glyph("close", 12)}</button></span>`;
@@ -833,7 +1002,7 @@ export class MachinePage implements Page {
           })
           .join("")}</div>`
       : "";
-    this.put("sharing", this.sharingBox, `<h2 class="mp-card-title">${escape(words.sharing)}</h2>${shared}${assisting}${direct}`);
+    this.put("sharing", this.sharingBox, `<h2 class="mp-sec-title">${escape(words.sharing)}</h2>${shared}${assisting}`);
   }
 
   private stateOf(machine: Machine): { kind: string; said: string } {
@@ -845,48 +1014,32 @@ export class MachinePage implements Page {
     return { kind: "unknown", said: machines.unknown };
   }
 
+  /** The login that may update `machine` and set its choices: its owner's,
+   *  or the super administrator's but for a visitor's machine
+   *  (`world-upgrade.md`, 谁来更新). */
+  private updaterLogin(machine: Machine, world: WorldNow): Login | null {
+    if (machine.here) return null;
+    const owner = this.ownerLogin(machine, world);
+    if (owner) return owner;
+    const logins = loginsOf(world.accounts);
+    for (const login of logins) {
+      if (!isSuper(world, login) || !machine.on.some((on) => on.hub === login.hub)) continue;
+      const of = ownerOf(machine, login);
+      if (of && !isVisitor(world, { ...login, account: of })) return login;
+    }
+    return null;
+  }
+
+  /** The login that may take `machine` off: its owner's, or the super
+   *  administrator's. */
+  private removerLogin(machine: Machine, world: WorldNow): Login | null {
+    const owner = this.ownerLogin(machine, world);
+    if (owner) return owner;
+    return loginsOf(world.accounts).find((login) => isSuper(world, login) && machine.on.some((on) => on.hub === login.hub)) ?? null;
+  }
+
   /** The login a machine is the account's own under: this computer's on a
    *  hub it is registered on, or the one that registered another. */
-  /** The way to have another machine that runs no application update
-   *  itself, for its owner, or a managed one's super administrator, while
-   *  the network knows a newer release than it runs. */
-  private updateAct(machine: Machine, version: string, world: WorldNow): string {
-    const updates = this.options.updates;
-    if (!updates || machine.here) return "";
-    const said = this.machineUpdate;
-    if (said) return `<span class="mp-update-said">${escape(said)}</span>`;
-    const state = updates.state.peek();
-    const running = state?.network?.machines?.[machine.name];
-    const offer = state?.offer;
-    if (!offer || (running && running.app) || compareVersions(offer.version, version) <= 0) return "";
-    const owner = this.ownerLogin(machine, world);
-    const administered = isManaged(world, machine.name) && loginsOf(world.accounts).some((login) => isSuper(world, login));
-    if (!owner && !administered) return "";
-    return `<button class="text-button quiet-button" type="button" data-act="update-machine" title="${escape(updates.words.machineBehind(offer.version))}">${escape(updates.words.updateMachine)}</button>`;
-  }
-
-  private redrawAbout(): void {
-    const world = this.options.store.world.peek();
-    if (world && this.machine) this.drawAbout(this.machine, keptOf(this.machine.name).last, world);
-  }
-
-  private updateMachine(machine: Machine): void {
-    const updates = this.options.updates;
-    if (!updates || this.machineUpdate) return;
-    this.machineUpdate = updates.words.machineUpdating;
-    this.redrawAbout();
-    updates.machine(machine.name).then(
-      () => {
-        this.machineUpdate = null;
-        this.redrawAbout();
-      },
-      (error: unknown) => {
-        this.machineUpdate = detailOf(String(error));
-        this.redrawAbout();
-      },
-    );
-  }
-
   private ownerLogin(machine: Machine, world: WorldNow): Login | undefined {
     const logins = loginsOf(world.accounts);
     if (machine.here) return logins.find((login) => world.nodes.hubs.some((hub) => hub.hub === login.hub && hub.home === login.account));
@@ -932,8 +1085,13 @@ export class MachinePage implements Page {
   }
 
   private click(event: Event): void {
-    const target = (event.target as HTMLElement).closest<HTMLElement>("[data-act], [data-range]");
+    const target = (event.target as HTMLElement).closest<HTMLElement>("[data-act], [data-range], [data-tab]");
     if (!target || (target as HTMLButtonElement).disabled) return;
+    if (target.dataset.tab) {
+      this.choose(target.dataset.tab as Tab, false);
+      return;
+    }
+    if (this.fastctx?.click(target)) return;
     if (target.dataset.range) {
       this.range = target.dataset.range as Range;
       keepRange(this.range);
@@ -977,12 +1135,11 @@ export class MachinePage implements Page {
           );
         return;
       }
-      case "remove":
-        if (owner) this.remove(owner, machine);
+      case "remove": {
+        const remover = this.removerLogin(machine, world);
+        if (remover) this.remove(remover, machine, world);
         return;
-      case "update-machine":
-        this.updateMachine(machine);
-        return;
+      }
       case "undo":
         void this.undo();
         return;
@@ -1021,14 +1178,35 @@ export class MachinePage implements Page {
     );
   }
 
-  private remove(login: Login, machine: Machine): void {
-    const { access } = this.options;
-    this.options.confirm.ask({
-      title: access.removeTitle(machine.written),
-      what: access.removeWhat(machine.written),
-      go: access.removeGo,
-      act: () => this.options.change(login, { change: "remove", name: machine.name, reason: access.reasonDefault }),
-      done: () => {
+  /** Takes `machine` off the network as `login`, one of three ways
+   *  (`world-network.md`, 移出网络与卸载): uninstalling Fastctx there is only
+   *  its owner's, or a managed machine's super administrator's, and never
+   *  for a computer with the application, managed or not, or the machine
+   *  that runs the hub. */
+  private remove(login: Login, machine: Machine, world: WorldNow): void {
+    const { access, manage } = this.options;
+    const running = this.options.updates?.state.peek()?.network?.machines?.[machine.name];
+    const owner = this.ownerLogin(machine, world);
+    const managed = isManaged(world, machine.name);
+    const hub = hubOf(world, login);
+    const cannot = running?.hub_here
+      ? manage.notHub
+      : running?.app
+        ? managed
+          ? manage.managedApp
+          : manage.notApp
+        : !owner && !managed
+          ? manage.notMember
+          : !hub?.uninstalls
+            ? manage.hubOlder
+            : null;
+    this.removing.open({
+      machine: machine.written,
+      cannot,
+      offline: machine.online === false,
+      remove: async (way: RemoveWay) => {
+        const then = way === "leave" ? {} : { then: way };
+        await this.options.change(login, { change: "remove", name: machine.name, reason: access.reasonDefault, ...then });
         void this.options.store.refresh();
         this.options.replace({ kind: "machines" });
       },
@@ -1091,6 +1269,13 @@ function factsOf(machine: Machine): MachineFacts | null {
   return "Ok" in machine.facts && machine.facts.Ok ? machine.facts.Ok : null;
 }
 
+/** Rows of facts, the names in one column and the values in the next. */
+function factRows(rows: { label: string; value: string; code?: boolean; title?: string }[]): string {
+  return `<dl class="mp-rows">${rows
+    .map((row) => `<dt>${escape(row.label)}</dt><dd${row.title ? ` title="${escape(row.title)}"` : ""}${row.code ? ` class="code"` : ""}><span>${escape(row.value)}</span></dd>`)
+    .join("")}</dl>`;
+}
+
 function hubOf(world: WorldNow | null, login: Login): HubAccounts | null {
   return world?.accounts.hubs.find((hub) => hub.hub === login.hub) ?? null;
 }
@@ -1113,7 +1298,7 @@ function directSaid(machine: Machine, world: WorldNow, words: MachinesWords): st
     const peer = name(one.a === key ? one.b : one.a);
     return one.up ? `<span class="direct-up">${escape(words.directUp(peer, one.ms))}</span>` : `<span class="direct-down">${escape(words.directDown(peer, one.why))}</span>`;
   });
-  return `<div class="panel-direct"><span class="given-label">${escape(words.directRow)}</span><span class="panel-direct-list">${said.join(`<span class="sep">·</span>`)}</span>${
+  return `<div class="panel-direct"><span class="panel-direct-list">${said.join(`<span class="sep">·</span>`)}</span>${
     at.length ? `<p class="panel-direct-at">${escape(words.takesDirectAt(at.join("、")))}</p>` : ""
   }</div>`;
 }

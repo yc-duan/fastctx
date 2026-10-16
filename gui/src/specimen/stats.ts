@@ -5,6 +5,7 @@
 
 import { seeded } from "../pen/shapes";
 import type { Card, Disk, Gpu, LineChange, MachineStats, Trip } from "../world/stats";
+import { runningOn } from "./versions";
 
 const GB = 1024 ** 3;
 const DAY = 86_400_000;
@@ -233,6 +234,6 @@ export async function specimenStats(machine: string | null, after: string | null
         changes: changes.filter((change) => Date.parse(change.at) > since),
       };
     }),
-    node: { version: "1.0.0", started: iso(now - profile.started * 3_600_000), service: profile.service },
+    node: { version: runningOn(name), started: iso(now - profile.started * 3_600_000), service: profile.service },
   };
 }

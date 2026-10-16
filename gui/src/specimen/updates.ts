@@ -8,10 +8,11 @@
 // releases from the network; `?update=major` lists a release past the hub's
 // major version.
 
-import type { Manifest, Release, UpdateCall, UpdateSeam, UpdateSettings, UpdateState } from "../world/updates";
+import { compareVersions, type Manifest, type Release, type UpdateCall, type UpdateSeam, type UpdateSettings, type UpdateState } from "../world/updates";
+import { runningOn, SPECIMEN_VERSION } from "./versions";
 
 const TAKES = 6_000;
-const VERSION = "1.0.1-beta.3";
+const VERSION = SPECIMEN_VERSION;
 
 /** The releases GitHub lists, the newest first, and the size of each one's
  *  packages, absent where a release has none for a device. */
@@ -27,9 +28,9 @@ const MAJOR = { version: "2.0.0-beta.1", day: "2026-11-20T09:00:00Z", size: 16_0
 
 /** Other machines, by name: what each runs and is. */
 const MACHINES: Record<string, { running: string; app?: string; auto: boolean; relays: boolean }> = {
-  server: { running: "1.0.1-beta.2", auto: true, relays: true },
-  gpu: { running: VERSION, auto: false, relays: true },
-  studio: { running: "1.0.1-beta.1", app: "1.0.1-beta.1", auto: false, relays: true },
+  server: { running: runningOn("server"), auto: true, relays: true },
+  gpu: { running: runningOn("gpu"), auto: false, relays: true },
+  studio: { running: runningOn("studio"), app: runningOn("studio"), auto: false, relays: true },
 };
 
 function manifestOf(version: string, size: number | null, target: string, triple: string): Manifest {
@@ -48,8 +49,7 @@ export function specimenUpdates(params: URLSearchParams, phone: boolean): { seam
   const offline = params.get("update") === "offline";
   const listed = params.get("update") === "major" ? [MAJOR, ...RELEASES] : RELEASES;
   const releases: Release[] = listed.map((one) => ({ version: one.version, published: one.day, prerelease: one.version.includes("-") }));
-  const after = (running: string) =>
-    listed.filter((one) => one.version !== running && listed.indexOf(one) < listed.findIndex((other) => other.version === running));
+  const after = (running: string) => listed.filter((one) => compareVersions(one.version, running) > 0);
   const newer = (running: string) => after(running).filter((one) => one.size).map((one) => manifestOf(one.version, one.size, target, triple));
   const newest = (running: string) => newer(running).find((manifest) => !manifest.version.startsWith("2."));
   let settings: UpdateSettings = { auto: false, relays: !phone };

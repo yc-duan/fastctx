@@ -9,6 +9,7 @@ import type { About, Action, HubNodes, LinkState, MachineFacts, Node, ProjectRec
 import type { Away, WorldState } from "../home/model";
 import type { AgentFacts, WorldAgents } from "../world/agents";
 import type { WorldNow } from "../world/bridge";
+import { runningOn } from "./versions";
 
 const at = (time: string) => `2026-10-04T${time}Z`;
 /** An assistance's deadline some days from the moment the specimen is opened, at
@@ -68,7 +69,7 @@ function facts(name: string, os: string, home: string): MachineFacts {
   const form = os === "linux" ? "server" : name === "laptop" ? "laptop" : "desktop";
   return {
     name, os, arch: "x86_64", home, temp: os === "windows" ? `${home}/AppData/Local/Temp` : "/tmp",
-    shell: "", path_separator: os === "windows" ? "\\" : "/", case_sensitive: os !== "windows", version: name === "gpu" ? "0.9.0" : "1.0.0", form,
+    shell: "", path_separator: os === "windows" ? "\\" : "/", case_sensitive: os !== "windows", version: runningOn(name), form,
     ...(name === "gpu" ? {} : { stats: true }),
   };
 }
@@ -173,6 +174,9 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       roles: true,
       groups: true,
       dissolves: true,
+      versions: true,
+      due: true,
+      uninstalls: true,
       accounts: [
         { name: "me", level: "super", locked: false, opened: at("00:00:00") },
         { name: "ada", level: "member", locked: false, opened: at("00:05:00") },
