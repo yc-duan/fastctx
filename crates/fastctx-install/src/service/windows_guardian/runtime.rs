@@ -31,6 +31,10 @@ pub(super) struct Requests {
     pub stop: AtomicBool,
     pub shutdown: AtomicBool,
     pub refresh: AtomicBool,
+    /// Its user asked it to take the newer World program (`super::adopt`).
+    pub adopt: AtomicBool,
+    /// Its user said the next stop is planned.
+    pub planned: AtomicBool,
     pub wake_queued: AtomicBool,
 }
 
@@ -74,6 +78,12 @@ pub(super) fn run(
             }
             if requests.refresh.swap(false, Ordering::SeqCst) {
                 refresh = true;
+            }
+            if requests.adopt.swap(false, Ordering::SeqCst) {
+                match super::adopt::adopt(&config) {
+                    Ok(()) => line(&mut log, "took the newer World program its user asked for"),
+                    Err(error) => line(&mut log, &format!("did not take the World program: {error:#}")),
+                }
             }
             if refresh || active.is_none() && candidate.is_none() {
                 refresh = false;

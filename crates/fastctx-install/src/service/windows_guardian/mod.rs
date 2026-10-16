@@ -2,6 +2,7 @@
 //! run under their user's token, and communicate through inherited pipes.
 
 mod account;
+mod adopt;
 mod child;
 mod config;
 mod firewall;
@@ -22,8 +23,11 @@ pub(super) fn registrations(installation: &crate::uninstall::Installation) -> an
     node.user_sid = Some(installation.user_sid.clone());
     let mut candidates = vec![node];
     let mut hubs = super::registered_hubs(&installation.root)?;
-    if installation.root.join("hub/hub.json").try_exists()? { hubs.push(installation.root.join("hub")); }
-    hubs.sort(); hubs.dedup();
+    if installation.root.join("hub/hub.json").try_exists()? {
+        hubs.push(installation.root.join("hub"));
+    }
+    hubs.sort();
+    hubs.dedup();
     candidates.extend(hubs.into_iter().map(|directory| super::Service::new(super::Kind::Hub, &executable, directory)));
     for service in candidates {
         let account = service.user_sid.as_deref().unwrap_or("S-1-5-18");
@@ -31,15 +35,22 @@ pub(super) fn registrations(installation: &crate::uninstall::Installation) -> an
         let directory = security::directory(&name)?;
         let installed = scm::capture(&name)?.is_some();
         let protected = directory.try_exists()?;
-        if !installed && !protected { continue; }
+        if !installed && !protected {
+            continue;
+        }
         if service.kind == super::Kind::Node && (installed || directory.join("config.json").try_exists()?) {
             let config = Config::read(&name)?;
             if config.executable() != executable || config.directory() != installation.root {
                 bail!("the node registration has different ownership coordinates");
             }
         }
-        found.push(super::Registration { name, kind: service.kind, executable: service.executable,
-            directory: service.directory, artifacts: vec![directory] });
+        found.push(super::Registration {
+            name,
+            kind: service.kind,
+            executable: service.executable,
+            directory: service.directory,
+            artifacts: vec![directory],
+        });
     }
     Ok(found)
 }
@@ -56,10 +67,11 @@ use windows_service::service::{ServiceAccess, ServiceExitCode, ServiceStartType,
 use super::{Service, Status, transaction};
 use config::Config;
 
-pub(super) use system_cache::retire as retire_system_cache;
+pub(super) use adopt::ask as adopt_guardian;
 pub(super) use renewal::{
     current as guardian_current, replace as renew_guardian, restart as restart_guardian, staged as guardian_staged,
 };
+pub(super) use system_cache::retire as retire_system_cache;
 
 #[derive(Serialize, Deserialize)]
 struct Before {

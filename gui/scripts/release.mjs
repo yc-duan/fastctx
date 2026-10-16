@@ -48,6 +48,12 @@ const sidecar = join(binaries, `fastctx-${target}${exe}`);
 // added, over SSH is installed from.
 const release = JSON.parse(readFileSync(join(gui, "src-tauri", "tauri.release.conf.json"), "utf8"));
 const config = { bundle: { ...release.bundle, externalBin: ["binaries/fastctx"], createUpdaterArtifacts: false } };
+// With `--kernel-signed`, the kernel's official signature lies beside it, and is installed beside the
+// kernel the application carries: a Windows boot service takes a new release by it, with no
+// administrator (`world-upgrade.md`, 换版不要人确认).
+const signed = process.argv.includes("--kernel-signed");
+const signatureResource = `binaries/fastctx${exe}.sig`;
+if (signed) config.bundle.resources = { ...config.bundle.resources, [signatureResource]: `fastctx${exe}.sig` };
 const resources = Object.keys(config.bundle.resources ?? {}).map(resource => join(gui, "src-tauri", resource));
 if (platform === "win32") config.bundle.targets = ["nsis"];
 if (platform === "darwin") {
@@ -108,6 +114,10 @@ if (guiMetadata.packages.find(pkg => pkg.name === "fastctx-gui").version !== ver
 }
 mkdirSync(binaries, { recursive: true });
 copyFileSync(kernel.binary, sidecar);
+if (signed) {
+  if (!existsSync(`${kernel.binary}.sig`)) throw new Error(`--kernel-signed names no signature beside ${kernel.binary}`);
+  copyFileSync(`${kernel.binary}.sig`, join(gui, "src-tauri", signatureResource));
+}
 for (const resource of resources) {
   if (!existsSync(resource) || standsIn(resource)) throw new Error(`the installer carries ${resource}, which is not there`);
 }

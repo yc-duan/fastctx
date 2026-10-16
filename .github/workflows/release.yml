@@ -198,6 +198,7 @@ jobs:
           if (-not (Test-Path $app)) { throw "the installer left no $app" }
           $kernel = Join-Path $env:LOCALAPPDATA 'Fastctx/fastctx.exe'
           if ((Get-FileHash $kernel).Hash -ne (Get-FileHash kernel/fastctx.exe).Hash) { throw "the installed kernel is not the one this run built and tested" }
+          if (-not (Test-Path "$kernel.sig")) { throw "the installer left no signature beside the kernel" }
           & $kernel --version
           $process = Start-Process $app -PassThru
           Start-Sleep -Seconds 25
@@ -523,7 +524,7 @@ jobs:
           path: dist
       - name: Compile the application while its kernel is built
         working-directory: gui
-        run: node scripts/release.mjs --prepare --target '${{ matrix.target }}'
+        run: node scripts/release.mjs --prepare --kernel-signed --target '${{ matrix.target }}'
       - name: Wait for the kernels it carries
         env:
           GH_TOKEN: ${{ github.token }}
@@ -539,9 +540,18 @@ jobs:
           pattern: archive-*-unknown-linux-gnu
           merge-multiple: true
           path: gui/src-tauri/linux
+      # The boot service takes a new release's kernel by this signature alone, with no administrator.
+      - name: Sign the World program it carries
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        working-directory: gui
+        run: |
+          version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          node node_modules/@tauri-apps/cli/tauri.js signer sign --app-version "$version" ../kernel/fastctx.exe
       - name: Build the installer
         working-directory: gui
-        run: node scripts/release.mjs --prepared --kernel ../kernel/fastctx.exe --target '${{ matrix.target }}' --out ../dist/gui
+        run: node scripts/release.mjs --prepared --kernel-signed --kernel ../kernel/fastctx.exe --target '${{ matrix.target }}' --out ../dist/gui
       - name: Sign the installer for the updater
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -562,6 +572,7 @@ jobs:
           if (-not (Test-Path $app)) { throw "the installer left no $app" }
           $kernel = Join-Path $env:LOCALAPPDATA 'Fastctx/fastctx.exe'
           if ((Get-FileHash $kernel).Hash -ne (Get-FileHash kernel/fastctx.exe).Hash) { throw "the installed kernel is not the one this run built and tested" }
+          if ((Get-Content "$kernel.sig" -Raw) -ne (Get-Content kernel/fastctx.exe.sig -Raw)) { throw "the installed kernel's signature is not the one this run made" }
           & $kernel --version
           $process = Start-Process $app -PassThru
           Start-Sleep -Seconds 25
@@ -940,6 +951,8 @@ jobs:
           name: release
           path: |
             assets/latest.json
+            assets/SHA256SUMS
+            assets/fastctx-*-unknown-linux-gnu.tar.gz
             assets/*-setup.exe
             assets/*.dmg
             assets/*.app.tar.gz

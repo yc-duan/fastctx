@@ -18,28 +18,50 @@ pub(super) fn registrations(installation: &crate::uninstall::Installation) -> an
     let mut found = Vec::new();
     for entry in super::inventory::entries(std::path::Path::new("/etc/systemd/system"))? {
         let name = entry.file_name();
-        let Some(name) = name.to_str().filter(|name| name.starts_with("fastctx-service-") && name.ends_with(".executable")) else { continue };
+        let Some(name) =
+            name.to_str().filter(|name| name.starts_with("fastctx-service-") && name.ends_with(".executable"))
+        else {
+            continue;
+        };
         let executable = fs::read_link(entry.path())?;
-        if !executable.starts_with(installation.root.join("bin")) { continue; }
+        if !executable.starts_with(installation.root.join("bin")) {
+            continue;
+        }
         let stem = name.trim_end_matches(".executable");
         let file = entry.path().with_extension("service");
         let text = fs::read_to_string(&file)?;
         let marker = format!("# fastctx service v1: {stem}\n");
-        if !text.starts_with(&marker) { bail!("{} is not an owned fastctx unit", file.display()); }
-        let uid: u32 = text.lines().find_map(|line| line.strip_prefix("User=")).context("unit has no account")?.parse()?;
+        if !text.starts_with(&marker) {
+            bail!("{} is not an owned fastctx unit", file.display());
+        }
+        let uid: u32 =
+            text.lines().find_map(|line| line.strip_prefix("User=")).context("unit has no account")?.parse()?;
         let start = text.lines().find_map(|line| line.strip_prefix("ExecStart=:")).context("unit has no command")?;
         let words = unquote(start)?;
-        let kind = if words.get(1).is_some_and(|word| word == "node") { super::Kind::Node }
-            else if words.get(1).is_some_and(|word| word == "hub") { super::Kind::Hub }
-            else { bail!("unit has an unrecognized fastctx role") };
+        let kind = if words.get(1).is_some_and(|word| word == "node") {
+            super::Kind::Node
+        } else if words.get(1).is_some_and(|word| word == "hub") {
+            super::Kind::Hub
+        } else {
+            bail!("unit has an unrecognized fastctx role")
+        };
         let index = words.iter().position(|word| word == "--dir").context("unit has no directory")?;
         let directory = PathBuf::from(words.get(index + 1).context("unit directory is absent")?);
-        if kind == super::Kind::Node && uid != installation.uid { continue; }
+        if kind == super::Kind::Node && uid != installation.uid {
+            continue;
+        }
         let mut service = Service::new(kind, &executable, &directory);
         service.uid = uid;
-        if service.id(&uid.to_le_bytes()) != stem { bail!("unit directory and account do not match its name"); }
-        found.push(super::Registration { name: format!("{stem}.service"), kind, executable, directory,
-            artifacts: vec![PathBuf::from("/run/lock").join(format!("{stem}.service.lock"))] });
+        if service.id(&uid.to_le_bytes()) != stem {
+            bail!("unit directory and account do not match its name");
+        }
+        found.push(super::Registration {
+            name: format!("{stem}.service"),
+            kind,
+            executable,
+            directory,
+            artifacts: vec![PathBuf::from("/run/lock").join(format!("{stem}.service.lock"))],
+        });
     }
     Ok(found)
 }
@@ -47,16 +69,23 @@ pub(super) fn registrations(installation: &crate::uninstall::Installation) -> an
 fn unquote(text: &str) -> anyhow::Result<Vec<std::ffi::OsString>> {
     let mut result = Vec::new();
     for word in text.split(' ') {
-        let word = word.strip_prefix('"').and_then(|word| word.strip_suffix('"')).context("unit argument is not quoted")?;
+        let word =
+            word.strip_prefix('"').and_then(|word| word.strip_suffix('"')).context("unit argument is not quoted")?;
         let bytes = word.as_bytes();
         let mut decoded = Vec::new();
         let mut at = 0;
         while at < bytes.len() {
             if bytes[at..].starts_with(b"\\x") {
                 let hex = std::str::from_utf8(bytes.get(at + 2..at + 4).context("unit escape is incomplete")?)?;
-                decoded.push(u8::from_str_radix(hex, 16)?); at += 4;
-            } else if bytes[at..].starts_with(b"%%") { decoded.push(b'%'); at += 2; }
-            else { decoded.push(bytes[at]); at += 1; }
+                decoded.push(u8::from_str_radix(hex, 16)?);
+                at += 4;
+            } else if bytes[at..].starts_with(b"%%") {
+                decoded.push(b'%');
+                at += 2;
+            } else {
+                decoded.push(bytes[at]);
+                at += 1;
+            }
         }
         result.push(std::ffi::OsString::from_vec(decoded));
     }
@@ -72,6 +101,8 @@ struct Before {
 }
 
 struct Registration {
+    /// The unit's name without its suffix.
+    id: String,
     name: String,
     file: PathBuf,
     marker: String,
@@ -85,6 +116,7 @@ impl Registration {
         Self {
             watchdog: Watchdog::new(&format!("{id}.service"), &format!("# fastctx service v1: {id}\n")),
             name: format!("{id}.service"),
+            id: id.clone(),
             file: PathBuf::from("/etc/systemd/system").join(format!("{id}.service")),
             marker: format!("# fastctx service v1: {id}\n"),
             executable: PathBuf::from("/etc/systemd/system").join(format!("{id}.executable")),
@@ -214,6 +246,16 @@ pub(super) fn install(service: &Service) -> anyhow::Result<Status> {
             systemctl(&["enable", &reg.name])?;
             systemctl(&["start", &reg.name])?;
             reg.watchdog.start()?;
+            // Its user restarts it on a new release without a password: the
+            // node's own, or whoever installed a hub with sudo. Without the
+            // rule, a renewal waits for an administrator.
+            let served = match service.kind {
+                super::Kind::Node => Some(service.uid),
+                super::Kind::Hub => std::env::var("SUDO_UID").ok().and_then(|uid| uid.parse().ok()),
+            };
+            if let Some(uid) = served {
+                let _ = super::linux_restart::allow(&reg.id, uid);
+            }
             reg.status(true)
         },
         |before| restore(&reg, before),
@@ -332,6 +374,7 @@ pub(super) fn uninstall(service: &Service) -> anyhow::Result<Status> {
                 fs::remove_file(&reg.file)?;
                 delete_file(&reg.executable)?;
             }
+            super::linux_restart::forbid(&reg.id)?;
             reg.watchdog.delete()?;
             systemctl(&["daemon-reload"])?;
             reg.status(false)

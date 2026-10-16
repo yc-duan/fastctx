@@ -24,6 +24,8 @@ mod keep;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
+mod linux_restart;
+#[cfg(target_os = "linux")]
 mod linux_watchdog;
 #[cfg(windows)]
 mod local_network;
@@ -222,6 +224,36 @@ impl Service {
         }
     }
 
+    /// Whether this process may restart the boot service without asking: on
+    /// Linux as root, or by the rule its install left; elsewhere the
+    /// service's own rights decide.
+    pub fn may_restart(&self) -> anyhow::Result<bool> {
+        self.validate()?;
+        #[cfg(target_os = "linux")]
+        {
+            let normalized = self.normalized()?;
+            linux_restart::may(&normalized.id(&normalized.uid.to_le_bytes()))
+        }
+        #[cfg(not(target_os = "linux"))]
+        Ok(true)
+    }
+
+    /// Asks the protected guardian to take the World program its
+    /// registration names, which it does only for an officially signed
+    /// release newer than its own; whether it then holds `digest`. A
+    /// guardian of an earlier release, or a platform with none, does not.
+    pub fn adopt_guardian(&self, digest: &str) -> anyhow::Result<bool> {
+        self.validate()?;
+        let normalized = self.normalized()?;
+        #[cfg(windows)]
+        return windows::adopt_guardian(&normalized, digest);
+        #[cfg(not(windows))]
+        {
+            let _ = (digest, normalized);
+            Ok(false)
+        }
+    }
+
     pub fn guardian_staged(&self, digest: &str) -> anyhow::Result<bool> {
         self.validate()?;
         let normalized = self.normalized()?;
@@ -245,13 +277,7 @@ impl Service {
         #[cfg(target_os = "linux")]
         {
             let _ = digest;
-            anyhow::ensure!(fastctx_platform::elevation::is_elevated()?, "restarting the system service needs sudo");
-            checked(Command::new("systemctl").args([
-                "--system",
-                "restart",
-                &format!("{}.service", normalized.id(&normalized.uid.to_le_bytes())),
-            ]))?;
-            Ok(())
+            linux_restart::restart(&normalized.id(&normalized.uid.to_le_bytes()))
         }
         #[cfg(target_os = "macos")]
         {

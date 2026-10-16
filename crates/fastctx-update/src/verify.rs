@@ -14,12 +14,9 @@ use minisign_verify::{PublicKey, Signature};
 /// Checks the file at `path` against `signature`, the base64 a manifest
 /// carries, for the release `version`.
 pub fn file(path: &Path, signature: &str, version: &str) -> Result<(), String> {
-    let key = PublicKey::decode(&text(fastctx_types::update::PUBLIC_KEY)?)
-        .map_err(|error| format!("the program's own key: {error}"))?;
-    let signature =
-        Signature::decode(&text(signature)?).map_err(|error| format!("the package's signature: {error}"))?;
+    let (key, decoded) = decoded(signature)?;
     let mut verifier = key
-        .verify_stream(&signature)
+        .verify_stream(&decoded)
         .map_err(|error| format!("the package's signature is not one this key made: {error}"))?;
     let mut file = std::fs::File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
     let mut buffer = vec![0; 256 * 1024];
@@ -31,8 +28,38 @@ pub fn file(path: &Path, signature: &str, version: &str) -> Result<(), String> {
         verifier.update(&buffer[..read]);
     }
     verifier.finalize().map_err(|_| "the package does not match its signature".to_string())?;
-    // The trusted comment is signed too.
-    match signature.trusted_comment().split('\t').find_map(|field| field.strip_prefix("version:")) {
+    bound(&decoded, version)
+}
+
+/// Checks `bytes`, read once, against `signature` for the release `version`.
+pub fn bytes(bytes: &[u8], signature: &str, version: &str) -> Result<(), String> {
+    let (key, decoded) = decoded(signature)?;
+    key.verify(bytes, &decoded, false).map_err(|_| "the file does not match its signature".to_string())?;
+    bound(&decoded, version)
+}
+
+/// The release `signature` is bound to, as its trusted comment says. Only
+/// a signature checked against what it signs says so for certain.
+pub fn signed_version(signature: &str) -> Option<String> {
+    let decoded = Signature::decode(&text(signature).ok()?).ok()?;
+    signed(&decoded).map(|version| version.trim_start_matches('v').to_string())
+}
+
+fn decoded(signature: &str) -> Result<(PublicKey, Signature), String> {
+    let key = PublicKey::decode(&text(fastctx_types::update::PUBLIC_KEY)?)
+        .map_err(|error| format!("the program's own key: {error}"))?;
+    let signature =
+        Signature::decode(&text(signature)?).map_err(|error| format!("the package's signature: {error}"))?;
+    Ok((key, signature))
+}
+
+fn signed(signature: &Signature) -> Option<&str> {
+    signature.trusted_comment().split('\t').find_map(|field| field.strip_prefix("version:"))
+}
+
+/// The trusted comment is signed too: it names the release.
+fn bound(signature: &Signature, version: &str) -> Result<(), String> {
+    match signed(signature) {
         Some(signed) if signed.trim_start_matches('v') == version => Ok(()),
         Some(signed) => Err(format!("the package was signed for {signed}, not {version}")),
         None => Err(format!("the package's signature is bound to no version, so it is not taken for {version}")),

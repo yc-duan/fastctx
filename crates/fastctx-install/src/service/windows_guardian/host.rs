@@ -59,6 +59,13 @@ fn serve() -> anyhow::Result<()> {
             ServiceControl::Interrogate => return ServiceControlHandlerResult::NoError,
             ServiceControl::Stop => pending.stop.store(true, Ordering::SeqCst),
             ServiceControl::Shutdown | ServiceControl::Preshutdown => pending.shutdown.store(true, Ordering::SeqCst),
+            ServiceControl::UserEvent(code) if code.to_raw() == super::adopt::ADOPT => {
+                pending.adopt.store(true, Ordering::SeqCst)
+            }
+            ServiceControl::UserEvent(code) if code.to_raw() == super::adopt::PLANNED => {
+                pending.planned.store(true, Ordering::SeqCst);
+                return ServiceControlHandlerResult::NoError;
+            }
             ServiceControl::SessionChange(_)
             | ServiceControl::PowerEvent(_)
             | ServiceControl::TimeChange
@@ -102,9 +109,13 @@ fn serve() -> anyhow::Result<()> {
         .map_err(Into::into)
     };
     let result = runtime::run(config.clone(), requests.clone(), events, sender, ready);
-    // A stop while still installed is recoverable, too. Uninstall disables
-    // failure actions and auto-start before requesting this same stop.
-    let code = if requests.shutdown.load(Ordering::SeqCst) { 0 } else { 1 };
+    // A stop while still installed is recoverable, too: it ends as a failure,
+    // which the service manager answers by starting the guardian again.
+    // Uninstall disables failure actions and auto-start before requesting
+    // this same stop. A stop its user said was planned, to restart it on a
+    // new image, ends well.
+    let planned = requests.planned.load(Ordering::SeqCst) && requests.stop.load(Ordering::SeqCst);
+    let code = if requests.shutdown.load(Ordering::SeqCst) || planned { 0 } else { 1 };
     report(ServiceState::Stopped, code, ServiceControlAccept::empty())?;
     if let Err(error) = result {
         bail!("{error:#}");

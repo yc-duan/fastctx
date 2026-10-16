@@ -20,6 +20,7 @@ fastctx-client = { path = "../fastctx-client" }
 fastctx-hosts = { path = "../fastctx-hosts" }
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
+fastctx-update = { path = "../fastctx-update" }
 getrandom = { version = "0.3", features = ["std"] }
 jiff.workspace = true
 jsonc-parser = { version = "0.33.1", features = ["serde"] }

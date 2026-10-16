@@ -26,7 +26,8 @@ fn run_from_copy(request: &Request, line: Option<&mut dyn FnMut(&str)>) -> anyho
     {
         anyhow::bail!("{}", managed.refusal());
     }
-    let temporary = tempfile::Builder::new().prefix("fastctx-uninstall-").tempdir()?;
+    let temporary =
+        tempfile::Builder::new().prefix("fastctx-uninstall-").tempdir_in(scratch_for(&request.installation.root))?;
     fastctx_platform::ensure_private_dir(temporary.path())?;
     let original = std::env::current_exe()?;
     let program = temporary.path().join(if cfg!(windows) { "fastctx.exe" } else { "fastctx" });
@@ -72,6 +73,29 @@ fn run_from_copy(request: &Request, line: Option<&mut dyn FnMut(&str)>) -> anyho
     temporary.close()?;
     anyhow::ensure!(status.success(), "the uninstall worker exited {status}");
     Ok(())
+}
+
+/// Where the removal's own copy runs from: the system's temporary directory,
+/// or beside the World where that is on another volume. On Windows the
+/// invoking image keeps a second name there, and a name does not cross
+/// volumes.
+fn scratch_for(root: &Path) -> std::path::PathBuf {
+    let temporary = std::env::temp_dir();
+    #[cfg(windows)]
+    {
+        let volume = |path: &Path| match path.components().next() {
+            Some(std::path::Component::Prefix(prefix)) => Some(prefix.as_os_str().to_ascii_uppercase()),
+            _ => None,
+        };
+        if volume(&temporary) != volume(root)
+            && let Some(beside) = root.parent()
+        {
+            return beside.to_path_buf();
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = root;
+    temporary
 }
 
 /// Starts only an OS-provided waiting process; it never runs from the files

@@ -1,15 +1,17 @@
 """Write a release's latest.json: the manifest the official updater reads, and the World with it
-(`world-upgrade.md`, 两个通道), from the release's signed packages. Each package's signature
-must be bound to the release's version; every platform must be there.
+(`world-upgrade.md`, 正式版与测试版), from the release's signed packages. Each package's signature
+must be bound to the release's version; every platform must be there. Beside it, SHA256SUMS of the
+command-line programs, which a server's one-line install checks.
 
     python scripts/release-manifest.py --version V --assets DIR --notes TEXT --output latest.json
 
-DIR holds the packages the release publishes, each with its `.sig` beside it, and the command-line
-programs, `fastctx-<triple>.tar.gz` with theirs, which the release does not publish: the network's
-machines that carry them hand them on.
+DIR holds the packages the release publishes, each with its `.sig` beside it, and the Linux
+command-line programs, `fastctx-<triple>.tar.gz` with theirs, which it publishes too: a server
+updates itself from GitHub, and a network's machines that carry them hand them on.
 """
 import argparse
 import base64
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,11 +60,15 @@ def main():
         for target in targets:
             platforms[target] = entry
     fastctx = {}
+    sums = []
     for triple in KERNELS:
         path = args.assets/f'fastctx-{triple}.tar.gz'
         if not path.is_file():
             raise ValueError(f'the release has no {path.name}')
-        fastctx[triple] = {'signature': signature(path, args.version), 'size': path.stat().st_size}
+        fastctx[triple] = {'url': f'{base}/{path.name}', 'signature': signature(path, args.version),
+                           'size': path.stat().st_size}
+        sums.append(f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n')
+    (args.output.parent/'SHA256SUMS').write_text(''.join(sums), encoding='utf-8', newline='\n')
     manifest = {
         'version': args.version,
         'notes': args.notes,

@@ -65,8 +65,11 @@ pub(crate) fn replace(service: &Service, digest: &str) -> anyhow::Result<()> {
 pub(crate) fn restart(service: &Service, digest: &str) -> anyhow::Result<()> {
     let config = Config::new(service)?;
     ensure!(staged(service, digest)?, "the approved guardian image is not in place");
-    let registered = scm::open(&config.name, ServiceAccess::QUERY_STATUS | ServiceAccess::STOP | ServiceAccess::START)?
-        .context("guardian registration disappeared")?;
+    let registered = scm::open(
+        &config.name,
+        ServiceAccess::QUERY_STATUS | ServiceAccess::STOP | ServiceAccess::START | ServiceAccess::USER_DEFINED_CONTROL,
+    )?
+    .context("guardian registration disappeared")?;
     // SCM's existing failure action and independent check remain enabled.
     // A crash here cannot leave boot startup disabled or require another UAC.
     let mut requested = false;
@@ -77,6 +80,7 @@ pub(crate) fn restart(service: &Service, digest: &str) -> anyhow::Result<()> {
             match status.current_state {
                 ServiceState::Running => {
                     stopped = status.process_id.map(fastctx_platform::identity_of).transpose()?.flatten();
+                    super::adopt::planned(&registered);
                     registered.stop()?;
                     requested = true;
                     continue;

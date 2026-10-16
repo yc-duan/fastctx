@@ -229,10 +229,19 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
     if !plan.keeper_restarted {
         let service =
             fastctx_install::service::Service::new(fastctx_install::service::Kind::Node, store::installed(root), root);
+        // The protected guardian takes an officially signed newer program
+        // by itself (`world-upgrade.md`, 换版不要人确认); a development build,
+        // or a guardian of an earlier release, waits for an administrator.
+        let staged = !needs_guardian || service.guardian_staged(&plan.candidate.build.digest)? || {
+            let (asked, digest) = (service.clone(), plan.candidate.build.digest.clone());
+            tokio::task::spawn_blocking(move || asked.adopt_guardian(&digest)).await??
+        };
         // A macOS node is the user's own LaunchAgent; only a hub kept here,
         // a LaunchDaemon, needs an administrator to start the new program.
-        if (needs_guardian && !service.guardian_staged(&plan.candidate.build.digest)?)
-            || (cfg!(target_os = "linux") && !fastctx_platform::elevation::is_elevated()?)
+        // A Linux node's unit restarts as root or by the rule its install
+        // left (`fastctx_install::service::Service::may_restart`).
+        if !staged
+            || (cfg!(target_os = "linux") && !service.may_restart()?)
             || (cfg!(target_os = "macos")
                 && !fastctx_platform::elevation::is_elevated()?
                 && !fastctx_install::service::registered_hubs(root)?.is_empty())
@@ -258,7 +267,9 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
             && node.build.digest == plan.candidate.build.digest
         {
             phase(root, plan, Phase::Complete)?;
-            if let Err(error) = follow_hubs(root, &plan.candidate.build.digest) {
+            let (folder, digest) = (root.to_path_buf(), plan.candidate.build.digest.clone());
+            let followed = tokio::task::spawn_blocking(move || follow_hubs(&folder, &digest)).await?;
+            if let Err(error) = followed {
                 plan.error = Some(format!("the node runs the new program; {error:#}"));
                 store::save(root, plan)?;
             }
@@ -270,11 +281,13 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
 
 /// A hub this computer keeps runs the same World program and would go on
 /// speaking the old network protocol (`world-upgrade.md`, 中枢跟着换). Once
-/// the node is back in its boot service, systemd starts the hub again from
-/// the new program, and its machines reconnect by themselves. Where this
-/// process may not, the administrator's step does it (`guardian_apply`).
+/// the node is back in its boot service, the hub starts again on the new
+/// program, and its machines reconnect by themselves: on Linux systemd runs
+/// it straight from the World program, on Windows its guardian takes the
+/// signed program first. Where neither can be done without an
+/// administrator, the administrator's step does it (`guardian_apply`).
 fn follow_hubs(root: &Path, digest: &str) -> anyhow::Result<()> {
-    if !cfg!(target_os = "linux") || !fastctx_platform::elevation::is_elevated()? {
+    if !cfg!(any(windows, target_os = "linux")) {
         return Ok(());
     }
     for directory in fastctx_install::service::registered_hubs(root)? {
@@ -283,10 +296,17 @@ fn follow_hubs(root: &Path, digest: &str) -> anyhow::Result<()> {
             store::installed(root),
             &directory,
         );
-        if hub.status()?.installed {
-            hub.restart_guardian(digest)
-                .with_context(|| format!("restarting the hub kept at {}", directory.display()))?;
+        if !hub.status()?.installed || (cfg!(windows) && hub.guardian_current(digest)?) {
+            continue;
         }
+        let ready = if cfg!(windows) { hub.adopt_guardian(digest)? } else { hub.may_restart()? };
+        anyhow::ensure!(
+            ready,
+            "the hub kept at {} takes the new program once an administrator runs `fastctx renew guardian --dir {}`",
+            directory.display(),
+            root.display()
+        );
+        hub.restart_guardian(digest).with_context(|| format!("restarting the hub kept at {}", directory.display()))?;
     }
     Ok(())
 }

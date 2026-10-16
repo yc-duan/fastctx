@@ -353,7 +353,21 @@ pub fn install(root: &Path, program: &Program) -> io::Result<()> {
             ));
         }
     }
-    publish_image(&program.path, &installed)
+    publish_image(&program.path, &installed)?;
+    // The installed program's signature is its own, or none.
+    let signature = signature_of(&program.path);
+    if signature.is_file() {
+        fastctx_platform::publish(
+            &signature_of(&installed),
+            &fs::read(&signature)?,
+            fastctx_platform::Permissions::Private,
+        )
+    } else {
+        match fs::remove_file(signature_of(&installed)) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        }
+    }
 }
 
 /// Keeps a hard link to a mapped Windows image before replacing its name.
@@ -428,7 +442,21 @@ fn copy_image(root: &Path, source: &Path) -> io::Result<PathBuf> {
     if digest(&path)? != hash {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "immutable executable digest differs"));
     }
+    // A release's program carries its official signature beside it: the
+    // boot service takes a program it can check without an administrator
+    // (`world-upgrade.md`, 换版不要人确认).
+    let signature = signature_of(source);
+    if signature.is_file() && !signature_of(&path).is_file() {
+        fs::copy(&signature, signature_of(&path))?;
+    }
     Ok(path)
+}
+
+/// Where the official signature of the program at `program` is kept.
+pub fn signature_of(program: &Path) -> PathBuf {
+    let mut name = program.as_os_str().to_owned();
+    name.push(".sig");
+    PathBuf::from(name)
 }
 
 fn copy_to(source: &Path, target: &Path) -> io::Result<()> {

@@ -1394,6 +1394,7 @@ dependencies = [
  "fastctx-hosts",
  "fastctx-platform",
  "fastctx-types",
+ "fastctx-update",
  "getrandom 0.3.4",
  "jiff",
  "jsonc-parser",

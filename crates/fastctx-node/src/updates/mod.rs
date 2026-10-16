@@ -512,8 +512,16 @@ async fn kernel(node: &Arc<Node>, version: Option<&str>, asker: Option<Asker>) -
     }
     {
         let mut held = node.updates.held.lock().expect("never poisoned");
-        if held.fetching.is_some() {
-            return Err("a package is on its way here already; once it is, ask again".to_string());
+        match &held.fetching {
+            // Asked again while it comes, the update goes on as it is.
+            Some(fetching) if fetching.version == offer.version && fetching.target == target => return Ok(()),
+            Some(fetching) => {
+                return Err(format!(
+                    "{} of {} is on its way here; once it is, ask again",
+                    fetching.target, fetching.version
+                ));
+            }
+            None => {}
         }
         held.failed = None;
         held.fetching = Some(Fetching {

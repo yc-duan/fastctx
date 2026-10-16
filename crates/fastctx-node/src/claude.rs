@@ -29,6 +29,7 @@ mod image_flush;
 pub(crate) use image_flush::wait_for_image;
 pub mod management;
 pub(crate) mod pairing;
+mod plugin_check;
 mod process;
 mod rewind;
 mod startup;
@@ -148,7 +149,7 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
     calls::sweep(node);
     let plugin = claude::write_plugin(node.world.path())?;
     let checking = node.clone();
-    tokio::task::spawn_blocking(move || check_plugin(&checking, &plugin));
+    tokio::task::spawn_blocking(move || plugin_check::run(&checking, &plugin));
     let sessions = exchange::sessions(node.world.path());
     fastctx_platform::ensure_private_dir(&sessions)?;
     let (changed, mut changes) = mpsc::unbounded_channel::<PathBuf>();
@@ -1445,38 +1446,6 @@ pub async fn open_here(
     replay(node).await;
     startup::observe(node, &id, first.delivery.id.clone(), launching);
     Ok((id, Landed::Handed { id: first.delivery.id }))
-}
-
-/// Has Claude Code check the plugin as it checks one before loading it,
-/// and says loudly when it would not load: its mod is read and judged by
-/// Claude Code before it runs, and a mod it refuses tells the World nothing
-/// at all. Without Claude Code here there is nothing to load it, and where
-/// no apply put the plugin into Claude Code nothing loads it either: the
-/// user's Claude Code is then not run at all, since running it, even to
-/// validate, reads its login.
-fn check_plugin(node: &Node, plugin: &Path) {
-    let Ok(Command { program, cwd, env }) = command(node, None) else { return };
-    let places = crate::agents::places(node, &env, &cwd, Some(program.clone()));
-    match fastctx_install::apply::status(&places) {
-        Ok(status) if status.claude == fastctx_install::apply::Standing::In => {}
-        Ok(_) => {
-            node.log.line("Claude Code here does not have the World's plugin, so it is not asked to check it");
-            return;
-        }
-        Err(error) => {
-            node.log.line(format_args!(
-                "could not tell whether Claude Code here has the World's plugin, so it is not asked to check it: {error}"
-            ));
-            return;
-        }
-    }
-    let args: Vec<OsString> = vec!["plugin".into(), "validate".into(), plugin.into()];
-    match background::claude(&program, &args, &cwd, &env) {
-        Ok(_) => node.log.line("Claude Code accepts the World's plugin"),
-        Err(why) => node.log.line(format_args!(
-            "Claude Code would not load the World's plugin, so its sessions tell the World nothing: {why}"
-        )),
-    }
 }
 
 /// The World's directories where its sessions stand are trusted in Claude
