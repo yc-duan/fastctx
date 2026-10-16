@@ -1,9 +1,12 @@
 // Which World this computer runs, beside the interface's carried program.
-// Putting a newer program in place
-// is the user's to start; the program the interface carries does it and
-// keeps its own record, and this row says where it stands, step by step,
-// asked again every two seconds while a step is under way, as the World
-// is. The one step that needs an administrator is asked for only when it
+// Putting a newer program in place is the user's to start; the program the
+// interface carries does it and keeps its own record, and this row says
+// where it stands, step by step: asked again every two seconds while a
+// step is under way, as the World is, and every few while it waits for an
+// administrator, an old version to exit or its turn, so it changes by
+// itself once it is done (`world-upgrade.md`). A node that does not answer
+// while it hands over is asked again; only one silent for long is said to
+// fail. The one step that needs an administrator is asked for only when it
 // is reached.
 
 import { escape } from "../conversation/prose";
@@ -23,6 +26,12 @@ export interface Renewing {
 
 /** Steps the World is taking by itself, after which it is asked again. */
 const UNDER_WAY: RenewalPhase[] = ["preparing", "waiting_for_idle", "updating_guardian", "returning_to_service"];
+/** Steps it waits on someone or something else in, asked less often. */
+const WAITING: RenewalPhase[] = ["staged", "awaiting_administrator", "awaiting_legacy_exit"];
+const UNDER_WAY_MS = 2_000;
+const WAITING_MS = 5_000;
+/** How long a node handing over may not answer before that is said. */
+const SILENT_MS = 20_000;
 
 export class RenewalRow {
   private status: RenewalStatus | null = null;
@@ -32,6 +41,8 @@ export class RenewalRow {
   private busy = false;
   private timer = 0;
   private left = false;
+  /** Since when the node has not answered, while a change goes on. */
+  private silent: number | null = null;
 
   constructor(
     private readonly element: HTMLElement,
@@ -56,11 +67,21 @@ export class RenewalRow {
       (status) => {
         if (this.left) return;
         this.status = status;
+        this.silent = null;
         this.draw();
-        if (status.phase && UNDER_WAY.includes(status.phase)) this.timer = window.setTimeout(() => this.ask(), 2000);
+        const phase = status.phase;
+        if (phase && UNDER_WAY.includes(phase)) this.timer = window.setTimeout(() => this.ask(), UNDER_WAY_MS);
+        else if (phase && WAITING.includes(phase)) this.timer = window.setTimeout(() => this.ask(), WAITING_MS);
       },
       (error: unknown) => {
         if (this.left) return;
+        const phase = this.status?.phase;
+        const going = !!phase && (UNDER_WAY.includes(phase) || WAITING.includes(phase));
+        this.silent ??= Date.now();
+        if (going && Date.now() - this.silent < SILENT_MS) {
+          this.timer = window.setTimeout(() => this.ask(), UNDER_WAY_MS);
+          return;
+        }
         this.said = String(error);
         this.draw();
       },
