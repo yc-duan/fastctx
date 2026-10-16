@@ -37,7 +37,7 @@ pub fn start(node: &Arc<Node>) -> io::Result<()> {
     let towns = node.world.path().join("towns");
     ensure_private_dir(&towns)?;
     let (changed, mut changes) = mpsc::unbounded_channel::<Option<TownName>>();
-    let root = towns.clone();
+    let root = crate::file_events::named(&towns)?;
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
         Ok(event) if !crate::file_events::changes(&event) => {}
         Ok(event) => {

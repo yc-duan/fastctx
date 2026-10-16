@@ -154,16 +154,17 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
     fastctx_platform::ensure_private_dir(&sessions)?;
     let (changed, mut changes) = mpsc::unbounded_channel::<PathBuf>();
     let root = sessions.clone();
+    let seen = crate::file_events::named(&sessions)?;
     let conversations = node.world.conversations();
     fastctx_platform::ensure_private_dir(&conversations)?;
-    let homes = conversations.clone();
+    let homes = crate::file_events::named(&conversations)?;
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         match event {
             Ok(event) if !crate::file_events::changes(&event) => {}
             Ok(event) => {
                 for path in event.paths {
                     // The session's directory: the first name under the root.
-                    if let Ok(rest) = path.strip_prefix(&root)
+                    if let Ok(rest) = path.strip_prefix(&seen)
                         && let Some(first) = rest.components().next()
                     {
                         let _ = changed.send(root.join(first));

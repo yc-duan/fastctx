@@ -19,8 +19,12 @@ pub(super) async fn start(node: &Arc<Node>, resident: &ResidentId, directory: &P
     if node.claude.title_files.lock().expect("never poisoned").contains(&path) {
         return Ok(());
     }
+    let folder = path.parent().ok_or_else(|| std::io::Error::other("Claude transcript has no parent"))?;
     let (changed, mut changes) = tokio::sync::mpsc::channel(1);
-    let watched = path.clone();
+    let watched = match path.file_name() {
+        Some(name) => crate::file_events::named(folder)?.join(name),
+        None => path.clone(),
+    };
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         if event
             .as_ref()
@@ -30,12 +34,7 @@ pub(super) async fn start(node: &Arc<Node>, resident: &ResidentId, directory: &P
         }
     })
     .map_err(std::io::Error::other)?;
-    notify::Watcher::watch(
-        &mut watcher,
-        path.parent().ok_or_else(|| std::io::Error::other("Claude transcript has no parent"))?,
-        notify::RecursiveMode::NonRecursive,
-    )
-    .map_err(std::io::Error::other)?;
+    notify::Watcher::watch(&mut watcher, folder, notify::RecursiveMode::NonRecursive).map_err(std::io::Error::other)?;
     if !node.claude.title_files.lock().expect("never poisoned").insert(path.clone()) {
         return Ok(());
     }

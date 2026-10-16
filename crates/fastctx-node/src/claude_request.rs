@@ -42,8 +42,9 @@ fn wake(parent: &ProcessIdentity, session: &Path, root: &Path) -> io::Result<()>
     }
     let (sender, receiver) = mpsc::channel();
     let changes = sender.clone();
-    let (watched, marker) = (session.to_path_buf(), root.join("uninstalled.json"));
-    let (inbox_seen, controls_seen) = (inbox.clone(), controls.clone());
+    let watched = crate::file_events::named(session)?;
+    let marker = crate::file_events::named(root)?.join("uninstalled.json");
+    let (inbox_seen, controls_seen) = (watched.join("inbox"), watched.join("control").join("inbox"));
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         let Ok(event) = event else {
             // The watch itself faltered: a look finds whatever is there.
