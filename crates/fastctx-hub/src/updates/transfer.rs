@@ -103,6 +103,15 @@ pub(crate) async fn serve(
     }
     let pulse = crate::pulse_of(&socket);
     let (mut sink, mut stream) = socket.split();
+    let (body_sent, sent) = tokio::sync::oneshot::channel();
+    let receipt = async {
+        let at = match sent.await {
+            Ok(at) => at,
+            Err(_) => return std::future::pending::<Result<(), String>>().await,
+        };
+        tokio::time::sleep_until(at + std::time::Duration::from_secs(120)).await;
+        Err("the member did not acknowledge the complete package within 120 seconds".to_string())
+    };
     let writer = async {
         // Its turn among the members being handed packages, said to be
         // alive while it waits.
@@ -128,6 +137,7 @@ pub(crate) async fn serve(
             put(&mut sink, &pulse, WsMessage::Binary(buffer[..read].to_vec().into())).await?;
             pace.wrote(read, began.elapsed());
         }
+        let _ = body_sent.send(tokio::time::Instant::now());
         loop {
             tokio::time::sleep(HEARTBEAT).await;
             put(&mut sink, &pulse, fastctx_net::pulse::ping(&pulse)).await?;
@@ -152,6 +162,7 @@ pub(crate) async fn serve(
     let ended: Result<(), String> = tokio::select! {
         ended = reader => ended,
         ended = writer => ended,
+        ended = receipt => ended,
     };
     match ended {
         Ok(()) => hub.log.line(format_args!("{me} took {target} of {version} from the hub")),

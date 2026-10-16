@@ -298,7 +298,10 @@ impl Stream {
     /// As the source: waits for the sink's word that it has everything, and
     /// closes.
     pub async fn finish(mut self) -> Result<(), String> {
-        match self.next().await? {
+        let receipt = tokio::time::timeout(DUE_WITHIN, self.next()).await.map_err(|_| {
+            format!("the final receipt did not arrive within {} s after the body was sent", DUE_WITHIN.as_secs())
+        })??;
+        match receipt {
             Some(Message::Word(text)) if text == DONE => {
                 self.line.close().await;
                 Ok(())
