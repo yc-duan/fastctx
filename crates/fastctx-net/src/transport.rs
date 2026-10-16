@@ -21,46 +21,89 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 /// control and data connections, and direct links between machines.
 pub type Socket = WebSocketStream<tokio_rustls::TlsStream<Transport>>;
 
+/// When the bytes of `socket` last moved, each way (`crate::pulse`).
+pub fn pulse_of(socket: &Socket) -> std::sync::Arc<crate::pulse::Pulse> {
+    socket.get_ref().get_ref().0.pulse()
+}
+
 /// The WebSocket to a forwarding machine that carries the hub's TLS.
 pub type ForwardSocket = WebSocketStream<tokio_rustls::client::TlsStream<TcpStream>>;
 
-/// What the TLS of a connection runs on.
-pub enum Transport {
+/// What the TLS of a connection runs on, keeping when its bytes last moved
+/// (`crate::pulse`).
+pub struct Transport(crate::pulse::Pulsing<Way>);
+
+impl Transport {
     /// A TCP connection of this machine's own.
-    Tcp(TcpStream),
+    pub fn tcp(tcp: TcpStream) -> Self {
+        Self(crate::pulse::Pulsing::new(Way::Tcp(tcp)))
+    }
+
     /// The bytes of a connection to the hub, carried by a machine that
     /// forwards them, unread, to the hub.
+    pub fn forwarded(carried: WsIo) -> Self {
+        Self(crate::pulse::Pulsing::new(Way::Forwarded(Box::new(carried))))
+    }
+
+    pub fn pulse(&self) -> std::sync::Arc<crate::pulse::Pulse> {
+        self.0.pulse()
+    }
+}
+
+/// The ways a connection runs.
+pub enum Way {
+    Tcp(TcpStream),
     Forwarded(Box<WsIo>),
 }
 
 impl AsyncRead for Transport {
     fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
-        match self.get_mut() {
-            Transport::Tcp(tcp) => Pin::new(tcp).poll_read(cx, buf),
-            Transport::Forwarded(forwarded) => Pin::new(forwarded.as_mut()).poll_read(cx, buf),
-        }
+        Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
     }
 }
 
 impl AsyncWrite for Transport {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.get_mut().0).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().0).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().0).poll_shutdown(cx)
+    }
+}
+
+impl AsyncRead for Way {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
-            Transport::Tcp(tcp) => Pin::new(tcp).poll_write(cx, buf),
-            Transport::Forwarded(forwarded) => Pin::new(forwarded.as_mut()).poll_write(cx, buf),
+            Way::Tcp(tcp) => Pin::new(tcp).poll_read(cx, buf),
+            Way::Forwarded(forwarded) => Pin::new(forwarded.as_mut()).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for Way {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        match self.get_mut() {
+            Way::Tcp(tcp) => Pin::new(tcp).poll_write(cx, buf),
+            Way::Forwarded(forwarded) => Pin::new(forwarded.as_mut()).poll_write(cx, buf),
         }
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
-            Transport::Tcp(tcp) => Pin::new(tcp).poll_flush(cx),
-            Transport::Forwarded(forwarded) => Pin::new(forwarded.as_mut()).poll_flush(cx),
+            Way::Tcp(tcp) => Pin::new(tcp).poll_flush(cx),
+            Way::Forwarded(forwarded) => Pin::new(forwarded.as_mut()).poll_flush(cx),
         }
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
-            Transport::Tcp(tcp) => Pin::new(tcp).poll_shutdown(cx),
-            Transport::Forwarded(forwarded) => Pin::new(forwarded.as_mut()).poll_shutdown(cx),
+            Way::Tcp(tcp) => Pin::new(tcp).poll_shutdown(cx),
+            Way::Forwarded(forwarded) => Pin::new(forwarded.as_mut()).poll_shutdown(cx),
         }
     }
 }

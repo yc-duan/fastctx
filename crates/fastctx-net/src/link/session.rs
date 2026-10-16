@@ -304,15 +304,17 @@ async fn connected(
     // connection can be published.
     let mut guard = Connected { inner, generation, reason: "the connection was interrupted".to_string() };
 
+    let pulse = crate::transport::pulse_of(&socket);
     let (mut sink, mut stream) = socket.split();
     let (writer_done, mut writer_stopped) = oneshot::channel::<()>();
-    // No frame takes longer than the silence to write: a hub that takes
-    // nothing is as gone as one that says nothing.
+    // No frame goes on being written once nothing of it went for the
+    // silence: a hub that takes nothing is as gone as one that says nothing.
+    let writing = pulse.clone();
     let writer = tokio::spawn(async move {
         let _done = writer_done;
         while let Some(frame) = outgoing.recv().await {
             let message = WsMessage::Binary(frame.bytes.into());
-            if !tokio::time::timeout(SILENCE, sink.send(message)).await.is_ok_and(|sent| sent.is_ok()) {
+            if !writing.writing(sink.send(message)).await.is_ok_and(|sent| sent.is_ok()) {
                 return;
             }
             if let Some(written) = frame.written {
@@ -367,22 +369,35 @@ async fn connected(
     // wait behind letters and answers the hub queued before it.
     let mut heard = Instant::now();
     let mut last_ping = 0;
-    // A check asked since the hub was last heard, and how long it waits.
+    // A check asked since the hub was last heard, and how long it waits;
+    // and when it was asked.
     let mut checking: Option<Instant> = None;
+    let mut asked = Instant::now();
     let ended = loop {
         let next = tokio::select! {
             // Checked first, so that once nothing has come for the whole
             // silence the connection ends even if something is just arriving.
+            // A frame still coming in shows the hub is there, as one come
+            // whole does.
             biased;
             _ = tokio::time::sleep_until(heard + SILENCE) => {
+                if let Some(at) = pulse.since(heard) {
+                    heard = at;
+                    continue;
+                }
                 break Ended::Retry(format!("nothing came from the hub for {} s", SILENCE.as_secs()));
             },
             _ = tokio::time::sleep_until(checking.unwrap_or(heard + SILENCE)), if checking.is_some() => {
+                if pulse.since(asked).is_some() {
+                    checking = None;
+                    continue;
+                }
                 break Ended::Reroute("the hub did not answer a check after the network changed".to_string());
             },
             () = inner.check.notified() => {
                 if checking.is_none() {
-                    checking = Some(Instant::now() + inner.check_within());
+                    asked = Instant::now();
+                    checking = Some(asked + inner.check_within());
                     // Numbered apart from the heartbeats, so its pong measures
                     // nothing.
                     let paths = inner.view().direct_links.then(|| inner.paths());
@@ -433,7 +448,7 @@ async fn connected(
                     last_ping = n;
                     let mut pinged = pinged.lock().expect("never poisoned");
                     if let Some(sent) = pinged.remove(&n) {
-                        let ms = u32::try_from(sent.elapsed().as_millis()).unwrap_or(u32::MAX);
+                        let ms = super::line::millis(sent.elapsed());
                         *inner.hub_ms.lock().expect("never poisoned") = Some(ms);
                         inner.trip(ms);
                     }

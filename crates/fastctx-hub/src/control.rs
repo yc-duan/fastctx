@@ -135,9 +135,11 @@ pub(crate) async fn session(
     // Whoever sees it sees it online now.
     hub.changed();
 
+    let pulse = crate::pulse_of(&socket);
     let (mut sink, mut stream) = socket.split();
     let (stopped, mut writer_stopped) = tokio::sync::oneshot::channel::<()>();
     let (telling, member, member_name, queue) = (hub.clone(), key, name.clone(), out.clone());
+    let writing = pulse.clone();
     let writer = tokio::spawn(async move {
         // Dropped when the writer returns, which the reader notices.
         let _stopped = stopped;
@@ -154,7 +156,8 @@ pub(crate) async fn session(
                 }
             };
             for frame in frames {
-                match tokio::time::timeout(SILENCE, sink.send(WsMessage::Binary(wire::encode(&frame).into()))).await {
+                // Written for as long as its bytes keep going out.
+                match writing.writing(sink.send(WsMessage::Binary(wire::encode(&frame).into()))).await {
                     Ok(Ok(())) => {}
                     Ok(Err(_)) => return,
                     Err(_) => {
@@ -184,19 +187,27 @@ pub(crate) async fn session(
     let intake = tokio::spawn(intake(hub.clone(), name.clone(), generation, out.clone(), letters_coming));
 
     // Whether the writer still has a refusal to deliver before closing.
+    let mut heard = tokio::time::Instant::now();
     let (ended, refusing) = loop {
         let next = tokio::select! {
-            next = tokio::time::timeout(SILENCE, stream.next()) => next,
+            next = stream.next() => next,
+            // A frame still coming in shows it is there, as one come whole
+            // does.
+            () = tokio::time::sleep_until(heard + SILENCE) => {
+                if let Some(at) = pulse.since(heard) {
+                    heard = at;
+                    continue;
+                }
+                break (Some(format!("nothing was heard from it for {} s", SILENCE.as_secs())), false);
+            }
             // The writer stopped: the connection was replaced or ended.
             _ = &mut writer_stopped => break (None, false),
         };
+        heard = tokio::time::Instant::now();
         let frame = match next {
-            Err(_) => {
-                break (Some(format!("nothing was heard from it for {} s", SILENCE.as_secs())), false);
-            }
-            Ok(None | Some(Ok(WsMessage::Close(_)))) => break (None, false),
-            Ok(Some(Err(error))) => break (Some(fastctx_net::dial::describe(&error)), false),
-            Ok(Some(Ok(WsMessage::Binary(bytes)))) => match serde_json::from_slice::<Up>(&bytes) {
+            None | Some(Ok(WsMessage::Close(_))) => break (None, false),
+            Some(Err(error)) => break (Some(fastctx_net::dial::describe(&error)), false),
+            Some(Ok(WsMessage::Binary(bytes))) => match serde_json::from_slice::<Up>(&bytes) {
                 Ok(frame) => frame,
                 // A newer machine's frame this hub does not know is passed
                 // over, a question it asks answered that it is not known.
@@ -205,7 +216,7 @@ pub(crate) async fn session(
                     continue;
                 }
             },
-            Ok(Some(Ok(_))) => continue,
+            Some(Ok(_)) => continue,
         };
         // A letter waits its turn to be kept; more than `LETTERS_IN` waiting
         // and this connection is read no further until there is room, for

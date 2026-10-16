@@ -348,13 +348,15 @@ async fn relay(mut first: Socket, mut second: Socket, cutting: oneshot::Receiver
         return 0;
     }
     let mut carried = 0_u64;
+    let (first_pulse, second_pulse) = (crate::pulse_of(&first), crate::pulse_of(&second));
     let (mut first_sink, mut first_stream) = first.split();
     let (mut second_sink, mut second_stream) = second.split();
+    // Each message is passed on for as long as its bytes keep going out.
     let forward = async {
         while let Some(Ok(message)) = first_stream.next().await {
             carried += message.len() as u64;
             if message.is_close()
-                || !tokio::time::timeout(SILENCE, second_sink.send(message)).await.is_ok_and(|sent| sent.is_ok())
+                || !second_pulse.writing(second_sink.send(message)).await.is_ok_and(|sent| sent.is_ok())
             {
                 break;
             }
@@ -362,8 +364,7 @@ async fn relay(mut first: Socket, mut second: Socket, cutting: oneshot::Receiver
     };
     let backward = async {
         while let Some(Ok(message)) = second_stream.next().await {
-            if message.is_close()
-                || !tokio::time::timeout(SILENCE, first_sink.send(message)).await.is_ok_and(|sent| sent.is_ok())
+            if message.is_close() || !first_pulse.writing(first_sink.send(message)).await.is_ok_and(|sent| sent.is_ok())
             {
                 break;
             }

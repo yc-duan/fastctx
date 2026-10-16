@@ -34,6 +34,7 @@ pub mod message;
 pub mod moving;
 pub mod peer;
 pub mod proxy;
+pub mod pulse;
 mod queue;
 pub mod route;
 pub mod sign;

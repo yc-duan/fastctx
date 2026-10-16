@@ -10,9 +10,10 @@
 //!
 //! The two directions end together: once reading stops, for silence, a
 //! break or a cut, writing stops too and whatever waits to be written is
-//! told why; and nothing written may take longer than the silence, as an
-//! end that does not take what it is sent is as gone as one that says
-//! nothing.
+//! told why; and nothing written goes on once none of it went for the
+//! silence, as an end that does not take what it is sent is as gone as one
+//! that says nothing. A message still coming in or going out counts as the
+//! line moving (`crate::pulse`), so a slow line is not a dead one.
 //!
 //! An end of an older fastctx answers pings without sending any, so a
 //! connection to one that stays quiet past `SILENCE` ends; whoever holds
@@ -56,6 +57,7 @@ impl Line {
     /// Takes over `socket`; `cut`, when this machine cuts the call the
     /// connection goes with, ends it with the reason.
     pub(super) fn new(socket: HubSocket, cut: Option<watch::Receiver<Option<String>>>) -> Self {
+        let pulse = crate::transport::pulse_of(&socket);
         let (sink, stream) = socket.split();
         // One message waits for its holder at most: what follows is not
         // read until it is taken, so a slow holder slows the sender.
@@ -69,8 +71,8 @@ impl Line {
             stopped: stopped.clone(),
             over: over.clone(),
             outgoing,
-            reader: tokio::spawn(read(stream, received, stopped.clone(), cut, ending.clone())),
-            writer: tokio::spawn(write(sink, sending, over, stopped, ending)),
+            reader: tokio::spawn(read(stream, received, stopped.clone(), cut, ending.clone(), pulse.clone())),
+            writer: tokio::spawn(write(sink, sending, over, stopped, ending, pulse)),
         }
     }
 
@@ -137,6 +139,7 @@ async fn read(
     stopped: Arc<Mutex<Option<String>>>,
     mut cut: Option<watch::Receiver<Option<String>>>,
     ending: Arc<watch::Sender<bool>>,
+    pulse: Arc<crate::pulse::Pulse>,
 ) {
     let mut over = ending.subscribe();
     let mut heard = Instant::now();
@@ -144,6 +147,11 @@ async fn read(
         let next = tokio::select! {
             next = stream.next() => next,
             () = tokio::time::sleep_until(heard + SILENCE) => {
+                // A message still coming in shows the other end is there.
+                if let Some(at) = pulse.since(heard) {
+                    heard = at;
+                    continue;
+                }
                 break Some(format!("nothing came from the other end for {} s", SILENCE.as_secs()));
             }
             why = was_cut(&mut cut) => break Some(why),
@@ -183,11 +191,15 @@ async fn was_cut(cut: &mut Option<watch::Receiver<Option<String>>>) -> String {
     }
 }
 
-/// Writes `message`, no longer than the silence lets it take.
-async fn put(sink: &mut SplitSink<HubSocket, WsMessage>, message: WsMessage) -> Result<(), String> {
-    match tokio::time::timeout(SILENCE, sink.send(message)).await {
+/// Writes `message`, for as long as its bytes keep going out.
+async fn put(
+    sink: &mut SplitSink<HubSocket, WsMessage>,
+    pulse: &crate::pulse::Pulse,
+    message: WsMessage,
+) -> Result<(), String> {
+    match pulse.writing(sink.send(message)).await {
         Ok(sent) => sent.map_err(|error| format!("sending: {}", dial::describe(&error))),
-        Err(_) => Err(format!("the other end took nothing for {} s", SILENCE.as_secs())),
+        Err(quiet) => Err(quiet.to_string()),
     }
 }
 
@@ -197,6 +209,7 @@ async fn write(
     mut over: watch::Receiver<bool>,
     stopped: Arc<Mutex<Option<String>>>,
     ending: Arc<watch::Sender<bool>>,
+    pulse: Arc<crate::pulse::Pulse>,
 ) {
     let mut beat = tokio::time::interval_at(Instant::now() + HEARTBEAT, HEARTBEAT);
     beat.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -208,7 +221,7 @@ async fn write(
             _ = over.wait_for(|over| *over) => return,
         };
         let Some(next) = next else {
-            let beating = put(&mut sink, WsMessage::Ping(Default::default()));
+            let beating = put(&mut sink, &pulse, WsMessage::Ping(Default::default()));
             let result = tokio::select! {
                 result = beating => result,
                 _ = over.wait_for(|over| *over) => return,
@@ -221,7 +234,7 @@ async fn write(
         };
         match next {
             Some(Out::Message(message, sent)) => {
-                let writing = put(&mut sink, message);
+                let writing = put(&mut sink, &pulse, message);
                 let result = tokio::select! {
                     result = writing => result,
                     _ = over.wait_for(|over| *over) => return,

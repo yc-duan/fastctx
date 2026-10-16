@@ -43,7 +43,7 @@ impl Host {
 }
 
 type Body = UnsyncBoxBody<Bytes, io::Error>;
-type TlsStream = tokio_rustls::server::TlsStream<TcpStream>;
+type TlsStream = tokio_rustls::server::TlsStream<fastctx_net::pulse::Pulsing<TcpStream>>;
 
 pub(crate) async fn serve(host: Host, tls: tokio_rustls::TlsAcceptor, tcp: TcpStream, peer: SocketAddr) {
     // Keep the existing initial handshake budget. File transfer itself has
@@ -52,7 +52,7 @@ pub(crate) async fn serve(host: Host, tls: tokio_rustls::TlsAcceptor, tcp: TcpSt
     // A connection that never becomes a session or a download is logged
     // with where it came from and why, so a machine that could not get in
     // leaves a trace here as well as in its own log.
-    let stream = match tokio::time::timeout_at(deadline, tls.accept(tcp)).await {
+    let stream = match tokio::time::timeout_at(deadline, tls.accept(fastctx_net::pulse::Pulsing::new(tcp))).await {
         Ok(Ok(stream)) => stream,
         Ok(Err(error)) => {
             host.log().line(format_args!("{peer}: the TLS handshake failed: {error}"));

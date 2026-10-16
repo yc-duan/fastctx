@@ -366,13 +366,16 @@ async fn serve(
     mut frames: crate::queue::Receiver<Vec<u8>>,
     mut network: Option<&mut watch::Receiver<u64>>,
 ) -> (String, bool) {
+    let pulse = crate::transport::pulse_of(&socket);
+    let writing = pulse.clone();
     let (mut sink, mut stream) = socket.split();
     let (writer_done, mut writer_stopped) = tokio::sync::oneshot::channel::<()>();
     let (finish, mut finishing) = tokio::sync::oneshot::channel::<String>();
     // The writer outlives the link by as long as it takes to say why it
     // ended, so whoever ends it is not held up by a peer that went silent.
-    // No write takes longer than the silence, and the link's end stops one
-    // under way: what it began is then not finished, and nothing follows.
+    // No write goes on once nothing of it went for the silence, and the
+    // link's end stops one under way: what it began is then not finished,
+    // and nothing follows.
     let writer = tokio::spawn(async move {
         let _done = writer_done;
         loop {
@@ -381,7 +384,7 @@ async fn serve(
                     Some(frame) => {
                         let message = WsMessage::Binary(frame.into());
                         tokio::select! {
-                            written = tokio::time::timeout(SILENCE, sink.send(message)) => {
+                            written = writing.writing(sink.send(message)) => {
                                 if !written.is_ok_and(|written| written.is_ok()) {
                                     return;
                                 }
@@ -433,6 +436,11 @@ async fn serve(
         let next = tokio::select! {
             biased;
             () = tokio::time::sleep_until(heard + SILENCE) => {
+                // A frame still coming in shows it is there.
+                if let Some(at) = pulse.since(heard) {
+                    heard = at;
+                    continue;
+                }
                 break format!("nothing came from it for {} s", SILENCE.as_secs());
             }
             reason = &mut ended => break reason,
@@ -480,7 +488,7 @@ async fn serve(
                 if n > last_ping {
                     last_ping = n;
                     if let Some(sent) = pinged.lock().expect("never poisoned").remove(&n) {
-                        let ms = u32::try_from(sent.elapsed().as_millis()).unwrap_or(u32::MAX);
+                        let ms = super::super::line::millis(sent.elapsed());
                         *conn.ms.lock().expect("never poisoned") = Some(ms);
                     }
                     pinged.lock().expect("never poisoned").retain(|sent, _| *sent > n);

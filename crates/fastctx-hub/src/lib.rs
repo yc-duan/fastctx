@@ -70,7 +70,12 @@ pub use moving::standby::prepare as prepare_arrival;
 pub use store::HubFile;
 use store::{Book, Store};
 
-pub type Socket = WebSocketStream<tokio_rustls::server::TlsStream<TcpStream>>;
+pub type Socket = WebSocketStream<tokio_rustls::server::TlsStream<fastctx_net::pulse::Pulsing<TcpStream>>>;
+
+/// When the bytes of `socket` last moved, each way (`fastctx_net::pulse`).
+pub(crate) fn pulse_of(socket: &Socket) -> std::sync::Arc<fastctx_net::pulse::Pulse> {
+    socket.get_ref().get_ref().0.pulse()
+}
 
 /// The directory a hub keeps everything in when none is given.
 pub fn default_dir(fastctx_root: &Path) -> PathBuf {

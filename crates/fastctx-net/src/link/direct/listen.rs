@@ -100,7 +100,7 @@ async fn connected(inner: Weak<Inner>, tcp: tokio::net::TcpStream, from: SocketA
     let Some(inner) = inner.upgrade() else { return };
     let log = |what: String| inner.node.log(format!("direct connections: {from}: {what}"));
     let deadline = Instant::now() + SILENCE;
-    let stream = match tokio::time::timeout_at(deadline, tls.accept(Transport::Tcp(tcp))).await {
+    let stream = match tokio::time::timeout_at(deadline, tls.accept(Transport::tcp(tcp))).await {
         Ok(Ok(stream)) => stream,
         Ok(Err(error)) => return log(format!("the TLS handshake failed: {error}")),
         Err(_) => return log(format!("no TLS handshake within {} s", SILENCE.as_secs())),

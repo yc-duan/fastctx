@@ -209,7 +209,7 @@ pub async fn probe(address: SocketAddr, hub: &HubId, name: &MachineName, key: &P
         let tls = tokio_rustls::TlsConnector::from(crate::tls::client_config(None))
             .connect(
                 rustls::pki_types::ServerName::IpAddress(address.ip().into()),
-                crate::transport::Transport::Tcp(tcp),
+                crate::transport::Transport::tcp(tcp),
             )
             .await
             .map_err(|error| format!("TLS: {error}"))?;

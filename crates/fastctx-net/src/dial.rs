@@ -197,7 +197,7 @@ pub async fn dial(hub: &[SocketAddr], pin: Option<CertPin>, path: &str, max_mess
     let (hub, path) = (hub.to_vec(), path.to_string());
     on_own_task(async move {
         watching_android(|| {
-            reach(&hub, |tcp, address| tls_websocket(Transport::Tcp(tcp), address, pin, &path, max_message))
+            reach(&hub, |tcp, address| tls_websocket(Transport::tcp(tcp), address, pin, &path, max_message))
         })
         .await
     })
@@ -262,7 +262,7 @@ pub async fn dial_upstream(
                             )
                             .await
                             .map_err(|error| format!("asking it to forward: {error}"))?;
-                            let inner = Transport::Forwarded(Box::new(WsIo::new(socket)));
+                            let inner = Transport::forwarded(WsIo::new(socket));
                             tls_websocket(inner, address, Some(pin), &path, max_message)
                                 .await
                                 .map_err(|error| format!("the hub through it: {error}"))
@@ -282,7 +282,7 @@ pub async fn dial_peer(at: &[SocketAddr], path: &str, max_message: usize) -> Res
     let (at, path) = (at.to_vec(), path.to_string());
     on_own_task(async move {
         watching_android(|| {
-            reach(&at, |tcp, address| tls_websocket(Transport::Tcp(tcp), address, None, &path, max_message))
+            reach(&at, |tcp, address| tls_websocket(Transport::tcp(tcp), address, None, &path, max_message))
         })
         .await
     })

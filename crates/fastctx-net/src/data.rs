@@ -34,8 +34,59 @@ const PAIRED_WITHIN: std::time::Duration = std::time::Duration::from_secs(90);
 
 /// The most bytes one message carries. The other end counts only whole
 /// messages as hearing from this one, so each must arrive well within
-/// `SILENCE` even on a slow link: 64 KiB in 30 s is about 2 KiB/s.
+/// `SILENCE`: a transfer's messages grow to this only on a line that takes
+/// them at once (`Pace`).
 pub const CHUNK: usize = 64 * 1024;
+
+/// The fewest bytes a message carries, however slow the line: 4 KiB within
+/// the silence is about 140 bytes a second.
+pub const SMALLEST_CHUNK: usize = 4 * 1024;
+
+/// How large each message of a transfer is: as large as the line takes
+/// well within the silence, which the other end counts only whole messages
+/// against. It starts at the smallest; one that took long to write halves
+/// it, and it doubles, up to `CHUNK`, once more than any send buffer holds
+/// went at once, as a buffer taking the first messages at once says
+/// nothing of the line behind it.
+pub struct Pace {
+    chunk: usize,
+    /// The bytes written at once since the size last changed.
+    quick: usize,
+}
+
+/// A message that took this long to write halves the next.
+const SLOW_MESSAGE: std::time::Duration = std::time::Duration::from_secs(4);
+/// One written within this went at once.
+const QUICK_MESSAGE: std::time::Duration = std::time::Duration::from_millis(500);
+/// How much has to go at once before the messages grow.
+const BUFFERED: usize = 512 * 1024;
+
+impl Default for Pace {
+    fn default() -> Self {
+        Self { chunk: SMALLEST_CHUNK, quick: 0 }
+    }
+}
+
+impl Pace {
+    /// How many bytes the next message carries.
+    pub fn chunk(&self) -> usize {
+        self.chunk
+    }
+
+    /// A message of `bytes` took `took` to write.
+    pub fn wrote(&mut self, bytes: usize, took: std::time::Duration) {
+        if took >= SLOW_MESSAGE {
+            self.chunk = (self.chunk / 2).max(SMALLEST_CHUNK);
+            self.quick = 0;
+        } else if took <= QUICK_MESSAGE {
+            self.quick += bytes;
+            if self.quick >= BUFFERED {
+                self.chunk = (self.chunk * 2).min(CHUNK);
+                self.quick = 0;
+            }
+        }
+    }
+}
 
 /// Where a data connection goes.
 pub enum Endpoint {
@@ -52,13 +103,15 @@ pub struct Stream {
     line: Line,
     /// Bytes received and not yet taken.
     pending: Vec<u8>,
+    /// How large the messages it sends are now.
+    pace: Pace,
     /// Says why, when this machine cut the call the transfer goes with.
     cut: Option<watch::Receiver<Option<String>>>,
 }
 
 impl Stream {
     fn over(socket: HubSocket, cut: Option<watch::Receiver<Option<String>>>) -> Self {
-        Self { line: Line::new(socket, cut.clone()), pending: Vec::new(), cut }
+        Self { line: Line::new(socket, cut.clone()), pending: Vec::new(), pace: Pace::default(), cut }
     }
 
     /// Opens this machine's end of the transfer `stream` and waits for the
@@ -124,12 +177,23 @@ impl Stream {
         self.cut.as_ref().and_then(|cut| cut.borrow().clone())
     }
 
-    /// Sends bytes.
+    /// Sends bytes, as many to a message as the line takes (`Pace`).
     pub async fn send(&mut self, bytes: &[u8]) -> Result<(), String> {
-        for chunk in bytes.chunks(CHUNK) {
-            self.put(WsMessage::Binary(chunk.to_vec().into())).await?;
+        let mut rest = bytes;
+        while !rest.is_empty() {
+            let (piece, after) = rest.split_at(rest.len().min(self.pace.chunk()));
+            let began = std::time::Instant::now();
+            self.put(WsMessage::Binary(piece.to_vec().into())).await?;
+            self.pace.wrote(piece.len(), began.elapsed());
+            rest = after;
         }
         Ok(())
+    }
+
+    /// The most a message it sends carries now: what is said in one word
+    /// is said whole only when it fits (`crate::watch_stream`).
+    pub fn message_size(&self) -> usize {
+        self.pace.chunk()
     }
 
     /// Takes exactly `count` bytes, handing each piece to `take` as it comes.

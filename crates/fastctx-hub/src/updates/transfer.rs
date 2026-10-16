@@ -24,18 +24,35 @@ use crate::{Hub, Socket, refuse, send};
 
 /// What the member says once it has every byte.
 const DONE: &str = "\"done\"";
-/// The most bytes one message carries.
-const CHUNK: usize = 64 * 1024;
 
-/// Writes `message`, taking no longer than the silence: a member that does
-/// not take what it is sent is gone as much as one that says nothing.
-async fn put<S>(sink: &mut S, message: WsMessage) -> Result<(), String>
+/// Writes `message`, for as long as its bytes keep going out: a member
+/// that takes nothing of what it is sent for a silence is gone as much as
+/// one that says nothing.
+async fn put<S>(sink: &mut S, pulse: &fastctx_net::pulse::Pulse, message: WsMessage) -> Result<(), String>
 where
     S: futures_util::Sink<WsMessage, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
 {
-    match tokio::time::timeout(SILENCE, sink.send(message)).await {
+    match pulse.writing(sink.send(message)).await {
         Ok(sent) => sent.map_err(|error| error.to_string()),
         Err(_) => Err(format!("the member took nothing for {} s", SILENCE.as_secs())),
+    }
+}
+
+/// The next message from the member, or why none comes: nothing of one
+/// came for a silence.
+async fn heard<S>(stream: &mut S, pulse: &fastctx_net::pulse::Pulse) -> Result<Option<WsMessage>, String>
+where
+    S: futures_util::Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    let mut heard = tokio::time::Instant::now();
+    loop {
+        tokio::select! {
+            next = stream.next() => return next.transpose().map_err(|error| error.to_string()),
+            () = tokio::time::sleep_until(heard + SILENCE) => match pulse.since(heard) {
+                Some(at) => heard = at,
+                None => return Err(format!("nothing came from the member for {} s", SILENCE.as_secs())),
+            },
+        }
     }
 }
 
@@ -84,6 +101,7 @@ pub(crate) async fn serve(
     if tokio::time::timeout(SILENCE, send(&mut socket, &Down::Paired)).await.map_or(true, |sent| sent.is_err()) {
         return;
     }
+    let pulse = crate::pulse_of(&socket);
     let (mut sink, mut stream) = socket.split();
     let writer = async {
         // Its turn among the members being handed packages, said to be
@@ -93,32 +111,34 @@ pub(crate) async fn serve(
         let _place = loop {
             tokio::select! {
                 place = &mut place => break place.map_err(|error| error.to_string())?,
-                () = tokio::time::sleep(HEARTBEAT) => put(&mut sink, WsMessage::Ping(Vec::new().into())).await?,
+                () = tokio::time::sleep(HEARTBEAT) => put(&mut sink, &pulse, WsMessage::Ping(Vec::new().into())).await?,
             }
         };
         let said = serde_json::to_string(&Sized { size }).expect("a size serializes");
-        put(&mut sink, WsMessage::Text(said.into())).await?;
-        let mut buffer = vec![0; CHUNK];
+        put(&mut sink, &pulse, WsMessage::Text(said.into())).await?;
+        // As many bytes to a message as the member's line takes.
+        let mut pace = fastctx_net::data::Pace::default();
+        let mut buffer = vec![0; fastctx_net::data::CHUNK];
         loop {
-            let read = file.read(&mut buffer).await.map_err(|error| error.to_string())?;
+            let read = file.read(&mut buffer[..pace.chunk()]).await.map_err(|error| error.to_string())?;
             if read == 0 {
                 break;
             }
-            put(&mut sink, WsMessage::Binary(buffer[..read].to_vec().into())).await?;
+            let began = std::time::Instant::now();
+            put(&mut sink, &pulse, WsMessage::Binary(buffer[..read].to_vec().into())).await?;
+            pace.wrote(read, began.elapsed());
         }
         loop {
             tokio::time::sleep(HEARTBEAT).await;
-            put(&mut sink, WsMessage::Ping(Vec::new().into())).await?;
+            put(&mut sink, &pulse, WsMessage::Ping(Vec::new().into())).await?;
         }
     };
     let reader = async {
         loop {
-            match tokio::time::timeout(SILENCE, stream.next()).await {
-                Ok(Some(Ok(WsMessage::Text(text)))) if text.as_str() == DONE => return Ok(()),
-                Ok(Some(Ok(WsMessage::Close(_))) | None) => return Err("the member left".to_string()),
-                Ok(Some(Ok(_))) => {}
-                Ok(Some(Err(error))) => return Err(error.to_string()),
-                Err(_) => return Err(format!("nothing came from the member for {} s", SILENCE.as_secs())),
+            match heard(&mut stream, &pulse).await? {
+                Some(WsMessage::Text(text)) if text.as_str() == DONE => return Ok(()),
+                Some(WsMessage::Close(_)) | None => return Err("the member left".to_string()),
+                Some(_) => {}
             }
         }
     };
@@ -200,6 +220,7 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Attempt
     tokio::time::timeout(SILENCE, send(&mut socket, &Down::Paired))
         .await
         .map_err(|_| format!("the member took nothing for {} s", SILENCE.as_secs()))??;
+    let pulse = crate::pulse_of(&socket);
     let (mut sink, mut stream) = socket.split();
     let received = async {
         let mut file =
@@ -207,23 +228,21 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Attempt
         let mut size = None;
         let mut have = 0_u64;
         while size.is_none_or(|size| have < size) {
-            match tokio::time::timeout(SILENCE, stream.next()).await {
-                Ok(Some(Ok(WsMessage::Text(text)))) if size.is_none() => {
+            match heard(&mut stream, &pulse).await? {
+                Some(WsMessage::Text(text)) if size.is_none() => {
                     let said: Sized = serde_json::from_str(&text).map_err(|error| error.to_string())?;
                     size = Some(said.size);
                 }
-                Ok(Some(Ok(WsMessage::Binary(bytes)))) if size.is_some() => {
+                Some(WsMessage::Binary(bytes)) if size.is_some() => {
                     file.write_all(&bytes).await.map_err(|error| error.to_string())?;
                     have += bytes.len() as u64;
                     attempt.brought.fetch_add(bytes.len() as u64, Ordering::Relaxed);
                 }
-                Ok(Some(Ok(WsMessage::Ping(_) | WsMessage::Pong(_)))) => {}
-                Ok(Some(Ok(WsMessage::Close(_))) | None) => {
+                Some(WsMessage::Ping(_) | WsMessage::Pong(_)) => {}
+                Some(WsMessage::Close(_)) | None => {
                     return Err("the member left before it sent it all".to_string());
                 }
-                Ok(Some(Ok(_))) => return Err("the member sent something other than the package".to_string()),
-                Ok(Some(Err(error))) => return Err(error.to_string()),
-                Err(_) => return Err(format!("nothing came from the member for {} s", SILENCE.as_secs())),
+                Some(_) => return Err("the member sent something other than the package".to_string()),
             }
         }
         if have != size.unwrap_or_default() {
@@ -234,7 +253,7 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Attempt
     let pinging = async {
         loop {
             tokio::time::sleep(HEARTBEAT).await;
-            if put(&mut sink, WsMessage::Ping(Vec::new().into())).await.is_err() {
+            if put(&mut sink, &pulse, WsMessage::Ping(Vec::new().into())).await.is_err() {
                 std::future::pending::<()>().await;
             }
         }
@@ -258,7 +277,7 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Attempt
         Ok(()) => DONE.to_string(),
         Err(why) => serde_json::to_string(&format!("the hub did not take it: {why}")).expect("text serializes"),
     };
-    let _ = put(&mut sink, WsMessage::Text(word.into())).await;
+    let _ = put(&mut sink, &pulse, WsMessage::Text(word.into())).await;
     let _ = tokio::time::timeout(SILENCE, sink.close()).await;
     kept
 }

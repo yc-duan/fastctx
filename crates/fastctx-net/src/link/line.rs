@@ -22,6 +22,8 @@ const DAYS: i64 = 30;
 
 /// How many of the line's longest recent round trips a check waits for.
 const CHECK_TIMES: u64 = 4;
+/// The least time an answer to a check is given.
+const CHECK_AT_LEAST: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// How far back round trips are kept: one each heartbeat.
 const TRIPS: SignedDuration = SignedDuration::from_hours(1);
@@ -59,12 +61,15 @@ impl Inner {
 
     /// How long an answer to a check may take before the line is taken for
     /// dead: several times the longest round trip it made over the last
-    /// hour, at most its silence (`world-network.md`, 有人在等，就替他看着线).
-    /// Before any round trip is measured, it is the silence.
+    /// hour, a second at least and its silence at most (`world-network.md`,
+    /// 有人在等，就替他看着线). A hub on the same machine answers within a
+    /// millisecond, which says nothing of how long the next answer takes
+    /// while the machine wakes or its network changes. Before any round
+    /// trip is measured, it is the silence.
     pub(super) fn check_within(&self) -> std::time::Duration {
         let longest = self.line.lock().expect("never poisoned").trips.iter().map(|trip| trip.ms).max();
         longest.map_or(crate::wire::SILENCE, |ms| {
-            std::time::Duration::from_millis(u64::from(ms) * CHECK_TIMES).min(crate::wire::SILENCE)
+            std::time::Duration::from_millis(u64::from(ms) * CHECK_TIMES).clamp(CHECK_AT_LEAST, crate::wire::SILENCE)
         })
     }
 
@@ -91,4 +96,10 @@ impl super::Link {
     pub fn line_changes(&self) -> Vec<LineChange> {
         self.inner.line.lock().expect("never poisoned").changes.clone()
     }
+}
+
+/// A round trip in whole milliseconds, one under a millisecond counted as
+/// one.
+pub(super) fn millis(trip: std::time::Duration) -> u32 {
+    u32::try_from(trip.as_micros().div_ceil(1000)).unwrap_or(u32::MAX)
 }
