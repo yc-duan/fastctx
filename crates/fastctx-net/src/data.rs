@@ -28,6 +28,10 @@ use line::{Line, Received as Message};
 /// close of both directions.
 const DONE: &str = "\"done\"";
 
+/// How long an end waits for the hub to pair it: the hub waits a minute
+/// for the other end, and says so within a silence.
+const PAIRED_WITHIN: std::time::Duration = std::time::Duration::from_secs(90);
+
 /// The most bytes one message carries. The other end counts only whole
 /// messages as hearing from this one, so each must arrive well within
 /// `SILENCE` even on a slow link: 64 KiB in 30 s is about 2 KiB/s.
@@ -100,8 +104,14 @@ impl Stream {
             version: env!("CARGO_PKG_VERSION").to_string(),
             intent: intent(key.public(), proof),
         };
-        dial::send(&mut socket, &hello).await?;
-        match dial::recv(&mut socket).await? {
+        let paired = async {
+            dial::send(&mut socket, &hello).await?;
+            dial::recv(&mut socket).await
+        };
+        let paired = tokio::time::timeout(PAIRED_WITHIN, paired)
+            .await
+            .map_err(|_| format!("the hub paired nothing within {} s", PAIRED_WITHIN.as_secs()))??;
+        match paired {
             Some(Down::Paired) => Ok(Self::over(socket, None)),
             Some(Down::Refused { reason }) => Err(reason.to_string()),
             Some(_) => Err("the hub answered something other than a pairing".to_string()),

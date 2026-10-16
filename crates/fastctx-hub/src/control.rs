@@ -1007,6 +1007,11 @@ fn answer(hub: &Hub, name: &MachineName, generation: u64, call: u64, message: En
     // The caller may have given up or left; an answer nobody waits for is
     // dropped, as a call does not outlive its caller.
     let Some(pending) = pending else { return };
+    // Its data connection, if it is not paired by now, never is: the call
+    // is over.
+    if let Some(stream) = pending.stream {
+        crate::data::forget(hub, stream, "its call was answered");
+    }
     let fits = {
         let store = hub.store();
         let directory = &store.book.directory;

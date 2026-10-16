@@ -195,8 +195,10 @@ pub(super) async fn keep(inner: Arc<Inner>, peer: MachineName, at: Vec<SocketAdd
             Ok((conn, socket, frames, address, route)) => {
                 inner.node.log(format!("a direct link with {peer} is up, to {address} {route}"));
                 inner.direct_up(&conn);
+                let mut down = Down::new(&inner, &conn);
                 let (reason, moved) = serve(inner.clone(), conn.clone(), socket, frames, Some(&mut network)).await;
-                inner.direct_down(&conn, &reason);
+                down.reason = reason.clone();
+                drop(down);
                 if moved || started.elapsed() >= STABLE {
                     failures = 0;
                 }
@@ -276,11 +278,37 @@ pub(super) async fn taken(
     let (conn, frames) = PeerConn::new(name.clone(), key, false, Vec::new(), cancels);
     inner.node.log(format!("a direct link from {name} came in from {from}"));
     inner.direct_up(&conn);
+    let mut down = Down::new(&inner, &conn);
     // The machine that dialled keeps the link and dials again, so a change
     // in this machine's network does not end it here; its silence does.
     let (reason, _) = serve(inner.clone(), conn.clone(), socket, frames, None).await;
-    inner.direct_down(&conn, &reason);
+    down.reason = reason.clone();
+    drop(down);
     inner.node.log(format!("the direct link from {name} ended: {reason}"));
+}
+
+/// Takes a link down once it is dropped: when serving it ends, and when
+/// the task keeping it is stopped in the middle, so the calls on it hear so
+/// either way.
+struct Down<'a> {
+    inner: &'a Inner,
+    conn: &'a Arc<PeerConn>,
+    /// Why it went down.
+    reason: String,
+}
+
+impl<'a> Down<'a> {
+    fn new(inner: &'a Inner, conn: &'a Arc<PeerConn>) -> Self {
+        Self { inner, conn, reason: "this machine stopped keeping the link".to_string() }
+    }
+}
+
+impl Drop for Down<'_> {
+    fn drop(&mut self) {
+        self.conn.close(self.reason.clone());
+        self.inner.answers.stop_all(&self.conn.on(), "the direct link it came on ended");
+        self.inner.direct_down(self.conn, &self.reason);
+    }
 }
 
 impl Inner {

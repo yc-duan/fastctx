@@ -58,6 +58,8 @@ struct Registration {
 }
 
 struct Waiting {
+    /// Tells this end apart from any other that came with its number.
+    serial: u64,
     end: End,
     member: MachineName,
     hand_over: oneshot::Sender<(Socket, oneshot::Receiver<String>)>,
@@ -191,6 +193,7 @@ pub(crate) async fn end(
     // find each other.
     let (hand_over, mut handed) = oneshot::channel();
     let (called_off, mut calling_off) = oneshot::channel();
+    let serial = hub.next();
     let waiting = {
         let mut pairing = hub.data.lock().expect("never poisoned");
         match pairing.waiting.remove(&stream) {
@@ -203,7 +206,8 @@ pub(crate) async fn end(
                         pairing.waiting.len()
                     ))
                 } else {
-                    pairing.waiting.insert(stream, Waiting { end, member: me.clone(), hand_over, called_off });
+                    let waiting = Waiting { serial, end, member: me.clone(), hand_over, called_off };
+                    pairing.waiting.insert(stream, waiting);
                     Ok(None)
                 }
             }
@@ -214,24 +218,38 @@ pub(crate) async fn end(
             hub.log.line(format_args!("refused a data connection of {me}: {reason}"));
             refuse(&mut socket, Refusal::Broken { reason }).await;
         }
-        Ok(Some(waiting)) => {
-            let (cut, cutting) = oneshot::channel();
-            match pair(&hub, stream, &waiting, end, &me, cut) {
-                Ok((source, sink)) => {
-                    hub.log.line(format_args!("a transfer from {source} to {sink} started"));
-                    // The first end relays; this one is handed over to it,
-                    // with the means to cut the pair.
-                    if let Err((mut socket, _)) = waiting.hand_over.send((socket, cutting)) {
-                        hub.data.lock().expect("never poisoned").live.remove(&stream);
-                        refuse(&mut socket, Refusal::Broken { reason: "the other end left".to_string() }).await;
+        Ok(Some(waiting)) => match pair(&hub, stream, &waiting, end, &me) {
+            Ok((source, sink, standings)) => {
+                // The first end relays; this one is handed over to it, with
+                // the means to cut the pair. Live and handed over in one
+                // look, or neither: the first end, giving up meanwhile, finds
+                // either.
+                let (cut, cutting) = oneshot::channel();
+                let handed = {
+                    let mut pairing = hub.data.lock().expect("never poisoned");
+                    if pairing.live.len() >= LIVE {
+                        Err((socket, format!("the hub relays {} transfers already; try again", pairing.live.len())))
+                    } else {
+                        pairing.live.insert(stream, Live { standings, cut: Some(cut) });
+                        waiting.hand_over.send((socket, cutting)).map_err(|(socket, _)| {
+                            pairing.live.remove(&stream);
+                            (socket, "the other end left".to_string())
+                        })
+                    }
+                };
+                match handed {
+                    Ok(()) => hub.log.line(format_args!("a transfer from {source} to {sink} started")),
+                    Err((mut socket, reason)) => {
+                        hub.log.line(format_args!("refused to pair a data connection of {me}: {reason}"));
+                        refuse(&mut socket, Refusal::Broken { reason }).await;
                     }
                 }
-                Err(reason) => {
-                    hub.log.line(format_args!("refused to pair a data connection of {me}: {reason}"));
-                    refuse(&mut socket, Refusal::Broken { reason }).await;
-                }
             }
-        }
+            Err(reason) => {
+                hub.log.line(format_args!("refused to pair a data connection of {me}: {reason}"));
+                refuse(&mut socket, Refusal::Broken { reason }).await;
+            }
+        },
         Ok(None) => {
             let peer = tokio::select! {
                 handed = &mut handed => handed.map_err(|_| "the other end left".to_string()),
@@ -242,13 +260,19 @@ pub(crate) async fn end(
                 }
                 Ok(why) = &mut calling_off => Err(why),
             };
-            // A pairing that came meanwhile hands its end over still.
+            // Still waiting, it was never handed over; taken by a second end,
+            // that end decides at once whether it hands this one over.
             let peer = match peer {
                 Err(why) => {
-                    let mut pairing = hub.data.lock().expect("never poisoned");
-                    pairing.waiting.remove(&stream);
-                    drop(pairing);
-                    handed.try_recv().map_err(|_| why)
+                    let still = {
+                        let mut pairing = hub.data.lock().expect("never poisoned");
+                        let mine = pairing.waiting.get(&stream).is_some_and(|waiting| waiting.serial == serial);
+                        if mine {
+                            pairing.waiting.remove(&stream);
+                        }
+                        mine
+                    };
+                    if still { Err(why) } else { (&mut handed).await.map_err(|_| why) }
                 }
                 handed => handed,
             };
@@ -270,16 +294,15 @@ pub(crate) async fn end(
 }
 
 /// Checks that the two ends of `stream` are the machines a registration
-/// names and that what it was allowed under still holds; marks the pair
-/// live. Returns the source and the sink.
+/// names and that what it was allowed under still holds. Returns the source,
+/// the sink, and what the pair was allowed under.
 fn pair(
     hub: &Hub,
     stream: u64,
     waiting: &Waiting,
     end: End,
     me: &MachineName,
-    cut: oneshot::Sender<String>,
-) -> Result<(MachineName, MachineName), String> {
+) -> Result<(MachineName, MachineName, Vec<Standing>), String> {
     if waiting.end == end {
         return Err("two ends of one kind presented one stream".to_string());
     }
@@ -297,9 +320,6 @@ fn pair(
                 registration.source, registration.sink
             ));
         }
-        if pairing.live.len() >= LIVE {
-            return Err(format!("the hub relays {} transfers already; try again", pairing.live.len()));
-        }
         registration.standings.clone()
     };
     let covers =
@@ -316,8 +336,7 @@ fn pair(
             return Err(why);
         }
     }
-    hub.data.lock().expect("never poisoned").live.insert(stream, Live { standings, cut: Some(cut) });
-    Ok((source, sink))
+    Ok((source, sink, standings))
 }
 
 /// Relays between the two ends until either is done or the pair is cut;

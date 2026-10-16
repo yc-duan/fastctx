@@ -161,10 +161,13 @@ async fn read(
             }
             Some(Ok(WsMessage::Pong(_) | WsMessage::Frame(_))) => continue,
         };
-        if received.send(message).await.is_err() {
-            return;
+        // Waiting for the holder to take it is not the other end's silence,
+        // but a cut or the end of writing still ends the connection.
+        tokio::select! {
+            sent = received.send(message) => if sent.is_err() { return },
+            why = was_cut(&mut cut) => break Some(why),
+            _ = over.wait_for(|over| *over) => break None,
         }
-        // Waiting for the holder to take it is not the other end's silence.
         heard = Instant::now();
     };
     end(&stopped, &ending, why);
