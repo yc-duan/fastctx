@@ -4,6 +4,8 @@
 //! when the change is.
 
 pub mod bounded;
+mod streaming;
+pub use streaming::Frames;
 
 use fastctx_types::town::{Afloat, AfootChange};
 use serde::Serialize;

@@ -141,6 +141,7 @@ pub(crate) async fn session(
     // Whoever sees it sees it online now.
     hub.health.opened();
     hub.present(&name);
+    out.afoot_started();
 
     let pulse = crate::pulse_of(&socket);
     let (mut sink, mut stream) = socket.split();
@@ -507,6 +508,7 @@ fn open(
         version: env!("CARGO_PKG_VERSION").to_string(),
         taken: counted_through(entry),
         letters: entry.out_epoch,
+        afoot_pending: Some(said.afoot),
     };
     // Its new numbering is kept before any letter of it is taken: kept
     // later, a stop in between would take the new letters for ones held.
@@ -670,7 +672,7 @@ fn handle(
     match frame {
         Up::Ping { n, paths, held, .. } => {
             crate::assists::heard(hub);
-            reply(Down::Pong { n, at: Some(Timestamp::now()), took: Some(took) });
+            reply(Down::Pong { n, at: Some(Timestamp::now()), took: Some(took), afoot_ready: false });
             if let Some(held) = held {
                 refusals_heard(hub, name, generation, |refused| refused <= held);
             }

@@ -7,7 +7,7 @@
 //! again, machine by machine.
 
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use fastctx_types::MachineName;
 use fastctx_types::town::{Afoot, AfootChange, AfootSeen, ResidentNow, RunningJob};
@@ -19,16 +19,18 @@ use crate::wire::Up;
 pub(crate) struct Afoots {
     here: Mutex<Here>,
     elsewhere: Mutex<BTreeMap<MachineName, Elsewhere>>,
-    /// The session whose first telling of the other machines has come.
+    /// The session whose initial directory arrived.
     synced: Mutex<Option<u64>>,
+    complete: Mutex<Option<u64>>,
 }
 
 /// What is afoot on this machine: the latest, and the session that takes it
 /// with what it was told, none yet when it has been told nothing.
 #[derive(Default)]
 struct Here {
-    latest: Option<Afoot>,
-    taking: Option<(u64, Option<Afoot>)>,
+    latest: Option<Arc<Afoot>>,
+    taking: Option<(u64, Option<Arc<Afoot>>)>,
+    sending: Option<u64>,
 }
 
 /// What is afoot on another machine as the hub told this one: what there
@@ -48,6 +50,7 @@ impl Inner {
             self.node.log(format!("status was not published: {reason}"));
             return;
         }
+        let afoot = Arc::new(afoot);
         let mut here = self.afoots.here.lock().expect("never poisoned");
         if here.latest.as_ref() == Some(&afoot) {
             return;
@@ -56,9 +59,8 @@ impl Inner {
         self.send_afoot(&mut here);
     }
 
-    /// The session `generation` has asked the hub for the view: its first
-    /// telling of the other machines came before the answer. When the hub
-    /// takes what is afoot, it is told all of it here.
+    /// The session's directory arrived, allowing local status to be sent.
+    /// A newer hub acknowledges its initial status snapshot separately.
     pub(super) fn afoot_synced(&self, generation: u64) {
         if self.view().afoot {
             let mut here = self.afoots.here.lock().expect("never poisoned");
@@ -69,38 +71,78 @@ impl Inner {
         self.node.afoot_changed();
     }
 
+    pub(super) fn afoot_started(&self, generation: u64, pending: bool) {
+        *self.afoots.complete.lock().expect("never poisoned") = (!pending).then_some(generation);
+    }
+
+    pub(super) fn afoot_complete(&self, generation: u64) {
+        *self.afoots.complete.lock().expect("never poisoned") = Some(generation);
+        self.node.afoot_changed();
+    }
+
     /// Whether what the hub told of the other machines is as the session
     /// on now first gave it, or there is no session: false between a
     /// session's start and its first telling.
     pub(crate) fn afoot_ready(&self) -> bool {
         let Some(connection) = self.connection() else { return true };
         *self.afoots.synced.lock().expect("never poisoned") == Some(connection.generation)
+            && *self.afoots.complete.lock().expect("never poisoned") == Some(connection.generation)
     }
 
     fn send_afoot(&self, here: &mut Here) {
-        let Some(latest) = &here.latest else { return };
-        let Some((generation, told)) = &mut here.taking else { return };
-        let Some(connection) = self.connection().filter(|connection| connection.generation == *generation) else {
-            return;
-        };
-        let change = match told {
-            Some(told) => told.change_to(latest),
-            None => latest.whole(),
-        };
-        if change.is_empty() {
+        let Some((generation, _)) = &here.taking else { return };
+        let generation = *generation;
+        if here.latest.is_none() || here.sending == Some(generation) {
             return;
         }
-        let (frames, too_large) = crate::afoot::frames(change, crate::afoot::FRAME_ROOM);
-        if !too_large.is_empty() {
-            self.node.log(format!("status was not published: {} cannot fit in a control frame", too_large.join(", ")));
-            return;
-        }
-        for change in frames {
-            if connection.up.send(Up::Afoot { change: Box::new(change) }).is_err() {
-                return;
+        let Some(inner) = self.this.upgrade() else { return };
+        here.sending = Some(generation);
+        tokio::spawn(async move {
+            if let Err(reason) = inner.write_afoot(generation).await {
+                let mut here = inner.afoots.here.lock().expect("never poisoned");
+                if here.sending == Some(generation) {
+                    here.sending = None;
+                }
+                inner.node.log(format!("publishing status: {reason}"));
+            }
+        });
+    }
+
+    async fn write_afoot(&self, generation: u64) -> Result<(), String> {
+        loop {
+            let (before, after) = {
+                let mut here = self.afoots.here.lock().expect("never poisoned");
+                let Some((taking, before)) = &here.taking else { return Ok(()) };
+                if *taking != generation {
+                    return Ok(());
+                }
+                let Some(after) = &here.latest else {
+                    here.sending = None;
+                    return Ok(());
+                };
+                if before.as_ref() == Some(after) {
+                    here.sending = None;
+                    return Ok(());
+                }
+                (before.clone(), after.clone())
+            };
+            let connection = self
+                .connection()
+                .filter(|connection| connection.generation == generation)
+                .ok_or_else(|| "the status connection ended".to_string())?;
+            for frame in crate::afoot::Frames::new(before, after.clone()) {
+                connection.up.write(Up::Afoot { change: Box::new(frame?) }).await?;
+            }
+            let mut here = self.afoots.here.lock().expect("never poisoned");
+            if here.taking.as_ref().is_none_or(|(taking, _)| *taking != generation) {
+                return Ok(());
+            }
+            here.taking = Some((generation, Some(after.clone())));
+            if here.latest.as_ref() == Some(&after) {
+                here.sending = None;
+                return Ok(());
             }
         }
-        *told = Some(latest.clone());
     }
 
     /// The hub told how what is afoot on `machine` changed.

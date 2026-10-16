@@ -20,7 +20,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use fastctx_net::directory::Directory;
-use fastctx_net::wire::Down;
+
 use fastctx_types::town::{Afoot, AfootChange, AfootJob, AfootResident, AfootSeen};
 use fastctx_types::{AccountName, MachineName, ResidentId};
 
@@ -44,7 +44,7 @@ struct Shown {
 /// What a member was told of one machine.
 #[derive(Default, PartialEq)]
 struct Seen {
-    afoot: AfootSeen,
+    afoot: Arc<AfootSeen>,
     busy: Option<u32>,
 }
 
@@ -147,28 +147,17 @@ fn tell(hub: &Hub, scope: Scope<'_>) {
                         .then(|| Arc::new(seen(&directory, &logins, machine, &told[machine], hidden.get(machine))))
                 })
                 .clone();
-            let (change, busy) = match (shown.machines.get(machine), &now) {
+            let before = shown.machines.get(machine);
+            match (before, &now) {
                 (None, None) => continue,
-                (None, Some(now)) => (now.afoot.whole(), now.busy),
-                (Some(_), None) => (AfootChange { anew: true, ..AfootChange::default() }, None),
                 (Some(was), Some(now)) if Arc::ptr_eq(was, now) || was == now => continue,
-                (Some(was), Some(now)) => (was.afoot.change_to(&now.afoot), now.busy),
-            };
-            let (frames, too_large) = fastctx_net::afoot::frames(change, fastctx_net::afoot::FRAME_ROOM);
-            if !too_large.is_empty() {
-                hub.log.line(format_args!(
-                    "what is afoot on {machine} leaves out {} for {reader}: each is larger than a frame",
-                    too_large.join(", ")
-                ));
-                let _ = out.send(Out::End(fastctx_net::wire::Refusal::Broken {
-                    reason: "a status record could not be represented; its sending baseline was not advanced".into(),
-                }));
-                continue;
+                _ => {}
             }
-            // A change of the count alone goes as a change of nothing.
-            let frames = if frames.is_empty() { vec![AfootChange::default()] } else { frames };
-            for change in frames {
-                let _ = out.send(Out::Frame(Down::Afoot { machine: machine.clone(), busy, change: Box::new(change) }));
+            let previous = before.map(|seen| seen.afoot.clone());
+            let after = now.as_ref().map(|seen| seen.afoot.clone()).unwrap_or_default();
+            let busy = now.as_ref().and_then(|seen| seen.busy);
+            if out.afoot(machine.clone(), previous, after, busy).is_err() {
+                continue;
             }
             match now {
                 Some(now) => {
@@ -209,16 +198,17 @@ fn seen(
     let owner =
         directory.member(machine).and_then(|member| member.home.as_ref()).is_some_and(|home| logins.contains(home));
     let mut seen = Seen::default();
+    let projected = Arc::make_mut(&mut seen.afoot);
     for (id, resident) in &afoot.residents {
         if theirs(&resident.accounts) && shown(id) {
-            seen.afoot.residents.insert(id.clone(), resident.resident.clone());
+            projected.residents.insert(id.clone(), resident.resident.clone());
         }
     }
     for (id, job) in &afoot.jobs {
         let of_hidden =
             job.job.owner.resident().is_some_and(|owner| owner.machine == *machine && !shown(&owner.resident));
         if theirs(&job.accounts) && !of_hidden {
-            seen.afoot.jobs.insert(id.clone(), job.job.clone());
+            projected.jobs.insert(id.clone(), job.job.clone());
         }
     }
     // What works there for accounts that may work on the machine counts;

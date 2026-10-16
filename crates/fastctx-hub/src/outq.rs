@@ -14,10 +14,11 @@
 //! waits behind all of it.
 //!
 //! Each lane is bounded where things are queued. The first by count and
-//! bytes, notices by count, and their afoot changes by a shared byte budget
-//! that also covers a notice being drained. A member that leaves more than
-//! that untaken is let go; it comes back and reads on from where it was,
-//! with a fresh afoot snapshot. Letters are bounded by the mailbox's window.
+//! bytes, and notices by count. Status notices own bounded cursors into
+//! shared immutable snapshots, plus at most one frame and one pending item
+//! while draining; they never encode the whole snapshot into this queue.
+//! Snapshot bodies belong to the current status and reader baselines, not
+//! the cursor budget. Letters are bounded by the mailbox's window.
 
 mod afoot;
 
@@ -92,6 +93,9 @@ struct State {
     /// The afoot notice taken last, drained a frame at a time before the next.
     spilled: Option<afoot::Pending>,
     afoot_bytes: usize,
+    afoot_started: bool,
+    initial_afoots: usize,
+    afoot_ready: bool,
     overflowed: Option<String>,
     /// How many frames of the first lane went in a row.
     in_a_row: usize,
@@ -166,6 +170,53 @@ impl Outq {
         }
         self.0.ready.notify_one();
         queued
+    }
+
+    /// Shares a status snapshot and only materializes a frame when its writer asks.
+    pub(crate) fn afoot(
+        &self,
+        machine: MachineName,
+        before: Option<Arc<fastctx_types::town::AfootSeen>>,
+        after: Arc<fastctx_types::town::AfootSeen>,
+        busy: Option<u32>,
+    ) -> Result<(), ()> {
+        let (result, overflowed) = {
+            let mut state = self.0.state.lock().expect("never poisoned");
+            if state.shut || state.overflowed.is_some() {
+                return Err(());
+            }
+            let notice = Notice::Afoot(machine.clone());
+            let at = state.notices.iter().position(|(key, _)| *key == notice);
+            let result = if let Some(at) = at {
+                let Pending::Afoot(pending) = &mut state.notices[at].1 else { unreachable!("status snapshot") };
+                pending.replace(after, busy);
+                Ok(())
+            } else if state.notices.len() >= NOTICES {
+                state.overflow("too many pending notices".into())
+            } else {
+                match afoot::Pending::new(machine, before, after, busy, &mut state.afoot_bytes) {
+                    Ok(mut pending) => {
+                        pending.initial = !state.afoot_started;
+                        state.initial_afoots += usize::from(pending.initial);
+                        state.notices.push_back((notice, Pending::Afoot(pending)));
+                        Ok(())
+                    }
+                    Err(why) => state.afoot_overflow(why),
+                }
+            };
+            (result, state.overflowed.clone())
+        };
+        if let Some(why) = overflowed {
+            self.0.over.send_replace(Some(why));
+        }
+        self.0.ready.notify_one();
+        result
+    }
+
+    /// Initial producers are finished; the writer acknowledges after draining their frames.
+    pub(crate) fn afoot_started(&self) {
+        self.0.state.lock().expect("never poisoned").afoot_started = true;
+        self.0.ready.notify_one();
     }
 
     /// What to write next; none once the queue is shut.
@@ -254,30 +305,13 @@ impl State {
         if at.is_none() && self.notices.len() >= NOTICES {
             return self.overflow(format!("{NOTICES} notices wait for it untaken; letting it go"));
         }
-        let Down::Afoot { machine, busy, change } = frame else {
-            match at {
-                // A machine's presence counted earlier never replaces one
-                // counted later.
-                Some(at) if older_presence(&self.notices[at].1, &frame) => {}
-                Some(at) => self.notices[at].1 = Pending::Frame(frame),
-                None => self.notices.push_back((notice, Pending::Frame(frame))),
-            }
-            return Ok(());
-        };
-        let at = match at {
-            Some(at) => at,
-            None => match afoot::Pending::new(machine, &mut self.afoot_bytes) {
-                Ok(pending) => {
-                    let at = self.notices.len();
-                    self.notices.push_back((notice, Pending::Afoot(pending)));
-                    at
-                }
-                Err(why) => return self.afoot_overflow(why),
-            },
-        };
-        let Pending::Afoot(pending) = &mut self.notices[at].1 else { unreachable!("afoot notice has afoot changes") };
-        if let Err(why) = pending.merge(*change, busy, &mut self.afoot_bytes) {
-            return self.afoot_overflow(why);
+        if matches!(frame, Down::Afoot { .. }) {
+            return self.overflow("status changes must retain their owning snapshots".into());
+        }
+        match at {
+            Some(at) if older_presence(&self.notices[at].1, &frame) => {}
+            Some(at) => self.notices[at].1 = Pending::Frame(frame),
+            None => self.notices.push_back((notice, Pending::Frame(frame))),
         }
         Ok(())
     }
@@ -292,6 +326,10 @@ impl State {
         }
         if let Some(why) = &self.overflowed {
             return Some(Next::Overflowed(why.clone()));
+        }
+        if self.afoot_started && self.initial_afoots == 0 && !self.afoot_ready {
+            self.afoot_ready = true;
+            return Some(Next::Frames(vec![Down::Pong { n: 0, at: None, took: None, afoot_ready: true }]));
         }
         let others = !self.letters.is_empty() || !self.notices.is_empty() || self.spilled.is_some();
         if (self.in_a_row < BURST || !others)
@@ -314,8 +352,15 @@ impl State {
                 }
             }
             let pending = state.spilled.as_mut().expect("taken above");
-            let (frame, done) = pending.take(&mut state.afoot_bytes);
+            let (frame, done) = match pending.take(&mut state.afoot_bytes) {
+                Ok(taken) => taken,
+                Err(why) => {
+                    state.overflowed = Some(why);
+                    return None;
+                }
+            };
             if done {
+                state.initial_afoots -= usize::from(pending.initial);
                 state.spilled = None;
             }
             Some(frame)
@@ -326,6 +371,9 @@ impl State {
         } else {
             notice(self).or_else(|| letter(self))
         };
+        if let Some(why) = &self.overflowed {
+            return Some(Next::Overflowed(why.clone()));
+        }
         frame.map(|frame| Next::Frames(vec![frame]))
     }
 }

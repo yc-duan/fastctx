@@ -309,6 +309,9 @@ pub enum Down {
         version: String,
         taken: u64,
         letters: u64,
+        /// This hub separately acknowledges completion of its initial status snapshot.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        afoot_pending: Option<bool>,
     },
     /// The hub's half of a password login.
     LoginResponse {
@@ -355,6 +358,9 @@ pub enum Down {
         /// (`crate::pulse`); an older hub says none.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         took: Option<u64>,
+        /// All initial status frames preceded this acknowledgement on the wire.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        afoot_ready: bool,
     },
     /// The hub holds this machine's letter `seq` and all before it; when
     /// the hub cannot deliver it, `refused` says why and the letter is gone.

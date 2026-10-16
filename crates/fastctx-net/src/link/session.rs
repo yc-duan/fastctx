@@ -162,6 +162,7 @@ struct Opened {
     route: fastctx_types::world::Route,
     taken: u64,
     hub_letters: u64,
+    afoot_pending: bool,
 }
 
 /// Opens a session by the first way to the hub that takes it.
@@ -234,7 +235,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
         }
     };
     match welcome {
-        Down::Welcome { hub, hub_name, name, taken, letters, .. } => {
+        Down::Welcome { hub, hub_name, name, taken, letters, afoot_pending, .. } => {
             if hub != membership.id {
                 return Err(Ended::Retry(format!("the hub is {hub}, not {}", membership.id)));
             }
@@ -249,7 +250,14 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
                     Err(error) => inner.node.log(format!("recording that the hub is called {hub_name}: {error}")),
                 }
             }
-            Ok(Opened { socket, address, route, taken, hub_letters: letters })
+            Ok(Opened {
+                socket,
+                address,
+                route,
+                taken,
+                hub_letters: letters,
+                afoot_pending: afoot_pending.unwrap_or(false),
+            })
         }
         Down::Refused { reason } => Err(refused(inner, reason)),
         _ => Err(Ended::Retry("the first frame was not a welcome".to_string())),
@@ -263,7 +271,7 @@ async fn connected(
     tried: &[Upstream],
     opened: Opened,
 ) -> Ended {
-    let Opened { socket, address, route, taken, hub_letters } = opened;
+    let Opened { socket, address, route, taken, hub_letters, afoot_pending } = opened;
     let upstream = tried.last().expect("a session is opened by a way").clone();
 
     // The hub holds this machine's letters through `taken`.
@@ -288,6 +296,7 @@ async fn connected(
     rerouted.as_mut().enable();
 
     let generation = super::ways::connection_number();
+    inner.afoot_started(generation, afoot_pending);
     let (up, mut outgoing) = Outgoing::channel();
     let (closed, closing) = tokio::sync::watch::channel(None);
     *inner.connection.lock().expect("never poisoned") = Some(Connection {
@@ -363,10 +372,20 @@ async fn connected(
     {
         let inner = inner.clone();
         tasks.0.push(tokio::spawn(async move {
-            if let Err(error) = inner.refresh().await {
-                inner.node.log(format!("asking the hub for the view: {error}"));
+            let mut failing = None;
+            loop {
+                match inner.refresh().await {
+                    Ok(()) => break,
+                    Err(error) => {
+                        if failing.as_ref() != Some(&error) {
+                            inner.node.log(format!("asking the hub for the initial view: {error}; trying again"));
+                            failing = Some(error);
+                        }
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    }
+                }
             }
-            // The hub tells what is afoot elsewhere before it answers.
+            // The directory and the initial status snapshot complete independently.
             inner.afoot_synced(generation);
             inner.versions_synced(generation);
             tell_worked(&inner).await;
@@ -465,7 +484,10 @@ async fn connected(
         heard = Instant::now();
         answered(inner, &mut checking);
         match frame {
-            Down::Pong { n, at, took } => {
+            Down::Pong { n, at, took, afoot_ready } => {
+                if afoot_ready {
+                    inner.afoot_complete(generation);
+                }
                 if let Some(took) = took {
                     pulse.told(took);
                 }
