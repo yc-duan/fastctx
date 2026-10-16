@@ -70,10 +70,15 @@ export function removeMachines(machines: Machine[], world: WorldNow, title: stri
         }
       }
       options.done();
-      if (failed.length) throw new Error(failed.join("; "));
       const log = options.log;
-      if (!log || !since || !gone.length) return null;
+      // Those taken off to uninstall are followed even when others could
+      // not be taken off, which the sheet says beside them.
+      if (!log || !since || !gone.length) {
+        if (failed.length) throw new Error(failed.join("; "));
+        return null;
+      }
       const following: Following = {
+        ...(failed.length ? { failed: options.manage.removeFailed(failed.join("; ")) } : {}),
         machines: gone.map((one) => ({ written: one.machine.written, away: one.machine.online === false })),
         left: async () => {
           const left = new Map<string, string>();

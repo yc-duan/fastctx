@@ -868,8 +868,11 @@ const updateOlderMachine = (name: string) =>
     network: () => appUpdates.state.peek()?.network,
     superOver: (machine) => {
       const world = store.world.peek();
+      // The policy this device knows is its one hub's; on several, whose it
+      // is is not told apart here, and the line is left as it is.
+      if (!world || world.accounts.hubs.length !== 1) return undefined;
       const found = machinesOf(world).find((one) => one.name === machine);
-      return world && found ? superLoginOver(found, world) : undefined;
+      return found ? superLoginOver(found, world) : undefined;
     },
     change,
     machine: (one) => updatesAsked.machine(one),

@@ -30,6 +30,8 @@ export interface Uninstalling {
 export interface Following {
   machines: Uninstalling[];
   left(): Promise<Map<string, string>>;
+  /** Those of the rest that could not be taken off, and why. */
+  failed?: string;
 }
 
 export interface Removing {
@@ -146,8 +148,10 @@ export class RemoveMachineSheet {
     const { sheet, removing, words } = this;
     if (!sheet || !removing) return;
     if (this.following) {
+      const failed = this.following.failed ? `<p class="sheet-note" role="alert">${escape(this.following.failed)}</p>` : "";
       sheet.body.innerHTML = `${sheet.head(words.removedTitle, words.close)}
         <div class="mr-follow">${this.following.machines.map((one) => this.row(one)).join("")}</div>
+        ${failed}
         <div class="mr-go"><button class="sheet-go" type="button" data-mr-done>${escape(words.done)}</button></div>`;
       return;
     }

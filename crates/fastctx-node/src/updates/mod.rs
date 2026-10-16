@@ -101,6 +101,11 @@ pub(crate) fn start(node: &Arc<Node>) {
     {
         let mut held = node.updates.held.lock().expect("never poisoned");
         held.settings = read_json(&dir.join("settings.json")).ok().flatten().unwrap_or_default();
+        // Turned on is always its owner's doing: 1.0.1 beta 1 and 2 kept no
+        // `chosen` and took nothing by themselves unless told to.
+        if held.settings.auto {
+            held.settings.chosen = true;
+        }
         held.looked = read_json(&dir.join("looked.json")).ok().flatten().unwrap_or_default();
         if let Ok(Some(AppFile { app, carried, program })) = read_json::<AppFile>(&dir.join("app.json")) {
             held.app = Some(app);

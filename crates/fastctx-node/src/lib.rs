@@ -423,8 +423,17 @@ pub async fn run_prepared(
             let lock = world.node_lock();
             tokio::task::spawn_blocking(move || FileLock::acquire(&lock)).await??
         }
-        false => FileLock::try_acquire(&world.node_lock())?
-            .ok_or_else(|| anyhow!("a node is already running for the World in {}", world.path().display()))?,
+        false => match FileLock::try_acquire(&world.node_lock())? {
+            Some(lock) => lock,
+            None => {
+                // A service manager starts the node again at once, and the
+                // World may be held a while yet, by a renewal's bridge among
+                // others: a moment's pause, holding nothing, keeps that from
+                // spinning.
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                return Err(anyhow!("a node is already running for the World in {}", world.path().display()));
+            }
+        },
     };
     if renewal.successor
         && fastctx_install::renewal::read(fastctx_root)?.is_some_and(|plan| plan.candidate.build != renewal.build)

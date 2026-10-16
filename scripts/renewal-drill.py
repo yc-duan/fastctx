@@ -151,7 +151,8 @@ def run(program, later, version):
               lambda: sha256(protected(names["hub"]) / "guardian.exe") == digest
               and sha256(protected(names["hub"]) / "payload.exe") == digest, 120)
         for kind, name in names.items():
-            said = json.loads((protected(name) / "adopted.json").read_text(encoding="utf-8"))
+            adopted = protected(name) / "adopted.json"
+            said = json.loads(adopted.read_text(encoding="utf-8")) if adopted.is_file() else {}
             check(f"the {kind}'s guardian says it took it", not said.get("why") and said.get("digest"), said)
 
         def serving_later():

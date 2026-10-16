@@ -96,9 +96,15 @@ pub fn run(args: RenewalArgs) -> anyhow::Result<()> {
         RenewalAction::Now { dir } => store::request(&dir, true)?,
         RenewalAction::Run { dir, retry } => runtime.block_on(worker(&dir, retry))?,
         RenewalAction::Guardian { dir, graphical } => {
-            let dir = match dir {
-                Some(dir) => dir,
-                None => fastctx_platform::fastctx_root()?,
+            let dir = match (dir, std::env::var_os("SUDO_USER")) {
+                (Some(dir), _) => dir,
+                // Under sudo the World found would be root's, never the one
+                // waiting: the command asks for an administrator itself.
+                (None, Some(user)) => bail!(
+                    "run `fastctx renew guardian` as {}, without sudo: it asks for an administrator itself",
+                    user.to_string_lossy()
+                ),
+                (None, None) => fastctx_platform::fastctx_root()?,
             };
             runtime.block_on(guardian(&dir, graphical))?
         }
