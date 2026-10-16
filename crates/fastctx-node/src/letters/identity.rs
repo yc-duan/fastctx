@@ -23,6 +23,7 @@ fn piece(path: &std::path::Path, limit: usize) -> io::Result<Vec<u8>> {
 pub(crate) struct Identity {
     pub id: NoticeId,
     key: PublicKey,
+    original: String,
     names: Vec<MachineName>,
     previous: Vec<NoticeId>,
 }
@@ -43,7 +44,7 @@ impl Identity {
         let previous = names.iter().map(|name| crate::speech::fixed_id("letter", &[name.key(), original])).collect();
         let encoded = serde_json::to_string(&key).expect("public identities serialize");
         let id = crate::speech::fixed_id("letter", &["machine-key", &encoded, original]);
-        Self { id, key, names, previous }
+        Self { id, key, original: original.to_string(), names, previous }
     }
 
     pub fn local(node: &Node, original: &str) -> io::Result<Self> {
@@ -71,6 +72,10 @@ impl Identity {
         }
         let key = found.ok_or_else(|| io::Error::other(format!("the identity of {machine} is not available")))?;
         Ok(Self::new(node, key, original, &names))
+    }
+
+    pub(super) fn source(&self) -> (&PublicKey, &str) {
+        (&self.key, &self.original)
     }
 
     pub fn same_computer(&self, other: &Self) -> bool {

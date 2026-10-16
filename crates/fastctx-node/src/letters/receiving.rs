@@ -2,6 +2,8 @@
 //! completion marker precedes deleting pieces, so replaying the final fragment
 //! after a crash cannot leave an already accepted letter waiting for lost pieces.
 
+mod failed;
+
 use std::collections::HashSet;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -16,6 +18,7 @@ use crate::Node;
 
 pub(super) const MAX_BYTES: usize = 16 * 1024 * 1024;
 pub(super) const MAX_PARTS: usize = 4096;
+const LEGACY_BYTES: usize = 64 * 1024 * 1024;
 const PART_BYTES: usize = fastctx_net::wire::MAX_CONTROL_FRAME;
 // A JSON string can encode each input byte as six bytes, plus tuple overhead.
 const STORED_BYTES: usize = PART_BYTES * 6 + 64;
@@ -71,8 +74,8 @@ pub(crate) fn receive(
     total: usize,
     text: &str,
 ) -> io::Result<Result<Option<(Letter, Completion)>, String>> {
-    if total == 0 || total > MAX_PARTS || index >= total {
-        return Ok(Err(format!("invalid letter fragment numbering; at most {MAX_PARTS} parts are accepted")));
+    if total == 0 || index >= total {
+        return Ok(Err("invalid letter fragment numbering".to_string()));
     }
     if text.is_empty() || text.len() > PART_BYTES {
         return Ok(Err(format!("a letter fragment must contain 1 to {PART_BYTES} bytes")));
@@ -110,16 +113,18 @@ fn keep(
     }
     // Which pieces are kept, by their numbers. Old versions kept the same
     // numbered tuples with no manifest, so they are taken where they are.
-    let mut kept = vec![false; total];
+    let (mut kept, mut current) = (0_usize, false);
     for entry in std::fs::read_dir(&directory)? {
         let name = entry?.file_name();
-        let Some(part) = name.to_str().and_then(|name| name.parse::<usize>().ok()) else { continue };
-        let Some(kept) = kept.get_mut(part) else {
-            return Ok(Err("letter fragments disagree about their total".to_string()));
-        };
-        *kept = true;
+        let Some(name) = name.to_str() else { continue };
+        let Ok(part) = name.parse::<usize>() else { continue };
+        if part >= total || name != part.to_string() {
+            return Ok(Err("letter fragments disagree about their total or numbering".to_string()));
+        }
+        kept += 1;
+        current |= part == index;
     }
-    if kept[index] {
+    if current {
         match stored(&directory, index, total)? {
             Ok(piece) if piece == text => {}
             Ok(_) => return Ok(Err("a letter fragment changed under the same id".to_string())),
@@ -129,13 +134,15 @@ fn keep(
     // Recommit a matching duplicate too: seeing bytes from a failed publication
     // does not establish that its directory entry was made durable.
     let bytes = serde_json::to_vec(&(total, text)).map_err(io::Error::other)?;
-    if (0..total).any(|part| part != index && !kept[part]) {
-        publish(&directory.join(index.to_string()), &bytes, Permissions::Private)?;
+    publish(&directory.join(index.to_string()), &bytes, Permissions::Private)?;
+    drop(bytes);
+    if kept + usize::from(!current) < total {
         return Ok(Ok(None));
     }
     // Every piece is kept: the whole is put together within the process's
     // budget, held until its business is done with it.
-    let mut whole = Buffer::new(MAX_BYTES.min(total * PART_BYTES), STORED_BYTES).map_err(io::Error::other)?;
+    let capacity = total.saturating_mul(PART_BYTES).min(LEGACY_BYTES);
+    let mut whole = Buffer::new(capacity, STORED_BYTES + PART_BYTES).map_err(io::Error::other)?;
     for part in 0..total {
         let other;
         let piece = if part == index {
@@ -147,8 +154,10 @@ fn keep(
             };
             other.as_str()
         };
-        if piece.len() > MAX_BYTES - whole.len() {
-            return Ok(Err(format!("the fragmented letter exceeds its {MAX_BYTES}-byte limit")));
+        if piece.len() > LEGACY_BYTES - whole.len() {
+            drop(whole);
+            let reason = failed::keep(&directory, identity, total, LEGACY_BYTES)?;
+            return Ok(Err(reason));
         }
         whole.extend(piece.as_bytes()).map_err(io::Error::other)?;
     }
@@ -159,7 +168,6 @@ fn keep(
     if matches!(letter, Letter::Fragment { .. }) {
         return Ok(Err("nested letter fragments".to_string()));
     }
-    publish(&directory.join(index.to_string()), &bytes, Permissions::Private)?;
     Ok(Ok(Some((letter, Completion { active, total, _memory: whole.into_reservation() }))))
 }
 
