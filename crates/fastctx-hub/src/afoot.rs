@@ -24,13 +24,16 @@ use fastctx_net::directory::Directory;
 use fastctx_types::town::{Afoot, AfootChange, AfootJob, AfootResident, AfootSeen};
 use fastctx_types::{AccountName, MachineName, ResidentId};
 
-use crate::{Hub, Out};
+use crate::Hub;
+use fastctx_net::afoot::isolation::{self, Previous, Problems};
 
 /// The latest each machine told, and what each member's session was told.
 #[derive(Default)]
 pub(crate) struct Afoots {
     told: HashMap<MachineName, Afoot>,
+    prior: HashMap<MachineName, Previous>,
     shown: HashMap<MachineName, Shown>,
+    rejected: HashMap<MachineName, Problems>,
 }
 
 /// What one session of a member was told, machine by machine.
@@ -39,6 +42,7 @@ struct Shown {
     /// It has not been told of every machine yet.
     fresh: bool,
     machines: HashMap<MachineName, Arc<Seen>>,
+    rejected: HashMap<MachineName, Problems>,
 }
 
 /// What a member was told of one machine.
@@ -61,14 +65,18 @@ enum Scope<'a> {
 
 /// `machine` told how what is afoot on it changed.
 pub(crate) fn heard(hub: &Hub, machine: &MachineName, mut change: AfootChange<AfootResident, AfootJob>) {
-    if let Err(reason) = fastctx_net::afoot::bounded::change(&mut change) {
-        hub.log.line(format_args!("status from {machine} was not published: {reason}"));
-        if let Some(session) = hub.sessions().get(machine) {
-            let _ = session.out.send(Out::End(fastctx_net::wire::Refusal::Broken { reason }));
-        }
-        return;
+    fastctx_net::afoot::bounded::change(&mut change);
+    {
+        let mut afoots = hub.afoots();
+        let Afoots { told, prior, rejected, .. } = &mut *afoots;
+        isolation::apply(
+            told.entry(machine.clone()).or_default(),
+            prior.entry(machine.clone()).or_default(),
+            change,
+            rejected.entry(machine.clone()).or_default(),
+            |reason| hub.log.line(format_args!("from {machine}: {reason}")),
+        );
     }
-    hub.afoots().told.entry(machine.clone()).or_default().apply(change);
     tell(hub, Scope::Machine(machine));
 }
 
@@ -110,19 +118,25 @@ fn tell(hub: &Hub, scope: Scope<'_>) {
     let hidden = crate::forget::hidden(&store);
     let mut afoots = hub.afoots();
     drop(store);
-    let Afoots { told, shown } = &mut *afoots;
+    let Afoots { told, prior, shown, rejected } = &mut *afoots;
     // A machine's last stays while it is on the hub under that name.
     told.retain(|machine, _| directory.member(machine).is_some_and(|member| member.name == *machine));
     shown.retain(|reader, shown| {
         readers.iter().any(|(name, generation, _)| name == reader && *generation == shown.generation)
     });
+    rejected.retain(|machine, _| told.contains_key(machine));
+    prior.retain(|machine, _| told.contains_key(machine));
     let told = &*told;
     // What each set of logins sees of each machine, worked out once.
     let mut groups: HashMap<BTreeSet<AccountName>, usize> = HashMap::new();
     let mut seen_by: HashMap<(usize, &MachineName), Option<Arc<Seen>>> = HashMap::new();
     for (reader, generation, out) in readers {
-        let shown =
-            shown.entry(reader.clone()).or_insert_with(|| Shown { generation, fresh: true, machines: HashMap::new() });
+        let shown = shown.entry(reader.clone()).or_insert_with(|| Shown {
+            generation,
+            fresh: true,
+            machines: HashMap::new(),
+            rejected: HashMap::new(),
+        });
         if matches!(scope, Scope::Come) && !shown.fresh {
             continue;
         }
@@ -140,7 +154,7 @@ fn tell(hub: &Hub, scope: Scope<'_>) {
             if *machine == reader {
                 continue;
             }
-            let now = seen_by
+            let mut now = seen_by
                 .entry((group, machine))
                 .or_insert_with(|| {
                     sees(&directory, &logins, machine)
@@ -148,6 +162,16 @@ fn tell(hub: &Hub, scope: Scope<'_>) {
                 })
                 .clone();
             let before = shown.machines.get(machine);
+            if let Some(candidate) = &now {
+                let mut after = candidate.afoot.clone();
+                let rejected = isolation::snapshot(&mut after, before.map(|before| &*before.afoot));
+                isolation::report(shown.rejected.entry(machine.clone()).or_default(), rejected, |reason| {
+                    hub.log.line(format_args!("from {machine} to {reader}: {reason}"))
+                });
+                if !Arc::ptr_eq(&after, &candidate.afoot) {
+                    now = Some(Arc::new(Seen { afoot: after, busy: candidate.busy }));
+                }
+            }
             match (before, &now) {
                 (None, None) => continue,
                 (Some(was), Some(now)) if Arc::ptr_eq(was, now) || was == now => continue,
@@ -171,6 +195,7 @@ fn tell(hub: &Hub, scope: Scope<'_>) {
         // Of machines that left, nothing more is told: they leave the
         // member's view, and it forgets them.
         shown.machines.retain(|machine, _| told.contains_key(machine));
+        shown.rejected.retain(|machine, _| told.contains_key(machine));
         shown.fresh = false;
     }
 }

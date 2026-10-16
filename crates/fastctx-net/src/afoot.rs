@@ -4,6 +4,7 @@
 //! when the change is.
 
 pub mod bounded;
+pub mod isolation;
 mod streaming;
 pub use streaming::Frames;
 

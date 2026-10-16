@@ -4,7 +4,7 @@ use fastctx_types::residents::Origin;
 use fastctx_types::town::{Afoot, AfootChange, AfootJob, AfootResident, ResidentNow, RunningJob};
 
 const TEXT: usize = 4096;
-const SHORT: &str = " … [shortened; open the full record]";
+const SHORT: &str = "…";
 
 fn shorten(text: &mut String, limit: usize) {
     if text.len() <= limit {
@@ -42,7 +42,6 @@ fn resident(resident: &mut ResidentNow) {
             if asked.options.len() > 32 || asked.options.iter().map(String::len).sum::<usize>() > TEXT {
                 // Shortening an answer would change what choosing it sends.
                 asked.options.clear();
-                asked.text.push_str(" [Open the conversation to see and choose the complete answers.]");
             }
         }
     }
@@ -52,36 +51,37 @@ fn job(job: &mut RunningJob) {
     shorten(&mut job.command, TEXT);
 }
 
-fn fits(value: &impl serde::Serialize) -> Result<(), String> {
-    let size = serde_json::to_vec(value).map_err(|error| error.to_string())?.len();
-    if size + 256 > super::FRAME_ROOM {
-        return Err(format!(
-            "a status record needs {size} bytes even with its display text shortened; its identity and metadata cannot fit in one control message"
-        ));
+pub(super) fn fits(value: &impl serde::Serialize) -> Result<(), String> {
+    struct Size(usize);
+    impl std::io::Write for Size {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > super::FRAME_ROOM - 256 - self.0 {
+                return Err(std::io::Error::other("status identity and metadata exceed one control frame"));
+            }
+            self.0 += bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
-    Ok(())
+    serde_json::to_writer(&mut Size(0), value).map_err(|error| error.to_string())
 }
 
-pub fn state(afoot: &mut Afoot) -> Result<(), String> {
+pub fn state(afoot: &mut Afoot) {
     for entry in afoot.residents.values_mut() {
         resident(&mut entry.resident);
-        fits(entry)?;
     }
     for entry in afoot.jobs.values_mut() {
         job(&mut entry.job);
-        fits(entry)?;
     }
-    Ok(())
 }
 
-pub fn change(change: &mut AfootChange<AfootResident, AfootJob>) -> Result<(), String> {
+pub fn change(change: &mut AfootChange<AfootResident, AfootJob>) {
     for entry in &mut change.residents {
         resident(&mut entry.resident);
-        fits(entry)?;
     }
     for entry in &mut change.jobs {
         job(&mut entry.job);
-        fits(entry)?;
     }
-    Ok(())
 }

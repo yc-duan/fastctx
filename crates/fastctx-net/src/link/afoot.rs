@@ -31,6 +31,7 @@ struct Here {
     latest: Option<Arc<Afoot>>,
     taking: Option<(u64, Option<Arc<Afoot>>)>,
     sending: Option<u64>,
+    rejected: crate::afoot::isolation::Problems,
 }
 
 /// What is afoot on another machine as the hub told this one: what there
@@ -46,12 +47,11 @@ impl Inner {
     /// What is afoot on this machine is `afoot` now: told to the hub as the
     /// session there takes it.
     pub(crate) fn tell_afoot(&self, mut afoot: Afoot) {
-        if let Err(reason) = crate::afoot::bounded::state(&mut afoot) {
-            self.node.log(format!("status was not published: {reason}"));
-            return;
-        }
-        let afoot = Arc::new(afoot);
+        crate::afoot::bounded::state(&mut afoot);
         let mut here = self.afoots.here.lock().expect("never poisoned");
+        let rejected = crate::afoot::isolation::state(&mut afoot, here.latest.as_deref());
+        crate::afoot::isolation::report(&mut here.rejected, rejected, |reason| self.node.log(reason));
+        let afoot = Arc::new(afoot);
         if here.latest.as_ref() == Some(&afoot) {
             return;
         }
