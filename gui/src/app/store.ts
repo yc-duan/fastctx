@@ -21,7 +21,9 @@ export interface Store {
   readonly whole: Signal<WorldNow | null>;
   /** Shows another network this device is in. */
   showNetwork(hub: string): void;
-  /** Why the World could not be asked the last time, or `null`. */
+  /** Why the World cannot be followed from the local service now, or
+   *  `null`: the watch broke and has not come back, or, while it has given
+   *  nothing since it broke, the World could not be read either. */
   readonly trouble: Signal<string | null>;
   /** Now, moving on while the window is in view, for what is shown as so
    *  long ago; or the specimen's moment. */
@@ -99,24 +101,46 @@ export function createStore(specimen: () => { world: WorldNow; now: Date }): Sto
   const came = (now: WorldNow) => {
     remember(now);
     read(now);
-    trouble.set(null);
     waiting = null;
     moveOn();
   };
+  // Why the watch broke, while it has not come back; why reading the World
+  // failed, while the watch gave nothing since it broke. What the watch
+  // says is newer than any reading begun before it came, so a reading that
+  // answers after it says nothing.
+  let broken: string | null = null;
+  let failed: string | null = null;
+  let pieces = 0;
+  const say = () => trouble.set(broken ?? failed);
   void watchWorld((piece) => {
+    pieces += 1;
     if (piece.kind === "world") {
+      broken = null;
+      failed = null;
+      say();
       came(piece.world);
       return;
     }
-    trouble.set(piece.error);
+    broken = piece.error;
+    say();
     waiting ??= piece.since;
     moveOn();
-  }).catch((error: unknown) => trouble.set(String(error)));
+  }).catch((error: unknown) => {
+    broken = String(error);
+    say();
+  });
   const refresh = async () => {
+    const before = pieces;
     try {
-      came(await worldNow());
+      const now = await worldNow();
+      if (pieces !== before) return;
+      failed = null;
+      say();
+      came(now);
     } catch (error) {
-      trouble.set(String(error));
+      if (pieces !== before || broken === null) return;
+      failed = String(error);
+      say();
     }
   };
   return { live, world, whole, showNetwork, trouble, clock, unanswered, refresh };

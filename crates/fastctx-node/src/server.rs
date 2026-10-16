@@ -172,10 +172,16 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             let mut shown = node.shown.subscribe();
             let mut jobs = node.jobs.subscribe();
             let mut told = None;
+            // What could not be read is read again in a moment, the watch
+            // kept: the interface goes on showing what it was told, and the
+            // log says why, once for each reason.
+            let mut failing: Option<String> = None;
             loop {
+                let mut again = false;
                 if crate::shown::ready(node) {
                     match crate::shown::now(node).await {
                         Ok(world) => {
+                            failing = None;
                             let frame = json(&NodeFrame::World { id, world: Box::new(world) });
                             if told.as_ref() != Some(&frame) {
                                 writer.send(&frame).await?;
@@ -183,12 +189,19 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                             }
                         }
                         Err(failure) => {
-                            writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
-                            return writer.drain().await;
+                            if failing.as_deref() != Some(failure.message.as_str()) {
+                                node.log.line(format_args!(
+                                    "reading the World for an interface: {}; reading it again in a moment",
+                                    failure.message
+                                ));
+                                failing = Some(failure.message);
+                            }
+                            again = true;
                         }
                     }
                 }
                 tokio::select! {
+                    () = tokio::time::sleep(std::time::Duration::from_secs(1)), if again => {}
                     changed = residents.changed() => if changed.is_err() { return Ok(()) },
                     changed = shown.changed() => if changed.is_err() { return Ok(()) },
                     job = jobs.recv() => {
