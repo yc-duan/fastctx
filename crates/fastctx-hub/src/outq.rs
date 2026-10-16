@@ -28,10 +28,13 @@ use tokio::sync::{Notify, watch};
 
 use crate::Out;
 
+mod answers;
+
 /// The most frames of the first lane that may wait for a member.
 const URGENT: usize = 4096;
-/// The most bytes of the first lane that may wait for a member.
-const URGENT_BYTES: usize = 32 * 1024 * 1024;
+/// The most bytes of the first lane that may wait for a member. A full-size
+/// answer's JSON text can double when escaped; leave room for its envelopes.
+const URGENT_BYTES: usize = 2 * fastctx_net::wire::PARTS_AT_MOST + fastctx_net::wire::MAX_CONTROL_FRAME;
 /// The most notices that may wait for a member: one of a kind and subject
 /// merges with the next, so only a member that reads nothing piles them up.
 const NOTICES: usize = 16384;
@@ -137,9 +140,9 @@ impl Outq {
                     state.letters.push_back(Down::Deliver { seq, message });
                     Ok(())
                 }
-                Out::Frame(Down::Told { id, answer }) => {
-                    told(id, answer, self.0.parts).into_iter().try_for_each(|frame| state.urge(Out::Frame(frame)))
-                }
+                Out::Frame(Down::Told { id, answer }) => answers::frames(id, answer, self.0.parts)
+                    .into_iter()
+                    .try_for_each(|frame| state.urge(Out::Frame(frame))),
                 Out::Frame(frame) => match notice(&frame) {
                     Some(notice) => state.notify(notice, frame),
                     None => state.urge(Out::Frame(frame)),
@@ -306,46 +309,6 @@ fn notice(frame: &Down) -> Option<Notice> {
         Down::Fetch { fetch } => Notice::Fetch(fetch.id),
         _ => return None,
     })
-}
-
-/// The answer to the question `id` as the frames it goes in: one when it
-/// fits in a frame; else in parts for a member that reads them, and for one
-/// that does not, that the answer is too large for its release.
-fn told(id: u64, answer: Result<fastctx_net::wire::Told, String>, parts: bool) -> Vec<Down> {
-    let whole = Down::Told { id, answer };
-    if fastctx_net::wire::encode(&whole).len() <= fastctx_net::wire::MAX_CONTROL_FRAME {
-        return vec![whole];
-    }
-    let Down::Told { answer, .. } = whole else { unreachable!("made above") };
-    let text = serde_json::to_string(&answer).expect("answers serialize");
-    let too_large = |why: String| vec![Down::Told { id, answer: Err(why) }];
-    if !parts {
-        return too_large(format!(
-            "the hub's answer is {} bytes, more than this release of Fastctx reads in one frame; update it",
-            text.len()
-        ));
-    }
-    if text.len() > fastctx_net::wire::PARTS_AT_MOST {
-        return too_large(format!(
-            "the hub's answer is {} bytes, more than {} it sends in parts",
-            text.len(),
-            fastctx_net::wire::PARTS_AT_MOST
-        ));
-    }
-    // Cut at character boundaries, each part well within a frame.
-    let mut pieces = Vec::new();
-    let mut rest = text.as_str();
-    while !rest.is_empty() {
-        let mut end = rest.len().min(fastctx_net::wire::PART);
-        while !rest.is_char_boundary(end) {
-            end -= 1;
-        }
-        let (piece, after) = rest.split_at(end);
-        pieces.push(piece.to_string());
-        rest = after;
-    }
-    let total = u32::try_from(pieces.len()).expect("parts are few");
-    pieces.into_iter().enumerate().map(|(index, text)| Down::Part { id, index: index as u32, total, text }).collect()
 }
 
 /// A notice as the frames it goes in: what is afoot on a machine, merged

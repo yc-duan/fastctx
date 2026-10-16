@@ -177,11 +177,20 @@ pub(crate) async fn session(
                 }
             };
             for frame in frames {
+                let bytes = wire::encode(&frame);
+                if bytes.len() > wire::MAX_CONTROL_FRAME {
+                    telling.log.line(format_args!(
+                        "{member_name}: outgoing control frame is {} bytes, more than {} the member reads; closing the session",
+                        bytes.len(),
+                        wire::MAX_CONTROL_FRAME
+                    ));
+                    return;
+                }
                 // Written for as long as it moves (`fastctx_net::pulse`); given
                 // up at once when so much waits for the member untaken that it
                 // is let go, however long this write would still take.
                 let written = tokio::select! {
-                    written = writing.writing(sink.send(WsMessage::Binary(wire::encode(&frame).into()))) => written,
+                    written = writing.writing(sink.send(WsMessage::Binary(bytes.into()))) => written,
                     why = queue.overflowed() => {
                         telling.log.line(format_args!("{member_name}: {why}"));
                         return;
