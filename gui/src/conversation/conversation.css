@@ -1751,28 +1751,48 @@ a.bubble-file:hover {
   }
 }
 
-/* One picture over the whole window: the paper dims to a solid dark, the
-   picture is moved and zoomed by hand, its name and what can be done with
-   it along the top. */
+/* One picture in a card over the page, as long text is viewed (`.lv-card`):
+   its name and what can be done with it along the top, the picture moved
+   and zoomed by hand on a field beneath. The window's own bar stays clear;
+   a press beside the card closes it. */
 .picture-viewer {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
+  margin: auto;
+  padding: 0;
+  border: 0;
+  max-width: none;
+  max-height: none;
+  background: transparent;
+  color: var(--text);
+  overflow: visible;
+}
+
+.picture-viewer::backdrop {
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.picture-viewer[open] .pv-card {
+  animation: sheet-in var(--enter) var(--fold-easing) both;
+}
+
+.pv-card {
   display: grid;
-  grid-template-rows: auto 1fr;
-  /* One column the window's width: a long name in the bar must not widen
-     it, or the picture and the bar's buttons go off a phone's screen. */
+  grid-template-rows: auto minmax(0, 1fr);
+  /* One column the card's width: a long name must not widen it. */
   grid-template-columns: minmax(0, 1fr);
-  background: color-mix(in srgb, var(--bg) 18%, #0d0d0c);
-  color: #ece8e0;
-  animation: viewer-in 0.18s ease both;
+  gap: var(--space-2);
+  width: min(1040px, 100vw - 48px);
+  height: min(760px, 86dvh);
+  padding: var(--space-3);
+  border-radius: var(--radius-l);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
 }
 
 .pv-stage {
   position: relative;
-  grid-row: 1 / -1;
-  grid-column: 1;
   overflow: hidden;
+  border-radius: var(--radius-m);
+  background: var(--fill);
   touch-action: none;
   cursor: grab;
 }
@@ -1792,17 +1812,11 @@ a.bubble-file:hover {
 }
 
 .pv-bar {
-  position: relative;
-  z-index: 1;
-  grid-row: 1;
-  grid-column: 1;
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  min-height: 52px;
-  padding: calc(var(--space-2) + var(--safe-top)) var(--space-3) var(--space-2) var(--space-4);
-  background: linear-gradient(rgba(13, 13, 12, 0.72), rgba(13, 13, 12, 0));
-  pointer-events: none;
+  min-height: 32px;
+  padding-left: var(--space-1);
 }
 
 .pv-name {
@@ -1810,12 +1824,14 @@ a.bubble-file:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--size-ui);
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  color: var(--text-strong);
 }
 
 .pv-counter {
   flex: none;
-  color: rgba(236, 232, 224, 0.6);
+  color: var(--text-3);
   font-size: var(--size-small);
   font-variant-numeric: tabular-nums;
 }
@@ -1823,26 +1839,16 @@ a.bubble-file:hover {
 /* How a picture being saved comes; its hover says why its way broke. */
 .pv-note {
   flex: none;
-  color: rgba(236, 232, 224, 0.6);
+  color: var(--text-3);
   font-size: var(--size-small);
   font-variant-numeric: tabular-nums;
-  pointer-events: auto;
 }
 
 .pv-acts {
   display: flex;
   gap: 2px;
   margin-left: auto;
-  pointer-events: auto;
-}
-
-.picture-viewer .icon-button {
-  color: #ece8e0;
-}
-
-.picture-viewer .icon-button:hover,
-.picture-viewer .icon-button:focus-visible {
-  background: rgba(236, 232, 224, 0.12);
+  margin-right: -6px;
 }
 
 .pv-side {
@@ -1851,28 +1857,28 @@ a.bubble-file:hover {
   z-index: 1;
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 64px;
-  margin-top: -32px;
+  width: 40px;
+  height: 56px;
+  margin-top: -28px;
   padding: 0;
   border: 0;
   border-radius: var(--radius-m);
-  background: rgba(13, 13, 12, 0.4);
-  color: #ece8e0;
+  background: color-mix(in srgb, var(--bg-elevated) 72%, transparent);
+  color: var(--text);
   cursor: pointer;
 }
 
 .pv-side:hover,
 .pv-side:focus-visible {
-  background: rgba(13, 13, 12, 0.7);
+  background: var(--bg-elevated);
 }
 
 .pv-previous {
-  left: var(--space-3);
+  left: var(--space-2);
 }
 
 .pv-next {
-  right: var(--space-3);
+  right: var(--space-2);
 }
 
 .pv-next svg {
@@ -1881,12 +1887,6 @@ a.bubble-file:hover {
 
 .pv-side[hidden] {
   display: none;
-}
-
-@keyframes viewer-in {
-  from {
-    opacity: 0;
-  }
 }
 
 @media (pointer: coarse) {
@@ -1903,7 +1903,26 @@ a.bubble-file:hover {
   }
 }
 
-:root[data-reduced] .picture-viewer {
+/* On a phone the card rises from the bottom, as a sheet does. */
+@media (max-width: 760px) {
+  .picture-viewer {
+    margin: auto 0 0;
+    width: 100%;
+  }
+
+  .pv-card {
+    width: 100%;
+    height: 88dvh;
+    padding: var(--space-3) var(--space-3) calc(var(--space-3) + var(--safe-bottom));
+    border-radius: var(--radius-l) var(--radius-l) 0 0;
+  }
+
+  .picture-viewer[open] .pv-card {
+    animation-name: sheet-rise;
+  }
+}
+
+:root[data-reduced] .picture-viewer[open] .pv-card {
   animation: none;
 }
 

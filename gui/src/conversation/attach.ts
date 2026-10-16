@@ -5,6 +5,7 @@
 // words go once everything attached has; what the agent is told of each,
 // and where it was put, is the World's to say.
 
+import { viewPictures, type PictureWords } from "./pictures";
 import { glyph } from "./glyphs";
 import { escape } from "./prose";
 
@@ -27,6 +28,17 @@ export interface AttachWords {
   size(bytes: number): string;
   /** Said when words are sent while something attached is still going. */
   wait: string;
+  /** The viewer a picture attached opens in when pressed. */
+  pictures: PictureWords;
+}
+
+/** Opens the picture pressed in `tray`, with the others it holds. */
+export function viewAttached(tray: HTMLElement, pressed: Element, words: PictureWords): boolean {
+  const image = pressed.closest<HTMLImageElement>("img.attach-thumb");
+  if (!image) return false;
+  const all = [...tray.querySelectorAll<HTMLImageElement>("img.attach-thumb")];
+  viewPictures(all, Math.max(0, all.indexOf(image)), words);
+  return true;
 }
 
 export interface Attached {
@@ -74,7 +86,10 @@ export class AttachTray {
     this.element.hidden = true;
     this.element.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-remove], [data-retry]");
-      if (!button) return;
+      if (!button) {
+        viewAttached(this.element, event.target as Element, this.words.pictures);
+        return;
+      }
       if (button.dataset.remove) this.remove(button.dataset.remove);
       else void this.send(this.items.find((item) => item.key === button.dataset.retry)!);
     });
@@ -226,7 +241,7 @@ export class AttachTray {
     this.element.innerHTML = this.items
       .map((item) => {
         const picture = item.preview
-          ? `<img class="attach-thumb" src="${escape(item.preview)}" alt="">`
+          ? `<img class="attach-thumb" src="${escape(item.preview)}" alt="${escape(item.name)}">`
           : `<span class="attach-thumb attach-glyph">${glyph(item.image ? "image" : "file", 18)}</span>`;
         const fact =
           item.state === "failed"

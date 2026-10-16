@@ -1,6 +1,6 @@
 // The pictures of a conversation. Small ones are drawn in their place as
 // they come into view, made by the machine holding each and never kept
-// there; pressed, one opens over the whole window, where it is dragged,
+// there; pressed, one opens in a card over the page, where it is dragged,
 // zoomed with Ctrl and the wheel or two fingers, and the conversation's
 // other pictures are a key or a swipe away. A picture is named by what its
 // element carries: a file the user sent (`data-attachment`), a file on a
@@ -11,7 +11,6 @@
 
 import { layerOpened } from "../app/back";
 import { CanvasCamera } from "../map-canvas";
-import { darkUnderBars, safeBottom, safeTop } from "../system-bars";
 import type { MachineName } from "../world/events";
 import type { AttachmentSource } from "../world/files";
 import { HeldReads, LetGo, shareOf, type HeldRead, type ReadProgress } from "../world/reads";
@@ -202,9 +201,26 @@ export class Pictures {
   }
 }
 
-/** The whole window given to one picture at a time. */
+/** Pictures the page itself holds, being attached and not sent yet, in the
+ *  same viewer: `index` of `images` first, the others a key or a swipe
+ *  away. Nothing of them is on a machine yet, so the viewer only shows. */
+export function viewPictures(images: HTMLImageElement[], index: number, words: PictureWords): void {
+  const nowhere = (): Promise<never> => Promise.reject(new Error("a picture being attached is not on a machine yet"));
+  const options: PicturesOptions = {
+    words,
+    here: "",
+    machine: "",
+    seams: { thumbnail: nowhere, attachmentThumbnail: nowhere, original: nowhere },
+    say: () => {},
+    broken: () => "",
+  };
+  const pictures = images.map((element) => ({ element, name: element.alt, machine: "", path: null, attachment: null }));
+  const opener = images[index];
+  new PictureViewer(pictures, index, null, options, () => opener?.focus({ preventScroll: true }));
+}
+
+/** A card over the page given to one picture at a time. */
 class PictureViewer {
-  private readonly element: HTMLElement;
   private readonly stage: HTMLElement;
   private readonly image: HTMLImageElement;
   private camera: CanvasCamera | null = null;
@@ -224,32 +240,35 @@ class PictureViewer {
   private swipe: { start: [number, number]; fitted: boolean } | null = null;
   private readonly resize: ResizeObserver;
   private readonly keys: (event: KeyboardEvent) => void;
-  /** Lets the phone's bars go back to the theme's icons. */
-  private readonly undarken: () => void;
+  private readonly element: HTMLDialogElement;
 
   constructor(
     private readonly pictures: Picture[],
     index: number,
-    private readonly maker: Pictures,
+    /** Where a larger picture is asked for; none for pictures the page holds. */
+    private readonly maker: Pictures | null,
     private readonly options: PicturesOptions,
     private readonly closed: () => void,
   ) {
     this.index = index;
     const { words } = options;
-    this.element = document.createElement("div");
+    // A card over the page, as long text is viewed: the window's own bar and
+    // the page's edges stay where they are, and a press beside it closes it.
+    this.element = document.createElement("dialog");
     this.element.className = "picture-viewer";
-    this.element.setAttribute("role", "dialog");
-    this.element.setAttribute("aria-modal", "true");
+    this.element.setAttribute("aria-label", words.close);
     const button = (act: string, icon: Parameters<typeof glyph>[0], label: string) =>
       `<button class="icon-button pv-act" type="button" data-pv="${act}" aria-label="${escape(label)}" title="${escape(label)}">${glyph(icon, 18)}</button>`;
-    this.element.innerHTML = `<div class="pv-stage"><img class="pv-image" alt="" draggable="false"></div>
+    this.element.innerHTML = `<div class="pv-card">
       <div class="pv-bar"><span class="pv-name"></span><span class="pv-counter"></span><span class="pv-note" aria-live="polite" hidden></span><span class="pv-acts">${
         typeof ClipboardItem === "undefined" ? "" : button("copy-image", "copy", words.copyImage)
       }${options.seams.save ? button("save", "save", words.saveAs) : ""}${button("copy-path", "link", words.copyPath)}${
         options.seams.reveal ? button("reveal", "folder", words.reveal) : ""
       }${button("close", "close", words.close)}</span></div>
+      <div class="pv-stage"><img class="pv-image" alt="" draggable="false">
       <button class="pv-side pv-previous" type="button" data-pv="previous" aria-label="${escape(words.previous)}" title="${escape(words.previous)}">${glyph("back", 22)}</button>
-      <button class="pv-side pv-next" type="button" data-pv="next" aria-label="${escape(words.next)}" title="${escape(words.next)}">${glyph("back", 22)}</button>`;
+      <button class="pv-side pv-next" type="button" data-pv="next" aria-label="${escape(words.next)}" title="${escape(words.next)}">${glyph("back", 22)}</button></div>
+    </div>`;
     this.stage = this.element.querySelector(".pv-stage")!;
     this.image = this.element.querySelector(".pv-image")!;
     this.note = this.element.querySelector(".pv-note")!;
@@ -259,8 +278,17 @@ class PictureViewer {
     });
     document.body.append(this.element);
     this.element.addEventListener("click", (event) => {
+      // The dialog itself is pressed only beside the card.
+      if (event.target === this.element) {
+        this.close();
+        return;
+      }
       const act = (event.target as Element).closest<HTMLElement>("[data-pv]")?.dataset.pv;
       if (act) void this.act(act);
+    });
+    this.element.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      this.close();
     });
     this.keys = (event) => {
       if (event.key === "Escape") this.close();
@@ -293,8 +321,7 @@ class PictureViewer {
       else this.paint();
     });
     this.resize.observe(this.stage);
-    this.resize.observe(this.element.querySelector(".pv-bar")!);
-    this.undarken = darkUnderBars();
+    this.element.showModal();
     // The system back closes it, as Esc does.
     layerOpened({ isOpen: () => this.element.isConnected, close: () => this.close() });
     this.show();
@@ -302,11 +329,12 @@ class PictureViewer {
   }
 
   close(): void {
+    if (!this.element.isConnected) return;
     this.looks.release();
     document.removeEventListener("keydown", this.keys, true);
     this.resize.disconnect();
-    this.undarken();
     if (this.original) URL.revokeObjectURL(this.original);
+    this.element.close();
     this.element.remove();
     this.closed();
   }
@@ -344,7 +372,7 @@ class PictureViewer {
     this.place(picture.element.src, shown);
     const screen = Math.round(Math.max(screen_.width, screen_.height) * devicePixelRatio);
     // Without the larger one the picture stays as the page had it.
-    void this.maker.sized(picture, screen)?.then(
+    void this.maker?.sized(picture, screen)?.then(
       (larger) => this.place(larger, shown),
       (error: unknown) => console.warn("a larger picture could not be had", error),
     );
@@ -373,8 +401,8 @@ class PictureViewer {
   }
 
   private fitScale(): number {
-    const padding = Math.max(16, Math.min(64, Math.min(this.stage.clientWidth, this.stage.clientHeight) * 0.06));
-    return Math.min((this.stage.clientWidth - padding * 2) / this.size[0], (this.stage.clientHeight - safeTop() - safeBottom() - padding * 2) / this.size[1], 4);
+    const padding = Math.max(12, Math.min(40, Math.min(this.stage.clientWidth, this.stage.clientHeight) * 0.04));
+    return Math.min((this.stage.clientWidth - padding * 2) / this.size[0], (this.stage.clientHeight - padding * 2) / this.size[1], 4);
   }
 
   private fit(): void {
@@ -382,7 +410,7 @@ class PictureViewer {
     this.fitted = this.fitScale();
     const view = this.camera.view;
     const scale = this.fitted;
-    this.camera.set({ ...view, scale, x: (view.width - this.size[0] * scale) / 2, y: safeTop() + (view.height - safeTop() - safeBottom() - this.size[1] * scale) / 2 });
+    this.camera.set({ ...view, scale, x: (view.width - this.size[0] * scale) / 2, y: (view.height - this.size[1] * scale) / 2 });
     this.paint();
   }
 
@@ -494,10 +522,10 @@ class PictureViewer {
         await navigator.clipboard.writeText(naturalPath(picture.path));
         say(words.copied);
       } else if (act === "reveal" && picture.path && seams.reveal) await seams.reveal(picture.path);
-      else if (act === "save" && (picture.path || picture.attachment) && seams.save) {
-        const save = seams.save;
+      else if (act === "save" && this.maker && (picture.path || picture.attachment) && seams.save) {
+        const [save, saves] = [seams.save, this.maker.saves];
         try {
-          if (await this.maker.saves.hold((held) => save(picture, held), (progress) => this.tell(progress))) say(words.saved);
+          if (await saves.hold((held) => save(picture, held), (progress) => this.tell(progress))) say(words.saved);
         } finally {
           this.tell(null);
         }

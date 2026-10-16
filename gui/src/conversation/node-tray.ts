@@ -15,7 +15,7 @@
 
 import type { ComposerSession, ComposerSessionState } from "./composer";
 import type { ComposerDocument } from "./composer";
-import type { AttachWords } from "./attach";
+import { viewAttached, type AttachWords } from "./attach";
 import { glyph } from "./glyphs";
 import { escape } from "./prose";
 
@@ -61,7 +61,10 @@ export class NodeTray {
     this.element.hidden = true;
     this.element.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-remove], [data-retry]");
-      if (!button) return;
+      if (!button) {
+        viewAttached(this.element, event.target as Element, this.words.pictures);
+        return;
+      }
       if (button.dataset.retry) {
         this.session.retryOperation(button.dataset.retry).catch((error: unknown) => this.failed(String(error)));
         return;
@@ -173,7 +176,7 @@ export class NodeTray {
     const draft = this.draft(state);
     const operations = new Map((state?.operations ?? []).map((operation) => [operation.id, operation]));
     const item = (key: string, name: string, image: boolean, preview: string | null, fact: string, failed: string | null, retry: string | null, why: string | null = null) => {
-      const picture = preview ? `<img class="attach-thumb" src="${escape(preview)}" alt="">` : `<span class="attach-thumb attach-glyph">${glyph(image ? "image" : "file", 18)}</span>`;
+      const picture = preview ? `<img class="attach-thumb" src="${escape(preview)}" alt="${escape(name)}">` : `<span class="attach-thumb attach-glyph">${glyph(image ? "image" : "file", 18)}</span>`;
       const said = failed ? `<span class="attach-fact wrong" title="${escape(failed)}">${escape(words.failed(failed))}</span>` : fact ? `<span class="attach-fact"${why ? ` title="${escape(why)}"` : ""}>${escape(fact)}</span>` : "";
       const again = retry ? `<button class="attach-act" type="button" data-retry="${escape(retry)}">${escape(words.retry)}</button>` : "";
       return `<li class="attach-item ${failed ? "failed" : fact === words.sending || fact === words.resuming ? "sending" : "ready"}">${picture}<span class="attach-text"><span class="attach-name" title="${escape(name)}">${escape(name)}</span>${said}</span>${again}<button class="attach-remove" type="button" data-remove="${escape(key)}" aria-label="${escape(words.remove)}" title="${escape(words.remove)}">${glyph("close", 14)}</button></li>`;

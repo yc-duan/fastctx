@@ -783,6 +783,7 @@
   height: 40px;
   border-radius: var(--radius-s);
   object-fit: cover;
+  cursor: zoom-in;
 }
 
 .attach-glyph {
