@@ -499,6 +499,12 @@ async fn guardian_apply(root: &Path, user_sid: Option<String>, uid: Option<u32>)
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         service.restart_guardian(&own.digest)?;
+        // A unit an earlier release installed has no rule letting its user
+        // restart it; this approval leaves the one an install now does, so
+        // it is the last a renewal here asks for.
+        if let Err(error) = service.allow_restart(service.uid) {
+            eprintln!("the boot service's user may not restart it by itself yet: {error:#}");
+        }
         // systemd and launchd run a kept hub straight from the World
         // program, so a restart is all it takes to run the new one.
         for directory in fastctx_install::service::registered_hubs(root)? {
@@ -509,6 +515,9 @@ async fn guardian_apply(root: &Path, user_sid: Option<String>, uid: Option<u32>)
             );
             if hub.status()?.installed {
                 hub.restart_guardian(&own.digest)?;
+                if let Err(error) = hub.allow_restart(service.uid) {
+                    eprintln!("the hub's user may not restart it by itself yet: {error:#}");
+                }
             }
         }
         Ok(())

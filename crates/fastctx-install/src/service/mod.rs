@@ -238,6 +238,23 @@ impl Service {
         Ok(true)
     }
 
+    /// As root on Linux: lets the account with `uid` restart this service
+    /// from now on, as an install of this release leaves it; elsewhere there
+    /// is nothing to allow.
+    pub fn allow_restart(&self, uid: u32) -> anyhow::Result<()> {
+        self.validate()?;
+        #[cfg(target_os = "linux")]
+        {
+            let normalized = self.normalized()?;
+            linux_restart::allow(&normalized.id(&normalized.uid.to_le_bytes()), uid)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = uid;
+            Ok(())
+        }
+    }
+
     /// Asks the protected guardian to take the World program its
     /// registration names, which it does only for an officially signed
     /// release newer than its own; whether it then holds `digest`. A

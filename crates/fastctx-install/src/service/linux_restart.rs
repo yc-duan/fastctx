@@ -38,17 +38,19 @@ pub(super) fn allow(unit: &str, uid: u32) -> anyhow::Result<()> {
         "# Written by Fastctx: {user} restarts its own boot service, and nothing else, so a new release takes over.\n{user} ALL=(root) NOPASSWD: {}\n",
         command(&systemctl, unit)
     );
-    let candidate = std::env::temp_dir().join(format!("{unit}.sudoers"));
-    std::fs::write(&candidate, &text)?;
+    // Checked where only root writes, under a name sudo passes over for the
+    // dot in it, then put in place whole.
+    let candidate = Path::new(RULES).join(format!(".{unit}.check"));
+    publish(&candidate, text.as_bytes(), Permissions::Private)
+        .with_context(|| format!("writing {}", candidate.display()))?;
     let checked = Command::new("visudo").args(["-c", "-q", "-f"]).arg(&candidate).stdout(Stdio::null()).status();
-    let _ = std::fs::remove_file(&candidate);
     if !checked.is_ok_and(|status| status.success()) {
+        let _ = std::fs::remove_file(&candidate);
         return Ok(());
     }
-    publish(&rule_path(unit), text.as_bytes(), Permissions::Private)
-        .with_context(|| format!("writing {}", rule_path(unit).display()))?;
     use std::os::unix::fs::PermissionsExt as _;
-    std::fs::set_permissions(rule_path(unit), std::fs::Permissions::from_mode(0o440))?;
+    std::fs::set_permissions(&candidate, std::fs::Permissions::from_mode(0o440))?;
+    std::fs::rename(&candidate, rule_path(unit)).with_context(|| format!("writing {}", rule_path(unit).display()))?;
     Ok(())
 }
 
