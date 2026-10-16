@@ -38,6 +38,7 @@ mod mailbox;
 mod manage;
 mod moving;
 mod outq;
+mod records;
 mod releases;
 mod store;
 pub mod third;

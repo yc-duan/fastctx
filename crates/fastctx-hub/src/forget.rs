@@ -52,7 +52,12 @@ struct Pending {
 
 /// The member `asker` asks, as `account`, that the conversation at
 /// `conversation` be deleted from every member keeping something of it.
-pub(crate) fn ask(hub: &Hub, asker: &MachineName, account: AccountName, conversation: Address) -> Result<Told, String> {
+pub(crate) fn ask(
+    hub: &std::sync::Arc<Hub>,
+    asker: &MachineName,
+    account: AccountName,
+    conversation: Address,
+) -> Result<Told, String> {
     let conversation = {
         let store = hub.store();
         let directory = &store.book.directory;
@@ -132,16 +137,20 @@ pub(crate) fn ask(hub: &Hub, asker: &MachineName, account: AccountName, conversa
                     deleted_by_asker(&mut store, asker, &forgetting)?;
                 }
                 // Letters held for it would only be set aside where it lived.
-                match store.drop_letters_for(&conversation) {
-                    Ok(0) => {}
-                    Ok(dropped) => hub
-                        .log
-                        .line(format_args!("dropped {dropped} letters held for {}, being deleted", conversation.key())),
-                    Err(error) => hub.log.line(format_args!(
-                        "dropping the letters held for {}, being deleted: {error}",
-                        conversation.key()
-                    )),
-                }
+                let (hub, conversation) = (hub.clone(), conversation.clone());
+                tokio::spawn(async move {
+                    match crate::mailbox::drop_for(&hub, &conversation).await {
+                        Ok(0) => {}
+                        Ok(dropped) => hub.log.line(format_args!(
+                            "dropped {dropped} letters held for {}, being deleted",
+                            conversation.key()
+                        )),
+                        Err(error) => hub.log.line(format_args!(
+                            "dropping the letters held for {}, being deleted: {error}",
+                            conversation.key()
+                        )),
+                    }
+                });
                 tell
             }
         }

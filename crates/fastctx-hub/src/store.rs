@@ -284,6 +284,10 @@ pub struct Letters {
     /// and made as another asked.
     #[serde(default)]
     pub due: bool,
+    /// Why the hub refused letters of the member's that it may send again,
+    /// by number: kept in its count's file (`Taken`), not here.
+    #[serde(skip)]
+    pub refused: BTreeMap<u64, String>,
 }
 
 pub struct Store {
@@ -314,15 +318,49 @@ pub struct Store {
     /// Told whenever `letters` changed, for its writer
     /// (`crate::mailbox::keep_records`).
     pub(crate) letters_changed: std::sync::Arc<tokio::sync::Notify>,
+    /// Counts every change of what the hub keeps of its letters: the
+    /// records, and the senders' counts (`crate::records`).
+    revision: u64,
+    /// How far the records of where the letters stand are written.
+    pub(crate) records: std::sync::Arc<crate::records::Records>,
+    /// What each sender's count is written through (`Store::write_count`).
+    counts: std::collections::HashMap<MachineName, std::sync::Arc<crate::records::Fence>>,
+    /// The session of each member whose letters move its count now: one
+    /// replaced keeps no more (`crate::control::intake`).
+    pub(crate) intake: std::collections::HashMap<MachineName, u64>,
 }
 
-/// A sender's count of its own letters, the last of which the hub holds:
-/// kept in a small file of its own, written before the hub says it holds a
-/// letter, so a letter sent again after a stop is known and kept once.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct Taken {
-    epoch: u64,
-    taken: u64,
+/// The most refusals a sender's count keeps, the latest.
+const REFUSALS: usize = 256;
+
+/// A sender's count of its own letters, the last of which the hub holds,
+/// and why it refused those it refused: kept in a small file of its own,
+/// written before the hub says it holds a letter, so a letter sent again
+/// after a stop is known, and one refused is told why again.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Taken {
+    pub epoch: u64,
+    pub taken: u64,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub refused: BTreeMap<u64, String>,
+}
+
+impl Taken {
+    /// `entry`'s count as it is now, with its latest refusals.
+    pub(crate) fn of(entry: &Letters) -> Self {
+        let skip = entry.refused.len().saturating_sub(REFUSALS);
+        let refused = entry.refused.iter().skip(skip).map(|(seq, why)| (*seq, why.clone())).collect();
+        Self { epoch: entry.epoch, taken: entry.taken, refused }
+    }
+}
+
+/// A number given to a letter for a member (`Store::next_letter`).
+pub(crate) struct Numbered {
+    pub seq: u64,
+    /// The file it is written to.
+    pub path: PathBuf,
+    /// The key of the member it is for, when it was numbered.
+    pub key: Option<PublicKey>,
 }
 
 impl Store {
@@ -385,12 +423,13 @@ impl Store {
             }
             // A sender's count is kept in a file of its own, written before
             // the hub said it holds a letter; the records may be older.
-            if let Some(kept) = read_taken(dir, name)?
-                && (kept.epoch, kept.taken) != (entry.epoch, entry.taken)
-            {
-                entry.epoch = kept.epoch;
-                entry.taken = kept.taken;
-                changed = true;
+            if let Some(kept) = read_taken(dir, name)? {
+                if (kept.epoch, kept.taken) != (entry.epoch, entry.taken) {
+                    entry.epoch = kept.epoch;
+                    entry.taken = kept.taken;
+                    changed = true;
+                }
+                entry.refused = kept.refused;
             }
         }
         let worked = read_or_default(&dir.join("worked.json"))?;
@@ -414,6 +453,10 @@ impl Store {
             called_off,
             mailboxes: std::collections::HashMap::new(),
             letters_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
+            revision: 0,
+            records: std::sync::Arc::new(crate::records::Records::new()),
+            counts: std::collections::HashMap::new(),
+            intake: std::collections::HashMap::new(),
         };
         if changed {
             store.save_letters_now()?;
@@ -542,8 +585,13 @@ impl Store {
                 }
             }
             // What is known of the letters under the old name is read again
-            // under the new, once its session wants them.
+            // under the new, once its session wants them; what was writing
+            // under the old name writes there no more.
             self.mailboxes.remove(&old);
+            self.intake.remove(&old);
+            if let Some(fence) = self.counts.remove(&old) {
+                fence.close();
+            }
             let entry = self.letters.remove(&old).expect("listed above");
             self.letters.insert(new.clone(), entry);
             said.push(format!("the letters for {old} are kept for {new}, as it is called now"));
@@ -643,21 +691,29 @@ impl Store {
 
     /// Has the records of where the letters stand kept: by their writer, off
     /// this lock, soon after (`crate::mailbox::keep_records`).
-    pub fn save_letters(&self) -> io::Result<()> {
+    pub fn save_letters(&mut self) -> io::Result<()> {
+        self.revision += 1;
         self.letters_changed.notify_one();
         Ok(())
     }
 
-    /// Keeps the records of where the letters stand now, as the hub does
-    /// while it opens, before their writer runs.
-    pub fn save_letters_now(&self) -> io::Result<()> {
-        publish(&self.dir.join("letters.json"), &json(&self.letters)?, Permissions::Private)
+    /// Keeps the records of where the letters stand now, before this lock
+    /// is let go: as the hub opens, stops, renames a member or hands itself
+    /// over, and before deleting letters only the records then number past.
+    pub fn save_letters_now(&mut self) -> io::Result<()> {
+        self.revision += 1;
+        self.records.write(self.revision, &self.dir.join("letters.json"), &json(&self.letters)?)
     }
 
-    /// The records of where the letters stand as they are to be written,
-    /// and where.
-    pub(crate) fn letters_record(&self) -> io::Result<(Vec<u8>, PathBuf)> {
-        Ok((json(&self.letters)?, self.dir.join("letters.json")))
+    /// The records of where the letters stand as they are now, to be
+    /// written off this lock: their revision, what they say, and where.
+    pub(crate) fn letters_record(&self) -> (u64, BTreeMap<MachineName, Letters>, PathBuf) {
+        (self.revision, self.letters.clone(), self.dir.join("letters.json"))
+    }
+
+    /// The revision of what is kept of the letters now (`crate::records`).
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Where the letters waiting for `name` are kept.
@@ -665,12 +721,35 @@ impl Store {
         name.entry_in(&self.dir.join("outbox"))
     }
 
-    /// Writes `name`'s count of its own letters, the last of which the hub
-    /// holds; off any lock, before the hub says it holds them.
-    pub(crate) fn write_taken(dir: &Path, name: &MachineName, epoch: u64, taken: u64) -> io::Result<()> {
-        let counts = dir.join(TAKEN);
-        ensure_private_dir(&counts)?;
-        publish(&taken_path(dir, name), &json(&Taken { epoch, taken })?, Permissions::Private)
+    /// `name`'s count as it is now, its revision, and the fence it is
+    /// written through, to write it off this lock (`write_count`).
+    pub(crate) fn count_of(
+        &mut self,
+        name: &MachineName,
+    ) -> Option<(Taken, u64, std::sync::Arc<crate::records::Fence>)> {
+        let taken = Taken::of(self.letters.get(name)?);
+        self.revision += 1;
+        let fence =
+            self.counts.entry(name.clone()).or_insert_with(|| std::sync::Arc::new(crate::records::Fence::new()));
+        Some((taken, self.revision, fence.clone()))
+    }
+
+    /// Writes `name`'s count `taken`, as of `revision`, through `fence`:
+    /// before the hub says it holds the letters it counts. One of an
+    /// earlier revision that comes late is passed over.
+    pub(crate) fn write_count(
+        dir: &Path,
+        name: &MachineName,
+        taken: &Taken,
+        fence: &crate::records::Fence,
+        revision: u64,
+    ) -> io::Result<()> {
+        fence
+            .write(revision, || {
+                ensure_private_dir(&dir.join(TAKEN))?;
+                publish(&taken_path(dir, name), &json(taken)?, Permissions::Private)
+            })
+            .map(|_| ())
     }
 
     /// The letter records of a member, made when it first connects.
@@ -689,6 +768,7 @@ impl Store {
                 roles: false,
                 versions: false,
                 due: false,
+                refused: BTreeMap::new(),
             };
             self.letters.insert(name.clone(), fresh);
         }
@@ -696,40 +776,18 @@ impl Store {
     }
 
     /// The number the next letter for `to` takes, and the file it is to be
-    /// written to, off this lock (`write_letter`). A number given to a letter
-    /// that is then not written leaves a gap, which nothing minds.
-    pub fn next_letter(&mut self, to: &MachineName) -> io::Result<(u64, PathBuf)> {
+    /// written to, off this lock (`write_letter`). Until it is written or
+    /// given up (`crate::mailbox::kept`, `abandoned`), no letter after it goes
+    /// to `to`; one given up leaves a gap, which nothing minds.
+    pub(crate) fn next_letter(&mut self, to: &MachineName) -> io::Result<Numbered> {
         let directory = to.entry_in(&self.dir.join("outbox"))?;
+        let key = self.book.directory.member(to).map(|member| member.key);
         let entry = self.letters_of(to)?;
         let seq = entry.next;
         entry.next = seq + 1;
-        Ok((seq, directory.join(format!("{seq:020}"))))
-    }
-
-    /// Drops the letters waiting for the conversation at `conversation`,
-    /// being deleted; says how many. A part of a letter too large for one
-    /// message names nobody, and stays.
-    pub fn drop_letters_for(&mut self, conversation: &fastctx_types::Address) -> io::Result<usize> {
-        use fastctx_types::remote::Letter;
-        let mut dropped = 0;
-        for (seq, path) in outbox_entries(&self.dir, &conversation.machine)? {
-            let message: Envelope = read(&path)?;
-            let Ok(body) = message.body::<fastctx_net::message::LetterBody>() else { continue };
-            let to = match &body.letter {
-                Letter::JobFacts { to, .. } | Letter::Notice { to, .. } | Letter::Speak { to, .. } => to,
-                Letter::Fragment { .. } | Letter::Left { .. } => continue,
-            };
-            if *to == conversation.resident {
-                match std::fs::remove_file(&path) {
-                    Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-                    _ => dropped += 1,
-                }
-                if let Some(mailbox) = self.mailboxes.get_mut(&conversation.machine) {
-                    mailbox.forget(seq);
-                }
-            }
-        }
-        Ok(dropped)
+        self.save_letters()?;
+        crate::mailbox::numbered(self, to, seq);
+        Ok(Numbered { seq, path: directory.join(format!("{seq:020}")), key })
     }
 
     /// Forgets which machines were called to work for the conversation at
@@ -749,6 +807,10 @@ impl Store {
     pub fn forget_letters(&mut self, name: &MachineName) -> io::Result<()> {
         self.letters.remove(name);
         self.mailboxes.remove(name);
+        self.intake.remove(name);
+        if let Some(fence) = self.counts.remove(name) {
+            fence.close();
+        }
         self.save_letters()?;
         match std::fs::remove_file(taken_path(&self.dir, name)) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
@@ -776,16 +838,18 @@ fn read_taken(dir: &Path, name: &MachineName) -> io::Result<Option<Taken>> {
 }
 
 /// Writes the letter `message` to `path` (`Store::next_letter`), off any
-/// lock: the hub holds it once this returns.
-pub(crate) fn write_letter(path: &Path, message: &Envelope) -> io::Result<()> {
+/// lock: the hub holds it once this returns. Its size.
+pub(crate) fn write_letter(path: &Path, message: &Envelope) -> io::Result<u64> {
     if let Some(directory) = path.parent() {
         ensure_private_dir(directory)?;
     }
-    publish(path, &json(message)?, Permissions::Private)
+    let bytes = json(message)?;
+    publish(path, &bytes, Permissions::Private)?;
+    Ok(bytes.len() as u64)
 }
 
-/// The numbers of the letter files in `directory`.
-pub(crate) fn letter_numbers(directory: &Path) -> io::Result<Vec<u64>> {
+/// The numbers of the letter files in `directory`, and their sizes.
+pub(crate) fn letter_numbers(directory: &Path) -> io::Result<Vec<(u64, u64)>> {
     let entries = match std::fs::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -793,9 +857,10 @@ pub(crate) fn letter_numbers(directory: &Path) -> io::Result<Vec<u64>> {
     };
     let mut found = Vec::new();
     for entry in entries {
+        let entry = entry?;
         // Temporary files of an interrupted write start with a dot.
-        if let Some(seq) = entry?.file_name().to_str().and_then(|name| name.parse::<u64>().ok()) {
-            found.push(seq);
+        if let Some(seq) = entry.file_name().to_str().and_then(|name| name.parse::<u64>().ok()) {
+            found.push((seq, entry.metadata()?.len()));
         }
     }
     Ok(found)

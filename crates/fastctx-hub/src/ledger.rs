@@ -29,7 +29,7 @@ use fastctx_net::directory::Directory;
 use fastctx_net::ledger::Entry;
 use fastctx_net::sign::Signed;
 use fastctx_net::wire::{self, Down, Told};
-use fastctx_platform::{Permissions, ensure_private_dir, publish_new};
+use fastctx_platform::{Permissions, PublishFailure, ensure_private_dir, publish_checked};
 use fastctx_types::MachineName;
 use fastctx_types::access::TownId;
 
@@ -293,13 +293,24 @@ pub(crate) async fn write(hub: &Arc<Hub>, from: &MachineName, town: TownId, sign
         hub.ledgers.lock().expect("never poisoned").check(&store, from, &town, &signed)?
     };
     let (path, bytes) = (checked.path.clone(), checked.bytes.clone());
-    tokio::task::spawn_blocking(move || {
+    let published = tokio::task::spawn_blocking(move || {
         let folder = path.parent().expect("an entry has a folder");
-        ensure_private_dir(folder).and_then(|()| publish_new(&path, &bytes, Permissions::Private))
+        ensure_private_dir(folder)
+            .map_err(|error| PublishFailure { error, published: false })
+            .and_then(|()| publish_checked(&path, &bytes, Permissions::Private, false, || Ok(())))
     })
     .await
-    .map_err(|error| format!("the hub could not keep the entry: {error}"))?
     .map_err(|error| format!("the hub could not keep the entry: {error}"))?;
+    match published {
+        Ok(()) => {}
+        // In place for all to read, though not known to be on disk for good:
+        // kept as written, since the next entry of the project follows it.
+        Err(failure) if failure.published => hub.log.line(format_args!(
+            "an entry of {town} from {from} is in place, but making it last failed: {}",
+            failure.error
+        )),
+        Err(failure) => return Err(format!("the hub could not keep the entry: {}", failure.error)),
+    }
     let (seq, tell) = {
         let store = hub.store();
         let directory = &store.book.directory;

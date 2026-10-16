@@ -323,7 +323,7 @@ async fn connected(
     });
     let (letter_failed, mut letters_failed) = oneshot::channel::<String>();
     let (outbox_failed, mut outbox_failure) = oneshot::channel::<String>();
-    let (deliveries, delivered) = mpsc::unbounded_channel();
+    let (deliveries, delivered) = mpsc::channel(DELIVERIES);
     let pinged: Arc<std::sync::Mutex<std::collections::HashMap<u64, Instant>>> = Arc::default();
     let mut tasks = Tasks(vec![
         writer,
@@ -448,8 +448,20 @@ async fn connected(
                     break Ended::Retry(format!("recording what the hub holds: {error}"));
                 }
             }
+            // Letters the hub sends faster than this machine takes them wait
+            // for it, the connection read no further meanwhile, for as long
+            // as a silence lasts at most: an older hub sends all it holds at
+            // once.
             Down::Deliver { seq, message } => {
-                let _ = deliveries.send((seq, message));
+                match tokio::time::timeout(SILENCE, deliveries.send((seq, message))).await {
+                    Ok(_) => {}
+                    Err(_) => {
+                        break Ended::Retry(format!(
+                            "the hub's letters came faster than this machine takes them, for {} s",
+                            SILENCE.as_secs()
+                        ));
+                    }
+                }
             }
             Down::Incoming { call, message } => {
                 let stop = inner.answers.open(inner, CallOn::Hub(generation), call);
@@ -658,18 +670,24 @@ fn interface_addresses() -> Vec<std::net::IpAddr> {
 /// Records that the hub holds this machine's letters through `seq`, and
 /// wakes the sending of the next ones.
 fn held(inner: &Inner, seq: u64) -> std::io::Result<()> {
-    let before = inner.letters.lock().expect("never poisoned").file.held;
-    if seq <= before {
-        return Ok(());
-    }
-    Outbox::new(&inner.dir).held_between(before, seq)?;
-    let mut letters = inner.letters.lock().expect("never poisoned");
-    if seq > letters.file.held {
+    // Kept before the letters are deleted: a stop in between leaves letters
+    // the next start deletes, never a number given out again to a letter
+    // the hub would take for one it holds.
+    let before = {
+        let mut letters = inner.letters.lock().expect("never poisoned");
+        let before = letters.file.held;
+        if seq <= before {
+            return Ok(());
+        }
         letters.file.held = seq;
         letters.next = letters.next.max(seq + 1);
-        super::state::write(&inner.dir.letters(), &letters.file)?;
-    }
-    drop(letters);
+        if let Err(error) = super::state::write(&inner.dir.letters(), &letters.file) {
+            letters.file.held = before;
+            return Err(error);
+        }
+        before
+    };
+    Outbox::new(&inner.dir).held_between(before, seq)?;
     inner.outbox_changed.notify_one();
     Ok(())
 }
@@ -697,6 +715,10 @@ const WINDOW_BYTES: usize = 8 * 1024 * 1024;
 /// How many of the hub's letters are taken before the hub is told, at once,
 /// that they are.
 const TAKEN_AT_ONCE: usize = 64;
+
+/// How many of the hub's letters may wait to be taken: more than a hub of
+/// this release sends at once, which it never fills.
+const DELIVERIES: usize = 1024;
 
 /// Sends the letters in the outbox past `sent`, in order, a window at a
 /// time, and each new one as there is room for it. Letters are numbered one
@@ -747,7 +769,7 @@ async fn take_letters(
     inner: Arc<Inner>,
     up: Outgoing,
     hub_letters: u64,
-    mut delivered: mpsc::UnboundedReceiver<(u64, Envelope)>,
+    mut delivered: mpsc::Receiver<(u64, Envelope)>,
     failed: oneshot::Sender<String>,
 ) {
     while let Some(first) = delivered.recv().await {
@@ -767,9 +789,24 @@ async fn take_letters(
                 .file
                 .taken
                 .is_some_and(|(epoch, taken)| epoch == hub_letters && seq <= taken);
-            if !already && let Err(error) = take_letter(&inner, &message).await {
-                let _ = failed.send(format!("taking a letter: {error}"));
-                return;
+            if !already {
+                // Taken whole, its handling and its receipt, whatever becomes
+                // of this session, and one at a time with the next session's:
+                // a letter sent again meanwhile waits for it, and finds its
+                // receipt.
+                let taking = inner.taking.clone().lock_owned().await;
+                let taker = inner.clone();
+                let taken = tokio::spawn(async move {
+                    let _taking = taking;
+                    take_letter(&taker, &message).await
+                })
+                .await
+                .map_err(|error| std::io::Error::other(error.to_string()))
+                .and_then(|taken| taken);
+                if let Err(error) = taken {
+                    let _ = failed.send(format!("taking a letter: {error}"));
+                    return;
+                }
             }
             last = Some(seq);
         }

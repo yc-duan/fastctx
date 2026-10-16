@@ -68,7 +68,7 @@ mod windows_process;
 #[cfg(windows)]
 mod windows_user;
 
-pub use atomic::{Permissions, Staged, publish, publish_new};
+pub use atomic::{Permissions, PublishFailure, Staged, publish, publish_checked, publish_new};
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub use child::Child;
 pub use detach::{DetachedProcess, spawn_detached};

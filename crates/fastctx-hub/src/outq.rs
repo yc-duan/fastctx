@@ -1,21 +1,22 @@
 //! What waits to go to one member on its control connection, and in what
 //! order (`world-concurrency.md`, 机器之间).
 //!
-//! Three lanes. What answers or ends something goes first: pongs, answers,
-//! the calls the member is to take, statuses, receipts, refusals. Then, in
-//! turn, letters, which the member's mailbox puts here a window at a time
-//! (`crate::store`, `Mailbox`), and notices that a newer one replaces or
-//! merges with: the directory changed, a project's ledger changed, the
-//! network's versions, what is afoot on a machine, a conversation to
-//! delete, a package to fetch.
+//! The welcome first, always: no backlog keeps a member from coming in.
+//! Then three lanes. What answers or ends something goes first: pongs,
+//! answers, the calls the member is to take, statuses, receipts, refusals.
+//! Then, in turn, letters, which the member's mailbox puts here a window at
+//! a time (`crate::mailbox`), and notices that a newer one replaces or merges
+//! with: the directory changed, a project's ledger changed, the network's
+//! versions, what is afoot on a machine, a conversation to delete, a package
+//! to fetch. The first lane has `BURST` frames in a row at most before a
+//! letter or a notice has its turn, so neither waits for long behind it; a
+//! notice that takes several frames goes a frame at a turn, so a pong never
+//! waits behind all of it.
 //!
-//! Each lane is bounded. The first by count and bytes: a member that
-//! leaves more than `URGENT` frames or `URGENT_BYTES` bytes of it untaken
-//! does not read what it is sent, and is let go; it comes back and reads on
-//! from where it was. Letters are bounded by the mailbox's window, notices
-//! by having one of each kind and subject. The welcome is the first frame a
-//! session writes, so no backlog keeps a member from coming in, and a pong
-//! never waits behind letters.
+//! Each lane is bounded where things are queued. The first by count and
+//! bytes, and notices by count: a member that leaves more than that
+//! untaken does not read what it is sent, and is let go; it comes back and
+//! reads on from where it was. Letters are bounded by the mailbox's window.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -31,6 +32,12 @@ use crate::Out;
 const URGENT: usize = 4096;
 /// The most bytes of the first lane that may wait for a member.
 const URGENT_BYTES: usize = 32 * 1024 * 1024;
+/// The most notices that may wait for a member: one of a kind and subject
+/// merges with the next, so only a member that reads nothing piles them up.
+const NOTICES: usize = 16384;
+/// How many frames of the first lane go in a row while letters or notices
+/// wait.
+const BURST: usize = 32;
 
 /// What a member's writer is to do next.
 pub(crate) enum Next {
@@ -49,17 +56,24 @@ pub(crate) struct Outq(Arc<Shared>);
 struct Shared {
     state: Mutex<State>,
     ready: Notify,
-    /// Set once the session's writer is done: nothing more is taken.
+    /// Set once the session's writer is done.
     shut: watch::Sender<bool>,
 }
 
 #[derive(Default)]
 struct State {
+    /// Nothing more is taken: the session's writer is done.
+    shut: bool,
+    welcome: Option<Down>,
     urgent: VecDeque<(Out, usize)>,
     urgent_bytes: usize,
     letters: VecDeque<Down>,
-    notices: Vec<(Notice, Down)>,
+    notices: VecDeque<(Notice, Down)>,
+    /// The frames of the notice taken last that are still to go.
+    spilled: VecDeque<Down>,
     overflowed: Option<String>,
+    /// How many frames of the first lane went in a row.
+    in_a_row: usize,
     /// Whether letters go before notices next.
     letters_next: bool,
 }
@@ -81,20 +95,27 @@ impl Outq {
         Self(Arc::new(Shared { state: Mutex::default(), ready: Notify::new(), shut: watch::channel(false).0 }))
     }
 
-    /// Queues `out`; an error once the session's writer is done.
+    /// Queues the welcome, which goes before anything else.
+    pub(crate) fn welcome(&self, welcome: Down) {
+        self.0.state.lock().expect("never poisoned").welcome = Some(welcome);
+        self.0.ready.notify_one();
+    }
+
+    /// Queues `out`; an error once the session's writer is done, or when
+    /// the member left so much untaken that it is let go.
     pub(crate) fn send(&self, out: Out) -> Result<(), ()> {
-        if *self.0.shut.borrow() {
-            return Err(());
-        }
         {
             let mut state = self.0.state.lock().expect("never poisoned");
+            if state.shut || state.overflowed.is_some() {
+                return Err(());
+            }
             match out {
                 Out::Frame(Down::Deliver { seq, message }) => state.letters.push_back(Down::Deliver { seq, message }),
                 Out::Frame(frame) => match notice(&frame) {
-                    Some(notice) => state.notify(notice, frame),
-                    None => state.urge(Out::Frame(frame)),
+                    Some(notice) => state.notify(notice, frame)?,
+                    None => state.urge(Out::Frame(frame))?,
                 },
-                end @ Out::End(_) => state.urge(end),
+                end @ Out::End(_) => state.urge(end)?,
             }
         }
         self.0.ready.notify_one();
@@ -106,11 +127,14 @@ impl Outq {
         loop {
             // Asked for before looking, so a frame queued in between wakes it.
             let ready = self.0.ready.notified();
-            if *self.0.shut.borrow() {
-                return None;
-            }
-            if let Some(next) = self.0.state.lock().expect("never poisoned").take() {
-                return Some(next);
+            {
+                let mut state = self.0.state.lock().expect("never poisoned");
+                if state.shut {
+                    return None;
+                }
+                if let Some(next) = state.take() {
+                    return Some(next);
+                }
             }
             ready.await;
         }
@@ -119,9 +143,9 @@ impl Outq {
     /// The session's writer is done: nothing more is taken, and whoever
     /// waits for the session to end hears it.
     pub(crate) fn shut(&self) {
+        *self.0.state.lock().expect("never poisoned") = State { shut: true, ..State::default() };
         self.0.shut.send_replace(true);
         self.0.ready.notify_waiters();
-        *self.0.state.lock().expect("never poisoned") = State::default();
     }
 
     /// Resolves once the queue is shut.
@@ -132,26 +156,36 @@ impl Outq {
 }
 
 impl State {
-    fn urge(&mut self, out: Out) {
+    fn overflow(&mut self, why: String) -> Result<(), ()> {
+        self.overflowed = Some(why);
+        Err(())
+    }
+
+    fn urge(&mut self, out: Out) -> Result<(), ()> {
         let bytes = match &out {
             Out::Frame(frame) => fastctx_net::wire::encode(frame).len(),
             Out::End(_) => 0,
         };
-        self.urgent_bytes += bytes;
-        self.urgent.push_back((out, bytes));
-        if self.overflowed.is_none() && (self.urgent.len() > URGENT || self.urgent_bytes > URGENT_BYTES) {
-            self.overflowed = Some(format!(
-                "{} frames of {} bytes wait for it untaken, more than {URGENT} or {URGENT_BYTES} bytes; letting it go",
+        if self.urgent.len() >= URGENT || self.urgent_bytes + bytes > URGENT_BYTES {
+            let why = format!(
+                "{} frames of {} bytes wait for it untaken, as many as {URGENT} or {URGENT_BYTES} bytes; letting it go",
                 self.urgent.len(),
                 self.urgent_bytes
-            ));
+            );
+            return self.overflow(why);
         }
+        self.urgent_bytes += bytes;
+        self.urgent.push_back((out, bytes));
+        Ok(())
     }
 
-    fn notify(&mut self, notice: Notice, frame: Down) {
+    fn notify(&mut self, notice: Notice, frame: Down) -> Result<(), ()> {
         let Some(at) = self.notices.iter().position(|(kept, _)| *kept == notice) else {
-            self.notices.push((notice, frame));
-            return;
+            if self.notices.len() >= NOTICES {
+                return self.overflow(format!("{NOTICES} notices wait for it untaken; letting it go"));
+            }
+            self.notices.push_back((notice, frame));
+            return Ok(());
         };
         let kept = &mut self.notices[at].1;
         match (kept, frame) {
@@ -162,29 +196,43 @@ impl State {
             }
             (kept, frame) => *kept = frame,
         }
+        Ok(())
     }
 
     fn take(&mut self) -> Option<Next> {
-        if let Some(why) = self.overflowed.take() {
-            return Some(Next::Overflowed(why));
+        if let Some(welcome) = self.welcome.take() {
+            return Some(Next::Frames(vec![welcome]));
         }
-        if let Some((out, bytes)) = self.urgent.pop_front() {
+        if let Some(why) = &self.overflowed {
+            return Some(Next::Overflowed(why.clone()));
+        }
+        let others = !self.letters.is_empty() || !self.notices.is_empty() || !self.spilled.is_empty();
+        if (self.in_a_row < BURST || !others)
+            && let Some((out, bytes)) = self.urgent.pop_front()
+        {
             self.urgent_bytes -= bytes;
+            self.in_a_row += 1;
             return Some(match out {
                 Out::Frame(frame) => Next::Frames(vec![frame]),
                 Out::End(reason) => Next::End(reason),
             });
         }
-        let letter = |state: &mut Self| state.letters.pop_front().map(|frame| Next::Frames(vec![frame]));
+        self.in_a_row = 0;
+        let letter = |state: &mut Self| state.letters.pop_front();
         let notice = |state: &mut Self| {
-            if state.notices.is_empty() {
-                return None;
+            if state.spilled.is_empty() {
+                let (_, frame) = state.notices.pop_front()?;
+                state.spilled.extend(split(frame));
             }
-            let (_, frame) = state.notices.remove(0);
-            Some(Next::Frames(split(frame)))
+            state.spilled.pop_front()
         };
         self.letters_next = !self.letters_next;
-        if self.letters_next { letter(self).or_else(|| notice(self)) } else { notice(self).or_else(|| letter(self)) }
+        let frame = if self.letters_next {
+            letter(self).or_else(|| notice(self))
+        } else {
+            notice(self).or_else(|| letter(self))
+        };
+        frame.map(|frame| Next::Frames(vec![frame]))
     }
 }
 

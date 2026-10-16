@@ -615,6 +615,13 @@ fn join(
             hub.machine_log_changed.notify_one();
         }
         let name = result?;
+        // A member new to the hub under a name one taken off had starts with
+        // nothing of that one's letters, should any be left.
+        if before.directory.member(&name).is_none()
+            && let Err(error) = store.forget_letters(&name)
+        {
+            hub.log.line(format_args!("clearing what was left of the letters of an earlier {name}: {error}"));
+        }
         // What it said of names holds from now, not from its first session:
         // one that joined and has not connected yet does not hold back the
         // names of those joining by the same code after it.

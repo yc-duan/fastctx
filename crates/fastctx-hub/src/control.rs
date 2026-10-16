@@ -181,7 +181,7 @@ pub(crate) async fn session(
     // The letters it sends are kept in order by a task of their own, so a
     // slow disk holds up no heartbeat or answer on this connection.
     let (letters_in, letters_coming) = mpsc::channel(LETTERS_IN);
-    let intake = tokio::spawn(intake(hub.clone(), name.clone(), out.clone(), letters_coming));
+    let intake = tokio::spawn(intake(hub.clone(), name.clone(), generation, out.clone(), letters_coming));
 
     // Whether the writer still has a refusal to deliver before closing.
     let (ended, refusing) = loop {
@@ -208,9 +208,18 @@ pub(crate) async fn session(
             Ok(Some(Ok(_))) => continue,
         };
         // A letter waits its turn to be kept; more than `LETTERS_IN` waiting
-        // and this connection is read no further until there is room.
+        // and this connection is read no further until there is room, for
+        // as long as a silence lasts at most.
         if let Up::Send { seq, message } = frame {
-            if letters_in.send((seq, message)).await.is_err() {
+            let queued = tokio::select! {
+                queued = letters_in.send((seq, message)) => queued.is_ok(),
+                _ = &mut writer_stopped => break (None, false),
+                () = tokio::time::sleep(SILENCE) => {
+                    let why = format!("its letters came faster than the hub keeps them, for {} s", SILENCE.as_secs());
+                    break (Some(why), false);
+                }
+            };
+            if !queued {
                 break (Some("keeping its letters stopped".to_string()), false);
             }
             continue;
@@ -246,10 +255,17 @@ const LETTERS_IN: usize = 1024;
 /// them, their count written once for all of them.
 const KEPT_AT_ONCE: usize = 64;
 
-/// Keeps the letters `name` sends, in order: each written to disk, then its
-/// count, then the sender told the hub holds them. A failure of the hub's
-/// own disk ends the session, and the member sends them again.
-async fn intake(hub: Arc<Hub>, name: MachineName, out: Outq, mut coming: mpsc::Receiver<(u64, Envelope)>) {
+/// Keeps the letters the session `generation` of `name` sends, in order:
+/// each written to disk, then its sender's count, then the sender told the
+/// hub holds them. A failure of the hub's own disk ends the session, and
+/// the member sends them again; a session replaced since keeps no more.
+async fn intake(
+    hub: Arc<Hub>,
+    name: MachineName,
+    generation: u64,
+    out: Outq,
+    mut coming: mpsc::Receiver<(u64, Envelope)>,
+) {
     while let Some(first) = coming.recv().await {
         let mut batch = vec![first];
         while batch.len() < KEPT_AT_ONCE {
@@ -259,26 +275,42 @@ async fn intake(hub: Arc<Hub>, name: MachineName, out: Outq, mut coming: mpsc::R
             }
         }
         let mut receipts = Vec::new();
-        let mut count = None;
+        // Whether the count moved: letters only sent again leave it as it is.
+        let mut counted = false;
         for (seq, message) in batch {
-            match keep(&hub, &name, seq, message).await {
-                Ok((refused, counted)) => {
-                    receipts.push((seq, refused));
-                    count = counted.or(count);
+            match keep(&hub, &name, generation, seq, message).await {
+                Ok(Kept::Held) => {
+                    receipts.push((seq, None));
+                    counted = true;
                 }
-                Err(reason) => {
+                Ok(Kept::Refused(why)) => {
+                    receipts.push((seq, Some(why)));
+                    counted = true;
+                }
+                Ok(Kept::Again(refused)) => receipts.push((seq, refused)),
+                Err(Stopped::Replaced) => return,
+                Err(Stopped::Failed(reason)) => {
                     let _ = out.send(Out::End(reason));
                     return;
                 }
             }
         }
-        if let Some((epoch, taken)) = count {
-            let (dir, sender) = (hub.store().dir().to_path_buf(), name.clone());
-            let written =
-                tokio::task::spawn_blocking(move || crate::store::Store::write_taken(&dir, &sender, epoch, taken))
-                    .await
-                    .map_err(|error| std::io::Error::other(error.to_string()))
-                    .and_then(|written| written);
+        let count = {
+            let mut store = hub.store();
+            if store.intake.get(&name) != Some(&generation) {
+                return;
+            }
+            let dir = store.dir().to_path_buf();
+            if counted { store.count_of(&name).map(|count| (dir, count)) } else { None }
+        };
+        if let Some((dir, (taken, revision, fence))) = count {
+            let sender = name.clone();
+            let written = tokio::task::spawn_blocking(move || {
+                crate::store::Store::write_count(&dir, &sender, &taken, &fence, revision)
+            })
+            .await
+            .map_err(|error| std::io::Error::other(error.to_string()))
+            .and_then(|written| written);
             if let Err(error) = written {
                 let _ = out.send(Out::End(storage_failure(&hub, "counting a letter", &error)));
                 return;
@@ -351,6 +383,7 @@ fn open(
         // The machine numbers its letters afresh, having lost its records.
         entry.epoch = letters.epoch;
         entry.taken = 0;
+        entry.refused.clear();
     }
     let taken_by_member = match letters.taken {
         Some((epoch, taken)) if epoch == entry.out_epoch => taken,
@@ -368,15 +401,16 @@ fn open(
     };
     // Its new numbering is kept before any letter of it is taken: kept
     // later, a stop in between would take the new letters for ones held.
-    if renumbered {
-        let epoch = letters.epoch;
-        crate::store::Store::write_taken(store.dir(), name, epoch, 0)
+    if renumbered && let Some((taken, revision, fence)) = store.count_of(name) {
+        crate::store::Store::write_count(store.dir(), name, &taken, &fence, revision)
             .map_err(|error| storage_failure(hub, "recording the machine's numbering", &error))?;
     }
     store.save_letters().map_err(|error| storage_failure(hub, "recording the connection", &error))?;
+    // From now on only this session's letters move the member's count.
+    store.intake.insert(name.clone(), generation);
     // The welcome is the first frame; the letters waiting follow from where
     // the member took them.
-    let _ = out.send(Out::Frame(welcome));
+    out.welcome(welcome);
     crate::mailbox::opened(hub, &mut store, name, generation, out.clone(), taken_by_member);
     let session = Session {
         generation,
@@ -422,6 +456,9 @@ pub(crate) fn close(hub: &Hub, name: &MachineName, generation: u64) {
             if let Err(error) = store.save_letters() {
                 hub.log.line(format_args!("recording that {name} left: {error}"));
             }
+        }
+        if store.intake.get(name) == Some(&generation) {
+            store.intake.remove(name);
         }
         crate::mailbox::closed(&mut store, name, generation);
     }
@@ -646,17 +683,92 @@ fn standing(hub: &Hub, message: &Envelope) -> Result<Standing, String> {
 /// be told, and its count once this letter is counted, which is kept before
 /// it is told (`intake`). The letter is on disk before it counts: a sender
 /// told the hub holds one only once the hub does.
+/// Writes the letter `message`, numbered for `to` as `numbered`, and
+/// settles its number: kept when it is written for the member it was
+/// numbered for, a gap when it is not written or that member is gone.
+async fn write(
+    hub: Arc<Hub>,
+    to: MachineName,
+    numbered: crate::store::Numbered,
+    message: Envelope,
+) -> std::io::Result<()> {
+    let path = numbered.path.clone();
+    let written = tokio::task::spawn_blocking(move || crate::store::write_letter(&path, &message))
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))
+        .and_then(|written| written);
+    let gone = {
+        let mut store = hub.store();
+        let size = match written {
+            Ok(size) => size,
+            Err(error) => {
+                crate::mailbox::abandoned(&hub, &mut store, &to, numbered.seq);
+                return Err(error);
+            }
+        };
+        // Its receiver was taken off meanwhile, or another member took its
+        // name: the letter goes nowhere.
+        let now = store.book.directory.member(&to).map(|member| member.key);
+        if now.is_some() && now == numbered.key {
+            crate::mailbox::kept(&hub, &mut store, &to, numbered.seq, size);
+            false
+        } else {
+            crate::mailbox::abandoned(&hub, &mut store, &to, numbered.seq);
+            true
+        }
+    };
+    if gone {
+        let _ = tokio::fs::remove_file(&numbered.path).await;
+        if let Some(directory) = numbered.path.parent() {
+            let _ = tokio::fs::remove_dir(directory).await;
+        }
+    }
+    Ok(())
+}
+
+/// What became of a letter a member sent.
+enum Kept {
+    /// The hub holds it.
+    Held,
+    /// The hub refused it, saying why.
+    Refused(String),
+    /// Sent again after a reconnect: the hub holds it already, or refused it
+    /// then, saying why.
+    Again(Option<String>),
+}
+
+/// Why keeping a session's letters stopped.
+enum Stopped {
+    /// A newer session of the member keeps them now.
+    Replaced,
+    /// The hub's own disk failed.
+    Failed(Refusal),
+}
+
+/// Keeps the letter `seq` the session `generation` of `name` sent: written
+/// to disk before its sender's count moves past it. Only the member's
+/// current session moves its count: a letter a session replaced since was
+/// writing is kept all the same, and the new session sends it again, which
+/// its receiver's receipt of it takes once.
 async fn keep(
     hub: &Arc<Hub>,
     name: &MachineName,
+    generation: u64,
     seq: u64,
     message: Envelope,
-) -> Result<(Option<String>, Option<(u64, u64)>), Refusal> {
-    let taken = hub.store().letters.get(name).map(|entry| entry.taken).unwrap_or(0);
-    if seq <= taken {
-        // Sent again after a reconnect; the hub holds it already.
-        return Ok((None, None));
+) -> Result<Kept, Stopped> {
+    {
+        let store = hub.store();
+        if store.intake.get(name) != Some(&generation) {
+            return Err(Stopped::Replaced);
+        }
+        if let Some(entry) = store.letters.get(name)
+            && seq <= entry.taken
+        {
+            return Ok(Kept::Again(entry.refused.get(&seq).cloned()));
+        }
     }
+    let failed = |error: std::io::Error| Stopped::Failed(storage_failure(hub, "keeping a letter", &error));
     let refused = match own(hub, name, &message).and_then(|()| {
         if message.kind != Kind::Letter {
             return Err("only letters are kept for later".to_string());
@@ -672,33 +784,44 @@ async fn keep(
     }) {
         Ok(()) => {
             let to = canonical(hub, &message.to);
-            let (number, path) =
-                hub.store().next_letter(&to).map_err(|error| storage_failure(hub, "keeping a letter", &error))?;
-            let written = tokio::task::spawn_blocking(move || crate::store::write_letter(&path, &message))
+            let numbered = {
+                let mut store = hub.store();
+                if store.intake.get(name) != Some(&generation) {
+                    return Err(Stopped::Replaced);
+                }
+                store.next_letter(&to).map_err(failed)?
+            };
+            // Written and settled whatever becomes of this session: a
+            // number given out and left unsettled holds back every letter
+            // after it.
+            let written = tokio::spawn(write(hub.clone(), to, numbered, message))
                 .await
                 .map_err(|error| std::io::Error::other(error.to_string()))
                 .and_then(|written| written);
-            if let Err(error) = written {
-                return Err(storage_failure(hub, "keeping a letter", &error));
-            }
-            crate::mailbox::kept(hub, &mut hub.store(), &to, number);
+            written.map_err(failed)?;
             None
         }
         Err(reason) => Some(reason),
     };
-    let counted = {
+    {
         let mut store = hub.store();
-        let counted = store.letters.get_mut(name).map(|entry| {
-            entry.taken = seq;
-            (entry.epoch, seq)
-        });
+        if store.intake.get(name) != Some(&generation) {
+            return Err(Stopped::Replaced);
+        }
+        let Some(entry) = store.letters.get_mut(name) else { return Err(Stopped::Replaced) };
+        entry.taken = entry.taken.max(seq);
+        if let Some(reason) = &refused {
+            entry.refused.insert(seq, reason.clone());
+        }
         let _ = store.save_letters();
-        counted
-    };
-    if let Some(reason) = &refused {
-        hub.log.line(format_args!("refused letter {seq} from {name}: {reason}"));
     }
-    Ok((refused, counted))
+    Ok(match refused {
+        Some(reason) => {
+            hub.log.line(format_args!("refused letter {seq} from {name}: {reason}"));
+            Kept::Refused(reason)
+        }
+        None => Kept::Held,
+    })
 }
 
 /// The call an envelope carries, when it carries one whole.

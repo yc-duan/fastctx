@@ -55,12 +55,17 @@ impl Outbox {
     /// needed.
     pub fn held_between(&self, from: u64, through: u64) -> io::Result<()> {
         for number in from.saturating_add(1)..=through {
-            match std::fs::remove_file(self.dir.join(format!("{number:020}"))) {
-                Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-                _ => {}
-            }
+            self.remove(number)?;
         }
         Ok(())
+    }
+
+    /// Forgets the letter `seq`, which the hub holds.
+    pub fn remove(&self, seq: u64) -> io::Result<()> {
+        match std::fs::remove_file(self.dir.join(format!("{seq:020}"))) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        }
     }
 
     /// The numbers of the letters waiting, in order.

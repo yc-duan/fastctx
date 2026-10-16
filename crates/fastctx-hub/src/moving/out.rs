@@ -243,7 +243,7 @@ async fn copy(hub: &Arc<Hub>, record: &Outgoing, socket: &mut HubSocket) -> Resu
 
     reached(hub, &record.id, MoveStage::Switching);
     hub.log.line(format_args!("the move {}: the hub stops taking anything and hands over", record.id));
-    frames::working::<_, ToNew, _>(socket, Moving::freeze(hub)).await?;
+    frames::working::<_, ToNew, _>(socket, Moving::freeze(hub)).await??;
     let theirs = holds(socket).await?;
     let mine = listing(socket, &dir).await?;
     send_difference(socket, &dir, &mine, &theirs).await?;

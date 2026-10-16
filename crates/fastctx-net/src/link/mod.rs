@@ -270,6 +270,8 @@ pub(crate) struct Inner {
     next_id: AtomicU64,
     /// Woken when a letter is put in the outbox.
     outbox_changed: Notify,
+    /// Held while one of the hub's letters is taken (`session::take_letters`).
+    taking: Arc<tokio::sync::Mutex<()>>,
     /// An application knows when its network changed or it returned to the foreground.
     reconnect: Notify,
     /// The session on now is to be asked at once whether the hub still
@@ -366,7 +368,14 @@ impl Link {
             }
             Err(error) => return Err(error),
         };
-        let highest = letters::Outbox::new(&dir).numbers()?.last().copied().unwrap_or(0);
+        let outbox = letters::Outbox::new(&dir);
+        let numbers = outbox.numbers()?;
+        // What the hub held when a stop came between keeping that and
+        // deleting the letters is deleted now.
+        for seq in numbers.iter().filter(|seq| **seq <= letters_file.held) {
+            outbox.remove(*seq)?;
+        }
+        let highest = numbers.last().copied().unwrap_or(0);
         let next = letters_file.held.max(highest) + 1;
         let view = match state::read::<View>(&dir.view()) {
             Ok(view) if view.hub == membership.id && view.me == membership.name => view,
@@ -407,6 +416,7 @@ impl Link {
             dissolved: std::sync::atomic::AtomicBool::new(false),
             then: Mutex::new(None),
             outbox_changed: Notify::new(),
+            taking: Arc::default(),
             reconnect: Notify::new(),
             check: Notify::new(),
             checks: watch::channel(0).0,

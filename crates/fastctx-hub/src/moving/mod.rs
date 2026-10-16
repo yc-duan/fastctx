@@ -371,9 +371,11 @@ impl Moving {
     }
 
     /// Stops taking anything, ends every member's session and the
-    /// connections of old places of earlier moves, and waits until no
-    /// connection that may change the records is left.
-    pub async fn freeze(hub: &crate::Hub) {
+    /// connections of old places of earlier moves, waits until no
+    /// connection that may change the records is left, and keeps the
+    /// records of where the letters stand as they are then: their writer
+    /// may not have caught up with the last changes.
+    pub async fn freeze(hub: &crate::Hub) -> Result<(), String> {
         hub.moving.frozen.store(true, Ordering::SeqCst);
         let sessions: Vec<_> = hub.sessions().values().map(|session| session.out.clone()).collect();
         for out in sessions {
@@ -383,10 +385,11 @@ impl Moving {
         loop {
             let idle = hub.moving.idle.notified();
             if hub.moving.active.load(Ordering::SeqCst) == 0 {
-                return;
+                break;
             }
             idle.await;
         }
+        hub.store().save_letters_now().map_err(|error| format!("recording where the letters stand: {error}"))
     }
 
     pub fn thaw(&self) {
