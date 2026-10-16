@@ -14,9 +14,12 @@
 //! waits behind all of it.
 //!
 //! Each lane is bounded where things are queued. The first by count and
-//! bytes, and notices by count: a member that leaves more than that
-//! untaken does not read what it is sent, and is let go; it comes back and
-//! reads on from where it was. Letters are bounded by the mailbox's window.
+//! bytes, notices by count, and their afoot changes by a shared byte budget
+//! that also covers a notice being drained. A member that leaves more than
+//! that untaken is let go; it comes back and reads on from where it was,
+//! with a fresh afoot snapshot. Letters are bounded by the mailbox's window.
+
+mod afoot;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -85,9 +88,10 @@ struct State {
     urgent: VecDeque<(Out, usize)>,
     urgent_bytes: usize,
     letters: VecDeque<Down>,
-    notices: VecDeque<(Notice, Down)>,
-    /// The frames of the notice taken last that are still to go.
-    spilled: VecDeque<Down>,
+    notices: VecDeque<(Notice, Pending)>,
+    /// The afoot notice taken last, drained a frame at a time before the next.
+    spilled: Option<afoot::Pending>,
+    afoot_bytes: usize,
     overflowed: Option<String>,
     /// How many frames of the first lane went in a row.
     in_a_row: usize,
@@ -106,6 +110,11 @@ enum Notice {
     Presence(MachineName),
     Forget(u64),
     Fetch(u64),
+}
+
+enum Pending {
+    Frame(Down),
+    Afoot(afoot::Pending),
 }
 
 impl Outq {
@@ -192,7 +201,7 @@ impl Outq {
             urgent: state.urgent.len(),
             urgent_bytes: state.urgent_bytes,
             letters: state.letters.len(),
-            notices: state.notices.len() + state.spilled.len(),
+            notices: state.notices.len() + usize::from(state.spilled.is_some()),
         }
     }
 
@@ -241,23 +250,37 @@ impl State {
     }
 
     fn notify(&mut self, notice: Notice, frame: Down) -> Result<(), ()> {
-        let Some(at) = self.notices.iter().position(|(kept, _)| *kept == notice) else {
-            if self.notices.len() >= NOTICES {
-                return self.overflow(format!("{NOTICES} notices wait for it untaken; letting it go"));
+        let at = self.notices.iter().position(|(kept, _)| *kept == notice);
+        if at.is_none() && self.notices.len() >= NOTICES {
+            return self.overflow(format!("{NOTICES} notices wait for it untaken; letting it go"));
+        }
+        let Down::Afoot { machine, busy, change } = frame else {
+            match at {
+                Some(at) => self.notices[at].1 = Pending::Frame(frame),
+                None => self.notices.push_back((notice, Pending::Frame(frame))),
             }
-            self.notices.push_back((notice, frame));
             return Ok(());
         };
-        let kept = &mut self.notices[at].1;
-        match (kept, frame) {
-            (Down::Afoot { change: kept_change, busy: kept_busy, .. }, Down::Afoot { change, busy, .. }) => {
-                let earlier = std::mem::take(&mut **kept_change);
-                **kept_change = earlier.then(*change);
-                *kept_busy = busy;
-            }
-            (kept, frame) => *kept = frame,
+        let at = match at {
+            Some(at) => at,
+            None => match afoot::Pending::new(machine, &mut self.afoot_bytes) {
+                Ok(pending) => {
+                    let at = self.notices.len();
+                    self.notices.push_back((notice, Pending::Afoot(pending)));
+                    at
+                }
+                Err(why) => return self.afoot_overflow(why),
+            },
+        };
+        let Pending::Afoot(pending) = &mut self.notices[at].1 else { unreachable!("afoot notice has afoot changes") };
+        if let Err(why) = pending.merge(*change, busy, &mut self.afoot_bytes) {
+            return self.afoot_overflow(why);
         }
         Ok(())
+    }
+
+    fn afoot_overflow(&mut self, why: &str) -> Result<(), ()> {
+        self.overflow(format!("{why}: {} bytes charged, limit {}; letting it go", self.afoot_bytes, afoot::LIMIT))
     }
 
     fn take(&mut self) -> Option<Next> {
@@ -267,7 +290,7 @@ impl State {
         if let Some(why) = &self.overflowed {
             return Some(Next::Overflowed(why.clone()));
         }
-        let others = !self.letters.is_empty() || !self.notices.is_empty() || !self.spilled.is_empty();
+        let others = !self.letters.is_empty() || !self.notices.is_empty() || self.spilled.is_some();
         if (self.in_a_row < BURST || !others)
             && let Some((out, bytes)) = self.urgent.pop_front()
         {
@@ -281,11 +304,18 @@ impl State {
         self.in_a_row = 0;
         let letter = |state: &mut Self| state.letters.pop_front();
         let notice = |state: &mut Self| {
-            if state.spilled.is_empty() {
-                let (_, frame) = state.notices.pop_front()?;
-                state.spilled.extend(split(frame));
+            if state.spilled.is_none() {
+                match state.notices.pop_front()?.1 {
+                    Pending::Frame(frame) => return Some(frame),
+                    Pending::Afoot(pending) => state.spilled = Some(pending),
+                }
             }
-            state.spilled.pop_front()
+            let pending = state.spilled.as_mut().expect("taken above");
+            let (frame, done) = pending.take(&mut state.afoot_bytes);
+            if done {
+                state.spilled = None;
+            }
+            Some(frame)
         };
         self.letters_next = !self.letters_next;
         let frame = if self.letters_next {
@@ -309,13 +339,4 @@ fn notice(frame: &Down) -> Option<Notice> {
         Down::Fetch { fetch } => Notice::Fetch(fetch.id),
         _ => return None,
     })
-}
-
-/// A notice as the frames it goes in: what is afoot on a machine, merged
-/// from several, may need more than one.
-fn split(frame: Down) -> Vec<Down> {
-    let Down::Afoot { machine, busy, change } = frame else { return vec![frame] };
-    let (changes, _) = fastctx_net::afoot::frames(*change, fastctx_net::afoot::FRAME_ROOM);
-    let changes = if changes.is_empty() { vec![Default::default()] } else { changes };
-    changes.into_iter().map(|change| Down::Afoot { machine: machine.clone(), busy, change: Box::new(change) }).collect()
 }
