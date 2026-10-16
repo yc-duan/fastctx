@@ -941,10 +941,8 @@ impl Inner {
         {
             return found.clone();
         }
-        let found = self.refresh_now().await;
-        // Count completed refreshes: arrivals during this I/O still observe
-        // the preceding count and share this result when the gate opens.
         let began = self.refreshes.fetch_add(1, Ordering::SeqCst) + 1;
+        let found = self.refresh_now().await;
         one.last = Some((began, found.clone()));
         found
     }
