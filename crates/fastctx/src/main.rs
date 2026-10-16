@@ -639,13 +639,22 @@ fn node(
         }
         None => None,
     };
-    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_node::run_prepared(
+    let ran = tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_node::run_prepared(
         &root,
         supervision,
         successor.as_deref(),
         coordinator.as_ref(),
         startup_gate,
-    ))
+    ));
+    // A service manager starts the node again at once, and the World may be
+    // held a while yet, by a renewal's bridge among others: a moment's pause,
+    // once every lock is let go, keeps that from spinning.
+    if let Err(error) = &ran
+        && error.downcast_ref::<fastctx_node::AlreadyServed>().is_some()
+    {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    ran
 }
 
 fn ui() -> anyhow::Result<()> {

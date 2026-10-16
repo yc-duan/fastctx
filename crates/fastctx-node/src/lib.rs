@@ -379,6 +379,19 @@ pub async fn run_replacing(
     run_prepared(fastctx_root, supervision, successor, None, None).await
 }
 
+/// Another node serves the World already: this one ends, having taken
+/// nothing of it.
+#[derive(Debug)]
+pub struct AlreadyServed(pub PathBuf);
+
+impl std::fmt::Display for AlreadyServed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "a node is already running for the World in {}", self.0.display())
+    }
+}
+
+impl std::error::Error for AlreadyServed {}
+
 pub async fn run_prepared(
     fastctx_root: &Path,
     supervision: Option<handoff::Supervision>,
@@ -423,17 +436,7 @@ pub async fn run_prepared(
             let lock = world.node_lock();
             tokio::task::spawn_blocking(move || FileLock::acquire(&lock)).await??
         }
-        false => match FileLock::try_acquire(&world.node_lock())? {
-            Some(lock) => lock,
-            None => {
-                // A service manager starts the node again at once, and the
-                // World may be held a while yet, by a renewal's bridge among
-                // others: a moment's pause, holding nothing, keeps that from
-                // spinning.
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                return Err(anyhow!("a node is already running for the World in {}", world.path().display()));
-            }
-        },
+        false => FileLock::try_acquire(&world.node_lock())?.ok_or_else(|| AlreadyServed(world.path().to_path_buf()))?,
     };
     if renewal.successor
         && fastctx_install::renewal::read(fastctx_root)?.is_some_and(|plan| plan.candidate.build != renewal.build)
