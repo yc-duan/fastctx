@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use fastctx_types::access::Purpose;
 use fastctx_types::{AccountName, MachineName};
 use futures_util::{SinkExt as _, StreamExt as _};
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
@@ -28,6 +28,12 @@ use crate::wire::{CallStatus, HEARTBEAT, SILENCE};
 const QUEUED: usize = 8192;
 const QUEUED_BYTES: usize = 64 * 1024 * 1024;
 
+/// A frame for the writer, as it is written; and whom to tell once it is.
+pub(crate) struct Queued {
+    bytes: Vec<u8>,
+    written: Option<oneshot::Sender<()>>,
+}
+
 /// One live direct link.
 pub(crate) struct PeerConn {
     pub name: MachineName,
@@ -44,7 +50,7 @@ pub(crate) struct PeerConn {
     /// Whether the other machine reads `Frame::Cancel`.
     pub cancels: bool,
     /// Frames for the writer, as they are written.
-    out: crate::queue::Sender<Vec<u8>>,
+    out: crate::queue::Sender<Queued>,
     ms: Mutex<Option<u32>>,
     closed: watch::Sender<Option<String>>,
 }
@@ -56,7 +62,7 @@ impl PeerConn {
         dialed: bool,
         at: Vec<SocketAddr>,
         cancels: bool,
-    ) -> (Arc<Self>, crate::queue::Receiver<Vec<u8>>) {
+    ) -> (Arc<Self>, crate::queue::Receiver<Queued>) {
         let (out, frames) = crate::queue::bounded(QUEUED, QUEUED_BYTES);
         let (closed, _) = watch::channel(None);
         let conn = Self {
@@ -74,9 +80,22 @@ impl PeerConn {
     }
 
     pub fn send(&self, frame: Frame) -> Result<(), ()> {
-        let bytes = peer::encode(&frame);
+        self.queue(&frame, None)
+    }
+
+    /// Sends `frame` and waits until it is written: an answer holds what it
+    /// holds here until it has gone, not only until it is queued.
+    pub async fn write(&self, frame: Frame) -> Result<(), String> {
+        let (written, received) = oneshot::channel();
+        self.queue(&frame, Some(written))
+            .map_err(|()| "the direct link ended before the frame was queued".to_string())?;
+        received.await.map_err(|_| "the direct link ended before the frame was written".to_string())
+    }
+
+    fn queue(&self, frame: &Frame, written: Option<oneshot::Sender<()>>) -> Result<(), ()> {
+        let bytes = peer::encode(frame);
         let size = bytes.len();
-        self.out.send(bytes, size).map_err(|_| ())
+        self.out.send(Queued { bytes, written }, size).map_err(|_| ())
     }
 
     /// The round trip as last measured.
@@ -235,7 +254,7 @@ pub(super) async fn keep(inner: Arc<Inner>, peer: MachineName, at: Vec<SocketAdd
     }
 }
 
-type Linked = (Arc<PeerConn>, Socket, crate::queue::Receiver<Vec<u8>>, SocketAddr, fastctx_types::world::Route);
+type Linked = (Arc<PeerConn>, Socket, crate::queue::Receiver<Queued>, SocketAddr, fastctx_types::world::Route);
 
 /// Dials `peer` at `at` and has it prove who it is.
 async fn dial(inner: &Inner, peer: &MachineName, at: &[SocketAddr]) -> Result<Linked, String> {
@@ -363,7 +382,7 @@ async fn serve(
     inner: Arc<Inner>,
     conn: Arc<PeerConn>,
     socket: Socket,
-    mut frames: crate::queue::Receiver<Vec<u8>>,
+    mut frames: crate::queue::Receiver<Queued>,
     mut network: Option<&mut watch::Receiver<u64>>,
 ) -> (String, bool) {
     let pulse = crate::transport::pulse_of(&socket);
@@ -381,12 +400,15 @@ async fn serve(
         loop {
             tokio::select! {
                 frame = frames.recv() => match frame {
-                    Some(frame) => {
-                        let message = WsMessage::Binary(frame.into());
+                    Some(Queued { bytes, written }) => {
+                        let message = WsMessage::Binary(bytes.into());
                         tokio::select! {
-                            written = writing.writing(sink.send(message)) => {
-                                if !written.is_ok_and(|written| written.is_ok()) {
+                            sent = writing.writing(sink.send(message)) => {
+                                if !sent.is_ok_and(|sent| sent.is_ok()) {
                                     return;
+                                }
+                                if let Some(written) = written {
+                                    let _ = written.send(());
                                 }
                             }
                             _ = &mut finishing => return,
@@ -407,14 +429,14 @@ async fn serve(
     });
     let pinged: Arc<Mutex<HashMap<u64, Instant>>> = Arc::default();
     let heartbeat = {
-        let (conn, pinged) = (conn.clone(), pinged.clone());
+        let (conn, pinged, pulse) = (conn.clone(), pinged.clone(), pulse.clone());
         tokio::spawn(async move {
             let mut n = 0;
             loop {
                 tokio::time::sleep(HEARTBEAT).await;
                 n += 1;
                 pinged.lock().expect("never poisoned").insert(n, Instant::now());
-                if conn.send(Frame::Ping { n }).is_err() {
+                if conn.send(Frame::Ping { n, took: Some(pulse.taken()) }).is_err() {
                     return;
                 }
             }
@@ -481,10 +503,18 @@ async fn serve(
         };
         heard = Instant::now();
         match frame {
-            Frame::Ping { n } => {
-                let _ = conn.send(Frame::Pong { n });
+            // What the other machine says it took keeps this one's writes
+            // to it going (`crate::pulse`).
+            Frame::Ping { n, took } => {
+                if let Some(took) = took {
+                    pulse.told(took);
+                }
+                let _ = conn.send(Frame::Pong { n, took: Some(pulse.taken()) });
             }
-            Frame::Pong { n } => {
+            Frame::Pong { n, took } => {
+                if let Some(took) = took {
+                    pulse.told(took);
+                }
                 if n > last_ping {
                     last_ping = n;
                     if let Some(sent) = pinged.lock().expect("never poisoned").remove(&n) {

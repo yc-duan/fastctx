@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use fastctx_net::envelope::{Envelope, Kind};
 use fastctx_net::sign::{PublicKey, Signature};
-use fastctx_net::wire::{self, CallStatus, Change, Down, Letters, Question, Refusal, SILENCE, Told, Up};
+use fastctx_net::wire::{self, CallStatus, Change, Down, HEARTBEAT, Letters, Question, Refusal, SILENCE, Told, Up};
 use fastctx_types::access::Purpose;
 use fastctx_types::remote::RemoteCall;
 use fastctx_types::{AccountName, AgentName, MachineName};
@@ -150,7 +150,21 @@ pub(crate) async fn session(
     let writer = tokio::spawn(async move {
         // Dropped when the writer returns, which the reader notices.
         let _stopped = stopped;
-        while let Some(next) = queue.next().await {
+        loop {
+            // Something goes at least every heartbeat, saying how much the
+            // hub took of what the member sent: a member sending a long frame
+            // on a slow line has its own heartbeats wait behind that frame,
+            // and hears the hub only by what the hub sends of itself.
+            let next = tokio::select! {
+                next = queue.next() => next,
+                () = tokio::time::sleep(HEARTBEAT) => {
+                    if !matches!(writing.writing(sink.send(fastctx_net::pulse::ping(&writing))).await, Ok(Ok(()))) {
+                        return;
+                    }
+                    continue;
+                }
+            };
+            let Some(next) = next else { break };
             let (frames, last) = match next {
                 Next::Frames(frames) => (frames, false),
                 Next::End(reason) => (vec![Down::Refused { reason }], true),
@@ -163,8 +177,17 @@ pub(crate) async fn session(
                 }
             };
             for frame in frames {
-                // Written for as long as its bytes keep going out.
-                match writing.writing(sink.send(WsMessage::Binary(wire::encode(&frame).into()))).await {
+                // Written for as long as it moves (`fastctx_net::pulse`); given
+                // up at once when so much waits for the member untaken that it
+                // is let go, however long this write would still take.
+                let written = tokio::select! {
+                    written = writing.writing(sink.send(WsMessage::Binary(wire::encode(&frame).into()))) => written,
+                    why = queue.overflowed() => {
+                        telling.log.line(format_args!("{member_name}: {why}"));
+                        return;
+                    }
+                };
+                match written {
                     Ok(Ok(())) => {}
                     Ok(Err(_)) => return,
                     Err(_) => {
@@ -242,7 +265,12 @@ pub(crate) async fn session(
             }
             continue;
         }
-        if let Err(reason) = handle(&hub, &name, generation, &out, frame) {
+        // What it says it took of what the hub sent keeps the hub's writes
+        // to it going.
+        if let Up::Ping { took: Some(took), .. } = &frame {
+            pulse.told(*took);
+        }
+        if let Err(reason) = handle(&hub, &name, generation, &out, pulse.taken(), frame) {
             let _ = out.send(Out::End(reason.clone()));
             break (Some(reason.to_string()), true);
         }
@@ -565,14 +593,23 @@ pub(crate) fn cut_calls(hub: &Hub) {
     }
 }
 
-fn handle(hub: &Arc<Hub>, name: &MachineName, generation: u64, out: &Outq, frame: Up) -> Result<(), Refusal> {
+/// Does what the member's frame asks; `took`, how many bytes of this
+/// connection the hub took from it, goes back with its heartbeat.
+fn handle(
+    hub: &Arc<Hub>,
+    name: &MachineName,
+    generation: u64,
+    out: &Outq,
+    took: u64,
+    frame: Up,
+) -> Result<(), Refusal> {
     let reply = |frame: Down| {
         let _ = out.send(Out::Frame(frame));
     };
     match frame {
-        Up::Ping { n, paths } => {
+        Up::Ping { n, paths, .. } => {
             crate::assists::heard(hub);
-            reply(Down::Pong { n, at: Some(Timestamp::now()) });
+            reply(Down::Pong { n, at: Some(Timestamp::now()), took: Some(took) });
             if let Some(paths) = paths {
                 lines(hub, name, generation, paths);
             }

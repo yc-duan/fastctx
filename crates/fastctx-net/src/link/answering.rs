@@ -16,6 +16,11 @@
 //! connection it came on ending. Once taken on, a call that only reads stops
 //! too, and also on its own a little past the time its caller waits; a
 //! change is done whole, whoever is left to hear of it.
+//!
+//! A call holds its place here, and what keeps its node from handing over
+//! (`Node::answering`), until its answer is written, a large answer's bytes
+//! all sent, or the answer given up: a node handing over waits for answers
+//! to go, not only for the work behind them.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -77,7 +82,9 @@ pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelop
             registered.as_ref().map(|registered| registered.cut.clone()),
         )),
     };
-    let Some(result) = work(&inner, &caller, &message, &endpoint, &mut stop).await else {
+    // Kept until the answer has gone, or is given up.
+    let mut held: Vec<Box<dyn Send>> = Vec::new();
+    let Some(result) = work(&inner, &caller, &message, &endpoint, &mut stop, &mut held).await else {
         // Nobody is left to hear the answer.
         return;
     };
@@ -124,19 +131,26 @@ pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelop
         inner.node.log(format!("announcing a large answer to {}: {error}", caller.machine));
         return;
     }
-    if let Err(error) = crate::data::source(&endpoint, &inner.key, stream, &bytes).await {
+    let sent = tokio::select! {
+        sent = crate::data::source(&endpoint, &inner.key, stream, &bytes) => sent,
+        _ = stop.stopping() => Err("its caller gave it up".to_string()),
+    };
+    if let Err(error) = sent {
         inner.node.log(format!("sending a large answer to {}: {error}", caller.machine));
     }
+    drop(held);
 }
 
-/// Takes the call `message` holds on and does it, holding its place here
-/// all the while; none when it was stopped first.
+/// Takes the call `message` holds on and does it; none when it was stopped
+/// first. Its place here and what keeps its node from handing over go into
+/// `held`, for its caller to keep until the answer has gone.
 async fn work(
     inner: &Arc<Inner>,
     caller: &Caller,
     message: &Envelope,
     endpoint: &Endpoint,
     stop: &mut Answer,
+    held: &mut Vec<Box<dyn Send>>,
 ) -> Option<RemoteResult> {
     let refused = |reason: String| {
         inner.node.log(format!("refused a call from {}: {reason}", caller.machine));
@@ -173,9 +187,10 @@ async fn work(
             Err(failure) => return Some(Err(failure)),
         };
     }
-    let _place = place;
-    let _answering = match inner.node.answering(&remote) {
-        Ok(guard) => guard,
+    held.push(place);
+    match inner.node.answering(&remote) {
+        Ok(Some(guard)) => held.push(guard),
+        Ok(None) => {}
         Err(failure) => {
             // Its data connection is closed, not dropped: the other end
             // then waits for this answer, which says why.
@@ -184,7 +199,7 @@ async fn work(
             }
             return Some(Err(failure));
         }
-    };
+    }
     let kind = remote.kind();
     let doing = inner.node.call(caller.clone(), remote, stream);
     if !contract.cancellable {
@@ -212,9 +227,7 @@ async fn work(
 async fn send(replier: &Replier, message: Envelope) -> Result<(), String> {
     match replier {
         Replier::Hub(up, call) => up.write(Up::Answer { call: *call, message }).await,
-        Replier::Peer(conn, id) => conn
-            .send(crate::peer::Frame::Answer { id: *id, message })
-            .map_err(|()| "the direct link ended before the answer was queued".to_string()),
+        Replier::Peer(conn, id) => conn.write(crate::peer::Frame::Answer { id: *id, message }).await,
     }
 }
 

@@ -71,6 +71,10 @@ pub enum Up {
         /// said; older hubs ignore it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         paths: Option<Paths>,
+        /// How many bytes of this connection this machine took from the hub
+        /// (`crate::pulse`); an earlier release says none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        took: Option<u64>,
     },
     /// The second half of a password login (`Intent::Login`): the last
     /// OPAQUE message, and the computer or phone that logs in.
@@ -342,6 +346,10 @@ pub enum Down {
         /// clock); an older hub says none.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         at: Option<jiff::Timestamp>,
+        /// How many bytes of this connection the hub took from the machine
+        /// (`crate::pulse`); an older hub says none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        took: Option<u64>,
     },
     /// The hub holds this machine's letter `seq` and all before it; when
     /// the hub cannot deliver it, `refused` says why and the letter is gone.

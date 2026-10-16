@@ -111,7 +111,7 @@ pub(crate) async fn serve(
         let _place = loop {
             tokio::select! {
                 place = &mut place => break place.map_err(|error| error.to_string())?,
-                () = tokio::time::sleep(HEARTBEAT) => put(&mut sink, &pulse, WsMessage::Ping(Vec::new().into())).await?,
+                () = tokio::time::sleep(HEARTBEAT) => put(&mut sink, &pulse, fastctx_net::pulse::ping(&pulse)).await?,
             }
         };
         let said = serde_json::to_string(&Sized { size }).expect("a size serializes");
@@ -130,7 +130,7 @@ pub(crate) async fn serve(
         }
         loop {
             tokio::time::sleep(HEARTBEAT).await;
-            put(&mut sink, &pulse, WsMessage::Ping(Vec::new().into())).await?;
+            put(&mut sink, &pulse, fastctx_net::pulse::ping(&pulse)).await?;
         }
     };
     let reader = async {
@@ -138,6 +138,13 @@ pub(crate) async fn serve(
             match heard(&mut stream, &pulse).await? {
                 Some(WsMessage::Text(text)) if text.as_str() == DONE => return Ok(()),
                 Some(WsMessage::Close(_)) | None => return Err("the member left".to_string()),
+                // What the member says it took keeps the package going to it;
+                // one that is there and takes nothing has its place let go.
+                Some(WsMessage::Ping(said)) => {
+                    if let Some(took) = fastctx_net::pulse::said(&said) {
+                        pulse.told(took);
+                    }
+                }
                 Some(_) => {}
             }
         }

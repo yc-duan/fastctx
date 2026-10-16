@@ -358,9 +358,12 @@ async fn relay(mut first: Socket, mut second: Socket, cutting: oneshot::Receiver
     let (first_pulse, second_pulse) = (crate::pulse_of(&first), crate::pulse_of(&second));
     let (mut first_sink, mut first_stream) = first.split();
     let (mut second_sink, mut second_stream) = second.split();
-    // Each message is passed on for as long as its bytes keep going out.
+    // Each message is passed on for as long as it moves: an end's pings say
+    // how much it took of what the hub sent it (`fastctx_net::pulse`), and
+    // go on to the other end, which counts them as the far end's own.
     let forward = async {
         while let Some(Ok(message)) = first_stream.next().await {
+            told(&first_pulse, &message);
             carried += message.len() as u64;
             if message.is_close()
                 || !second_pulse.writing(second_sink.send(message)).await.is_ok_and(|sent| sent.is_ok())
@@ -371,6 +374,7 @@ async fn relay(mut first: Socket, mut second: Socket, cutting: oneshot::Receiver
     };
     let backward = async {
         while let Some(Ok(message)) = second_stream.next().await {
+            told(&second_pulse, &message);
             if message.is_close() || !first_pulse.writing(first_sink.send(message)).await.is_ok_and(|sent| sent.is_ok())
             {
                 break;
@@ -393,6 +397,15 @@ async fn relay(mut first: Socket, mut second: Socket, cutting: oneshot::Receiver
     let _ = tokio::time::timeout(SILENCE, first_sink.close()).await;
     let _ = tokio::time::timeout(SILENCE, second_sink.close()).await;
     carried
+}
+
+/// Notes what an end's ping says it took of what the hub sent it.
+fn told(pulse: &fastctx_net::pulse::Pulse, message: &crate::WsMessage) {
+    if let crate::WsMessage::Ping(said) = message
+        && let Some(took) = fastctx_net::pulse::said(said)
+    {
+        pulse.told(took);
+    }
 }
 
 /// Tells an end it is paired; whether it took that within the silence.

@@ -73,11 +73,18 @@ pub enum Frame {
     Refused {
         reason: String,
     },
+    /// A heartbeat; `took`, how many bytes of this connection the sender
+    /// took from the receiver (`crate::pulse`), which an earlier release
+    /// does not say.
     Ping {
         n: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        took: Option<u64>,
     },
     Pong {
         n: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        took: Option<u64>,
     },
     /// A call for the machine on the other end, numbered `id` by its caller.
     Call {

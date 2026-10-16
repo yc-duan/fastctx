@@ -310,8 +310,9 @@ async fn connected(
     let pulse = crate::transport::pulse_of(&socket);
     let (mut sink, mut stream) = socket.split();
     let (writer_done, mut writer_stopped) = oneshot::channel::<()>();
-    // No frame goes on being written once nothing of it went for the
-    // silence: a hub that takes nothing is as gone as one that says nothing.
+    // No frame goes on being written once nothing of it went, and the hub
+    // said it took nothing more, for the silence: a hub that takes nothing
+    // is as gone as one that says nothing (`crate::pulse`).
     let writing = pulse.clone();
     let writer = tokio::spawn(async move {
         let _done = writer_done;
@@ -332,7 +333,7 @@ async fn connected(
     let pinged: Arc<std::sync::Mutex<std::collections::HashMap<u64, Instant>>> = Arc::default();
     let mut tasks = Tasks(vec![
         writer,
-        tokio::spawn(heartbeat(inner.clone(), up.clone(), pinged.clone())),
+        tokio::spawn(heartbeat(inner.clone(), up.clone(), pinged.clone(), pulse.clone())),
         tokio::spawn(flush(inner.clone(), up.clone(), taken, outbox_failed)),
         tokio::spawn(take_letters(inner.clone(), up.clone(), hub_letters, delivered, letter_failed)),
     ]);
@@ -409,7 +410,7 @@ async fn connected(
                     // Numbered apart from the heartbeats, so its pong measures
                     // nothing.
                     let paths = inner.view().direct_links.then(|| inner.paths());
-                    let _ = up.send(Up::Ping { n: 0, paths });
+                    let _ = up.send(Up::Ping { n: 0, paths, took: Some(pulse.taken()) });
                 }
                 continue;
             },
@@ -442,7 +443,14 @@ async fn connected(
                     continue;
                 }
             },
-            Some(Ok(_)) => {
+            Some(Ok(message)) => {
+                // The hub's own ping, sent when it had nothing else to say,
+                // says how much it took of what this machine sent.
+                if let WsMessage::Ping(said) = &message
+                    && let Some(took) = crate::pulse::said(said)
+                {
+                    pulse.told(took);
+                }
                 heard = Instant::now();
                 answered(inner, &mut checking);
                 continue;
@@ -451,7 +459,10 @@ async fn connected(
         heard = Instant::now();
         answered(inner, &mut checking);
         match frame {
-            Down::Pong { n, at } => {
+            Down::Pong { n, at, took } => {
+                if let Some(took) = took {
+                    pulse.told(took);
+                }
                 if n > last_ping {
                     last_ping = n;
                     let mut pinged = pinged.lock().expect("never poisoned");
@@ -630,11 +641,13 @@ async fn ask_preferred(
 }
 
 /// Sends a heartbeat every `HEARTBEAT`, noting when, and with it how this
-/// machine's lines go, to a hub that keeps that.
+/// machine's lines go, to a hub that keeps that, and how much this machine
+/// took of what the hub sent (`crate::pulse`).
 async fn heartbeat(
     inner: Arc<Inner>,
     up: Outgoing,
     pinged: Arc<std::sync::Mutex<std::collections::HashMap<u64, Instant>>>,
+    pulse: Arc<crate::pulse::Pulse>,
 ) {
     let mut n = 0;
     loop {
@@ -642,7 +655,7 @@ async fn heartbeat(
         n += 1;
         let paths = inner.view().direct_links.then(|| inner.paths());
         pinged.lock().expect("never poisoned").insert(n, Instant::now());
-        if up.send(Up::Ping { n, paths }).is_err() {
+        if up.send(Up::Ping { n, paths, took: Some(pulse.taken()) }).is_err() {
             return;
         }
     }

@@ -390,6 +390,61 @@ pub async fn answers(world: &World, report: &mut Report) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A stream open between two machines and quiet both ways, its far end's
+/// line gone dead without closing: the near end takes the stream for gone
+/// within a silence, though the hub still answers its pings.
+pub async fn quiet_stream(world: &World, report: &mut Report) -> anyhow::Result<()> {
+    let (alpha, beta) = (world.machine("alpha"), world.machine("beta"));
+    let link = alpha.link();
+    let read = lab::read_of(lab::QUIET);
+    let (to, account, purpose) = (beta.name.clone(), world.account.clone(), read.purpose());
+    let call = tokio::spawn(async move {
+        let taken = Arc::new(AtomicUsize::new(0));
+        timed(link.call_with_stream(&to, &account, purpose, read, taking(1, taken))).await
+    });
+    let open = until(Duration::from_secs(15), || beta.lab.answering() == 1).await;
+    report.check(open.is_some(), "a quiet stream from beta to alpha was open", "");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let froze = Instant::now();
+    beta.line.freeze(true);
+    let ended = tokio::time::timeout(SILENCE + NOTICED, call).await;
+    let took = froze.elapsed();
+    beta.line.freeze(false);
+    report.check(
+        ended.is_ok(),
+        "alpha took the quiet stream for gone within a silence once beta's line went dead, though the hub still answered its pings",
+        seconds(took),
+    );
+    let stopped = until(Duration::from_secs(90), || beta.lab.answering() == 0).await;
+    report.check(stopped.is_some(), "and beta let its end go once it came back", "");
+    Ok(())
+}
+
+/// A stream whose receiving end takes nothing while it keeps saying it is
+/// there: the end sending into it gives the write up within a silence or
+/// so, and does not wait for ever.
+pub async fn unread_stream(world: &World, report: &mut Report) -> anyhow::Result<()> {
+    const SENT: u64 = 64 * 1024 * 1024;
+    let (alpha, beta) = (world.machine("alpha"), world.machine("beta"));
+    let link = alpha.link();
+    let read = lab::read_of(SENT);
+    let (to, account, purpose) = (beta.name.clone(), world.account.clone(), read.purpose());
+    let began = Instant::now();
+    let call = tokio::spawn(async move { link.call_with_stream(&to, &account, purpose, read, holding()).await });
+    let gave_up = until(SILENCE * 3, || !beta.lab.reads().is_empty()).await;
+    let reads = beta.lab.reads();
+    report.check(
+        gave_up.is_some() && reads.first().is_some_and(|(_, outcome)| !outcome.starts_with("sent")),
+        "beta gave up sending to an end that took nothing though it kept saying it was there",
+        reads.first().map_or(format!("still sending after {}", seconds(began.elapsed())), |(took, outcome)| {
+            format!("{outcome}, after {}", seconds(*took))
+        }),
+    );
+    let answered = tokio::time::timeout(Duration::from_secs(60), call).await;
+    report.check(answered.is_ok(), "and alpha's call ended with it", "");
+    Ok(())
+}
+
 /// Asks `to` from `from` `count` questions at once, each given up after two
 /// seconds; how many were given up.
 pub async fn give_up(world: &World, from: &str, to: &str, count: usize) -> usize {
@@ -429,6 +484,18 @@ fn taking(bytes: usize, taken: Arc<AtomicUsize>) -> Feed {
                 })
                 .await?;
             stream.done().await
+        })
+    })
+}
+
+/// A caller's end of a data connection that takes nothing, holding the
+/// connection open as if it would.
+fn holding() -> Feed {
+    Box::new(move |stream| -> BoxFuture<Result<(), String>> {
+        Box::pin(async move {
+            tokio::time::sleep(Duration::from_secs(600)).await;
+            drop(stream);
+            Ok(())
         })
     })
 }

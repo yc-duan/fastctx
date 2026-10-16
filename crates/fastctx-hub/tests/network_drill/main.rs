@@ -3,12 +3,12 @@
 //! connection cut, the hub killed, a receiver away or restarting while
 //! thousands of letters come for it, a line gone dead without closing,
 //! either way or one way only, a line slower than one message crosses
-//! within a silence, questions given up or never answered, machines coming
-//! and going; and, given an earlier release's kernel,
-//! that release's hub serving this one's machines and its node on this
-//! one's hub. Each scenario checks that its trouble did happen, what must
-//! hold however it went, and, on this release's hub, that the hub was left
-//! as it was found.
+//! within a silence, a stream whose far end goes dead or takes nothing,
+//! questions given up or never answered, machines coming and going; and,
+//! given an earlier release's kernel, that release's hub serving this
+//! one's machines and its node on this one's hub. Each scenario checks that
+//! its trouble did happen, what must hold however it went, and, on this
+//! release's hub, that the hub was left as it was found.
 //!
 //!     network_drill [--root DIR] [--earlier FASTCTX] [--only NAME,...]
 //!     network_drill hub DIR      (the hub, served in a child process)
@@ -34,7 +34,7 @@ use report::Report;
 use world::{Program, World};
 
 /// Every scenario, in the order they run.
-const SCENARIOS: [&str; 12] = [
+const SCENARIOS: [&str; 14] = [
     "answers",
     "backlog",
     "cuts",
@@ -42,6 +42,8 @@ const SCENARIOS: [&str; 12] = [
     "restart",
     "freeze",
     "half-open",
+    "quiet-stream",
+    "unread-stream",
     "slow",
     "cancel",
     "presence",
@@ -181,6 +183,8 @@ async fn scenario(name: &'static str, dir: &Path, earlier: Option<&Path>) -> Rep
             "restart" => scenarios::restart(&world, &mut report).await,
             "freeze" => scenarios::freeze(&world, &mut report).await,
             "half-open" => scenarios::half_open(&world, &mut report).await,
+            "quiet-stream" => scenarios::quiet_stream(&world, &mut report).await,
+            "unread-stream" => scenarios::unread_stream(&world, &mut report).await,
             "slow" => scenarios::slow(&world, &mut report).await,
             "cancel" => scenarios::cancel(&world, &mut report).await,
             "presence" => scenarios::presence(&world, &mut report, true).await,

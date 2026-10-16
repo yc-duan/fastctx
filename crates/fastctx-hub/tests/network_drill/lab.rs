@@ -25,6 +25,9 @@ pub const IN_A_MESSAGE: usize = 80_000;
 /// Bytes of the answer to `Updates { State }`: too large for one control
 /// message, so its caller fetches it over a data connection.
 pub const OVER_DATA: usize = 300_000;
+/// The bytes of a read that sends nothing and keeps its stream open until
+/// the stream ends, as a quiet watch does.
+pub const QUIET: u64 = u64::MAX;
 
 pub struct Lab {
     /// How many times each letter was taken, by its id.
@@ -37,6 +40,9 @@ pub struct Lab {
     /// Calls being answered now, and calls stopped before they were done.
     answering: Arc<AtomicUsize>,
     stopped: Arc<AtomicUsize>,
+    /// How each read sent over a data connection ended: how long it took,
+    /// and what came of it.
+    reads: Arc<Mutex<Vec<(Duration, String)>>>,
     log: Mutex<std::fs::File>,
 }
 
@@ -48,6 +54,7 @@ impl Lab {
             stalls: AtomicBool::new(false),
             answering: Arc::default(),
             stopped: Arc::default(),
+            reads: Arc::default(),
             log: Mutex::new(std::fs::File::create(log)?),
         }))
     }
@@ -71,6 +78,11 @@ impl Lab {
 
     pub fn stopped(&self) -> usize {
         self.stopped.load(Ordering::SeqCst)
+    }
+
+    /// How the reads sent so far ended.
+    pub fn reads(&self) -> Vec<(Duration, String)> {
+        self.reads.lock().expect("never poisoned").clone()
     }
 }
 
@@ -121,14 +133,31 @@ impl Node for Lab {
                 Box::pin(async { Err(Failure::new("y".repeat(OVER_DATA))) })
             }
             RemoteCall::ReadFile { request: ReadFileRequest { range: FileRange::Range { bytes, .. }, .. }, .. } => {
+                self.answering.fetch_add(1, Ordering::SeqCst);
+                let answering =
+                    Answering { answering: self.answering.clone(), stopped: self.stopped.clone(), done: false };
+                let reads = self.reads.clone();
                 Box::pin(async move {
+                    let began = std::time::Instant::now();
                     let Some(mut stream) = stream else {
                         return Err(Failure::new("the read came without its data connection"));
                     };
-                    let sent = vec![7_u8; usize::try_from(bytes).unwrap_or(0)];
-                    stream.send(&sent).await.map_err(Failure::new)?;
-                    stream.finish().await.map_err(Failure::new)?;
-                    Err(Failure::new(format!("sent {bytes}")))
+                    let outcome = if bytes == QUIET {
+                        stream.closed().await;
+                        "the stream ended".to_string()
+                    } else {
+                        let sent = vec![7_u8; usize::try_from(bytes).unwrap_or(0)];
+                        match stream.send(&sent).await {
+                            Ok(()) => match stream.finish().await {
+                                Ok(()) => format!("sent {bytes}"),
+                                Err(error) => error,
+                            },
+                            Err(error) => error,
+                        }
+                    };
+                    reads.lock().expect("never poisoned").push((began.elapsed(), outcome.clone()));
+                    answering.answered();
+                    Err(Failure::new(outcome))
                 })
             }
             RemoteCall::Who { .. } if self.stalls.load(Ordering::SeqCst) => {

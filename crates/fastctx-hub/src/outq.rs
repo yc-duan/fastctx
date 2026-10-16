@@ -67,6 +67,8 @@ struct Shared {
     ready: Notify,
     /// Set once the session's writer is done.
     shut: watch::Sender<bool>,
+    /// Why the member is let go, once so much waits for it untaken.
+    over: watch::Sender<Option<String>>,
     /// Whether the member reads an answer too large for one frame in parts
     /// (`fastctx_net::wire::Down::Part`).
     parts: bool,
@@ -107,7 +109,13 @@ impl Outq {
     /// A queue for a member that reads an answer too large for one frame in
     /// parts, or not.
     pub(crate) fn new(parts: bool) -> Self {
-        Self(Arc::new(Shared { state: Mutex::default(), ready: Notify::new(), shut: watch::channel(false).0, parts }))
+        Self(Arc::new(Shared {
+            state: Mutex::default(),
+            ready: Notify::new(),
+            shut: watch::channel(false).0,
+            over: watch::channel(None).0,
+            parts,
+        }))
     }
 
     /// Queues the welcome, which goes before anything else.
@@ -119,27 +127,33 @@ impl Outq {
     /// Queues `out`; an error once the session's writer is done, or when
     /// the member left so much untaken that it is let go.
     pub(crate) fn send(&self, out: Out) -> Result<(), ()> {
-        {
+        let (queued, overflowed) = {
             let mut state = self.0.state.lock().expect("never poisoned");
             if state.shut || state.overflowed.is_some() {
                 return Err(());
             }
-            match out {
-                Out::Frame(Down::Deliver { seq, message }) => state.letters.push_back(Down::Deliver { seq, message }),
+            let queued = match out {
+                Out::Frame(Down::Deliver { seq, message }) => {
+                    state.letters.push_back(Down::Deliver { seq, message });
+                    Ok(())
+                }
                 Out::Frame(Down::Told { id, answer }) => {
-                    for frame in told(id, answer, self.0.parts) {
-                        state.urge(Out::Frame(frame))?;
-                    }
+                    told(id, answer, self.0.parts).into_iter().try_for_each(|frame| state.urge(Out::Frame(frame)))
                 }
                 Out::Frame(frame) => match notice(&frame) {
-                    Some(notice) => state.notify(notice, frame)?,
-                    None => state.urge(Out::Frame(frame))?,
+                    Some(notice) => state.notify(notice, frame),
+                    None => state.urge(Out::Frame(frame)),
                 },
-                end @ Out::End(_) => state.urge(end)?,
-            }
+                end @ Out::End(_) => state.urge(end),
+            };
+            (queued, state.overflowed.clone())
+        };
+        // Let go: a write under way for it stops too (`overflowed`).
+        if let Some(why) = overflowed {
+            self.0.over.send_replace(Some(why));
         }
         self.0.ready.notify_one();
-        Ok(())
+        queued
     }
 
     /// What to write next; none once the queue is shut.
@@ -176,6 +190,19 @@ impl Outq {
             urgent_bytes: state.urgent_bytes,
             letters: state.letters.len(),
             notices: state.notices.len() + state.spilled.len(),
+        }
+    }
+
+    /// Resolves, with why, once so much waits for the member untaken that it
+    /// is let go: the writer stops a write under way then, however long that
+    /// would still take.
+    pub(crate) async fn overflowed(&self) -> String {
+        let mut over = self.0.over.subscribe();
+        let why = over.wait_for(Option::is_some).await.ok().map(|why| why.clone().unwrap_or_default());
+        match why {
+            Some(why) => why,
+            // The queue outlives its writer, which is all that waits on this.
+            None => std::future::pending().await,
         }
     }
 

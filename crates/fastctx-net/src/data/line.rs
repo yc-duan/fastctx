@@ -6,14 +6,17 @@
 //! operating system to notice a peer is gone, and none goes quiet long
 //! enough for a path that drops idle connections to cut it. Pongs are not
 //! the other end's own: on a connection the hub relays, the hub answers
-//! pings itself whether the far end is there or not.
+//! pings itself whether the far end is there or not; so neither they nor
+//! the few bytes they take count, and a message on its way counts once
+//! more of it came within a silence than such answers could make.
 //!
 //! The two directions end together: once reading stops, for silence, a
 //! break or a cut, writing stops too and whatever waits to be written is
-//! told why; and nothing written goes on once none of it went for the
-//! silence, as an end that does not take what it is sent is as gone as one
-//! that says nothing. A message still coming in or going out counts as the
-//! line moving (`crate::pulse`), so a slow line is not a dead one.
+//! told why. Each ping says how much this end took of what the other sent,
+//! and nothing written goes on once neither its bytes went nor the other
+//! end said it took more for the silence (`crate::pulse`): an end that does
+//! not take what it is sent is as gone as one that says nothing, however
+//! lively its own pings, while a slow line still carrying it is not.
 //!
 //! An end of an older fastctx answers pings without sending any, so a
 //! connection to one that stays quiet past `SILENCE` ends; whoever holds
@@ -29,6 +32,11 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use crate::dial::{self, HubSocket};
 use crate::wire::{HEARTBEAT, SILENCE};
+
+/// How much of a message on its way has to come within a silence to show
+/// the other end is there: more than the hub's answers to this end's own
+/// pings, a few dozen bytes each, could make.
+const MOVING: u64 = 2048;
 
 /// What the other end sent, in the order it sent it.
 pub(super) enum Received {
@@ -143,13 +151,15 @@ async fn read(
 ) {
     let mut over = ending.subscribe();
     let mut heard = Instant::now();
+    let mut taken = pulse.taken();
     let why = loop {
         let next = tokio::select! {
             next = stream.next() => next,
             () = tokio::time::sleep_until(heard + SILENCE) => {
                 // A message still coming in shows the other end is there.
-                if let Some(at) = pulse.since(heard) {
-                    heard = at;
+                if pulse.taken() >= taken + MOVING {
+                    heard = Instant::now();
+                    taken = pulse.taken();
                     continue;
                 }
                 break Some(format!("nothing came from the other end for {} s", SILENCE.as_secs()));
@@ -163,8 +173,12 @@ async fn read(
             Some(Err(error)) => break Some(format!("receiving: {}", dial::describe(&error))),
             Some(Ok(WsMessage::Binary(bytes))) => Received::Bytes(bytes.to_vec()),
             Some(Ok(WsMessage::Text(text))) => Received::Word(text.to_string()),
-            Some(Ok(WsMessage::Ping(_))) => {
+            Some(Ok(WsMessage::Ping(said))) => {
+                if let Some(took) = crate::pulse::said(&said) {
+                    pulse.told(took);
+                }
                 heard = Instant::now();
+                taken = pulse.taken();
                 continue;
             }
             Some(Ok(WsMessage::Pong(_) | WsMessage::Frame(_))) => continue,
@@ -177,6 +191,7 @@ async fn read(
             _ = over.wait_for(|over| *over) => break None,
         }
         heard = Instant::now();
+        taken = pulse.taken();
     };
     end(&stopped, &ending, why);
 }
@@ -221,7 +236,7 @@ async fn write(
             _ = over.wait_for(|over| *over) => return,
         };
         let Some(next) = next else {
-            let beating = put(&mut sink, &pulse, WsMessage::Ping(Default::default()));
+            let beating = put(&mut sink, &pulse, crate::pulse::ping(&pulse));
             let result = tokio::select! {
                 result = beating => result,
                 _ = over.wait_for(|over| *over) => return,
