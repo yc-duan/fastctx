@@ -265,16 +265,13 @@ async fn finish_at(
     keep_answers(node, id, &about.origin, &directory, turn, turn, &finished.end, &finished.readers).await?;
     let (pay_node, pay_id, pay_directory) = (node.clone(), id.clone(), directory.clone());
     tokio::spawn(async move { pay(&pay_node, &pay_id, &pay_directory).await });
-    let requester_here = match &about.origin {
-        Origin::Colleague { asked_by, .. } => node.residents.requester_here(asked_by, &node.machine()),
-        Origin::User => true,
-    };
+
     let trouble = match (&finished.end.how, &finished.end.reason) {
         (TurnHow::Completed, _) => None,
         (how, Some(reason)) => Some(Trouble { at: finished.at, text: format!("turn {how}: {reason}") }),
         (how, None) => Some(Trouble { at: finished.at, text: format!("turn {how}") }),
     };
-    if let Err(error) = node.residents.take_owed(&node.world, id, turn, requester_here, trouble) {
+    if let Err(error) = node.residents.take_owed(&node.world, id, turn, &node.machine(), trouble) {
         node.log.line(format_args!("the end of {id}'s turn {turn} is durable, but updating now failed: {error}"));
     }
     for handover in &accepted {

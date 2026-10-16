@@ -176,6 +176,12 @@ impl WorldDir {
         self.root.join("deleted")
     }
 
+    /// Remote requesters' departure or return, one durable record each,
+    /// independent of the resident cache rebuilt at startup.
+    pub fn departed(&self) -> PathBuf {
+        self.root.join("departed")
+    }
+
     /// Conversation book directories plus the older shared queue, while an
     /// upgrade still has records whose owner cannot be recovered.
     pub fn book_directories(&self, name: &str) -> std::io::Result<Vec<PathBuf>> {

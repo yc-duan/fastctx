@@ -168,7 +168,9 @@ pub async fn ask_here(
     prompt: String,
     started: fastctx_types::collab::Started,
 ) -> Result<ResidentId, Failure> {
-    node.residents.set_departed(asker.clone(), false);
+    node.residents
+        .set_departed(&node.world, &asker, false, None)
+        .map_err(|error| Failure::not_run(format!("recording that {asker} returned: {error}")))?;
     if let Some(town) = &town {
         crate::town::project::spans_here(node, town).await?;
     }
@@ -613,7 +615,9 @@ pub fn left(node: &Arc<Node>, resident: ResidentId) {
     let node = node.clone();
     tokio::spawn(async move {
         let address = Address { machine: node.machine(), resident: resident.clone() };
-        sleep_idle(&node, &address);
+        if let Err(error) = node.residents.sleep_colleagues(&node.world, &address) {
+            node.log.line(format_args!("putting {address}'s idle colleagues to sleep: {error}"));
+        }
         let Some((about, _)) = node.residents.about(&resident) else { return };
         let acting = about.acting;
         let actions = node.world.conversation(&resident).actions();
@@ -629,23 +633,8 @@ pub fn left(node: &Arc<Node>, resident: ResidentId) {
 }
 
 /// A resident of another machine that asked for colleagues here left.
-pub fn departed(node: &Node, asker: Address) {
-    node.residents.set_departed(asker.clone(), true);
-    sleep_idle(node, &asker);
-}
-
-fn sleep_idle(node: &Node, asker: &Address) {
-    for colleague in node.residents.colleagues_of(asker) {
-        let idle = node.residents.now(&colleague).is_some_and(|now| now.activity == Activity::Idle);
-        if idle
-            && let Err(error) = node.residents.change_now(&node.world, &colleague, |now| {
-                now.activity = Activity::Asleep;
-                now.since = Timestamp::now();
-            })
-        {
-            node.log.line(format_args!("recording that {colleague} sleeps: {error}"));
-        }
-    }
+pub fn departed(node: &Node, asker: Address, letter: (&str, &str)) -> std::io::Result<()> {
+    node.residents.set_departed(&node.world, &asker, true, Some(letter))
 }
 
 /// The machines a resident asked colleagues on, from its `actions`.

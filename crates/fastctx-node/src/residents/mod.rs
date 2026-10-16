@@ -17,6 +17,7 @@
 //! is in is one record there (`town`), so changing projects moves nothing.
 
 pub(crate) mod cache;
+mod departures;
 mod records;
 mod removal;
 mod tombstones;
@@ -58,10 +59,8 @@ struct State {
     /// Codex thread id to the resident it is.
     threads: cache::Index,
     current_sessions: cache::Index,
-    /// Residents of other machines that asked for colleagues here and have
-    /// since left, as their machines wrote. They come back by asking or
-    /// speaking again.
-    departed: cache::Index,
+    /// Remote requesters' departures and returns, kept outside the cache.
+    departed: departures::Departures,
     inboxes: cache::Index,
     /// The colleagues each asker started, kept as residents are admitted:
     /// a resident's origin never changes, and finding them by walking every
@@ -228,13 +227,14 @@ impl Residents {
     /// Reads every resident this machine has a record of. A record that
     /// cannot be read is reported and left as it is.
     pub fn load(world: &WorldDir) -> io::Result<(Self, Vec<(PathBuf, io::Error)>)> {
+        let departed = departures::Departures::load(world)?;
         let root = cache::prepare(world.path())?;
         let mut problems = Vec::new();
         let mut state = State {
             live: cache::Cache::new(root.join("residents"))?,
             threads: cache::Index::new(root.join("threads"))?,
             current_sessions: cache::Index::new(root.join("current-sessions"))?,
-            departed: cache::Index::new(root.join("departed"))?,
+            departed,
             inboxes: cache::Index::new(root.join("inboxes"))?,
             colleagues: HashMap::new(),
             deleting: HashMap::new(),
@@ -285,10 +285,21 @@ impl Residents {
             }
             // Whoever sat at the desk sat there for a turn the node that
             // stopped kept; the desk is the new node's to see afresh.
-            let now = now.map(|mut now| {
+            let mut now = now;
+            if let Some(now) = &mut now {
                 now.desk = false;
-                now
-            });
+                // A departure may have been committed before the node stopped
+                // halfway through putting its idle colleagues to sleep.
+                if removed.is_none()
+                    && now.activity == Activity::Idle
+                    && let Origin::Colleague { asked_by, .. } = &about.origin
+                    && state.departed.get(asked_by)?
+                {
+                    now.activity = Activity::Asleep;
+                    now.since = Timestamp::now();
+                    records::write_now(directory, now)?;
+                }
+            }
             // Who is owed the turns the node stopped under: they are told how
             // those turns ended once the node is up (`unfinished`).
             let mut live = Live::new(about, places, now);
@@ -699,31 +710,27 @@ impl Residents {
         .collect()
     }
 
-    /// Every resident the World started whose words come from `asker`.
-    pub fn colleagues_of(&self, asker: &Address) -> Vec<ResidentId> {
-        self.lock().colleagues.get(asker).cloned().unwrap_or_default()
-    }
-
-    /// Whether the resident a colleague works for is here: one of this
-    /// machine that has not left, or one of another machine whose machine
-    /// has not written that it left.
-    pub fn requester_here(&self, asker: &Address, here_machine: &MachineName) -> bool {
+    /// Durably records a remote resident leaving or returning. Idle
+    /// colleagues sleep before a departure can be acknowledged. `letter`
+    /// names its hub and stable delivery id; an ask has no letter.
+    pub fn set_departed(
+        &self,
+        world: &WorldDir,
+        asker: &Address,
+        departed: bool,
+        letter: Option<(&str, &str)>,
+    ) -> io::Result<()> {
         let mut state = self.lock();
-        if asker.machine == *here_machine {
-            state.live.get(&asker.resident).is_some_and(here)
-        } else {
-            !state.departed.contains(asker)
+        if state.departed.set(asker, departed, letter)? {
+            state.sleep_colleagues(world, asker)?;
         }
+        Ok(())
     }
 
-    /// A resident of another machine left (`departed`) or came back.
-    pub fn set_departed(&self, asker: Address, departed: bool) {
-        let state = self.lock();
-        if departed {
-            state.departed.insert(asker, true);
-        } else {
-            state.departed.remove(&asker);
-        }
+    /// Puts only idle colleagues to sleep, under the same lock that starts
+    /// and ends their turns.
+    pub fn sleep_colleagues(&self, world: &WorldDir, asker: &Address) -> io::Result<()> {
+        self.lock().sleep_colleagues(world, asker)
     }
 
     /// Changes a resident's `now` and writes it through. One with no `now`
@@ -804,33 +811,51 @@ impl Residents {
         world: &WorldDir,
         id: &ResidentId,
         turn: &str,
-        requester_here: bool,
+        here_machine: &MachineName,
         trouble: Option<Trouble>,
     ) -> io::Result<Vec<Address>> {
+        let mut state = self.lock();
+        let Some(origin) = state.live.get(id).map(|live| live.about.origin.clone()) else {
+            return Ok(Vec::new());
+        };
+        // Presence and the turn's final activity are decided in one
+        // transaction with departures and returns.
+        let requester_here = match origin {
+            Origin::Colleague { asked_by, .. } if asked_by.machine == *here_machine => {
+                state.live.get(&asked_by.resident).is_some_and(here)
+            }
+            Origin::Colleague { asked_by, .. } => !state.departed.get(&asked_by)?,
+            Origin::User => true,
+        };
         let mut readers = Vec::new();
-        self.with_proof(world, id, |live, now| {
-            let current = now.turn.as_deref() == Some(turn)
-                || (now.turn.is_none() && now.activity == Activity::Busy && turn.is_empty());
-            readers = live.owed.remove(turn).unwrap_or_default().into_iter().collect();
-            // Words may meanwhile have started the next turn, whose state
-            // stands.
-            if current {
-                now.turn = None;
-                now.waiting_for_user = false;
-                now.waiting_since = None;
-                now.desk = false;
-                now.desk_since = None;
-                now.activity = if requester_here { Activity::Idle } else { Activity::Asleep };
-                now.since = Timestamp::now();
-            }
-            if !readers.is_empty() {
-                now.answering = readers.clone();
-            }
-            now.owed = owed(live);
-            if current {
-                now.trouble = trouble;
-            }
-        })?;
+        state.change_live(
+            world,
+            id,
+            |live, now| {
+                let current = now.turn.as_deref() == Some(turn)
+                    || (now.turn.is_none() && now.activity == Activity::Busy && turn.is_empty());
+                readers = live.owed.remove(turn).unwrap_or_default().into_iter().collect();
+                // Words may meanwhile have started the next turn, whose state
+                // stands.
+                if current {
+                    now.turn = None;
+                    now.waiting_for_user = false;
+                    now.waiting_since = None;
+                    now.desk = false;
+                    now.desk_since = None;
+                    now.activity = if requester_here { Activity::Idle } else { Activity::Asleep };
+                    now.since = Timestamp::now();
+                }
+                if !readers.is_empty() {
+                    now.answering = readers.clone();
+                }
+                now.owed = owed(live);
+                if current {
+                    now.trouble = trouble;
+                }
+            },
+            true,
+        )?;
         Ok(readers)
     }
 
@@ -854,8 +879,43 @@ impl Residents {
         change: impl FnOnce(&mut Live, &mut Now),
         proven: bool,
     ) -> io::Result<()> {
-        let mut state = self.lock();
-        let Some(live) = state.live.get_mut(id) else {
+        self.lock().change_live(world, id, change, proven)
+    }
+}
+
+impl State {
+    fn sleep_colleagues(&mut self, world: &WorldDir, asker: &Address) -> io::Result<()> {
+        let colleagues = self.colleagues.get(asker).cloned().unwrap_or_default();
+        let mut failures = Vec::new();
+        for colleague in colleagues {
+            let idle = self.live.get(&colleague).is_some_and(|live| {
+                live.removed.is_none() && live.now.as_ref().is_some_and(|now| now.activity == Activity::Idle)
+            });
+            if idle
+                && let Err(error) = self.change_live(
+                    world,
+                    &colleague,
+                    |_, now| {
+                        now.activity = Activity::Asleep;
+                        now.since = Timestamp::now();
+                    },
+                    false,
+                )
+            {
+                failures.push(format!("recording that {colleague} sleeps: {error}"));
+            }
+        }
+        if failures.is_empty() { Ok(()) } else { Err(io::Error::other(failures.join("; "))) }
+    }
+
+    fn change_live(
+        &mut self,
+        world: &WorldDir,
+        id: &ResidentId,
+        change: impl FnOnce(&mut Live, &mut Now),
+        proven: bool,
+    ) -> io::Result<()> {
+        let Some(live) = self.live.get_mut(id) else {
             return Ok(());
         };
         if live.removed.is_some() {

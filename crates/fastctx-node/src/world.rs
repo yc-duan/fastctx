@@ -1045,7 +1045,7 @@ impl fastctx_net::link::Node for Handler {
                 }
                 Letter::Speak { to, from: speaker, text, .. } => {
                     let address = Address { machine: from, resident: speaker };
-                    node.residents.set_departed(address.clone(), false);
+                    node.residents.set_departed(&node.world, &address, false, Some((hub.as_str(), &delivery_id)))?;
                     let notice = Notice::Words { from: Speaker::Resident { address: address.clone() }, text };
                     let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
                     match crate::speech::tell_here(&node, &to, delivery, Owed::Speaker(address)).await {
@@ -1054,7 +1054,11 @@ impl fastctx_net::link::Node for Handler {
                     }
                 }
                 Letter::Left { resident } => {
-                    crate::colleagues::departed(&node, Address { machine: from, resident });
+                    crate::colleagues::departed(
+                        &node,
+                        Address { machine: from, resident },
+                        (hub.as_str(), &delivery_id),
+                    )?;
                     Ok(Ok(()))
                 }
             }
