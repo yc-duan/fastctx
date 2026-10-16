@@ -331,6 +331,19 @@ pub(crate) async fn history_here(node: &Arc<Node>, resident: &ResidentId) -> Res
         _ => (recorded(&directory)?, None),
     };
     let mut history = history(recorded, hosted, about.host.agent.as_str());
+    // A change of history tells a view already open to read again; the
+    // history read here is already what follows it. Kept in a view, an
+    // interface that reads it as news would read again on every event.
+    history.retain(|event| {
+        !matches!(
+            &event.happened,
+            fastctx_types::session::Happened::Changed {
+                change: fastctx_types::session::SessionChange::HistoryChanged
+                    | fastctx_types::session::SessionChange::HistoryCut { .. },
+                ..
+            }
+        )
+    });
     for event in &mut history {
         crate::run_facts::attach(&directory, event).map_err(|error| Failure::new(error.to_string()))?;
     }

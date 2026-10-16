@@ -326,6 +326,10 @@ export class Fold {
       this.replaying = false;
     }
     this.extend(events);
+    // A history the node gives whole is as it stands after every change it
+    // holds: a change of history among its events is shown already, and is
+    // no reason to read it again. One that comes after it is.
+    this.stale = false;
     for (const ask of waiting) {
       if (ask.kind === "ask" && !this.entries.some((entry) => entry.kind === "ask" && askKey(entry.id) === askKey(ask.id))) this.add(ask);
     }
