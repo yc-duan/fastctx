@@ -291,9 +291,7 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Attempt
         Ok(()) => Err("the hub gave this request up and asked another machine".to_string()),
         Err(why) => Err(why),
     };
-    if kept.is_err() {
-        let _ = tokio::fs::remove_file(&incoming).await;
-    }
+    super::cleanup::temporary(hub, &incoming).await;
     let word = match &kept {
         Ok(()) => DONE.to_string(),
         Err(why) => serde_json::to_string(&format!("the hub did not take it: {why}")).expect("text serializes"),

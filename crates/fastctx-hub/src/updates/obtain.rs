@@ -55,41 +55,72 @@ pub(crate) fn unfetched(hub: &Hub, name: &MachineName, id: u64, why: String) {
     }
 }
 
+pub(super) struct Obtaining {
+    waiters: Vec<oneshot::Sender<Result<u64, String>>>,
+    expired: bool,
+    id: u64,
+}
+
 /// The package's size once the hub holds it.
 async fn obtain(hub: &Arc<Hub>, held: Held) -> Result<u64, String> {
     let (waiting, answered) = oneshot::channel();
     {
         let mut updates = hub.updates.lock().expect("never poisoned");
-        if let Some(size) = size_of(&updates.cache, &held)? {
-            return Ok(size);
-        }
+
         match updates.obtaining.get_mut(&held) {
-            Some(waiters) => waiters.push(waiting),
+            Some(owner) if owner.expired => {
+                return Err(
+                    "the previous package request timed out and its owner is still finishing; try again later".into()
+                );
+            }
+            Some(owner) => {
+                owner.waiters.retain(|waiter| !waiter.is_closed());
+                if owner.waiters.len() >= 512 {
+                    return Err("too many requests are waiting for this package; try again later".into());
+                }
+                owner.waiters.push(waiting);
+            }
             None => {
-                updates.obtaining.insert(held.clone(), vec![waiting]);
-                let (hub, held) = (hub.clone(), held.clone());
-                tokio::spawn(async move {
-                    // However long its parts take, among them checking what
-                    // came, it is over within its budget.
-                    let brought =
-                        tokio::time::timeout(BUDGET + 2 * SETTLE, bring(&hub, &held)).await.unwrap_or_else(|_| {
-                            Err(format!(
-                                "bringing it in took more than {} minutes",
-                                (BUDGET + 2 * SETTLE).as_secs() / 60
-                            ))
-                        });
-                    if let Err(why) = &brought {
-                        hub.log.line(format_args!("bringing in {} of {}: {why}", held.target, held.version));
-                    }
-                    let waiters = hub.updates.lock().expect("never poisoned").obtaining.remove(&held);
-                    for waiter in waiters.into_iter().flatten() {
-                        let _ = waiter.send(brought.clone());
-                    }
-                });
+                let id = hub.next();
+                updates.obtaining.insert(held.clone(), Obtaining { waiters: vec![waiting], expired: false, id });
+                tokio::spawn(own(hub.clone(), held.clone(), id));
             }
         }
     }
     answered.await.map_err(|_| "the hub stopped bringing it in".to_string())?
+}
+
+/// The deadline answers waiters; it never drops the actual package owner.
+async fn own(hub: Arc<Hub>, held: Held, id: u64) {
+    // The timer remains runnable even while the owner enters synchronous
+    // publication I/O. Its identity cannot expire a subsequent owner.
+    let timer = tokio::spawn(expire(hub.clone(), held.clone(), id));
+    let brought = bring(&hub, &held).await;
+    timer.abort();
+    if let Err(why) = &brought {
+        hub.log.line(format_args!("bringing in {} of {}: {why}", held.target, held.version));
+    }
+    let owner = hub.updates.lock().expect("never poisoned").obtaining.remove(&held);
+    for waiter in owner.into_iter().flat_map(|owner| owner.waiters) {
+        let _ = waiter.send(brought.clone());
+    }
+}
+
+async fn expire(hub: Arc<Hub>, held: Held, id: u64) {
+    tokio::time::sleep(BUDGET + 2 * SETTLE).await;
+    let waiters = {
+        let mut updates = hub.updates.lock().expect("never poisoned");
+        let Some(owner) = updates.obtaining.get_mut(&held).filter(|owner| owner.id == id) else { return };
+        owner.expired = true;
+        std::mem::take(&mut owner.waiters)
+    };
+    let reason = format!(
+        "bringing it in took more than {} minutes; its owner is still finishing",
+        (BUDGET + 2 * SETTLE).as_secs() / 60
+    );
+    for waiter in waiters {
+        let _ = waiter.send(Err(reason.clone()));
+    }
 }
 
 fn size_of(cache: &fastctx_update::Cache, held: &Held) -> Result<Option<u64>, String> {
@@ -102,6 +133,9 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
         let updates = hub.updates.lock().expect("never poisoned");
         (updates.manifest(&held.version), updates.cache.clone())
     };
+    if let Some(size) = size_of(&cache, held)? {
+        return Ok(size);
+    }
     let manifest = manifest.ok_or_else(|| format!("no machine of the network knows the release {}", held.version))?;
     let package = manifest
         .package(&held.target)
@@ -110,20 +144,19 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
     let mut failures = Vec::new();
     let deadline = Instant::now() + BUDGET;
     if let Some(url) = &package.url {
-        let incoming = Leftover(cache.attempt(&held.version, &held.target, hub.next())?);
+        let incoming = cache.attempt(&held.version, &held.target, hub.next())?;
         let patience = DOWNLOAD_PATIENCE.min(deadline.saturating_duration_since(Instant::now()));
         let mut quiet = |_, _| {};
-        let downloaded =
-            tokio::time::timeout(patience, fastctx_update::download::from_url(url, &incoming.0, &mut quiet));
-        match downloaded.await {
-            Ok(Ok(())) => {
-                match super::transfer::take_in(hub, &cache, &manifest, &held.target, &incoming.0, || true).await {
-                    Ok(size) => return Ok(size),
-                    Err(why) => failures.push(why),
-                }
-            }
-            Ok(Err(why)) => failures.push(why),
-            Err(_) => failures.push(format!("downloading it took more than {} minutes", patience.as_secs() / 60)),
+        let downloaded = tokio::time::timeout(patience, fastctx_update::download::from_url(url, &incoming, &mut quiet));
+        let result = match downloaded.await {
+            Ok(Ok(())) => super::transfer::take_in(hub, &cache, &manifest, &held.target, &incoming, || true).await,
+            Ok(Err(why)) => Err(why),
+            Err(_) => Err(format!("downloading it took more than {} minutes", patience.as_secs() / 60)),
+        };
+        super::cleanup::temporary(hub, &incoming).await;
+        match result {
+            Ok(size) => return Ok(size),
+            Err(why) => failures.push(why),
         }
     }
     let mut tried = Vec::new();
@@ -172,15 +205,14 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
             hub.log.line(format_args!(
                 "the transfer from {helper} did not end in time; it may no longer put its package in place"
             ));
-            if !attempt.revoke() {
-                attempt.ended().await;
-            }
+            attempt.revoke();
+            attempt.ended().await;
         }
         hub.updates.lock().expect("never poisoned").fetches.remove(&id);
         if attempt.is_over()
             && let Ok(left) = cache.attempt(&held.version, &held.target, id)
         {
-            let _ = std::fs::remove_file(left);
+            super::cleanup::temporary(hub, &left).await;
         }
         // Whatever its machine said, what it brought may be in place now.
         if let Some(size) = size_of(&cache, held)? {
@@ -243,16 +275,6 @@ async fn watch_attempt(
                 patience.duration_since(started).as_secs() / 60
             ));
         }
-    }
-}
-
-/// A package's file coming in, deleted however bringing it in ends; one
-/// kept was moved into place first.
-struct Leftover(std::path::PathBuf);
-
-impl Drop for Leftover {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
     }
 }
 

@@ -9,6 +9,7 @@
 //! memory: each tells the rest again.
 
 mod obtain;
+mod cleanup;
 mod transfer;
 
 use std::collections::HashMap;
@@ -43,7 +44,7 @@ pub(crate) struct Updates {
     /// What every machine was last told.
     told: Option<Network>,
     /// The packages being brought in, and who waits for each.
-    obtaining: HashMap<Held, Vec<oneshot::Sender<Result<u64, String>>>>,
+    obtaining: HashMap<Held, obtain::Obtaining>,
     /// The requests machines were sent to fetch a package (`Down::Fetch`).
     fetches: HashMap<u64, Fetching>,
     cache: Cache,
@@ -89,6 +90,8 @@ pub(super) enum Try {
     Keeping,
     /// It checked its package and puts it in place, which it finishes.
     Committing,
+    /// Publication was revoked, but checking and cleanup still have an owner.
+    Revoked,
     /// Over: given up, failed, or kept.
     Over,
 }
@@ -132,13 +135,13 @@ impl Attempt {
     }
 
     /// Takes back the right of a try given up to put its package in place
-    /// while it still checks it, which makes it over: whether it is over
-    /// now, false while it puts its package in place.
+    /// while it still checks it. This does not end its actual work; `ended`
+    /// resolves only after that work and its cleanup finish.
     pub(super) fn revoke(&self) -> bool {
         self.state.send_if_modified(|state| {
             let revoked = *state == Try::Keeping;
             if revoked {
-                *state = Try::Over;
+                *state = Try::Revoked;
             }
             revoked
         });
@@ -173,12 +176,12 @@ impl Attempt {
 
     /// Whether a transfer of it runs.
     pub(super) fn moving(&self) -> bool {
-        matches!(*self.state.borrow(), Try::Running | Try::Stopping | Try::Keeping | Try::Committing)
+        matches!(*self.state.borrow(), Try::Running | Try::Stopping | Try::Keeping | Try::Committing | Try::Revoked)
     }
 
     /// Whether it has the whole package, which it checks or puts in place.
     pub(super) fn keeping(&self) -> bool {
-        matches!(*self.state.borrow(), Try::Keeping | Try::Committing)
+        matches!(*self.state.borrow(), Try::Keeping | Try::Committing | Try::Revoked)
     }
 
     pub(super) fn is_over(&self) -> bool {
