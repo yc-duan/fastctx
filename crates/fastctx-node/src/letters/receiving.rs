@@ -2,6 +2,7 @@
 //! completion marker precedes deleting pieces, so replaying the final fragment
 //! after a crash cannot leave an already accepted letter waiting for lost pieces.
 
+mod capacity;
 mod failed;
 
 use std::collections::HashSet;
@@ -110,6 +111,9 @@ fn keep(
         }
         Some(_) => return Ok(Err("letter fragments disagree about their total".to_string())),
         None => {}
+    }
+    if let Err(reason) = capacity::admit(&directory, total)? {
+        return Ok(Err(reason));
     }
     // Which pieces are kept, by their numbers. Old versions kept the same
     // numbered tuples with no manifest, so they are taken where they are.

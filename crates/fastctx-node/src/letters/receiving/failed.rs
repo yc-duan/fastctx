@@ -23,7 +23,12 @@ pub(super) fn keep(directory: &Path, identity: &super::Identity, total: usize, l
     let _memory =
         fastctx_net::reassembly::Reservation::new(super::STORED_BYTES + super::PART_BYTES).map_err(io::Error::other)?;
     let target = directory.join("whole.json");
-    let mut whole = Staged::create(&target, Some(0o600))?;
+    let partial = directory.join(".whole-partial");
+    let (mut whole, held) = Staged::resume(&target, partial.clone(), Some(0o600))?;
+    if held != 0 {
+        whole.discard();
+        (whole, _) = Staged::resume(&target, partial, Some(0o600))?;
+    }
     let mut bytes = 0_u64;
     for part in 0..total {
         let piece = super::stored(directory, part, total)?
