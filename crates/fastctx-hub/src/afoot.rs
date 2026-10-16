@@ -95,11 +95,14 @@ fn tell(hub: &Hub, scope: Scope<'_>) {
         .filter(|(_, session)| session.afoot)
         .map(|(name, session)| (name.clone(), session.generation, session.out.clone()))
         .collect();
-    let (directory, hidden) = {
-        let store = hub.store();
-        (store.book.directory.clone(), crate::forget::hidden(&store))
-    };
+    // Hold the directory until the state it will prune is locked. A newly
+    // admitted machine cannot publish into a snapshot from before it joined.
+    // Afoot writers never acquire the store while holding this leaf lock.
+    let store = hub.store();
+    let directory = store.book.directory.clone();
+    let hidden = crate::forget::hidden(&store);
     let mut afoots = hub.afoots();
+    drop(store);
     let Afoots { told, shown } = &mut *afoots;
     // A machine's last stays while it is on the hub under that name.
     told.retain(|machine, _| directory.member(machine).is_some_and(|member| member.name == *machine));
