@@ -239,7 +239,9 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Attempt
         .await
         .map_err(|_| format!("the member took nothing for {} s", SILENCE.as_secs()))??;
     let pulse = crate::pulse_of(&socket);
-    let (mut sink, mut stream) = socket.split();
+    let (sink, mut stream) = socket.split();
+    let work = fastctx_net::data::ReceiptWork::default();
+    let writer = super::receipt_writer::Writer::new(sink, pulse.clone(), work.clone());
     let received = async {
         let mut file =
             tokio::fs::File::create(&incoming).await.map_err(|error| format!("{}: {error}", incoming.display()))?;
@@ -252,6 +254,7 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Attempt
                     size = Some(said.size);
                 }
                 Some(WsMessage::Binary(bytes)) if size.is_some() => {
+                    let _writing = work.begin();
                     file.write_all(&bytes).await.map_err(|error| error.to_string())?;
                     have += bytes.len() as u64;
                     attempt.brought.fetch_add(bytes.len() as u64, Ordering::Relaxed);
@@ -266,38 +269,34 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Attempt
         if have != size.unwrap_or_default() {
             return Err("the member sent more than it said".to_string());
         }
+        let _settling = work.begin();
         file.sync_all().await.map_err(|error| error.to_string())
     };
-    let pinging = async {
-        loop {
-            tokio::time::sleep(HEARTBEAT).await;
-            if put(&mut sink, &pulse, WsMessage::Ping(Vec::new().into())).await.is_err() {
-                std::future::pending::<()>().await;
+
+    let completing = async {
+        let received: Result<(), String> = tokio::select! {
+            received = received => received,
+            () = attempt.stopping() => Err("the hub gave this request up and asked another machine".to_string()),
+        };
+        let _settling = work.begin();
+        let kept = match received {
+            Ok(()) if attempt.keep() => {
+                take_in(hub, &cache, &manifest, &held.target, &incoming, || attempt.commit()).await.map(|_| ())
             }
-        }
+            Ok(()) => Err("the hub gave this request up and asked another machine".to_string()),
+            Err(why) => Err(why),
+        };
+        super::cleanup::temporary(hub, &incoming).await;
+        kept
     };
-    let received: Result<(), String> = tokio::select! {
-        received = received => received,
-        () = pinging => unreachable!("pinging never ends"),
-        () = attempt.stopping() => Err("the hub gave this request up and asked another machine".to_string()),
-    };
-    // A try given up before it had its last byte does not put its package
-    // in place: the next try owns that. Once it has them, it checks them,
-    // and puts them in place unless the hub took that right back meanwhile.
-    let kept = match received {
-        Ok(()) if attempt.keep() => {
-            take_in(hub, &cache, &manifest, &held.target, &incoming, || attempt.commit()).await.map(|_| ())
-        }
-        Ok(()) => Err("the hub gave this request up and asked another machine".to_string()),
-        Err(why) => Err(why),
-    };
-    super::cleanup::temporary(hub, &incoming).await;
+    let kept = completing.await;
     let word = match &kept {
         Ok(()) => DONE.to_string(),
         Err(why) => serde_json::to_string(&format!("the hub did not take it: {why}")).expect("text serializes"),
     };
-    let _ = put(&mut sink, &pulse, WsMessage::Text(word.into())).await;
-    let _ = tokio::time::timeout(SILENCE, sink.close()).await;
+    if let Err(why) = writer.finish(word).await {
+        hub.log.line(format_args!("sending the package receipt: {why}"));
+    }
     kept
 }
 
@@ -327,9 +326,15 @@ pub(super) async fn take_in(
         let _ = std::fs::remove_file(incoming);
         return Err("the hub gave this request up while it checked the package".to_string());
     }
-    cache.keep_manifest(manifest)?;
-    let path = cache.keep(&manifest.version, target, incoming)?;
-    let size = std::fs::metadata(&path).map_err(|error| error.to_string())?.len();
+    let (publishing, kept_manifest, kept_target, received) =
+        (cache.clone(), manifest.clone(), target.to_string(), incoming.to_path_buf());
+    let size = tokio::task::spawn_blocking(move || {
+        publishing.keep_manifest(&kept_manifest)?;
+        let path = publishing.keep(&kept_manifest.version, &kept_target, &received)?;
+        std::fs::metadata(&path).map(|meta| meta.len()).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())??;
     hub.log.line(format_args!("holds {target} of {} now, {size} bytes", manifest.version));
     super::prune(hub, &manifest.version);
     super::tell(hub, None);

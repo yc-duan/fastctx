@@ -670,17 +670,23 @@ async fn take_files(
         let from = if resumes { from } else { 0 };
         // Going on with a file may read what is here of it.
         let known = holding.known.clone();
-        let (back, (left, mut arriving)) = blocking(move || {
+        let preparing = stream.settling();
+        let (back, (left, arriving)) = blocking(move || {
+            let _preparing = preparing;
             let arrival = receiver.arrive(index, from, &mut known.lock().expect("never poisoned"));
             (receiver, arrival)
         })
         .await?;
         receiver = back;
-        let taken = stream.take(left, |piece| arriving.write(piece)).await;
+        let work = stream.receipt_work();
+        let (arriving, taken) =
+            stream.take_writing(left, arriving, |arriving, piece| arriving.write(piece)).await.map_err(failure)?;
         // Putting a file in place makes it lasting; one the copy broke off
         // in is kept as it stands, for the try after this one.
         let (known, broke_off) = (holding.known.clone(), taken.is_err());
+        let settling = work.begin();
         receiver = blocking(move || {
+            let _settling = settling;
             let known = &mut known.lock().expect("never poisoned");
             if broke_off {
                 receiver.broke(index, arriving, known);
@@ -692,7 +698,13 @@ async fn take_files(
         .await?;
         taken.map_err(failure)?;
     }
-    receiver.link();
+    let settling = stream.settling();
+    let receiver = blocking(move || {
+        let _settling = settling;
+        receiver.link();
+        receiver
+    })
+    .await?;
     Ok(CopyReport {
         from: String::new(),
         from_machine: node.machine(),

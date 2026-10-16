@@ -10,6 +10,7 @@
 
 mod cleanup;
 mod obtain;
+mod receipt_writer;
 mod transfer;
 
 use std::collections::HashMap;

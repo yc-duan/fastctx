@@ -10,6 +10,9 @@
 //! for gone when the other falls silent (`line`).
 
 mod line;
+mod receipt;
+mod writing;
+pub use receipt::{ReceiptWork, Settlement, settling_ping};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -302,9 +305,20 @@ impl Stream {
     /// As the source: waits for the sink's word that it has everything, and
     /// closes.
     pub async fn finish(mut self) -> Result<(), String> {
-        let receipt = tokio::time::timeout(DUE_WITHIN, self.next()).await.map_err(|_| {
-            format!("the final receipt did not arrive within {} s after the body was sent", DUE_WITHIN.as_secs())
-        })??;
+        let mut progress = self.line.receipt.subscribe();
+        let began = tokio::time::Instant::now();
+        let receipt = loop {
+            let worked = (*progress.borrow_and_update()).unwrap_or(began).max(began);
+            tokio::select! {
+                next = self.next() => break next?,
+                changed = progress.changed() => {
+                    changed.map_err(|_| "the receiver's work notifications ended".to_string())?;
+                },
+                () = tokio::time::sleep_until(worked + DUE_WITHIN) => {
+                    return Err(format!("the final receipt did not arrive and no receiver work was reported for {} s", DUE_WITHIN.as_secs()));
+                },
+            }
+        };
         match receipt {
             Some(Message::Word(text)) if text == DONE => {
                 self.line.close().await;
@@ -320,6 +334,17 @@ impl Stream {
     /// other end reads its end, not a cut.
     pub async fn close(self) {
         self.line.close().await;
+    }
+
+    /// Keeps the receipt wait alive only while this receiver owns actual local
+    /// writes or finalization. Transport heartbeats alone do not renew it.
+    pub fn settling(&self) -> Settlement {
+        self.line.receipt.hold()
+    }
+
+    /// A work handle that can enter a blocking writer without borrowing the stream.
+    pub fn receipt_work(&self) -> ReceiptWork {
+        ReceiptWork(self.line.receipt.clone())
     }
 
     /// As the sink: says everything arrived, and closes.

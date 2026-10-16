@@ -877,22 +877,20 @@ async fn take_output(node: &Arc<Node>, producer: &OnOrigin, source: &OnSource, p
                 let mut file =
                     std::fs::File::create(&path).map_err(|error| format!("writing {}: {error}", path.display()))?;
                 let (mut taken, mut digest) = (0u64, Sha256::new());
+                let work = stream.receipt_work();
                 loop {
                     let word = tokio::time::timeout(SILENT_FOR, stream.hear::<PipeWord>())
                         .await
                         .map_err(|_| format!("{from} said nothing for {}s", SILENT_FOR.as_secs()))??;
                     match word {
                         PipeWord::Out { bytes } => {
-                            let mut written = Ok(());
-                            stream
-                                .take(bytes, |chunk| {
+                            let (back, written) = stream
+                                .take_writing(bytes, (file, digest), |(file, digest), chunk| {
                                     digest.update(chunk);
-                                    if written.is_ok() {
-                                        written = file.write_all(chunk);
-                                    }
-                                    Ok(())
+                                    file.write_all(chunk).map_err(|error| error.to_string())
                                 })
                                 .await?;
+                            (file, digest) = back;
                             written.map_err(|error| format!("writing {}: {error}", path.display()))?;
                             taken += bytes;
                         }
@@ -901,7 +899,14 @@ async fn take_output(node: &Arc<Node>, producer: &OnOrigin, source: &OnSource, p
                             if bytes != taken || sha256 != hex(&digest.finalize()) {
                                 return Err("the output arrived different from what was sent".to_string());
                             }
-                            file.sync_all().map_err(|error| format!("writing {}: {error}", path.display()))?;
+                            let settling = work.begin();
+                            tokio::task::spawn_blocking(move || {
+                                let _settling = settling;
+                                file.sync_all()
+                            })
+                            .await
+                            .map_err(|error| error.to_string())?
+                            .map_err(|error| format!("writing {}: {error}", path.display()))?;
                             *arrived.lock().expect("never poisoned") = true;
                             return stream.done().await;
                         }

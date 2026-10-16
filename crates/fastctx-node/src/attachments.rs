@@ -107,7 +107,7 @@ pub async fn upload(
                     .map_err(broke)?
                     .ok_or_else(|| broke("the uploader disconnected before ending the file"))?;
                 if piece.is_empty() {
-                    return finish(arriving, guard.as_mut()).await;
+                    return finish(arriving, guard.as_mut(), None).await;
                 }
                 arriving.write(held.past(&piece))?;
             }
@@ -225,8 +225,22 @@ async fn arrival(
     }
 }
 
-async fn finish(arriving: Arriving, guard: Option<&mut crate::composer::uploads::Guard>) -> Result<Uploaded, Failure> {
-    let attachment = arriving.finish()?;
+async fn finish(
+    arriving: Arriving,
+    guard: Option<&mut crate::composer::uploads::Guard>,
+    work: Option<fastctx_net::data::ReceiptWork>,
+) -> Result<Uploaded, Failure> {
+    let attachment = if let Some(writing) = work.as_ref().map(|work| work.begin()) {
+        tokio::task::spawn_blocking(move || {
+            let _settling = writing;
+            arriving.finish()
+        })
+        .await
+        .map_err(failure)??
+    } else {
+        arriving.finish()?
+    };
+    let _settling = work.as_ref().map(|work| work.begin());
     let composer = match guard {
         Some(guard) => Some(guard.finish(&attachment).await),
         None => None,
@@ -315,16 +329,17 @@ pub async fn receive(
         if resumes {
             stream.say(&UploadStart { from: arriving.received }).await.map_err(broke)?;
         }
-        let mut refused = None;
-        let taken = stream
-            .take(size - arriving.received, |piece| {
+        let ((back, refused), taken) = stream
+            .take_writing(size - arriving.received, (arriving, None), |(arriving, refused), piece| {
                 arriving.write(piece).map_err(|error| {
                     let message = error.message.clone();
-                    refused = Some(error);
+                    *refused = Some(error);
                     message
                 })
             })
-            .await;
+            .await
+            .map_err(failure)?;
+        arriving = back;
         if let Err(why) = taken {
             return Err(refused.unwrap_or_else(|| broke(why)));
         }
@@ -332,7 +347,7 @@ pub async fn receive(
         if end != "uploaded" {
             return Err(failure("the uploader did not end the file"));
         }
-        let uploaded = finish(arriving, guard.as_mut()).await?;
+        let uploaded = finish(arriving, guard.as_mut(), Some(stream.receipt_work())).await?;
         stream.done().await.map_err(failure)?;
         Ok(uploaded)
     }
@@ -877,13 +892,23 @@ pub async fn take_placed(
     }
     stream.say(&Need { bytes: true }).await.map_err(failure)?;
     let size = wanted.file.size;
-    let mut arriving = arriving_in(&directory, wanted, false)?;
-    stream.take(size, |piece| arriving.write(piece).map_err(|error| error.message)).await.map_err(Failure::new)?;
+    let arriving = arriving_in(&directory, wanted, false)?;
+    let (arriving, taken) = stream
+        .take_writing(size, arriving, |arriving, piece| arriving.write(piece).map_err(|error| error.message))
+        .await
+        .map_err(failure)?;
+    taken.map_err(failure)?;
     let end: String = stream.hear().await.map_err(failure)?;
     if end != "placed" {
         return Err(failure("the sender did not end the file"));
     }
-    let placed = arriving.finish()?;
+    let settling = stream.settling();
+    let placed = tokio::task::spawn_blocking(move || {
+        let _settling = settling;
+        arriving.finish()
+    })
+    .await
+    .map_err(failure)??;
     stream.done().await.map_err(failure)?;
     Ok(placed)
 }

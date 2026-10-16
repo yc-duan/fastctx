@@ -59,6 +59,7 @@ pub(super) struct Line {
     outgoing: mpsc::UnboundedSender<Out>,
     reader: tokio::task::JoinHandle<()>,
     writer: tokio::task::JoinHandle<()>,
+    pub(super) receipt: Arc<super::receipt::Progress>,
 }
 
 impl Line {
@@ -74,13 +75,23 @@ impl Line {
         let stopped = Arc::new(Mutex::new(None));
         let (ending, over) = watch::channel(false);
         let ending = Arc::new(ending);
+        let receipt = Arc::new(super::receipt::Progress::default());
         Self {
             incoming,
             stopped: stopped.clone(),
             over: over.clone(),
             outgoing,
-            reader: tokio::spawn(read(stream, received, stopped.clone(), cut, ending.clone(), pulse.clone())),
-            writer: tokio::spawn(write(sink, sending, over, stopped, ending, pulse)),
+            reader: tokio::spawn(read(
+                stream,
+                received,
+                stopped.clone(),
+                cut,
+                ending.clone(),
+                pulse.clone(),
+                receipt.clone(),
+            )),
+            writer: tokio::spawn(write(sink, sending, over, stopped, ending, pulse, receipt.clone())),
+            receipt,
         }
     }
 
@@ -148,6 +159,7 @@ async fn read(
     mut cut: Option<watch::Receiver<Option<String>>>,
     ending: Arc<watch::Sender<bool>>,
     pulse: Arc<crate::pulse::Pulse>,
+    receipt: Arc<super::receipt::Progress>,
 ) {
     let mut over = ending.subscribe();
     let mut heard = Instant::now();
@@ -174,6 +186,7 @@ async fn read(
             Some(Ok(WsMessage::Binary(bytes))) => Received::Bytes(bytes.to_vec()),
             Some(Ok(WsMessage::Text(text))) => Received::Word(text.to_string()),
             Some(Ok(WsMessage::Ping(said))) => {
+                receipt.heard(&said);
                 if let Some(took) = crate::pulse::said(&said) {
                     pulse.told(took);
                 }
@@ -225,7 +238,10 @@ async fn write(
     stopped: Arc<Mutex<Option<String>>>,
     ending: Arc<watch::Sender<bool>>,
     pulse: Arc<crate::pulse::Pulse>,
+    receipt: Arc<super::receipt::Progress>,
 ) {
+    let work = super::receipt::ReceiptWork(receipt);
+    let mut completed = 0;
     let mut beat = tokio::time::interval_at(Instant::now() + HEARTBEAT, HEARTBEAT);
     beat.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
@@ -236,7 +252,13 @@ async fn write(
             _ = over.wait_for(|over| *over) => return,
         };
         let Some(next) = next else {
-            let beating = put(&mut sink, &pulse, crate::pulse::ping(&pulse));
+            let beating = async {
+                put(&mut sink, &pulse, crate::pulse::ping(&pulse)).await?;
+                if work.changed(&mut completed) {
+                    put(&mut sink, &pulse, super::receipt::settling_ping()).await?;
+                }
+                Ok::<(), String>(())
+            };
             let result = tokio::select! {
                 result = beating => result,
                 _ = over.wait_for(|over| *over) => return,
