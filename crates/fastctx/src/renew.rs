@@ -238,10 +238,18 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
             fastctx_install::service::Service::new(fastctx_install::service::Kind::Node, store::installed(root), root);
         // The protected guardian takes an officially signed newer program
         // by itself (`world-upgrade.md`, 换版不要人确认); a development build,
-        // or a guardian of an earlier release, waits for an administrator.
+        // or a guardian of an earlier release, waits for an administrator,
+        // and so does one that says why it will not, its reason kept.
+        let mut refused = None;
         let staged = !needs_guardian || service.guardian_staged(&plan.candidate.build.digest)? || {
             let (asked, digest) = (service.clone(), plan.candidate.build.digest.clone());
-            tokio::task::spawn_blocking(move || asked.adopt_guardian(&digest)).await??
+            match tokio::task::spawn_blocking(move || asked.adopt_guardian(&digest)).await? {
+                Ok(taken) => taken,
+                Err(error) => {
+                    refused = Some(format!("{error:#}"));
+                    false
+                }
+            }
         };
         // A macOS node is the user's own LaunchAgent; only a hub kept here,
         // a LaunchDaemon, needs an administrator to start the new program.
@@ -253,7 +261,12 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
                 && !fastctx_platform::elevation::is_elevated()?
                 && !fastctx_install::service::registered_hubs(root)?.is_empty())
         {
-            return phase(root, plan, Phase::AwaitingAdministrator);
+            phase(root, plan, Phase::AwaitingAdministrator)?;
+            if refused.is_some() {
+                plan.error = refused;
+                store::save(root, plan)?;
+            }
+            return Ok(());
         }
         let _gate = FileLock::acquire(&store::directory(root).join("manager-gate.lock"))?;
         let Probe::Running(node) = renewal::probe(&WorldDir::under(root)).await? else {
