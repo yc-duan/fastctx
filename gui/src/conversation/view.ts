@@ -1416,7 +1416,7 @@ export class ConversationView {
       // when it is not this one. Words not yet heard say how they stand.
       const who =
         from && from.machine !== this.context.here ? `<div class="bubble-from">${escape(words.you(from.machine))}</div>` : "";
-      const state = sending ? ` ${sending.state}` : "";
+      const state = sending && sending.state !== "settled" ? ` ${sending.state}` : "";
       let note = "";
       if (sending?.state === "failed") note = `<div class="bubble-note wrong" title="${escape(sending.why)}">${escape(words.notSent(sending.why))}</div>`;
       if (sending?.state === "waiting") note = `<div class="bubble-note" title="${escape(sending.why)}">${escape(words.waitingToSend)}</div>`;

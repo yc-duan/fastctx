@@ -1412,7 +1412,8 @@ function liveTalk(address: Address): KeepablePage {
   // A conversation just begun here opens with its first words on their way.
   const seed = seeds.get(talkKey(address));
   seeds.delete(talkKey(address));
-  if (seed) conversation.sending(seed.text, here, seed.attached);
+  // The World answered for them as it opened the conversation.
+  if (seed) conversation.named(conversation.sending(seed.text, here, seed.attached), null);
   // Names of files for an `@`, on the agent's machine, in its places.
   const search = new FileSearch(address.machine, address.resident);
   const page: ConversationPage = new ConversationPage({
@@ -1526,7 +1527,8 @@ function liveTalk(address: Address): KeepablePage {
         },
         address.machine,
       )
-        .then(({ to, landed }) => {
+        .then(({ to, landed, delivery }) => {
+          conversation.named(key, delivery ?? null);
           // Words in a turn take their place when the session hears them;
           // words in no turn yet say where they are.
           if (landed.kind === "waiting" || landed.kind === "sent" || landed.kind === "uncertain") {
@@ -1589,6 +1591,14 @@ function liveTalk(address: Address): KeepablePage {
     resumed: () => page.resumed(),
     ended: (why) => {
       page.lost(why);
+      page.update();
+    },
+    refused: (why) => {
+      page.refused(why);
+      page.update();
+    },
+    now: (busy, turn, kept) => {
+      conversation.now(busy, turn, kept);
       page.update();
     },
     deleted: () => gone(),

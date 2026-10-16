@@ -62,6 +62,11 @@ export type Piece =
   | { kind: "ended"; error: string | null }
   /** The conversation was deleted: nothing more of it comes. */
   | { kind: "deleted"; error: string }
+  /** Its machine refused this account: nothing more comes until it may. */
+  | { kind: "refused"; error: string }
+  /** Whether it works now, on which turn, and which words its machine
+   *  keeps on their way in. */
+  | { kind: "now"; busy: boolean; turn: string | null; kept?: import("../conversation/model").KeptWords[] }
   /** The part the page holds is now this, in place of all it held. */
   | { kind: "window"; window: Window }
   /** What came before arrived: what the page holds stays, moved along. */
@@ -189,7 +194,7 @@ export interface NotSaid {
 
 /** The user's words to a conversation. Said again under the same `id`, as
  *  after an answer that never came, they go in once. */
-export function talk(who: Address, text: string, attachments: Attachment[] = [], filesOn: string | null = null, id: string | null = null): Promise<{ to: Address; landed: Landed }> {
+export function talk(who: Address, text: string, attachments: Attachment[] = [], filesOn: string | null = null, id: string | null = null): Promise<{ to: Address; landed: Landed; delivery?: string | null }> {
   return invoke("talk", { residentId: who.resident, machineName: who.machine, text, attachments, filesOn, id });
 }
 

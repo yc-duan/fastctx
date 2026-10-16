@@ -35,7 +35,17 @@ export type SendState =
   /** In the World, not yet in a turn: `how` is the way they landed
    *  (`waiting`, `sent`, `uncertain`), as the node said. */
   | { state: "landed"; how: string; machine: MachineName; why?: string | null }
+  /** Its machine keeps them no more and no turn runs: they went in, and
+   *  stand as said until the session's own telling of them comes. */
+  | { state: "settled" }
   | { state: "failed"; why: string };
+
+/** Words a conversation's machine keeps that no turn took yet, as it tells
+ *  them (`Watched::Now`). */
+export interface KeptWords {
+  id: string;
+  state: "waiting" | "handing" | "unknown";
+}
 
 /** Something the user attached to their words, as it is shown with them. */
 export interface ShownAttachment {
@@ -62,6 +72,9 @@ export type Entry = {
       text: string;
       turn: string | null;
       sending?: SendState;
+      /** Words sent from here, once the World answered for them: their id
+       *  on the machine they went to, `null` where it gave none. */
+      delivery?: string | null;
       /** Words sent from here while a turn was under way: they wait below
        *  the turn's line until a turn takes them in. Words sent to a
        *  conversation at rest begin the next turn, above it. */
@@ -1066,25 +1079,59 @@ export class Fold {
     }
   }
 
+  /** The World answered for words being sent: `delivery` is their id where
+   *  they went, `null` where it gave none. Words the World has answered for
+   *  are no longer on their way to it, only to the session. */
+  named(key: string, delivery: string | null): void {
+    const entry = this.byKey.get(key);
+    if (entry?.kind === "heard" && entry.sending) entry.delivery = delivery;
+  }
+
   /** The World says no turn runs: what is still shown under way here
-   *  ended unseen, and stands as cut off. */
+   *  ended unseen, and stands as cut off, whichever turn it was in. */
   noTurnRuns(): void {
-    if (this.running.size === 0) return;
     const at = Date.now();
-    for (const turn of this.running) {
-      for (const entry of this.byTurn.get(turn) ?? []) {
-        if (entry.kind === "tool" && entry.ended === null) {
-          entry.ended = { at, use: "cut" };
-          this.touch(entry);
-        }
-        if (entry.kind === "prose" && entry.writing) {
-          entry.writing = false;
-          this.touch(entry);
-        }
+    let changed = this.running.size > 0;
+    for (const entry of this.entries) {
+      if (entry.kind === "tool" && entry.ended === null) {
+        entry.ended = { at, use: "cut" };
+        this.touch(entry);
+        changed = true;
+      }
+      if (entry.kind === "prose" && entry.writing) {
+        entry.writing = false;
+        this.touch(entry);
+        changed = true;
       }
     }
     this.running.clear();
     this.began.clear();
+    if (changed) this.clock += 1;
+  }
+
+  /** What the conversation's machine holds of it now (`world-concurrency.md`,
+   *  一句话从发出到落定): whether it works, on which turn, and which words it
+   *  keeps on their way in. What shows under way here gives way to it: a
+   *  turn it runs is under way; when none runs, nothing shown is; words the
+   *  World answered for stand as it keeps them, or, kept no more, as said. */
+  now(busy: boolean, turn: string | null, kept: KeptWords[]): void {
+    if (busy && turn) this.underWay(turn, Date.now());
+    if (!busy) this.noTurnRuns();
+    const keeping = new Map(kept.map((words) => [words.id, words.state]));
+    for (const entry of this.entries) {
+      if (entry.kind !== "heard" || !entry.sending || entry.delivery === undefined) continue;
+      const settling = entry.sending.state === "going" || (entry.sending.state === "landed" && entry.sending.how === "kept");
+      if (!settling) continue;
+      const state = entry.delivery === null ? undefined : keeping.get(entry.delivery);
+      let next: SendState | null = null;
+      if (state === "waiting") next = { state: "landed", how: "kept", machine: entry.from?.kind === "user" ? entry.from.machine : "" };
+      else if (state === undefined && !busy) next = { state: "settled" };
+      else if (state !== undefined) next = { state: "going" };
+      if (next && JSON.stringify(next) !== JSON.stringify(entry.sending)) {
+        entry.sending = next;
+        this.touch(entry);
+      }
+    }
     this.clock += 1;
   }
 

@@ -210,6 +210,8 @@ export interface Words {
   /** The watch on the session ended: the node ended it, or the connection
    *  to it broke. */
   watchEnded(why: string | null): string;
+  /** Its machine refused this account the conversation. */
+  watchRefused: string;
   /** The live stream broke and is waiting to be read again. */
   watchInterrupted(why: string | null): string;
   /** On hover over that: for how long, and why. */
@@ -460,6 +462,7 @@ export const zh: Words = {
   answered: (label, took) => (took ? `${label} 交回 · ${took}` : `${label} 交回`),
   answerFailed: (label) => `${label} 本轮失败`,
   watchEnded: () => "已停止同步",
+  watchRefused: "你的账号看不了这段对话",
   watchInterrupted: () => "连接中断，正在重连…",
   brokenFor: (took, why) => (why ? `已断开 ${took} · ${why}` : `已断开 ${took}`),
   notSent: () => "发送失败",
@@ -537,7 +540,9 @@ export const zh: Words = {
       ? `已发往 ${machine}`
       : how === "uncertain"
         ? "不确定是否送到"
-        : "等它下次用世界的工具时送到",
+        : how === "kept"
+          ? "排着，等这一轮结束"
+          : "等它下次用世界的工具时送到",
   jobEnded: (_job, machine) => `后台命令在 ${machine} 上结束`,
   movedTo: (town) => `已移到项目 ${town}`,
   movedOut: "已移出项目",
@@ -709,6 +714,7 @@ export const en: Words = {
   answered: (label, took) => (took ? `${label} handed back · ${took}` : `${label} handed back`),
   answerFailed: (label) => `${label}: turn failed`,
   watchEnded: () => "Sync stopped",
+  watchRefused: "Your account can't see this conversation",
   watchInterrupted: () => "Disconnected, reconnecting…",
   brokenFor: (took, why) => (why ? `Disconnected for ${took} · ${why}` : `Disconnected for ${took}`),
   notSent: () => "Couldn't send",
@@ -786,7 +792,9 @@ export const en: Words = {
       ? `Sent to ${machine}`
       : how === "uncertain"
         ? "Not sure it arrived"
-        : "Arrives when it next uses a Fastctx tool",
+        : how === "kept"
+          ? "Queued until this turn ends"
+          : "Arrives when it next uses a Fastctx tool",
   jobEnded: (_job, machine) => `Background command on ${machine} ended`,
   movedTo: (town) => `Moved to project ${town}`,
   movedOut: "Removed from project",

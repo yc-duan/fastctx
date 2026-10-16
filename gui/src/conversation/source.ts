@@ -30,6 +30,12 @@ export interface ConversationFeed {
   ended(why: string | null): void;
   /** It was deleted: what is shown stays, and nothing more comes. */
   deleted(why: string): void;
+  /** Its machine refused this account: what is shown stays, and it is not
+   *  asked again. */
+  refused(why: string): void;
+  /** Whether it works now, on which turn, and which words its machine
+   *  keeps on their way in; after every event before it. */
+  now(busy: boolean, turn: string | null, kept: import("./model").KeptWords[]): void;
 }
 
 export interface Reading {
@@ -91,6 +97,13 @@ export const watched: ConversationSource = {
         case "deleted":
           closed = true;
           feed.deleted(piece.error);
+          return;
+        case "refused":
+          closed = true;
+          feed.refused(piece.error);
+          return;
+        case "now":
+          feed.now(piece.busy, piece.turn, piece.kept ?? []);
       }
     };
     // A watch that could not start is tried again, as `../world/again.ts`
@@ -121,10 +134,16 @@ export const watched: ConversationSource = {
         })
         .catch((error: unknown) => {
           if (mine !== reading || closed) return;
-          // Deleted: asking again will not find it.
+          // Deleted: asking again will not find it. Refused: asking again
+          // on a timer is refused the same way.
           if (typeof error === "object" && error !== null && (error as { deleted?: unknown }).deleted === true) {
             closed = true;
             feed.deleted(whyOf(error));
+            return;
+          }
+          if (typeof error === "object" && error !== null && (error as { refused?: unknown }).refused === true) {
+            closed = true;
+            feed.refused(whyOf(error));
             return;
           }
           since ??= new Date();

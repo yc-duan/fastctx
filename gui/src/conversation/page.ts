@@ -914,6 +914,9 @@ export class ConversationPage {
           return;
         }
         const landed = updated.landed;
+        // The node has them: what they wait on is for its telling of now
+        // to say (`Fold.now`).
+        if (landed) conversation.named(key, null);
         if (!landed) conversation.unsend(key);
         else if (landed.kind === "waiting" || landed.kind === "sent" || landed.kind === "uncertain") {
           conversation.sent(key, { state: "landed", how: landed.kind, machine: this.options.someone.machine, why: "why" in landed ? landed.why : null });
@@ -1856,6 +1859,16 @@ export class ConversationPage {
     this.view.unfollowed();
     this.gone = this.options.words.watchEnded(why);
     this.goneWhy = why ?? "";
+    this.interrupted = false;
+    this.drawState();
+  }
+
+  /** Its machine refused this account: what is shown stays, and the bar
+   *  says so; on hover, the machine's words. */
+  refused(why: string): void {
+    this.view.unfollowed();
+    this.gone = this.options.words.watchRefused;
+    this.goneWhy = why;
     this.interrupted = false;
     this.drawState();
   }
