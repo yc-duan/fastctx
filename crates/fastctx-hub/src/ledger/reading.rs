@@ -4,7 +4,8 @@
 
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use fastctx_net::sign::Signed;
 use fastctx_net::wire::{self, Down, Told};
@@ -14,6 +15,9 @@ use tokio::sync::oneshot;
 
 use crate::outq::Outq;
 use crate::{Hub, Out};
+
+const READ_WITHIN: Duration = Duration::from_secs(55);
+static READERS: LazyLock<Arc<tokio::sync::Semaphore>> = LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(32)));
 
 /// The committed end never advances during a page, even if new entries
 /// reach disk while it is being read.
@@ -32,18 +36,35 @@ pub(crate) fn ask(hub: &Arc<Hub>, name: &MachineName, out: &Outq, id: u64, town:
         let _ = out.send(Out::Frame(Down::Told { id, answer }));
         return;
     }
+    let place = match READERS.clone().try_acquire_owned() {
+        Ok(place) => place,
+        Err(_) => {
+            let answer = Err("the hub is busy reading ledgers; try again".to_string());
+            let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            return;
+        }
+    };
+    let deadline = tokio::time::Instant::now() + READ_WITHIN;
     let page = hub.ledgers.lock().expect("never poisoned").page(town.clone(), after);
     let (hub, name, out) = (hub.clone(), name.clone(), out.clone());
     tokio::spawn(async move {
         // Dropping the receiver stops a running read between files. Aborting
         // its task also stops a read still waiting for a blocking thread.
         let (wanted, reader) = oneshot::channel::<()>();
-        let mut reading = tokio::task::spawn_blocking(move || page.read(&wanted));
+        let mut reading = tokio::task::spawn_blocking(move || {
+            // A cancelled caller cannot return a place still occupied by disk I/O.
+            let _place = place;
+            page.read(&wanted, deadline)
+        });
         let answer = tokio::select! {
             biased;
             () = out.closed() => {
                 reading.abort();
                 return;
+            }
+            () = tokio::time::sleep_until(deadline) => {
+                reading.abort();
+                Err(format!("reading {town}'s ledger did not finish within {} seconds", READ_WITHIN.as_secs()))
             }
             read = &mut reading => read
                 .map_err(|error| format!("reading {town}'s ledger: {error}"))
@@ -61,14 +82,14 @@ pub(crate) fn ask(hub: &Arc<Hub>, name: &MachineName, out: &Outq, id: u64, town:
 }
 
 impl Page {
-    fn read(self, wanted: &oneshot::Sender<()>) -> Result<Told, String> {
+    fn read(self, wanted: &oneshot::Sender<()>, deadline: tokio::time::Instant) -> Result<Told, String> {
         // The longest id and `false` leave room for either value of `more`.
         let mut size =
             wire::encode(&Down::Told { id: u64::MAX, answer: Ok(Told::Entries { entries: Vec::new(), more: false }) })
                 .len();
         let mut entries = Vec::new();
         for previous in self.after..self.last {
-            if wanted.is_closed() {
+            if wanted.is_closed() || tokio::time::Instant::now() >= deadline {
                 return Err("the ledger reader ended".into());
             }
             let seq = previous + 1;
