@@ -484,8 +484,10 @@ async fn connected(
                 }
             }
             Down::Ack { seq, refused } => {
-                if let Some(reason) = refused {
-                    refused_letter(inner, seq, &reason);
+                if let Some(reason) = refused
+                    && let Err(error) = refused_letter(inner, seq, &reason)
+                {
+                    break Ended::Retry(format!("recording refused letter {seq}: {error}"));
                 }
                 if let Err(error) = held(inner, seq) {
                     break Ended::Retry(format!("recording what the hub holds: {error}"));
@@ -739,18 +741,16 @@ fn held(inner: &Inner, seq: u64) -> std::io::Result<()> {
     Ok(())
 }
 
-fn refused_letter(inner: &Inner, seq: u64, reason: &str) {
+fn refused_letter(inner: &Inner, seq: u64, reason: &str) -> std::io::Result<()> {
     let outbox = Outbox::new(&inner.dir);
-    match outbox.get(seq) {
-        Ok(Some(message)) => match letters::record_failure(&inner.dir, "out", reason, &message) {
-            Ok(path) => inner.node.log(format!("the hub refused letter {seq}: {reason}; kept in {}", path.display())),
-            Err(error) => {
-                inner.node.log(format!("the hub refused letter {seq}: {reason}; recording that failed: {error}"))
-            }
-        },
-        Ok(None) => inner.node.log(format!("the hub refused letter {seq}: {reason}")),
-        Err(error) => inner.node.log(format!("the hub refused letter {seq}: {reason}; reading it failed: {error}")),
+    match outbox.get(seq)? {
+        Some(message) => {
+            let path = letters::record_failure(&inner.dir, "out", reason, &message)?;
+            inner.node.log(format!("the hub refused letter {seq}: {reason}; kept in {}", path.display()));
+        }
+        None => inner.node.log(format!("the hub refused letter {seq}: {reason}")),
     }
+    Ok(())
 }
 
 /// The most letters this machine has sent the hub that the hub has not yet
