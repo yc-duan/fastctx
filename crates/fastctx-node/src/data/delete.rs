@@ -328,6 +328,9 @@ async fn measure(node: &Arc<Node>, name: &str) -> Result<Measured, Stop> {
     let (node, wanted) = (node.clone(), name.to_string());
     tokio::task::spawn_blocking(move || {
         if let Some(measured) = super::space::conversation(&node, &wanted)? {
+            if let Some(reason) = measured.unreadable_jobs.first() {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, reason.clone()));
+            }
             return Ok(Some(measured));
         }
         // Listing uses directory predicates; an inaccessible directory must

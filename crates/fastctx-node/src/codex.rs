@@ -153,17 +153,33 @@ fn discard_unclaimed(node: &Node) -> std::io::Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
     };
+    let mut unreadable = None;
     for entry in entries {
         let path = entry?.path();
-        let claimed = path.extension().is_some_and(|extension| extension == "json")
-            && serde_json::from_slice::<KeptReports>(&std::fs::read(&path)?)
-                .ok()
-                .is_some_and(|kept| node.residents.resident_of_thread(&kept.thread).is_some());
+        let claimed = if path.extension().is_some_and(|extension| extension == "json") {
+            match serde_json::from_slice::<KeptReports>(&std::fs::read(&path)?) {
+                Ok(kept) => node.residents.resident_of_thread(&kept.thread).is_some(),
+                Err(error) => {
+                    unreadable.get_or_insert_with(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("preserved {}: its reports cannot be read: {error}", path.display()),
+                        )
+                    });
+                    continue;
+                }
+            }
+        } else {
+            false
+        };
         if !claimed {
             std::fs::remove_file(path)?;
         }
     }
-    Ok(())
+    match unreadable {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 #[derive(Default)]

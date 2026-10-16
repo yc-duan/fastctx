@@ -46,6 +46,8 @@ pub(super) struct Measured {
     pub claude_home: Option<PathBuf>,
     /// The jobs of it that still run here.
     pub running: Vec<String>,
+    /// Records whose running state could not be established; never proof of idleness.
+    pub unreadable_jobs: Vec<String>,
     /// The project of the latest job it ran here.
     pub job_town: Option<(Timestamp, Option<TownName>)>,
 }
@@ -382,8 +384,13 @@ fn add_jobs(one: &mut Measured, jobs: &Path) -> io::Result<()> {
         }
         let job = match fastctx_hands::run::record::read(&record) {
             Ok(job) => job,
-            // A record that cannot be read names no program to stop.
-            Err(error) if error.kind() == io::ErrorKind::InvalidData => continue,
+            Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+                one.unreadable_jobs.push(format!(
+                    "cannot determine whether a job is running from {}: {error}; its conversation cannot be deleted",
+                    record.display()
+                ));
+                continue;
+            }
             Err(error) => return Err(error),
         };
         if job.end.is_none() || fastctx_hands::run::program::in_use(&job)? {
@@ -405,10 +412,11 @@ fn describe(
     let kind = Kind::of(name).expect("only conversation directories are measured");
     let directory = ConversationDir::at(&node.world.conversations().join(name));
     let mut last = one.records.latest.max(one.output.latest).max(one.host.latest);
-    let running = one
-        .running
-        .first()
-        .map(|job| format!("{job}, a command it started, still runs here; stop it first (fastctx stop {job})"));
+    let running = one.unreadable_jobs.first().cloned().or_else(|| {
+        one.running
+            .first()
+            .map(|job| format!("{job}, a command it started, still runs here; stop it first (fastctx stop {job})"))
+    });
     let (group, agent, title, town, lives_on, unopened, held) = match &kind {
         Kind::Home(id) => match everyone.get(id) {
             Some(resident) => {
@@ -457,7 +465,7 @@ fn describe(
                             host: std::mem::take(&mut one.host_record),
                         },
                         unopened: false,
-                        held: None,
+                        held: running,
                     });
                 }
                 let town = std::fs::read(directory.draft())
