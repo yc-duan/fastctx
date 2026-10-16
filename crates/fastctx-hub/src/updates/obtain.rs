@@ -10,7 +10,7 @@ use std::time::Duration;
 use fastctx_net::wire::{Down, Told};
 use fastctx_types::MachineName;
 use fastctx_types::update::{Fetch, Held};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use tokio::time::Instant;
 
 use super::{Attempt, Fetching};
@@ -36,7 +36,7 @@ const SETTLE: Duration = Duration::from_secs(30);
 
 /// `asker` asks, as its question `id`, for the package `target` of
 /// `version`: answered once the hub holds it, or with why it cannot.
-pub(crate) fn ask(hub: &Arc<Hub>, id: u64, version: String, target: String, out: mpsc::UnboundedSender<Out>) {
+pub(crate) fn ask(hub: &Arc<Hub>, id: u64, version: String, target: String, out: crate::outq::Outq) {
     let hub = hub.clone();
     tokio::spawn(async move {
         let answer = obtain(&hub, Held { version, target }).await.map(|size| Told::Package { size });

@@ -34,8 +34,10 @@ mod ledger;
 mod log;
 mod login;
 mod machine_log;
+mod mailbox;
 mod manage;
 mod moving;
+mod outq;
 mod releases;
 mod store;
 pub mod third;
@@ -60,7 +62,6 @@ use fastctx_types::{AccountName, HubName, MachineName};
 use futures_util::{SinkExt as _, StreamExt as _};
 use jiff::Timestamp;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
@@ -235,7 +236,7 @@ pub(crate) struct Hub {
 /// A member's open control connection.
 pub(crate) struct Session {
     generation: u64,
-    out: mpsc::UnboundedSender<Out>,
+    out: outq::Outq,
     since: Timestamp,
     /// Where the connection comes from: the member, or the machine that
     /// forwards it here.
@@ -371,8 +372,7 @@ async fn tell_directory(hub: std::sync::Weak<Hub>, changed: Arc<tokio::sync::Not
     loop {
         changed.notified().await;
         let Some(hub) = hub.upgrade() else { return };
-        let outs: Vec<mpsc::UnboundedSender<Out>> =
-            hub.sessions().values().map(|session| session.out.clone()).collect();
+        let outs: Vec<outq::Outq> = hub.sessions().values().map(|session| session.out.clone()).collect();
         drop(hub);
         for out in outs {
             let _ = out.send(Out::Frame(Down::DirectoryChanged));
@@ -498,6 +498,8 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
     });
     tokio::spawn(updates::look_every(Arc::downgrade(&hub)));
     tokio::spawn(tell_directory(Arc::downgrade(&hub), hub.directory_changed.clone()));
+    let letters_changed = hub.store().letters_changed.clone();
+    tokio::spawn(mailbox::keep_records(Arc::downgrade(&hub), letters_changed));
     if driven {
         moving::out::drive(&hub);
     }
@@ -536,11 +538,11 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         // The hub moved away: every connection still open here ends, and the
         // old place forwards on the same port.
         hub.moving.stop();
+        keep_letters_now(&hub);
         return Ok(Next::Again(Some(kept)));
     }
     hub.log.line(format_args!("shutting down"));
-    let sessions: Vec<mpsc::UnboundedSender<Out>> =
-        hub.sessions().values().map(|session| session.out.clone()).collect();
+    let sessions: Vec<outq::Outq> = hub.sessions().values().map(|session| session.out.clone()).collect();
     for out in &sessions {
         let _ = out.send(Out::End(Refusal::ShuttingDown));
     }
@@ -549,7 +551,16 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
     while !hub.sessions().is_empty() && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
+    keep_letters_now(&hub);
     Ok(Next::Stop)
+}
+
+/// Keeps the records of where the letters stand as they are, as the hub
+/// stops: their writer may not have caught up with the last changes.
+fn keep_letters_now(hub: &Hub) {
+    if let Err(error) = hub.store().save_letters_now() {
+        hub.log.line(format_args!("recording where the letters stand: {error}"));
+    }
 }
 
 pub(crate) async fn shutdown_signal() {

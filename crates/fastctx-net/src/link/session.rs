@@ -390,6 +390,7 @@ async fn connected(
                 continue;
             },
             _ = &mut writer_stopped => break Ended::Retry("writing to the hub failed".to_string()),
+            () = up.overflowed() => break Ended::Retry("the hub took nothing while frames for it piled up".to_string()),
             () = &mut rerouted => break Ended::Reroute("the ways this machine connects to the hub by changed".to_string()),
             Ok(upstream) = &mut preferred_back => break Ended::Reroute(format!("{upstream} takes sessions again")),
             failed = &mut letters_failed => break Ended::Retry(failed.unwrap_or_else(|_| "taking letters stopped".to_string())),
@@ -647,15 +648,22 @@ fn interface_addresses() -> Vec<std::net::IpAddr> {
     }
 }
 
-/// Records that the hub holds this machine's letters through `seq`.
+/// Records that the hub holds this machine's letters through `seq`, and
+/// wakes the sending of the next ones.
 fn held(inner: &Inner, seq: u64) -> std::io::Result<()> {
-    Outbox::new(&inner.dir).held_through(seq)?;
+    let before = inner.letters.lock().expect("never poisoned").file.held;
+    if seq <= before {
+        return Ok(());
+    }
+    Outbox::new(&inner.dir).held_between(before, seq)?;
     let mut letters = inner.letters.lock().expect("never poisoned");
     if seq > letters.file.held {
         letters.file.held = seq;
         letters.next = letters.next.max(seq + 1);
         super::state::write(&inner.dir.letters(), &letters.file)?;
     }
+    drop(letters);
+    inner.outbox_changed.notify_one();
     Ok(())
 }
 
@@ -673,41 +681,61 @@ fn refused_letter(inner: &Inner, seq: u64, reason: &str) {
     }
 }
 
-/// Sends every letter in the outbox past `sent`, in order, and each new one
-/// as it is put there.
+/// The most letters this machine has sent the hub that the hub has not yet
+/// said it holds, and the most bytes of them: the rest wait their turn on
+/// disk, so a long backlog never fills the connection.
+const WINDOW: usize = 256;
+const WINDOW_BYTES: usize = 8 * 1024 * 1024;
+
+/// How many of the hub's letters are taken before the hub is told, at once,
+/// that they are.
+const TAKEN_AT_ONCE: usize = 64;
+
+/// Sends the letters in the outbox past `sent`, in order, a window at a
+/// time, and each new one as there is room for it. Letters are numbered one
+/// after another, so the next is known without listing the outbox; one not
+/// there was held by the hub, or set aside, meanwhile.
 async fn flush(inner: Arc<Inner>, up: Outgoing, mut sent: u64, failed: oneshot::Sender<String>) {
     let outbox = Outbox::new(&inner.dir);
+    let mut on_way: std::collections::VecDeque<(u64, usize)> = std::collections::VecDeque::new();
     loop {
-        let numbers = match outbox.numbers() {
-            Ok(numbers) => numbers,
-            Err(error) => {
-                let _ = failed.send(format!("reading the outbox: {error}"));
-                return;
-            }
+        // Asked for before looking: a letter put, or the hub holding some,
+        // between the two wakes it all the same.
+        let changed = inner.outbox_changed.notified();
+        let (held, next) = {
+            let letters = inner.letters.lock().expect("never poisoned");
+            (letters.file.held, letters.next)
         };
-        let start = sent;
-        for seq in numbers.into_iter().filter(|seq| *seq > start) {
-            match outbox.get(seq) {
-                Ok(Some(message)) => {
+        while on_way.front().is_some_and(|(seq, _)| *seq <= held) {
+            on_way.pop_front();
+        }
+        sent = sent.max(held);
+        while sent + 1 < next
+            && on_way.len() < WINDOW
+            && on_way.iter().map(|(_, size)| size).sum::<usize>() < WINDOW_BYTES
+        {
+            let seq = sent + 1;
+            match outbox.get_sized(seq) {
+                Ok(Some((message, size))) => {
                     if up.send(Up::Send { seq, message }).is_err() {
                         return;
                     }
-                    sent = seq;
+                    on_way.push_back((seq, size));
                 }
-                // Held by the hub meanwhile.
                 Ok(None) => {}
                 Err(error) => {
                     let _ = failed.send(format!("reading letter {seq} from the outbox: {error}"));
                     return;
                 }
             }
+            sent = seq;
         }
-        inner.outbox_changed.notified().await;
+        changed.await;
     }
 }
 
 /// Takes the hub's letters in the order the hub numbered them, and tells
-/// the hub each is taken.
+/// the hub they are taken, once for each run of them that came together.
 async fn take_letters(
     inner: Arc<Inner>,
     up: Outgoing,
@@ -715,25 +743,41 @@ async fn take_letters(
     mut delivered: mpsc::UnboundedReceiver<(u64, Envelope)>,
     failed: oneshot::Sender<String>,
 ) {
-    while let Some((seq, message)) = delivered.recv().await {
-        let already = inner
-            .letters
-            .lock()
-            .expect("never poisoned")
-            .file
-            .taken
-            .is_some_and(|(epoch, taken)| epoch == hub_letters && seq <= taken);
-        if !already {
-            if let Err(error) = take_letter(&inner, &message).await {
+    while let Some(first) = delivered.recv().await {
+        let mut run = vec![first];
+        while run.len() < TAKEN_AT_ONCE {
+            match delivered.try_recv() {
+                Ok(next) => run.push(next),
+                Err(_) => break,
+            }
+        }
+        let mut last = None;
+        for (seq, message) in run {
+            let already = inner
+                .letters
+                .lock()
+                .expect("never poisoned")
+                .file
+                .taken
+                .is_some_and(|(epoch, taken)| epoch == hub_letters && seq <= taken);
+            if !already && let Err(error) = take_letter(&inner, &message).await {
                 let _ = failed.send(format!("taking a letter: {error}"));
                 return;
             }
+            last = Some(seq);
+        }
+        let Some(seq) = last else { continue };
+        // A stop before this is written has the hub send the run again; each
+        // letter's receipt keeps it from being taken twice.
+        {
             let mut letters = inner.letters.lock().expect("never poisoned");
-            letters.file.taken = Some((hub_letters, seq));
-            if let Err(error) = super::state::write(&inner.dir.letters(), &letters.file) {
-                drop(letters);
-                let _ = failed.send(format!("recording a letter taken: {error}"));
-                return;
+            if !letters.file.taken.is_some_and(|(epoch, taken)| epoch == hub_letters && seq <= taken) {
+                letters.file.taken = Some((hub_letters, seq));
+                if let Err(error) = super::state::write(&inner.dir.letters(), &letters.file) {
+                    drop(letters);
+                    let _ = failed.send(format!("recording a letter taken: {error}"));
+                    return;
+                }
             }
         }
         if up.send(Up::Ack { seq }).is_err() {

@@ -70,7 +70,7 @@ pub(crate) fn accounts_of(hub: &Hub, conversation: &fastctx_types::Address) -> O
 fn tell(hub: &Hub, only: Option<&MachineName>) {
     // The sessions and the directory are read first, without the afoot
     // record's lock, which is taken last.
-    let readers: Vec<(MachineName, u64, tokio::sync::mpsc::UnboundedSender<Out>)> = hub
+    let readers: Vec<(MachineName, u64, crate::outq::Outq)> = hub
         .sessions()
         .iter()
         .filter(|(_, session)| session.afoot)

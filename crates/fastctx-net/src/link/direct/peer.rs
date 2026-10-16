@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use fastctx_types::access::Purpose;
 use fastctx_types::{AccountName, MachineName};
 use futures_util::{SinkExt as _, StreamExt as _};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::watch;
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
@@ -21,6 +21,10 @@ use crate::peer::{self, Frame, Intent};
 use crate::sign::{Domain, PublicKey};
 use crate::transport::Socket;
 use crate::wire::{CallStatus, HEARTBEAT, SILENCE};
+
+/// The most frames that wait for a direct link's writer: past that the
+/// other machine takes nothing, and the link ends (`crate::queue`).
+const QUEUED: usize = 8192;
 
 /// One live direct link.
 pub(crate) struct PeerConn {
@@ -35,7 +39,7 @@ pub(crate) struct PeerConn {
     pub dialed: bool,
     /// Where the other machine was reached, when this one dialed it.
     pub at: Vec<SocketAddr>,
-    out: mpsc::UnboundedSender<Frame>,
+    out: crate::queue::Sender<Frame>,
     ms: Mutex<Option<u32>>,
     closed: watch::Sender<Option<String>>,
 }
@@ -46,8 +50,8 @@ impl PeerConn {
         key: PublicKey,
         dialed: bool,
         at: Vec<SocketAddr>,
-    ) -> (Arc<Self>, mpsc::UnboundedReceiver<Frame>) {
-        let (out, frames) = mpsc::unbounded_channel();
+    ) -> (Arc<Self>, crate::queue::Receiver<Frame>) {
+        let (out, frames) = crate::queue::bounded(QUEUED);
         let (closed, _) = watch::channel(None);
         let conn = Self {
             name,
@@ -219,7 +223,7 @@ pub(super) async fn keep(inner: Arc<Inner>, peer: MachineName, at: Vec<SocketAdd
     }
 }
 
-type Linked = (Arc<PeerConn>, Socket, mpsc::UnboundedReceiver<Frame>, SocketAddr, fastctx_types::world::Route);
+type Linked = (Arc<PeerConn>, Socket, crate::queue::Receiver<Frame>, SocketAddr, fastctx_types::world::Route);
 
 /// Dials `peer` at `at` and has it prove who it is.
 async fn dial(inner: &Inner, peer: &MachineName, at: &[SocketAddr]) -> Result<Linked, String> {
@@ -308,7 +312,7 @@ async fn serve(
     inner: Arc<Inner>,
     conn: Arc<PeerConn>,
     socket: Socket,
-    mut frames: mpsc::UnboundedReceiver<Frame>,
+    mut frames: crate::queue::Receiver<Frame>,
     mut network: Option<&mut watch::Receiver<u64>>,
 ) -> (String, bool) {
     let (mut sink, mut stream) = socket.split();
@@ -382,6 +386,7 @@ async fn serve(
             }
             reason = &mut ended => break reason,
             _ = &mut writer_stopped => break "writing to it failed".to_string(),
+            () = conn.out.overflowed() => break "it took nothing while frames for it piled up".to_string(),
             changed = network_changed(&mut network) => {
                 moved = changed;
                 break "this machine's network changed".to_string();

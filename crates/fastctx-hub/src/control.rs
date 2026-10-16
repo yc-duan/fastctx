@@ -21,6 +21,7 @@ use jiff::Timestamp;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
+use crate::outq::{Next, Outq};
 use crate::{Hub, Out, Session, Socket, refuse, storage_failure};
 
 /// What a member says of itself when its session opens.
@@ -112,7 +113,7 @@ pub(crate) async fn session(
         }
     };
     let generation = hub.next();
-    let (out, mut outgoing) = mpsc::unbounded_channel();
+    let out = Outq::new();
     if let Err(reason) = open(&hub, &name, generation, out.clone(), letters, peer, said) {
         hub.log.line(format_args!("{peer}: the session of {name} could not open: {reason}"));
         refuse(&mut socket, reason).await;
@@ -134,44 +135,51 @@ pub(crate) async fn session(
 
     let (mut sink, mut stream) = socket.split();
     let (stopped, mut writer_stopped) = tokio::sync::oneshot::channel::<()>();
-    let (telling, member, member_name) = (hub.clone(), key, name.clone());
+    let (telling, member, member_name, queue) = (hub.clone(), key, name.clone(), out.clone());
     let writer = tokio::spawn(async move {
         // Dropped when the writer returns, which the reader notices.
         let _stopped = stopped;
-        while let Some(out) = outgoing.recv().await {
-            // A member that does not read what it is sent is let go: it
-            // comes back and reads on from where it was (`world-concurrency.md`,
-            // 机器之间).
-            if outgoing.len() > QUEUED {
-                telling.log.line(format_args!("{member_name}: more than {QUEUED} frames wait for it; letting it go"));
-                return;
-            }
-            let (frame, last) = match out {
-                Out::Frame(frame) => (frame, false),
-                Out::End(reason) => (Down::Refused { reason }, true),
-            };
-            match tokio::time::timeout(SILENCE, sink.send(WsMessage::Binary(wire::encode(&frame).into()))).await {
-                Ok(Ok(())) => {}
-                Ok(Err(_)) => return,
-                Err(_) => {
-                    telling
-                        .log
-                        .line(format_args!("{member_name}: took nothing in {} s; letting it go", SILENCE.as_secs()));
+        while let Some(next) = queue.next().await {
+            let (frames, last) = match next {
+                Next::Frames(frames) => (frames, false),
+                Next::End(reason) => (vec![Down::Refused { reason }], true),
+                // A member that does not read what it is sent is let go: it
+                // comes back and reads on from where it was
+                // (`world-concurrency.md`, 机器之间).
+                Next::Overflowed(why) => {
+                    telling.log.line(format_args!("{member_name}: {why}"));
                     return;
                 }
-            }
-            // A machine on the network, told it was dissolved.
-            if let Down::Refused { reason } = &frame
-                && crate::dissolve::tells(reason)
-            {
-                crate::dissolve::told(&telling, &member);
+            };
+            for frame in frames {
+                match tokio::time::timeout(SILENCE, sink.send(WsMessage::Binary(wire::encode(&frame).into()))).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) => return,
+                    Err(_) => {
+                        telling.log.line(format_args!(
+                            "{member_name}: took nothing in {} s; letting it go",
+                            SILENCE.as_secs()
+                        ));
+                        return;
+                    }
+                }
+                // A machine on the network, told it was dissolved.
+                if let Down::Refused { reason } = &frame
+                    && crate::dissolve::tells(reason)
+                {
+                    crate::dissolve::told(&telling, &member);
+                }
             }
             if last {
-                let _ = sink.close().await;
+                let _ = tokio::time::timeout(SILENCE, sink.close()).await;
                 return;
             }
         }
     });
+    // The letters it sends are kept in order by a task of their own, so a
+    // slow disk holds up no heartbeat or answer on this connection.
+    let (letters_in, letters_coming) = mpsc::channel(LETTERS_IN);
+    let intake = tokio::spawn(intake(hub.clone(), name.clone(), out.clone(), letters_coming));
 
     // Whether the writer still has a refusal to deliver before closing.
     let (ended, refusing) = loop {
@@ -197,6 +205,14 @@ pub(crate) async fn session(
             },
             Ok(Some(Ok(_))) => continue,
         };
+        // A letter waits its turn to be kept; more than `LETTERS_IN` waiting
+        // and this connection is read no further until there is room.
+        if let Up::Send { seq, message } = frame {
+            if letters_in.send((seq, message)).await.is_err() {
+                break (Some("keeping its letters stopped".to_string()), false);
+            }
+            continue;
+        }
         if let Err(reason) = handle(&hub, &name, generation, &out, frame) {
             let _ = out.send(Out::End(reason.clone()));
             break (Some(reason.to_string()), true);
@@ -205,13 +221,14 @@ pub(crate) async fn session(
     // The member counts as gone from this moment, and the calls waiting on
     // it are told so.
     close(&hub, &name, generation);
-    drop(out);
+    intake.abort();
     if refusing {
         // The writer returns once it has sent the refusal.
         let _ = writer.await;
     } else {
         writer.abort();
     }
+    out.shut();
     match ended {
         Some(reason) => hub.log.line(format_args!("{name} disconnected: {reason}")),
         None => hub.log.line(format_args!("{name} disconnected")),
@@ -219,18 +236,69 @@ pub(crate) async fn session(
     hub.changed();
 }
 
-/// How many frames may wait for a member before it is let go.
-const QUEUED: usize = 4096;
+/// How many letters from a member may wait to be kept before its
+/// connection is read no further.
+const LETTERS_IN: usize = 1024;
+
+/// How many letters are kept before their sender is told the hub holds
+/// them, their count written once for all of them.
+const KEPT_AT_ONCE: usize = 64;
+
+/// Keeps the letters `name` sends, in order: each written to disk, then its
+/// count, then the sender told the hub holds them. A failure of the hub's
+/// own disk ends the session, and the member sends them again.
+async fn intake(hub: Arc<Hub>, name: MachineName, out: Outq, mut coming: mpsc::Receiver<(u64, Envelope)>) {
+    while let Some(first) = coming.recv().await {
+        let mut batch = vec![first];
+        while batch.len() < KEPT_AT_ONCE {
+            match coming.try_recv() {
+                Ok(next) => batch.push(next),
+                Err(_) => break,
+            }
+        }
+        let mut receipts = Vec::new();
+        let mut count = None;
+        for (seq, message) in batch {
+            match keep(&hub, &name, seq, message).await {
+                Ok((refused, counted)) => {
+                    receipts.push((seq, refused));
+                    count = counted.or(count);
+                }
+                Err(reason) => {
+                    let _ = out.send(Out::End(reason));
+                    return;
+                }
+            }
+        }
+        if let Some((epoch, taken)) = count {
+            let (dir, sender) = (hub.store().dir().to_path_buf(), name.clone());
+            let written =
+                tokio::task::spawn_blocking(move || crate::store::Store::write_taken(&dir, &sender, epoch, taken))
+                    .await
+                    .map_err(|error| std::io::Error::other(error.to_string()))
+                    .and_then(|written| written);
+            if let Err(error) = written {
+                let _ = out.send(Out::End(storage_failure(&hub, "counting a letter", &error)));
+                return;
+            }
+        }
+        // A receipt counts for every letter before it: a refused letter is
+        // told on its own, with why, and the run once, by its last.
+        let last = receipts.last().map(|(seq, refused)| (*seq, refused.is_some()));
+        for (seq, refused) in receipts {
+            if refused.is_some() {
+                let _ = out.send(Out::Frame(Down::Ack { seq, refused }));
+            }
+        }
+        if let Some((seq, false)) = last {
+            let _ = out.send(Out::Frame(Down::Ack { seq, refused: None }));
+        }
+    }
+}
 
 /// A frame from `name` this hub cannot read: told once in the log for each
 /// kind; a question is answered that it is not known here.
-fn unreadable(
-    hub: &Hub,
-    name: &MachineName,
-    out: &mpsc::UnboundedSender<Out>,
-    bytes: &[u8],
-    error: &serde_json::Error,
-) {
+fn unreadable(hub: &Hub, name: &MachineName, out: &Outq, bytes: &[u8], error: &serde_json::Error) {
     let frame: serde_json::Value = serde_json::from_slice(bytes).unwrap_or_default();
     let kind = frame["f"].as_str().unwrap_or("?");
     hub.log.line(format_args!("{name}: a frame this hub cannot read ({kind}): {error}"));
@@ -246,19 +314,18 @@ fn unreadable(
 }
 
 /// Registers the session, replacing an older one of the same member, and
-/// queues the welcome and every letter waiting for the member, in order.
+/// queues the welcome; the letters waiting for the member follow it, a
+/// window at a time (`crate::mailbox`).
 #[allow(clippy::too_many_arguments)]
 fn open(
-    hub: &Hub,
+    hub: &Arc<Hub>,
     name: &MachineName,
     generation: u64,
-    out: mpsc::UnboundedSender<Out>,
+    out: Outq,
     letters: Letters,
     peer: SocketAddr,
     said: Said,
 ) -> Result<(), Refusal> {
-    // The store's lock is held while the session is registered, so a letter
-    // kept meanwhile is either in the backlog below or pushed after it.
     let mut store = hub.store();
     let (world, hub_name) = (store.hub.id.clone(), store.hub.name.clone());
     let too_old = !said.any_names && crate::login::beyond_older_releases(&store);
@@ -277,7 +344,8 @@ fn open(
         hub.log.line(format_args!("{name}: refused a session: {}", crate::login::OLDER_RELEASE));
         return Err(Refusal::Broken { reason: crate::login::OLDER_RELEASE.to_string() });
     }
-    if entry.epoch != letters.epoch {
+    let renumbered = entry.epoch != letters.epoch;
+    if renumbered {
         // The machine numbers its letters afresh, having lost its records.
         entry.epoch = letters.epoch;
         entry.taken = 0;
@@ -296,16 +364,18 @@ fn open(
         taken: entry.taken,
         letters: entry.out_epoch,
     };
-    store.save_letters().map_err(|error| storage_failure(hub, "recording the connection", &error))?;
-    store
-        .letters_taken(name, taken_by_member)
-        .map_err(|error| storage_failure(hub, "dropping taken letters", &error))?;
-    let backlog =
-        store.letters_after(name, taken_by_member).map_err(|error| storage_failure(hub, "reading letters", &error))?;
-    let _ = out.send(Out::Frame(welcome));
-    for (seq, message) in backlog {
-        let _ = out.send(Out::Frame(Down::Deliver { seq, message }));
+    // Its new numbering is kept before any letter of it is taken: kept
+    // later, a stop in between would take the new letters for ones held.
+    if renumbered {
+        let epoch = letters.epoch;
+        crate::store::Store::write_taken(store.dir(), name, epoch, 0)
+            .map_err(|error| storage_failure(hub, "recording the machine's numbering", &error))?;
     }
+    store.save_letters().map_err(|error| storage_failure(hub, "recording the connection", &error))?;
+    // The welcome is the first frame; the letters waiting follow from where
+    // the member took them.
+    let _ = out.send(Out::Frame(welcome));
+    crate::mailbox::opened(hub, &mut store, name, generation, out.clone(), taken_by_member);
     let session = Session {
         generation,
         out,
@@ -350,6 +420,7 @@ pub(crate) fn close(hub: &Hub, name: &MachineName, generation: u64) {
                 hub.log.line(format_args!("recording that {name} left: {error}"));
             }
         }
+        crate::mailbox::closed(&mut store, name, generation);
     }
     // Data connections it registered and nobody paired wait no longer; a
     // session that replaced this one keeps its own.
@@ -417,13 +488,7 @@ pub(crate) fn cut_calls(hub: &Hub) {
     }
 }
 
-fn handle(
-    hub: &Arc<Hub>,
-    name: &MachineName,
-    generation: u64,
-    out: &mpsc::UnboundedSender<Out>,
-    frame: Up,
-) -> Result<(), Refusal> {
+fn handle(hub: &Arc<Hub>, name: &MachineName, generation: u64, out: &Outq, frame: Up) -> Result<(), Refusal> {
     let reply = |frame: Down| {
         let _ = out.send(Out::Frame(frame));
     };
@@ -442,11 +507,9 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Send { seq, message } => letter(hub, name, seq, message, &reply)?,
-        Up::Ack { seq } => {
-            let store = hub.store();
-            store.letters_taken(name, seq).map_err(|error| storage_failure(hub, "dropping taken letters", &error))?;
-        }
+        // Letters are kept by the session's own task (`intake`).
+        Up::Send { .. } => {}
+        Up::Ack { seq } => crate::mailbox::taken(hub, &mut hub.store(), name, generation, seq),
         Up::Call { id, message } => reply(Down::Status { id, status: call(hub, name, generation, id, message) }),
         Up::Answer { call, message } => answer(hub, name, generation, call, message),
         Up::Afoot { change } => crate::afoot::heard(hub, name, *change),
@@ -455,6 +518,14 @@ fn handle(
         Up::Unfetched { id, why } => crate::updates::unfetched(hub, name, id, why),
         Up::Ask { id, question: Question::Package { version, target } } => {
             crate::updates::ask(hub, id, version, target, out.clone());
+        }
+        // Written off the store's lock, one entry of a project at a time.
+        Up::Ask { id, question: Question::LedgerWrite { town, entry } } => {
+            let (hub, writer, out) = (hub.clone(), name.clone(), out.clone());
+            tokio::spawn(async move {
+                let answer = crate::ledger::write(&hub, &writer, town, entry).await;
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
         }
         Up::Cancel { id } => {
             let given_up: Vec<Pending> = {
@@ -549,12 +620,20 @@ fn standing(hub: &Hub, message: &Envelope) -> Result<Standing, String> {
     }
 }
 
-fn letter(hub: &Hub, name: &MachineName, seq: u64, message: Envelope, reply: &impl Fn(Down)) -> Result<(), Refusal> {
+/// Keeps the letter `seq` from `name`, or refuses it: what the sender is to
+/// be told, and its count once this letter is counted, which is kept before
+/// it is told (`intake`). The letter is on disk before it counts: a sender
+/// told the hub holds one only once the hub does.
+async fn keep(
+    hub: &Arc<Hub>,
+    name: &MachineName,
+    seq: u64,
+    message: Envelope,
+) -> Result<(Option<String>, Option<(u64, u64)>), Refusal> {
     let taken = hub.store().letters.get(name).map(|entry| entry.taken).unwrap_or(0);
     if seq <= taken {
         // Sent again after a reconnect; the hub holds it already.
-        reply(Down::Ack { seq, refused: None });
-        return Ok(());
+        return Ok((None, None));
     }
     let refused = match own(hub, name, &message).and_then(|()| {
         if message.kind != Kind::Letter {
@@ -571,26 +650,33 @@ fn letter(hub: &Hub, name: &MachineName, seq: u64, message: Envelope, reply: &im
     }) {
         Ok(()) => {
             let to = canonical(hub, &message.to);
-            let kept = {
-                let mut store = hub.store();
-                store.keep_letter(&to, &message).map_err(|error| storage_failure(hub, "keeping a letter", &error))?
-            };
-            hub.tell(&to, Down::Deliver { seq: kept, message });
+            let (number, path) =
+                hub.store().next_letter(&to).map_err(|error| storage_failure(hub, "keeping a letter", &error))?;
+            let written = tokio::task::spawn_blocking(move || crate::store::write_letter(&path, &message))
+                .await
+                .map_err(|error| std::io::Error::other(error.to_string()))
+                .and_then(|written| written);
+            if let Err(error) = written {
+                return Err(storage_failure(hub, "keeping a letter", &error));
+            }
+            crate::mailbox::kept(hub, &mut hub.store(), &to, number);
             None
         }
         Err(reason) => Some(reason),
     };
-    let mut store = hub.store();
-    if let Some(entry) = store.letters.get_mut(name) {
-        entry.taken = seq;
-    }
-    store.save_letters().map_err(|error| storage_failure(hub, "counting a letter", &error))?;
-    drop(store);
+    let counted = {
+        let mut store = hub.store();
+        let counted = store.letters.get_mut(name).map(|entry| {
+            entry.taken = seq;
+            (entry.epoch, seq)
+        });
+        let _ = store.save_letters();
+        counted
+    };
     if let Some(reason) = &refused {
         hub.log.line(format_args!("refused letter {seq} from {name}: {reason}"));
     }
-    reply(Down::Ack { seq, refused });
-    Ok(())
+    Ok((refused, counted))
 }
 
 /// The call an envelope carries, when it carries one whole.
@@ -819,31 +905,7 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
         }
         Question::Directory => Ok(Told::Directory { view: Box::new(hub.view_for(name)) }),
         Question::Manage { .. } => Err("changes are made as they come".into()),
-        Question::LedgerWrite { town, entry } => {
-            let (seq, tell) = {
-                let store = hub.store();
-                let (seq, mut tell) = hub.ledgers.lock().expect("never poisoned").write(&store, name, &town, entry)?;
-                // Every member that may read the project hears of it too, as
-                // one that keeps a copy it does not span keeps it current
-                // (`world-network.md`, 隔着网络也要顺手).
-                let directory = &store.book.directory;
-                tell.extend(
-                    directory
-                        .members
-                        .iter()
-                        .filter(|member| directory.member_in_project(&member.name, &town))
-                        .map(|member| member.name.clone()),
-                );
-                tell.sort();
-                tell.dedup();
-                (seq, tell)
-            };
-            hub.log.line(format_args!("{name} wrote entry {seq} of {town}"));
-            for machine in tell {
-                hub.tell(&machine, Down::LedgerChanged { town: town.clone() });
-            }
-            Ok(Told::Written { seq })
-        }
+        Question::LedgerWrite { .. } => Err("ledger entries are written as they come".into()),
         Question::LedgerTowns => {
             let store = hub.store();
             let towns = hub.ledgers.lock().expect("never poisoned").towns_of(&store.book.directory, name);

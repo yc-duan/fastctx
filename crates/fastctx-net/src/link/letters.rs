@@ -37,6 +37,32 @@ impl Outbox {
         }
     }
 
+    /// The letter `seq` and how many bytes it takes; none when it is not
+    /// there.
+    pub fn get_sized(&self, seq: u64) -> io::Result<Option<(Envelope, usize)>> {
+        let bytes = match std::fs::read(self.dir.join(format!("{seq:020}"))) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let message =
+            serde_json::from_slice(&bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        Ok(Some((message, bytes.len())))
+    }
+
+    /// Forgets the letters after `from` through `through`, which the hub
+    /// holds now, by number: letters go one after another, so no listing is
+    /// needed.
+    pub fn held_between(&self, from: u64, through: u64) -> io::Result<()> {
+        for number in from.saturating_add(1)..=through {
+            match std::fs::remove_file(self.dir.join(format!("{number:020}"))) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     /// The numbers of the letters waiting, in order.
     pub fn numbers(&self) -> io::Result<Vec<u64>> {
         let mut numbers = Vec::new();
@@ -49,20 +75,6 @@ impl Outbox {
         }
         numbers.sort_unstable();
         Ok(numbers)
-    }
-
-    /// Forgets the letters through `seq`: the hub holds them.
-    pub fn held_through(&self, seq: u64) -> io::Result<()> {
-        for number in self.numbers()? {
-            if number > seq {
-                break;
-            }
-            match std::fs::remove_file(self.dir.join(format!("{number:020}"))) {
-                Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-                _ => {}
-            }
-        }
-        Ok(())
     }
 }
 

@@ -77,6 +77,41 @@ impl<R, J> AfootChange<R, J> {
     }
 }
 
+impl<R: Afloat<Id = ResidentId>, J: Afloat<Id = JobId>> AfootChange<R, J> {
+    /// This change and `later` as one: applying it does what applying this
+    /// and then `later` does. A member told late is told once.
+    pub fn then(mut self, later: Self) -> Self {
+        if later.anew {
+            return later;
+        }
+        for id in later.residents_gone {
+            self.residents.retain(|resident| resident.id() != id);
+            if !self.residents_gone.contains(&id) {
+                self.residents_gone.push(id);
+            }
+        }
+        for resident in later.residents {
+            let id = resident.id();
+            self.residents.retain(|kept| kept.id() != id);
+            self.residents_gone.retain(|gone| *gone != id);
+            self.residents.push(resident);
+        }
+        for id in later.jobs_gone {
+            self.jobs.retain(|job| job.id() != id);
+            if !self.jobs_gone.contains(&id) {
+                self.jobs_gone.push(id);
+            }
+        }
+        for job in later.jobs {
+            let id = job.id();
+            self.jobs.retain(|kept| kept.id() != id);
+            self.jobs_gone.retain(|gone| *gone != id);
+            self.jobs.push(job);
+        }
+        self
+    }
+}
+
 /// Something afoot, known by its id.
 pub trait Afloat {
     type Id: Ord + Clone;
