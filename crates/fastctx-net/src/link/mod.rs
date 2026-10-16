@@ -932,7 +932,12 @@ impl Inner {
         if changed {
             state::write(&self.dir.view(), &*view).map_err(|error| format!("keeping the view: {error}"))?;
             self.follow_addresses(&view);
-            *self.view.lock().expect("never poisoned") = Arc::from(view);
+            let mut current = self.view.lock().expect("never poisoned");
+            // Who came or went while it was being kept goes in with it: a
+            // change told meanwhile went into the view it replaces.
+            self.with_presences(&mut view);
+            *current = Arc::from(view);
+            drop(current);
             if let Some(this) = self.this.upgrade() {
                 this.follow_view();
             }

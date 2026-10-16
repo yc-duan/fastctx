@@ -256,6 +256,9 @@ impl State {
         }
         let Down::Afoot { machine, busy, change } = frame else {
             match at {
+                // A machine's presence counted earlier never replaces one
+                // counted later.
+                Some(at) if older_presence(&self.notices[at].1, &frame) => {}
                 Some(at) => self.notices[at].1 = Pending::Frame(frame),
                 None => self.notices.push_back((notice, Pending::Frame(frame))),
             }
@@ -325,6 +328,14 @@ impl State {
         };
         frame.map(|frame| Next::Frames(vec![frame]))
     }
+}
+
+/// Whether `frame` tells of a presence counted before the one `kept` tells of.
+fn older_presence(kept: &Pending, frame: &Down) -> bool {
+    matches!(
+        (kept, frame),
+        (Pending::Frame(Down::Presence { rev: kept, .. }), Down::Presence { rev, .. }) if rev < kept
+    )
 }
 
 /// The notice `frame` is, when it is one.

@@ -243,6 +243,9 @@ pub(crate) struct Hub {
     presence_changed: Arc<tokio::sync::Notify>,
     /// How many times who is online changed (`Hub::present`).
     presence: AtomicU64,
+    /// Held while a change in who is online is counted, looked at and
+    /// queued, so that of two at once the later counted is queued later.
+    presenting: Mutex<()>,
     /// What the hub counts for its health (`health`).
     health: health::Health,
 }
@@ -371,15 +374,18 @@ impl Hub {
     /// no call or transfer is cut; a session just come is told what is
     /// afoot.
     fn present(&self, name: &MachineName) {
-        let rev = self.presence.fetch_add(1, Ordering::SeqCst) + 1;
-        let online = self.online();
-        let readers: Vec<(MachineName, outq::Outq, bool)> = self
-            .sessions()
-            .iter()
-            .map(|(reader, session)| (reader.clone(), session.out.clone(), session.presence))
-            .collect();
         let mut older = false;
         {
+            // A change counted later is looked at later and queued later: a
+            // reader is never told an older state past a newer one.
+            let _presenting = self.presenting.lock().expect("never poisoned");
+            let rev = self.presence.fetch_add(1, Ordering::SeqCst) + 1;
+            let online = self.online();
+            let readers: Vec<(MachineName, outq::Outq, bool)> = self
+                .sessions()
+                .iter()
+                .map(|(reader, session)| (reader.clone(), session.out.clone(), session.presence))
+                .collect();
             let store = self.store();
             for (reader, out, reads) in readers {
                 if !reads {
@@ -566,6 +572,7 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         directory_changed: Arc::new(tokio::sync::Notify::new()),
         presence_changed: Arc::new(tokio::sync::Notify::new()),
         presence: AtomicU64::new(0),
+        presenting: Mutex::new(()),
         health: health::Health::default(),
     });
     tokio::spawn(health::keep(Arc::downgrade(&hub)));
