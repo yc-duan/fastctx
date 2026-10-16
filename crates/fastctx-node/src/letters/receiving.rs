@@ -7,10 +7,10 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
+use super::Identity;
 use fastctx_net::reassembly::{Buffer, Reservation};
 use fastctx_platform::{Permissions, ensure_private_dir, publish};
 use fastctx_types::remote::Letter;
-use fastctx_types::{MachineName, NoticeId};
 
 use crate::Node;
 
@@ -66,8 +66,7 @@ impl Completion {
 /// budget can be retried. Pieces are read only once all of them are kept.
 pub(crate) fn receive(
     node: &Node,
-    from: &MachineName,
-    id: &NoticeId,
+    identity: &Identity,
     index: usize,
     total: usize,
     text: &str,
@@ -78,18 +77,25 @@ pub(crate) fn receive(
     if text.is_empty() || text.len() > PART_BYTES {
         return Ok(Err(format!("a letter fragment must contain 1 to {PART_BYTES} bytes")));
     }
-    let name = crate::speech::fixed_id("letter", &[from.key(), id.as_str()]);
-    keep(node.world.path().join("letter-parts").join(name.as_str()), index, total, text)
+    keep(node.world.path().join("letter-parts"), identity, index, total, text)
 }
 
 /// Keeps piece `index` of `total` in `directory`, which holds that letter's.
 fn keep(
-    directory: PathBuf,
+    root: PathBuf,
+    identity: &Identity,
     index: usize,
     total: usize,
     text: &str,
 ) -> io::Result<Result<Option<(Letter, Completion)>, String>> {
+    let directory = root.join(identity.id.as_str());
     let active = Active::take(directory.clone())?;
+    if let Err(error) = identity.migrate_fragments(&root, STORED_BYTES) {
+        if error.kind() == io::ErrorKind::InvalidData {
+            return Ok(Err(error.to_string()));
+        }
+        return Err(error);
+    }
     ensure_private_dir(&directory)?;
     match read_bounded(&directory.join("done"), 32)? {
         Some(Ok(done)) if done == total.to_string().as_bytes() => {

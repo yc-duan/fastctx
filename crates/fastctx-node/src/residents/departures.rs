@@ -74,15 +74,21 @@ impl Departures {
     /// together. An ask has no letter, and keeps the last letters on record.
     /// Replaying an older departure cannot undo a subsequent ask or a return
     /// received through another hub.
-    pub fn set(&self, asker: &Address, departed: bool, letter: Option<(&str, &str)>) -> io::Result<bool> {
+    pub fn set(
+        &self,
+        asker: &Address,
+        departed: bool,
+        letter: Option<(&str, &crate::letters::Identity)>,
+    ) -> io::Result<bool> {
         let path = self.path(asker);
         let mut record = read::<Record>(&path)?.unwrap_or_default();
-        let repeated = letter.is_some_and(|(hub, id)| record.letters.get(hub).is_some_and(|last| last == id));
+        let repeated =
+            letter.is_some_and(|(_, identity)| record.letters.values().any(|last| identity.recognizes(last)));
         if !repeated {
             record.departed = departed;
-            if let Some((hub, id)) = letter {
-                record.letters.insert(hub.to_string(), id.to_string());
-            }
+        }
+        if let Some((hub, identity)) = letter {
+            record.letters.insert(hub.to_string(), identity.id.to_string());
         }
         // Publish even on replay: a prior attempt may have replaced the
         // file but failed its durability barrier.

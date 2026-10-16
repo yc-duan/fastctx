@@ -718,7 +718,7 @@ impl Residents {
         world: &WorldDir,
         asker: &Address,
         departed: bool,
-        letter: Option<(&str, &str)>,
+        letter: Option<(&str, &crate::letters::Identity)>,
     ) -> io::Result<()> {
         let mut state = self.lock();
         if state.departed.set(asker, departed, letter)? {

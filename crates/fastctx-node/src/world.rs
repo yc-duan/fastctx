@@ -642,9 +642,15 @@ struct Handler {
 }
 
 impl fastctx_net::link::Node for Handler {
-    fn place(&self, from: &Caller, pool: fastctx_types::contract::Pool) -> Result<Box<dyn Send>, Failure> {
+    fn place(
+        &self,
+        machine: &MachineName,
+        account: &fastctx_types::AccountName,
+        pool: fastctx_types::contract::Pool,
+    ) -> Result<Box<dyn Send>, Failure> {
         let node = self.node.upgrade().ok_or_else(|| Failure::new("the node is stopping"))?;
-        crate::intake::take(&node.machine(), &self.hub, from, pool).map(|place| Box::new(place) as Box<dyn Send>)
+        crate::intake::take(&node.machine(), &self.hub, machine, account, pool)
+            .map(|place| Box::new(place) as Box<dyn Send>)
     }
 
     fn answering(&self, call: &RemoteCall) -> Result<Option<Box<dyn Send>>, Failure> {
@@ -1002,13 +1008,7 @@ impl fastctx_net::link::Node for Handler {
         id: LetterId,
         letter: Letter,
     ) -> BoxFuture<io::Result<Result<(), String>>> {
-        let (from, sent_as) = (caller.machine.clone(), caller.sent_as.clone());
-        // What the letter carries is named here from who sent it and what
-        // they named it, never by a name from the letter itself: a letter
-        // that comes again is the same thing, and is not told twice. Its
-        // sender is named as it was sent, which a rename since does not
-        // change, as the letter's receipt is.
-        let delivery_id = crate::speech::fixed_id("letter", &[sent_as.key(), id.as_str()]);
+        let from = caller.machine.clone();
         let node = self.node.upgrade();
         let hub = self.hub.clone();
         Box::pin(async move {
@@ -1016,21 +1016,44 @@ impl fastctx_net::link::Node for Handler {
                 return Err(io::Error::other("the node is stopping"));
             };
             let _answering = node.handoff.call().ok_or_else(|| io::Error::other("the node is handing over"))?;
-            let (letter, delivery_id, completion) = match letter {
-                Letter::Fragment { id, index, total, text } => {
-                    match crate::letters::receive(&node, &sent_as, &id, index, total, &text)? {
-                        Ok(Some((letter, completion))) => {
-                            (letter, crate::speech::fixed_id("letter", &[sent_as.key(), id.as_str()]), Some(completion))
-                        }
+            let original = match &letter {
+                Letter::Fragment { id, .. } => id.as_str(),
+                _ => id.as_str(),
+            };
+            let identity = crate::letters::Identity::new(&node, caller.key, original, &caller.names);
+            let handoff = crate::letters::Handoff::begin(&node, &identity)?;
+            let finished = handoff.finished()?;
+            let (letter, completion) = match letter {
+                Letter::Fragment { index, total, text, .. } => {
+                    match crate::letters::receive(&node, &identity, index, total, &text)? {
+                        Ok(Some((letter, completion))) => (letter, Some(completion)),
                         Ok(None) => return Ok(Ok(())),
                         Err(reason) => return Ok(Err(reason)),
                     }
                 }
-                letter => (letter, delivery_id, None),
+                letter => (letter, None),
             };
+            if finished {
+                if let Some(completion) = completion {
+                    completion.finish()?;
+                }
+                return Ok(Ok(()));
+            }
             if let Err(refused) = crate::admission::letters::admit(&node, &hub, &caller, purpose, &letter) {
                 return Ok(Err(refused));
             }
+            let _completion_handoff = if matches!(&letter, Letter::Notice { notice, .. } if matches!(**notice, Notice::JobEnded { .. }))
+            {
+                Some(node.on_deliveries.draining.lock().await)
+            } else {
+                None
+            };
+            let delivery_id = match &letter {
+                Letter::Speak { to, .. } | Letter::Notice { to, .. } => {
+                    identity.delivery(&node.world.conversation(to))?
+                }
+                _ => identity.id.clone(),
+            };
             let result = async {
                 match letter {
                     Letter::Fragment { .. } => unreachable!("nested fragments are rejected"),
@@ -1044,7 +1067,7 @@ impl fastctx_net::link::Node for Handler {
                             crate::here::ended_elsewhere(&node, &to, machine, job);
                         }
                         let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
-                        if crate::on_delivery::park(&node, &to, &delivery)? {
+                        if crate::on_delivery::park_from(&node, &to, &delivery, Some(&identity))? {
                             return Ok(Ok(()));
                         }
                         match crate::speech::tell_here(&node, &to, delivery, Owed::Working).await {
@@ -1054,12 +1077,7 @@ impl fastctx_net::link::Node for Handler {
                     }
                     Letter::Speak { to, from: speaker, text, .. } => {
                         let address = Address { machine: from, resident: speaker };
-                        node.residents.set_departed(
-                            &node.world,
-                            &address,
-                            false,
-                            Some((hub.as_str(), &delivery_id)),
-                        )?;
+                        node.residents.set_departed(&node.world, &address, false, Some((hub.as_str(), &identity)))?;
                         let notice = Notice::Words { from: Speaker::Resident { address: address.clone() }, text };
                         let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
                         match crate::speech::tell_here(&node, &to, delivery, Owed::Speaker(address)).await {
@@ -1071,17 +1089,18 @@ impl fastctx_net::link::Node for Handler {
                         crate::colleagues::departed(
                             &node,
                             Address { machine: from, resident },
-                            (hub.as_str(), &delivery_id),
+                            (hub.as_str(), &identity),
                         )?;
                         Ok(Ok(()))
                     }
                 }
             }
             .await;
-            if matches!(result, Ok(Ok(())))
-                && let Some(completion) = completion
-            {
-                completion.finish()?;
+            if matches!(result, Ok(Ok(()))) {
+                handoff.finish()?;
+                if let Some(completion) = completion {
+                    completion.finish()?;
+                }
             }
             result
         })

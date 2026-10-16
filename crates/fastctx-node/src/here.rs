@@ -239,6 +239,7 @@ pub(crate) async fn run(
     };
     let (script, started_at) = (request.script.clone(), jiff::Timestamp::now());
     let call = RemoteCall::Run { resident: resident.clone(), town: town.clone(), request };
+    let source = crate::letters::Identity::at(node, to, "");
     let answer = node.call(&acting, to, Purpose::Hands, call);
     tokio::pin!(answer);
     let (mut told, mut stopping) = (false, false);
@@ -283,9 +284,19 @@ pub(crate) async fn run(
     };
     if let Some(consumed) = &reply.consumed {
         crate::job_receipts::apply_consumed(&directory, consumed).map_err(|error| Failure::new(error.to_string()))?;
-        for id in consumed.iter().filter(|id| !id.as_str().starts_with("letter-")) {
-            let letter = crate::speech::fixed_id("letter", &[reply.machine.key(), id.as_str()]);
-            crate::inbox::consume(&directory, &letter).map_err(|error| Failure::new(error.to_string()))?;
+        if consumed.iter().any(|id| !id.as_str().starts_with("letter-")) {
+            let source = source.map_err(|error| Failure::new(error.to_string()))?;
+            let current =
+                crate::letters::Identity::at(node, to, "").map_err(|error| Failure::new(error.to_string()))?;
+            if !source.same_computer(&current) {
+                return Err(Failure::new("the job computer's identity changed while its answer was in flight"));
+            }
+            for id in consumed.iter().filter(|id| !id.as_str().starts_with("letter-")) {
+                source
+                    .with_id(node, id.as_str())
+                    .consume(&directory)
+                    .map_err(|error| Failure::new(error.to_string()))?;
+            }
         }
     }
     if reply.state != RunState::Running {

@@ -1,7 +1,11 @@
 //! Large letters retain their exact JSON text across independently durable
 //! transport frames. A recipient applies the reconstructed letter once.
 
+mod delivered;
+mod identity;
 mod receiving;
+pub(crate) use delivered::Handoff;
+pub(crate) use identity::Identity;
 
 pub(crate) use receiving::receive;
 

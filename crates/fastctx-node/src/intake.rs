@@ -11,7 +11,7 @@ use std::hash::Hash;
 use std::sync::{LazyLock, Mutex};
 
 use fastctx_net::ids::HubId;
-use fastctx_net::link::Caller;
+
 use fastctx_types::contract::Pool;
 use fastctx_types::ipc::Failure;
 use fastctx_types::{AccountName, MachineName};
@@ -66,17 +66,23 @@ pub(crate) struct Place {
 
 /// Takes a place of the kind `pool` on `me` for a call that came from
 /// `from` through the hub `hub`, or says why there is none.
-pub(crate) fn take(me: &MachineName, hub: &HubId, from: &Caller, pool: Pool) -> Result<Place, Failure> {
+pub(crate) fn take(
+    me: &MachineName,
+    hub: &HubId,
+    machine: &MachineName,
+    account: &AccountName,
+    pool: Pool,
+) -> Result<Place, Failure> {
     let bounds = bounds(pool);
-    let by_machine = (pool, hub.clone(), from.machine.clone());
-    let by_account = (pool, hub.clone(), from.account.clone());
+    let by_machine = (pool, hub.clone(), machine.clone());
+    let by_account = (pool, hub.clone(), account.clone());
     let mut taken = TAKEN.lock().expect("never poisoned");
     let full = |what: String| Failure::not_run(format!("{me} is answering {what} already; ask again in a moment"));
     if count(&taken.machines, &by_machine) >= bounds.machine {
-        return Err(full(format!("{} {} from {}", bounds.machine, called(pool), from.machine)));
+        return Err(full(format!("{} {} from {}", bounds.machine, called(pool), machine)));
     }
     if count(&taken.accounts, &by_account) >= bounds.account {
-        return Err(full(format!("{} {} for {}", bounds.account, called(pool), from.account)));
+        return Err(full(format!("{} {} for {}", bounds.account, called(pool), account)));
     }
     if count(&taken.all, &pool) >= bounds.all {
         return Err(full(format!("{} {}", bounds.all, called(pool))));
@@ -84,7 +90,7 @@ pub(crate) fn take(me: &MachineName, hub: &HubId, from: &Caller, pool: Pool) -> 
     *taken.machines.entry(by_machine).or_insert(0) += 1;
     *taken.accounts.entry(by_account).or_insert(0) += 1;
     *taken.all.entry(pool).or_insert(0) += 1;
-    Ok(Place { pool, hub: hub.clone(), machine: from.machine.clone(), account: from.account.clone() })
+    Ok(Place { pool, hub: hub.clone(), machine: machine.clone(), account: account.clone() })
 }
 
 fn count<K: Eq + Hash>(counts: &HashMap<K, usize>, key: &K) -> usize {

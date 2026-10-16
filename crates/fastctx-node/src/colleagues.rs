@@ -633,7 +633,7 @@ pub fn left(node: &Arc<Node>, resident: ResidentId) {
 }
 
 /// A resident of another machine that asked for colleagues here left.
-pub fn departed(node: &Node, asker: Address, letter: (&str, &str)) -> std::io::Result<()> {
+pub fn departed(node: &Node, asker: Address, letter: (&str, &crate::letters::Identity)) -> std::io::Result<()> {
     node.residents.set_departed(&node.world, &asker, true, Some(letter))
 }
 

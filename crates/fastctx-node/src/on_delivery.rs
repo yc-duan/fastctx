@@ -23,7 +23,7 @@ type Job = (Address, MachineName, JobId, Option<NoticeId>);
 #[derive(Default)]
 pub(crate) struct Deliveries {
     state: Mutex<State>,
-    draining: crate::ranked::Draining,
+    pub(crate) draining: crate::ranked::Draining,
 }
 
 #[derive(Default)]
@@ -195,25 +195,64 @@ fn held(state: &State, to: &Address, machine: &MachineName, job: &JobId, request
 /// Called after admission, before ordinary inbox delivery. A successful
 /// return may be acknowledged to the sender, even if the node now stops.
 pub(crate) fn park(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> io::Result<bool> {
+    park_from(node, to, delivery, None)
+}
+
+pub(crate) fn park_from(
+    node: &Arc<Node>,
+    to: &ResidentId,
+    delivery: &Delivery,
+    sender: Option<&crate::letters::Identity>,
+) -> io::Result<bool> {
     let Notice::JobEnded { job, machine, request, follower, taken, .. } = &delivery.notice else { return Ok(false) };
     let state = node.on_deliveries.state.lock().expect("never poisoned");
     let path = receipt(node, &node.machine(), to, machine, job, request.as_ref());
     if *taken {
         ensure_private_dir(path.parent().expect("receipt directory"))?;
         publish(&path, b"", Permissions::Private)?;
-        let owner = Address { machine: node.machine(), resident: to.clone() };
         if !node.residents.knows(to) {
             return Err(io::Error::other("the completion owner is unknown"));
         }
         let directory = node.world.conversation(to);
-        let id = crate::inbox::end_id(&owner, machine, job, request.as_ref());
-        crate::inbox::consume(&directory, &id)?;
-        let letter = crate::speech::fixed_id("letter", &[machine.key(), id.as_str()]);
-        crate::inbox::consume(&directory, &letter)?;
+        let local;
+        let sender = match sender {
+            Some(sender) => sender,
+            None if node.is_me(machine) => {
+                local = crate::letters::Identity::local(node, "")?;
+                &local
+            }
+            None => return Err(io::Error::other("a remote completion receipt requires its sender identity")),
+        };
+        for owner in local_owners(node, to) {
+            let id = crate::inbox::end_id(&owner, machine, job, request.as_ref());
+            crate::inbox::consume(&directory, &id)?;
+            sender.with_id(node, id.as_str()).consume(&directory)?;
+        }
         return Ok(true);
     }
-    if receipt_exists(node, &path)? || stopped(node, to, machine, request.as_ref())? {
+    if stopped(node, to, machine, request.as_ref())? {
         return Ok(true);
+    }
+    for owner in local_owners(node, to) {
+        let previous = receipt(node, &owner.machine, to, machine, job, request.as_ref());
+        if receipt_exists(node, &previous)? {
+            return Ok(true);
+        }
+        if sender.is_some()
+            && let Some(parked) = fastctx_install::renewal::read_json::<Parked>(&previous.with_extension("json"))?
+        {
+            if parked.to != *to || parked.delivery.notice != delivery.notice {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("the held completion changed: {}", previous.display()),
+                ));
+            }
+            // Preserve beta.2's delivery identity until its original handoff finishes.
+            let bytes = serde_json::to_vec(&parked).map_err(io::Error::other)?;
+            publish(&previous.with_extension("json"), &bytes, Permissions::Private)?;
+            resume(node);
+            return Ok(true);
+        }
     }
     let owner = Address { machine: node.machine(), resident: to.clone() };
     let nested = follower.as_ref().is_some_and(|follower| !node.is_me(follower));
@@ -231,6 +270,11 @@ pub(crate) fn park(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> io
         resume(node);
     }
     Ok(true)
+}
+
+fn local_owners(node: &Node, to: &ResidentId) -> Vec<Address> {
+    let names = node.machine_names();
+    std::iter::once(names.name).chain(names.was).map(|machine| Address { machine, resident: to.clone() }).collect()
 }
 
 /// Startup and follower departure both release durable, unclaimed letters.

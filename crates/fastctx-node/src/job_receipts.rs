@@ -369,8 +369,9 @@ pub(crate) fn wait_taken(
                 },
             )?;
             let id = crate::inbox::job_notice_id(&record);
-            let letter = crate::speech::fixed_id("letter", &[record.machine.key(), id.as_str()]);
-            inherit_consumed(parent, &[id, letter])?;
+            let identity = crate::letters::Identity::local(node, id.as_str())?;
+            let consumed: Vec<_> = std::iter::once(id).chain(identity.ids().cloned()).collect();
+            inherit_consumed(parent, &consumed)?;
         } else {
             received_here(
                 node,
@@ -552,8 +553,8 @@ fn snapshot_here(
                             } else {
                                 id.parse().map_err(io::Error::other)?
                             };
-                            let letter = crate::speech::fixed_id("letter", &[target.machine.key(), id.as_str()]);
-                            for receipt in [id, letter] {
+                            let identity = crate::letters::Identity::local(node, id.as_str())?;
+                            for receipt in std::iter::once(id).chain(identity.ids().cloned()) {
                                 if !receipts.contains(&receipt) {
                                     receipts.push(receipt);
                                 }

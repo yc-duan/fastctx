@@ -467,7 +467,8 @@ impl Inner {
     /// longest id and count it could carry.
     pub(super) fn letter_size(&self, to: &MachineName, account: &AccountName, letter: &Letter) -> usize {
         let message = self.letter(to, account, Purpose::Words, u64::MAX, LetterId::longest(), letter.clone());
-        wire::encode(&Up::Send { seq: u64::MAX, message }).len()
+        let rename_room = 64usize.saturating_sub(message.from.as_str().len());
+        wire::encode(&Up::Send { seq: u64::MAX, message }).len() + rename_room
     }
 
     fn letter(

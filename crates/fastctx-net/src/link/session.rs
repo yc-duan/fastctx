@@ -921,10 +921,9 @@ async fn take_letter(inner: &Inner, message: &Envelope) -> std::io::Result<()> {
         Err(error) => return set_aside(format!("from {}: {error}", message.from)),
     };
     let digest = crate::sign::Digest(sha256(&serde_json::to_vec(&letter).expect("letters serialize")));
-    // Receipts go by the name the letter was sent under, which it is sent
-    // under again: a sender renamed since still sends it so.
-    let sender = &message.from;
-    match letters::receipt(&inner.dir, sender, &id)? {
+    // Receipts and business delivery now share the admitted computer's identity.
+    let sender = caller.key;
+    match letters::receipt(&inner.dir, &sender, &caller.names, &id)? {
         Some(receipt) if receipt.digest == digest => return Ok(()),
         Some(_) => {
             return set_aside(format!(
@@ -939,5 +938,5 @@ async fn take_letter(inner: &Inner, message: &Envelope) -> std::io::Result<()> {
     if let Err(reason) = inner.node.letter(caller, purpose, id.clone(), letter).await? {
         set_aside(format!("from {from}: {reason}"))?;
     }
-    letters::keep_receipt(&inner.dir, sender, &id, &Receipt { digest, at: Timestamp::now() })
+    letters::keep_receipt(&inner.dir, &sender, &id, &Receipt { digest, at: Timestamp::now() })
 }

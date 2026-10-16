@@ -79,8 +79,11 @@ pub struct Caller {
     /// The member, by its name now.
     pub machine: MachineName,
     pub account: AccountName,
-    /// The name it was sent under, which a letter sent before a rename keeps
-    /// every time it is sent again: what was taken of it is known by this.
+    /// The admitted computer's immutable public identity.
+    pub key: PublicKey,
+    /// Its known names, retained only for older stored records.
+    pub names: Vec<MachineName>,
+    /// The original envelope name, used only to admit older message bodies.
     pub sent_as: MachineName,
 }
 
@@ -91,8 +94,13 @@ pub trait Node: Send + Sync + 'static {
     /// waits on it; or says why there is none: this machine is answering as
     /// many of that kind as it takes. The place is let go when the guard is
     /// dropped.
-    fn place(&self, from: &Caller, pool: Pool) -> Result<Box<dyn Send>, fastctx_types::ipc::Failure> {
-        let _ = (from, pool);
+    fn place(
+        &self,
+        machine: &MachineName,
+        account: &AccountName,
+        pool: Pool,
+    ) -> Result<Box<dyn Send>, fastctx_types::ipc::Failure> {
+        let _ = (machine, account, pool);
         Ok(Box::new(()))
     }
     /// Admits a call and keeps its work alive through writing the reply,
@@ -1015,8 +1023,14 @@ impl Inner {
             (Kind::Letter, Purpose::Echo) => view.admits_echo(&envelope.from, account, &view.me),
             _ => view.admits(&envelope.from, account, &view.me, purpose),
         }?;
-        let machine = view.canonical(&envelope.from).clone();
-        Ok(Caller { machine, account: account.clone(), sent_as: envelope.from.clone() })
+        let member = view.member(&envelope.from).ok_or("the admitted sender has no directory identity")?;
+        let machine = member.name.clone();
+        let mut names = member.was.clone();
+        names.push(machine.clone());
+        names.push(envelope.from.clone());
+        names.sort();
+        names.dedup();
+        Ok(Caller { machine, account: account.clone(), key: member.key, names, sent_as: envelope.from.clone() })
     }
 
     async fn ask(&self, question: Question) -> Result<Told, String> {

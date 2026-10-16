@@ -50,6 +50,14 @@ pub fn keep(directory: &ConversationDir, pending: &Pending) -> io::Result<bool> 
     }
 }
 
+/// Whether durable business custody already exists under this delivery id.
+pub(crate) fn knows(directory: &ConversationDir, id: &NoticeId) -> io::Result<bool> {
+    let _transaction = crate::resident_storage::lock();
+    Ok(delivered_here(directory, id)?
+        || path(directory, id).try_exists()?
+        || directory.uncertain().join(format!("{id}.json")).try_exists()?)
+}
+
 /// Retains words whose host acceptance cannot be established.
 pub fn retain_uncertain(directory: &ConversationDir, pending: &Pending) -> io::Result<()> {
     let _transaction = crate::resident_storage::lock();
