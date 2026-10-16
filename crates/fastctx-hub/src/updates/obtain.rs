@@ -28,8 +28,9 @@ const STALLED: Duration = Duration::from_secs(5 * 60);
 const DOWNLOAD_PATIENCE: Duration = Duration::from_secs(20 * 60);
 
 /// How long bringing one package in may take in all, however it is
-/// brought: as long as whoever asks for it waits (`fastctx_net::link`).
-const BUDGET: Duration = Duration::from_secs(45 * 60);
+/// brought, giving its last try up included: within the 45 minutes whoever
+/// asks for it waits (`fastctx_net::link`), so that it hears why.
+const BUDGET: Duration = Duration::from_secs(43 * 60);
 
 /// How long a try given up has to end its transfer before the next starts.
 const SETTLE: Duration = Duration::from_secs(30);
@@ -109,19 +110,21 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
     let mut failures = Vec::new();
     let deadline = Instant::now() + BUDGET;
     if let Some(url) = &package.url {
-        let incoming = cache.attempt(&held.version, &held.target, hub.next())?;
+        let incoming = Leftover(cache.attempt(&held.version, &held.target, hub.next())?);
         let patience = DOWNLOAD_PATIENCE.min(deadline.saturating_duration_since(Instant::now()));
         let mut quiet = |_, _| {};
-        let downloaded = tokio::time::timeout(patience, fastctx_update::download::from_url(url, &incoming, &mut quiet));
+        let downloaded =
+            tokio::time::timeout(patience, fastctx_update::download::from_url(url, &incoming.0, &mut quiet));
         match downloaded.await {
-            Ok(Ok(())) => match super::transfer::take_in(hub, &cache, &manifest, &held.target, &incoming).await {
-                Ok(size) => return Ok(size),
-                Err(why) => failures.push(why),
-            },
+            Ok(Ok(())) => {
+                match super::transfer::take_in(hub, &cache, &manifest, &held.target, &incoming.0, || true).await {
+                    Ok(size) => return Ok(size),
+                    Err(why) => failures.push(why),
+                }
+            }
             Ok(Err(why)) => failures.push(why),
             Err(_) => failures.push(format!("downloading it took more than {} minutes", patience.as_secs() / 60)),
         }
-        let _ = std::fs::remove_file(&incoming);
     }
     let mut tried = Vec::new();
     while let Some((helper, generation)) = choose(hub, held, &tried) {
@@ -141,6 +144,7 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
             attempt: attempt.clone(),
         };
         hub.updates.lock().expect("never poisoned").fetches.insert(id, fetching);
+        let _asking = Asking { hub, id, attempt: attempt.clone() };
         let fetch = Fetch { id, version: held.version.clone(), target: held.target.clone(), package: package.clone() };
         let sent = hub
             .sessions()
@@ -154,15 +158,23 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
             Err("it left before it was asked".to_string())
         };
         // The try is over before the next begins: its transfer is told to
-        // stop and given a moment to, and what it left is deleted. One that
-        // does not end in that moment can no longer put its package in
-        // place, and deletes what it left itself.
+        // stop and given a moment to, and what it left is deleted. One with
+        // the whole package checks it and puts it in place within what is
+        // left of the budget. One that does not end in time can no longer
+        // put its package in place, and deletes what it left itself; one
+        // putting it in place then finishes.
         attempt.give_up();
-        if tokio::time::timeout(SETTLE, attempt.ended()).await.is_err() {
+        let settle = match attempt.keeping() {
+            true => deadline.max(Instant::now() + SETTLE),
+            false => Instant::now() + SETTLE,
+        };
+        if tokio::time::timeout_at(settle, attempt.ended()).await.is_err() {
             hub.log.line(format_args!(
-                "the transfer from {helper} did not end within {} s of being stopped",
-                SETTLE.as_secs()
+                "the transfer from {helper} did not end in time; it may no longer put its package in place"
             ));
+            if !attempt.revoke() {
+                attempt.ended().await;
+            }
         }
         hub.updates.lock().expect("never poisoned").fetches.remove(&id);
         if attempt.is_over()
@@ -170,13 +182,12 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
         {
             let _ = std::fs::remove_file(left);
         }
+        // Whatever its machine said, what it brought may be in place now.
+        if let Some(size) = size_of(&cache, held)? {
+            return Ok(size);
+        }
         match outcome {
-            Ok(()) => {
-                if let Some(size) = size_of(&cache, held)? {
-                    return Ok(size);
-                }
-                failures.push(format!("{helper} delivered, but the package is not here"));
-            }
+            Ok(()) => failures.push(format!("{helper} delivered, but the package is not here")),
             Err(why) => failures.push(format!("{helper}: {why}")),
         }
     }
@@ -201,12 +212,21 @@ async fn watch_attempt(
     let mut seen: Option<u64> = None;
     let mut moved = started;
     loop {
-        let look = (Instant::now() + Duration::from_secs(15)).min(patience);
+        // Once it has the whole package, only the budget counts while the
+        // hub checks it.
+        let until = if attempt.keeping() { deadline } else { patience };
+        let look = (Instant::now() + Duration::from_secs(15)).min(until);
         tokio::select! {
             outcome = &mut delivered => return outcome.unwrap_or_else(|_| Err("the request was dropped".to_string())),
             () = tokio::time::sleep_until(look) => {}
         }
         let now = Instant::now();
+        if attempt.keeping() {
+            if now >= deadline {
+                return Err("checking what it brought took the rest of the budget".to_string());
+            }
+            continue;
+        }
         if attempt.moving() || seen.is_some() {
             let brought = attempt.brought.load(Ordering::Relaxed);
             if seen != Some(brought) {
@@ -223,6 +243,33 @@ async fn watch_attempt(
                 patience.duration_since(started).as_secs() / 60
             ));
         }
+    }
+}
+
+/// A package's file coming in, deleted however bringing it in ends; one
+/// kept was moved into place first.
+struct Leftover(std::path::PathBuf);
+
+impl Drop for Leftover {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// A try asked of a machine, given up however bringing the package in ends,
+/// as when it runs out of time: its transfer stops, a package it checks is
+/// not put in place, and its request is forgotten.
+struct Asking<'a> {
+    hub: &'a Hub,
+    id: u64,
+    attempt: Arc<Attempt>,
+}
+
+impl Drop for Asking<'_> {
+    fn drop(&mut self) {
+        self.attempt.give_up();
+        self.attempt.revoke();
+        self.hub.updates.lock().expect("never poisoned").fetches.remove(&self.id);
     }
 }
 

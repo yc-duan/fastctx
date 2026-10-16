@@ -69,8 +69,8 @@ pub(super) struct Attempt {
     /// Numbers the try's file (`fastctx_update::Cache::attempt`).
     id: u64,
     /// Where it stands: every change is one step of this, so a transfer
-    /// cannot start once the try is given up, nor be given up once it puts
-    /// its package in place.
+    /// cannot start once the try is given up, a package checked after it was
+    /// given up is not put in place, and one being put in place finishes.
     state: tokio::sync::watch::Sender<Try>,
     /// The bytes it brought so far, which say whether it moves.
     brought: std::sync::atomic::AtomicU64,
@@ -85,8 +85,10 @@ pub(super) enum Try {
     Running,
     /// Given up while its transfer runs: the transfer stops.
     Stopping,
-    /// It has the whole package and puts it in place, which it finishes.
+    /// It has the whole package and checks it.
     Keeping,
+    /// It checked its package and puts it in place, which it finishes.
+    Committing,
     /// Over: given up, failed, or kept.
     Over,
 }
@@ -102,10 +104,16 @@ impl Attempt {
         self.step(Try::Asked, Try::Running)
     }
 
-    /// Its transfer has the whole package: whether it may put it in place,
-    /// not given up meanwhile.
+    /// Its transfer has the whole package: whether it may check it, not
+    /// given up meanwhile.
     pub(super) fn keep(&self) -> bool {
         self.step(Try::Running, Try::Keeping)
+    }
+
+    /// Its package is checked: whether it may put it in place, its right to
+    /// not taken back meanwhile (`revoke`).
+    pub(super) fn commit(&self) -> bool {
+        self.step(Try::Keeping, Try::Committing)
     }
 
     fn step(&self, from: Try, to: Try) -> bool {
@@ -123,8 +131,23 @@ impl Attempt {
         self.state.send_replace(Try::Over);
     }
 
+    /// Takes back the right of a try given up to put its package in place
+    /// while it still checks it, which makes it over: whether it is over
+    /// now, false while it puts its package in place.
+    pub(super) fn revoke(&self) -> bool {
+        self.state.send_if_modified(|state| {
+            let revoked = *state == Try::Keeping;
+            if revoked {
+                *state = Try::Over;
+            }
+            revoked
+        });
+        *self.state.borrow() != Try::Committing
+    }
+
     /// Gives the try up: one not begun is over at once, a transfer running
-    /// is told to stop, and one putting its package in place finishes.
+    /// is told to stop, and one with the whole package goes on to check it
+    /// and put it in place, unless that right is taken back.
     pub(super) fn give_up(&self) {
         self.state.send_if_modified(|state| {
             let next = match *state {
@@ -150,7 +173,12 @@ impl Attempt {
 
     /// Whether a transfer of it runs.
     pub(super) fn moving(&self) -> bool {
-        matches!(*self.state.borrow(), Try::Running | Try::Stopping | Try::Keeping)
+        matches!(*self.state.borrow(), Try::Running | Try::Stopping | Try::Keeping | Try::Committing)
+    }
+
+    /// Whether it has the whole package, which it checks or puts in place.
+    pub(super) fn keeping(&self) -> bool {
+        matches!(*self.state.borrow(), Try::Keeping | Try::Committing)
     }
 
     pub(super) fn is_over(&self) -> bool {

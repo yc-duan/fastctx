@@ -271,9 +271,12 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Attempt
         () = attempt.stopping() => Err("the hub gave this request up and asked another machine".to_string()),
     };
     // A try given up before it had its last byte does not put its package
-    // in place: the next try owns that. Once it has them, it finishes.
+    // in place: the next try owns that. Once it has them, it checks them,
+    // and puts them in place unless the hub took that right back meanwhile.
     let kept = match received {
-        Ok(()) if attempt.keep() => take_in(hub, &cache, &manifest, &held.target, &incoming).await.map(|_| ()),
+        Ok(()) if attempt.keep() => {
+            take_in(hub, &cache, &manifest, &held.target, &incoming, || attempt.commit()).await.map(|_| ())
+        }
         Ok(()) => Err("the hub gave this request up and asked another machine".to_string()),
         Err(why) => Err(why),
     };
@@ -289,14 +292,16 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Attempt
     kept
 }
 
-/// Checks the package that came to `incoming` and keeps it, telling every
-/// machine the hub holds it; its size.
+/// Checks the package that came to `incoming` and keeps it, if `may_keep`
+/// still says it may once it is checked, telling every machine the hub holds
+/// it; its size.
 pub(super) async fn take_in(
     hub: &Arc<Hub>,
     cache: &fastctx_update::Cache,
     manifest: &Manifest,
     target: &str,
     incoming: &Path,
+    may_keep: impl FnOnce() -> bool,
 ) -> Result<u64, String> {
     let package = manifest.package(target).ok_or("the release has no such package")?;
     let (path, signature, version) = (incoming.to_path_buf(), package.signature.clone(), manifest.version.clone());
@@ -308,6 +313,10 @@ pub(super) async fn take_in(
             return Err(why);
         }
         Err(error) => return Err(error.to_string()),
+    }
+    if !may_keep() {
+        let _ = std::fs::remove_file(incoming);
+        return Err("the hub gave this request up while it checked the package".to_string());
     }
     cache.keep_manifest(manifest)?;
     let path = cache.keep(&manifest.version, target, incoming)?;
