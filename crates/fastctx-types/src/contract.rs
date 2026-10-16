@@ -44,6 +44,10 @@ pub enum Pool {
     Stream,
     /// Stopping, interrupting, and the facts that say a machine is there.
     Control,
+    /// A call too large for one message while its bytes come, before what
+    /// it is is known: bounded on its own, so slow uploads keep out no
+    /// question.
+    Receiving,
 }
 
 impl Contract {
@@ -58,6 +62,12 @@ impl Contract {
         Self { within: Some(Duration::from_secs(300)), pool: Pool::Short, cancellable: false, held: true };
     /// Work that answers once it is done, however long that takes.
     const LONG: Self = Self { within: None, pool: Pool::Long, cancellable: false, held: true };
+    /// Running a script there, which answers within the longest a run
+    /// waits (ten minutes, `fastctx_hands::run::LONGEST_WAIT`), the job going
+    /// on there past that.
+    const RUN: Self = Self { within: Some(Duration::from_secs(12 * 60)), ..Self::LONG };
+    /// Starting a colleague there, which answers once it is started.
+    const START: Self = Self { within: Some(Duration::from_secs(300)), ..Self::LONG };
     /// Bringing a release there and handing it to the renewal, which
     /// answers once the program is there, from GitHub or through the hub:
     /// waited for an hour at most, while the update goes on and is asked
@@ -131,7 +141,8 @@ impl RemoteCall {
                     | UpdateCall::Choose { .. },
             } => Contract::CHANGE,
             Self::UpdateWorld | Self::Updates { update: UpdateCall::Kernel { .. } } => Contract::UPDATE,
-            Self::Run { .. } | Self::Ask { .. } => Contract::LONG,
+            Self::Run { .. } => Contract::RUN,
+            Self::Ask { .. } => Contract::START,
             Self::On { .. }
             | Self::PipeOut { .. }
             | Self::Follow { .. }

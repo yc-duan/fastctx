@@ -179,19 +179,32 @@ impl Inner {
                 (message, Side::Sending(task))
             }
         };
-        let routed = self.route(&via, to, n, message, side, &mut feed);
-        let reply = match contract.within {
-            Some(within) => match fastctx_platform::doing::outside(what, within, routed).await {
-                Ok(reply) => reply?,
-                Err(late) => {
-                    return Err(CallFailure::Unknown {
-                        name: to.clone(),
-                        reason: format!("it gave no answer within {} s", late.within.as_secs()),
-                    });
-                }
-            },
-            None => routed.await?,
+        // The answer, a large one fetched too, within the one time the call
+        // is waited for.
+        let answered = async {
+            let reply = self.route(&via, to, n, message, side, &mut feed).await?;
+            self.answer_of(&via, to, reply).await
         };
+        match contract.within {
+            Some(within) => match fastctx_platform::doing::outside(what, within, answered).await {
+                Ok(answer) => answer,
+                Err(late) => Err(CallFailure::Unknown {
+                    name: to.clone(),
+                    reason: format!("it gave no answer within {} s", late.within.as_secs()),
+                }),
+            },
+            None => answered.await,
+        }
+    }
+
+    /// What `reply`, from `to`, says of the call it answers; a large answer
+    /// fetched over the data connection it names.
+    async fn answer_of(
+        self: &Arc<Self>,
+        via: &Via,
+        to: &MachineName,
+        reply: Envelope,
+    ) -> Result<RemoteResult, CallFailure> {
         let broken = |reason: String| CallFailure::Unknown { name: to.clone(), reason };
         match reply.kind {
             Kind::Refused => {
@@ -200,7 +213,7 @@ impl Inner {
             }
             Kind::Answer => match reply.body::<Body>() {
                 Ok(Body::Answer { result }) => Ok(result),
-                Ok(Body::LargeAnswer { carried }) => self.fetch(&via, to, &reply, &carried).await.map_err(|reason| {
+                Ok(Body::LargeAnswer { carried }) => self.fetch(via, to, &reply, &carried).await.map_err(|reason| {
                     broken(format!("its answer was too large for a message, and fetching it failed: {reason}"))
                 }),
                 Ok(_) => Err(broken("what came back is not an answer".to_string())),

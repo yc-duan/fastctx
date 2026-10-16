@@ -32,6 +32,7 @@ fn bounds(pool: Pool) -> Bounds {
         Pool::Long => Bounds { machine: 64, account: 128, all: 256 },
         Pool::Stream => Bounds { machine: 128, account: 256, all: 1024 },
         Pool::Control => Bounds { machine: 32, account: 64, all: 256 },
+        Pool::Receiving => Bounds { machine: 16, account: 32, all: 64 },
     }
 }
 
@@ -42,6 +43,7 @@ fn called(pool: Pool) -> &'static str {
         Pool::Long => "long-running calls",
         Pool::Stream => "streams",
         Pool::Control => "control calls",
+        Pool::Receiving => "large calls coming in",
     }
 }
 

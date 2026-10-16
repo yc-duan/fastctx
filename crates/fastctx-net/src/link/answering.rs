@@ -149,10 +149,10 @@ async fn work(
         Err(error) => return Some(refused(format!("{error}; a newer Fastctx may make calls this one does not know"))),
     };
     // A large call's own kind is known only once it is in: it comes in in
-    // a short place, and then takes its own.
+    // a place for calls coming in, and then takes its own.
     let pool = match &body {
         Body::Call { call } | Body::StreamCall { call } => call.contract().pool,
-        Body::LargeCall { .. } | Body::Answer { .. } | Body::LargeAnswer { .. } => Pool::Short,
+        Body::LargeCall { .. } | Body::Answer { .. } | Body::LargeAnswer { .. } => Pool::Receiving,
     };
     let mut place = match inner.node.place(caller, pool) {
         Ok(place) => place,
