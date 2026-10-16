@@ -123,12 +123,27 @@ class Lab:
         return done.returncode, done.stdout.decode("utf-8", "replace") + done.stderr.decode("utf-8", "replace")
 
     def start_node(self):
+        """Starts this lab's node; whether it is the one that took the World. No command asks it
+        anything before some node listens, as a command that found none would start one of its own,
+        with the user's environment and not this lab's."""
         if self.ending.is_set():
             raise RuntimeError("the drill is ending; no new node can start")
+        listened = self.listened()
         with open(self.root / "node.out", "ab") as log:
             self.node = subprocess.Popen([str(self.program), "node"], env=self.env(), stdout=log,
                                          stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+        until("a node listens", lambda: self.listened() > listened or self.node.poll() is not None, limit=60)
+        if self.node.poll() is not None:
+            return False
         until("the node answers", lambda: self.run("w", timeout=20)[0] == 0, limit=60)
+        return self.node.poll() is None
+
+    def listened(self):
+        """How many times a node of this lab began to listen."""
+        try:
+            return self.node_log().count("listening at ")
+        except FileNotFoundError:
+            return 0
 
     def node_pids(self):
         """Every node of this lab: the one started here, or one a command started from the World's own
@@ -219,23 +234,33 @@ class Lab:
 
     def restart(self):
         """Ends the node and starts this lab's again at once. A command still running when the node went
-        may have started one of its own before this one was up, with the user's environment: it is ended
-        too, until the node is this lab's."""
+        may start one of its own as this one comes up, with the user's environment: one that lost the
+        World to this lab's ends by itself; one that took it is ended, and this lab's started again,
+        until the node is this lab's."""
         with self.lock:
             self.restarter = threading.current_thread()
             self.restarting.set()
             self.generation += 1
             try:
-                for _ in range(5):
+                deadline = time.monotonic() + 120
+                while True:
                     self.end_node()
-                    self.start_node()
-                    if not self.foreign_nodes():
+                    if self.start_node() and self.settled():
                         break
-                else:
-                    raise RuntimeError("a node started by a command kept taking this lab's World")
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("a node started by a command kept taking this lab's World")
             finally:
                 time.sleep(2)
                 self.restarting.clear()
+
+    def settled(self):
+        """Whether this lab's node serves alone, once a node a command started has had time to end."""
+        give_up = time.monotonic() + 10
+        while self.foreign_nodes():
+            if time.monotonic() >= give_up or self.node.poll() is not None:
+                return False
+            time.sleep(0.5)
+        return self.node.poll() is None
 
     def foreign_nodes(self):
         """Nodes of this lab's program a command started (`fastctx node --dir`), not this lab."""
@@ -567,7 +592,8 @@ def main():
     try:
         mock = Mock()
         lab = Lab(args.program, args.codex, root, mock)
-        lab.start_node()
+        if not lab.start_node():
+            raise RuntimeError("this lab's node did not take its World")
         code, out = lab.run("apply", "--target", "codex", "--home", str(lab.codex_home), timeout=180)
         if not check("the Codex login gets the World's tools", code == 0, out):
             return 1

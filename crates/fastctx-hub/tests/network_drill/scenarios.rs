@@ -217,7 +217,11 @@ pub async fn restart(world: &World, report: &mut Report) -> anyhow::Result<()> {
         amid += usize::from(gamma.lab.got().len() < sending.wanted.len());
         gamma.stop();
         tokio::time::sleep(Duration::from_millis(rng.between(500, 2000))).await;
+        let connected = gamma.lab.connections();
         gamma.start()?;
+        // The next stop comes once this start connected, so each is a
+        // restart however slowly the machine comes up.
+        until(Duration::from_secs(30), || gamma.lab.connections() > connected).await;
     }
     sending.sent().await?;
     let came = arrived(&gamma.lab, &sending.wanted, DRAIN).await;

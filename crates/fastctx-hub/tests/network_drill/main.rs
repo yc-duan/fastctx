@@ -167,7 +167,7 @@ fn drill(args: &[String]) -> anyhow::Result<bool> {
         passed += report.passed;
         failed += report.failed;
         if report.failed == 0
-            && let Err(error) = std::fs::remove_dir_all(root.join(name))
+            && let Err(error) = remove_finished(&root.join(name))
         {
             failed += 1;
             println!("FAIL removing {name}'s completed workspace: {error}");
@@ -183,6 +183,40 @@ fn drill(args: &[String]) -> anyhow::Result<bool> {
         println!("what the failed scenarios left is in {}", root.display());
     }
     Ok(failed == 0)
+}
+
+/// Removes a finished scenario's directory. A link stopped in it can still
+/// be finishing a write there, as its blocking work outlives it by a moment
+/// where a process would have ended; what is left after that is named.
+fn remove_finished(dir: &Path) -> std::io::Result<()> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match std::fs::remove_dir_all(dir) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(_) if std::time::Instant::now() < deadline => std::thread::sleep(Duration::from_millis(250)),
+            Err(error) => return Err(std::io::Error::other(format!("{error}; still there: {}", left_in(dir)))),
+        }
+    }
+}
+
+/// Up to twenty of what is in `dir`, named from it.
+fn left_in(dir: &Path) -> String {
+    let mut left = Vec::new();
+    let mut directories = vec![dir.to_path_buf()];
+    while let Some(next) = directories.pop() {
+        for entry in std::fs::read_dir(&next).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                directories.push(path.clone());
+            }
+            left.push(path.strip_prefix(dir).unwrap_or(&path).display().to_string());
+            if left.len() == 20 {
+                return left.join(", ");
+            }
+        }
+    }
+    left.join(", ")
 }
 
 async fn scenario(name: &'static str, dir: &Path, earlier: Option<&Path>) -> Report {
