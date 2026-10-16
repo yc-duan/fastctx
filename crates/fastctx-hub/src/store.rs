@@ -9,9 +9,9 @@
 //!                             acting, projects, enrollment tokens, removed members
 //!                             and 90 days of machine-layer change records
 //! <hub>/letters.json          where each member's letters stand
-//! <hub>/outbox/<name>/<seq>   letters waiting for a member, one file each
+//! <hub>/outboxes/<epoch>/<seq> letters waiting for a member, one file each
 //! <hub>/outbox-trash/         the letters of members taken off, set aside to be deleted
-//! <hub>/taken/<name>          a member's count of its own letters, the last of which the hub holds
+//! <hub>/counts/<epoch>        a member's count of its own letters, the last of which the hub holds
 //! <hub>/ledger/<town>/<seq>.json   the projects' ledgers (`crate::ledger`)
 //! <hub>/moves.json            the moves that brought the hub here (`crate::moving`)
 //! <hub>/moving-out.json       a move of the hub away from here, while and after it goes
@@ -465,7 +465,7 @@ impl Store {
             }
             // A sender's count is kept in a file of its own, written before
             // the hub said it holds a letter; the records may be older.
-            if let Some(kept) = read_taken(dir, name)? {
+            if let Some(kept) = read_count(dir, entry.out_epoch, name)? {
                 if (kept.epoch, kept.taken) != (entry.epoch, entry.taken) {
                     entry.epoch = kept.epoch;
                     entry.taken = kept.taken;
@@ -571,6 +571,28 @@ impl Store {
         }
         let numberings: std::collections::BTreeSet<String> =
             self.letters.values().map(|entry| format!("{:016x}", entry.out_epoch)).collect();
+        match std::fs::read_dir(self.dir.join(COUNTS)) {
+            Ok(entries) => {
+                for entry in entries {
+                    let entry = match entry {
+                        Ok(entry) => entry,
+                        Err(error) => {
+                            said.push(format!("reading a sender count: {error}"));
+                            continue;
+                        }
+                    };
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if !name.starts_with('.')
+                        && !numberings.contains(&name)
+                        && let Err(error) = std::fs::remove_file(entry.path())
+                    {
+                        said.push(format!("deleting the count of removed numbering {name}: {error}"));
+                    }
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => said.push(format!("reading sender counts: {error}")),
+        }
         let boxes = self.dir.join(BOXES);
         match std::fs::read_dir(&boxes) {
             Ok(entries) => {
@@ -629,17 +651,10 @@ impl Store {
             .collect();
         for (old, new) in renamed {
             // The same name spelled anew keeps its records where they are.
-            if old != new {
-                if self.letters.contains_key(&new) {
-                    said.push(format!(
-                        "letters are kept for both {old} and {new}, which it was renamed to; left as they are"
-                    ));
-                    continue;
-                }
-                let count = taken_path(&self.dir, &old);
-                if std::fs::exists(&count)? {
-                    std::fs::rename(&count, taken_path(&self.dir, &new))?;
-                }
+            if old != new && self.letters.contains_key(&new) {
+                return Err(io::Error::other(format!(
+                    "letters are kept for both {old} and {new}, which it was renamed to"
+                )));
             }
             // Its letters stay in the directory of their numbering, and what
             // is known of them goes on under the new name, those being
@@ -648,12 +663,19 @@ impl Store {
             crate::mailbox::renamed(&mut self.mailboxes, &old, &new);
             self.intake.remove(&old);
             if let Some(fence) = self.counts.remove(&old) {
-                fence.close();
+                // Pending writes keep the same path and ordering across a rename.
+                self.counts.insert(new.clone(), fence);
             }
             let entry = self.letters.remove(&old).expect("listed above");
             self.letters.insert(new.clone(), entry);
+            // A rename commits the latest count too, even when an earlier
+            // asynchronous write has not entered its fence yet.
+            if let Some((taken, revision, fence, numbering)) = self.count_of(&new) {
+                Self::write_count(&self.dir, numbering, &taken, &fence, revision)?;
+            }
             said.push(format!("the letters for {old} are kept for {new}, as it is called now"));
         }
+        let directory = &self.book.directory;
         let worked: std::collections::BTreeSet<(MachineName, fastctx_types::Address)> = self
             .worked
             .iter()
@@ -785,28 +807,30 @@ impl Store {
     pub(crate) fn count_of(
         &mut self,
         name: &MachineName,
-    ) -> Option<(Taken, u64, std::sync::Arc<crate::records::Fence>)> {
-        let taken = Taken::of(self.letters.get(name)?);
+    ) -> Option<(Taken, u64, std::sync::Arc<crate::records::Fence>, u64)> {
+        let entry = self.letters.get(name)?;
+        let numbering = entry.out_epoch;
+        let taken = Taken::of(entry);
         self.revision += 1;
         let fence =
             self.counts.entry(name.clone()).or_insert_with(|| std::sync::Arc::new(crate::records::Fence::new()));
-        Some((taken, self.revision, fence.clone()))
+        Some((taken, self.revision, fence.clone(), numbering))
     }
 
-    /// Writes `name`'s count `taken`, as of `revision`, through `fence`:
+    /// Writes the count of member storage `numbering`, as of `revision`, through `fence`:
     /// before the hub says it holds the letters it counts. One of an
     /// earlier revision that comes late is passed over.
     pub(crate) fn write_count(
         dir: &Path,
-        name: &MachineName,
+        numbering: u64,
         taken: &Taken,
         fence: &crate::records::Fence,
         revision: u64,
     ) -> io::Result<()> {
         fence
             .write(revision, || {
-                ensure_private_dir(&dir.join(TAKEN))?;
-                publish(&taken_path(dir, name), &json(taken)?, Permissions::Private)
+                ensure_private_dir(&dir.join(COUNTS))?;
+                publish(&count_path(dir, numbering), &json(taken)?, Permissions::Private)
             })
             .map(|_| ())
     }
@@ -868,15 +892,41 @@ impl Store {
             _ => {}
         }
         self.set_aside(&name.entry_in(&self.dir.join(OUTBOX))?, &name.file_name())?;
-        match entry {
-            Some(entry) => self.set_aside(&box_path(&self.dir, entry.out_epoch), &format!("{:016x}", entry.out_epoch)),
-            None => Ok(()),
+        if let Some(entry) = entry {
+            match std::fs::remove_file(count_path(&self.dir, entry.out_epoch)) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+                _ => {}
+            }
+            self.set_aside(&box_path(&self.dir, entry.out_epoch), &format!("{:016x}", entry.out_epoch))?;
         }
+        Ok(())
     }
 }
 
 /// Where the counts of each sender's letters are kept (`Store::write_taken`).
 const TAKEN: &str = "taken";
+const COUNTS: &str = "counts";
+
+fn count_path(dir: &Path, numbering: u64) -> PathBuf {
+    dir.join(COUNTS).join(format!("{numbering:016x}"))
+}
+
+/// Migrates a legacy name-based count before any session can write it.
+fn read_count(dir: &Path, numbering: u64, name: &MachineName) -> io::Result<Option<Taken>> {
+    let path = count_path(dir, numbering);
+    match read(&path) {
+        Ok(taken) => Ok(Some(taken)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let taken = read_taken(dir, name)?;
+            if let Some(taken) = &taken {
+                ensure_private_dir(&dir.join(COUNTS))?;
+                publish(&path, &json(taken)?, Permissions::Private)?;
+            }
+            Ok(taken)
+        }
+        Err(error) => Err(error),
+    }
+}
 
 fn taken_path(dir: &Path, name: &MachineName) -> PathBuf {
     dir.join(TAKEN).join(&*name.file_name())

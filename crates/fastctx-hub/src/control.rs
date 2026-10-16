@@ -367,12 +367,11 @@ async fn intake(
             let dir = store.dir().to_path_buf();
             if counted { store.count_of(&name).map(|count| (dir, count)) } else { None }
         };
-        if let Some((dir, (taken, revision, fence))) = count {
-            let sender = name.clone();
+        if let Some((dir, (taken, revision, fence, numbering))) = count {
             let held = crate::moving::Moving::hold(&hub);
             let written = tokio::task::spawn_blocking(move || {
                 let _held = held;
-                crate::store::Store::write_count(&dir, &sender, &taken, &fence, revision)
+                crate::store::Store::write_count(&dir, numbering, &taken, &fence, revision)
             })
             .await
             .map_err(|error| std::io::Error::other(error.to_string()))
@@ -487,8 +486,8 @@ fn open(
     };
     // Its new numbering is kept before any letter of it is taken: kept
     // later, a stop in between would take the new letters for ones held.
-    if renumbered && let Some((taken, revision, fence)) = store.count_of(name) {
-        crate::store::Store::write_count(store.dir(), name, &taken, &fence, revision)
+    if renumbered && let Some((taken, revision, fence, numbering)) = store.count_of(name) {
+        crate::store::Store::write_count(store.dir(), numbering, &taken, &fence, revision)
             .map_err(|error| storage_failure(hub, "recording the machine's numbering", &error))?;
     }
     store.save_letters().map_err(|error| storage_failure(hub, "recording the connection", &error))?;
