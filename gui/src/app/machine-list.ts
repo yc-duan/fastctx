@@ -10,6 +10,10 @@
 // machine's row goes to its own page; a hub's or an assisting agent's opens
 // the details beside the list, as on the drawing. A visitor's machine, which
 // the network's administrator only sees, is a faint row that goes nowhere.
+// A machine the account works on has a small box at the start of its row,
+// and each heading one for all its machines, half filled when some are
+// chosen: the boxes show where pointed at, and on every row once any is
+// chosen (`machine-picking.ts`).
 
 import { glyph, type GlyphName } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -20,6 +24,7 @@ import type { MachinesWords } from "./account-words";
 import { compareBoxes } from "./machine-groups";
 import { mapOf } from "./map-of";
 import type { MapNode } from "./map-nodes";
+import { pickable, pickableIn } from "./machine-picking";
 import { link } from "./places";
 import { assistantsOf, machinesOf, owns, type Machine } from "./reach";
 
@@ -32,6 +37,10 @@ export interface ListNow {
   adds: string[];
   /** When, as the page says it: a clock time today, a day before. */
   when(at: Date, now: Date): string;
+  /** The machines chosen together, by their keys. */
+  picked: ReadonlySet<string>;
+  /** The names of a row's box and a heading's. */
+  pick: { one(name: string): string; all(label: string): string };
 }
 
 /** Up to this many dots for the agents at work on a machine; more are a
@@ -49,6 +58,7 @@ export function machineList(now: ListNow, words: MachinesWords): string {
     const state = [hubLabels.get(hub.id) ?? "", ms ? words.listMs(ms) : ""].filter(Boolean).join(" · ");
     const key = `hub:${hub.id}`;
     return `<button class="ml-row ml-hub${hub.online ? " online" : " offline"}${now.selected === key ? " chosen" : ""}" type="button" data-ml-open="${escape(key)}">
+      <span class="ml-pick none" aria-hidden="true"></span>
       <span class="ml-mark" aria-hidden="true">${knot()}</span>
       <span class="ml-name"><span class="ml-name-text">${escape(hub.name)}</span><span class="tag">${escape(words.listHub)}</span></span>
       <span class="ml-system">${escape(words.hubMachines(count))}</span>
@@ -89,15 +99,25 @@ export function machineList(now: ListNow, words: MachinesWords): string {
       const visitor = all.some((node) => node.hold === "visitor") ? `<span class="tag">${escape(words.visitor)}</span>` : "";
       const add =
         group.key === "mine" && now.adds.length
-          ? `<button class="ml-row ml-add" type="button" data-ml-add="${escape(now.adds[0]!)}"><span class="ml-mark" aria-hidden="true">${glyph("plus", 14)}</span><span class="ml-name">${escape(words.addMachine)}</span></button>`
+          ? `<button class="ml-row ml-add" type="button" data-ml-add="${escape(now.adds[0]!)}"><span class="ml-pick none" aria-hidden="true"></span><span class="ml-mark" aria-hidden="true">${glyph("plus", 14)}</span><span class="ml-name">${escape(words.addMachine)}</span></button>`
           : "";
       const inside = group.inside
-        .map((band) => `<h3 class="ml-band-head"><span>${escape(band.label)}</span><span class="ml-group-sub">${escape(words.groupSub(band.nodes.length, online(band.nodes)))}</span></h3>${rows(band.nodes)}`)
+        .map((band) => `<h3 class="ml-band-head">${box(`list:${band.key}`, band.label, nodes, now)}<span>${escape(band.label)}</span><span class="ml-group-sub">${escape(words.groupSub(band.nodes.length, online(band.nodes)))}</span></h3>${rows(band.nodes)}`)
         .join("");
-      return `<section class="ml-group"><h2 class="ml-group-head"><span>${escape(group.label)}</span>${visitor}<span class="ml-group-sub">${escape(words.groupSub(all.length, online(all)))}</span></h2>${rows(group.nodes)}${add}${inside}</section>`;
+      return `<section class="ml-group"><h2 class="ml-group-head">${box(`list:${group.key}`, group.label, nodes, now)}<span>${escape(group.label)}</span>${visitor}<span class="ml-group-sub">${escape(words.groupSub(all.length, online(all)))}</span></h2>${rows(group.nodes)}${add}${inside}</section>`;
     })
     .join("");
   return `<div class="ml-hubs">${hubRows.join("")}</div>${body}`;
+}
+
+/** A heading's box: all its machines that may be chosen, half filled when
+ *  only some are; none where none may be. */
+function box(key: string, label: string, nodes: readonly MapNode[], now: ListNow): string {
+  const keys = pickableIn(nodes, key);
+  if (!keys.length) return "";
+  const chosen = keys.filter((one) => now.picked.has(one)).length;
+  const state = chosen === 0 ? "false" : chosen === keys.length ? "true" : "mixed";
+  return `<span class="ml-pick" role="checkbox" aria-checked="${state}" aria-label="${escape(now.pick.all(label))}" data-ml-pick-all="${escape(key)}"></span>`;
 }
 
 function row(node: MapNode, machine: Machine | null, now: ListNow, words: MachinesWords): string {
@@ -126,20 +146,26 @@ function row(node: MapNode, machine: Machine | null, now: ListNow, words: Machin
   const given = assist ? "" : givenSaid(world, machine, words);
   const busy = node.busy > 0 ? busyDots(node.busy, words) : "";
   const title = node.title;
-  const inner = `<span class="ml-mark" aria-hidden="true"><span class="ml-dot"></span></span>
+  const chooses = pickable(node);
+  const chosen = chooses && now.picked.has(node.key);
+  const pick = chooses
+    ? `<span class="ml-pick" role="checkbox" aria-checked="${chosen}" aria-label="${escape(now.pick.one(node.name))}" data-ml-pick="${escape(node.key)}"></span>`
+    : `<span class="ml-pick none" aria-hidden="true"></span>`;
+  const inner = `${pick}<span class="ml-mark" aria-hidden="true"><span class="ml-dot"></span></span>
       <span class="ml-name"><span class="ml-name-text">${escape(node.name)}</span>${tags}</span>
       <span class="ml-system">${system}</span>
       <span class="ml-link">${link_}</span>
       <span class="ml-given">${given}</span>
       <span class="ml-busy">${busy}</span>
       <span class="ml-go" aria-hidden="true">${glyph("chevron", 16)}</span>`;
-  const kind = `ml-row ${state}${assist ? " assist" : ""}${visitor ? " visitor" : ""}${now.selected === node.key ? " chosen" : ""}`;
+  const kind = `ml-row ${state}${assist ? " assist" : ""}${visitor ? " visitor" : ""}${now.selected === node.key || chosen ? " chosen" : ""}`;
+  const keyed = chooses ? ` data-ml-key="${escape(node.key)}"` : "";
   // A machine one may work on has its own page; an assisting agent's and a
   // phone open their details here; a visitor's is only seen.
   if (visitor) return `<div class="${kind}" title="${escape(title)}">${inner.replace(glyph("chevron", 16), "")}</div>`;
   return assist || node.device
     ? `<button class="${kind}" type="button" data-ml-open="${escape(node.key)}" title="${escape(title)}">${inner}</button>`
-    : `<a class="${kind}" href="${link({ kind: "machine", name: node.name })}" title="${escape(title)}">${inner}</a>`;
+    : `<a class="${kind}" href="${link({ kind: "machine", name: node.name })}" title="${escape(title)}"${keyed}>${inner}</a>`;
 }
 
 /** How a machine is there: through which machine it reaches the hub, or the

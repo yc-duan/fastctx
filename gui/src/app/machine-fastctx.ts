@@ -10,7 +10,7 @@
 
 import { escape } from "../conversation/prose";
 import type { Login } from "../world/accounts";
-import { compareVersions, type UpdateCall, type UpdateSettings, type UpdateState } from "../world/updates";
+import { compareVersions, newestKnown, type UpdateCall, type UpdateSettings, type UpdateState } from "../world/updates";
 import type { ManageWords } from "./machine-manage-words";
 import type { Machine } from "./reach";
 import type { Signal } from "./signals";
@@ -185,15 +185,7 @@ export class FastctxBlock {
 
   /** The newest release this device knows on the line of `running`. */
   private newest(local: UpdateState | null, running: string | null): string | null {
-    if (!local || !running) return null;
-    const beta = running.includes("-");
-    const known = [local.offer, local.looked.stable, local.looked.beta, local.network?.stable, local.network?.beta, ...(local.looked.newer ?? [])];
-    let best: string | null = null;
-    for (const manifest of known) {
-      if (!manifest || (!beta && manifest.version.includes("-"))) continue;
-      if (compareVersions(manifest.version, running) > 0 && (!best || compareVersions(manifest.version, best) > 0)) best = manifest.version;
-    }
-    return best;
+    return running ? newestKnown(local, running) : null;
   }
 
   private choices(state: UpdateState): string[] {

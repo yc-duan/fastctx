@@ -78,9 +78,14 @@
   color: var(--text-strong);
 }
 
-.mr-way-what {
+.mr-way-what,
+.mr-way-some {
   font-size: var(--size-small);
   color: var(--text-3);
+}
+
+.mr-way-some {
+  color: var(--caution);
 }
 
 .mr-way:disabled .mr-way-title {

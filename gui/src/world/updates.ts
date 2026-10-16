@@ -175,6 +175,21 @@ export function isTest(version: string): boolean {
   return version.includes("-");
 }
 
+/** The newest release `state` knows of on the line of `running`: a test
+ *  release takes test releases and stable ones, a stable one stable ones
+ *  alone; none when nothing newer is known. */
+export function newestKnown(state: UpdateState | null | undefined, running: string): string | null {
+  if (!state) return null;
+  const test = isTest(running);
+  const known = [state.offer, state.looked.stable, state.looked.beta, state.network?.stable, state.network?.beta, ...(state.looked.newer ?? [])];
+  let best: string | null = null;
+  for (const manifest of known) {
+    if (!manifest || (!test && isTest(manifest.version))) continue;
+    if (compareVersions(manifest.version, running) > 0 && (!best || compareVersions(manifest.version, best) > 0)) best = manifest.version;
+  }
+  return best;
+}
+
 /** A release's major version. */
 export function majorOf(version: string): number {
   return Number(version.split(".")[0] ?? 0);

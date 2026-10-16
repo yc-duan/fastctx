@@ -1,0 +1,114 @@
+/* Machines chosen together (`machine-framed.ts`): a row each to open it by,
+   solid, no lines, ending with what it runs or how an update of it goes;
+   under them what is done to them together, and how an update of several
+   went once it is through. */
+
+.framed-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: var(--space-3) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.framed-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  color: var(--text);
+  font-size: var(--size-ui);
+  text-align: left;
+}
+
+.framed-row:hover {
+  background: var(--fill-strong);
+}
+
+.framed-row .dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--text-2);
+}
+
+.framed-row.offline .dot {
+  background: none;
+  box-shadow: inset 0 0 0 1.4px var(--text-3);
+}
+
+.framed-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.framed-sub {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--size-small);
+}
+
+.framed-tail {
+  flex: none;
+  max-width: 56%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.framed-row.newer .framed-tail {
+  color: var(--text);
+}
+
+.framed-row.done .framed-tail {
+  color: var(--text-2);
+}
+
+.framed-row.wrong .framed-tail {
+  color: var(--wrong);
+}
+
+/* Nothing here may be done to it: it stands back. */
+.framed-row.faint {
+  opacity: 0.5;
+}
+
+.framed-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin: var(--space-4) 0 0 calc(-1 * var(--space-3));
+}
+
+.framed-acts .sheet-go {
+  margin: 0 var(--space-2) 0 var(--space-3);
+}
+
+.framed-said {
+  padding: 0 var(--space-3);
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+/* Setting how several update: those left, and why. */
+.ways-skipped {
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--size-small);
+  line-height: var(--leading-ui);
+  color: var(--text-3);
+}

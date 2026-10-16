@@ -28,7 +28,7 @@ export interface CanvasOptions extends CameraOptions {
 /** A pointer down on the drawing. With a mouse the left button chooses
  *  or, dragged, draws a frame round several; the middle button moves the
  *  drawing. A finger or a pen moves it. */
-interface Pointer { point: Point; start: Point; item: string | null; moved: boolean; touch: boolean; middle?: boolean; frame?: boolean }
+interface Pointer { point: Point; start: Point; item: string | null; moved: boolean; touch: boolean; middle?: boolean; frame?: boolean; add?: boolean }
 interface ButtonLabel { item: CanvasItem; button: HTMLButtonElement; label: HTMLElement; width: number; height: number }
 
 /** The page owns ink and operations. This surface owns the camera, input, hit
@@ -146,7 +146,7 @@ export class MapCanvas {
       const target = e.target as HTMLElement;
       const handle = this.handles.get(target.closest<HTMLElement>("[data-handle]")?.dataset.handle ?? "");
       if (handle) this.beginDraft(handle.handle, this.camera.toScreen(handle.handle.point), true);
-      else if (this.keyOf(target)) this.select(this.keyOf(target), this.camera.toScreen(this.buttons.get(this.keyOf(target)!)!.item.point));
+      else if (this.keyOf(target)) this.select(this.keyOf(target), this.camera.toScreen(this.buttons.get(this.keyOf(target)!)!.item.point), e.ctrlKey || e.metaKey);
     }, { signal });
     this.element.addEventListener("focusin", e => {
       const key = this.keyOf(e.target);
@@ -370,9 +370,9 @@ export class MapCanvas {
     this.options.event({ kind: "point", key, at });
     this.schedule();
   }
-  private select(key: string | null, at: Point): void {
+  private select(key: string | null, at: Point, add = false): void {
     this.selected = key;
-    this.options.event({ kind: "select", key, at });
+    this.options.event({ kind: "select", key, at, add });
     this.schedule();
   }
   private stopLongPress(): void { clearTimeout(this.longPress); this.longPress = 0; }
@@ -397,7 +397,7 @@ export class MapCanvas {
     this.longPressed = false;
     this.stopLongPress();
     const item = middle ? null : this.itemAt(point);
-    this.pointers.set(e.pointerId, { point, start: point, item, moved: false, touch: e.pointerType === "touch", middle, frame });
+    this.pointers.set(e.pointerId, { point, start: point, item, moved: false, touch: e.pointerType === "touch", middle, frame, add: e.ctrlKey || e.metaKey });
     this.element.setPointerCapture(e.pointerId);
     if (middle) {
       this.cancelDraft("interrupted");
@@ -443,11 +443,11 @@ export class MapCanvas {
       if (distance(previous) > 0) this.camera.zoom(distance(now) / distance(previous), before);
       this.pan(after[0] - before[0], after[1] - before[1]);
     } else if (pointer.frame) {
-      if (pointer.moved) this.drawFrame(pointer.start, p, false);
+      if (pointer.moved) this.drawFrame(pointer.start, p, false, !!pointer.add);
     } else if ((pointer.moved || pointer.middle) && !this.longPressed) this.pan(p[0] - old[0], p[1] - old[1]);
   }
   /** The frame from `from` to `to`, on the screen, and the items inside. */
-  private drawFrame(from: Point, to: Point, done: boolean): void {
+  private drawFrame(from: Point, to: Point, done: boolean, add: boolean): void {
     const x = Math.min(from[0], to[0]);
     const y = Math.min(from[1], to[1]);
     const width = Math.abs(to[0] - from[0]);
@@ -462,7 +462,7 @@ export class MapCanvas {
         return sx >= x && sx <= x + width && sy >= y && sy <= y + height;
       })
       .map((item) => item.key);
-    this.options.event({ kind: "marquee", keys, done });
+    this.options.event({ kind: "marquee", keys, done, add });
   }
   private up(e: PointerEvent): void {
     const pointer = this.pointers.get(e.pointerId);
@@ -472,8 +472,8 @@ export class MapCanvas {
     this.move(e);
     this.stopLongPress();
     if (this.draft && this.draftPointer === e.pointerId) { this.refreshDraft(this.local(e)); this.finishDraft(this.local(e)); }
-    else if (pointer.frame && pointer.moved) this.drawFrame(pointer.start, this.local(e), true);
-    else if (!pointer.middle && !pointer.moved && !this.longPressed && this.pointers.size === 1) this.select(pointer.item, this.local(e));
+    else if (pointer.frame && pointer.moved) this.drawFrame(pointer.start, this.local(e), true, !!pointer.add);
+    else if (!pointer.middle && !pointer.moved && !this.longPressed && this.pointers.size === 1) this.select(pointer.item, this.local(e), !!pointer.add);
     this.pointers.delete(e.pointerId);
     if (this.element.hasPointerCapture(e.pointerId)) this.element.releasePointerCapture(e.pointerId);
     this.schedule();
@@ -563,7 +563,7 @@ export class MapCanvas {
       const handle = this.handles.get((e.target as HTMLElement).dataset.handle ?? "")?.handle;
       if (handle) { e.preventDefault(); this.beginDraft(handle, this.camera.toScreen(handle.point), true); return; }
       const item = key ? this.buttons.get(key)?.item : undefined;
-      if (item) { e.preventDefault(); this.select(item.key, this.camera.toScreen(item.point)); return; }
+      if (item) { e.preventDefault(); this.select(item.key, this.camera.toScreen(item.point), e.ctrlKey || e.metaKey); return; }
     }
     if (this.options.still) return;
     const pans: Record<string, Point> = { ArrowLeft: [48, 0], ArrowRight: [-48, 0], ArrowUp: [0, 48], ArrowDown: [0, -48] };

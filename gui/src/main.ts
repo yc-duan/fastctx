@@ -27,6 +27,7 @@ import "./app/me.css";
 import "./app/when.css";
 import "./app/assist.css";
 import "./app/machines.css";
+import "./app/machine-framed.css";
 import "./app/machine-list.css";
 import "./app/machine-page.css";
 import "./app/machine-manage.css";
@@ -85,6 +86,7 @@ import { link, placeOf, talkLink, type Place } from "./app/places";
 import { MachinePage } from "./app/machine-page";
 import { enMachinePage, zhMachinePage } from "./app/machine-page-words";
 import { enManage, zhManage } from "./app/machine-manage-words";
+import { enBatch, zhBatch } from "./app/machine-batch-words";
 import { enNameSaid, zhNameSaid } from "./app/name-words";
 import { specimenStats } from "./specimen/stats";
 import { SettingsPage } from "./app/settings";
@@ -1950,7 +1952,13 @@ function show(next: Place): void {
           policy: () => appUpdates.state.peek()?.network?.policy ?? {},
           words: updateWords,
           minimum: minimumVersions,
+          state: appUpdates.state,
+          remote: (name, call) => updatesAsked.remote(name, call),
+          older: (name) => updatesAsked.machine(name),
+          versions: versionWindow,
         },
+        batch: english ? enBatch : zhBatch,
+        manage: english ? enManage : zhManage,
         words: english ? enMachines : zhMachines,
         access: english ? enAccess : zhAccess,
         people: english ? enPeople : zhPeople,

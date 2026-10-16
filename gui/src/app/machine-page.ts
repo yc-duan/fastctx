@@ -29,8 +29,10 @@ import { diskBar, Ring, Spark, Strip, type LineMark, type LineSpan } from "./mac
 import { daysOf, heldOf, keptOf, SPAN_MS, take, tripsHeld, type Sample } from "./machine-history";
 import type { MachinePageWords } from "./machine-page-words";
 import { FastctxBlock, type FastctxSubject } from "./machine-fastctx";
+import { ownerLoginOf, removerLoginOf, updaterLoginOf } from "./machine-logins";
 import type { ManageWords } from "./machine-manage-words";
-import { RemoveMachineSheet, type RemoveWay } from "./machine-remove";
+import { RemoveMachineSheet } from "./machine-remove";
+import { removeMachines } from "./machine-removing";
 import { GiveSheet } from "./machine-sheets";
 import { linkSaid, linkWhy } from "./machines";
 import { formerNames, mapOf } from "./map-of";
@@ -42,7 +44,7 @@ import { assistantsOn, groupsOf, inNoNetwork, isSuper, isVisitor, machineActsFor
 import { RenameField, renamerOf, type Renamer } from "./rename";
 import type { Page } from "./shell";
 import { effect, type Signal } from "./signals";
-import { compareVersions, type UpdateCall, type UpdateState } from "../world/updates";
+import { newestKnown, type UpdateCall, type UpdateState } from "../world/updates";
 import type { UpdateWords } from "./update-words";
 import type { VersionWindow } from "./version-window";
 import { jobsOf, residentsOf, type Store } from "./store";
@@ -848,12 +850,7 @@ export class MachinePage implements Page {
     const { words } = this.options;
     const state = this.options.updates?.state.peek();
     if (!state) return [words.fastctxRuns(version)];
-    const beta = version.includes("-");
-    const known = [state.offer, state.looked.stable, state.looked.beta, state.network?.stable, state.network?.beta, ...(state.looked.newer ?? [])];
-    const newer = known
-      .filter((manifest) => manifest && (beta || !manifest.version.includes("-")) && compareVersions(manifest.version, version) > 0)
-      .map((manifest) => manifest!.version)
-      .sort((a, b) => compareVersions(b, a))[0];
+    const newer = newestKnown(state, version);
     return [words.fastctxRuns(version), newer ? words.fastctxBehind(newer) : words.fastctxLatest];
   }
 
@@ -911,7 +908,7 @@ export class MachinePage implements Page {
       machine,
       version: stats?.node.version ?? factsOf(machine)?.version ?? null,
       service: stats ? stats.node.service : null,
-      manages: this.updaterLogin(machine, world),
+      manages: updaterLoginOf(machine, world),
     };
     block.show(subject, this.tab === "manage" && document.visibilityState === "visible");
     this.put("fastctx", this.fastctxBox, block.html(subject));
@@ -922,11 +919,11 @@ export class MachinePage implements Page {
    *  network instead of uninstalling it. */
   private drawDanger(machine: Machine, world: WorldNow): void {
     const { manage } = this.options;
-    const remover = this.removerLogin(machine, world);
+    const remover = removerLoginOf(machine, world);
     const hub = this.options.updates?.state.peek()?.network?.machines?.[machine.name]?.hub_here === true;
     const parts: string[] = [];
     if (hub) parts.push(`<p class="mp-danger-note">${escape(manage.hubHere)}</p><a class="text-button quiet-button" href="${link({ kind: "machines" })}">${escape(manage.hubGo)}</a>`);
-    if (remover && !machine.here) parts.push(`<button class="text-button quiet-button danger" type="button" data-act="remove">${glyph("close", 14)}<span>${escape(manage.remove)}</span></button>`);
+    if (remover) parts.push(`<button class="text-button quiet-button danger" type="button" data-act="remove">${glyph("close", 14)}<span>${escape(manage.remove)}</span></button>`);
     this.dangerBox.hidden = !parts.length;
     this.put("danger", this.dangerBox, `<div class="mp-danger-acts">${parts.join("")}</div>`);
   }
@@ -1014,36 +1011,8 @@ export class MachinePage implements Page {
     return { kind: "unknown", said: machines.unknown };
   }
 
-  /** The login that may update `machine` and set its choices: its owner's,
-   *  or the super administrator's but for a visitor's machine
-   *  (`world-upgrade.md`, 谁来更新). */
-  private updaterLogin(machine: Machine, world: WorldNow): Login | null {
-    if (machine.here) return null;
-    const owner = this.ownerLogin(machine, world);
-    if (owner) return owner;
-    const logins = loginsOf(world.accounts);
-    for (const login of logins) {
-      if (!isSuper(world, login) || !machine.on.some((on) => on.hub === login.hub)) continue;
-      const of = ownerOf(machine, login);
-      if (of && !isVisitor(world, { ...login, account: of })) return login;
-    }
-    return null;
-  }
-
-  /** The login that may take `machine` off: its owner's, or the super
-   *  administrator's. */
-  private removerLogin(machine: Machine, world: WorldNow): Login | null {
-    const owner = this.ownerLogin(machine, world);
-    if (owner) return owner;
-    return loginsOf(world.accounts).find((login) => isSuper(world, login) && machine.on.some((on) => on.hub === login.hub)) ?? null;
-  }
-
-  /** The login a machine is the account's own under: this computer's on a
-   *  hub it is registered on, or the one that registered another. */
   private ownerLogin(machine: Machine, world: WorldNow): Login | undefined {
-    const logins = loginsOf(world.accounts);
-    if (machine.here) return logins.find((login) => world.nodes.hubs.some((hub) => hub.hub === login.hub && hub.home === login.account));
-    return logins.find((login) => owns(machine, login));
+    return ownerLoginOf(machine, world);
   }
 
   private renamer(machine: Machine, world: WorldNow): Renamer | null {
@@ -1135,11 +1104,9 @@ export class MachinePage implements Page {
           );
         return;
       }
-      case "remove": {
-        const remover = this.removerLogin(machine, world);
-        if (remover) this.remove(remover, machine, world);
+      case "remove":
+        this.remove(machine, world);
         return;
-      }
       case "undo":
         void this.undo();
         return;
@@ -1178,35 +1145,17 @@ export class MachinePage implements Page {
     );
   }
 
-  /** Takes `machine` off the network as `login`, one of three ways
-   *  (`world-network.md`, 移出网络与卸载): uninstalling Fastctx there is only
-   *  its owner's, or a managed machine's super administrator's, and never
-   *  for a computer with the application, managed or not, or the machine
-   *  that runs the hub. */
-  private remove(login: Login, machine: Machine, world: WorldNow): void {
+  /** Takes `machine` off the network, one of three ways
+   *  (`world-network.md`, 移出网络与卸载). */
+  private remove(machine: Machine, world: WorldNow): void {
     const { access, manage } = this.options;
-    const running = this.options.updates?.state.peek()?.network?.machines?.[machine.name];
-    const owner = this.ownerLogin(machine, world);
-    const managed = isManaged(world, machine.name);
-    const hub = hubOf(world, login);
-    const cannot = running?.hub_here
-      ? manage.notHub
-      : running?.app
-        ? managed
-          ? manage.managedApp
-          : manage.notApp
-        : !owner && !managed
-          ? manage.notMember
-          : !hub?.uninstalls
-            ? manage.hubOlder
-            : null;
-    this.removing.open({
-      machine: machine.written,
-      cannot,
-      offline: machine.online === false,
-      remove: async (way: RemoveWay) => {
-        const then = way === "leave" ? {} : { then: way };
-        await this.options.change(login, { change: "remove", name: machine.name, reason: access.reasonDefault, ...then });
+    removeMachines([machine], world, manage.removeTitle(machine.written), {
+      manage,
+      access,
+      sheet: this.removing,
+      running: (name) => this.options.updates?.state.peek()?.network?.machines?.[name],
+      change: this.options.change,
+      done: () => {
         void this.options.store.refresh();
         this.options.replace({ kind: "machines" });
       },

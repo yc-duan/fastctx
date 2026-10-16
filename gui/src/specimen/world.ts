@@ -626,6 +626,8 @@ export function specimenAgents(machine: string, at: Date = new Date()): WorldAge
  *  nothing really connects. Anything else it refuses. */
 export function specimenChange(world: WorldNow | null, hub: string, made: AccountChange): WorldNow | null {
   if (!world) return null;
+  // An update kept for a machine away is the hub's, not the World's.
+  if (made.change === "update_due") return world;
   if (made.change === "rename") return renamed(world, hub, made.machine, made.to);
   if (made.change === "revoke_token") {
     const hubs = world.accounts.hubs.map((one) => (one.hub === hub ? { ...one, tokens: (one.tokens ?? []).filter((token) => token.key !== made.token) } : one));

@@ -40,9 +40,14 @@ export interface ManageWords {
 
   remove: string;
   removeTitle(machine: string): string;
+  removeMany(count: number): string;
   ways: { uninstall: { title: string; what: string }; everything: { title: string; what: string }; leave: { title: string; what: string } };
   /** Why it cannot uninstall Fastctx from here. */
   notMember: string;
+  /** Of several taken off: none is uninstalled from here, or some only
+   *  leave, and why when one reason holds for all of them. */
+  noneUninstall: string;
+  onlyLeave(count: number, why: string | null): string;
   notApp: string;
   /** A managed computer: taken off, it is unlocked and uninstalled at it. */
   managedApp: string;
@@ -94,12 +99,15 @@ export const zhManage: ManageWords = {
 
   remove: "移除…",
   removeTitle: (machine) => `移除 ${machine}？`,
+  removeMany: (count) => `移除这 ${count} 台？`,
   ways: {
     uninstall: { title: "移出并卸载，保留数据", what: "那台上的 Fastctx 卸掉，世界的记录、登录与身份留着，重新装上还能接着用" },
     everything: { title: "移出并彻底移除", what: "把 Fastctx 写在那台上的一切清掉" },
     leave: { title: "只移出网络", what: "那台上的 Fastctx 留着，只是连不上这个网络" },
   },
   notMember: "成员的机器由成员自己卸载，这里只能移出网络",
+  noneUninstall: "这几台都不能从这里卸载，只能移出网络",
+  onlyLeave: (count, why) => `其中 ${count} 台只移出网络${why ? `：${why}` : ""}`,
   notApp: "带应用的电脑由坐在它前面的人在它自己的设置里卸载",
   managedApp: "受管电脑移出之后，由坐在它前面的人在那台上卸载",
   notHub: "这台跑着网络的中枢，先搬走中枢或解散网络",
@@ -149,12 +157,15 @@ export const enManage: ManageWords = {
 
   remove: "Remove…",
   removeTitle: (machine) => `Remove ${machine}?`,
+  removeMany: (count) => `Remove these ${count}?`,
   ways: {
     uninstall: { title: "Remove and uninstall, keeping its data", what: "Fastctx goes from it; its World's records, logins and identity stay, to carry on once installed again" },
     everything: { title: "Remove and erase", what: "Everything Fastctx wrote there goes" },
     leave: { title: "Only take it off the network", what: "Fastctx stays on it, and no longer reaches this network" },
   },
   notMember: "A member's machine is the member's to uninstall; here it is only taken off",
+  noneUninstall: "None of these can be uninstalled from here; they are only taken off",
+  onlyLeave: (count, why) => `${count} of them only leave the network${why ? `: ${why}` : ""}`,
   notApp: "A computer with the app is uninstalled by whoever sits at it, in its own settings",
   managedApp: "Once taken off, a managed computer is uninstalled by whoever sits at it",
   notHub: "It runs the network's hub: move the hub or dissolve the network first",

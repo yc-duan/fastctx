@@ -37,7 +37,7 @@ import { HubMoving, type HubMovingOptions } from "./hub-moving";
 import { holdUntilNamed, typedName } from "./typed-name";
 import { GiveSheet } from "./machine-sheets";
 import { MachineLog, type ReadLog } from "./machine-log";
-import { boxParts, chosenGroup, groupChange, groupForm, groupingOf, groupingTogether, groupMoreKey, groupMoreOf, groupNameOf, groupRenameForm, wireGroupForm, type Grouping } from "./machine-groups";
+import { boxParts, chosenGroup, groupChange, groupForm, groupingOf, groupMoreKey, groupMoreOf, groupNameOf, groupRenameForm, wireGroupForm, type Grouping } from "./machine-groups";
 import { foldedOf, MachineMap, MAP_ORDER, personKey } from "./machine-map";
 import { isManaged, machineList } from "./machine-list";
 import { MapPeople } from "./map-people";
@@ -51,6 +51,17 @@ import type { Page } from "./shell";
 import { effect } from "./signals";
 import { UpdatePolicySheet, type Policy } from "./update-policy";
 import type { UpdateWords } from "./update-words";
+import type { UpdateCall, UpdateState } from "../world/updates";
+import type { BatchWords } from "./machine-batch-words";
+import { FramedPanel } from "./machine-framed";
+import { removerLoginOf } from "./machine-logins";
+import type { ManageWords } from "./machine-manage-words";
+import { added, between, pickable, pickableIn, toggled } from "./machine-picking";
+import { RemoveMachineSheet } from "./machine-remove";
+import { removeMachines } from "./machine-removing";
+import { WaysSheet } from "./machine-ways";
+import type { Signal } from "./signals";
+import type { VersionWindow } from "./version-window";
 import { jobsOf, residentsOf, type Store } from "./store";
 
 export interface MachinesOptions {
@@ -84,15 +95,24 @@ export interface MachinesOptions {
     here(to: string): Promise<void>;
   };
   /** The network's update policy, as this device last heard it, and the
-   *  words of setting it. */
+   *  words of setting it; what this device knows of releases and of the
+   *  network's machines, and asking other machines about their updates. */
   updates?:
     | {
         policy(): Policy;
         words: UpdateWords;
         /** The window of versions, picking the network's lowest one, or none. */
         minimum(current: string | null, pick: (version: string | null) => void): void;
+        state: Signal<UpdateState | null>;
+        remote(machine: string, call: UpdateCall): Promise<UpdateState>;
+        /** Has a machine of an earlier release update to the newest on its line. */
+        older(machine: string): Promise<unknown>;
+        versions: VersionWindow;
       }
     | undefined;
+  /** The words of machines chosen together, and of taking machines off. */
+  batch: BatchWords;
+  manage: ManageWords;
 }
 
 /** A group's box on the drawing: its name, its machines, and how each is
@@ -213,10 +233,15 @@ export class MachinesPage implements Page {
   /** Machines direct connections were just allowed to, while the hub
    *  checks it reaches them. */
   private readonly opening = new Set<string>();
-  /** Machines framed together with the mouse, and those inside the frame
-   *  while it is drawn. */
+  /** Machines chosen together, with Ctrl, a frame, a box or the list's
+   *  boxes, and those inside the frame while it is drawn. On the drawing
+   *  one alone is the one chosen. */
   private framed: string[] = [];
   private framing: string[] = [];
+  /** The list's row a range chosen with Shift starts from. */
+  private anchor: string | null = null;
+  private readonly chosen: FramedPanel;
+  private readonly removing: RemoveMachineSheet;
   /** Groups the user folded or opened, by key; the rest follow the
    *  default. */
   private readonly folds = new Map<string, boolean>();
@@ -238,6 +263,22 @@ export class MachinesPage implements Page {
     const { words } = options;
     this.giving = new GiveSheet(options.access);
     this.assistSheet = new AssistSheet(options.access);
+    this.removing = new RemoveMachineSheet(options.manage);
+    this.chosen = new FramedPanel({
+      words: options.words,
+      batch: options.batch,
+      manage: options.manage,
+      access: options.access,
+      updates: options.updates,
+      change: options.change,
+      refresh: () => options.store.refresh(),
+      removing: this.removing,
+      ways: new WaysSheet(options.batch, options.manage.close),
+      share: (machines, login) => this.shareMachines(machines, login),
+      group: (machines) => this.groupMachines(machines),
+      clear: () => this.setPicked([]),
+      changed: () => this.redraw(),
+    });
     this.moving = new HubMoving({ ...options.moving, words, access: options.access, confirm: options.confirm, changed: () => this.redraw() });
     this.people = new MapPeople({
       words: options.people,
@@ -292,6 +333,22 @@ export class MachinesPage implements Page {
     });
     this.list.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
+      const press = event as MouseEvent;
+      const all = target.closest<HTMLElement>("[data-ml-pick-all]")?.dataset.mlPickAll;
+      if (all) {
+        event.preventDefault();
+        return this.pickAll(all);
+      }
+      const box = target.closest<HTMLElement>("[data-ml-pick]")?.dataset.mlPick;
+      const row = target.closest<HTMLElement>("[data-ml-key]")?.dataset.mlKey;
+      if (box || (row && (press.ctrlKey || press.metaKey))) {
+        event.preventDefault();
+        return this.pickOne((box ?? row)!);
+      }
+      if (row && press.shiftKey) {
+        event.preventDefault();
+        return this.pickRange(row);
+      }
       const open = target.closest<HTMLElement>("[data-ml-open]")?.dataset.mlOpen;
       if (open) return this.details(open);
       const hub = target.closest<HTMLElement>("[data-ml-add]")?.dataset.mlAdd;
@@ -314,8 +371,8 @@ export class MachinesPage implements Page {
       people: options.people,
       storageKey: MAP_ORDER,
       event: (event) => {
-        if (event.kind === "select") this.choose(event.key);
-        else if (event.kind === "marquee") this.frame(event.keys, event.done);
+        if (event.kind === "select") this.choose(event.key, event.add);
+        else if (event.kind === "marquee") this.frame(event.keys, event.done, event.add);
         else if (event.kind === "context") this.openMenu(event.key, event.at, event.input !== "mouse" || matchMedia("(max-width: 760px)").matches);
       },
       frame: (frame) => {
@@ -381,15 +438,25 @@ export class MachinesPage implements Page {
         this.stopChoosing();
       } else if (event.key === "Escape" && this.framed.length) {
         event.stopPropagation();
-        this.framed = [];
-        this.redraw();
+        this.setPicked([]);
       }
     });
     this.card.addEventListener("click", (event) => {
       if ((event.target as HTMLElement).closest("[data-card=cancel]")) this.closeCard();
     });
     document.addEventListener("pointerdown", this.outside, true);
-    this.stop = effect(() => this.draw(options.store.world.get(), options.store.clock.get()));
+    const stopWorld = effect(() => this.draw(options.store.world.get(), options.store.clock.get()));
+    const updates = options.updates;
+    const stopUpdates = updates
+      ? effect(() => {
+          updates.state.get();
+          this.redraw();
+        })
+      : () => {};
+    this.stop = () => {
+      stopWorld();
+      stopUpdates();
+    };
     let narrow: boolean | null = null;
     this.resized = new ResizeObserver(() => {
       if (narrow === this.narrow()) return;
@@ -406,6 +473,7 @@ export class MachinesPage implements Page {
 
   leave(): void {
     this.stop();
+    this.chosen.dispose();
     this.film?.destroy();
     this.moving.dispose();
     this.resized.disconnect();
@@ -462,23 +530,18 @@ export class MachinesPage implements Page {
         if (login) this.invite(login);
         return;
       case "remove":
-        if (login) this.remove(login, machine);
+        this.removeNamed(machine);
         return;
-      case "framed-pick":
-        this.choose(button.dataset.key ?? null);
+      case "framed-pick": {
+        // In the list a machine chosen goes to its page; on the drawing it
+        // is the one chosen.
+        const key = button.dataset.key ?? null;
+        if (this.view === "list" && key?.startsWith("m:")) location.hash = link({ kind: "machine", name: key.slice(2) });
+        else this.choose(key);
         return;
+      }
       case "framed-clear":
-        this.framed = [];
-        this.redraw();
-        return;
-      case "framed-share":
-        this.shareFramed();
-        return;
-      case "framed-group":
-        this.groupFramed();
-        return;
-      case "framed-remove":
-        this.removeFramed();
+        this.setPicked([]);
         return;
       case "close-details":
         this.closeDetails();
@@ -489,6 +552,9 @@ export class MachinesPage implements Page {
         this.redraw();
         return;
     }
+    const act = button.dataset.act ?? "";
+    const world = this.options.store.world.peek();
+    if (act.startsWith("framed-") && world) this.chosen.click(act, this.pickedMachines(world), world);
   }
 
   /** Whether the page is narrow enough that what is known of the one
@@ -529,7 +595,7 @@ export class MachinesPage implements Page {
   }
 
   /** Shows the machines as a drawing or a list, and keeps the choice on
-   *  this device. What was chosen on one is let go on the other. */
+   *  this device. */
   private show(view: View): void {
     if (view === this.view) return;
     this.view = view;
@@ -538,9 +604,16 @@ export class MachinesPage implements Page {
     } catch {
       // Kept for this visit only.
     }
-    this.selected = null;
+    // What is chosen stays chosen: one machine alone is the one chosen on
+    // the drawing, and ticked in the list.
+    if (view === "list" && !this.framed.length && this.selected && this.isPickable(this.selected)) {
+      this.framed = [this.selected];
+      this.selected = null;
+    } else if (view === "map" && this.framed.length === 1) {
+      this.selected = this.framed[0]!;
+      this.framed = [];
+    }
     this.detailsOpen = false;
-    this.framed = [];
     this.closeMenu();
     this.closeCard();
     this.redraw();
@@ -571,9 +644,12 @@ export class MachinesPage implements Page {
     return foldedOf(nodes, this.folds);
   }
 
-  /** A frame drawn round machines: one chosen, or several together. */
-  private frame(keys: string[], done: boolean): void {
-    const machines = keys.filter((key) => key.startsWith("m:"));
+  /** A frame drawn round machines: one chosen, or several together; with
+   *  Ctrl, those framed are added to those chosen. */
+  private frame(keys: string[], done: boolean, add: boolean): void {
+    const can = this.pickableKeys();
+    const inside = keys.filter((key) => can.has(key));
+    const machines = add ? added(this.pickedNow(), inside) : inside;
     if (!done) {
       if (JSON.stringify(machines) === JSON.stringify(this.framing)) return;
       this.framing = machines;
@@ -582,15 +658,76 @@ export class MachinesPage implements Page {
       return;
     }
     this.framing = [];
-    if (machines.length < 2) return this.choose(machines[0] ?? null);
+    if (!add && machines.length < 2) return this.choose(machines[0] ?? null);
+    this.setPicked(machines);
+  }
+
+  /** The machines chosen together; on the drawing one alone is the one
+   *  chosen, its actions beside it. */
+  private setPicked(keys: string[]): void {
+    const before = this.framed.join("\n");
+    if (this.view === "map" && keys.length === 1) {
+      this.framed = [];
+      this.selected = keys[0]!;
+    } else {
+      this.framed = keys;
+      if (keys.length) this.selected = null;
+    }
+    if (this.framed.join("\n") !== before) this.chosen.forget();
     this.closeMenu();
     this.closeCard();
-    this.framed = machines;
-    this.selected = null;
     this.redraw();
   }
 
-  private choose(key: string | null): void {
+  /** Those chosen now: the one chosen on the drawing among them. */
+  private pickedNow(): string[] {
+    if (this.framed.length) return this.framed;
+    return this.selected && this.isPickable(this.selected) ? [this.selected] : [];
+  }
+
+  /** The machines chosen, as the World now has them. */
+  private pickedMachines(world: WorldNow): Machine[] {
+    const spots = this.spots(world);
+    return this.framed.flatMap((key) => {
+      const spot = spots.get(key);
+      return spot?.kind === "machine" ? [spot.machine] : [];
+    });
+  }
+
+  /** The keys of the machines that may be chosen together now. */
+  private pickableKeys(): Set<string> {
+    const world = this.options.store.world.peek();
+    return new Set(world ? mapOf(world, this.options.words).nodes.filter(pickable).map((node) => node.key) : []);
+  }
+
+  private isPickable(key: string): boolean {
+    return this.pickableKeys().has(key);
+  }
+
+  /** A row's box, or a row pressed with Ctrl: it is added or taken out. */
+  private pickOne(key: string): void {
+    this.anchor = key;
+    this.setPicked(toggled(this.pickedNow(), key));
+  }
+
+  /** A row pressed with Shift: every row from the last one chosen to it. */
+  private pickRange(key: string): void {
+    const order = [...this.list.querySelectorAll<HTMLElement>("[data-ml-key]")].map((row) => row.dataset.mlKey!);
+    this.setPicked(added(this.pickedNow(), between(order, this.anchor, key)));
+    this.anchor = key;
+  }
+
+  /** A box, a group's band or a heading: all of its machines chosen, or let
+   *  go when they all were. */
+  private pickAll(key: string): void {
+    const world = this.options.store.world.peek();
+    if (!world) return;
+    const keys = pickableIn(mapOf(world, this.options.words).nodes, key);
+    const now = this.pickedNow();
+    this.setPicked(keys.every((one) => now.includes(one)) ? now.filter((one) => !keys.includes(one)) : added(now, keys));
+  }
+
+  private choose(key: string | null, add = false): void {
     // Choosing where the server goes: a machine that can take it asks to
     // be confirmed; any other says why it cannot; the paper ends choosing.
     if (this.moving.chosenHub) {
@@ -600,6 +737,16 @@ export class MachinesPage implements Page {
       if (!this.whyNot) this.moving.confirmTo(machine, () => this.showMove());
       this.redraw();
       return;
+    }
+    // Pressed with Ctrl, a machine is added to those chosen or taken out,
+    // and a box's strip or a group's band adds all of its machines.
+    if (add && key) {
+      if (key.startsWith("group:")) {
+        const world = this.options.store.world.peek();
+        if (world) this.setPicked(added(this.pickedNow(), pickableIn(mapOf(world, this.options.words).nodes, key)));
+        return;
+      }
+      if (this.isPickable(key)) return this.setPicked(toggled(this.pickedNow(), key));
     }
     // The dashed box that adds a person is itself the way to add one; a
     // person's "⋯" lists what may be done to them.
@@ -620,6 +767,7 @@ export class MachinesPage implements Page {
       this.redraw();
       return;
     }
+    if (this.framed.length) this.chosen.forget();
     this.framed = [];
     this.closeMenu();
     // The dashed ring is itself the way to add a machine.
@@ -701,13 +849,18 @@ export class MachinesPage implements Page {
     );
   }
 
-  private remove(login: Login, machine: string): void {
-    const { access } = this.options;
-    this.options.confirm.ask({
-      title: access.removeTitle(machine),
-      what: access.removeWhat(machine),
-      go: access.removeGo,
-      act: () => this.options.change(login, { change: "remove", name: machine, reason: access.reasonDefault }),
+  /** Takes the machine of `name` off, one of three ways. */
+  private removeNamed(name: string): void {
+    const world = this.options.store.world.peek();
+    const machine = world ? machinesOf(world).find((one) => one.name === name) : undefined;
+    if (!world || !machine) return;
+    const { manage, access } = this.options;
+    removeMachines([machine], world, manage.removeTitle(machine.written), {
+      manage,
+      access,
+      sheet: this.removing,
+      running: (one) => this.options.updates?.state.peek()?.network?.machines?.[one],
+      change: this.options.change,
       done: () => void this.options.store.refresh(),
     });
   }
@@ -819,7 +972,10 @@ export class MachinesPage implements Page {
     // at once, its actions a row in it.
     const narrow = this.narrow();
     const framed = this.framed.filter((key) => spots.get(key)?.kind === "machine");
-    const open = (!!spot && (narrow || this.detailsOpen)) || framed.length > 1;
+    // In the list one machine ticked is enough for what is done to them
+    // together; on the drawing one alone is the one chosen.
+    const together = framed.length > (this.view === "list" ? 0 : 1);
+    const open = (!!spot && (narrow || this.detailsOpen)) || together;
     if (open && this.panel.hidden) layerOpened(this.detailsLayer);
     this.panel.hidden = !open;
     this.panel.classList.toggle("peek", narrow && !this.grown);
@@ -836,9 +992,15 @@ export class MachinesPage implements Page {
     }
     this.canvas.classList.toggle("listing", listing);
     this.list.hidden = !listing;
+    this.list.classList.toggle("picking", framed.length > 0);
+    // Beside the list on a wide page the panel takes its own room.
+    this.canvas.classList.toggle("beside", listing && open && !narrow);
     if (listing) {
       const adds = world.accounts.hubs.filter((hub) => this.hubLogin(hub.hub)).map((hub) => hub.hub);
-      const html = machineList({ world, now, selected: open ? this.selected : null, adds, when: this.options.when }, words);
+      const html = machineList(
+        { world, now, selected: open ? this.selected : null, adds, when: this.options.when, picked: new Set(framed), pick: { one: this.options.batch.pickOne, all: this.options.batch.pickAll } },
+        words,
+      );
       if (html !== this.listed) {
         this.listed = html;
         redrawKeepingFocus(this.list, () => {
@@ -853,8 +1015,8 @@ export class MachinesPage implements Page {
       : "";
     const html = alone
       ? ""
-      : framed.length > 1
-        ? this.framedPanel(framed, world)
+      : together
+        ? this.chosen.html(this.pickedMachines(world), world)
       : spot && open
         ? `${grip}<button class="icon-button panel-close" type="button" data-act="close-details" aria-label="${escape(words.closeDetails)}" title="${escape(words.closeDetails)}">${glyph("close", 16)}</button>${spot.kind === "hub" ? this.hubPanel(spot.hub, world, acts) : spot.kind === "assist" ? this.assistPanel(spot.assistants, world, now, acts) : spot.kind === "device" ? this.phonePanel(spot.member, spot.here, now, acts) : this.machinePanel(spot.machine, world, now, acts)}`
         : "";
@@ -993,15 +1155,22 @@ export class MachinesPage implements Page {
   /** What can be done to a spot, as `world` stands. */
   private actsOf(key: string, world: WorldNow): Act[] {
     const { words } = this.options;
+    // A box's or a group's machines are chosen together from its "⋯", or
+    // its strip pressed with the right button.
+    const all: Act[] = pickableIn(mapOf(world, words).nodes, key).length ? [{ act: "pick-group", label: this.options.batch.pickGroup, icon: "check" }] : [];
     const person = personOf(key);
-    if (person) return this.people.acts(world, person.hub, person.account);
+    if (person) return [...all, ...this.people.acts(world, person.hub, person.account)];
     if (groupMoreOf(key))
-      return this.groupBox(key, world)
-        ? [
-            { act: "rename-group", label: words.groups.renameGroup, icon: "edit" },
-            { act: "end-group", label: words.groups.endGroup, icon: "unarchive" },
-          ]
-        : [];
+      return [
+        ...all,
+        ...(this.groupBox(key, world)
+          ? [
+              { act: "rename-group", label: words.groups.renameGroup, icon: "edit" as const },
+              { act: "end-group", label: words.groups.endGroup, icon: "unarchive" as const },
+            ]
+          : []),
+      ];
+    if (key.startsWith("group:")) return all;
     const spot = this.spots(world).get(key);
     if (!spot) return [];
     const details: Act = { act: "details", label: words.details, icon: "info" };
@@ -1050,7 +1219,7 @@ export class MachinesPage implements Page {
       ...rename,
       ...group,
       details,
-      ...(owners.length && !spot.machine.here ? [{ act: "remove", label: words.remove, icon: "close" as const, danger: true }] : []),
+      ...(removerLoginOf(spot.machine, world) ? [{ act: "remove", label: words.remove, icon: "close" as const, danger: true }] : []),
     ];
   }
 
@@ -1100,6 +1269,7 @@ export class MachinesPage implements Page {
     const act = button.dataset.mapAct!;
     this.closeMenu();
     if (act === "fit") return this.map.fit();
+    if (act === "pick-group") return this.setPicked(added(this.pickedNow(), pickableIn(mapOf(world, this.options.words).nodes, key)));
     const person = personOf(key);
     if (person) return this.people.run(act, person.hub, person.account, key);
     if (groupMoreOf(key)) {
@@ -1163,7 +1333,7 @@ export class MachinesPage implements Page {
         if (login) this.share(login, machine.name);
         return;
       case "remove":
-        if (login) this.remove(login, machine.name);
+        this.removeNamed(machine.name);
         return;
       case "rename":
         this.renameCard(key, machine);
@@ -1184,14 +1354,13 @@ export class MachinesPage implements Page {
     }
   }
 
-  /** Puts every framed machine in one group, from one card. */
-  private groupFramed(): void {
+  /** Puts `machines`, all one owner's, in one group, from one card beside
+   *  the first. */
+  private groupMachines(machines: Machine[]): void {
     const world = this.options.store.world.peek();
-    if (!world || !this.framed.length) return;
-    const spots = this.spots(world);
-    const machines = this.framed.map((key) => spots.get(key)).flatMap((spot) => (spot?.kind === "machine" ? [spot.machine] : []));
-    const groupings = groupingTogether(machines, world);
-    if (groupings) this.groupCard(this.framed[0]!, machines, groupings);
+    const groupings = world ? machines.map((machine) => groupingOf(machine, world)) : [];
+    if (!machines.length || groupings.some((one) => !one)) return;
+    this.groupCard(`m:${machines[0]!.written}`, machines, groupings as Grouping[]);
   }
 
   /** The card that puts machines in a group, beside the ring of the one, or
@@ -1616,7 +1785,7 @@ export class MachinesPage implements Page {
     // A person's or a group's menu stands for them alone: what was chosen
     // on the drawing gives way, and a sheet says whose or which it is.
     const alone = key ? (personOf(key)?.account ?? groupMoreOf(key)?.group ?? null) : null;
-    if (alone !== null) {
+    if (alone !== null || key?.startsWith("group:")) {
       this.selected = null;
       this.detailsOpen = false;
     } else if (key) this.selected = key;
@@ -1678,52 +1847,10 @@ export class MachinesPage implements Page {
     return `<button class="text-button quiet-button" type="button" data-act="${act}"${extra}>${icon}<span>${escape(label)}</span></button>`;
   }
 
-  /** The machines framed together: each, and what is done to all of them
-   *  at once where the account owns every one. */
-  private framedPanel(keys: string[], world: WorldNow): string {
-    const { words } = this.options;
-    const spots = this.spots(world);
-    const machines = keys.map((key) => spots.get(key)).flatMap((spot) => (spot?.kind === "machine" ? [spot.machine] : []));
-    const owned = this.ownedTogether(machines, world);
-    const rows = machines
-      .map((machine) => {
-        const facts = "Ok" in machine.facts && machine.facts.Ok ? machine.facts.Ok : null;
-        const state = machine.online === false ? " offline" : "";
-        return `<li><button class="framed-row${state}" type="button" data-act="framed-pick" data-key="m:${escape(machine.written)}"><span class="dot" aria-hidden="true"></span><span class="framed-name">${escape(machine.written)}</span><span class="framed-sub">${escape(facts ? osName(facts.os) : "")}</span></button></li>`;
-      })
-      .join("");
-    return `<header class="panel-head"><h2 class="panel-title">${escape(words.framedTitle(machines.length))}</h2></header>
-      <ul class="framed-list">${rows}</ul>
-      <div class="panel-acts">${[
-        owned ? this.button("framed-share", words.framedShare, "", glyph("colleague", 14)) : "",
-        groupingTogether(machines, world) ? this.button("framed-group", words.groups.group, "", glyph("folder", 14)) : "",
-        owned && !machines.some((machine) => machine.here) ? this.button("framed-remove", words.framedRemove, " data-danger", glyph("close", 14)) : "",
-        this.button("framed-clear", words.framedClear),
-      ].join("")}</div>`;
-  }
-
-  /** The one login that owns every machine in `machines`, if one does. */
-  private ownedTogether(machines: Machine[], world: WorldNow): Login | undefined {
-    const first = machines[0] ? this.ownersOf(machines[0], world)[0] : undefined;
-    return first && machines.every((machine) => this.ownersOf(machine, world).some((login) => sameLogin(login, first))) ? first : undefined;
-  }
-
-  private framedMachines(): { machines: Machine[]; login: Login } | null {
-    const world = this.options.store.world.peek();
-    if (!world) return null;
-    const spots = this.spots(world);
-    const machines = this.framed.map((key) => spots.get(key)).flatMap((spot) => (spot?.kind === "machine" ? [spot.machine] : []));
-    const login = this.ownedTogether(machines, world);
-    return login && machines.length ? { machines, login } : null;
-  }
-
-  /** Shares every framed machine with the same accounts: those all of them
-   *  are shared with are shown, and a change applies to each. */
-  private shareFramed(): void {
-    const framed = this.framedMachines();
-    if (!framed) return;
+  /** Shares `machines`, all `login`'s, with the same accounts: those all of
+   *  them are shared with are shown, and a change applies to each. */
+  private shareMachines(machines: Machine[], login: Login): void {
     const { access, words } = this.options;
-    const { machines, login } = framed;
     const together = () => {
       const each = machines.map((machine) => new Set(this.sharedWith(login, machine.name)));
       return [...(each[0] ?? [])].filter((account) => each.every((set) => set.has(account)));
@@ -1732,26 +1859,6 @@ export class MachinesPage implements Page {
       for (const machine of machines) await this.options.change(login, { change: "share", machine: machine.name, to, shared });
       await this.options.store.refresh();
       return together();
-    });
-  }
-
-  /** Removes every framed machine, after one red card naming them. */
-  private removeFramed(): void {
-    const framed = this.framedMachines();
-    if (!framed) return;
-    const { access, words } = this.options;
-    const { machines, login } = framed;
-    this.options.confirm.ask({
-      title: words.framedRemoveTitle(machines.length),
-      what: words.framedRemoveWhat(machines.map((machine) => machine.written)),
-      go: access.removeGo,
-      act: async () => {
-        for (const machine of machines) await this.options.change(login, { change: "remove", name: machine.name, reason: access.reasonDefault });
-      },
-      done: () => {
-        this.framed = [];
-        void this.options.store.refresh();
-      },
     });
   }
 

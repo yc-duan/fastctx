@@ -41,13 +41,16 @@ export interface Draft {
 
 export type CanvasEvent =
   | { kind: "point"; key: string | null; at: Point }
-  | { kind: "select"; key: string | null; at: Point }
+  /** An item pressed; `add` while Ctrl (Command on a Mac) is held, to add
+   *  it to those chosen or take it out. */
+  | { kind: "select"; key: string | null; at: Point; add: boolean }
   | { kind: "context"; key: string | null; at: Point; input: "mouse" | "touch" | "keyboard" }
   | { kind: "draft"; draft: Draft }
   | { kind: "drop"; handle: CanvasHandle; target: string; at: Point }
   /** A frame drawn with the left mouse button: the items inside it, while
-   *  it is drawn and once it is let go. */
-  | { kind: "marquee"; keys: string[]; done: boolean }
+   *  it is drawn and once it is let go; `add` while Ctrl or Command is held,
+   *  to add them to those chosen. */
+  | { kind: "marquee"; keys: string[]; done: boolean; add: boolean }
   | { kind: "cancel"; handle: CanvasHandle; reason: "escape" | "outside" | "interrupted" | "changed" };
 
 export interface CanvasFrame {

@@ -1,7 +1,8 @@
-// Taking a machine off the network, three ways (`world-network.md`, 移出网络
-// 与卸载): uninstalling Fastctx there and keeping its data, the way chosen
-// first; erasing everything Fastctx wrote there; or only taking it off. The
-// two that uninstall say why when they cannot be taken; the red button acts.
+// Taking a machine off the network, or several, three ways
+// (`world-network.md`, 移出网络与卸载): uninstalling Fastctx there and keeping
+// its data, the way chosen first; erasing everything Fastctx wrote there; or
+// only taking it off. The two that uninstall say why when they cannot be
+// taken, and of several how many only leave; the red button acts.
 
 import { Sheet } from "./confirm";
 import { escape } from "../conversation/prose";
@@ -10,10 +11,12 @@ import type { ManageWords } from "./machine-manage-words";
 export type RemoveWay = "uninstall" | "everything" | "leave";
 
 export interface Removing {
-  /** The machine's name, as written. */
-  machine: string;
-  /** Why Fastctx on it cannot be uninstalled from here, when it cannot. */
+  /** The sheet's title, naming the machine or saying how many. */
+  title: string;
+  /** Why Fastctx is uninstalled from here on none of them, when it is not. */
   cannot: string | null;
+  /** Of several, those that only leave and why, when some do. */
+  some: string | null;
   offline: boolean;
   remove(way: RemoveWay): Promise<void>;
 }
@@ -76,14 +79,15 @@ export class RemoveMachineSheet {
       const { title, what } = words.ways[kind];
       const blocked = kind !== "leave" && removing.cannot !== null;
       const chosen = this.way === kind;
+      const some = kind !== "leave" && !blocked && removing.some ? `<span class="mr-way-some">${escape(removing.some)}</span>` : "";
       return `<button type="button" class="mr-way${chosen ? " chosen" : ""}${kind === "everything" ? " erase" : ""}" role="radio" aria-checked="${chosen}" data-mr-way="${kind}"${blocked ? " disabled" : ""}>
         <span class="mr-way-title">${escape(title)}</span>
-        <span class="mr-way-what">${escape(blocked ? removing.cannot! : what)}</span>
+        <span class="mr-way-what">${escape(blocked ? removing.cannot! : what)}</span>${some}
       </button>`;
     };
     const note = removing.offline && this.way !== "leave" ? `<p class="mr-note">${escape(words.removeOffline)}</p>` : "";
-    sheet.body.innerHTML = `${sheet.head(words.removeTitle(removing.machine), words.close)}
-      <div class="mr-ways" role="radiogroup" aria-label="${escape(words.removeTitle(removing.machine))}">${way("uninstall")}${way("everything")}${way("leave")}</div>
+    sheet.body.innerHTML = `${sheet.head(removing.title, words.close)}
+      <div class="mr-ways" role="radiogroup" aria-label="${escape(removing.title)}">${way("uninstall")}${way("everything")}${way("leave")}</div>
       ${note}
       <p class="sheet-note" role="alert"${this.said ? "" : " hidden"}>${escape(this.said)}</p>
       <div class="mr-go"><button class="sheet-go danger" type="button" data-mr-go${sheet.busy ? " disabled" : ""}>${escape(words.removeGo)}</button></div>`;

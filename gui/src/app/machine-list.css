@@ -66,6 +66,11 @@
   display: none;
 }
 
+/* The details or the machines chosen open beside the list, not over it. */
+.machines-canvas.listing.beside > .ml-list {
+  right: calc(min(380px, 42%) + var(--space-2));
+}
+
 .ml-hubs,
 .ml-group {
   max-width: 1080px;
@@ -95,13 +100,15 @@
 }
 
 /* A group of the owner's inside their section: its name over its rows,
-   level with the rows' names, quieter than the section's own head. */
+   level with the rows' names, quieter than the section's own head; its box
+   stands in the column of the rows' boxes. */
 .ml-band-head {
+  position: relative;
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
   margin: var(--space-4) 0 0;
-  padding: 0 var(--space-3) 0 calc(var(--space-3) * 2 + 18px);
+  padding: 0 var(--space-3) 0 calc(var(--space-3) * 3 + 18px + 16px);
   font-family: var(--font-emphasis);
   font-weight: 400;
   font-size: var(--size-small);
@@ -110,6 +117,65 @@
 
 .ml-band-head .ml-group-sub {
   font-family: var(--font-reading);
+}
+
+.ml-band-head .ml-pick {
+  position: absolute;
+  top: 50%;
+  left: var(--space-3);
+  transform: translateY(-50%);
+}
+
+/* A machine's box, and a heading's for all its machines: a small solid
+   fill, no line round it, filled with clay once chosen, half when some of
+   a heading's are. It shows where pointed at, and on every row once any
+   machine is chosen. */
+.ml-pick {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: var(--fill-strong);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--hover) ease, background-color var(--hover) ease;
+}
+
+.ml-pick.none {
+  visibility: hidden;
+}
+
+.ml-row:hover .ml-pick,
+.ml-row:focus-visible .ml-pick,
+.ml-group-head:hover .ml-pick,
+.ml-band-head:hover .ml-pick,
+.ml-list.picking .ml-pick {
+  opacity: 1;
+}
+
+.ml-pick[aria-checked="true"],
+.ml-pick[aria-checked="mixed"] {
+  background: var(--accent);
+}
+
+.ml-pick[aria-checked="true"]::after {
+  content: "";
+  width: 8px;
+  height: 4px;
+  margin-top: -2px;
+  border-left: 2px solid var(--bg);
+  border-bottom: 2px solid var(--bg);
+  transform: rotate(-45deg);
+}
+
+.ml-pick[aria-checked="mixed"]::after {
+  content: "";
+  width: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--bg);
 }
 
 .ml-group-head::after {
@@ -125,7 +191,7 @@
    hub, whom it is shared with, the agents at work on it, and the way in. */
 .ml-row {
   display: grid;
-  grid-template-columns: 18px minmax(140px, 1.4fr) minmax(110px, 0.9fr) minmax(120px, 1fr) minmax(0, 1fr) 64px 16px;
+  grid-template-columns: 16px 18px minmax(140px, 1.4fr) minmax(110px, 0.9fr) minmax(120px, 1fr) minmax(0, 1fr) 64px 16px;
   align-items: center;
   column-gap: var(--space-3);
   width: 100%;
@@ -307,7 +373,7 @@
 /* Narrower: whom it is shared with gives way first. */
 @container ml (max-width: 760px) {
   .ml-row {
-    grid-template-columns: 18px minmax(120px, 1.4fr) minmax(90px, 0.9fr) minmax(100px, 1fr) 48px 16px;
+    grid-template-columns: 16px 18px minmax(120px, 1.4fr) minmax(90px, 0.9fr) minmax(100px, 1fr) 48px 16px;
   }
 
   .ml-given {
@@ -330,6 +396,16 @@
 
   .ml-mark {
     grid-area: mark;
+  }
+
+  /* No pointer rests on a phone: machines are chosen on a larger screen. */
+  .ml-pick,
+  .ml-band-head .ml-pick {
+    display: none;
+  }
+
+  .ml-band-head {
+    padding-left: calc(var(--space-3) * 2 + 18px);
   }
 
   .ml-name {

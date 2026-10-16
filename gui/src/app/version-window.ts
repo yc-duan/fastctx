@@ -29,6 +29,8 @@ export interface VersionSubject {
   state: UpdateState;
   /** Looks on GitHub again, there. */
   look?(): Promise<UpdateState>;
+  /** The window's first line, for several machines: what they run. */
+  said?: string;
 }
 
 type Filter = "all" | "stable" | "test";
@@ -261,7 +263,7 @@ export class VersionWindow {
         ? `<button class="text-button quiet-button" type="button" data-vw-pick=""${this.picking !== null ? " disabled" : ""}>${escape(words.askNone)}</button>`
         : "";
     const html = `${sheet.head(purpose.kind === "minimum" ? words.minimumTitle : words.title, words.close)}
-      <p class="vw-running">${escape(purpose.kind === "minimum" ? words.minimumNow(minimum) : words.runs(subject.who, subject.running))}</p>
+      <p class="vw-running">${escape(purpose.kind === "minimum" ? words.minimumNow(minimum) : (subject.said ?? words.runs(subject.who, subject.running)))}</p>
       <div class="vw-tools">
         <div class="choice-options" role="radiogroup" aria-label="${escape(words.filterLabel)}">${filters}</div>
         <span class="vw-looked"><span>${escape(looked)}</span>${subject.look ? `<button class="text-button quiet-button" type="button" data-vw-look${this.looking ? " disabled" : ""}>${escape(words.lookAgain)}</button>` : ""}</span>
