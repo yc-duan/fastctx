@@ -1021,7 +1021,7 @@ impl fastctx_net::link::Node for Handler {
                 _ => id.as_str(),
             };
             let identity = crate::letters::Identity::new(&node, caller.key, original, &caller.names);
-            let handoff = crate::letters::Handoff::begin(&node, &identity)?;
+            let handoff = crate::letters::Handoff::begin(&node, &identity).await;
             let finished = handoff.finished()?;
             let (letter, completion) = match letter {
                 Letter::Fragment { index, total, text, .. } => {
