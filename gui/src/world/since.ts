@@ -5,6 +5,7 @@
 import type { TurnEnd } from "./events";
 import type { Address, JobId, JournalName, MachineName, NoticeId, Timestamp, TownName } from "./wire";
 import type { Host, JobOwner, Location, Origin, Writer } from "./world";
+import type { HubAccount } from "./accounts";
 
 export interface WorldSince {
   machine: MachineName;
@@ -60,6 +61,9 @@ export type SinceKind =
       exit: { status: ExitStatus; at: Timestamp } | null;
       script: string;
       output: string;
+      /** The account a job run here for a resident of another machine
+       *  works for. */
+      account?: HubAccount;
     }
   | { kind: "colleague_asked"; asker: Address; colleague: Address; label: string }
   | { kind: "answer_delivery"; colleague: Address; to: Address; turn: string | null; outcome: Outcome }

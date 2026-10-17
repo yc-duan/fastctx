@@ -103,6 +103,7 @@ pub fn fixtures() -> Fixtures {
             exit: Some(Exited { status: ExitStatus::Code(7), at }),
             script: "exit 7".into(),
             output: "C:/world/output.log".into(),
+            account: None,
         });
     }
     for outcome in [

@@ -241,6 +241,7 @@ impl Scan<'_> {
         for path in self.json_files(directory) {
             let Some(job) = self.optional::<JobRecord>(&path) else { continue };
             let Some(end) = job.end else { continue };
+            let account = job.account.or_else(|| job.on.and_then(|on| on.account));
             self.events.push(SinceEvent {
                 id: identity("job-end", &[job.machine.key(), &job.owner.key(), job.id.as_str()]),
                 at: end.at,
@@ -257,6 +258,7 @@ impl Scan<'_> {
                     exit: job.exit,
                     script: job.script,
                     output: job.output,
+                    account,
                 },
             });
         }

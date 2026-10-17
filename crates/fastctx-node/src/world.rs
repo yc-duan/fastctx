@@ -931,15 +931,23 @@ impl fastctx_net::link::Node for Handler {
                     Ok(RemoteReply::Looked { looked: crate::admission::seen::looked(&node, &asker, looked), jobs })
                 }
                 RemoteCall::Find { resident } => {
-                    let lives_here = crate::admission::seen::resident(&node, &asker, &resident);
+                    let lives_here = crate::admission::seen::resident(
+                        &node,
+                        crate::admission::seen::Looker::Asker(&asker),
+                        &resident,
+                    );
                     Ok(RemoteReply::Found { lives_here })
                 }
                 RemoteCall::Who { all, town, since } => crate::server::who_here(&node, all, town, since)
                     .await
                     .map(|reply| RemoteReply::Who(crate::admission::seen::who(&node, &asker, reply))),
-                RemoteCall::Since { since, town } => crate::since::here(&node, since, town)
-                    .await
-                    .map(|reply| RemoteReply::Since(crate::admission::seen::since(&node, &asker, reply))),
+                RemoteCall::Since { since, town } => crate::since::here(&node, since, town).await.map(|reply| {
+                    RemoteReply::Since(crate::admission::seen::since(
+                        &node,
+                        crate::admission::seen::Looker::Asker(&asker),
+                        reply,
+                    ))
+                }),
                 RemoteCall::Canon { path } => {
                     tokio::task::spawn_blocking(move || crate::town::map::heads(std::path::Path::new(&path)))
                         .await

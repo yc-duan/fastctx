@@ -135,6 +135,10 @@ pub enum SinceKind {
         exit: Option<Exited>,
         script: String,
         output: String,
+        /// The account a job run here for a resident of another machine
+        /// works for, by which it is seen.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account: Option<crate::access::HubAccount>,
     },
     /// A successful invitation. `at` is when the caller started asking, not
     /// when the colleague was born or when the call returned.

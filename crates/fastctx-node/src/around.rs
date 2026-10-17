@@ -32,6 +32,37 @@ pub(crate) fn reachable(node: &Node, acting: &Acting, purpose: Purpose) -> Vec<R
     reachable
 }
 
+/// As `reachable`, but each machine once for every account `acting` works
+/// for that may ask `purpose` of it there. A machine shows each account the
+/// conversations that work for it alone (`admission::seen`), so a computer
+/// logged in to several accounts on a hub asks as each and merges what it
+/// hears.
+pub(crate) fn reachable_each(node: &Node, acting: &Acting, purpose: Purpose) -> Vec<Reachable> {
+    let mut reachable = Vec::new();
+    let mut keys = Vec::new();
+    for link in node.links() {
+        let view = link.view();
+        let accounts = node.accounts_on(&link, acting);
+        let here = &view.me;
+        for machine in view.machines().filter(|machine| !view.is_me(&machine.name)) {
+            if keys.contains(&machine.key) {
+                continue;
+            }
+            let mut asked = false;
+            for account in &accounts {
+                if let Some(account) = view.account_for(std::slice::from_ref(account), here, &machine.name, purpose) {
+                    asked = true;
+                    reachable.push(Reachable { link: link.clone(), name: machine.name.clone(), account });
+                }
+            }
+            if asked {
+                keys.push(machine.key);
+            }
+        }
+    }
+    reachable
+}
+
 /// Whom whoever makes a local call works for: a resident's own standing,
 /// or this computer's logins for the user and pages.
 pub(crate) fn acting_of(node: &Node, caller: &crate::town::caller::Caller) -> Acting {

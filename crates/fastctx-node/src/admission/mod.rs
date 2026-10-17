@@ -31,7 +31,8 @@ pub struct Asker {
     pub machine: MachineName,
     pub hub: HubId,
     pub account: AccountName,
-    /// Whether the account may work on this machine, and so sees all of it.
+    /// Whether the account may work on this machine: it sees the machine's
+    /// agents and pages, never a conversation that works for another (`seen`).
     pub hands: bool,
 }
 
@@ -137,9 +138,12 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
         }
     }
     let hands = view.rights(&caller.account, &here).hands;
+    // A conversation's attachments are seen by the accounts it works for
+    // alone (`seen`); a draft's, which no conversation holds yet, by whoever
+    // may work here.
     let resident = resident_of(call).or(match call {
         RemoteCall::AttachmentThumbnail { attachment, .. } | RemoteCall::ReadAttachment { attachment, .. }
-            if !hands =>
+            if !hands || node.residents.knows(&attachment.owner().resident) =>
         {
             Some(&attachment.owner().resident)
         }

@@ -1486,18 +1486,37 @@ async fn who(
                 // 共享机器与智能体协助).
                 if node.works_here(acting).is_err() {
                     crate::who::only_for(node, acting, &mut reply);
+                } else {
+                    reply = crate::admission::seen::who_here(node, acting, reply);
                 }
                 MachineWho::Answered { reply }
             }
             Err(error) => MachineWho::NoAnswer { machine: here.clone(), reason: error.message },
         });
     }
-    let reachable: Vec<_> = crate::around::reachable(node, acting, fastctx_types::access::Purpose::Look)
+    let reachable: Vec<_> = crate::around::reachable_each(node, acting, fastctx_types::access::Purpose::Look)
         .into_iter()
         .filter(|machine| asks_for(&machine.name))
         .collect();
     let heard = crate::around::ask_each(reachable, |_| RemoteCall::Who { all, town: town.clone(), since }).await;
     for (machine, heard) in heard {
+        // A machine asked as several accounts: what each was shown, as one
+        // answer; one that answered stands over one that did not.
+        let known = machines.iter().position(|answer| match answer {
+            MachineWho::Answered { reply } => reply.machine == machine,
+            MachineWho::Offline { machine: name, .. } | MachineWho::NoAnswer { machine: name, .. } => *name == machine,
+        });
+        if let Some(at) = known {
+            if let crate::around::Heard::Answered(RemoteReply::Who(reply)) = heard
+                && reply.machine == machine
+            {
+                match &mut machines[at] {
+                    MachineWho::Answered { reply: answer } => answer.merge(reply),
+                    other => *other = MachineWho::Answered { reply },
+                }
+            }
+            continue;
+        }
         machines.push(match heard {
             crate::around::Heard::Answered(RemoteReply::Who(reply)) if reply.machine == machine => {
                 MachineWho::Answered { reply }

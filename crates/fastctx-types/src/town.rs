@@ -27,6 +27,41 @@ pub struct WhoReply {
     pub busy: Option<u32>,
 }
 
+impl WhoReply {
+    /// The same machine's answer to another of the accounts whoever asks
+    /// works for, merged into this one: a machine shows each account the
+    /// conversations working for it alone.
+    pub fn merge(&mut self, more: WhoReply) {
+        for resident in more.residents {
+            if !self.residents.iter().any(|known| known.about.id == resident.about.id) {
+                self.residents.push(resident);
+            }
+        }
+        for job in more.jobs {
+            if !self.jobs.iter().any(|known| known.job == job.job) {
+                self.jobs.push(job);
+            }
+        }
+        match (&mut self.history, more.history) {
+            (Some(history), Some(more)) => {
+                for event in more.events {
+                    if !history.events.iter().any(|known| known.id == event.id) {
+                        history.events.push(event);
+                    }
+                }
+                for fact in more.undated {
+                    if !history.undated.contains(&fact) {
+                        history.undated.push(fact);
+                    }
+                }
+            }
+            (history @ None, more) => *history = more,
+            (Some(_), None) => {}
+        }
+        self.busy = self.busy.or(more.busy);
+    }
+}
+
 /// What is afoot on a machine (`world-network.md`, 近况): its residents and
 /// the jobs running on it, by id. The machine keeps its own whole, its hub
 /// the latest each machine told, and each member what it was told of each

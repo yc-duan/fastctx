@@ -42,18 +42,36 @@ pub async fn look(node: &Arc<Node>, acting: &Acting, ids: Vec<String>) -> Vec<Lo
                 Err(error) => unasked.push(format!("{} ({error})", node.machine())),
             }
         }
-        let machines = crate::around::reachable(node, acting, Purpose::Look);
+        // Asked as each account whoever asks works for, which a machine
+        // shows its own conversations apart.
+        let machines = crate::around::reachable_each(node, acting, Purpose::Look);
+        let mut answered = Vec::new();
         for (name, heard) in crate::around::ask_each(machines, |_| RemoteCall::Look { id: id.clone() }).await {
+            if answered.contains(&name) && !matches!(heard, Heard::Answered(RemoteReply::Looked { .. })) {
+                continue;
+            }
             match heard {
                 Heard::Answered(RemoteReply::Looked { looked, jobs: work }) => {
-                    found.extend(looked);
-                    jobs.extend(work);
+                    unasked.retain(|said: &String| !said.starts_with(&format!("{name} (")));
+                    answered.push(name);
+                    if let Some(looked) = looked
+                        && !found.contains(&looked)
+                    {
+                        found.push(looked);
+                    }
+                    for job in work {
+                        if !jobs.iter().any(|known: &fastctx_types::town::RunningJob| known.job == job.job) {
+                            jobs.push(job);
+                        }
+                    }
                 }
                 Heard::Answered(_) => unasked.push(format!("{name} (answered something else)")),
                 Heard::Offline(_) => unasked.push(format!("{name} (offline)")),
                 Heard::NoAnswer(reason) => unasked.push(format!("{name} ({reason})")),
             }
         }
+        unasked.sort();
+        unasked.dedup();
         let mut one = LookedUp { id, found, unasked, jobs };
         one.attach_jobs();
         looked.push(one);

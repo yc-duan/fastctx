@@ -572,20 +572,32 @@ pub async fn find(node: &Arc<Node>, from: &ResidentId, to: &ResidentId) -> Resul
 
 /// Which machine `acting` may look at says the resident `to` lives there.
 pub async fn find_for(node: &Arc<Node>, acting: &Acting, to: &ResidentId) -> Result<MachineName, Failure> {
-    let machines = crate::around::reachable(node, acting, Purpose::Look);
+    // Asked as each account `acting` works for: a machine says a resident
+    // lives there to the accounts it works for alone.
+    let machines = crate::around::reachable_each(node, acting, Purpose::Look);
     use crate::around::Heard as Answer;
     let heard = crate::around::ask_each(machines, |_| RemoteCall::Find { resident: to.clone() }).await;
     let mut found = Vec::new();
+    let mut answered = Vec::new();
     let mut offline = Vec::new();
     let mut unanswered = Vec::new();
     for (name, heard) in heard {
         match heard {
-            Answer::Answered(RemoteReply::Found { lives_here: true }) => found.push(name),
-            Answer::Answered(_) => {}
-            Answer::Offline(_) => offline.push(name.to_string()),
-            Answer::NoAnswer(reason) => unanswered.push(format!("{name} ({reason})")),
+            Answer::Answered(RemoteReply::Found { lives_here: true }) if !found.contains(&name) => {
+                found.push(name.clone());
+                answered.push(name);
+            }
+            Answer::Answered(_) => answered.push(name),
+            Answer::Offline(_) if !offline.contains(&name.to_string()) => offline.push(name.to_string()),
+            Answer::NoAnswer(reason) => unanswered.push((name, reason)),
+            Answer::Offline(_) => {}
         }
     }
+    let unanswered: Vec<String> = unanswered
+        .into_iter()
+        .filter(|(name, _)| !answered.contains(name))
+        .map(|(name, reason)| format!("{name} ({reason})"))
+        .collect();
     match found.as_slice() {
         [machine] => Ok(machine.clone()),
         [] => {

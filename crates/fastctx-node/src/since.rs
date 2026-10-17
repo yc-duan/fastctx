@@ -58,7 +58,10 @@ pub async fn query(
     let mut events = Vec::new();
     let mut undated = Vec::new();
     if asks_for(&machine) {
-        match here(node, since, town.clone()).await {
+        // This machine's own records are filtered as the other machines
+        // filter theirs: by whom each conversation works for.
+        let looker = crate::admission::seen::Looker::Here(acting);
+        match here(node, since, town.clone()).await.map(|reply| crate::admission::seen::since(node, looker, reply)) {
             Ok(mut reply) => {
                 events.append(&mut reply.events);
                 undated.append(&mut reply.undated);
@@ -71,11 +74,12 @@ pub async fn query(
         // machines are offline. Their resident records remain unavailable.
         events.extend(ledger_events(node, since, town, &mut issues).await?);
     }
-    let reachable: Vec<_> = crate::around::reachable(node, acting, Purpose::Look)
+    let reachable: Vec<_> = crate::around::reachable_each(node, acting, Purpose::Look)
         .into_iter()
         .filter(|machine| asks_for(&machine.name))
         .collect();
-    let asked_here: Vec<_> = reachable.iter().map(|machine| (machine.link.clone(), machine.name.clone())).collect();
+    let mut asked_here: Vec<_> = reachable.iter().map(|machine| (machine.link.clone(), machine.name.clone())).collect();
+    asked_here.dedup_by(|a, b| a.1 == b.1);
     let heard = crate::around::ask_each(reachable, |_| RemoteCall::Since { since, town: town.clone() }).await;
     // Who connected and left, as the hubs had it when they were just asked.
     for (link, name) in &asked_here {
@@ -84,6 +88,20 @@ pub async fn query(
         }
     }
     for (name, heard) in heard {
+        // A machine asked as several accounts answers each with what works
+        // for it; their events merge below, and one answer stands for it.
+        if let Some(at) = answers.iter().position(|answer| answer.machine() == &name) {
+            if let Heard::Answered(RemoteReply::Since(mut reply)) = heard
+                && reply.coverage.machine == name
+            {
+                events.append(&mut reply.events);
+                undated.append(&mut reply.undated);
+                if !matches!(answers[at], MachineSince::Answered { .. }) {
+                    answers[at] = MachineSince::Answered { reply: reply.coverage };
+                }
+            }
+            continue;
+        }
         answers.push(match heard {
             Heard::Answered(RemoteReply::Since(mut reply)) if reply.coverage.machine == name => {
                 events.append(&mut reply.events);
