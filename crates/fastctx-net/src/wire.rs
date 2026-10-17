@@ -314,9 +314,7 @@ pub enum Down {
         afoot_pending: Option<bool>,
     },
     /// The hub's half of a password login.
-    LoginResponse {
-        response: Bytes,
-    },
+    LoginResponse { response: Bytes },
     /// What a token lets a device into, asked before it is used
     /// (`Intent::Peek`): whose, and whether as a managed machine.
     TokenInfo {
@@ -329,25 +327,16 @@ pub enum Down {
         expires: Timestamp,
     },
     /// The hub's half of opening an account, or of setting a password.
-    RegisterResponse {
-        response: Bytes,
-    },
+    RegisterResponse { response: Bytes },
     /// The login was taken: this computer or phone is the member `name` of
     /// the hub, logged in to `account`.
-    LoggedIn {
-        hub: HubId,
-        hub_name: HubName,
-        name: MachineName,
-        account: AccountName,
-    },
+    LoggedIn { hub: HubId, hub_name: HubName, name: MachineName, account: AccountName },
     /// The account is open; log in to it.
     Registered,
     /// The data connection is paired; bytes follow.
     Paired,
     /// The connection is refused or ended, and why.
-    Refused {
-        reason: Refusal,
-    },
+    Refused { reason: Refusal },
     Pong {
         n: u64,
         /// The hub's time as it answered, by its clock (`crate::link`'s
@@ -364,43 +353,23 @@ pub enum Down {
     },
     /// The hub holds this machine's letter `seq` and all before it; when
     /// the hub cannot deliver it, `refused` says why and the letter is gone.
-    Ack {
-        seq: u64,
-        refused: Option<String>,
-    },
+    Ack { seq: u64, refused: Option<String> },
     /// A letter for this machine, numbered `seq` in the hub's numbering.
-    Deliver {
-        seq: u64,
-        message: Envelope,
-    },
+    Deliver { seq: u64, message: Envelope },
     /// A call for this machine, numbered `call` by the hub.
-    Incoming {
-        call: u64,
-        message: Envelope,
-    },
+    Incoming { call: u64, message: Envelope },
     /// How the call `id` this machine made is going.
-    Status {
-        id: u64,
-        status: CallStatus,
-    },
+    Status { id: u64, status: CallStatus },
     /// The answer to the call `id` this machine made.
-    Answered {
-        id: u64,
-        message: Envelope,
-    },
+    Answered { id: u64, message: Envelope },
     /// The answer to the question `id`.
-    Told {
-        id: u64,
-        answer: Result<Told, String>,
-    },
+    Told { id: u64, answer: Result<Told, String> },
     /// The directory changed in what this member sees of it.
     DirectoryChanged,
     /// The hub takes sessions now (`Intent::Probe`).
     Ready,
     /// A project this member may use has new entries in its ledger.
-    LedgerChanged {
-        town: TownId,
-    },
+    LedgerChanged { town: TownId },
     /// How what is afoot on `machine` changed as this member may see it,
     /// since this session was last told of it; and, to the machine's owner
     /// alone, how many agents are at work or waiting there now.
@@ -413,47 +382,30 @@ pub enum Down {
     /// Delete what this member keeps of a conversation, and say how that
     /// went (`Up::Forgot`). Sent only to a member whose session says it
     /// forgets: now, and at each session it opens until it says it is done.
-    Forget {
-        forgetting: Forgetting,
-    },
+    Forget { forgetting: Forgetting },
     /// The versions of the network as the hub knows them, sent when the
     /// session opens and whenever they change, only to a member whose
     /// session says it reads them.
-    Versions {
-        network: Box<fastctx_types::update::Network>,
-    },
+    Versions { network: Box<fastctx_types::update::Network> },
     /// Fetch this package for the network, and deliver it
     /// (`Intent::Deliver`) or say why not (`Up::Unfetched`). Sent only to a
     /// member that reads versions and said it fetches for others, or holds
     /// the package.
-    Fetch {
-        fetch: Box<fastctx_types::update::Fetch>,
-    },
+    Fetch { fetch: Box<fastctx_types::update::Fetch> },
     /// The call `call` the hub passed on (`Incoming`) is over for its
     /// caller, who gave it up, left the hub, or lost the right it was made
     /// under: one that only reads stops (`fastctx_types::contract`). Sent
     /// only to a member whose session says it reads this.
-    Cancelled {
-        call: u64,
-    },
+    Cancelled { call: u64 },
     /// How `machine` is connected now, as the member may see it, the
     /// hub's `rev`th change in who is online (`crate::directory::View::presence`).
     /// Sent only to a member whose session says it reads this.
-    Presence {
-        machine: MachineName,
-        presence: crate::directory::Presence,
-        rev: u64,
-    },
+    Presence { machine: MachineName, presence: crate::directory::Presence, rev: u64 },
     /// The part `index` of `total` of the answer to the question `id`, as
     /// JSON text, when the whole is too large for one frame: put together,
     /// they are what `Told` would carry. Sent only to a member whose session
     /// says it reads this.
-    Part {
-        id: u64,
-        index: u32,
-        total: u32,
-        text: String,
-    },
+    Part { id: u64, index: u32, total: u32, text: String },
 }
 
 /// The most bytes of text one `Down::Part` carries.
@@ -567,6 +519,11 @@ pub enum Question {
         version: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         allow_partial: bool,
+        /// Which of the archives a hub cannot pack itself the line being
+        /// made downloads, brought in when the hub lacks them; an earlier
+        /// caller, which never says, gets the Windows one brought.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        wanted: Vec<String>,
     },
     /// This member's view of the directory.
     Directory,

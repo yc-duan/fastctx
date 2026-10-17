@@ -204,7 +204,7 @@ fn reconcile(
             .context("finding the user's interactive logon")?,
         None => None,
     };
-    let desired = if config.kind == Kind::Hub {
+    let desired = if config.kind == Kind::Hub || config.systems() {
         Identity::System
     } else {
         full.as_ref().map(|(identity, _)| *identity).unwrap_or(Identity::S4u)

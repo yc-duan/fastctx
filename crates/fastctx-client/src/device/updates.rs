@@ -134,6 +134,8 @@ impl Device {
             holds: Vec::new(),
             asked: None,
             hub_here: false,
+            github_speed: None,
+            target: None,
         };
         drop(held);
         for session in self.sessions() {

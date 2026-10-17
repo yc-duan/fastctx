@@ -40,6 +40,8 @@ pub enum Identity {
     S4u,
     /// The user's full identity, from their signed-in session.
     Interactive,
+    /// SYSTEM, for the managed computer SYSTEM installed for itself.
+    System,
 }
 
 impl Supervision {
@@ -146,7 +148,9 @@ impl Handoff {
             let changed = self.changed.notified();
             tokio::pin!(changed);
             changed.as_mut().enable();
-            if self.state.lock().expect("never poisoned").starting == 0 { return; }
+            if self.state.lock().expect("never poisoned").starting == 0 {
+                return;
+            }
             changed.await;
         }
     }

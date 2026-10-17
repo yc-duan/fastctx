@@ -1,38 +1,37 @@
 //! A package a machine asks the hub for: from the hub's own copy; else
-//! brought in once, however many ask, from where its release published it,
-//! and when the hub cannot reach that, from the machines that hold it or can
-//! reach GitHub and fetch for others, one after another.
+//! brought in once, however many ask (`world-network.md`, 中枢替网络存的东西),
+//! from where its release published it, by the hub itself or by a machine
+//! that holds it or reaches GitHub and fetches for others, the fastest
+//! first. Every source is judged the same way (`fastctx_update::pace`):
+//! while none going looks like finishing soon, the next is asked beside
+//! them, a few at once, and the first to have the whole package, checked,
+//! puts it in place.
 
+use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use fastctx_net::wire::{Down, Told};
 use fastctx_types::MachineName;
-use fastctx_types::update::{Fetch, Held};
-use tokio::sync::oneshot;
+use fastctx_types::update::{Fetch, Held, Manifest, Package};
+use fastctx_update::pace::{AT_ONCE, Pace, SAMPLE, Verdict};
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
-use super::{Attempt, Fetching};
+use super::{Attempt, Fetching, Race};
 use crate::{Hub, Out};
 
-/// How long a machine asked to fetch a package has to deliver it.
-const HELPER_PATIENCE: Duration = Duration::from_secs(30 * 60);
-
-/// How long a machine asked to fetch a package may bring nothing more of
-/// it before the next is asked.
-const STALLED: Duration = Duration::from_secs(5 * 60);
-
-/// How long the hub may download a package from where its release is
-/// published before it asks the machines instead.
-const DOWNLOAD_PATIENCE: Duration = Duration::from_secs(20 * 60);
+/// How long a machine asked to fetch a package may take before its first
+/// byte comes, fetching it from GitHub meanwhile, and still look promising.
+const MACHINE_START: Duration = Duration::from_secs(90);
 
 /// How long bringing one package in may take in all, however it is
 /// brought, giving its last try up included: within the 45 minutes whoever
 /// asks for it waits (`fastctx_net::link`), so that it hears why.
 const BUDGET: Duration = Duration::from_secs(43 * 60);
 
-/// How long a try given up has to end its transfer before the next starts.
+/// How long a try given up has to end its transfer before it is revoked.
 const SETTLE: Duration = Duration::from_secs(30);
 
 /// `asker` asks, as its question `id`, for the package `target` of
@@ -76,6 +75,7 @@ async fn obtain(hub: &Arc<Hub>, held: Held) -> Result<u64, String> {
     let (waiting, answered) = oneshot::channel();
     {
         let mut updates = hub.updates.lock().expect("never poisoned");
+        updates.asked.insert(held.version.clone(), std::time::Instant::now());
 
         match updates.obtaining.get_mut(&held) {
             Some(owner) if owner.expired => {
@@ -146,92 +146,90 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
     if let Some(size) = size_of(&cache, held)? {
         return Ok(size);
     }
+    // One placed by hand is handed out from where it is.
+    let placing = (hub.clone(), held.clone());
+    if let Ok(Some((_, size))) = tokio::task::spawn_blocking(move || super::placed(&placing.0, &placing.1)).await {
+        return Ok(size);
+    }
     let manifest = manifest.ok_or_else(|| format!("no machine of the network knows the release {}", held.version))?;
     let package = manifest
         .package(&held.target)
         .cloned()
         .ok_or_else(|| format!("the release {} has no package for {}", held.version, held.target))?;
-    let mut failures = Vec::new();
     let deadline = Instant::now() + BUDGET;
-    if let Some(url) = &package.url {
-        let incoming = cache.attempt(&held.version, &held.target, hub.next())?;
-        let patience = DOWNLOAD_PATIENCE.min(deadline.saturating_duration_since(Instant::now()));
-        let mut quiet = |_, _| {};
-        let downloaded = tokio::time::timeout(patience, fastctx_update::download::from_url(url, &incoming, &mut quiet));
-        let result = match downloaded.await {
-            Ok(Ok(())) => super::transfer::take_in(hub, &cache, &manifest, &held.target, &incoming, || true).await,
-            Ok(Err(why)) => Err(why),
-            Err(_) => Err(format!("downloading it took more than {} minutes", patience.as_secs() / 60)),
-        };
-        super::cleanup::temporary(hub, &incoming).await;
-        match result {
-            Ok(size) => return Ok(size),
-            Err(why) => failures.push(why),
-        }
-    }
-    let mut tried = Vec::new();
-    while let Some((helper, generation)) = choose(hub, held, &tried) {
-        if Instant::now() >= deadline {
-            failures.push(format!("no machine brought it within {} minutes in all", BUDGET.as_secs() / 60));
-            break;
-        }
-        tried.push(helper.clone());
-        let id = hub.next();
-        let attempt = Arc::new(Attempt::new(id));
-        let (done, delivered) = oneshot::channel();
-        let fetching = Fetching {
-            helper: helper.clone(),
-            generation,
-            held: held.clone(),
-            done: Some(done),
-            attempt: attempt.clone(),
-        };
-        hub.updates.lock().expect("never poisoned").fetches.insert(id, fetching);
-        let _asking = Asking { hub, id, attempt: attempt.clone() };
-        let fetch = Fetch { id, version: held.version.clone(), target: held.target.clone(), package: package.clone() };
-        let sent = hub
-            .sessions()
-            .get(&helper)
-            .filter(|session| session.generation == generation)
-            .is_some_and(|session| session.out.send(Out::Frame(Down::Fetch { fetch: Box::new(fetch) })).is_ok());
-        let outcome = if sent {
-            hub.log.line(format_args!("asked {helper} to fetch {} of {}", held.target, held.version));
-            watch_attempt(&attempt, delivered, deadline).await
-        } else {
-            Err("it left before it was asked".to_string())
-        };
-        // The try is over before the next begins: its transfer is told to
-        // stop and given a moment to, and what it left is deleted. One with
-        // the whole package checks it and puts it in place within what is
-        // left of the budget. One that does not end in time can no longer
-        // put its package in place, and deletes what it left itself; one
-        // putting it in place then finishes.
-        attempt.give_up();
-        let settle = match attempt.keeping() {
-            true => deadline.max(Instant::now() + SETTLE),
-            false => Instant::now() + SETTLE,
-        };
-        if tokio::time::timeout_at(settle, attempt.ended()).await.is_err() {
-            hub.log.line(format_args!(
-                "the transfer from {helper} did not end in time; it may no longer put its package in place"
-            ));
-            attempt.revoke();
-            attempt.ended().await;
-        }
-        hub.updates.lock().expect("never poisoned").fetches.remove(&id);
-        if attempt.is_over()
-            && let Ok(left) = cache.attempt(&held.version, &held.target, id)
-        {
-            super::cleanup::temporary(hub, &left).await;
-        }
-        // Whatever its machine said, what it brought may be in place now.
+    let race = Arc::new(Race::default());
+    let (ended, mut endings) = mpsc::unbounded_channel();
+    let mut going: Vec<Going> = Vec::new();
+    let mut tried = Tried { hub: package.url.is_none(), machines: Vec::new() };
+    let mut failures = Vec::new();
+    let mut look = tokio::time::interval(Duration::from_secs(1));
+    let size = loop {
         if let Some(size) = size_of(&cache, held)? {
-            return Ok(size);
+            break Some(size);
         }
-        match outcome {
-            Ok(()) => failures.push(format!("{helper} delivered, but the package is not here")),
-            Err(why) => failures.push(format!("{helper}: {why}")),
+        let now = Instant::now();
+        if now >= deadline {
+            failures.push(format!("it did not come within {} minutes in all", BUDGET.as_secs() / 60));
+            break None;
         }
+        let verdicts: Vec<Verdict> = going
+            .iter_mut()
+            .map(|try_| {
+                try_.pace.heard(now.into_std(), try_.attempt.brought.load(Ordering::Relaxed));
+                try_.pace.verdict(now.into_std(), package.size, try_.before_first)
+            })
+            .collect();
+        for (index, verdict) in verdicts.iter().enumerate().rev() {
+            if *verdict == Verdict::Stopped {
+                let stopped = going.remove(index);
+                failures.push(format!("{}: it brought nothing more for half a minute", stopped.source));
+                settle(hub, &cache, held, stopped, deadline).await;
+            }
+        }
+        let promising = verdicts.contains(&Verdict::Promising);
+        if !promising && going.len() < AT_ONCE {
+            match next(hub, held, &tried) {
+                Some(Source::Hub) => {
+                    tried.hub = true;
+                    going.push(by_the_hub(hub, &cache, &manifest, held, &package, &race, &ended));
+                }
+                Some(Source::Machine(helper, generation)) => {
+                    tried.machines.push(helper.clone());
+                    going.push(by_a_machine(hub, held, &package, helper, generation, &race, &ended));
+                }
+                None if going.is_empty() => break None,
+                None => {}
+            }
+        }
+        tokio::select! {
+            Some((id, outcome)) = endings.recv() => {
+                if let Some(index) = going.iter().position(|try_| try_.attempt.id == id) {
+                    let over = going.remove(index);
+                    if let Err(why) = outcome {
+                        failures.push(format!("{}: {why}", over.source));
+                    }
+                    settle(hub, &cache, held, over, deadline).await;
+                }
+            }
+            _ = look.tick() => {}
+        }
+    };
+    if let Some(size) = size {
+        // Nobody waits for the others to stop once the package is held.
+        let (hub, cache, held) = (hub.clone(), cache.clone(), held.clone());
+        tokio::spawn(async move {
+            for try_ in going {
+                settle(&hub, &cache, &held, try_, deadline).await;
+            }
+        });
+        return Ok(size);
+    }
+    for try_ in going {
+        settle(hub, &cache, held, try_, deadline).await;
+    }
+    // Whatever was said, what one brought may be in place now.
+    if let Some(size) = size_of(&cache, held)? {
+        return Ok(size);
     }
     if failures.is_empty() {
         return Err("no machine of the network can reach GitHub or holds the package now".to_string());
@@ -239,94 +237,188 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
     Err(failures.join("; "))
 }
 
-/// What came of the try a machine was asked to make: what it said, or why
-/// it was given up: it took longer than its patience or than what is left
-/// of `deadline`, or its transfer brought nothing more for `STALLED`. Before
-/// its transfer starts the machine may be fetching the package itself,
-/// which the hub does not see, so only its patience counts then.
-async fn watch_attempt(
-    attempt: &Attempt,
-    mut delivered: oneshot::Receiver<Result<(), String>>,
-    deadline: Instant,
-) -> Result<(), String> {
-    let started = Instant::now();
-    let patience = (started + HELPER_PATIENCE).min(deadline);
-    let mut seen: Option<u64> = None;
-    let mut moved = started;
-    loop {
-        // Once it has the whole package, only the budget counts while the
-        // hub checks it.
-        let until = if attempt.keeping() { deadline } else { patience };
-        let look = (Instant::now() + Duration::from_secs(15)).min(until);
-        tokio::select! {
-            outcome = &mut delivered => return outcome.unwrap_or_else(|_| Err("the request was dropped".to_string())),
-            () = tokio::time::sleep_until(look) => {}
-        }
-        let now = Instant::now();
-        if attempt.keeping() {
-            if now >= deadline {
-                return Err("checking what it brought took the rest of the budget".to_string());
-            }
-            continue;
-        }
-        if attempt.moving() || seen.is_some() {
-            let brought = attempt.brought.load(Ordering::Relaxed);
-            if seen != Some(brought) {
-                seen = Some(brought);
-                moved = now;
-            }
-            if now.duration_since(moved) >= STALLED {
-                return Err(format!("its transfer brought nothing more for {} minutes", STALLED.as_secs() / 60));
-            }
-        }
-        if now >= patience {
-            return Err(format!(
-                "it did not deliver within {} minutes",
-                patience.duration_since(started).as_secs() / 60
-            ));
+/// Where a try brings the package from.
+#[derive(Clone, Debug)]
+enum Source {
+    /// The hub downloads it from where its release published it.
+    Hub,
+    /// A machine, in its session of this generation, fetches or hands it.
+    Machine(MachineName, u64),
+}
+
+impl fmt::Display for Source {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Hub => f.write_str("the hub's own download"),
+            Self::Machine(name, _) => write!(f, "{name}"),
         }
     }
 }
 
-/// A try asked of a machine, given up however bringing the package in ends,
-/// as when it runs out of time: its transfer stops, a package it checks is
-/// not put in place, and its request is forgotten.
-struct Asking<'a> {
-    hub: &'a Hub,
-    id: u64,
+/// What was asked already: the hub's own download, and which machines.
+struct Tried {
+    hub: bool,
+    machines: Vec<MachineName>,
+}
+
+/// One try going, and how it goes.
+struct Going {
+    source: Source,
     attempt: Arc<Attempt>,
+    pace: Pace,
+    /// How long it may take before its first byte.
+    before_first: Duration,
 }
 
-impl Drop for Asking<'_> {
-    fn drop(&mut self) {
-        self.attempt.give_up();
-        self.attempt.revoke();
-        self.hub.updates.lock().expect("never poisoned").fetches.remove(&self.id);
+/// The hub's own download of the package, as one try: its bytes counted as
+/// they come, stopped when the try is given up, and put in place only if
+/// no other try put the package there first. How fast it went is kept, to
+/// weigh the hub against its machines next time.
+fn by_the_hub(
+    hub: &Arc<Hub>,
+    cache: &fastctx_update::Cache,
+    manifest: &Manifest,
+    held: &Held,
+    package: &Package,
+    race: &Arc<Race>,
+    ended: &mpsc::UnboundedSender<(u64, Result<(), String>)>,
+) -> Going {
+    let id = hub.next();
+    let attempt = Arc::new(Attempt::new(id, race.clone()));
+    attempt.begin();
+    let url = package.url.clone().expect("the hub downloads only a package published somewhere");
+    let (hub, cache, manifest, held, ended) =
+        (hub.clone(), cache.clone(), manifest.clone(), held.clone(), ended.clone());
+    let trying = attempt.clone();
+    tokio::spawn(async move {
+        let outcome = async {
+            let incoming = cache.attempt(&held.version, &held.target, id)?;
+            let counting = trying.clone();
+            let mut heard = move |brought, _| counting.brought.store(brought, Ordering::Relaxed);
+            let speed = tokio::select! {
+                downloaded = fastctx_update::download::patiently(&url, &incoming, &mut heard) => downloaded?,
+                () = trying.stopping() => return Err("given up for another".to_string()),
+            };
+            if let Some(speed) = speed {
+                hub.updates.lock().expect("never poisoned").own_speed = Some(speed);
+            }
+            if !trying.keep() {
+                return Err("given up for another".to_string());
+            }
+            super::transfer::take_in(&hub, &cache, &manifest, &held.target, &incoming, || trying.commit())
+                .await
+                .map(|_| ())
+        }
+        .await;
+        trying.over();
+        let _ = ended.send((id, outcome));
+    });
+    Going { source: Source::Hub, attempt, pace: Pace::new(std::time::Instant::now()), before_first: SAMPLE }
+}
+
+/// A machine asked to fetch the package, or hand the one it holds, as one
+/// try: its transfer counts the bytes (`super::transfer`).
+fn by_a_machine(
+    hub: &Arc<Hub>,
+    held: &Held,
+    package: &Package,
+    helper: MachineName,
+    generation: u64,
+    race: &Arc<Race>,
+    ended: &mpsc::UnboundedSender<(u64, Result<(), String>)>,
+) -> Going {
+    let id = hub.next();
+    let attempt = Arc::new(Attempt::new(id, race.clone()));
+    let (done, delivered) = oneshot::channel();
+    let fetching =
+        Fetching { helper: helper.clone(), generation, held: held.clone(), done: Some(done), attempt: attempt.clone() };
+    hub.updates.lock().expect("never poisoned").fetches.insert(id, fetching);
+    let fetch = Fetch { id, version: held.version.clone(), target: held.target.clone(), package: package.clone() };
+    let sent = hub
+        .sessions()
+        .get(&helper)
+        .filter(|session| session.generation == generation)
+        .is_some_and(|session| session.out.send(Out::Frame(Down::Fetch { fetch: Box::new(fetch) })).is_ok());
+    let ended = ended.clone();
+    if sent {
+        hub.log.line(format_args!("asked {helper} to fetch {} of {}", held.target, held.version));
+        tokio::spawn(async move {
+            let outcome = delivered.await.unwrap_or_else(|_| Err("the request was dropped".to_string()));
+            let _ = ended.send((id, outcome));
+        });
+    } else {
+        let _ = ended.send((id, Err("it left before it was asked".to_string())));
+    }
+    Going {
+        source: Source::Machine(helper, generation),
+        attempt,
+        pace: Pace::new(std::time::Instant::now()),
+        before_first: MACHINE_START,
     }
 }
 
-/// The next machine to ask, not one in `tried`: one that holds the package
-/// first, then one that reached GitHub and fetches for others.
-fn choose(hub: &Hub, held: &Held, tried: &[MachineName]) -> Option<(MachineName, u64)> {
+/// Ends a try: its transfer is told to stop and given a moment to, and
+/// what it left is deleted. One with the whole package checks it and puts
+/// it in place, if no other did, within what is left of the budget; one
+/// that does not end in time can no longer put its package in place, and
+/// deletes what it left itself; one putting it in place then finishes.
+async fn settle(hub: &Hub, cache: &fastctx_update::Cache, held: &Held, try_: Going, deadline: Instant) {
+    let Going { source, attempt, .. } = try_;
+    attempt.give_up();
+    let settle = match attempt.keeping() {
+        true => deadline.max(Instant::now() + SETTLE),
+        false => Instant::now() + SETTLE,
+    };
+    if tokio::time::timeout_at(settle, attempt.ended()).await.is_err() {
+        hub.log.line(format_args!(
+            "the transfer from {source} did not end in time; it may no longer put its package in place"
+        ));
+        attempt.revoke();
+        attempt.ended().await;
+    }
+    hub.updates.lock().expect("never poisoned").fetches.remove(&attempt.id);
+    if attempt.is_over()
+        && let Ok(left) = cache.attempt(&held.version, &held.target, attempt.id)
+    {
+        super::cleanup::temporary(hub, &left).await;
+    }
+}
+
+/// The next source to try, not one tried: a machine that holds the package
+/// first; then, of the hub's own download and the machines that reached
+/// GitHub and fetch for others, the fastest at its last download from
+/// GitHub, those of unknown speed after, the hub before a machine of the
+/// same.
+fn next(hub: &Hub, held: &Held, tried: &Tried) -> Option<Source> {
     let sessions = hub.sessions();
     let updates = hub.updates.lock().expect("never poisoned");
     let online = |name: &MachineName, generation: u64| {
         sessions.get(name).is_some_and(|session| session.versions && session.generation == generation)
     };
-    let candidates =
-        updates.reports.iter().filter(|(name, (generation, _))| !tried.contains(name) && online(name, *generation));
-    let mut best: Option<(u8, MachineName, u64)> = None;
+    let candidates = updates
+        .reports
+        .iter()
+        .filter(|(name, (generation, _))| !tried.machines.contains(name) && online(name, *generation));
+    // Holders first, then the fastest; a known speed before an unknown one.
+    let mut best: Option<((u8, u64), Source)> = None;
+    let mut consider = |rank: (u8, u64), source: Source| {
+        if best.as_ref().is_none_or(|(kept, _)| rank < *kept) {
+            best = Some((rank, source));
+        }
+    };
+    let by_speed = |speed: Option<u64>| speed.map_or((2, 0), |speed| (1, u64::MAX - speed));
+    if !tried.hub {
+        consider(by_speed(updates.own_speed), Source::Hub);
+    }
     for (name, (generation, report)) in candidates {
         let rank = if report.holds.contains(held) {
-            0
+            (0, 0)
         } else if report.relays && report.github == Some(true) {
-            1
+            by_speed(report.github_speed)
         } else {
             continue;
         };
-        if best.as_ref().is_none_or(|(kept, _, _)| rank < *kept) {
-            best = Some((rank, name.clone(), *generation));
-        }
+        consider(rank, Source::Machine(name.clone(), *generation));
     }
-    best.map(|(_, name, generation)| (name, generation))
+    best.map(|(_, source)| source)
 }

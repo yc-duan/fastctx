@@ -813,8 +813,9 @@ impl World {
         uses: Option<u32>,
         label: Option<String>,
         windows: bool,
+        mac: bool,
     ) -> Result<String, Error> {
-        match self.ask(Call::ServerCommand { hub, account, name, expires, managed, uses, label, windows }).await? {
+        match self.ask(Call::ServerCommand { hub, account, name, expires, managed, uses, label, windows, mac }).await? {
             Reply::ServerInvitation { command } => Ok(command),
             other => Err(unexpected(other)),
         }

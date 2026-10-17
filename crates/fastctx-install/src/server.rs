@@ -12,7 +12,8 @@ mod placement;
 #[cfg(target_os = "linux")]
 pub use placement::place;
 
-/// A Linux release's archive digests, as recorded in SHA256SUMS.
+/// A release's archive digests for one system, as recorded in SHA256SUMS:
+/// Linux's or the Mac's, by architecture.
 #[derive(Clone, Copy, Debug)]
 pub struct Kernel<'a> {
     pub version: &'a str,
@@ -77,12 +78,55 @@ pub fn command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> anyh
         }
     };
     Ok(format!(
-        "(set -e;a=$(uname -m);case $a in x86_64) {};;aarch64) {};;*) echo Unsupported:$a >&2;exit 1;;esac;d=$(mktemp -d);trap 'rm -rf \"$d\"' EXIT;cd \"$d\";w=1;until curl --proto '=https' -fL -C - -o a{pin} {}/fastctx-$a-unknown-linux-gnu.tar.gz;do r=$?;[ $r = 33 ]&&rm -f a;echo \"download stopped (curl $r); again in $w s\" >&2;sleep $w;w=$((w*2));[ $w -gt 60 ]&&w=60;done;echo \"$h  a\"|sha256sum -c -;tar xzf a;./fastctx server install {})",
+        "(set -e;a=$(uname -m);case $a in x86_64) {};;aarch64) {};;*) echo Unsupported:$a >&2;exit 1;;esac;d=$(mktemp -d);trap 'rm -rf \"$d\"' EXIT;cd \"$d\";w=1;until curl --proto '=https' -fL -C - -o a{pin} {}/fastctx-$a-unknown-linux-gnu.tar.gz;do r=$?;[ $r = 33 ]&&rm -f a;echo \"download stopped (curl $r); again in $w s\" >&2;sleep $w;w=$((w*2));[ $w -gt 60 ]&&w=60;done;echo \"$h  a\"|sha256sum -c - >/dev/null||{{ echo \"fastctx: the download is not the release it should be; run the line again\" >&2;exit 1;}};tar xzf a;./fastctx server install {})",
         architecture(kernel.x86_64_sha256, kernel.version),
         architecture(kernel.aarch64_sha256, kernel.version),
         quote(&directory),
         quote(invitation),
     ))
+}
+
+/// Builds the one line for a Mac, shaped as the Linux one: Apple silicon or
+/// Intel by `uname -m`, a download that goes on from where it broke, checked
+/// with `shasum`, which every Mac has. From a hub it trusts the digest it
+/// carries, as the Windows line does, rather than pinning the hub's key.
+/// Run as root it makes a node that starts at boot; run as a person, theirs.
+pub fn mac_command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> anyhow::Result<String> {
+    ensure!(
+        fastctx_types::kernel::release_version(kernel.version),
+        "the release version must be major.minor.patch, with at most a pre-release"
+    );
+    ensure!(
+        !invitation.is_empty() && !invitation.contains('\0') && !invitation.chars().any(char::is_whitespace),
+        "the invitation must be one nonempty word"
+    );
+    for value in [kernel.x86_64_sha256, kernel.aarch64_sha256].into_iter().flatten() {
+        digest(value)?;
+    }
+    let (directory, insecure) = match source {
+        Source::GitHub => (format!("https://github.com/yc-duan/fastctx/releases/download/v{}", kernel.version), ""),
+        Source::Hub { release_directory, .. } => {
+            ensure!(release_directory.starts_with("https://"), "a hub release directory must use HTTPS");
+            ensure!(!release_directory.contains(['\0', '\n', '\r', '?', '#']), "invalid hub release directory");
+            (release_directory.trim_end_matches('/').to_owned(), " -k")
+        }
+    };
+    Ok(format!(
+        "(set -e;case $(uname -m) in arm64) a=aarch64;{};;x86_64) a=x86_64;{};;*) echo Unsupported:$(uname -m) >&2;exit 1;;esac;d=$(mktemp -d);trap 'rm -rf \"$d\"' EXIT;cd \"$d\";w=1;until curl --proto '=https' -fL -C - -o a{insecure} {}/fastctx-$a-apple-darwin.tar.gz;do r=$?;[ $r = 33 ]&&rm -f a;echo \"download stopped (curl $r); again in $w s\" >&2;sleep $w;w=$((w*2));[ $w -gt 60 ]&&w=60;done;echo \"$h  a\"|shasum -a 256 -c - >/dev/null||{{ echo \"fastctx: the download is not the release it should be; run the line again\" >&2;exit 1;}};tar xzf a;./fastctx server install {})",
+        mac_architecture(kernel.aarch64_sha256, kernel.version),
+        mac_architecture(kernel.x86_64_sha256, kernel.version),
+        quote(&directory),
+        quote(invitation),
+    ))
+}
+
+fn mac_architecture(digest: Option<&str>, version: &str) -> String {
+    match digest {
+        Some(digest) => format!("h={}", digest.to_ascii_lowercase()),
+        None => format!(
+            "echo \"fastctx {version} for $a Macs is unavailable from this source; make the line again in a few minutes, or place the archive with SHA256SUMS on the hub.\" >&2;exit 1"
+        ),
+    }
 }
 
 /// Builds the one line for a Windows computer, pasted into an
@@ -133,10 +177,36 @@ pub fn windows_command(
         }
     };
     let folder = r"%ProgramData%\fastctx-install";
+    // Windows' own tools, by where Windows keeps them: a curl or a tar of
+    // another kind earlier on the PATH, as Git's, does not take their place.
+    let system = r"%SystemRoot%\System32";
+    // Only the download's arguments are kept in a variable: a program named
+    // by a delayed expansion is taken whole, arguments and all, as its path.
+    let arguments = format!(
+        "--proto =https -fL --retry 5 --retry-delay 3 -o fastctx.zip{pin} {directory}/{archive}",
+        archive = fastctx_types::kernel::WINDOWS_X86_64_ARCHIVE
+    );
+    let download = format!(r"{system}\curl.exe !d!");
+    // An archive already whole is kept; else the download goes on from what
+    // came, three times, and then starts afresh, each followed by the check.
+    // Delayed expansion (`/v:on`) writes the download's arguments once; the
+    // check is written out each time, since what runs in a pipe does not
+    // expand it. What is downloaded stays for the line run again until it
+    // installed. Every way the line stops ends with a line saying why.
+    let check = format!(
+        r"({system}\certutil.exe -hashfile fastctx.zip SHA256 | {system}\findstr.exe /i /x {} >nul)",
+        sha256.to_ascii_lowercase()
+    );
     Ok(format!(
-        "cmd /c \"rd /s /q {folder} 2>nul & mkdir {folder} && cd /d {folder} && curl.exe --proto =https -fL --retry 5 --retry-delay 3 -o fastctx.zip{pin} {directory}/{archive} && certutil -hashfile fastctx.zip SHA256 | findstr /i /x {hash} >nul && tar -xf fastctx.zip && fastctx.exe server install {invitation}\"",
-        archive = fastctx_types::kernel::WINDOWS_X86_64_ARCHIVE,
-        hash = sha256.to_ascii_lowercase(),
+        "cmd /v:on /c \"set d={arguments}&& \
+         (where /q {system}:curl.exe && where /q {system}:tar.exe || \
+         (echo fastctx: this Windows has no curl or tar; update it to Windows 10 1803 or later& exit /b 1)) && \
+         (mkdir {folder} 2>nul & cd /d {folder}) && \
+         ({check} || (({download} -C - || {download} -C - || {download} -C -) & {check}) || \
+         (del fastctx.zip 2>nul & {download} & {check}) || \
+         (echo fastctx: downloading the release failed or brought another file; run the line again to continue& exit /b 1)) && \
+         {system}\\tar.exe -xf fastctx.zip && .\\fastctx.exe server install {invitation} && \
+         (cd /d %ProgramData% & rd /s /q fastctx-install 2>nul & ver >nul)\""
     ))
 }
 

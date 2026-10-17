@@ -1154,9 +1154,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .map(Reply::MachineLog)
                 .map_err(Failure::new)
         }
-        Call::ServerCommand { hub, account, name, expires, managed, uses, label, windows } => {
+        Call::ServerCommand { hub, account, name, expires, managed, uses, label, windows, mac } => {
             users_voice(node, peer)?;
-            let code = crate::server_invitation::Code { name, expires, managed, uses, label, windows };
+            let code = crate::server_invitation::Code { name, expires, managed, uses, label, windows, mac };
             crate::server_invitation::command(node, hub.as_ref(), &account, code)
                 .await
                 .map(|command| Reply::ServerInvitation { command })

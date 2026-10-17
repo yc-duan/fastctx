@@ -53,7 +53,14 @@ struct Held {
     failed: Option<Failed>,
     /// The release last tried by itself, and when.
     tried: Option<(String, std::time::Instant)>,
+    /// How fast this machine's last download from GitHub went, in bytes a
+    /// second (`GITHUB_SPEED`).
+    github_speed: Option<u64>,
 }
+
+/// Where the speed of the last download from GitHub is kept, for the hub
+/// to choose who fetches for the network (`fastctx_types::update::Report`).
+const GITHUB_SPEED: &str = "github-speed.json";
 
 /// Who asked this machine from elsewhere for the World program it changes
 /// to, and through which hub: told that hub once it runs it (`Asked`).
@@ -107,6 +114,7 @@ pub(crate) fn start(node: &Arc<Node>) {
             held.settings.chosen = true;
         }
         held.looked = read_json(&dir.join("looked.json")).ok().flatten().unwrap_or_default();
+        held.github_speed = read_json(&dir.join(GITHUB_SPEED)).ok().flatten();
         if let Ok(Some(AppFile { app, carried, program })) = read_json::<AppFile>(&dir.join("app.json")) {
             held.app = Some(app);
             held.carried = carried;
@@ -327,6 +335,8 @@ pub(crate) fn report(node: &Node) {
         holds,
         asked: None,
         hub_here: false,
+        github_speed: held.github_speed,
+        target: Some(fastctx_update::kernel::target()),
     };
     drop(held);
     let hubs = hubs_here(node);
@@ -444,8 +454,9 @@ fn fetch(node: &Arc<Node>, version: String, target: String) -> Result<(), String
     Ok(())
 }
 
-/// Brings a package here by GitHub, then the first hub that hands them out,
-/// with its progress kept for the interface; older versions go once it is.
+/// Brings a package here by the first hub that hands them out, or GitHub
+/// (`fastctx_update::obtain`), with its progress kept for the interface;
+/// older versions go once it is.
 async fn bring(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<PathBuf, String> {
     let cache = cache(node);
     let links = node.links();
@@ -458,9 +469,22 @@ async fn bring(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<Pa
             fetching.total = progress.total;
         }
     };
-    let path = fastctx_update::obtain(&cache, manifest, target, link, &mut progress).await?;
+    let brought = fastctx_update::obtain(&cache, manifest, target, link, &mut progress).await?;
     cache.prune(&[manifest.version.as_str()]);
-    Ok(path)
+    if let Some(speed) = brought.github_speed {
+        github_speed(node, speed);
+    }
+    Ok(brought.path)
+}
+
+/// Keeps how fast this machine's download from GitHub went, and tells its
+/// hubs: the fastest is asked first to fetch for the network.
+fn github_speed(node: &Arc<Node>, speed: u64) {
+    node.updates.held.lock().expect("never poisoned").github_speed = Some(speed);
+    if let Err(error) = keep(node, GITHUB_SPEED, &speed) {
+        node.log.line(format_args!("keeping the speed of GitHub: {error}"));
+    }
+    report(node);
 }
 
 /// The hub asks this machine for a package for others: one held here, one
@@ -481,12 +505,21 @@ pub(crate) async fn relay(node: &Arc<Node>, fetch: Fetch) -> Result<PathBuf, Str
             .filter(|path| path.is_file());
         (held.settings.relays, carried)
     };
-    let incoming = cache.incoming(&fetch.version, &fetch.target)?;
+    // A file of the hub's request alone: this machine may bring the same
+    // package for itself meanwhile.
+    let incoming = cache.attempt(&fetch.version, &fetch.target, fetch.id)?;
     if let Some(carried) = carried {
         std::fs::copy(&carried, &incoming).map_err(|error| format!("{}: {error}", carried.display()))?;
     } else if relays && let Some(url) = &fetch.package.url {
         let _ = std::fs::remove_file(&incoming);
-        fastctx_update::download::from_url(url, &incoming, &mut |_, _| {}).await?;
+        let speed = fastctx_update::download::patiently(url, &incoming, &mut |_, _| {}).await;
+        if let Ok(Some(speed)) = speed {
+            github_speed(node, speed);
+        }
+        if let Err(why) = speed {
+            let _ = std::fs::remove_file(&incoming);
+            return Err(why);
+        }
     } else {
         return Err("this machine neither holds the package nor fetches for others".to_string());
     }

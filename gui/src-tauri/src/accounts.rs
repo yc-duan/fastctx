@@ -188,6 +188,7 @@ pub(crate) async fn server_command(
     uses: Option<u32>,
     label: Option<String>,
     windows: Option<bool>,
+    mac: Option<bool>,
 ) -> Result<String, String> {
     shell
         .world()
@@ -200,6 +201,7 @@ pub(crate) async fn server_command(
             uses,
             label,
             windows.unwrap_or(false),
+            mac.unwrap_or(false),
         )
         .await
         .map_err(|error| error.to_string())

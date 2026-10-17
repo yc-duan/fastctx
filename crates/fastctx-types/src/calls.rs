@@ -593,6 +593,9 @@ pub enum Call {
         /// The line is for Windows computers, not Linux servers.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         windows: bool,
+        /// The line is for Macs, not Linux servers.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        mac: bool,
     },
     /// Moving the hub named `hub`, or the one hub, as `account`, its super
     /// administrator (`crate::hub_move`).

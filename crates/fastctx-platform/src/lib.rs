@@ -45,12 +45,15 @@ pub mod private;
 #[cfg(target_os = "linux")]
 pub mod procfs;
 #[cfg(windows)]
+pub mod protected_directory;
+#[cfg(windows)]
 pub mod registry;
 pub mod rolling_log;
 pub mod service_channel;
 #[cfg(windows)]
 pub mod shell_process;
 pub mod system;
+pub mod system_home;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod terminate;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]

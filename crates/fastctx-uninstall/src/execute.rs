@@ -695,6 +695,34 @@ fn remove_rules(names: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Takes away the account a managed computer's World lived in, saying what
+/// of it stays.
+fn remove_account(sid: &str, events: &mut impl FnMut(Event)) -> anyhow::Result<()> {
+    #[cfg(windows)]
+    {
+        let left = fastctx_install::service::managed::remove(sid)?;
+        if !left.is_empty() {
+            events(Event::Finished {
+                left: left
+                    .into_iter()
+                    .map(|what| Left {
+                        kind: "account".into(),
+                        what,
+                        location: Some(fastctx_install::service::managed::ACCOUNT.into()),
+                        why: "Windows still held it while the account was removed.".into(),
+                    })
+                    .collect(),
+            });
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = events;
+        anyhow::bail!("the account {sid} is removed only on Windows")
+    }
+}
+
 pub fn run_system(request: &Request, mut events: impl FnMut(Event)) {
     run_system_phase(request, true, &mut events);
     run_system_phase(request, false, &mut events);
@@ -743,6 +771,7 @@ pub(crate) fn run_system_phase(request: &Request, early: bool, mut events: impl 
                 Action::Legacy(legacy) => legacy.uninstall(&request.installation),
                 Action::DirectRules(names) => remove_rules(names),
                 Action::Package => Ok(()),
+                Action::Account(sid) => remove_account(sid, &mut events),
                 Action::HubData(directory) => {
                     if !directory.try_exists()? {
                         return Ok(());

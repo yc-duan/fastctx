@@ -57,6 +57,9 @@ pub enum Action {
     Application,
     ApplicationData(PathBuf),
     Package,
+    /// The account, by SID, that 1.0.1-beta.3 made for a managed computer's
+    /// World (`fastctx_install::service::managed`).
+    Account(String),
 }
 
 /// The hubs whose directories a World keeps under `net`, by id.
@@ -504,6 +507,20 @@ pub fn preview(mut installation: Installation, everything: bool) -> anyhow::Resu
             "User file versions retained by host publication transactions",
             &location.display().to_string(),
         ));
+    }
+    // The account 1.0.1-beta.3 made for a managed computer's World goes with
+    // that World, last, once nothing of it runs.
+    #[cfg(windows)]
+    if everything && service::managed::made()?.as_deref() == Some(installation.user_sid.as_str()) {
+        let item = Item {
+            id: "managed-account".into(),
+            kind: "account".into(),
+            what: "Remove the account this World lived in".into(),
+            location: Some(service::managed::ACCOUNT.into()),
+            admin: true,
+        };
+        plan.steps.push(item.clone());
+        steps.push(Step { item, action: Action::Account(installation.user_sid.clone()) });
     }
     let programs = other_programs(&places, installation.application.as_deref())?;
     for program in &programs {

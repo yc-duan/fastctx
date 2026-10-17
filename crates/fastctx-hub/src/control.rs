@@ -740,10 +740,12 @@ fn handle(
             let (answer, ended) = crate::manage::change(hub, name, &account, change);
             reply(Down::Told { id, answer });
             crate::manage::end(hub, ended);
-            // The network's update policy may be what changed.
+            // The network's update policy, or an update kept for a machine,
+            // may be what changed.
             crate::updates::tell(hub, None);
+            crate::updates::prune(hub);
         }
-        Up::Ask { id, question: Question::KernelRelease { version, allow_partial } } => {
+        Up::Ask { id, question: Question::KernelRelease { version, allow_partial, wanted } } => {
             let releases = hub.releases.clone();
             let out = out.clone();
             let hub = hub.clone();
@@ -751,8 +753,18 @@ fn handle(
                 let read = releases.clone();
                 let answer = match tokio::task::spawn_blocking(move || read.ready(&version, allow_partial)).await {
                     Ok(Ok(mut release)) => {
-                        if release.windows_x86_64_sha256.is_none() {
-                            release.windows_x86_64_sha256 = crate::updates::windows_digest(&hub, &release.version).await;
+                        let version = release.version.clone();
+                        for (archive, _) in fastctx_types::kernel::HELD_ARCHIVES {
+                            let bring = if wanted.is_empty() {
+                                archive == fastctx_types::kernel::WINDOWS_X86_64_ARCHIVE
+                            } else {
+                                wanted.iter().any(|wanted| wanted == archive)
+                            };
+                            if let Some(held) = release.held(archive)
+                                && held.is_none()
+                            {
+                                *held = crate::updates::held_digest(&hub, &version, archive, bring).await;
+                            }
                         }
                         Ok(Told::KernelRelease { release, certificate: releases.certificate.clone() })
                     }

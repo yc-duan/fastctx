@@ -22,9 +22,10 @@ pub(super) struct Config {
 
 impl Config {
     pub fn new(service: &Service) -> anyhow::Result<Self> {
+        // A node SYSTEM installs for itself is SYSTEM's, as the hub always is.
         let target = match service.kind {
-            Kind::Node => Some(account::target(service.user_sid.as_deref())?),
-            Kind::Hub => None,
+            Kind::Node if !for_system(service)? => Some(account::target(service.user_sid.as_deref())?),
+            _ => None,
         };
         let account = target.as_ref().map(|target| target.sid.as_str()).unwrap_or("S-1-5-18");
         Ok(Self {
@@ -34,6 +35,11 @@ impl Config {
             directory: service.directory.as_os_str().encode_wide().collect(),
             target,
         })
+    }
+
+    /// Whether the node runs as SYSTEM, in the home Fastctx gives SYSTEM.
+    pub fn systems(&self) -> bool {
+        self.kind == Kind::Node && self.target.is_none()
     }
 
     pub fn root(&self) -> anyhow::Result<PathBuf> {
@@ -49,7 +55,7 @@ impl Config {
     pub fn read(name: &str) -> anyhow::Result<Self> {
         let bytes = std::fs::read(security::directory(name)?.join("config.json"))?;
         let config: Self = serde_json::from_slice(&bytes)?;
-        if config.name != name || (config.kind == Kind::Node) != config.target.is_some() {
+        if config.name != name || (config.kind == Kind::Hub && config.target.is_some()) {
             bail!("guardian configuration does not identify this service");
         }
         if !config.executable().is_absolute() || !config.directory().is_absolute() {
@@ -62,3 +68,13 @@ impl Config {
         Ok(config)
     }
 }
+
+fn for_system(service: &Service) -> anyhow::Result<bool> {
+    let sid = match &service.user_sid {
+        Some(sid) => sid.clone(),
+        None => fastctx_platform::current_user_sid()?,
+    };
+    Ok(sid == SYSTEM)
+}
+
+const SYSTEM: &str = "S-1-5-18";

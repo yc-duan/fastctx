@@ -1,59 +1,64 @@
 //! Executable identity without opening a World or an agent's configuration.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
 use fastctx_types::renewal::Build;
+
+/// How long a program may take to say what it is. Its first run on a slow
+/// machine can wait while the system looks it over.
+const ANSWERS_WITHIN: Duration = Duration::from_secs(120);
 
 /// Identifies a modern kernel and verifies its claimed content identity.
 /// A released pre-maintenance executable is recognized by its exact version
 /// response; protocol zero means that executable did not identify a protocol.
 pub fn inspect(path: &Path) -> anyhow::Result<Build> {
     let path = std::fs::canonicalize(path)?;
-    let revision = revision(&path)?;
+    let marked = mark(&path)?;
     let cache = CACHE.get_or_init(|| Mutex::new(std::collections::BTreeMap::new()));
-    if let Some((held, build)) = cache.lock().expect("kernel identity cache").get(&path)
-        && held.same_contents(&revision)
+    let held = cache.lock().expect("kernel identity cache").get(&path).cloned();
+    if let Some((held, build)) = held
+        && (held == marked || crate::renewal::digest(&path)? == build.digest)
     {
-        return Ok(build.clone());
+        cache.lock().expect("kernel identity cache").insert(path, (marked, build.clone()));
+        return Ok(build);
     }
     let build = identify(&path)?;
-    // Running it for its identity may itself get it marked, by Windows or an
-    // antivirus, with no byte of it changed.
-    ensure!(
-        revision.same_contents(&self::revision(&path)?),
-        "kernel changed during identification: {}",
-        path.display()
-    );
-    cache.lock().expect("kernel identity cache").insert(path, (revision, build.clone()));
+    // Its bytes are what decide: Windows or other software may mark a
+    // program the first time it runs without changing one of them.
+    ensure!(crate::renewal::digest(&path)? == build.digest, "kernel changed during identification: {}", path.display());
+    cache.lock().expect("kernel identity cache").insert(path.clone(), (mark(&path)?, build.clone()));
     Ok(build)
 }
 
-type Revision = fastctx_platform::file_read::Snapshot;
-type Cache = std::collections::BTreeMap<PathBuf, (Revision, Build)>;
+/// Everything the filesystem says of the file; equal marks spare hashing it.
+type Mark = String;
+type Cache = std::collections::BTreeMap<PathBuf, (Mark, Build)>;
 static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
 
-fn revision(path: &Path) -> std::io::Result<Revision> {
+fn mark(path: &Path) -> std::io::Result<Mark> {
     let file = fastctx_platform::file_read::open(path)?;
     let metadata = file.metadata()?;
     if !metadata.is_file() {
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "kernel must be a regular file"));
     }
-    fastctx_platform::file_read::snapshot(&file, &metadata)
+    Ok(fastctx_platform::file_read::snapshot(&file, &metadata)?.fingerprint())
 }
 
 fn identify(path: &Path) -> anyhow::Result<Build> {
     let digest = crate::renewal::digest(path)?;
-    let identified = command(path).args(["renew", "identify"]).output()?;
+    let identified = answer(command(path).args(["renew", "identify"]), path)?;
     if identified.status.success() {
         let build: Build = serde_json::from_slice(&identified.stdout).context("reading kernel identity")?;
         ensure!(build.digest == digest, "the identified executable changed: {}", path.display());
         semver::Version::parse(&build.version).context("kernel version is not semver")?;
         return Ok(build);
     }
-    let version = command(path).arg("--version").output()?;
+    let version = answer(command(path).arg("--version"), path)?;
     ensure!(version.status.success(), "{} cannot report its version", path.display());
     let text = std::str::from_utf8(&version.stdout)?;
     let version = text.trim().strip_prefix("fastctx ").context("executable is not fastctx")?;
@@ -65,6 +70,36 @@ fn identify(path: &Path) -> anyhow::Result<Build> {
         identified.status
     );
     Ok(Build { version: version.into(), protocol: 0, digest, built: None })
+}
+
+/// Runs a question to the program, ending it if it does not answer in time.
+fn answer(command: &mut Command, path: &Path) -> anyhow::Result<Output> {
+    let mut child = command.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut bytes);
+            }
+            bytes
+        })
+    };
+    let stdout = drain(child.stdout.take().map(|pipe| Box::new(pipe) as Box<dyn Read + Send>));
+    let stderr = drain(child.stderr.take().map(|pipe| Box::new(pipe) as Box<dyn Read + Send>));
+    let deadline = Instant::now() + ANSWERS_WITHIN;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            anyhow::bail!("{} did not answer within {} seconds", path.display(), ANSWERS_WITHIN.as_secs());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let joined = |reader: std::thread::JoinHandle<Vec<u8>>| reader.join().unwrap_or_default();
+    Ok(Output { status, stdout: joined(stdout), stderr: joined(stderr) })
 }
 
 /// Identical images are reusable. A different image needs a strictly newer
@@ -96,7 +131,7 @@ pub fn newer(candidate: &Build, previous: &Build) -> anyhow::Result<bool> {
 }
 
 pub fn notices(path: &Path) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
-    let output = command(path).args(["renew", "notices"]).output()?;
+    let output = answer(command(path).args(["renew", "notices"]), path)?;
     ensure!(output.status.success(), "the World program cannot provide its embedded notices");
     let notices: std::collections::BTreeMap<String, String> = serde_json::from_slice(&output.stdout)?;
     ensure!(

@@ -32,19 +32,23 @@ pub(crate) use transfer::{deliver, serve};
 
 use crate::{Hub, Out};
 
-/// The Windows archive of `version` as the hub holds it among its update
-/// packages, checked when it was brought in: where it is.
-pub(crate) fn windows_archive(hub: &Hub, version: &str) -> Option<std::path::PathBuf> {
+/// One of the archives a hub cannot pack itself (`HELD_ARCHIVES`), of
+/// `version`, as the hub holds it among its update packages, checked when
+/// it was brought in: where it is.
+pub(crate) fn held_archive(hub: &Hub, version: &str, archive: &str) -> Option<std::path::PathBuf> {
+    let package = fastctx_types::kernel::held_package(archive)?;
     let cache = hub.updates.lock().expect("never poisoned").cache.clone();
-    cache.get(version, fastctx_types::kernel::WINDOWS_X86_64_PACKAGE)
+    cache.get(version, package)
 }
 
-/// The SHA-256 of the Windows archive of `version` the hub holds, for the
-/// line that downloads it; none while it does not, and it is brought in
+/// The SHA-256 of such an archive the hub holds, for the line that
+/// downloads it; none while it does not, and when `bring` it is brought in
 /// then, so that a line made a few minutes later finds it.
-pub(crate) async fn windows_digest(hub: &Arc<Hub>, version: &str) -> Option<String> {
-    let Some(path) = windows_archive(hub, version) else {
-        bring_in(hub, version.to_owned(), fastctx_types::kernel::WINDOWS_X86_64_PACKAGE.to_owned());
+pub(crate) async fn held_digest(hub: &Arc<Hub>, version: &str, archive: &str, bring: bool) -> Option<String> {
+    let Some(path) = held_archive(hub, version, archive) else {
+        if bring && let Some(package) = fastctx_types::kernel::held_package(archive) {
+            bring_in(hub, version.to_owned(), package.to_owned());
+        }
         return None;
     };
     let hashed = tokio::task::spawn_blocking(move || -> std::io::Result<String> {
@@ -88,6 +92,17 @@ pub(crate) struct Updates {
     /// Places for the packages handed to machines at once, so updates leave
     /// the hub's line to everything else that passes on it.
     handing: Arc<tokio::sync::Semaphore>,
+    /// How fast the hub's own last download from GitHub went, in bytes a
+    /// second, beside its machines' (`obtain::next`).
+    own_speed: Option<u64>,
+    /// When each release was last asked for, which keeps it while a batch
+    /// asks one machine after another (`prune`).
+    asked: HashMap<String, std::time::Instant>,
+    /// The packages placed by hand among the releases that were checked
+    /// against their signatures, as each file was then (`placed`).
+    placed: HashMap<Held, (u64, Option<std::time::SystemTime>)>,
+    /// What was brought in before anyone asked, and when (`prefetch`).
+    prefetched: HashMap<Held, std::time::Instant>,
 }
 
 /// How many packages the hub hands to machines at once; the rest wait.
@@ -101,8 +116,15 @@ struct Fetching {
     attempt: Arc<Attempt>,
 }
 
-/// One try of bringing a package in: its own file, and where it stands,
-/// so the next try starts only once this one is over (`obtain`).
+/// The tries bringing one package in at once (`obtain`): only one of them
+/// puts its package in place.
+#[derive(Default)]
+pub(super) struct Race {
+    won: std::sync::Mutex<bool>,
+}
+
+/// One try of bringing a package in: its own file, and where it stands
+/// (`obtain`).
 pub(super) struct Attempt {
     /// Numbers the try's file (`fastctx_update::Cache::attempt`).
     id: u64,
@@ -112,6 +134,7 @@ pub(super) struct Attempt {
     state: tokio::sync::watch::Sender<Try>,
     /// The bytes it brought so far, which say whether it moves.
     brought: std::sync::atomic::AtomicU64,
+    race: Arc<Race>,
 }
 
 /// Where a try stands.
@@ -134,8 +157,13 @@ pub(super) enum Try {
 }
 
 impl Attempt {
-    fn new(id: u64) -> Self {
-        Self { id, state: tokio::sync::watch::channel(Try::Asked).0, brought: std::sync::atomic::AtomicU64::new(0) }
+    fn new(id: u64, race: Arc<Race>) -> Self {
+        Self {
+            id,
+            state: tokio::sync::watch::channel(Try::Asked).0,
+            brought: std::sync::atomic::AtomicU64::new(0),
+            race,
+        }
     }
 
     /// Starts its transfer, unless it is given up or one runs already:
@@ -151,9 +179,15 @@ impl Attempt {
     }
 
     /// Its package is checked: whether it may put it in place, its right to
-    /// not taken back meanwhile (`revoke`).
+    /// not taken back meanwhile (`revoke`), and no other try of its race
+    /// put one there first.
     pub(super) fn commit(&self) -> bool {
-        self.step(Try::Keeping, Try::Committing)
+        let mut won = self.race.won.lock().expect("never poisoned");
+        if *won {
+            return false;
+        }
+        *won = self.step(Try::Keeping, Try::Committing);
+        *won
     }
 
     fn step(&self, from: Try, to: Try) -> bool {
@@ -211,11 +245,6 @@ impl Attempt {
         let _ = self.state.subscribe().wait_for(|state| *state == Try::Over).await;
     }
 
-    /// Whether a transfer of it runs.
-    pub(super) fn moving(&self) -> bool {
-        matches!(*self.state.borrow(), Try::Running | Try::Stopping | Try::Keeping | Try::Committing | Try::Revoked)
-    }
-
     /// Whether it has the whole package, which it checks or puts in place.
     pub(super) fn keeping(&self) -> bool {
         matches!(*self.state.borrow(), Try::Keeping | Try::Committing | Try::Revoked)
@@ -243,6 +272,10 @@ impl Updates {
             fetches: HashMap::new(),
             cache,
             handing: Arc::new(tokio::sync::Semaphore::new(HANDED_AT_ONCE)),
+            own_speed: None,
+            asked: HashMap::new(),
+            placed: HashMap::new(),
+            prefetched: HashMap::new(),
         }
     }
 
@@ -319,7 +352,7 @@ pub(crate) fn network(hub: &Hub) -> Network {
 }
 
 /// `name` told the hub its versions on its session `generation`.
-pub(crate) fn heard(hub: &Hub, name: &MachineName, generation: u64, report: Report) {
+pub(crate) fn heard(hub: &Arc<Hub>, name: &MachineName, generation: u64, report: Report) {
     let (kernel, asked) = (report.kernel.clone(), report.asked.clone());
     {
         let mut updates = hub.updates.lock().expect("never poisoned");
@@ -328,6 +361,7 @@ pub(crate) fn heard(hub: &Hub, name: &MachineName, generation: u64, report: Repo
     }
     settle(hub, name, &kernel, asked);
     tell(hub, None);
+    prefetch(hub);
 }
 
 /// `name` runs `kernel` now: an update kept for it that this release is or
@@ -339,10 +373,13 @@ fn settle(hub: &Hub, name: &MachineName, kernel: &str, asked: Option<Asked>) {
     let runs = fastctx_types::update::release(kernel);
     let before = store.hub.due.len();
     store.hub.due.retain(|kept| kept.key != key || fastctx_types::update::release(&kept.due.version) > runs);
-    if store.hub.due.len() != before
-        && let Err(error) = store.save_hub()
-    {
-        hub.log.line(format_args!("keeping that {name} made the update kept for it: {error}"));
+    if store.hub.due.len() != before {
+        if let Err(error) = store.save_hub() {
+            hub.log.line(format_args!("keeping that {name} made the update kept for it: {error}"));
+        }
+        drop(store);
+        prune(hub);
+        store = hub.store();
     }
     let Some(asked) = asked.filter(|asked| asked.from != kernel) else { return };
     if store.book.machine_log.updated(&key, &asked.from, kernel) {
@@ -430,16 +467,106 @@ pub(crate) async fn look_every(hub: Weak<Hub>) {
             }
         }
         tell(&hub, None);
+        prefetch(&hub);
         drop(hub);
         tokio::time::sleep(LOOK_EVERY).await;
     }
 }
 
-/// Keeps only the newest release on each channel, and `kept`.
-fn prune(hub: &Arc<Hub>, kept: &str) {
+/// How long a release asked for is kept as asked: a batch asks one machine
+/// after another, three at a time.
+const ASKED_LATELY: Duration = Duration::from_secs(3600);
+
+/// How long a release brought in before anyone asked is not brought in again.
+const PREFETCHED_LATELY: Duration = Duration::from_secs(3600);
+
+/// Keeps the packages someone may still ask for (`world-network.md`,
+/// 中枢替网络存的东西): of the newest release on each line, of every release
+/// a machine is due to take, and of those being brought in or asked for
+/// lately; the rest go. Never by age alone: a computer joining months later
+/// finds the newest at once.
+pub(crate) fn prune(hub: &Hub) {
     let network = network(hub);
-    let mut keep = vec![kept];
-    keep.extend(network.stable.as_ref().map(|manifest| manifest.version.as_str()));
-    keep.extend(network.beta.as_ref().map(|manifest| manifest.version.as_str()));
-    hub.updates.lock().expect("never poisoned").cache.prune(&keep);
+    let mut updates = hub.updates.lock().expect("never poisoned");
+    let now = std::time::Instant::now();
+    updates.asked.retain(|_, at| now.duration_since(*at) < ASKED_LATELY);
+    let mut keep: Vec<String> =
+        [network.stable, network.beta].into_iter().flatten().map(|manifest| manifest.version).collect();
+    keep.extend(network.due.values().map(|due| due.version.clone()));
+    keep.extend(updates.obtaining.keys().map(|held| held.version.clone()));
+    keep.extend(updates.asked.keys().cloned());
+    let keep: Vec<&str> = keep.iter().map(String::as_str).collect();
+    updates.cache.prune(&keep);
+}
+
+/// Brings in, before anyone asks, the newest release's packages for the
+/// systems of the machines that run an older one: their World program's,
+/// and their application's where they have one. When they come to take
+/// it, the network has downloaded it from GitHub once.
+fn prefetch(hub: &Arc<Hub>) {
+    let wanted: Vec<Held> = {
+        let network = network(hub);
+        let mut updates = hub.updates.lock().expect("never poisoned");
+        let now = std::time::Instant::now();
+        updates.prefetched.retain(|_, at| now.duration_since(*at) < PREFETCHED_LATELY);
+        let mut wanted = std::collections::BTreeSet::new();
+        for manifest in [network.stable, network.beta].into_iter().flatten() {
+            let Some(newest) = manifest.semver() else { continue };
+            let older = |version: &str| fastctx_types::update::release(version).is_some_and(|runs| runs < newest);
+            for (_, report) in updates.reports.values() {
+                let mut targets = Vec::new();
+                if let Some(target) = report.target.as_ref().filter(|_| older(&report.kernel)) {
+                    targets.push(target.clone());
+                }
+                if let Some(app) = report.app.as_ref().filter(|app| older(&app.version)) {
+                    targets.push(app.target.clone());
+                }
+                for target in targets.into_iter().filter(|target| manifest.package(target).is_some()) {
+                    wanted.insert(Held { version: manifest.version.clone(), target });
+                }
+            }
+        }
+        let wanted: Vec<Held> = wanted
+            .into_iter()
+            .filter(|held| {
+                updates.cache.get(&held.version, &held.target).is_none()
+                    && !updates.obtaining.contains_key(held)
+                    && !updates.prefetched.contains_key(held)
+            })
+            .collect();
+        for held in &wanted {
+            updates.prefetched.insert(held.clone(), now);
+        }
+        wanted
+    };
+    for held in wanted {
+        hub.log.line(format_args!("bringing in {} of {} before it is asked for", held.target, held.version));
+        bring_in(hub, held.version, held.target);
+    }
+}
+
+/// The package `held` placed by hand among the releases as the archive it
+/// is, checked against the package's signature once per state of the file:
+/// handed out from there, never kept a second time among the update
+/// packages. Its file, opened, and size.
+pub(super) fn placed(hub: &Hub, held: &Held) -> Option<(std::fs::File, u64)> {
+    use std::io::Seek as _;
+    let archive = fastctx_types::kernel::archive_of(&held.target)?;
+    let mut file = hub.releases.placed(&held.version, archive).ok()?;
+    let metadata = file.metadata().ok()?;
+    let mark = (metadata.len(), metadata.modified().ok());
+    let signature = {
+        let updates = hub.updates.lock().expect("never poisoned");
+        if updates.placed.get(held) == Some(&mark) {
+            return Some((file, mark.0));
+        }
+        updates.manifest(&held.version)?.package(&held.target)?.signature.clone()
+    };
+    if let Err(why) = fastctx_update::verify::reader(&mut file, &signature, &held.version) {
+        hub.log.line(format_args!("{archive} placed for {} is not its package: {why}", held.version));
+        return None;
+    }
+    file.rewind().ok()?;
+    hub.updates.lock().expect("never poisoned").placed.insert(held.clone(), mark);
+    Some((file, mark.0))
 }

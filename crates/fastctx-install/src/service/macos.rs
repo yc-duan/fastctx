@@ -1,8 +1,9 @@
 //! launchd keeps the node and the hub on macOS. A node is a LaunchAgent of
 //! the user it serves, in that user's `gui` domain: it starts when the user
-//! logs in, and needs no administrator to install. A hub is a LaunchDaemon in
-//! the `system` domain, run as root from the start of the machine. Either is
-//! started again whenever it exits.
+//! logs in, and needs no administrator to install. A hub, and a node root
+//! installed for itself, as a Mac's line run as root does (`world-network.md`,
+//! 登录与入网), is a LaunchDaemon in the `system` domain, run as root from the
+//! start of the machine. Either is started again whenever it exits.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -131,18 +132,21 @@ fn target(service: &Service) -> String {
     format!("{}/{}", domain(service), label(service))
 }
 
+/// Whether launchd runs it as a daemon of the machine: a hub, or root's node.
+fn daemon(service: &Service) -> bool {
+    service.kind == Kind::Hub || service.uid == 0
+}
+
 fn domain(service: &Service) -> String {
-    match service.kind {
-        Kind::Node => format!("gui/{}", service.uid),
-        Kind::Hub => "system".to_string(),
-    }
+    if daemon(service) { "system".to_string() } else { format!("gui/{}", service.uid) }
 }
 
 fn definition_path(service: &Service) -> anyhow::Result<PathBuf> {
     let file = format!("{}.plist", label(service));
-    Ok(match service.kind {
-        Kind::Node => fastctx_platform::user_home()?.join("Library/LaunchAgents").join(file),
-        Kind::Hub => PathBuf::from("/Library/LaunchDaemons").join(file),
+    Ok(if daemon(service) {
+        PathBuf::from("/Library/LaunchDaemons").join(file)
+    } else {
+        fastctx_platform::user_home()?.join("Library/LaunchAgents").join(file)
     })
 }
 
@@ -159,11 +163,10 @@ fn definition(service: &Service) -> anyhow::Result<String> {
     let arguments: String = words.iter().map(|word| format!("\t\t<string>{}</string>\n", escape(word))).collect();
     // A user's node belongs to the application: System Settings names it
     // Fastctx among what runs in the background.
-    let belongs = match service.kind {
-        Kind::Node => format!(
-            "\t<key>AssociatedBundleIdentifiers</key>\n\t<array>\n\t\t<string>{APPLICATION}</string>\n\t</array>\n"
-        ),
-        Kind::Hub => String::new(),
+    let belongs = if daemon(service) {
+        String::new()
+    } else {
+        format!("\t<key>AssociatedBundleIdentifiers</key>\n\t<array>\n\t\t<string>{APPLICATION}</string>\n\t</array>\n")
     };
     Ok(format!(
         "{MARKER}\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>Label</key>\n\t<string>{}</string>\n\t<key>ProgramArguments</key>\n\t<array>\n{arguments}\t</array>\n\t<key>RunAtLoad</key>\n\t<true/>\n\t<key>KeepAlive</key>\n\t<true/>\n\t<key>ThrottleInterval</key>\n\t<integer>1</integer>\n\t<key>ProcessType</key>\n\t<string>Standard</string>\n\t<key>StandardInPath</key>\n\t<string>/dev/null</string>\n\t<key>StandardOutPath</key>\n\t<string>{}</string>\n\t<key>StandardErrorPath</key>\n\t<string>{}</string>\n{belongs}</dict>\n</plist>\n",

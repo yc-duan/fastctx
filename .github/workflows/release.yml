@@ -160,11 +160,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           python scripts/ci-await.py "kernel x86_64-pc-windows-msvc=Upload the kernel" \
+            "kernel x86_64-pc-windows-msvc=Upload the archive" \
             "kernel x86_64-pc-windows-msvc=Upload the tests" "gui x86_64-pc-windows-msvc=Upload the installer"
       - uses: actions/download-artifact@v4
         with:
           name: kernel-x86_64-pc-windows-msvc
           path: kernel
+      - uses: actions/download-artifact@v4
+        with:
+          name: archive-x86_64-pc-windows-msvc
+          path: archive
       - uses: actions/download-artifact@v4
         with:
           name: tests-x86_64-pc-windows-msvc
@@ -173,8 +178,8 @@ jobs:
         with:
           name: gui-windows-x64
           path: dist/gui
-      - name: Smoke test on an x64 machine
-        run: python scripts/smoke.py kernel/fastctx.exe
+      - name: Smoke test on an x64 machine, with a managed computer installed as SYSTEM
+        run: python scripts/smoke.py kernel/fastctx.exe --managed archive/fastctx-x86_64-pc-windows-msvc.zip
       # A real Codex app-server whose model is a mock on this machine: no
       # request goes to any vendor (`scripts/concurrency.py`). The node finds
       # Codex on the user's PATH as the system keeps it.
@@ -374,8 +379,8 @@ jobs:
           path: dist/fastctx-*.tar.gz
           if-no-files-found: error
       - if: matrix.target == 'aarch64-apple-darwin'
-        name: Smoke test on this machine
-        run: python scripts/smoke.py kernel/fastctx --service
+        name: Smoke test on this machine, with a managed Mac installed as root
+        run: python scripts/smoke.py kernel/fastctx --service --managed dist/fastctx-aarch64-apple-darwin.tar.gz
       - name: Build the release tests
         run: node scripts/kernel.mjs --tests '${{ matrix.target }}' tests
       - if: matrix.target == 'aarch64-apple-darwin'
@@ -467,7 +472,7 @@ jobs:
           if-no-files-found: ignore
 
   sign-kernels:
-    needs: [kernel-linux, kernel-windows]
+    needs: [kernel-linux, kernel-windows, gui-macos]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
@@ -481,19 +486,26 @@ jobs:
         with:
           name: archive-x86_64-pc-windows-msvc
           path: kernels
+      # A Mac's, Apple silicon and Intel, as the application carries it.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: signed-archive-*-apple-darwin
+          merge-multiple: true
+          path: kernels
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - uses: actions/checkout@v4
         with:
           path: source
-      - name: Sign the Linux and Windows command-line programs
+      - name: Sign the Linux, Windows and Mac command-line programs
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("source/Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
-          for archive in kernels/fastctx-*-unknown-linux-gnu.tar.gz kernels/fastctx-x86_64-pc-windows-msvc.zip; do
+          for archive in kernels/fastctx-*-unknown-linux-gnu.tar.gz kernels/fastctx-x86_64-pc-windows-msvc.zip \
+              kernels/fastctx-*-apple-darwin.tar.gz; do
             npx --yes "$TAURI_CLI" signer sign --app-version "$version" "$archive"
           done
       - uses: actions/upload-artifact@v4
@@ -502,6 +514,7 @@ jobs:
           path: |
             kernels/fastctx-*-unknown-linux-gnu.tar.gz*
             kernels/fastctx-x86_64-pc-windows-msvc.zip*
+            kernels/fastctx-*-apple-darwin.tar.gz*
           if-no-files-found: error
 
   gui-windows:
@@ -725,6 +738,22 @@ jobs:
             codesign -d -r- "$program" 2>&1 | grep -Eq 'certificate (leaf|root)'
           done
           codesign --verify --verbose "$app"
+      # A Mac without the application installs from its line the kernel the application carries,
+      # signed with the same fixed certificate, so what its user allows holds across versions too.
+      - name: Package the signed kernel for a Mac's line
+        run: |
+          app=gui/src-tauri/target/${{ matrix.target }}/release/bundle/macos/Fastctx.app
+          test -d "$app" || app=gui/src-tauri/target/release/bundle/macos/Fastctx.app
+          codesign --verify --verbose "$app/Contents/MacOS/fastctx"
+          mkdir -p dist/cli
+          python3 scripts/package.py platform --target '${{ matrix.target }}' --binary "$app/Contents/MacOS/fastctx" \
+            --notices dist/THIRD_PARTY_LICENSES.md --output dist/cli
+      - name: Upload the signed kernel's archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-archive-${{ matrix.target }}
+          path: dist/cli/fastctx-*.tar.gz
+          if-no-files-found: error
       - name: Sign the application for the updater
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -1082,6 +1111,7 @@ jobs:
             assets/SHA256SUMS
             assets/fastctx-*-unknown-linux-gnu.tar.gz
             assets/fastctx-x86_64-pc-windows-msvc.zip
+            assets/fastctx-*-apple-darwin.tar.gz
             assets/*-setup.exe
             assets/*.dmg
             assets/*.app.tar.gz

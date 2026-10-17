@@ -40,7 +40,8 @@ pub fn fastctx_root_in(home: &Path) -> PathBuf {
 /// The user's home directory. On Unix it is `HOME`, as every program there
 /// takes it, and the account database when `HOME` is unset. On Windows it
 /// is the profile directory as the system records it, never a variable
-/// that a shell may have respelled.
+/// that a shell may have respelled, except for SYSTEM, whose home is the
+/// one Fastctx gives it (`crate::system_home`).
 pub fn user_home() -> io::Result<PathBuf> {
     imp::user_home()
 }
@@ -113,6 +114,9 @@ mod imp {
     use crate::windows_user::with_current_token;
 
     pub fn user_home() -> io::Result<PathBuf> {
+        if let Some(home) = crate::system_home::home()? {
+            return Ok(home);
+        }
         let profile = with_current_token(|token| {
             let mut length = 0u32;
             // SAFETY: a size query with no buffer.

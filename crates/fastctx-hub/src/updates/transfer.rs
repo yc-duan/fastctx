@@ -79,13 +79,26 @@ pub(crate) async fn serve(
         let updates = hub.updates.lock().expect("never poisoned");
         (updates.cache.clone(), updates.handing.clone())
     };
-    let Some(path) = cache.path(&version, &target).ok().filter(|path| path.is_file()) else {
+    let kept = cache.path(&version, &target).ok().filter(|path| path.is_file());
+    let held = Held { version: version.clone(), target: target.clone() };
+    let placed = match &kept {
+        Some(_) => None,
+        None => {
+            let hub = hub.clone();
+            tokio::task::spawn_blocking(move || super::placed(&hub, &held)).await.ok().flatten()
+        }
+    };
+    if kept.is_none() && placed.is_none() {
         let reason = format!("the hub does not hold {target} of {version}");
         refuse(&mut socket, Refusal::Broken { reason }).await;
         return;
-    };
+    }
     let opened = async {
-        let mut file = tokio::fs::File::open(&path).await?;
+        let mut file = match (&kept, placed) {
+            (Some(path), _) => tokio::fs::File::open(path).await?,
+            (None, Some((file, _))) => tokio::fs::File::from_std(file),
+            (None, None) => unreachable!("refused above"),
+        };
         let size = file.metadata().await?.len();
         file.seek(std::io::SeekFrom::Start(from.min(size))).await?;
         Ok::<_, std::io::Error>((file, size))
@@ -336,7 +349,7 @@ pub(super) async fn take_in(
     .await
     .map_err(|error| error.to_string())??;
     hub.log.line(format_args!("holds {target} of {} now, {size} bytes", manifest.version));
-    super::prune(hub, &manifest.version);
+    super::prune(hub);
     super::tell(hub, None);
     Ok(size)
 }

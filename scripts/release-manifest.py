@@ -5,9 +5,10 @@ command-line programs, which a server's one-line install checks.
 
     python scripts/release-manifest.py --version V --assets DIR --notes TEXT --output latest.json
 
-DIR holds the packages the release publishes, each with its `.sig` beside it, and the Linux
-command-line programs, `fastctx-<triple>.tar.gz` with theirs, which it publishes too: a server
-updates itself from GitHub, and a network's machines that carry them hand them on.
+DIR holds the packages the release publishes, each with its `.sig` beside it, and the command-line
+programs, `fastctx-<triple>.tar.gz` (a zip for Windows) with theirs, which it publishes too: a
+machine without the application updates itself from GitHub, and a network's machines that carry
+them hand them on.
 """
 import argparse
 import base64
@@ -33,10 +34,11 @@ def packages(version):
 
 
 # The command-line programs a release carries, with their archives' kind:
-# Linux servers' and Windows computers' lines download them (Windows on Arm
-# runs the x64 one), and machines without the application update by them.
+# the lines of Linux servers, Windows computers and Macs download them
+# (Windows on Arm runs the x64 one), and machines without the application
+# update by them.
 KERNELS = [('x86_64-unknown-linux-gnu', 'tar.gz'), ('aarch64-unknown-linux-gnu', 'tar.gz'),
-           ('x86_64-pc-windows-msvc', 'zip')]
+           ('x86_64-pc-windows-msvc', 'zip'), ('aarch64-apple-darwin', 'tar.gz'), ('x86_64-apple-darwin', 'tar.gz')]
 
 
 def signature(path, version):

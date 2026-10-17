@@ -71,9 +71,9 @@ pub struct TokenArgs {
     #[arg(long)]
     hub: Option<HubName>,
     /// What logs in with it: a phone or another computer only logs in; for
-    /// a Linux server, or a Windows computer, the line that installs it and
-    /// registers it as a machine is printed instead.
-    #[arg(long = "for", default_value = "computer", value_parser = ["phone", "computer", "server", "windows"])]
+    /// a Linux server, a Windows computer or a Mac, the line that installs it
+    /// and registers it as a machine is printed instead.
+    #[arg(long = "for", default_value = "computer", value_parser = ["phone", "computer", "server", "windows", "mac"])]
     used_by: String,
     /// How long it stays valid: hours or days, as 1h or 7d, up to a year,
     /// or `never`, until it is revoked. An hour for a phone or a computer,
@@ -390,7 +390,8 @@ pub fn token(command: TokenCommand) -> anyhow::Result<()> {
 
 fn new_token(args: TokenArgs) -> anyhow::Result<()> {
     let windows = args.used_by == "windows";
-    let server = args.used_by == "server" || windows;
+    let mac = args.used_by == "mac";
+    let server = args.used_by == "server" || windows || mac;
     let kind = if args.used_by == "phone" { MemberKind::Phone } else { MemberKind::Computer };
     if args.managed && kind == MemberKind::Phone {
         anyhow::bail!("a phone is never a managed machine");
@@ -421,6 +422,7 @@ fn new_token(args: TokenArgs) -> anyhow::Result<()> {
             uses: args.uses,
             label: args.label,
             windows,
+            mac,
         })?;
         let Reply::ServerInvitation { command } = reply else {
             anyhow::bail!("the node answered something else: {reply:?}")
@@ -430,6 +432,8 @@ fn new_token(args: TokenArgs) -> anyhow::Result<()> {
             eprintln!(
                 "Paste this line into each computer's Command Prompt or PowerShell, run as administrator. {works}"
             );
+        } else if mac {
+            eprintln!("Paste this line into each Mac's Terminal, as root for one that starts at boot. {works}");
         } else {
             eprintln!("Paste this line into each server's terminal, as the user it is for. {works}");
         }

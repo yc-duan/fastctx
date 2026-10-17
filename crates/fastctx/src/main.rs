@@ -135,7 +135,7 @@ enum Command {
         supervisor_control: Option<u64>,
         #[arg(long, hide = true)]
         supervisor_events: Option<u64>,
-        #[arg(long, hide = true, value_parser = ["s4u", "interactive"])]
+        #[arg(long, hide = true, value_parser = ["s4u", "interactive", "system"])]
         service_identity: Option<String>,
         #[arg(long, hide = true)]
         successor: Option<String>,
@@ -583,6 +583,9 @@ fn node(
     successor: Option<String>,
     prepared_by: Option<String>,
 ) -> anyhow::Result<()> {
+    // A node SYSTEM runs lives in the home Fastctx gives SYSTEM, and so does
+    // everything it starts.
+    fastctx_platform::system_home::prepare()?;
     let root = match dir {
         Some(root) => root,
         None => fastctx_platform::fastctx_root()?,
@@ -633,6 +636,7 @@ fn node(
             let (control, events) = fastctx_platform::service_channel::inherited(control, events)?;
             let identity = match identity.as_deref() {
                 Some("s4u") => fastctx_node::handoff::Identity::S4u,
+                Some("system") => fastctx_node::handoff::Identity::System,
                 _ => fastctx_node::handoff::Identity::Interactive,
             };
             Some(fastctx_node::handoff::Supervision { control, events, identity })

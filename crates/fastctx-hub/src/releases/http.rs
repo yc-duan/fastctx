@@ -7,7 +7,10 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use fastctx_net::wire;
-use fastctx_types::kernel::{AARCH64_ARCHIVE, RELEASE_PATH, SUMS, WINDOWS_X86_64_ARCHIVE, X86_64_ARCHIVE, release_version};
+use fastctx_types::kernel::{
+    AARCH64_ARCHIVE, DARWIN_AARCH64_ARCHIVE, DARWIN_X86_64_ARCHIVE, RELEASE_PATH, SUMS, WINDOWS_X86_64_ARCHIVE,
+    X86_64_ARCHIVE, release_version,
+};
 use futures_util::TryStreamExt as _;
 use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt as _, Full, StreamBody};
@@ -92,8 +95,7 @@ pub(crate) async fn serve(host: Host, tls: Tls, tcp: TcpStream, peer: SocketAddr
     // Only a session is bound to its connection; a download needs no
     // binding, and TLS 1.2 may not give one.
     let mut binding = [0; 32];
-    if session && let Err(error) = stream.get_ref().1.export_keying_material(&mut binding, wire::EXPORTER_LABEL, None)
-    {
+    if session && let Err(error) = stream.get_ref().1.export_keying_material(&mut binding, wire::EXPORTER_LABEL, None) {
         host.log().line(format_args!("{peer}: the TLS exporter failed: {error}"));
         return;
     }
@@ -177,15 +179,15 @@ async fn respond(
     }
     let kind = match name {
         SUMS => "text/plain; charset=utf-8",
-        X86_64_ARCHIVE | AARCH64_ARCHIVE => "application/gzip",
+        X86_64_ARCHIVE | AARCH64_ARCHIVE | DARWIN_AARCH64_ARCHIVE | DARWIN_X86_64_ARCHIVE => "application/gzip",
         WINDOWS_X86_64_ARCHIVE => "application/zip",
         _ => return Ok(text(StatusCode::NOT_FOUND, "Not found")),
     };
     let (version, name) = (version.to_owned(), name.to_owned());
     let releases = hub.releases.clone();
-    // The Windows archive placed by hand comes first, as Linux ones do; else
-    // the one held among the update packages, checked when it came.
-    let held = (name == WINDOWS_X86_64_ARCHIVE).then(|| crate::updates::windows_archive(&hub, &version)).flatten();
+    // A Windows or Mac archive placed by hand comes first, as Linux ones do;
+    // else the one held among the update packages, checked when it came.
+    let held = crate::updates::held_archive(&hub, &version, &name);
     let opened = tokio::task::spawn_blocking(move || match releases.file(&version, &name) {
         Err(error) if error.kind() == io::ErrorKind::NotFound && held.is_some() => {
             std::fs::File::open(held.expect("checked above"))

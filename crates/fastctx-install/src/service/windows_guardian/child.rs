@@ -63,8 +63,8 @@ impl Child {
         let (event_read, event_write) = private_pipe(user)?;
         let identity = login.as_ref().map(|login| login.identity).unwrap_or(Identity::System);
         let token = login.as_ref().map(|login| login.token.as_raw_handle());
-        if (config.kind == Kind::Node) != token.is_some() {
-            bail!("a node cannot be launched under the guardian's SYSTEM identity");
+        if (config.kind == Kind::Node && !config.systems()) != token.is_some() {
+            bail!("a node of an account cannot be launched under the guardian's SYSTEM identity");
         }
         let environment = Environment::new(token).context("creating the user's environment block")?;
         let executable =
@@ -80,7 +80,12 @@ impl Child {
                 "--supervisor-events".into(),
                 (event_write.as_raw_handle() as usize).to_string().into(),
                 "--service-identity".into(),
-                (if identity == Identity::S4u { "s4u" } else { "interactive" }).into(),
+                (match identity {
+                    Identity::S4u => "s4u",
+                    Identity::Interactive(_) => "interactive",
+                    Identity::System => "system",
+                })
+                .into(),
             ]);
         }
         let program = wide(executable.as_os_str())?;

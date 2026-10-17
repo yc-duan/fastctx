@@ -8,7 +8,9 @@ use std::io;
 ///
 /// On Windows that is the system and user variables from the registry,
 /// merged as a fresh logon merges them, read anew on every call so a
-/// variable the user just changed is seen without restarting anything.
+/// variable the user just changed is seen without restarting anything;
+/// for SYSTEM, its profile and data folders are the home Fastctx gives it
+/// (`crate::system_home`).
 ///
 /// On Unix it is what a login session holds before the login shell reads
 /// its profile: the account's name, home and shell, then what PAM's
@@ -17,7 +19,12 @@ use std::io;
 /// per-user runtime directory and session bus when they exist. A login
 /// shell started with it reads the profile itself.
 pub fn user_environment() -> io::Result<Vec<(OsString, OsString)>> {
-    imp::user_environment()
+    let mut env = imp::user_environment()?;
+    for (name, value) in crate::system_home::variables()? {
+        env.retain(|(held, _)| !held.eq_ignore_ascii_case(&name));
+        env.push((name, value));
+    }
+    Ok(env)
 }
 
 /// The environment for a fastctx process the World starts on its own (a

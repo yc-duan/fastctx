@@ -124,27 +124,31 @@ impl Link {
         self.inner.view().versions
     }
 
-    /// Downloads the package `target` of `version` from the hub into
-    /// `file`, going on from what an earlier download left there; the hub
-    /// fetches it first when it has to. `progress` hears the bytes in the
-    /// file and the package's size as they grow. The bytes are the caller's
-    /// to check against the package's signature.
+    /// Asks the hub for the package `target` of `version`, answered once
+    /// it holds it, bringing it in first when it has to: its size.
+    pub async fn ask_package(&self, version: &str, target: &str) -> Result<u64, String> {
+        if !self.keeps_versions() {
+            return Err("the network's hub does not hand out packages".to_string());
+        }
+        match self.inner.ask(Question::Package { version: version.to_string(), target: target.to_string() }).await? {
+            Told::Package { size } => Ok(size),
+            _ => Err("the hub answered something other than a package".to_string()),
+        }
+    }
+
+    /// Downloads the package `target` of `version`, `size` bytes the hub
+    /// holds (`ask_package`), into `file`, going on from what an earlier
+    /// download left there. `progress` hears the bytes in the file and the
+    /// package's size as they grow. The bytes are the caller's to check
+    /// against the package's signature.
     pub async fn package(
         &self,
         version: &str,
         target: &str,
+        size: u64,
         file: &Path,
         progress: &mut (dyn FnMut(u64, Option<u64>) + Send),
     ) -> Result<(), String> {
-        if !self.keeps_versions() {
-            return Err("the network's hub does not hand out packages".to_string());
-        }
-        let size =
-            match self.inner.ask(Question::Package { version: version.to_string(), target: target.to_string() }).await?
-            {
-                Told::Package { size } => size,
-                _ => return Err("the hub answered something other than a package".to_string()),
-            };
         // Written at the end it reaches, and cut back when it is longer than
         // the package: a file opened only to append cannot be cut on Windows.
         let mut out = std::fs::OpenOptions::new()

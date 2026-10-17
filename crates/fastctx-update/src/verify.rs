@@ -4,7 +4,6 @@
 //! names no version, or another, is refused: an older package is never
 //! taken for a newer release, wherever its manifest came from.
 
-use std::io::Read as _;
 use std::path::Path;
 
 use base64::Engine as _;
@@ -14,14 +13,19 @@ use minisign_verify::{PublicKey, Signature};
 /// Checks the file at `path` against `signature`, the base64 a manifest
 /// carries, for the release `version`.
 pub fn file(path: &Path, signature: &str, version: &str) -> Result<(), String> {
+    let file = std::fs::File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    reader(file, signature, version).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// Checks what `reader` gives, read once to its end, as `file` checks a file.
+pub fn reader(mut reader: impl std::io::Read, signature: &str, version: &str) -> Result<(), String> {
     let (key, decoded) = decoded(signature)?;
     let mut verifier = key
         .verify_stream(&decoded)
         .map_err(|error| format!("the package's signature is not one this key made: {error}"))?;
-    let mut file = std::fs::File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
     let mut buffer = vec![0; 256 * 1024];
     loop {
-        let read = file.read(&mut buffer).map_err(|error| format!("{}: {error}", path.display()))?;
+        let read = reader.read(&mut buffer).map_err(|error| error.to_string())?;
         if read == 0 {
             break;
         }

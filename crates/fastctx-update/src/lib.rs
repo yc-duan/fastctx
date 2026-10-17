@@ -9,6 +9,7 @@ pub mod download;
 pub mod github;
 pub mod kernel;
 pub mod obtain;
+pub mod pace;
 pub mod verify;
 
 pub use cache::Cache;

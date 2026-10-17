@@ -9,9 +9,7 @@ use std::fs::File;
 use std::io::{self, Read as _};
 use std::path::Path;
 
-use fastctx_types::kernel::{
-    AARCH64_ARCHIVE, KernelRelease, SUMS, WINDOWS_X86_64_ARCHIVE, X86_64_ARCHIVE, release_version,
-};
+use fastctx_types::kernel::{AARCH64_ARCHIVE, HELD_ARCHIVES, KernelRelease, SUMS, X86_64_ARCHIVE, release_version};
 use sha2::{Digest as _, Sha256};
 
 pub(crate) struct Releases {
@@ -54,6 +52,11 @@ impl Releases {
         }
     }
 
+    /// An archive placed among the releases by hand, and only that.
+    pub fn placed(&self, version: &str, name: &str) -> io::Result<File> {
+        self.files.open(version, name)
+    }
+
     pub fn ready(&self, version: &str, allow_partial: bool) -> Result<KernelRelease, String> {
         if !release_version(version) {
             return Err("a kernel release version must be major.minor.patch, with at most a pre-release".into());
@@ -82,10 +85,21 @@ impl Releases {
         if !allow_partial && (x86_64_sha256.is_none() || aarch64_sha256.is_none()) {
             return Err("this caller requires both x86_64 and aarch64 archives".into());
         }
-        // The Windows archive is never required: placed here, or else held
-        // among the update packages (`crate::updates::windows_digest`).
-        let windows_x86_64_sha256 = self.archive(version, WINDOWS_X86_64_ARCHIVE, sums.as_deref())?;
-        Ok(KernelRelease { version: version.to_owned(), x86_64_sha256, aarch64_sha256, windows_x86_64_sha256 })
+        let mut release = KernelRelease {
+            version: version.to_owned(),
+            x86_64_sha256,
+            aarch64_sha256,
+            windows_x86_64_sha256: None,
+            darwin_aarch64_sha256: None,
+            darwin_x86_64_sha256: None,
+        };
+        // The Windows and Mac archives are never required: placed here, or
+        // else held among the update packages (`crate::updates::held_digest`).
+        for (archive, _) in HELD_ARCHIVES {
+            let digest = self.archive(version, archive, sums.as_deref())?;
+            *release.held(archive).expect("a held archive") = digest;
+        }
+        Ok(release)
     }
 
     fn archive(&self, version: &str, name: &str, sums: Option<&str>) -> Result<Option<String>, String> {
