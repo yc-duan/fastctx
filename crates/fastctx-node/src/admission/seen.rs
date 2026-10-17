@@ -17,9 +17,9 @@
 use fastctx_types::access::{Acting, HubAccount};
 use fastctx_types::agents::AgentsReply;
 use fastctx_types::run::JobOwner;
-use fastctx_types::since::{SinceKind, SinceReply};
+use fastctx_types::since::{SinceKind, SinceReply, SinceTown};
 use fastctx_types::town::{Looked, WhoReply};
-use fastctx_types::{Address, ResidentId};
+use fastctx_types::{Address, ResidentId, TownName};
 
 use super::Asker;
 use crate::Node;
@@ -57,6 +57,30 @@ impl Looker<'_> {
                 accounts.iter().any(|account| node.serves(&Acting::Here, &account.hub, &account.account))
             }
         }
+    }
+
+    /// Whether the looker may use the project `town`, as the views of the
+    /// hubs say: a project's records go to its accounts alone. One kept on
+    /// no hub is this computer's own, its user's.
+    fn in_project(self, node: &Node, town: &TownName) -> bool {
+        let mut kept = false;
+        for link in node.links() {
+            let view = link.view();
+            let Some(project) = view.projects.iter().find(|project| project.name == *town) else { continue };
+            kept = true;
+            let may = match self {
+                Looker::Asker(asker) => {
+                    link.membership().id == asker.hub && view.in_project(&asker.account, &project.town)
+                }
+                Looker::Here(acting) => {
+                    node.accounts_on(&link, acting).iter().any(|account| view.in_project(account, &project.town))
+                }
+            };
+            if may {
+                return true;
+            }
+        }
+        !kept && matches!(self, Looker::Here(Acting::Here))
     }
 }
 
@@ -96,20 +120,31 @@ pub fn who(node: &Node, asker: &Asker, mut reply: WhoReply) -> WhoReply {
     reply
 }
 
-/// This machine's own answer to whoever asks here, as `acting`. A session
-/// sees the conversations working for its accounts and every job running,
-/// each with its account; the user here is answered whole, the interface
-/// setting apart what works for others (`who::mark_others`), and sees the
-/// history of their own alone.
+/// This machine's own answer to whoever asks here and may work here, as
+/// `acting`: the conversations working for its accounts, and every job
+/// running, each with its account. Another account's conversation is not
+/// sent even to this computer's own interface: it is not left to the
+/// interface to hide.
 pub fn who_here(node: &Node, acting: &Acting, mut reply: WhoReply) -> WhoReply {
     let looker = Looker::Here(acting);
     reply.history = reply.history.map(|history| since(node, looker, history));
-    if matches!(acting, Acting::Here) {
-        return reply;
-    }
     unseen_by_account(node, looker, None, &mut reply);
     reply.residents.retain(|now| resident(node, looker, &now.about.id));
     reply
+}
+
+/// What this machine's own caller, who may work here, finds looking up an
+/// id here: a conversation working for its accounts; a job running here,
+/// whosever it is.
+pub fn looked_here(node: &Node, acting: &Acting, looked: Option<Looked>) -> Option<Looked> {
+    match &looked {
+        Some(Looked::Resident(detail)) => {
+            let at =
+                Address { machine: detail.resident.about.machine.clone(), resident: detail.resident.about.id.clone() };
+            if address(node, Looker::Here(acting), &at) { looked } else { None }
+        }
+        _ => looked,
+    }
 }
 
 /// Gives each job of a conversation `looker` does not see the account it
@@ -158,6 +193,10 @@ pub fn since(node: &Node, looker: Looker, mut reply: SinceReply) -> SinceReply {
     // The other end of an invitation or an answer may live on another
     // machine, which answers for it; this one judges the end it keeps.
     let other_end = |resident: &Address| !node.is_me(&resident.machine) || seen(resident);
+    let project = |town: &SinceTown| match town {
+        SinceTown::Known { town: Some(town) } => looker.in_project(node, town),
+        _ => false,
+    };
     reply.events.retain(|event| match &event.what {
         SinceKind::FileAction { resident, .. }
         | SinceKind::ResidentBorn { resident, .. }
@@ -168,11 +207,10 @@ pub fn since(node: &Node, looker: Looker, mut reply: SinceReply) -> SinceReply {
         SinceKind::JobEnded { owner: job_owner, account, .. } => owner(node, looker, job_owner, account.as_ref()),
         SinceKind::ColleagueAsked { asker: who, colleague, .. } => seen(who) && other_end(colleague),
         SinceKind::AnswerDelivery { colleague, to, .. } => seen(colleague) && other_end(to),
-        SinceKind::JournalEntry { .. }
-        | SinceKind::JournalDescription { .. }
-        | SinceKind::ProjectVersion { .. }
-        | SinceKind::MachineConnected
-        | SinceKind::MachineOffline => true,
+        SinceKind::JournalEntry { .. } | SinceKind::JournalDescription { .. } | SinceKind::ProjectVersion { .. } => {
+            project(&event.town)
+        }
+        SinceKind::MachineConnected | SinceKind::MachineOffline => true,
     });
     reply.undated.retain(|fact| seen(&fact.resident));
     reply

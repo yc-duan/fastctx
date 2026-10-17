@@ -24,6 +24,7 @@ use fastctx_types::{AccountName, MachineName, ResidentId, TownName};
 use crate::Node;
 
 pub mod letters;
+pub mod local;
 pub mod seen;
 
 /// Who asked, and what that lets it see here.

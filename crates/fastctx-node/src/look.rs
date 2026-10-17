@@ -36,7 +36,7 @@ pub async fn look(node: &Arc<Node>, acting: &Acting, ids: Vec<String>) -> Vec<Lo
         if node.works_here(acting).is_ok() && !crate::managed::is_managed(node) {
             match look_here(node, &id).await {
                 Ok((here, work)) => {
-                    found.extend(here);
+                    found.extend(crate::admission::seen::looked_here(node, acting, here));
                     jobs.extend(work);
                 }
                 Err(error) => unasked.push(format!("{} ({error})", node.machine())),
