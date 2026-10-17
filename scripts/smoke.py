@@ -277,10 +277,17 @@ def managed(lab, root, archive):
     work.mkdir(exist_ok=True)
     out = work / "out.txt"
     out.unlink(missing_ok=True)
-    (work / "run.cmd").write_bytes((f"@echo off\r\n{line} > {out} 2>&1\r\necho EXIT=%errorlevel%>> {out}\r\n").encode("ascii"))
+    # Marks in a file of their own say whether the script went on after the
+    # line, whatever became of its output.
+    marks = work / "marks.txt"
+    marks.unlink(missing_ok=True)
+    (work / "run.cmd").write_bytes((f"@echo off\r\necho started> {marks}\r\n{line} > {out} 2>&1\r\n"
+                                    f"echo after the line %errorlevel%>> {marks}\r\necho EXIT=%errorlevel%>> {out}\r\n"
+                                    f"echo wrote its end>> {marks}\r\n").encode("ascii"))
     task = "fastctx-smoke-managed"
     home = data / "Fastctx"
     first = len(RESULTS)
+    before = node_services()
     try:
         made = subprocess.run(["schtasks", "/create", "/tn", task, "/ru", "SYSTEM", "/sc", "once", "/st", "00:00",
                                "/tr", f"cmd /c {work / 'run.cmd'}", "/f"], capture_output=True, text=True)
@@ -291,7 +298,12 @@ def managed(lab, root, archive):
         def said():
             return out.is_file() and "EXIT=" in out.read_text(encoding="utf-8", errors="replace")
 
-        until("the line ends", said, 600)
+        if not until("the line ends", said, 600):
+            # What stands now, before taking it off the network changes it.
+            print("== marks.txt")
+            print(marks.read_text(encoding="utf-8", errors="replace") if marks.is_file() else "(none)")
+            print(subprocess.run(["schtasks", "/query", "/tn", task, "/v", "/fo", "list"], capture_output=True, text=True).stdout)
+            managed_diagnostics(data, home, out)
         text = out.read_text(encoding="utf-8", errors="replace") if out.is_file() else ""
         lines = [said for said in text.splitlines() if said.strip() and not said.startswith("EXIT=")]
         check("it installs the computer and says so in its last line", "EXIT=0" in text and bool(lines)
@@ -303,7 +315,8 @@ def managed(lab, root, archive):
               and "BUILTIN\\Administrators" in access and "Users" not in access and "Everyone" not in access, access)
         owners = subprocess.run(["powershell", "-NoProfile", "-Command",
                                  "Get-CimInstance Win32_Process -Filter \"Name='fastctx.exe'\" | "
-                                 "Where-Object { $_.CommandLine -like '*\\Fastctx\\.fastctx*' -and $_.CommandLine -match ' node ' } | "
+                                 # Windows writes the arguments quoted: `"node" "--dir" "..."`.
+                                 "Where-Object { $_.CommandLine -like '*\\Fastctx\\.fastctx*' -and $_.CommandLine -match ' \"?node\"? ' } | "
                                  "ForEach-Object { (Invoke-CimMethod -InputObject $_ -MethodName GetOwner).User }"],
                                 capture_output=True, text=True).stdout.split()
         check("its node runs as SYSTEM", bool(owners) and set(owners) == {"SYSTEM"}, owners)
@@ -311,9 +324,12 @@ def managed(lab, root, archive):
         code, said_out = lab.run("alpha", "remove", "managed", "--everything", timeout=180)
         check("alpha takes it off the network, to uninstall with everything", code == 0, said_out)
 
+        # alpha's and beta's own node services stay: the managed computer's is
+        # the one its line brought.
+        theirs = node_services() - before
+
         def uninstalled():
-            services = subprocess.run(["sc", "query", "type=", "service", "state=", "all"], capture_output=True, text=True).stdout
-            return "fastctx-service-node" not in services and not any((world / "bin").exists() for world in worlds)
+            return not (node_services() & theirs) and not any((world / "bin").exists() for world in worlds)
 
         until("it uninstalls itself, its service with it", uninstalled, 300)
     finally:
@@ -321,6 +337,12 @@ def managed(lab, root, archive):
             managed_diagnostics(data, home, out)
         subprocess.run(["schtasks", "/delete", "/tn", task, "/f"], capture_output=True)
         shutil.rmtree(work, ignore_errors=True)
+
+
+def node_services():
+    """The names of the node services on this Windows computer."""
+    listed = subprocess.run(["sc", "query", "type=", "service", "state=", "all"], capture_output=True, text=True).stdout
+    return set(re.findall(r"SERVICE_NAME: (fastctx-service-node-\S+)", listed))
 
 
 def managed_diagnostics(data, home, out):
