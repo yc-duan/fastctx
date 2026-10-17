@@ -17,6 +17,10 @@ pub struct LoggedIn {
     account: AccountName,
     #[cfg(desktop)]
     kept: Option<crate::setup::KeptNow>,
+    /// Why keeping the node running from boot failed, the machine being in
+    /// all the same.
+    #[cfg(desktop)]
+    unkept: Option<String>,
 }
 
 fn account(name: String) -> Result<AccountName, String> {
@@ -31,10 +35,15 @@ pub(crate) async fn logged_in(
     shell: &Shell,
     (hub, name, account): (HubName, MachineName, AccountName),
 ) -> Result<LoggedIn, String> {
+    // In already: what goes wrong keeping the node running from boot is
+    // said beside the login, never instead of it.
     #[cfg(desktop)]
-    let kept = match shell.connection.local_world() {
-        Ok(world) => Some(crate::setup::keep(&world).await?),
-        Err(_) => None,
+    let (kept, unkept) = match shell.connection.local_world() {
+        Ok(world) => match crate::setup::keep(&world).await {
+            Ok(kept) => (Some(kept), None),
+            Err(error) => (None, Some(error)),
+        },
+        Err(_) => (None, None),
     };
     #[cfg(not(desktop))]
     let _ = shell;
@@ -44,6 +53,8 @@ pub(crate) async fn logged_in(
         account,
         #[cfg(desktop)]
         kept,
+        #[cfg(desktop)]
+        unkept,
     })
 }
 
@@ -52,7 +63,7 @@ pub(crate) fn logged_in_kept(
     (hub, name, account): (HubName, MachineName, AccountName),
     kept: crate::setup::KeptNow,
 ) -> LoggedIn {
-    LoggedIn { hub, name, account, kept: Some(kept) }
+    LoggedIn { hub, name, account, kept: Some(kept), unkept: None }
 }
 
 /// Logs in to `account` at the hub written `hub` with its password, and
@@ -76,7 +87,7 @@ pub(crate) async fn login(
         .await
         .map_err(|error| error.to_string());
     #[cfg(target_os = "android")]
-    crate::android::joining(false)?;
+    crate::android::joining_ended();
     logged_in(&shell, joined?).await
 }
 
@@ -105,7 +116,7 @@ pub(crate) async fn login_token(
         .await
         .map_err(|error| error.to_string());
     #[cfg(target_os = "android")]
-    crate::android::joining(false)?;
+    crate::android::joining_ended();
     logged_in(&shell, joined?).await
 }
 

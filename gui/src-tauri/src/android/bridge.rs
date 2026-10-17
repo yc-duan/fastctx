@@ -24,6 +24,15 @@ pub(crate) fn joining(joining: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// A login is over, however it went. Should telling Android fail, the
+/// background connection still follows the device's state, which the
+/// monitor publishes every two seconds; the login stands.
+pub(crate) fn joining_ended() {
+    if let Err(error) = joining(false) {
+        report(format!("telling Android a login ended: {error}"));
+    }
+}
+
 impl Bridge {
     fn with<T>(&self, call: impl FnOnce(&mut JNIEnv<'_>, &JObject<'_>) -> jni::errors::Result<T>) -> Result<T, String> {
         let mut env = self.vm.attach_current_thread().map_err(|error| error.to_string())?;

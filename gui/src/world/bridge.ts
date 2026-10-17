@@ -442,6 +442,9 @@ export interface LoggedIn {
   name: MachineName;
   account: string;
   kept?: KeptNow | null;
+  /** Why keeping the node running from boot failed, the computer being in
+   *  all the same. */
+  unkept?: string | null;
 }
 
 /** Logs in to `account` at the hub written `hub` (host:port) with its

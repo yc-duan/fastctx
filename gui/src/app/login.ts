@@ -507,10 +507,13 @@ export class LoginPage implements Page {
   private wanting(): { kept: string } {
     const { words } = this.options;
     const kept = this.done?.kept;
-    const said =
-      !kept || this.options.device
-        ? ""
-        : kept.kind === "command"
+    const said = this.options.device
+      ? ""
+      : this.done?.unkept
+        ? words.kept.declined
+        : !kept
+          ? ""
+          : kept.kind === "command"
           ? "command"
           : kept.kind === "declined" || kept.kind === "unsupported"
             ? words.kept[kept.kind]
@@ -529,7 +532,7 @@ export class LoginPage implements Page {
       wanting.kept === "command" && kept?.kind === "command"
         ? `<div class="welcome-slip"><span>${escape(words.keptCommand)}</span><pre class="welcome-command mono">${escape(kept.command)}</pre></div>`
         : wanting.kept
-          ? `<div class="welcome-slip"><span>${escape(wanting.kept)}</span>${this.options.keep && kept?.kind === "declined" ? `<button class="text-button keep-now" type="button">${escape(words.keepGo)}</button>` : ""}</div>`
+          ? `<div class="welcome-slip"><span title="${escape(done.unkept ?? "")}">${escape(wanting.kept)}</span>${this.options.keep && (kept?.kind === "declined" || done.unkept) ? `<button class="text-button keep-now" type="button">${escape(words.keepGo)}</button>` : ""}</div>`
           : "",
     ].join("");
     const who = [done.account, this.options.device ? "" : done.name].filter(Boolean).join(" · ");
@@ -574,13 +577,59 @@ export class LoginPage implements Page {
   }
 
   /** Says what went wrong under the form; the original words of a problem
-   *  stay a hover away. */
+   *  stay a hover away, or a touch where there is no pointer to rest. */
   private note(text: string, detail = ""): void {
     const note = this.body.querySelector<HTMLElement>(".sheet-note");
     if (!note) return;
     note.textContent = text;
     note.title = detail;
+    note.dataset.detail = detail && detail !== text ? detail : "";
     note.hidden = !text;
+  }
+
+  /** The original words of the problem under the form, shown or put away. */
+  private toggleDetail(note: HTMLElement): void {
+    const detail = note.dataset.detail;
+    if (!detail) return;
+    const shown = note.querySelector(".sheet-note-detail");
+    if (shown) return shown.remove();
+    const line = document.createElement("span");
+    line.className = "sheet-note-detail mono";
+    line.textContent = detail;
+    note.append(line);
+  }
+
+  /** This device's logins now, as `hub/account`, the store asked first. */
+  private async loginsNow(): Promise<Set<string>> {
+    await this.options.store.refresh();
+    return new Set(loginsOf(this.options.store.world.peek()?.accounts).map((login) => `${login.hub}/${login.account}`));
+  }
+
+  /** After an error, whether this device is in all the same: an answer
+   *  lost on its way back, or a step after the hub let it in that failed,
+   *  leaves a login here that was not here `before`, to `account` where it
+   *  was typed. That login, as a login's result; none where there is no
+   *  such login. */
+  private async inAnyway(before: Set<string>, account: string | null): Promise<LoggedIn | null> {
+    await this.options.store.refresh();
+    const world = this.options.store.world.peek();
+    const login = loginsOf(world?.accounts).find(
+      (one) => !before.has(`${one.hub}/${one.account}`) && (!account || one.account === account),
+    );
+    return login && world ? { hub: login.hubName, name: world.accounts.machine, account: login.account } : null;
+  }
+
+  /** In: where this device arrived, or for a managed machine its one page.
+   *  The page that says so failing to draw leaves the person in all the
+   *  same, on the World's own pages. */
+  private async landed(managed: boolean): Promise<void> {
+    try {
+      await this.options.store.refresh();
+      if (managed) return this.options.enter();
+      await this.arrived();
+    } catch {
+      this.options.enter();
+    }
   }
 
   private problem(error: unknown): void {
@@ -598,6 +647,8 @@ export class LoginPage implements Page {
       else this.chosen.add(address);
       return this.drawAddresses();
     }
+    const note = target.closest<HTMLElement>(".sheet-note");
+    if (note) return this.toggleDetail(note);
     if (target.closest(".enter")) return this.options.enter();
     if (target.closest(".remove-first")) return this.options.remove?.();
     if (target.closest(".invite-next") && this.done && this.options.invite) {
@@ -611,18 +662,22 @@ export class LoginPage implements Page {
       const named = this.body.querySelector<HTMLInputElement>("[name=name]");
       if (named && !named.reportValidity()) return;
       this.busy = true;
+      let token: string | null = null;
+      let before = new Set<string>();
       try {
-        const token = await this.options.scan();
+        token = await this.options.scan();
         if (!token) return;
+        before = await this.loginsNow();
         this.done = await this.options.loginToken(token, named?.value.trim() || null);
-        this.created = false;
-        await this.options.store.refresh();
-        await this.arrived();
       } catch (error) {
-        this.problem(error);
+        const inAnyway = token ? await this.inAnyway(before, null) : null;
+        if (!inAnyway) return this.problem(error);
+        this.done = inAnyway;
       } finally {
         this.busy = false;
       }
+      this.created = false;
+      await this.landed(false);
       return;
     }
     if (target.closest(".place-now") && this.options.place) {
@@ -633,7 +688,7 @@ export class LoginPage implements Page {
       this.busy = true;
       try {
         const kept = await this.options.keep();
-        this.done = { ...this.done, kept };
+        this.done = { ...this.done, kept, unkept: null };
         this.draw();
       } catch (error) {
         this.problem(error);
@@ -739,21 +794,25 @@ export class LoginPage implements Page {
     go.disabled = true;
     go.textContent = creating ? words.creating : words.going;
     this.note("");
+    const typed = this.step === "confirm" ? null : (field("account")?.value.trim() ?? null);
+    const before = await this.loginsNow();
     try {
       this.done = await act();
-      this.created = creating;
-      this.busy = false;
-      await this.options.store.refresh();
-      // A managed machine has nothing more to show here: its one page says
-      // what it is.
-      if (managed) return this.options.enter();
-      await this.arrived();
     } catch (error) {
-      this.busy = false;
-      go.disabled = false;
-      go.textContent = label;
-      this.problem(error);
+      const inAnyway = await this.inAnyway(before, typed);
+      if (!inAnyway) {
+        this.busy = false;
+        go.disabled = false;
+        go.textContent = label;
+        return this.problem(error);
+      }
+      this.done = inAnyway;
     }
+    this.created = creating;
+    this.busy = false;
+    // A managed machine has nothing more to show here: its one page says
+    // what it is.
+    await this.landed(managed);
   }
 }
 

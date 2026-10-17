@@ -127,6 +127,15 @@
   color: var(--wrong);
 }
 
+/* The original words of a problem, under its sentence once touched. */
+.sheet-note-detail {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
 .sheet-foot {
   display: flex;
   align-items: center;

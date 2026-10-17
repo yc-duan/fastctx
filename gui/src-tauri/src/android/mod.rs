@@ -2,7 +2,7 @@
 //! The web page supplies notification rules; the service executes them.
 
 mod bridge;
-pub(crate) use bridge::joining;
+pub(crate) use bridge::{joining, joining_ended};
 mod monitor;
 mod observer;
 pub(crate) mod readiness;

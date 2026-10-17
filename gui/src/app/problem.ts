@@ -7,6 +7,8 @@ export interface ProblemWords {
   tooManyTries: string;
   locked: string;
   unreachable: string;
+  /** A hub's address that is no address. */
+  badAddress: string;
   nameTaken: string;
   /** A name another machine had before it was renamed, which still names
    *  that one. */
@@ -41,6 +43,7 @@ export const zhProblems: ProblemWords = {
   tooManyTries: "尝试次数过多，请稍后再试",
   locked: "该账号已被锁定，请联系管理员",
   unreachable: "无法连接中枢服务器，请检查地址和网络",
+  badAddress: "中枢服务器地址不对",
   nameTaken: "这个名称已被使用",
   formerName: "这是另一台机器的曾用名，仍指向它",
   olderDevices: "网络里还有设备在用旧版本，读不了这个名字",
@@ -65,6 +68,7 @@ export const enProblems: ProblemWords = {
   tooManyTries: "Too many attempts. Try again later",
   locked: "This account is locked. Contact the administrator",
   unreachable: "Can't reach the hub. Check the address and network",
+  badAddress: "That hub address isn't valid",
   nameTaken: "That name is already in use",
   formerName: "Another machine had that name and it still points there",
   olderDevices: "Some devices in this network run an older version that can't read this name",
@@ -104,7 +108,8 @@ const KNOWN: [RegExp, keyof ProblemWords][] = [
   [/is offline|not online|went offline/i, "offline"],
   [/the node is not running|the node was started but exited/i, "serviceDown"],
   [/handing over to its successor/i, "serviceSwitching"],
-  [/connect|timed out|unreachable|refused|no route|dns|resolve|no such host/i, "unreachable"],
+  [/the hub's address .*: (invalid|failed to lookup|no such host|name or service not known|nodename nor servname)|write the hub's address/i, "badAddress"],
+  [/connect|timed out|unreachable|refused|no route|dns|resolve|no such host|no answer within|said nothing for/i, "unreachable"],
 ];
 
 /** An assistance's weekly amount spent, as the login's machine says it
