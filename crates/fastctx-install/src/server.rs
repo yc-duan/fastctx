@@ -1,5 +1,5 @@
 //! A short bootstrap command for a machine invited by a GUI: a POSIX line for
-//! a Linux server, a cmd line for a Windows computer.
+//! a Linux server or Mac, a cmd line for a Windows computer.
 //! The invitation is opaque here; only the installed kernel interprets it.
 
 use anyhow::{bail, ensure};
@@ -45,7 +45,7 @@ pub fn certificate_pin(certificate_der: &[u8]) -> anyhow::Result<String> {
 /// A download that breaks goes on from where it stopped, again and again,
 /// waiting twice as long each time up to a minute (`world-network.md`, 断开不是
 /// 结束); a source that cannot resume is read again from the start.
-/// Requires a POSIX shell, uname, mktemp, curl, tar and sha256sum; no Python.
+/// Requires a POSIX shell, uname, curl, tar and sha256sum; no Python.
 /// The kernel owns durable installation, enrollment and service registration.
 pub fn command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> anyhow::Result<String> {
     ensure!(
@@ -77,11 +77,11 @@ pub fn command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> anyh
             )
         }
     };
+    let download = unix_download(kernel.version, "unknown-linux-gnu", &directory, &pin, "sha256sum");
     Ok(format!(
-        "(set -e;a=$(uname -m);case $a in x86_64) {};;aarch64) {};;*) echo Unsupported:$a >&2;exit 1;;esac;d=$(mktemp -d);trap 'rm -rf \"$d\"' EXIT;cd \"$d\";w=1;until curl --proto '=https' -fL -C - -o a{pin} {}/fastctx-$a-unknown-linux-gnu.tar.gz;do r=$?;[ $r = 33 ]&&rm -f a;echo \"download stopped (curl $r); again in $w s\" >&2;sleep $w;w=$((w*2));[ $w -gt 60 ]&&w=60;done;echo \"$h  a\"|sha256sum -c - >/dev/null||{{ echo \"fastctx: the download is not the release it should be; run the line again\" >&2;exit 1;}};tar xzf a;./fastctx server install {})",
+        "(set -e;a=$(uname -m);case $a in x86_64) {};;aarch64) {};;*) echo Unsupported:$a >&2;exit 1;;esac;{download};tar xzf a;./fastctx server install {};cd /;rm -rf \"$d\")",
         architecture(kernel.x86_64_sha256, kernel.version),
         architecture(kernel.aarch64_sha256, kernel.version),
-        quote(&directory),
         quote(invitation),
     ))
 }
@@ -119,13 +119,23 @@ pub fn mac_command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> 
             (release_directory.trim_end_matches('/').to_owned(), " -k")
         }
     };
+    let download = unix_download(kernel.version, "apple-darwin", &directory, insecure, "shasum -a 256");
     Ok(format!(
-        "(set -e;case $(uname -m) in arm64) a=aarch64;{};;x86_64) a=x86_64;{};;*) echo Unsupported:$(uname -m) >&2;exit 1;;esac;d=$(mktemp -d);trap 'rm -rf \"$d\"' EXIT;cd \"$d\";w=1;until curl --proto '=https' -fL -C - -o a{insecure} {}/fastctx-$a-apple-darwin.tar.gz;do r=$?;[ $r = 33 ]&&rm -f a;echo \"download stopped (curl $r); again in $w s\" >&2;sleep $w;w=$((w*2));[ $w -gt 60 ]&&w=60;done;echo \"$h  a\"|shasum -a 256 -c - >/dev/null||{{ echo \"fastctx: the download is not the release it should be; run the line again\" >&2;exit 1;}};tar xzf a;./fastctx server install {})",
+        "(set -e;case $(uname -m) in arm64) a=aarch64;{};;x86_64) a=x86_64;{};;*) echo Unsupported:$(uname -m) >&2;exit 1;;esac;{download};tar xzf a;./fastctx server install {};cd /;rm -rf \"$d\")",
         mac_architecture(kernel.aarch64_sha256, kernel.version),
         mac_architecture(kernel.x86_64_sha256, kernel.version),
-        quote(&directory),
         quote(invitation),
     ))
+}
+
+/// A failed attempt stays in the caller's home, apart from other versions
+/// and platforms. A complete archive is reused; an incorrect one is resumed
+/// and checked, then fetched afresh, just as in the Windows line.
+fn unix_download(version: &str, target: &str, directory: &str, options: &str, checksum: &str) -> String {
+    format!(
+        "d=\"${{HOME:?HOME is not set}}/.cache/fastctx-install/v{version}/$a-{target}\";mkdir -p \"$d\";cd \"$d\";check(){{ echo \"$h  a\"|{checksum} -c - >/dev/null;}};download(){{ w=1;until curl --proto '=https' -fL -C - -o a{options} {}/fastctx-$a-{target}.tar.gz;do r=$?;[ $r = 33 ]&&rm -f a;echo \"download stopped (curl $r); again in $w s\" >&2;sleep $w;w=$((w*2));[ $w -gt 60 ]&&w=60;done;}};check 2>/dev/null||{{ download;check;}}||{{ rm -f a;download;check;}}||{{ echo \"fastctx: the download is not the release it should be; run the line again\" >&2;exit 1;}}",
+        quote(directory),
+    )
 }
 
 fn mac_architecture(digest: Option<&str>, version: &str) -> String {
