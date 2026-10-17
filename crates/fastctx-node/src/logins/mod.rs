@@ -2,9 +2,12 @@
 //! (`world-agent-logins.md`): which the World lists and uses, which are
 //! candidates, what a scan found, the folders the user chose and what their
 //! searches found, the limits last read, and the changes of the list under
-//! way. Reading the record starts no process; a scan, a search, a change or
-//! a fresh read of limits happens only when the user asks for it, here or
-//! from another of their devices.
+//! way. A scan, a search, a change or a fresh read of limits happens only
+//! when the user asks for it, here or from another of their devices.
+//! Reading the record starts no process, but to ask again a login whose
+//! sign-in changed since it was asked (`sign_in`); which program each login
+//! starts is read as starting it reads it (`program`), and what its agent
+//! says is kept fresh as the World starts it for its own work (`heard`).
 //!
 //! The list is exactly the logins the World's tools are put into: the apply
 //! record (`applied.json`) says which, so the list and what the user's own
@@ -12,12 +15,15 @@
 
 pub(crate) mod change;
 pub(crate) mod folders;
+pub(crate) mod heard;
 pub(crate) mod identify;
 pub(crate) mod kept;
 pub(crate) mod limits;
+mod program;
 pub(crate) mod refresh;
 pub(crate) mod remote;
 pub(crate) mod scan;
+mod sign_in;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -50,6 +56,9 @@ pub(crate) struct Logins {
     /// The listed logins whose tools were not brought up to date by
     /// themselves, and why (`refresh`).
     drift: Mutex<Vec<(AgentName, PathBuf, fastctx_types::logins::Drift)>>,
+    /// Asking again the logins whose sign-in changed, one round at a time
+    /// (`sign_in`).
+    asking: crate::ranked::LoginAsking,
 }
 
 /// The agents that keep logins.
@@ -79,7 +88,7 @@ impl Context {
         let user_home = fastctx_platform::user_home()
             .map_err(|error| Failure::new(format!("finding the home directory: {error}")))?;
         let claude_default = crate::homes::claude_default(&env, &user_home);
-        let places = crate::agents::places(node, &env, &user_home, identify::claude_program());
+        let places = crate::agents::places(node, &env, &user_home, crate::claude::program());
         Ok(Self {
             codex_default: node.codex.default().config_home().to_path_buf(),
             claude_default,
@@ -94,8 +103,10 @@ impl Context {
     }
 }
 
-/// The record of this machine's logins.
+/// The record of this machine's logins, each login whose sign-in changed
+/// since it was asked asked again first.
 pub(crate) async fn here(node: &Arc<Node>) -> Result<MachineLogins, Failure> {
+    sign_in::ask_changed(node).await;
     let node = node.clone();
     tokio::task::spawn_blocking(move || assemble(&node))
         .await
@@ -221,9 +232,7 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
                 unattended,
                 auto_title: agent == "codex"
                     && kept.codex.titled.iter().any(|known| crate::homes::same_dir(known, dir)),
-                launcher: known.and_then(|login| login.launcher.clone()).map(|launcher| {
-                    if agent == "codex" { identify::current_launcher(node, dir, launcher) } else { launcher }
-                }),
+                launcher: program::now(node, agent, dir, known),
                 models,
                 change,
                 drift: if listed { refresh::of(node, agent, dir) } else { None },
@@ -357,7 +366,7 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
     if !dir.is_absolute() {
         return Err(Failure::not_run(format!("{} is not an absolute path", dir.display())));
     }
-    let (found, default, programs) = {
+    let (found, default, programs, signed) = {
         let (node, agent, dir) = (node.clone(), agent.clone(), dir.clone());
         tokio::task::spawn_blocking(move || {
             if !dir.is_dir() {
@@ -378,7 +387,8 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
             } else {
                 Found::Added
             };
-            Ok::<_, Failure>((found, default, kept.claude.programs.clone()))
+            let signed = sign_in::now(&context, agent.as_str(), &dir);
+            Ok::<_, Failure>((found, default, kept.claude.programs.clone(), signed))
         })
         .await
         .map_err(|error| Failure::new(error.to_string()))??
@@ -397,13 +407,7 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
             kept::change(&node, |kept| {
                 let logins = &mut kept.of_mut(agent.as_str()).logins;
                 logins.retain(|known| !crate::homes::same_dir(&known.dir, &dir));
-                logins.push(kept::KeptLogin {
-                    dir,
-                    found,
-                    identified: asked.identified,
-                    launcher: asked.launcher,
-                    models: asked.models,
-                });
+                logins.push(kept::KeptLogin::asked(dir, found, asked, signed));
             })
             .map_err(|error| Failure::new(format!("keeping the login: {error}")))
         })

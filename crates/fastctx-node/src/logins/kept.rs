@@ -67,15 +67,59 @@ pub(super) struct KeptAgent {
     pub titled: Vec<PathBuf>,
 }
 
+/// What a login's agent said when last asked. Which program the login
+/// starts is not kept: it is read again each time (`super::program`).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct KeptLogin {
     pub dir: PathBuf,
     pub found: Found,
     pub identified: Identified,
+    /// The program asked, with the version it gave.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launcher: Option<Launcher>,
+    /// That program's file as it stood when asked: the version holds while
+    /// the file is the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked_file: Option<FileStamp>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<AgentModel>,
+    /// How the login's sign-in files stood when it was asked
+    /// (`super::sign_in`); none in a record kept before they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed: Option<Vec<Option<FileStamp>>>,
+}
+
+impl KeptLogin {
+    /// The login `dir`, found as `found`, as asking it gave while its
+    /// sign-in files stood as `signed`.
+    pub fn asked(dir: PathBuf, found: Found, asked: super::identify::Asked, signed: Vec<Option<FileStamp>>) -> Self {
+        let asked_file = asked.launcher.as_ref().and_then(|launcher| FileStamp::of(&launcher.path));
+        Self {
+            dir,
+            found,
+            identified: asked.identified,
+            launcher: asked.launcher,
+            asked_file,
+            models: asked.models,
+            signed: Some(signed),
+        }
+    }
+}
+
+/// A file as it stood: its length and when it was last written.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct FileStamp {
+    pub len: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified: Option<Timestamp>,
+}
+
+impl FileStamp {
+    pub fn of(path: &Path) -> Option<Self> {
+        let metadata = std::fs::metadata(path).ok()?;
+        let modified = metadata.modified().ok().and_then(|modified| Timestamp::try_from(modified).ok());
+        Some(Self { len: metadata.len(), modified })
+    }
 }
 
 /// A Codex login's limits as Codex keys them, merged as it pushes them.

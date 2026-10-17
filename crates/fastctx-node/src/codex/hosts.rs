@@ -3,12 +3,16 @@
 //! runs its own (`AgentHome`). The default home's starts as before; each
 //! other one at its first use, with `CODEX_HOME` naming it and the desktop
 //! app's program when its home records none. Whatever any of them reports
-//! reaches the node's one listener: threads are told apart by their ids.
+//! reaches the node's one listener: threads are told apart by their ids;
+//! what they read of their logins' limits, and what each app-server says of
+//! its login on starting, reach the logins' record (`crate::logins`).
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use fastctx_hosts::codex::identify::SaidReport;
+use fastctx_hosts::codex::launch::{self, Launch};
 use fastctx_hosts::codex::{CodexHost, HostEvent, LimitsReport, Log};
 use fastctx_types::ipc::Failure;
 use fastctx_types::residents::About;
@@ -25,23 +29,37 @@ pub(crate) struct CodexHosts {
     events: mpsc::UnboundedSender<HostEvent>,
     /// What every host reads or hears of its login's limits.
     limits: mpsc::UnboundedSender<LimitsReport>,
+    /// What every host's app-server says of its login on starting.
+    said: mpsc::UnboundedSender<SaidReport>,
+}
+
+/// What the node's hosts tell, each its own way: their threads' reports,
+/// what they read or hear of their logins' limits, and what their
+/// app-servers say of their logins on starting.
+pub(crate) struct Heard {
+    pub events: mpsc::UnboundedReceiver<HostEvent>,
+    pub limits: mpsc::UnboundedReceiver<LimitsReport>,
+    pub said: mpsc::UnboundedReceiver<SaidReport>,
 }
 
 impl CodexHosts {
-    /// The node's hosts, the default home's `default_home` among them, what
-    /// they all report, and what they read or hear of their logins' limits.
+    /// The node's hosts, the default home's `default_home` among them, and
+    /// what they all tell.
     pub(crate) fn new(
         default_home: PathBuf,
         workdir: PathBuf,
         environment: Vec<(OsString, OsString)>,
         log: Log,
-    ) -> (Self, mpsc::UnboundedReceiver<HostEvent>, mpsc::UnboundedReceiver<LimitsReport>) {
+    ) -> (Self, Heard) {
         let (events, merged) = mpsc::unbounded_channel();
-        let (limits, heard) = mpsc::unbounded_channel();
+        let (limits, limits_heard) = mpsc::unbounded_channel();
+        let (said, said_heard) = mpsc::unbounded_channel();
         let (default, reports) = CodexHost::new(default_home, None, workdir.clone(), environment.clone(), log.clone());
         default.report_limits_to(limits.clone());
+        default.report_said_to(said.clone());
         forward(reports, events.clone());
-        (Self { default, others: Mutex::new(Vec::new()), workdir, environment, log, events, limits }, merged, heard)
+        let hosts = Self { default, others: Mutex::new(Vec::new()), workdir, environment, log, events, limits, said };
+        (hosts, Heard { events: merged, limits: limits_heard, said: said_heard })
     }
 
     pub(crate) fn default(&self) -> &Arc<CodexHost> {
@@ -68,6 +86,7 @@ impl CodexHosts {
         let program_home = Some(self.default.config_home().to_path_buf());
         let (host, reports) = CodexHost::new(dir.to_path_buf(), program_home, workdir, environment, self.log.clone());
         host.report_limits_to(self.limits.clone());
+        host.report_said_to(self.said.clone());
         forward(reports, self.events.clone());
         others.push(host.clone());
         Ok(host)
@@ -85,6 +104,20 @@ impl CodexHosts {
             .iter()
             .find(|host| crate::homes::same_dir(host.config_home(), dir))
             .cloned()
+    }
+
+    /// The Codex program the host of the home written `dir` starts, as it
+    /// would start it now (`launch::discover_for`): read from the homes'
+    /// configurations and the search path, with nothing made or started for
+    /// the asking.
+    pub(crate) fn launch(&self, dir: &Path) -> Result<Option<Launch>, String> {
+        if let Some(host) = self.existing(dir) {
+            return host.launch();
+        }
+        // As `home` would make its host: the default home's desktop app
+        // program, the environment's search path.
+        let path = self.environment.iter().find(|(name, _)| name.eq_ignore_ascii_case("PATH")).map(|(_, value)| value);
+        launch::discover_for(dir, Some(self.default.config_home()), path)
     }
 
     /// The environment every app-server runs with, before its home is named.

@@ -120,6 +120,7 @@ async fn usual(node: &Arc<Node>, started_at: Timestamp) -> Result<(), Failure> {
             let node = node.clone();
             let claude_programs = programs.claude.clone();
             let default = crate::homes::same_dir(&dir, context.default_of(agent));
+            let signed = super::sign_in::now(&context, agent, &dir);
             asking.push(tokio::spawn(async move {
                 let asked = if agent == "codex" {
                     identify::codex(&node, &dir, false).await
@@ -132,7 +133,7 @@ async fn usual(node: &Arc<Node>, started_at: Timestamp) -> Result<(), Failure> {
                         Err(error) => failed(error.to_string()),
                     }
                 };
-                (agent, dir, found, asked)
+                (agent, dir, found, asked, signed)
             }));
         }
     }
@@ -146,14 +147,8 @@ async fn usual(node: &Arc<Node>, started_at: Timestamp) -> Result<(), Failure> {
             kept.claude.programs = programs.claude;
             kept.codex.logins.clear();
             kept.claude.logins.clear();
-            for (agent, dir, found, asked) in answers {
-                kept.of_mut(agent).logins.push(KeptLogin {
-                    dir,
-                    found,
-                    identified: asked.identified,
-                    launcher: asked.launcher,
-                    models: asked.models,
-                });
+            for (agent, dir, found, asked, signed) in answers {
+                kept.of_mut(agent).logins.push(KeptLogin::asked(dir, found, asked, signed));
             }
             if let Some(scan) = &mut kept.scan
                 && scan.started_at == started_at

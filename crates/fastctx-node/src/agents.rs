@@ -1,6 +1,7 @@
 //! The agents of each machine in the shape interfaces and nodes before the
 //! logins record read (`AgentsReply`): built from what the node keeps of its
-//! logins (`logins`), with no program started for the asking.
+//! logins (`logins`), with no program started for the asking but to ask
+//! again a login whose sign-in changed.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -58,15 +59,12 @@ fn facts(agent: &str, login: &Login) -> AgentFacts {
         Some(Fact::Failed { reason }) => (Fact::failed(reason.clone()), Fact::failed(reason.clone())),
         None => (Fact::unavailable(unasked()), Fact::unavailable(unasked())),
     };
-    let program = match (&login.launcher, &login.identity) {
-        (Some(launcher), _) => Fact::known(Some(AgentProgram {
-            path: launcher.path.clone(),
-            source: if launcher.desktop_app { ProgramSource::DesktopApp } else { ProgramSource::Path },
-            exists: launcher.path.is_file(),
-        })),
-        (None, Some(_)) => Fact::known(None),
-        (None, None) => Fact::unavailable(unasked()),
-    };
+    // The program the login starts now, which no asking is needed for.
+    let program = Fact::known(login.launcher.as_ref().map(|launcher| AgentProgram {
+        path: launcher.path.clone(),
+        source: if launcher.desktop_app { ProgramSource::DesktopApp } else { ProgramSource::Path },
+        exists: launcher.path.is_file(),
+    }));
     let version = match login.launcher.as_ref().and_then(|launcher| launcher.version.clone()) {
         Some(version) => Fact::known(version),
         None => Fact::unavailable("its version is not known"),

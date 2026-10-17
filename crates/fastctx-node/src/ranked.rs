@@ -91,6 +91,10 @@ machine_lock!(
     LoginChanges: Mutex = LOGINS, "login changes"
 );
 machine_lock!(
+    /// Asking again the logins whose sign-in changed, one round at a time.
+    LoginAsking: Mutex = LOGINS, "asking logins again"
+);
+machine_lock!(
     /// Carrying an account's collaboration files.
     Carrying: Mutex = CARRYING, "carrying"
 );

@@ -501,7 +501,7 @@ pub async fn run_prepared(
     }
     let home = fastctx_platform::user_home().context("finding the home directory")?;
     let codex_log = log.clone();
-    let (codex, codex_events, codex_limits) = codex::hosts::CodexHosts::new(
+    let (codex, codex_heard) = codex::hosts::CodexHosts::new(
         launch::codex_home(&home, &environment),
         world.path().join("codex"),
         environment,
@@ -590,8 +590,9 @@ pub async fn run_prepared(
     }
     on_stop::resume(&node).await;
     codex::adopt(&node).await;
-    codex::listen(node.clone(), codex_events);
-    logins::limits::listen(node.clone(), codex_limits);
+    codex::listen(node.clone(), codex_heard.events);
+    logins::limits::listen(node.clone(), codex_heard.limits);
+    logins::heard::listen(node.clone(), codex_heard.said);
     codex::replay(&node).await;
     let mut unfinished: std::collections::BTreeSet<_> = unfinished.into_iter().collect();
     unfinished.extend(node.residents.unfinished());

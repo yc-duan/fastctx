@@ -283,7 +283,8 @@ pub enum Call {
         change: crate::agents::HomeChange,
     },
     /// What the nodes of one machine, or of every machine the asker may
-    /// use, keep of their agents' logins (`logins`); no process starts.
+    /// use, keep of their agents' logins (`logins`); no process starts but
+    /// to ask again a login whose sign-in changed since it was asked.
     AgentLogins {
         machine: Option<MachineName>,
     },

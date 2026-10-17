@@ -4,13 +4,14 @@
 //! otherwise one is started for the questions and stopped once answered.
 
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fastctx_types::agents::{AgentModel, Fact};
 use fastctx_types::logins::Identity;
 use jiff::Timestamp;
 use serde_json::{Value, json};
+use tokio::sync::mpsc;
 
 use super::launch::Launch;
 use super::server::{AppServer, Inbound};
@@ -19,8 +20,7 @@ use super::{CodexHost, Log};
 /// What a login's app-server said of it.
 #[derive(Debug)]
 pub struct Said {
-    /// The program's version, from its answer to `initialize`; none when
-    /// the app-server asked was already running.
+    /// The program's version, from its answer to `initialize`.
     pub version: Option<String>,
     pub who: Fact<Identity>,
     /// The answer of `account/rateLimits/read`, and when it came; none
@@ -29,16 +29,34 @@ pub struct Said {
     pub models: Fact<Vec<AgentModel>>,
 }
 
+/// What a login's app-server said of it on starting for the host's own
+/// work: what identifying the login asks, put to the server that is running
+/// anyway, so nothing is started for it.
+#[derive(Debug)]
+pub struct SaidReport {
+    /// The login: the home the app-server runs for.
+    pub home: PathBuf,
+    /// The program that said it.
+    pub launch: Launch,
+    pub at: Timestamp,
+    pub said: Said,
+}
+
 impl CodexHost {
     /// Asks this host's app-server when it is running now, its usage limits
-    /// too with `limits`; `None` when it is not, and then nothing is started.
-    pub async fn ask_running(self: &Arc<Self>, limits: bool) -> Option<Said> {
-        let server = self.lock().server.as_ref().map(|(server, _)| server.clone())?;
-        let said = ask(&server, None, limits).await;
+    /// too with `limits`, and says which program it runs; `None` when it is
+    /// not, and then nothing is started.
+    pub async fn ask_running(self: &Arc<Self>, limits: bool) -> Option<(Launch, Said)> {
+        let (server, launch, version) = {
+            let state = self.lock();
+            let (server, launch) = state.server.as_ref()?;
+            (server.clone(), launch.clone(), state.version.clone())
+        };
+        let said = ask(&server, version, limits).await;
         if let Some(Ok((at, answer))) = &said.limits {
             self.limits_heard(*at, super::account::LimitsHow::Read(answer.clone()));
         }
-        Some(said)
+        Some((launch, said))
     }
 
     /// The program this host starts, as it would start it now.
@@ -46,6 +64,34 @@ impl CodexHost {
         let path = self.env.iter().find(|(name, _)| name.eq_ignore_ascii_case("PATH")).map(|(_, value)| value);
         super::launch::discover_for(&self.codex_home, self.program_home.as_deref(), path)
     }
+
+    /// Where this host tells what its app-server says of its login each
+    /// time one starts.
+    pub fn report_said_to(&self, sink: mpsc::UnboundedSender<SaidReport>) {
+        *self.said.lock().expect("never poisoned") = Some(sink);
+    }
+
+    /// Asks `server`, just started from `launch` for this host's work, who
+    /// is logged in and its models, never its limits, and tells it.
+    pub(super) fn tell_said(&self, server: Arc<AppServer>, launch: Launch, version: Option<String>) {
+        let Some(sink) = self.said.lock().expect("never poisoned").clone() else { return };
+        let home = self.codex_home.clone();
+        tokio::spawn(async move {
+            let at = Timestamp::now();
+            let said = ask(&server, version, false).await;
+            let _ = sink.send(SaidReport { home, launch, at, said });
+        });
+    }
+}
+
+/// The program's version in an answer to `initialize`, whose user agent is
+/// `<client>/<version> (<system>) …`.
+pub(super) fn version_of(answer: &Value) -> Option<String> {
+    answer["userAgent"]
+        .as_str()
+        .and_then(|agent| agent.split_whitespace().next())
+        .and_then(|first| first.split_once('/'))
+        .map(|(_, version)| version.to_string())
 }
 
 /// Starts `launch` for the Codex home `home`, asks it, its usage limits
@@ -95,15 +141,7 @@ pub async fn ask_once(
         .await
         .and_then(|answer| server.notify("initialized", json!({})).map(|()| answer));
     let said = match started {
-        Ok(answer) => {
-            // `<client>/<version> (<system>) …`.
-            let version = answer["userAgent"]
-                .as_str()
-                .and_then(|agent| agent.split_whitespace().next())
-                .and_then(|first| first.split_once('/'))
-                .map(|(_, version)| version.to_string());
-            Ok(ask(&server, version, limits).await)
-        }
+        Ok(answer) => Ok(ask(&server, version_of(&answer), limits).await),
         Err(error) => Err(format!("starting the Codex app-server {}: {error}", launch.binary.display())),
     };
     server.kill();

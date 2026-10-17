@@ -1300,13 +1300,18 @@ fn command(node: &Node, home: Option<&Path>) -> Result<Command, Failure> {
         env.retain(|(name, _)| !name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR"));
         env.push(("CLAUDE_CONFIG_DIR".into(), home.as_os_str().to_owned()));
     }
-    let path = std::env::var_os("PATH");
-    let program = background::find(path.as_ref()).ok_or_else(|| {
+    let program = self::program().ok_or_else(|| {
         Failure::new(format!("Claude Code is not installed on {}: no claude command", node.machine()))
     })?;
     let cwd =
         fastctx_platform::user_home().map_err(|error| Failure::new(format!("finding the home directory: {error}")))?;
     Ok(Command { program, cwd, env })
+}
+
+/// The `claude` command the World runs, for every Claude Code command it
+/// runs: the first on the node's search path, looked up each time.
+pub(crate) fn program() -> Option<PathBuf> {
+    background::find(std::env::var_os("PATH").as_ref())
 }
 
 pub(crate) fn environment() -> Result<Vec<(OsString, OsString)>, Failure> {

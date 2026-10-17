@@ -299,12 +299,16 @@ pub struct CodexHost {
     tools_changed: Notify,
     /// Where what the app-server reads or pushes of the login's limits goes.
     limits: Mutex<Option<mpsc::UnboundedSender<account::LimitsReport>>>,
+    /// Where what each app-server says of the login on starting goes.
+    said: Mutex<Option<mpsc::UnboundedSender<identify::SaidReport>>>,
 }
 
 struct State {
     notification_sequence: u64,
     server_users: usize,
     server: Option<(Arc<AppServer>, Launch)>,
+    /// The running app-server's version, from its answer to `initialize`.
+    version: Option<String>,
     threads: cache::Threads,
     /// The models the running app-server last listed. Choosing a model or an
     /// effort checks against it rather than asking again.
@@ -415,6 +419,7 @@ impl CodexHost {
                 notification_sequence: 0,
                 server_users: 0,
                 server: None,
+                version: None,
                 catalog: None,
                 title_waiters: HashMap::new(),
             }),
@@ -434,6 +439,7 @@ impl CodexHost {
             ),
             tools_changed: Notify::new(),
             limits: Mutex::new(None),
+            said: Mutex::new(None),
         });
         (host, receiver)
     }
@@ -936,6 +942,7 @@ impl CodexHost {
                 thread.usage = None;
             }
             state.server = Some((server.clone(), launch.clone()));
+            state.version = None;
             state.catalog = None;
             state.threads.restarted();
         }
@@ -964,11 +971,16 @@ impl CodexHost {
             server.pid(),
             launch.binary.display()
         ));
-        let mut state = self.lock();
-        if !matches!(&state.server, Some((current, _)) if Arc::ptr_eq(current, &server)) {
-            return Err("the app-server exited during initialization".to_string());
+        let version = identify::version_of(&answer);
+        {
+            let mut state = self.lock();
+            if !matches!(&state.server, Some((current, _)) if Arc::ptr_eq(current, &server)) {
+                return Err("the app-server exited during initialization".to_string());
+            }
+            state.version = version.clone();
+            state.server_users += 1;
         }
-        state.server_users += 1;
+        self.tell_said(server.clone(), launch, version);
         Ok(ServerUse::new(server, self.clone()))
     }
 
