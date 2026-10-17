@@ -195,6 +195,9 @@ pub struct Report {
     /// its network before they are asked for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
+    /// Reports a fetch's progress and stops it when the hub cancels it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub package_progress: bool,
 }
 
 /// The versions a machine of the network runs; for one away, what it ran
@@ -293,6 +296,16 @@ pub struct Fetch {
     pub version: String,
     pub target: String,
     pub package: Package,
+    /// The hub accepts progress and can cancel this request.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub progress: bool,
+}
+
+/// Bytes received while preparing a package, before its final answer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageProgress {
+    pub received: u64,
+    pub total: Option<u64>,
 }
 
 /// A device's own choices about updates.

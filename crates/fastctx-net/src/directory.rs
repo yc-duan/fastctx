@@ -663,6 +663,9 @@ pub struct View {
     /// end the session of a member that sent any of them.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub versions: bool,
+    /// Supports progress during package requests and cancellable helpers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub package_progress: bool,
     /// Whether this hub keeps updates for machines away until they are back
     /// (`Change::UpdateDue`) and tells its version with the network's.
     /// Earlier hubs omit it, and would end the session of a member that
@@ -722,6 +725,7 @@ impl View {
             groups: false,
             dissolves: false,
             versions: false,
+            package_progress: false,
             due: false,
             uninstalls: false,
             tokens: Vec::new(),

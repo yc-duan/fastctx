@@ -24,6 +24,7 @@ struct Pending {
     generation: u64,
     answer: oneshot::Sender<Answer>,
     parts: Option<Parts>,
+    progress: Option<tokio::sync::watch::Sender<fastctx_types::update::PackageProgress>>,
 }
 
 struct Parts {
@@ -33,8 +34,22 @@ struct Parts {
 }
 
 impl Questions {
-    pub(super) fn insert(&self, id: u64, generation: u64, answer: oneshot::Sender<Answer>) {
-        self.pending.lock().expect("never poisoned").insert(id, Pending { generation, answer, parts: None });
+    pub(super) fn insert(
+        &self,
+        id: u64,
+        generation: u64,
+        answer: oneshot::Sender<Answer>,
+        progress: Option<tokio::sync::watch::Sender<fastctx_types::update::PackageProgress>>,
+    ) {
+        self.pending.lock().expect("never poisoned").insert(id, Pending { generation, answer, parts: None, progress });
+    }
+
+    pub(super) fn progress(&self, generation: u64, id: u64, progress: fastctx_types::update::PackageProgress) {
+        let pending = self.pending.lock().expect("never poisoned");
+        if let Some(sender) = pending.get(&id).filter(|p| p.generation == generation).and_then(|p| p.progress.as_ref())
+        {
+            sender.send_replace(progress);
+        }
     }
 
     pub(super) fn remove(&self, id: u64) {

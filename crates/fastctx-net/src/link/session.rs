@@ -565,7 +565,9 @@ async fn connected(
                 });
             }
             Down::Versions { network } => inner.heard_versions(*network),
-            Down::Fetch { fetch } => inner.fetch_for_hub(*fetch),
+            Down::Fetch { fetch } => inner.fetch_for_hub(generation, *fetch),
+            Down::FetchCancelled { id } => inner.cancel_fetch(generation, id),
+            Down::PackageProgress { id, progress } => inner.asks.progress(generation, id, progress),
             Down::Refused { reason } => break refused(inner, reason),
             Down::Welcome { .. }
             | Down::LoginResponse { .. }
@@ -620,6 +622,7 @@ impl Drop for Connected<'_> {
         // Nobody hears the answers to the calls that came on it.
         self.inner.answers.stop_all(&CallOn::Hub(self.generation), "the connection to the hub it came on ended");
         self.inner.asks.end(self.generation);
+        self.inner.cancel_fetches(self.generation);
         self.closed.send_replace(Some(self.reason.clone()));
     }
 }

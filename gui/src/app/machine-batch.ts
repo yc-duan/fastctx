@@ -26,7 +26,7 @@ const SILENT_MS = 180_000;
 
 /** What becomes of a machine chosen, as planned. */
 export type Fate =
-  | { kind: "update"; login: Login; older: boolean }
+  | { kind: "update"; login: Login; older: boolean; reserve: boolean }
   | { kind: "due"; login: Login }
   | { kind: "skip"; why: string };
 
@@ -53,7 +53,7 @@ export interface BatchOptions {
   /** Has a machine of an earlier release update to the newest on its line. */
   older(machine: string): Promise<unknown>;
   /** Keeps an update for a machine away until it is back. */
-  due(login: Login, machine: string, version: string): Promise<void>;
+  due(login: Login, machine: string, version: string | null, batch?: string): Promise<void>;
   /** What the network last heard a machine runs. */
   heard(machine: string): string | null;
   /** Something shown changed. */
@@ -80,7 +80,7 @@ export function planOf(machines: Machine[], world: WorldNow, version: string, lo
     }
     if (older && local?.network?.machines?.[machine.name]?.app) return row({ kind: "skip", why: words.skipOlderApp });
     if (older && newestKnown(local, running!) !== version) return row({ kind: "skip", why: words.skipOlder });
-    return row({ kind: "update", login, older });
+    return row({ kind: "update", login, older, reserve: !!world.accounts.hubs.find((hub) => hub.hub === login.hub)?.package_progress });
   });
 }
 
@@ -88,6 +88,8 @@ export class UpdateBatch {
   started = false;
   private timer = 0;
   private left = false;
+  private readonly id = crypto.randomUUID();
+  private readonly reserved = new Set<BatchRow>();
 
   constructor(
     readonly version: string,
@@ -116,16 +118,33 @@ export class UpdateBatch {
   start(): void {
     if (this.started) return;
     this.started = true;
-    for (const row of this.rows) {
-      if (row.fate.kind === "due") {
-        const { login } = row.fate;
-        row.going = { kind: "asking" };
-        this.options.due(login, row.machine.name, this.version).then(
-          () => this.settle(row, { kind: "kept" }),
-          (error: unknown) => this.settle(row, { kind: "failed", why: said(error) }),
-        );
-      } else if (row.fate.kind === "update") row.going = { kind: "queued" };
-    }
+    void this.prepare();
+  }
+
+  private async prepare(): Promise<void> {
+    await Promise.all(this.rows.map(async (row) => {
+      if (row.fate.kind === "skip") return;
+      const { login } = row.fate;
+      row.going = { kind: "asking" };
+      this.options.changed();
+      try {
+        if (row.fate.kind === "due") {
+          await this.options.due(login, row.machine.name, this.version);
+          row.going = { kind: "kept" };
+        } else {
+          if (row.fate.reserve) {
+            this.reserved.add(row);
+            await this.options.due(login, row.machine.name, this.version, this.id);
+          }
+          row.going = { kind: "queued" };
+          if (this.left) await this.release(row);
+        }
+      } catch (error) {
+        row.going = { kind: "failed", why: said(error) };
+        await this.release(row);
+      }
+    }));
+    if (this.left) return;
     this.pump();
     this.follow();
     this.options.changed();
@@ -134,6 +153,20 @@ export class UpdateBatch {
   dispose(): void {
     this.left = true;
     clearTimeout(this.timer);
+    for (const row of this.reserved) {
+      if (row.going?.kind === "queued") void this.release(row);
+    }
+  }
+
+  private async release(row: BatchRow): Promise<void> {
+    if (!this.reserved.has(row) || row.fate.kind !== "update") return;
+    try {
+      await this.options.due(row.fate.login, row.machine.name, null, this.id);
+      this.reserved.delete(row);
+    } catch (error) {
+      row.going = { kind: "failed", why: said(error) };
+      this.options.changed();
+    }
   }
 
   /** Asks the next machines in turn while fewer than a few are taking
@@ -163,6 +196,7 @@ export class UpdateBatch {
     } catch (error) {
       row.going = { kind: "failed", why: said(error) };
     }
+    if (row.going?.kind === "done" || row.going?.kind === "failed") await this.release(row);
     this.after();
   }
 
@@ -172,11 +206,6 @@ export class UpdateBatch {
     if (state.renewing?.phase === "failed") return { kind: "failed", why: state.renewing.error ?? "" };
     if (state.failed && compareVersions(state.failed.version, this.version) === 0 && !state.fetching && !state.renewing) return { kind: "failed", why: state.failed.why };
     return null;
-  }
-
-  private settle(row: BatchRow, going: Going): void {
-    row.going = going;
-    this.after();
   }
 
   private after(): void {
@@ -202,13 +231,14 @@ export class UpdateBatch {
     const going = row.going;
     if (going?.kind === "older") {
       const heard = this.options.heard(row.machine.name);
-      if (heard && compareVersions(heard, this.version) >= 0) row.going = { kind: "done" };
+      if (heard && compareVersions(heard, this.version) >= 0) { row.going = { kind: "done" }; await this.release(row); }
       return;
     }
     if (going?.kind !== "state") return;
     try {
       const state = await this.options.remote(row.machine.name, { do: "state" });
       row.going = this.read(state) ?? { kind: "state", state, heard: Date.now() };
+      if (row.going.kind === "done" || row.going.kind === "failed") await this.release(row);
     } catch (error) {
       // Changing its program it restarts, and is not there to answer for
       // a while: quiet until long past that.

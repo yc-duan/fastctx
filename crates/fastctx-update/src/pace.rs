@@ -2,7 +2,7 @@
 //! hub, a machine fetching for the network and one bringing its own update
 //! (`world-network.md`, 中枢替网络存的东西): a source that cannot be reached
 //! five times running is no use; one that, at the speed it has gone since
-//! its first byte, would need more than five minutes for the rest is slow,
+//! it was requested, would need more than five minutes for the rest is slow,
 //! and the next is tried beside it; one that brings nothing for half a
 //! minute has stopped.
 
@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 /// Connections that fail running before a source is given up.
 pub const TRIES: u32 = 5;
-/// How long a source goes from its first byte before its speed is judged.
+/// How long a source goes from its request before its speed is judged.
 pub const SAMPLE: Duration = Duration::from_secs(30);
 /// Within how long a source must look like finishing not to be slow.
 pub const SOON: Duration = Duration::from_secs(5 * 60);
@@ -61,10 +61,10 @@ impl Pace {
     }
 
     /// How it looks at `now` for a package of `total` bytes, when known: a
-    /// source with nothing yet has `before_first` to start.
-    pub fn verdict(&self, now: Instant, total: Option<u64>, before_first: Duration) -> Verdict {
-        let Some((first_at, first)) = self.first else {
-            return if now.duration_since(self.started) >= before_first { Verdict::Slow } else { Verdict::Promising };
+    /// source with nothing yet has `QUIET` to start.
+    pub fn verdict(&self, now: Instant, total: Option<u64>) -> Verdict {
+        let Some(_) = self.first else {
+            return if now.duration_since(self.started) >= QUIET { Verdict::Slow } else { Verdict::Promising };
         };
         let (last_at, brought) = self.last;
         if total.is_some_and(|total| brought >= total) {
@@ -73,12 +73,12 @@ impl Pace {
         if now.duration_since(last_at) >= QUIET {
             return Verdict::Stopped;
         }
-        let going = now.duration_since(first_at);
+        let going = now.duration_since(self.started);
         if going < SAMPLE {
             return Verdict::Promising;
         }
         let Some(total) = total else { return Verdict::Promising };
-        let speed = (brought - first) as f64 / going.as_secs_f64();
+        let speed = brought as f64 / going.as_secs_f64();
         let rest = total.saturating_sub(brought) as f64;
         if speed <= 0.0 || rest / speed > SOON.as_secs_f64() { Verdict::Slow } else { Verdict::Promising }
     }

@@ -36,6 +36,9 @@ impl Link {
                 .map(|project| project.town.clone())
                 .ok_or_else(|| format!("there is no project {name} on {}", self.hub_name()))
         };
+        if matches!(&change, AccountChange::UpdateDue { batch: Some(_), .. }) {
+            self.inner.refresh().await?;
+        }
         let wire = match change {
             AccountChange::Share { machine, to, shared } => Change::Share { machine, to, shared },
             AccountChange::Assist { machine, to, agent, home, assisting, until, weekly } => {
@@ -121,7 +124,13 @@ impl Link {
                     self.hub_name()
                 ));
             }
-            AccountChange::UpdateDue { machine, version } => Change::UpdateDue { machine, version },
+            AccountChange::UpdateDue { batch: Some(_), .. } if !self.view().package_progress => {
+                return Err(format!(
+                    "the hub {} must be updated before it can reserve a batch's packages",
+                    self.hub_name()
+                ));
+            }
+            AccountChange::UpdateDue { machine, version, batch } => Change::UpdateDue { machine, version, batch },
             AccountChange::Dissolve { .. } if !self.view().dissolves => {
                 return Err(format!("the hub {} runs an older fastctx that dissolves no network", self.hub_name()));
             }
@@ -132,7 +141,20 @@ impl Link {
             AccountChange::MoveProject { town, to } => Change::MoveProject { town: town_id(&town)?, to },
             AccountChange::Seen { .. } => return Err("what the user saw stays on their computer".to_string()),
         };
-        match self.manage(account, wire).await? {
+        let preparing = match &wire {
+            Change::UpdateDue { machine, version: Some(version), batch: Some(_) } => {
+                Some((machine.clone(), version.clone()))
+            }
+            _ => None,
+        };
+        let answer = self.manage(account, wire).await?;
+        if let Some((machine, version)) = preparing {
+            match self.inner.ask(crate::wire::Question::PrepareUpdate { machine, version }).await? {
+                Told::Done => {}
+                _ => return Err("the hub did not confirm the update's packages are ready".into()),
+            }
+        }
+        match answer {
             Told::Token { text } => Ok(Some(text)),
             _ => Ok(None),
         }
@@ -208,6 +230,7 @@ impl Link {
             groups: view.groups,
             dissolves: view.dissolves,
             versions: view.versions,
+            package_progress: view.package_progress,
             due: view.due,
             uninstalls: view.uninstalls,
             logins: me.map(|me| me.logins.iter().cloned().collect()).unwrap_or_default(),

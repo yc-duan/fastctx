@@ -115,6 +115,10 @@ pub enum Up {
     /// This member could not fetch the package of the hub's request `id`
     /// (`Down::Fetch`), and why.
     Unfetched { id: u64, why: String },
+    /// Progress of a fetch that explicitly requested it.
+    FetchProgress { id: u64, progress: fastctx_types::update::PackageProgress },
+    /// The request, including taking its bytes, is finished or abandoned.
+    PackageDone { id: u64 },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -392,6 +396,10 @@ pub enum Down {
     /// member that reads versions and said it fetches for others, or holds
     /// the package.
     Fetch { fetch: Box<fastctx_types::update::Fetch> },
+    /// Sent only to a helper that advertised package progress.
+    FetchCancelled { id: u64 },
+    /// Sent only for a package question that requested progress.
+    PackageProgress { id: u64, progress: fastctx_types::update::PackageProgress },
     /// The call `call` the hub passed on (`Incoming`) is over for its
     /// caller, who gave it up, left the hub, or lost the right it was made
     /// under: one that only reads stops (`fastctx_types::contract`). Sent
@@ -571,7 +579,14 @@ pub enum Question {
     /// download (`Intent::Package`): answered `Told::Package` once the hub
     /// holds it, having fetched it first, or asked a machine that can, when
     /// it did not. Asked only of a hub whose view says it keeps versions.
-    Package { version: String, target: String },
+    /// Prepares the packages for an explicitly queued update before it starts.
+    PrepareUpdate { machine: MachineName, version: String },
+    Package {
+        version: String,
+        target: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        progress: bool,
+    },
 }
 
 /// What a machine knows of its own firewall when it starts taking direct
@@ -766,6 +781,9 @@ pub enum Change {
         machine: MachineName,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         version: Option<String>,
+        /// Reserves the package for a batch without telling this machine to start.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        batch: Option<String>,
     },
     /// The super administrator dissolves the network named `name`, typed
     /// as it is: every machine and device is taken off it, and the hub lets

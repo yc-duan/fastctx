@@ -15,16 +15,12 @@ use std::time::Duration;
 use fastctx_net::wire::{Down, Told};
 use fastctx_types::MachineName;
 use fastctx_types::update::{Fetch, Held, Manifest, Package};
-use fastctx_update::pace::{AT_ONCE, Pace, SAMPLE, Verdict};
+use fastctx_update::pace::{AT_ONCE, Pace, Verdict};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
 use super::{Attempt, Fetching, Race};
 use crate::{Hub, Out};
-
-/// How long a machine asked to fetch a package may take before its first
-/// byte comes, fetching it from GitHub meanwhile, and still look promising.
-const MACHINE_START: Duration = Duration::from_secs(90);
 
 /// How long bringing one package in may take in all, however it is
 /// brought, giving its last try up included: within the 45 minutes whoever
@@ -36,10 +32,44 @@ const SETTLE: Duration = Duration::from_secs(30);
 
 /// `asker` asks, as its question `id`, for the package `target` of
 /// `version`: answered once the hub holds it, or with why it cannot.
-pub(crate) fn ask(hub: &Arc<Hub>, id: u64, version: String, target: String, out: crate::outq::Outq) {
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn ask(
+    hub: &Arc<Hub>,
+    name: &MachineName,
+    generation: u64,
+    id: u64,
+    version: String,
+    target: String,
+    reports: bool,
+    out: crate::outq::Outq,
+) {
+    let held = Held { version, target };
+    hub.updates
+        .lock()
+        .expect("never poisoned")
+        .requests
+        .insert((name.clone(), generation, id), (held.clone(), reports));
+    let name = name.clone();
     let hub = hub.clone();
     tokio::spawn(async move {
-        let answer = obtain(&hub, Held { version, target }).await.map(|size| Told::Package { size });
+        let (progress, mut changes) = tokio::sync::watch::channel(Default::default());
+        let work = obtain(&hub, held, Some(progress));
+        tokio::pin!(work);
+        let answer = loop {
+            tokio::select! {
+                result = &mut work => break result.map(|size| Told::Package { size }),
+                _ = out.closed() => return,
+                changed = changes.changed(), if reports => {
+                    if changed.is_ok() {
+                        let progress = *changes.borrow_and_update();
+                        if out.send(Out::Frame(Down::PackageProgress { id, progress })).is_err() { return; }
+                    }
+                }
+            }
+        };
+        if answer.is_err() {
+            super::inventory::done(&hub, &name, generation, id);
+        }
         let _ = out.send(Out::Frame(Down::Told { id, answer }));
     });
 }
@@ -50,7 +80,7 @@ pub(crate) fn bring_in(hub: &Arc<Hub>, version: String, target: String) {
     let hub = hub.clone();
     tokio::spawn(async move {
         // Why it could not is in the hub's log already.
-        let _ = obtain(&hub, Held { version, target }).await;
+        let _ = obtain(&hub, Held { version, target }, None).await;
     });
 }
 
@@ -65,17 +95,30 @@ pub(crate) fn unfetched(hub: &Hub, name: &MachineName, id: u64, why: String) {
 }
 
 pub(super) struct Obtaining {
-    waiters: Vec<oneshot::Sender<Result<u64, String>>>,
+    waiters: Vec<Waiter>,
     expired: bool,
     id: u64,
 }
 
+struct Waiter {
+    answer: oneshot::Sender<Result<u64, String>>,
+    progress: Option<tokio::sync::watch::Sender<fastctx_types::update::PackageProgress>>,
+}
+
 /// The package's size once the hub holds it.
-async fn obtain(hub: &Arc<Hub>, held: Held) -> Result<u64, String> {
-    let (waiting, answered) = oneshot::channel();
+pub(super) async fn obtain(
+    hub: &Arc<Hub>,
+    held: Held,
+    progress: Option<tokio::sync::watch::Sender<fastctx_types::update::PackageProgress>>,
+) -> Result<u64, String> {
+    let cache = hub.updates.lock().expect("never poisoned").cache.clone();
+    if let Some(size) = size_of(&cache, &held)? {
+        return Ok(size);
+    }
+    let (answer, answered) = oneshot::channel();
+    let waiting = Waiter { answer, progress };
     {
         let mut updates = hub.updates.lock().expect("never poisoned");
-        updates.asked.insert(held.version.clone(), std::time::Instant::now());
 
         match updates.obtaining.get_mut(&held) {
             Some(owner) if owner.expired => {
@@ -84,7 +127,7 @@ async fn obtain(hub: &Arc<Hub>, held: Held) -> Result<u64, String> {
                 );
             }
             Some(owner) => {
-                owner.waiters.retain(|waiter| !waiter.is_closed());
+                owner.waiters.retain(|waiter| !waiter.answer.is_closed());
                 if owner.waiters.len() >= 512 {
                     return Err("too many requests are waiting for this package; try again later".into());
                 }
@@ -112,7 +155,7 @@ async fn own(hub: Arc<Hub>, held: Held, id: u64) {
     }
     let owner = hub.updates.lock().expect("never poisoned").obtaining.remove(&held);
     for waiter in owner.into_iter().flat_map(|owner| owner.waiters) {
-        let _ = waiter.send(brought.clone());
+        let _ = waiter.answer.send(brought.clone());
     }
 }
 
@@ -129,7 +172,7 @@ async fn expire(hub: Arc<Hub>, held: Held, id: u64) {
         (BUDGET + 2 * SETTLE).as_secs() / 60
     );
     for waiter in waiters {
-        let _ = waiter.send(Err(reason.clone()));
+        let _ = waiter.answer.send(Err(reason.clone()));
     }
 }
 
@@ -160,6 +203,7 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
     let race = Arc::new(Race::default());
     let (ended, mut endings) = mpsc::unbounded_channel();
     let mut going: Vec<Going> = Vec::new();
+    let mut settling = tokio::task::JoinSet::new();
     let mut tried = Tried { hub: package.url.is_none(), machines: Vec::new() };
     let mut failures = Vec::new();
     let mut look = tokio::time::interval(Duration::from_secs(1));
@@ -175,15 +219,40 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
         let verdicts: Vec<Verdict> = going
             .iter_mut()
             .map(|try_| {
-                try_.pace.heard(now.into_std(), try_.attempt.brought.load(Ordering::Relaxed));
-                try_.pace.verdict(now.into_std(), package.size, try_.before_first)
+                let progress = try_.attempt.progress(package.size);
+                try_.pace.heard(now.into_std(), progress.received);
+                try_.pace.verdict(now.into_std(), progress.total)
             })
             .collect();
+        if let Some(progress) =
+            going.iter().map(|source| source.attempt.progress(package.size)).max_by_key(|progress| progress.received)
+        {
+            let updates = hub.updates.lock().expect("never poisoned");
+            if let Some(owner) = updates.obtaining.get(held) {
+                for progress_to in owner.waiters.iter().filter_map(|waiter| waiter.progress.as_ref()) {
+                    progress_to.send_if_modified(|kept| {
+                        if *kept == progress {
+                            false
+                        } else {
+                            *kept = progress;
+                            true
+                        }
+                    });
+                }
+            }
+        }
         for (index, verdict) in verdicts.iter().enumerate().rev() {
+            if *verdict == Verdict::Slow && !going[index].slow {
+                going[index].slow = true;
+                hub.log.line(format_args!(
+                    "bringing {} of {}: {} is slow; trying another source",
+                    held.target, held.version, going[index].source
+                ));
+            }
             if *verdict == Verdict::Stopped {
                 let stopped = going.remove(index);
                 failures.push(format!("{}: it brought nothing more for half a minute", stopped.source));
-                settle(hub, &cache, held, stopped, deadline).await;
+                settling.spawn(settle_owned(hub.clone(), cache.clone(), held.clone(), stopped, deadline));
             }
         }
         let promising = verdicts.contains(&Verdict::Promising);
@@ -206,26 +275,42 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
                 if let Some(index) = going.iter().position(|try_| try_.attempt.id == id) {
                     let over = going.remove(index);
                     if let Err(why) = outcome {
+                        hub.log.line(format_args!("bringing {} of {} from {}: {why}", held.target, held.version, over.source));
                         failures.push(format!("{}: {why}", over.source));
                     }
-                    settle(hub, &cache, held, over, deadline).await;
+                    settling.spawn(settle_owned(hub.clone(), cache.clone(), held.clone(), over, deadline));
                 }
             }
             _ = look.tick() => {}
         }
     };
     if let Some(size) = size {
-        // Nobody waits for the others to stop once the package is held.
-        let (hub, cache, held) = (hub.clone(), cache.clone(), held.clone());
-        tokio::spawn(async move {
-            for try_ in going {
-                settle(&hub, &cache, &held, try_, deadline).await;
-            }
-        });
-        return Ok(size);
+        let waiters = hub
+            .updates
+            .lock()
+            .expect("never poisoned")
+            .obtaining
+            .get_mut(held)
+            .map(|owner| std::mem::take(&mut owner.waiters))
+            .unwrap_or_default();
+        for waiter in waiters {
+            let _ = waiter.answer.send(Ok(size));
+        }
+    }
+    // Tell every remaining source to stop before waiting for any cleanup.
+    for try_ in &going {
+        stop(hub, try_);
     }
     for try_ in going {
-        settle(hub, &cache, held, try_, deadline).await;
+        settling.spawn(settle_owned(hub.clone(), cache.clone(), held.clone(), try_, deadline));
+    }
+    while let Some(ended) = settling.join_next().await {
+        if let Err(error) = ended {
+            hub.log.line(format_args!("finishing a package source: {error}"));
+        }
+    }
+    if let Some(size) = size {
+        return Ok(size);
     }
     // Whatever was said, what one brought may be in place now.
     if let Some(size) = size_of(&cache, held)? {
@@ -266,8 +351,7 @@ struct Going {
     source: Source,
     attempt: Arc<Attempt>,
     pace: Pace,
-    /// How long it may take before its first byte.
-    before_first: Duration,
+    slow: bool,
 }
 
 /// The hub's own download of the package, as one try: its bytes counted as
@@ -294,7 +378,10 @@ fn by_the_hub(
         let outcome = async {
             let incoming = cache.attempt(&held.version, &held.target, id)?;
             let counting = trying.clone();
-            let mut heard = move |brought, _| counting.brought.store(brought, Ordering::Relaxed);
+            let mut heard = move |brought, total| {
+                counting.brought.store(brought, Ordering::Relaxed);
+                counting.downloaded.lock().expect("never poisoned").total = total;
+            };
             let speed = tokio::select! {
                 downloaded = fastctx_update::download::patiently(&url, &incoming, &mut heard) => downloaded?,
                 () = trying.stopping() => return Err("given up for another".to_string()),
@@ -305,15 +392,13 @@ fn by_the_hub(
             if !trying.keep() {
                 return Err("given up for another".to_string());
             }
-            super::transfer::take_in(&hub, &cache, &manifest, &held.target, &incoming, || trying.commit())
-                .await
-                .map(|_| ())
+            super::transfer::take_in(&hub, &cache, &manifest, &held.target, &incoming, &trying).await.map(|_| ())
         }
         .await;
         trying.over();
         let _ = ended.send((id, outcome));
     });
-    Going { source: Source::Hub, attempt, pace: Pace::new(std::time::Instant::now()), before_first: SAMPLE }
+    Going { source: Source::Hub, attempt, pace: Pace::new(std::time::Instant::now()), slow: false }
 }
 
 /// A machine asked to fetch the package, or hand the one it holds, as one
@@ -330,10 +415,24 @@ fn by_a_machine(
     let id = hub.next();
     let attempt = Arc::new(Attempt::new(id, race.clone()));
     let (done, delivered) = oneshot::channel();
-    let fetching =
-        Fetching { helper: helper.clone(), generation, held: held.clone(), done: Some(done), attempt: attempt.clone() };
+    let progress = hub
+        .updates
+        .lock()
+        .expect("never poisoned")
+        .reports
+        .get(&helper)
+        .is_some_and(|(_, report)| report.package_progress);
+    let fetching = Fetching {
+        helper: helper.clone(),
+        generation,
+        held: held.clone(),
+        done: Some(done),
+        attempt: attempt.clone(),
+        progress,
+    };
     hub.updates.lock().expect("never poisoned").fetches.insert(id, fetching);
-    let fetch = Fetch { id, version: held.version.clone(), target: held.target.clone(), package: package.clone() };
+    let fetch =
+        Fetch { id, version: held.version.clone(), target: held.target.clone(), package: package.clone(), progress };
     let sent = hub
         .sessions()
         .get(&helper)
@@ -353,8 +452,64 @@ fn by_a_machine(
         source: Source::Machine(helper, generation),
         attempt,
         pace: Pace::new(std::time::Instant::now()),
-        before_first: MACHINE_START,
+        slow: false,
     }
+}
+
+fn stop(hub: &Hub, source: &Going) {
+    source.attempt.give_up();
+    cancel_helper(hub, source.attempt.id);
+}
+
+fn cancel_helper(hub: &Hub, id: u64) {
+    let helper = hub
+        .updates
+        .lock()
+        .expect("never poisoned")
+        .fetches
+        .get(&id)
+        .filter(|fetching| fetching.progress)
+        .map(|fetching| (fetching.helper.clone(), fetching.generation));
+    if let Some((name, generation)) = helper
+        && let Some(session) = hub.sessions().get(&name).filter(|session| session.generation == generation)
+    {
+        let _ = session.out.send(Out::Frame(Down::FetchCancelled { id }));
+    }
+}
+
+pub(super) fn cancel_helpers(hub: &Hub, race: &Arc<Race>, winner: u64) {
+    let ids: Vec<u64> = hub
+        .updates
+        .lock()
+        .expect("never poisoned")
+        .fetches
+        .iter()
+        .filter(|(id, fetching)| **id != winner && Arc::ptr_eq(&fetching.attempt.race, race))
+        .map(|(id, _)| *id)
+        .collect();
+    for id in ids {
+        cancel_helper(hub, id);
+    }
+}
+
+/// A helper's received bytes belong to the request on this session only.
+pub(crate) fn progress(
+    hub: &Hub,
+    name: &MachineName,
+    generation: u64,
+    id: u64,
+    progress: fastctx_types::update::PackageProgress,
+) {
+    let updates = hub.updates.lock().expect("never poisoned");
+    if let Some(fetching) =
+        updates.fetches.get(&id).filter(|f| f.helper == *name && f.generation == generation && f.progress)
+    {
+        *fetching.attempt.downloaded.lock().expect("never poisoned") = progress;
+    }
+}
+
+async fn settle_owned(hub: Arc<Hub>, cache: fastctx_update::Cache, held: Held, source: Going, deadline: Instant) {
+    settle(&hub, &cache, &held, source, deadline).await;
 }
 
 /// Ends a try: its transfer is told to stop and given a moment to, and
@@ -363,8 +518,8 @@ fn by_a_machine(
 /// that does not end in time can no longer put its package in place, and
 /// deletes what it left itself; one putting it in place then finishes.
 async fn settle(hub: &Hub, cache: &fastctx_update::Cache, held: &Held, try_: Going, deadline: Instant) {
+    stop(hub, &try_);
     let Going { source, attempt, .. } = try_;
-    attempt.give_up();
     let settle = match attempt.keeping() {
         true => deadline.max(Instant::now() + SETTLE),
         false => Instant::now() + SETTLE,

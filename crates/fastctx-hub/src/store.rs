@@ -67,6 +67,9 @@ pub struct HubFile {
     /// machine's key: a name it is renamed to keeps them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub due: Vec<DueFor>,
+    /// Package targets last reported by each device; retained while it is away.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub package_targets: BTreeMap<PublicKey, PackageTargets>,
 }
 
 /// An update kept for the machine with `key` (`fastctx_types::update::Due`).
@@ -75,6 +78,14 @@ pub struct DueFor {
     pub key: PublicKey,
     #[serde(flatten)]
     pub due: fastctx_types::update::Due,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageTargets {
+    pub kernel: Option<String>,
+    pub app: Option<String>,
 }
 
 /// Who dissolved the network, and when; and the machines and devices that

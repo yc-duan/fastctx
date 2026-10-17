@@ -57,6 +57,27 @@ impl Releases {
         self.files.open(version, name)
     }
 
+    /// Hand-placed archives the public release endpoint can open in place.
+    /// Listing them does not change the verification at the update entrance.
+    pub fn held(&self) -> Vec<fastctx_types::update::Held> {
+        let mut held = Vec::new();
+        let Ok(versions) = std::fs::read_dir(self.files.root.join("releases")) else { return held };
+        for entry in versions.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(version) = name.strip_prefix('v').filter(|version| release_version(version)) else { continue };
+            let archives = HELD_ARCHIVES.into_iter().chain([
+                (X86_64_ARCHIVE, "fastctx-x86_64-unknown-linux-gnu"),
+                (AARCH64_ARCHIVE, "fastctx-aarch64-unknown-linux-gnu"),
+            ]);
+            for (archive, target) in archives {
+                if self.placed(version, archive).is_ok() {
+                    held.push(fastctx_types::update::Held { version: version.into(), target: target.into() });
+                }
+            }
+        }
+        held
+    }
+
     pub fn ready(&self, version: &str, allow_partial: bool) -> Result<KernelRelease, String> {
         if !release_version(version) {
             return Err("a kernel release version must be major.minor.patch, with at most a pre-release".into());

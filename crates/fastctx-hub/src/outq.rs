@@ -114,6 +114,7 @@ enum Notice {
     Presence(MachineName),
     Forget(u64),
     Fetch(u64),
+    PackageProgress(u64),
 }
 
 enum Pending {
@@ -396,6 +397,8 @@ fn notice(frame: &Down) -> Option<Notice> {
         Down::Presence { machine, .. } => Notice::Presence(machine.clone()),
         Down::Forget { forgetting } => Notice::Forget(forgetting.id),
         Down::Fetch { fetch } => Notice::Fetch(fetch.id),
+        Down::FetchCancelled { id } => Notice::Fetch(*id),
+        Down::PackageProgress { id, .. } => Notice::PackageProgress(*id),
         _ => return None,
     })
 }

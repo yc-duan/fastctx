@@ -136,6 +136,7 @@ impl Device {
             hub_here: false,
             github_speed: None,
             target: None,
+            package_progress: false,
         };
         drop(held);
         for session in self.sessions() {

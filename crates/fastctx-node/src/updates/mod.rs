@@ -7,6 +7,7 @@
 //! (`application`). Everything kept is under `<root>/updates`.
 
 mod application;
+mod packages;
 
 pub(crate) use application::Open;
 
@@ -17,7 +18,7 @@ use std::time::Duration;
 use fastctx_install::renewal::{read_json, write_json};
 use fastctx_types::AccountName;
 use fastctx_types::update::{
-    App, Asked, Channel, Failed, Fetch, Fetching, Kind, Looked, Manifest, Network, Renewing, Report, Settings, State,
+    App, Asked, Channel, Failed, Fetching, Kind, Looked, Manifest, Network, Renewing, Report, Settings, State,
     UpdateCall,
 };
 use fastctx_update::Cache;
@@ -34,6 +35,7 @@ const TRY_AGAIN: Duration = Duration::from_secs(3600);
 #[derive(Default)]
 pub(crate) struct Updates {
     held: Mutex<Held>,
+    packages: fastctx_update::pool::Pool,
 }
 
 #[derive(Default)]
@@ -105,6 +107,9 @@ fn cache(node: &Node) -> Cache {
 /// Reads what was kept, and looks on GitHub from now on.
 pub(crate) fn start(node: &Arc<Node>) {
     let dir = dir(node);
+    for why in cache(node).clear_attempts() {
+        node.log.line(format_args!("deleting a package left coming: {why}"));
+    }
     {
         let mut held = node.updates.held.lock().expect("never poisoned");
         held.settings = read_json(&dir.join("settings.json")).ok().flatten().unwrap_or_default();
@@ -337,6 +342,7 @@ pub(crate) fn report(node: &Node) {
         hub_here: false,
         github_speed: held.github_speed,
         target: Some(fastctx_update::kernel::target()),
+        package_progress: true,
     };
     drop(held);
     let hubs = hubs_here(node);
@@ -455,22 +461,26 @@ fn fetch(node: &Arc<Node>, version: String, target: String) -> Result<(), String
 }
 
 /// Brings a package here by the first hub that hands them out, or GitHub
-/// (`fastctx_update::obtain`), with its progress kept for the interface;
-/// older versions go once it is.
+/// (`fastctx_update::obtain`), with its progress kept for the interface.
+/// Helpers can still be delivering other verified packages from this cache.
 async fn bring(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<PathBuf, String> {
     let cache = cache(node);
     let links = node.links();
     let link = links.iter().find(|link| link.keeps_versions()).map(|link| link.as_ref());
     let progressing = node.clone();
     let mut progress = move |progress: fastctx_update::Progress| {
-        if let Some(fetching) = &mut progressing.updates.held.lock().expect("never poisoned").fetching {
+        if let Some(fetching) = &mut progressing.updates.held.lock().expect("never poisoned").fetching
+            && fetching.version == manifest.version
+            && fetching.target == target
+        {
             fetching.via = progress.via;
             fetching.received = progress.received;
             fetching.total = progress.total;
         }
     };
-    let brought = fastctx_update::obtain(&cache, manifest, target, link, &mut progress).await?;
-    cache.prune(&[manifest.version.as_str()]);
+    let logging = node.clone();
+    let log: fastctx_update::pool::Log = Arc::new(move |message| logging.log.line(format_args!("{message}")));
+    let brought = node.updates.packages.obtain(&cache, manifest, target, link, &mut progress, log).await?;
     if let Some(speed) = brought.github_speed {
         github_speed(node, speed);
     }
@@ -487,53 +497,7 @@ fn github_speed(node: &Arc<Node>, speed: u64) {
     report(node);
 }
 
-/// The hub asks this machine for a package for others: one held here, one
-/// the application here carries, or, when this machine fetches for others,
-/// one from GitHub.
-pub(crate) async fn relay(node: &Arc<Node>, fetch: Fetch) -> Result<PathBuf, String> {
-    let cache = cache(node);
-    if let Some(path) = cache.get(&fetch.version, &fetch.target) {
-        return Ok(path);
-    }
-    let (relays, carried) = {
-        let held = node.updates.held.lock().expect("never poisoned");
-        let carried = held
-            .carried
-            .clone()
-            .filter(|_| held.app.as_ref().is_some_and(|app| app.version == fetch.version))
-            .map(|dir| dir.join(format!("{}.tar.gz", fetch.target)))
-            .filter(|path| path.is_file());
-        (held.settings.relays, carried)
-    };
-    // A file of the hub's request alone: this machine may bring the same
-    // package for itself meanwhile.
-    let incoming = cache.attempt(&fetch.version, &fetch.target, fetch.id)?;
-    if let Some(carried) = carried {
-        std::fs::copy(&carried, &incoming).map_err(|error| format!("{}: {error}", carried.display()))?;
-    } else if relays && let Some(url) = &fetch.package.url {
-        let _ = std::fs::remove_file(&incoming);
-        let speed = fastctx_update::download::patiently(url, &incoming, &mut |_, _| {}).await;
-        if let Ok(Some(speed)) = speed {
-            github_speed(node, speed);
-        }
-        if let Err(why) = speed {
-            let _ = std::fs::remove_file(&incoming);
-            return Err(why);
-        }
-    } else {
-        return Err("this machine neither holds the package nor fetches for others".to_string());
-    }
-    let (path, signature, version) = (incoming.clone(), fetch.package.signature.clone(), fetch.version.clone());
-    tokio::task::spawn_blocking(move || fastctx_update::verify::file(&path, &signature, &version))
-        .await
-        .map_err(|error| error.to_string())?
-        .inspect_err(|_| {
-            let _ = std::fs::remove_file(&incoming);
-        })?;
-    let path = cache.keep(&fetch.version, &fetch.target, &incoming)?;
-    report(node);
-    Ok(path)
-}
+pub(crate) use packages::relay;
 
 /// Updates this machine's World program to `version`, or from the release
 /// offered, when that is newer than this program: brought here, checked,

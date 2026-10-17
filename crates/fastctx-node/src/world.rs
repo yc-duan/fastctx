@@ -1234,11 +1234,12 @@ impl fastctx_net::link::Node for Handler {
     fn relay(
         &self,
         fetch: fastctx_types::update::Fetch,
+        progress: tokio::sync::watch::Sender<fastctx_types::update::PackageProgress>,
     ) -> fastctx_net::link::BoxFuture<Result<std::path::PathBuf, String>> {
         let node = self.node.upgrade();
         Box::pin(async move {
             match node {
-                Some(node) => crate::updates::relay(&node, fetch).await,
+                Some(node) => crate::updates::relay(&node, fetch, progress).await,
                 None => Err("the node is stopping".to_string()),
             }
         })

@@ -158,8 +158,12 @@ pub trait Node: Send + Sync + 'static {
     /// Brings here the package the hub asks for, for machines that cannot
     /// reach GitHub, checked against its signature, and says where it is
     /// (`crate::wire::Down::Fetch`).
-    fn relay(&self, fetch: fastctx_types::update::Fetch) -> BoxFuture<Result<std::path::PathBuf, String>> {
-        let _ = fetch;
+    fn relay(
+        &self,
+        fetch: fastctx_types::update::Fetch,
+        progress: tokio::sync::watch::Sender<fastctx_types::update::PackageProgress>,
+    ) -> BoxFuture<Result<std::path::PathBuf, String>> {
+        let _ = (fetch, progress);
         Box::pin(async { Err("this device does not fetch packages for others".to_string()) })
     }
     /// Lets other computers reach this machine at exactly the TCP `ports`
@@ -233,6 +237,7 @@ fn offline_for(last_seen: Timestamp) -> String {
     format!(" for {span}")
 }
 
+#[derive(Clone)]
 pub struct Link {
     inner: Arc<Inner>,
 }
@@ -1047,7 +1052,7 @@ impl Inner {
         let within = within(&question);
         let id = self.next_id();
         let (answer, answered) = oneshot::channel();
-        self.asks.insert(id, connection.generation, answer);
+        self.asks.insert(id, connection.generation, answer, None);
         struct Waiting<'a>(&'a Inner, u64);
         impl Drop for Waiting<'_> {
             fn drop(&mut self) {
@@ -1077,7 +1082,7 @@ impl Inner {
 /// answers from what it holds.
 pub(crate) fn within(question: &Question) -> std::time::Duration {
     std::time::Duration::from_secs(match question {
-        Question::Package { .. } => 45 * 60,
+        Question::Package { .. } | Question::PrepareUpdate { .. } => 45 * 60,
         Question::HubMove { .. } => 10 * 60,
         _ => 60,
     })

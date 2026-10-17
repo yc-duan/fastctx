@@ -275,6 +275,9 @@ pub enum AccountChange {
         machine: MachineName,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         version: Option<String>,
+        /// Reserves the package for a batch without telling this machine to start.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        batch: Option<String>,
     },
     /// The super administrator dissolves the network named `name`, typed as
     /// it is (`world-network.md`, 解散网络).
@@ -354,6 +357,9 @@ pub struct HubAccounts {
     /// (`world-upgrade.md`).
     #[serde(default)]
     pub versions: bool,
+    /// The hub prepares packages and retains a batch's demand until withdrawn.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub package_progress: bool,
     /// Whether the hub keeps updates for machines away until they are back,
     /// and tells its version (`world-upgrade.md`, 别的机器的更新).
     #[serde(default)]

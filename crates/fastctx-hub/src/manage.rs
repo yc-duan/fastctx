@@ -477,7 +477,7 @@ fn apply(
         // owner, and the super administrator but for a visitor's
         // (`world-upgrade.md`, 谁来更新). The update is kept until the
         // machine runs that release or a newer one (`crate::updates`).
-        Change::UpdateDue { machine, version } => {
+        Change::UpdateDue { machine, version, batch } => {
             own_machine(&store.book.directory, account, super_, &machine)?;
             if let Some(version) = &version
                 && fastctx_types::update::release(version).is_none()
@@ -486,10 +486,22 @@ fn apply(
             }
             let key = store.book.directory.member(&machine).expect("own_machine found it").key;
             let directory = &store.book.directory;
-            store.hub.due.retain(|kept| kept.key != key && directory.by_key(&kept.key).is_some());
+            if let Some(batch) = &batch
+                && (batch.is_empty()
+                    || batch.len() > 64
+                    || !batch.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b)))
+            {
+                return Err(
+                    "an update batch needs an identifier of at most 64 letters, digits, hyphens or underscores".into(),
+                );
+            }
+            store
+                .hub
+                .due
+                .retain(|kept| (kept.key != key || kept.batch != batch) && directory.by_key(&kept.key).is_some());
             if let Some(version) = version {
                 let due = fastctx_types::update::Due { version, by: account.clone(), at: Timestamp::now() };
-                store.hub.due.push(crate::store::DueFor { key, due });
+                store.hub.due.push(crate::store::DueFor { key, due, batch });
             }
             store.save_hub().map_err(|error| format!("the hub could not keep the update: {error}"))?;
             Ok(Told::Done)

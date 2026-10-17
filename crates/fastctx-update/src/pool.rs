@@ -1,0 +1,234 @@
+//! One owner of a package on this device, shared by its own update and all
+//! hubs asking it to help. Subscribers leaving cancel only their interest;
+//! the last one leaving stops the transfer and waits for its files to go.
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+
+use fastctx_net::link::Link;
+use fastctx_types::update::{Fetch, Manifest, Package};
+use tokio::sync::watch;
+
+use crate::Cache;
+use crate::obtain::{Brought, Progress};
+
+pub type Log = Arc<dyn Fn(String) + Send + Sync>;
+
+#[derive(Clone, Default)]
+pub struct Pool(Arc<Mutex<HashMap<PathBuf, Owner>>>);
+
+struct Owner {
+    local: watch::Sender<Local>,
+    state: watch::Sender<State>,
+    stopping: bool,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct Local {
+    pub requested: bool,
+    pub carried: Option<PathBuf>,
+}
+
+#[derive(Clone, Default)]
+struct State {
+    progress: Option<Progress>,
+    local_progress: Option<Progress>,
+    outcome: Option<Result<Brought, String>>,
+}
+
+pub(crate) struct Request {
+    pub version: String,
+    pub target: String,
+    pub package: Package,
+    pub link: Option<Link>,
+    pub local: Local,
+}
+
+static NEXT: AtomicU64 = AtomicU64::new(1);
+
+impl Pool {
+    /// Obtains a package once for this device, first asking its hub when one
+    /// is available. A helper joining this request starts its local source.
+    pub async fn obtain(
+        &self,
+        cache: &Cache,
+        manifest: &Manifest,
+        target: &str,
+        link: Option<&Link>,
+        progress: &mut (dyn FnMut(Progress) + Send),
+        log: Log,
+    ) -> Result<Brought, String> {
+        let package =
+            manifest.package(target).ok_or_else(|| format!("{} has no package for {target}", manifest.version))?;
+        let request = Request {
+            version: manifest.version.clone(),
+            target: target.to_string(),
+            package: package.clone(),
+            link: link.filter(|link| link.keeps_versions()).cloned(),
+            local: Local::default(),
+        };
+        let brought = self.join(cache, request, progress, log).await?;
+        cache.keep_manifest(manifest)?;
+        Ok(brought)
+    }
+
+    /// Joins the device's owner, asking it to use its carried package or
+    /// GitHub. The hub's request number never names a local file.
+    pub async fn relay(
+        &self,
+        cache: &Cache,
+        fetch: &Fetch,
+        carried: Option<PathBuf>,
+        progress: &mut (dyn FnMut(Progress) + Send),
+        log: Log,
+    ) -> Result<Brought, String> {
+        let request = Request {
+            version: fetch.version.clone(),
+            target: fetch.target.clone(),
+            package: fetch.package.clone(),
+            link: None,
+            local: Local { requested: true, carried },
+        };
+        self.join(cache, request, progress, log).await
+    }
+
+    async fn join(
+        &self,
+        cache: &Cache,
+        request: Request,
+        progress: &mut (dyn FnMut(Progress) + Send),
+        log: Log,
+    ) -> Result<Brought, String> {
+        let key = cache.path(&request.version, &request.target)?;
+        loop {
+            let (mut state, stopping) = {
+                let mut owners = self.0.lock().expect("never poisoned");
+                if let Some(path) = cache.get(&request.version, &request.target) {
+                    return Ok(Brought { path, github_speed: None });
+                }
+                if let Some(owner) = owners.get_mut(&key) {
+                    if request.local.requested && !owner.stopping {
+                        owner.local.send_replace(request.local.clone());
+                    }
+                    (owner.state.subscribe(), owner.stopping)
+                } else {
+                    let (local, source) = watch::channel(request.local.clone());
+                    let (state, receiver) = watch::channel(State::default());
+                    owners.insert(key.clone(), Owner { local, state: state.clone(), stopping: false });
+                    let (pool, cache, key, log) = (self.clone(), cache.clone(), key.clone(), log.clone());
+                    let request = Request {
+                        version: request.version.clone(),
+                        target: request.target.clone(),
+                        package: request.package.clone(),
+                        link: request.link.clone(),
+                        local: request.local.clone(),
+                    };
+                    tokio::spawn(async move {
+                        pool.own(cache, key, request, source, state, log).await;
+                    });
+                    (receiver, false)
+                }
+            };
+            loop {
+                let current = state.borrow_and_update().clone();
+                if let Some(heard) = if request.local.requested { current.local_progress } else { current.progress } {
+                    progress(heard);
+                }
+                if let Some(outcome) = current.outcome {
+                    if stopping {
+                        break;
+                    }
+                    return outcome;
+                }
+                if state.changed().await.is_err() {
+                    return Err("the package owner ended without a result".into());
+                }
+            }
+        }
+    }
+
+    async fn own(
+        &self,
+        cache: Cache,
+        key: PathBuf,
+        request: Request,
+        local: watch::Receiver<Local>,
+        state: watch::Sender<State>,
+        log: Log,
+    ) {
+        let id = NEXT.fetch_add(2, Ordering::Relaxed);
+        let files = (
+            cache.attempt(&request.version, &request.target, id),
+            cache.attempt(&request.version, &request.target, id + 1),
+        );
+        let outcome = match &files {
+            (Ok(hub_file), Ok(local_file)) => {
+                let mut heard = |progress: Progress| {
+                    state.send_modify(|state| {
+                        if progress.via == fastctx_types::update::Via::Github {
+                            state.local_progress = Some(progress);
+                        }
+                        if state.progress.is_none_or(|previous| progress.received >= previous.received) {
+                            state.progress = Some(progress);
+                        }
+                    });
+                };
+                let work = crate::obtain::run(&cache, &request, hub_file, local_file, local, &mut heard, &log);
+                tokio::pin!(work);
+                loop {
+                    tokio::select! {
+                        result = &mut work => break result,
+                        () = state.closed() => {
+                            let mut owners = self.0.lock().expect("never poisoned");
+                            if state.receiver_count() == 0 {
+                                owners.get_mut(&key).expect("owner stays until cleanup").stopping = true;
+                                break Err("nobody needs this package anymore".into());
+                            }
+                        }
+                    }
+                }
+            }
+            (Err(why), _) | (_, Err(why)) => Err(why.clone()),
+        };
+        // The futures and their open files have gone before cleanup starts.
+        for file in [files.0, files.1].into_iter().flatten() {
+            cleanup(&file, &log).await;
+        }
+        if let Err(why) = &outcome {
+            log(format!("bringing {} of {}: {why}", request.target, request.version));
+        }
+        let mut owners = self.0.lock().expect("never poisoned");
+        state.send_modify(|state| state.outcome = Some(outcome));
+        owners.remove(&key);
+    }
+
+    /// Versions with a live owner, including one still cleaning up.
+    pub fn active_versions(&self) -> Vec<String> {
+        self.0
+            .lock()
+            .expect("never poisoned")
+            .keys()
+            .filter_map(|path| path.parent()?.file_name()?.to_str()?.strip_prefix('v').map(str::to_owned))
+            .collect()
+    }
+}
+
+async fn cleanup(path: &std::path::Path, log: &Log) {
+    let mut last = None;
+    loop {
+        match tokio::fs::remove_file(path).await {
+            Ok(()) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                let why = format!("removing temporary package {}: {error}", path.display());
+                if last.as_ref() != Some(&why) {
+                    log(why.clone());
+                    last = Some(why);
+                }
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+}

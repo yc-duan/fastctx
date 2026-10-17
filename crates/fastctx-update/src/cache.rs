@@ -73,6 +73,16 @@ impl Cache {
     /// process that made it. Says what it could not delete.
     pub fn clear_attempts(&self) -> Vec<String> {
         let mut failed = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&self.root) {
+            for entry in entries.flatten() {
+                if entry.file_name().to_string_lossy().starts_with(".retired-")
+                    && entry.file_type().is_ok_and(|kind| kind.is_dir())
+                    && let Err(error) = std::fs::remove_dir_all(entry.path())
+                {
+                    failed.push(format!("{}: {error}", entry.path().display()));
+                }
+            }
+        }
         for (_, dir) in self.versions() {
             let Ok(entries) = std::fs::read_dir(&dir) else { continue };
             for entry in entries.flatten() {
@@ -140,6 +150,20 @@ impl Cache {
         kept
     }
 
+    /// Moves an unused release out of the inventory in one filesystem step.
+    /// Its returned directory can be deleted without blocking new acquisitions.
+    pub fn retire(&self, version: &str) -> Result<Option<PathBuf>, String> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let source = self.version_dir(version)?;
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let retired = self.root.join(format!(".retired-{}-{id}-{version}", std::process::id()));
+        match std::fs::rename(&source, &retired) {
+            Ok(()) => Ok(Some(retired)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(format!("retiring {}: {error}", source.display())),
+        }
+    }
+
     /// Removes every version but those in `keep`.
     pub fn prune(&self, keep: &[&str]) {
         for (version, dir) in self.versions() {
@@ -149,7 +173,8 @@ impl Cache {
         }
     }
 
-    fn versions(&self) -> Vec<(String, PathBuf)> {
+    /// Release directories currently present, excluding retired copies.
+    pub fn versions(&self) -> Vec<(String, PathBuf)> {
         let Ok(entries) = std::fs::read_dir(&self.root) else { return Vec::new() };
         entries
             .flatten()

@@ -43,6 +43,7 @@ fn hub() -> HubAccounts {
         groups: true,
         dissolves: true,
         versions: true,
+        package_progress: false,
         due: true,
         uninstalls: true,
         logins: vec!["ada".parse().unwrap()],
@@ -310,8 +311,8 @@ pub fn fixtures() -> Fixtures {
                 reason: "retired".into(),
                 then: Some(fastctx_types::uninstall::Then::Uninstall),
             },
-            AccountChange::UpdateDue { machine: "server".parse().unwrap(), version: Some("1.0.1".into()) },
-            AccountChange::UpdateDue { machine: "server".parse().unwrap(), version: None },
+            AccountChange::UpdateDue { machine: "server".parse().unwrap(), version: Some("1.0.1".into()), batch: None },
+            AccountChange::UpdateDue { machine: "server".parse().unwrap(), version: None, batch: None },
             AccountChange::Rename { machine: "server".parse().unwrap(), to: "台式机".parse().unwrap() },
             AccountChange::Logout,
             AccountChange::Token {

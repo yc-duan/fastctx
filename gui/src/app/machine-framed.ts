@@ -273,8 +273,8 @@ export class FramedPanel {
           this.batch = new UpdateBatch(version, planOf(machines, world, version, updates.state.peek(), words), {
             remote: updates.remote,
             older: updates.older,
-            due: async (login, machine, to) => {
-              await this.options.change(login, { change: "update_due", machine, version: to });
+            due: async (login, machine, to, batch) => {
+              await this.options.change(login, { change: "update_due", machine, ...(to ? { version: to } : {}), ...(batch ? { batch } : {}) });
               await this.options.refresh();
             },
             heard: (machine) => updates.state.peek()?.network?.machines?.[machine]?.kernel ?? null,

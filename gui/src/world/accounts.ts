@@ -254,6 +254,7 @@ export interface HubAccounts {
   dissolves?: boolean;
   /** Whether the hub keeps the network's versions and their policy. */
   versions?: boolean;
+  package_progress?: boolean;
   /** The hub keeps updates for machines away until they are back. */
   due?: boolean;
   /** The hub tells a machine it takes off to uninstall Fastctx. */
@@ -330,7 +331,7 @@ export type AccountChange =
   | { change: "updates"; policy: import("./updates").Policy }
   /** A machine away updates to `version` once it is back; none takes
    *  that back. */
-  | { change: "update_due"; machine: MachineName; version?: string }
+  | { change: "update_due"; machine: MachineName; version?: string; batch?: string }
   /** The super administrator dissolves the network named `name`, typed as
    *  it is. */
   | { change: "dissolve"; name: HubName }

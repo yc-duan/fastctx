@@ -125,6 +125,7 @@ pub(crate) fn view_for(
         groups: true,
         dissolves: true,
         versions: true,
+        package_progress: true,
         due: true,
         uninstalls: true,
         tokens,

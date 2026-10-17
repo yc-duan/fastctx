@@ -378,7 +378,7 @@ pub(crate) fn action(change: &Change, book: &Book) -> Action {
             minimum: policy.minimum.clone(),
             managed_auto: Some(policy.managed_auto),
         },
-        Change::UpdateDue { machine, version } => {
+        Change::UpdateDue { machine, version, .. } => {
             Action::UpdateDue { machine: machine.clone(), version: version.clone() }
         }
         Change::Dissolve { name } => Action::Dissolve { name: name.clone() },

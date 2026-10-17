@@ -698,8 +698,17 @@ fn handle(
         Up::Forgot { id, outcome } => crate::forget::forgot(hub, name, id, outcome),
         Up::Versions { report } => crate::updates::heard(hub, name, generation, *report),
         Up::Unfetched { id, why } => crate::updates::unfetched(hub, name, id, why),
-        Up::Ask { id, question: Question::Package { version, target } } => {
-            crate::updates::ask(hub, id, version, target, out.clone());
+        Up::FetchProgress { id, progress } => crate::updates::progress(hub, name, generation, id, progress),
+        Up::PackageDone { id } => crate::updates::done(hub, name, generation, id),
+        Up::Ask { id, question: Question::Package { version, target, progress } } => {
+            crate::updates::ask(hub, name, generation, id, version, target, progress, out.clone());
+        }
+        Up::Ask { id, question: Question::PrepareUpdate { machine, version } } => {
+            let (hub, out) = (hub.clone(), out.clone());
+            tokio::spawn(async move {
+                let answer = crate::updates::prepare_update(&hub, &machine, &version).await.map(|()| Told::Done);
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
         }
         Up::Ask { id, question: Question::LedgerRead { town, after } } => {
             crate::ledger::ask(hub, name, out, id, town, after);
@@ -742,6 +751,7 @@ fn handle(
             crate::manage::end(hub, ended);
             // The network's update policy, or an update kept for a machine,
             // may be what changed.
+            crate::updates::prefetch(hub);
             crate::updates::tell(hub, None);
             crate::updates::prune(hub);
         }
@@ -1215,7 +1225,7 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
                 .read(&store.book.directory, name, &account, before, reads)
                 .map(|page| Told::MachineLog { page })
         }
-        Question::KernelRelease { .. } | Question::Package { .. } => {
+        Question::KernelRelease { .. } | Question::Package { .. } | Question::PrepareUpdate { .. } => {
             Err("release reads are dispatched asynchronously".into())
         }
         Question::Directory => Ok(Told::Directory { view: Box::new(hub.view_for(name)) }),

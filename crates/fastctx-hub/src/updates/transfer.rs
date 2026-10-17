@@ -75,6 +75,7 @@ pub(crate) async fn serve(
             return;
         }
     };
+    let _serving = super::inventory::Serving::new(&hub, &me, Held { version: version.clone(), target: target.clone() });
     let (cache, handing) = {
         let updates = hub.updates.lock().expect("never poisoned");
         (updates.cache.clone(), updates.handing.clone())
@@ -241,7 +242,7 @@ pub(crate) async fn deliver(
     }
 }
 
-async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Attempt) -> Result<(), String> {
+async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Arc<Attempt>) -> Result<(), String> {
     let (manifest, cache) = {
         let updates = hub.updates.lock().expect("never poisoned");
         (updates.manifest(&held.version), updates.cache.clone())
@@ -265,6 +266,10 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Attempt
                 Some(WsMessage::Text(text)) if size.is_none() => {
                     let said: Sized = serde_json::from_str(&text).map_err(|error| error.to_string())?;
                     size = Some(said.size);
+                    let mut progress = attempt.downloaded.lock().expect("never poisoned");
+                    if progress.total.is_none() {
+                        progress.total = size;
+                    }
                 }
                 Some(WsMessage::Binary(bytes)) if size.is_some() => {
                     let _writing = work.begin();
@@ -294,7 +299,7 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Attempt
         let _settling = work.begin();
         let kept = match received {
             Ok(()) if attempt.keep() => {
-                take_in(hub, &cache, &manifest, &held.target, &incoming, || attempt.commit()).await.map(|_| ())
+                take_in(hub, &cache, &manifest, &held.target, &incoming, attempt).await.map(|_| ())
             }
             Ok(()) => Err("the hub gave this request up and asked another machine".to_string()),
             Err(why) => Err(why),
@@ -313,16 +318,15 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Attempt
     kept
 }
 
-/// Checks the package that came to `incoming` and keeps it, if `may_keep`
-/// still says it may once it is checked, telling every machine the hub holds
-/// it; its size.
+/// Checks a complete package and serializes its publication with the other
+/// sources. Only a successful publication wins; its size.
 pub(super) async fn take_in(
     hub: &Arc<Hub>,
     cache: &fastctx_update::Cache,
     manifest: &Manifest,
     target: &str,
     incoming: &Path,
-    may_keep: impl FnOnce() -> bool,
+    attempt: &Arc<Attempt>,
 ) -> Result<u64, String> {
     let package = manifest.package(target).ok_or("the release has no such package")?;
     let (path, signature, version) = (incoming.to_path_buf(), package.signature.clone(), manifest.version.clone());
@@ -335,19 +339,22 @@ pub(super) async fn take_in(
         }
         Err(error) => return Err(error.to_string()),
     }
-    if !may_keep() {
-        let _ = std::fs::remove_file(incoming);
+    let Some(mut won) = attempt.commit().await else {
         return Err("the hub gave this request up while it checked the package".to_string());
-    }
+    };
     let (publishing, kept_manifest, kept_target, received) =
         (cache.clone(), manifest.clone(), target.to_string(), incoming.to_path_buf());
     let size = tokio::task::spawn_blocking(move || {
+        let size = std::fs::metadata(&received).map_err(|error| error.to_string())?.len();
         publishing.keep_manifest(&kept_manifest)?;
-        let path = publishing.keep(&kept_manifest.version, &kept_target, &received)?;
-        std::fs::metadata(&path).map(|meta| meta.len()).map_err(|error| error.to_string())
+        publishing.keep(&kept_manifest.version, &kept_target, &received)?;
+        *won = true;
+        Ok::<_, String>(size)
     })
     .await
     .map_err(|error| error.to_string())??;
+    attempt.race.finished.notify_waiters();
+    super::obtain::cancel_helpers(hub, &attempt.race, attempt.id);
     hub.log.line(format_args!("holds {target} of {} now, {size} bytes", manifest.version));
     super::prune(hub);
     super::tell(hub, None);
