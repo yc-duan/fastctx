@@ -15,6 +15,7 @@ import type { Attachment } from "../world/attachments";
 import type { ComposerUpdated } from "../world/composer";
 import { glyph } from "./glyphs";
 import { escape } from "./prose";
+import { composing } from "../typing";
 
 interface Editing {
   id: string;
@@ -139,7 +140,7 @@ export class NodeQueue {
   private keyed(event: KeyboardEvent): void {
     const target = event.target as HTMLElement;
     if (target.classList.contains("queue-edit")) {
-      if (event.isComposing || event.keyCode === 229) return;
+      if (composing(event)) return;
       if (event.key === "Escape" || (event.key === "Enter" && !event.shiftKey)) {
         event.preventDefault();
         event.stopPropagation();

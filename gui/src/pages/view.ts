@@ -134,7 +134,7 @@ export class PageScreen {
       version.description ? `<span class="page-description">${escape(version.description)}</span>` : "",
     ]
       .filter(Boolean)
-      .join(`<span class="sep">·</span>`);
+      .join(`<span class="sep"></span>`);
     const acts = this.element.querySelector<HTMLButtonElement>(".page-acts")!;
     acts.hidden = version.acts.length === 0 || version.withdrawn;
     this.mount(view);

@@ -43,13 +43,15 @@
   overflow-y: auto;
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
   animation: map-panel-in var(--fold) var(--fold-easing) both;
 }
 
 @keyframes map-panel-in {
   from {
-    opacity: 0;
-    transform: translateX(8px);
+    --shown: 0;
+    --slide: 8px;
   }
 }
 
@@ -232,17 +234,19 @@
 }
 
 .map-live .chosen {
+  opacity: var(--shown);
   animation: paper-in var(--settle) var(--ease-out) both;
 }
 
 .map-live .arrived {
+  opacity: var(--shown);
   animation: arrived var(--linger) var(--ease-out) both;
 }
 
 /* The machines that can take the server, while its new place is chosen:
    their clay rings breathe; the rest of the names are faint. */
 .map-live .lit {
-  opacity: 0.6;
+  opacity: calc(var(--shown) * var(--lit));
   animation: paper-in var(--settle) var(--ease-out) both, lit-breathe var(--breath-slow) ease-in-out var(--settle) infinite;
 }
 
@@ -256,7 +260,7 @@
 
 @keyframes lit-breathe {
   50% {
-    opacity: 0.95;
+    --lit: 0.95;
   }
 }
 
@@ -310,7 +314,7 @@
 
 @keyframes paper-in {
   from {
-    opacity: 0;
+    --shown: 0;
   }
 }
 
@@ -323,10 +327,10 @@
 
 @keyframes arrived {
   0% {
-    opacity: 0;
+    --shown: 0;
   }
   30% {
-    opacity: 1;
+    --shown: 1;
   }
 }
 
@@ -354,6 +358,7 @@
   color: var(--text-2);
   pointer-events: auto;
   cursor: pointer;
+  opacity: var(--shown);
   animation: paper-in var(--enter) ease both;
 }
 
@@ -389,6 +394,7 @@
   box-shadow: var(--shadow-pop);
   font-size: var(--size-small);
   color: var(--text-2);
+  opacity: var(--shown);
   animation: paper-in var(--enter) ease both;
 }
 
@@ -446,6 +452,7 @@
   max-height: 60dvh;
   padding: var(--space-3) var(--space-3) calc(var(--space-4) + var(--safe-bottom));
   border-radius: var(--radius-l) var(--radius-l) 0 0;
+  translate: var(--slide) var(--lift);
   animation: map-sheet-rise var(--enter) var(--ease-out) both;
 }
 
@@ -464,7 +471,7 @@
 
 @keyframes map-sheet-rise {
   from {
-    transform: translateY(100%);
+    --lift: 100%;
   }
 }
 
@@ -486,6 +493,7 @@
   box-shadow: var(--shadow-pop);
   color: var(--text-2);
   outline: none;
+  opacity: var(--shown);
   animation: paper-in var(--enter) ease both;
 }
 
@@ -501,6 +509,7 @@
   overflow: auto;
   padding: var(--space-4) var(--space-4) calc(var(--space-4) + var(--safe-bottom));
   border-radius: var(--radius-l) var(--radius-l) 0 0;
+  translate: var(--slide) var(--lift);
   animation: map-sheet-rise var(--enter) var(--ease-out) both;
 }
 
@@ -622,6 +631,35 @@
   right: var(--space-3);
 }
 
+/* Choosing several on a touch screen: the page's head gives way to its
+   own, a close, how many, and every one. */
+.ml-select-head {
+  display: none;
+}
+
+.machines-page.selecting .page-head > :not(.ml-select-head) {
+  display: none;
+}
+
+.machines-page.selecting .ml-select-head {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.ml-select-count {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--body-size);
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
 /* What is known of the one pointed at. */
 .machine-panel {
   min-height: 0;
@@ -637,23 +675,10 @@
   gap: 6px var(--space-2);
 }
 
-.panel-head .dot {
-  flex: none;
-  width: 9px;
-  height: 9px;
-  border-radius: var(--radius-full);
-  background: var(--text-2);
-}
-
-.panel-head.offline .dot,
-.panel-head.unknown .dot {
-  background: none;
-  box-shadow: inset 0 0 0 1.4px var(--text-3);
-}
-
-.panel-head.assist .dot {
-  background: none;
-  box-shadow: inset 0 0 0 1.8px var(--accent);
+/* Away, or not heard of: the name goes grey, as on the list; no dot. */
+.panel-head.offline .panel-title,
+.panel-head.unknown .panel-title {
+  color: var(--text-3);
 }
 
 .panel-head .knot {
@@ -897,6 +922,7 @@
     padding: var(--space-4) var(--space-4) calc(var(--space-5) + var(--safe-bottom));
     border-radius: var(--radius-l) var(--radius-l) 0 0;
     box-shadow: var(--shadow-pop);
+    translate: var(--slide) var(--lift);
     animation: map-sheet-rise var(--enter) var(--ease-out) both;
   }
 
@@ -926,6 +952,17 @@
     border-radius: var(--radius-full);
     background: var(--text-3);
     opacity: 0.6;
+  }
+
+  /* What is done to several chosen by a long press: only the row of
+     actions, along the bottom. */
+  .machines-layout > .machine-panel.as-bar {
+    max-height: none;
+    padding: var(--space-1) var(--space-2) calc(var(--space-1) + var(--safe-bottom));
+  }
+
+  .machine-panel.as-bar .sheet-acts {
+    margin: 0;
   }
 
   /* The actions are a row in the sheet; the panel's own buttons for them
@@ -1161,6 +1198,7 @@
   max-height: 64dvh;
   padding-bottom: calc(var(--space-4) + var(--safe-bottom));
   border-radius: var(--radius-l) var(--radius-l) 0 0;
+  translate: var(--slide) var(--lift);
   animation: map-sheet-rise var(--enter) var(--ease-out) both;
 }
 

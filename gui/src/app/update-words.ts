@@ -171,7 +171,7 @@ export interface UpdateWords {
 
 export const zhUpdate: UpdateWords = {
   versions: zhVersions,
-  bar: "更新",
+  bar: "新版本",
   barFetching: (percent) => (percent === null ? "下载中" : `下载中 ${percent}%`),
   barReady: "重启以更新",
   barInstalling: "正在更新",
@@ -217,7 +217,7 @@ export const zhUpdate: UpdateWords = {
 
 export const enUpdate: UpdateWords = {
   versions: enVersions,
-  bar: "Update",
+  bar: "New version",
   barFetching: (percent) => (percent === null ? "Downloading" : `Downloading ${percent}%`),
   barReady: "Restart to update",
   barInstalling: "Updating",

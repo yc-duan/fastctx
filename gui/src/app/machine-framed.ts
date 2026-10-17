@@ -7,7 +7,7 @@
 // pointed at. An update of several shows its plan in the rows, then how
 // each goes (`machine-batch.ts`).
 
-import { glyph } from "../conversation/glyphs";
+import { glyph, type GlyphName } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { AccountChange, Login } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
@@ -29,6 +29,18 @@ import type { VersionWindow } from "./version-window";
 
 /** The first release that answers about its updates (`RemoteCall::Updates`). */
 const ASKED_SINCE = "1.0.1-beta.3";
+
+/** One thing done to the machines chosen: its label, saying how many it
+ *  reaches when not all of them; its word on a phone's bar, where how many
+ *  is a small figure on its mark. */
+interface Verb {
+  act: string;
+  label: string;
+  word: string;
+  reach: number | null;
+  icon: GlyphName;
+  danger?: boolean;
+}
 
 export interface FramedOptions {
   words: MachinesWords;
@@ -82,14 +94,36 @@ export class FramedPanel {
     }
   }
 
+  /** Whether an update of several is planned or under way: its rows and
+   *  its start are the panel itself. */
+  get planning(): boolean {
+    return this.batch !== null;
+  }
+
   html(machines: Machine[], world: WorldNow): string {
     const { words, batch } = this.options;
     const local = this.options.updates?.state.peek() ?? null;
     const plan = this.batch;
     const title = plan ? `${words.framedTitle(machines.length)} ${batch.planTitle(plan.version)}` : words.framedTitle(machines.length);
-    return `<header class="panel-head"><h2 class="panel-title">${escape(title)}</h2></header>
+    const acts = this.acts(machines, world, local);
+    return `<header class="panel-head framed-head"><h2 class="panel-title">${escape(title)}</h2></header><button class="icon-button panel-close" type="button" data-act="framed-clear" aria-label="${escape(batch.clear)}" title="${escape(batch.clear)}">${glyph("close", 16)}</button>
       <ul class="framed-list">${machines.map((machine) => this.row(machine, world, local)).join("")}</ul>
-      <div class="framed-acts">${this.acts(machines, world, local)}</div>`;
+      ${acts ? `<div class="framed-acts">${acts}</div>` : ""}`;
+  }
+
+  /** What is done to them together as a bar of equal columns, a mark over
+   *  each word, for the bottom of a phone while several are chosen there. */
+  bar(machines: Machine[], world: WorldNow): string {
+    const local = this.options.updates?.state.peek() ?? null;
+    const verbs = this.verbs(machines, world, local);
+    return verbs.length
+      ? `<div class="sheet-acts framed-bar" style="--acts:${verbs.length}">${verbs
+          .map(
+            (verb) =>
+              `<button class="sheet-act${verb.danger ? " danger" : ""}" type="button" data-act="${verb.act}"${verb.reach === null ? "" : ` title="${escape(verb.label)}"`}><span class="framed-mark">${glyph(verb.icon, 18)}${verb.reach === null ? "" : `<span class="framed-reach">${verb.reach}</span>`}</span><span>${escape(verb.word)}</span></button>`,
+          )
+          .join("")}</div>`
+      : "";
   }
 
   /** A machine's row: its name and system, then what it runs and whether
@@ -148,7 +182,7 @@ export class FramedPanel {
   }
 
   /** What is done to them together; an update of several, its start, or
-   *  once through, how it went. */
+   *  once through, how it went. Letting them go is the head's close. */
   private acts(machines: Machine[], world: WorldNow, local: UpdateState | null): string {
     const { batch: words } = this.options;
     const button = (act: string, label: string, extra = "") => `<button class="text-button quiet-button" type="button" data-act="${act}"${extra}>${escape(label)}</button>`;
@@ -157,21 +191,32 @@ export class FramedPanel {
       return `<button class="sheet-go" type="button" data-act="framed-start"${plan.reaching ? "" : " disabled"}>${escape(words.start(plan.reaching))}</button>${button("framed-cancel", words.cancel)}`;
     }
     if (plan?.finished) return `<span class="framed-said">${escape(words.finished(plan.done, plan.failed))}</span>${button("framed-close", words.close)}`;
-    if (plan) return button("framed-clear", words.clear);
-    const counted = (label: string, reach: number) => (reach < machines.length ? words.some(label, reach) : label);
+    if (plan) return "";
+    return this.verbs(machines, world, local)
+      .map((verb) => button(verb.act, verb.label, verb.danger ? " data-danger" : ""))
+      .join("");
+  }
+
+  /** What may be done to them together, each saying how many it reaches
+   *  when not all of them. */
+  private verbs(machines: Machine[], world: WorldNow, local: UpdateState | null): Verb[] {
+    const { batch: words } = this.options;
+    const verb = (act: string, label: string, word: string, reach: number, icon: GlyphName, danger = false): Verb => {
+      const some = reach < machines.length;
+      return { act, label: some ? words.some(label, reach) : label, word, reach: some ? reach : null, icon, danger };
+    };
     const share = sharable(machines, world);
     const group = groupable(machines, world);
     const update = this.options.updates ? updatable(machines, world) : [];
     const ways = update.filter((machine) => machine.online !== false && !olderOf(machine, local));
     const remove = machines.filter((machine) => removerLoginOf(machine, world));
-    return [
-      share ? button("framed-share", counted(words.share, share.machines.length)) : "",
-      group.length ? button("framed-group", counted(words.group, group.length)) : "",
-      update.length ? button("framed-update", counted(words.update, update.length)) : "",
-      ways.length ? button("framed-ways", counted(words.ways, ways.length)) : "",
-      remove.length ? button("framed-remove", counted(words.remove, remove.length), " data-danger") : "",
-      button("framed-clear", words.clear),
-    ].join("");
+    const verbs: Verb[] = [];
+    if (share) verbs.push(verb("framed-share", words.share, words.bar.share, share.machines.length, "colleague"));
+    if (group.length) verbs.push(verb("framed-group", words.group, words.bar.group, group.length, "folder"));
+    if (update.length) verbs.push(verb("framed-update", words.update, words.bar.update, update.length, "update"));
+    if (ways.length) verbs.push(verb("framed-ways", words.ways, words.bar.ways, ways.length, "settings"));
+    if (remove.length) verbs.push(verb("framed-remove", words.remove, words.bar.remove, remove.length, "close", true));
+    return verbs;
   }
 
   /** The panel's own buttons; whether the press was one of them. */

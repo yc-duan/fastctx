@@ -1,7 +1,11 @@
 /* Machines chosen together (`machine-framed.ts`): a row each to open it by,
    solid, no lines, ending with what it runs or how an update of it goes;
    under them what is done to them together, and how an update of several
-   went once it is through. */
+   went once it is through. The head's close lets them go. */
+
+.framed-head {
+  padding-right: var(--space-6);
+}
 
 .framed-list {
   display: flex;
@@ -106,6 +110,36 @@
   padding: 0 var(--space-3);
   font-size: var(--size-small);
   color: var(--text-2);
+}
+
+/* On a phone, what is done to several chosen by a long press: the sheet's
+   row of marks over words, alone along the bottom. */
+.framed-bar .sheet-act.danger {
+  color: var(--wrong);
+}
+
+/* How many of those chosen it reaches, when not all: a small figure on
+   its mark. */
+.framed-mark {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.framed-reach {
+  position: absolute;
+  top: -6px;
+  left: calc(100% - 4px);
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  color: var(--text-2);
+  font-size: var(--size-small);
+  line-height: 17px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Setting how several update: those left, and why. */

@@ -47,18 +47,10 @@
   white-space: nowrap;
 }
 
-.mp-dot {
-  flex: none;
-  width: 9px;
-  height: 9px;
-  border-radius: var(--radius-full);
-  background: var(--text-2);
-}
-
-.mp-dot.offline,
-.mp-dot.unknown {
-  background: none;
-  box-shadow: inset 0 0 0 1.4px var(--text-3);
+/* Away, or not heard of: the name goes grey, as on the list; no dot. */
+.mp-name.offline,
+.mp-name.unknown {
+  color: var(--text-3);
 }
 
 .mp-rename,

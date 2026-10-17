@@ -79,7 +79,7 @@ export class JournalPage {
     this.body.innerHTML = `
       <header class="journal-intro">
         ${about ? `<p class="project-lede">${escape(about.text)}</p><p class="project-facts">${escape(words.edited(this.writer(about.by), words.day(new Date(about.at))))}</p>` : ""}
-        <p class="project-facts">${escape(words.shown(first, last, view.total))}<span class="sep">·</span>${escape(words.writers(view.writers))}</p>
+        <p class="project-facts">${escape(words.shown(first, last, view.total))}<span class="sep"></span>${escape(words.writers(view.writers))}</p>
       </header>
       ${first > 1 ? `<button class="earlier" type="button">${escape(words.earlier)}</button>` : ""}
       <ol class="entries">${this.shown.map((entry) => this.entry(entry)).join("")}</ol>`;
@@ -103,7 +103,7 @@ export class JournalPage {
     const head = [`${words.day(at)} ${words.clock(at)}`, `${who} ${words.onMachine(stamp.machine)}`, model]
       .filter(Boolean)
       .map(escape)
-      .join(`<span class="sep">·</span>`);
+      .join(`<span class="sep"></span>`);
     const cites = stamp.cites.length
       ? `<p class="entry-note">${escape(words.cites)} ${stamp.cites.map((id) => `<code>${escape(id)}</code>`).join(" ")}</p>`
       : "";

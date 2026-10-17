@@ -15,6 +15,11 @@ export interface BatchWords {
   ways: string;
   remove: string;
   clear: string;
+  /** Choosing several on a touch screen: every machine, or none again;
+   *  and the words of the bar along the bottom, one short word each. */
+  selectAll: string;
+  selectNone: string;
+  bar: { share: string; group: string; update: string; ways: string; remove: string };
   /** Why a row stands back: nothing here may be done to it. */
   notYours: string;
   /** A row's box in the list, a heading's, and choosing a box's machines
@@ -75,6 +80,9 @@ export const zhBatch: BatchWords = {
   ways: "更新方式",
   remove: "移除…",
   clear: "取消选择",
+  selectAll: "全选",
+  selectNone: "取消全选",
+  bar: { share: "共享", group: "分组", update: "更新", ways: "更新方式", remove: "移除" },
   notYours: "这台不归你管：只有它的主人和超级管理员能管它",
   pickOne: (name) => `选中 ${name}`,
   pickAll: (label) => `选中 ${label} 的全部机器`,
@@ -125,6 +133,9 @@ export const enBatch: BatchWords = {
   ways: "How they update",
   remove: "Remove…",
   clear: "Clear",
+  selectAll: "Select all",
+  selectNone: "Select none",
+  bar: { share: "Share", group: "Group", update: "Update", ways: "Settings", remove: "Remove" },
   notYours: "Not yours to manage: only its owner and the super administrator manage it",
   pickOne: (name) => `Choose ${name}`,
   pickAll: (label) => `Choose every machine in ${label}`,

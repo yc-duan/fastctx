@@ -475,6 +475,45 @@
     grid-template-areas: "name busy go";
     min-height: 48px;
   }
+
+  /* Choosing several, begun by a long press: every row's box comes first,
+     and a press ticks rather than goes in. */
+  .ml-list.selecting .ml-row {
+    grid-template-columns: 16px minmax(0, 1fr) auto 16px;
+    grid-template-areas:
+      "pick name busy go"
+      "pick about about go";
+  }
+
+  .ml-list.selecting .ml-fold {
+    grid-template-columns: 16px minmax(0, max-content) minmax(0, 1fr) auto 16px;
+    grid-template-areas: "pick name count busy go";
+  }
+
+  .ml-list.selecting .ml-add {
+    grid-template-areas: "pick name busy go";
+  }
+
+  .ml-list.selecting .ml-pick {
+    display: grid;
+    grid-area: pick;
+    opacity: 1;
+  }
+
+  .ml-list.selecting .ml-go {
+    visibility: hidden;
+  }
+
+  .ml-list.selecting .ml-row[data-depth]::before {
+    left: calc(var(--space-3) * 2 + 16px + (var(--depth) - 1) * var(--ml-step) + var(--ml-twisty) + var(--space-2) + var(--ml-icon) / 2);
+  }
+}
+
+/* A finger resting on a row chooses: the system's callout and selecting
+   its words give way. */
+.ml-list[data-own-press] .ml-row {
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 /* On a phone the head keeps the two marks without their names. */

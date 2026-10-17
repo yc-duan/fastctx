@@ -11,6 +11,7 @@ import type { NameProblem, WorldNow } from "../world/bridge";
 import type { NameSaid } from "./name-words";
 import { detailOf } from "./problem";
 import { isSuper, owns, type Machine } from "./reach";
+import { composing } from "../typing";
 
 /** Renames a machine `to`; `called` is what it is called now, when that is
  *  no longer the name it was found under (as when a renaming is undone). */
@@ -91,7 +92,7 @@ export class RenameField {
       this.timer = window.setTimeout(() => void this.check(), CHECK_MS);
     });
     this.input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.isComposing) {
+      if (event.key === "Enter" && !composing(event)) {
         event.preventDefault();
         event.stopPropagation();
         void this.submit();

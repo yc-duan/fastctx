@@ -38,6 +38,50 @@
   initial-value: 0;
 }
 
+/* What comes in and goes out (a sheet, a panel, a menu, a hint, a card)
+   moves these: an element that plays such a keyframe binds them, as
+   `opacity: var(--shown)` and `translate: var(--slide) var(--lift)`, each
+   at rest where it changes nothing. */
+@property --shown {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+@property --lift {
+  syntax: "<length-percentage>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --slide {
+  syntax: "<length-percentage>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --grow {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+/* How tall the shade is that the conversation fades into under its head
+   once scrolled (`app.css`). */
+@property --edge {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+/* How strongly a machine that can take the server shows while its new
+   place is chosen, breathing (`machines.css`). */
+@property --lit {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0.6;
+}
+
 /* A mark that something runs. */
 @keyframes pulse {
   0%,

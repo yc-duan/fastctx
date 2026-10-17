@@ -138,7 +138,7 @@ export class FastctxBlock {
       app ? escape(app === running ? words.withApp : words.app(app)) : "",
       subject.service === null ? "" : escape(this.options.kept(subject.service)),
     ].filter(Boolean);
-    const rows = [`<dt>${escape(words.fastctx)}</dt><dd class="fx-facts"><span>${facts.join(`<span class="sep">·</span>`)}</span></dd>`];
+    const rows = [`<dt>${escape(words.fastctx)}</dt><dd class="fx-facts"><span>${facts.join(`<span class="sep"></span>`)}</span></dd>`];
     const status = this.status(subject, state, running);
     if (status) rows.push(`<dt></dt><dd class="fx-status">${status}</dd>`);
     if (!machine.here && subject.manages && state && !this.older(subject) && machine.online !== false) {

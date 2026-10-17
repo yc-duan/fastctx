@@ -6,6 +6,7 @@
 // matches.
 
 import { escape } from "../conversation/prose";
+import { composing } from "../typing";
 
 /** At most this many names listed at once. */
 const SHOWN = 6;
@@ -73,7 +74,8 @@ export class NameSuggest {
   }
 
   private key(event: KeyboardEvent): void {
-    if (!this.shown.length) return;
+    // The input method's own keys pick its candidates, not a name.
+    if (!this.shown.length || composing(event)) return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const step = event.key === "ArrowDown" ? 1 : -1;

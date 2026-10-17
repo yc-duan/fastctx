@@ -249,6 +249,8 @@
   border-radius: var(--radius-l);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
   animation: panel-rise var(--fold) var(--fold-easing) both;
 }
 
@@ -376,6 +378,8 @@
 }
 
 .agents-pop.popover-leaving {
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
   animation: panel-settle var(--fold) var(--fold-easing) both;
 }
 
@@ -389,10 +393,12 @@
     max-height: 70dvh;
     padding-bottom: calc(var(--space-4) + var(--safe-bottom));
     border-radius: var(--radius-l) var(--radius-l) 0 0;
+    translate: var(--slide) var(--lift);
     animation-name: sheet-rise;
   }
 
   .agents-pop.popover-leaving {
+    translate: var(--slide) var(--lift);
     animation-name: sheet-sink;
   }
 

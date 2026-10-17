@@ -23,6 +23,9 @@ export interface CanvasOptions extends CameraOptions {
   /** A picture to look at: always fitted to its frame, never moved or
    *  zoomed, with no controls; its items can still be chosen. */
   still?: boolean;
+  /** The smallest scale the drawing fits itself at, so its names can be
+   *  read; asked for its whole (the fit control), it fits however small. */
+  fitFloor?: number;
 }
 
 /** A pointer down on the drawing. With a mouse the left button chooses
@@ -71,6 +74,10 @@ export class MapCanvas {
   private longPressed = false;
   private rect = this.element.getBoundingClientRect();
   private fitOnResize = true;
+  /** Whether the whole drawing was asked for, however small that makes it. */
+  private fitWhole = false;
+  /** What a drawing too large to read whole shows first (`setScene`). */
+  private focus: Bounds | null = null;
   private controlWidth = 0;
   private labelObstacles: readonly Bounds[] = [];
   private frameState: CanvasFrame;
@@ -165,7 +172,7 @@ export class MapCanvas {
     this.resize = new ResizeObserver(() => {
       this.rect = this.element.getBoundingClientRect();
       this.camera.resize(this.element.clientWidth, this.element.clientHeight);
-      if (this.fitOnResize) this.camera.fit(this.bounds, this.fitPadding());
+      if (this.fitOnResize) this.camera.fit(this.bounds, this.fitPadding(), this.floor(), this.focus);
       this.measure();
       this.schedule();
     });
@@ -211,10 +218,12 @@ export class MapCanvas {
   /** What the drawing holds. With `keepView`, the drawing stays where it is
    *  and is no longer fitted to what it holds: a change the person made in
    *  it, such as folding a part, must not move the rest under the pointer. */
-  setScene(items: readonly CanvasItem[], handles: readonly CanvasHandle[], bounds: Bounds, keepView = false): void {
+  /** `focus` is what of a drawing too large to read whole is shown first. */
+  setScene(items: readonly CanvasItem[], handles: readonly CanvasHandle[], bounds: Bounds, keepView = false, focus: Bounds | null = null): void {
     if (new Set(items.map(i => i.key)).size !== items.length || new Set(handles.map(h => h.key)).size !== handles.length) throw new Error("Duplicate canvas identity");
     this.items = items;
     this.bounds = bounds;
+    this.focus = focus;
     const kept = new Set(items.map(i => i.key));
     for (const [key, entry] of this.buttons) {
       if (!kept.has(key)) { entry.button.remove(); entry.label.remove(); this.buttons.delete(key); }
@@ -264,7 +273,7 @@ export class MapCanvas {
     if (this.pointed && !kept.has(this.pointed)) this.point(null, [0, 0]);
     // Until the drawing is moved by hand it stays fitted to what it holds.
     if (keepView) this.fitOnResize = false;
-    else if (this.fitOnResize && this.camera.view.width > 0) this.camera.fit(this.bounds, this.fitPadding());
+    else if (this.fitOnResize && this.camera.view.width > 0) this.camera.fit(this.bounds, this.fitPadding(), this.floor(), this.focus);
     if (this.draft) {
       const current = this.handles.get(this.draft.handle.key)?.handle;
       if (!current || current.source !== this.draft.handle.source || current.point.some((n, i) => n !== this.draft!.handle.point[i])) this.cancelDraft("changed");
@@ -275,7 +284,12 @@ export class MapCanvas {
   }
   pan(dx: number, dy: number): void { this.fitOnResize = false; this.camera.pan(dx, dy); this.schedule(); }
   zoom(factor: number, at?: Point): void { this.fitOnResize = false; this.camera.zoom(factor, at); this.schedule(); }
-  fit(): void { this.fitOnResize = true; this.camera.fit(this.bounds, this.fitPadding()); this.schedule(); }
+  /** The whole drawing in view, however small, kept so as it changes. */
+  fit(): void { this.fitOnResize = true; this.fitWhole = true; this.camera.fit(this.bounds, this.fitPadding()); this.schedule(); }
+  /** The scale the drawing fits itself no smaller than. */
+  private floor(): number {
+    return this.fitWhole || this.options.still ? 0 : (this.options.fitFloor ?? 0);
+  }
   /** Use after directly changing the camera, or changing CSS font metrics. */
   refresh(): void { this.measure(); this.schedule(); }
   dispose(): void {

@@ -10,6 +10,7 @@
 import type { Attached } from "./attach";
 import { glyph } from "./glyphs";
 import { escape } from "./prose";
+import { composing } from "../typing";
 
 export interface QueueWords {
   /** Above the queue: how many wait, and when they go. */
@@ -177,7 +178,7 @@ export class SendQueue {
     const target = event.target as HTMLElement;
     // Changing one: Enter keeps it, Escape leaves it as it was.
     if (target.classList.contains("queue-edit")) {
-      if (event.isComposing || event.keyCode === 229) return;
+      if (composing(event)) return;
       const key = target.closest<HTMLElement>("[data-key]")?.dataset.key;
       if (event.key === "Escape") {
         event.preventDefault();

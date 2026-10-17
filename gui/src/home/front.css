@@ -599,6 +599,8 @@
 .front-board.arriving .front-result,
 .front-board.arriving .front-rows > li,
 .front-board.arriving .front-jobs > li {
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
   animation: front-rise var(--slow) var(--fold-easing) both;
 }
 
@@ -616,8 +618,8 @@
 
 @keyframes front-rise {
   from {
-    opacity: 0;
-    transform: translateY(8px);
+    --shown: 0;
+    --lift: 8px;
   }
 }
 

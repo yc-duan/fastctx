@@ -37,13 +37,26 @@ export class CanvasCamera {
     const scale = Math.max(this.options.minScale, Math.min(this.options.maxScale, this.state.scale * factor));
     this.set({ ...this.state, scale, x: at[0] - world[0] * scale, y: at[1] - world[1] * scale });
   }
-  /** Padding is in CSS pixels, so fit leaves room for unscaled names and controls. */
-  fit(bounds: Bounds, padding: number): void {
-    const scale = Math.max(this.options.minScale, Math.min(this.options.maxScale,
-      (this.state.width - padding * 2) / Math.max(1, bounds.width), (this.state.height - padding * 2) / Math.max(1, bounds.height)));
+  /** Padding is in CSS pixels, so fit leaves room for unscaled names and controls.
+   *  No smaller than `floor`: each way a drawing is larger than its view at
+   *  that scale, it shows `focus` in the middle, or without one its start,
+   *  as a page is read, never past its own edges; each way it fits, it is
+   *  centred. */
+  fit(bounds: Bounds, padding: number, floor = 0, focus: Bounds | null = null): void {
+    const whole = Math.min((this.state.width - padding * 2) / Math.max(1, bounds.width), (this.state.height - padding * 2) / Math.max(1, bounds.height));
+    const scale = Math.max(this.options.minScale, Math.min(this.options.maxScale, Math.max(whole, floor)));
+    const axis = (start: number, size: number, view: number, near: number | undefined, far: number | undefined): number => {
+      if (size * scale <= view - padding * 2) return view / 2 - (start + size / 2) * scale;
+      const first = padding - start * scale;
+      const last = view - padding - (start + size) * scale;
+      const wanted = near === undefined || far === undefined
+        ? first
+        : far * scale <= view - padding * 2 ? view / 2 - (near + far / 2) * scale : padding - near * scale;
+      return Math.min(first, Math.max(last, wanted));
+    };
     this.set({ ...this.state, scale,
-      x: this.state.width / 2 - (bounds.x + bounds.width / 2) * scale,
-      y: this.state.height / 2 - (bounds.y + bounds.height / 2) * scale });
+      x: axis(bounds.x, bounds.width, this.state.width, focus?.x, focus?.width),
+      y: axis(bounds.y, bounds.height, this.state.height, focus?.y, focus?.height) });
   }
   reveal(point: Point, margin: number): void {
     const [x, y] = this.toScreen(point);

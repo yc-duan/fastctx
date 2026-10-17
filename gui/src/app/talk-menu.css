@@ -214,6 +214,8 @@
   border-radius: var(--radius-m);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
   animation: panel-rise var(--fold) var(--fold-easing) both;
 }
 
@@ -358,12 +360,13 @@
   max-height: 70dvh;
   padding: var(--space-2) var(--space-3) calc(var(--space-4) + var(--safe-bottom));
   border-radius: var(--radius-l) var(--radius-l) 0 0;
+  translate: var(--slide) var(--lift);
   animation: talk-menu-rise var(--fold) var(--fold-easing) both;
 }
 
 @keyframes talk-menu-rise {
   from {
-    transform: translateY(100%);
+    --lift: 100%;
   }
 }
 
@@ -402,46 +405,51 @@
   inset: 0;
   z-index: 39;
   background: var(--scrim);
+  opacity: var(--shown);
   animation: talk-menu-shade-in var(--fold) ease both;
 }
 
 @keyframes talk-menu-shade-in {
   from {
-    opacity: 0;
+    --shown: 0;
   }
 }
 
 /* Put away, it fades where it stands, or sinks back down as a sheet. */
 .talk-menu.leaving {
   pointer-events: none;
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
   animation: talk-menu-leave var(--quick) ease both;
 }
 
 .talk-menu.as-sheet.leaving {
+  translate: var(--slide) var(--lift);
   animation: talk-menu-sink var(--fold) var(--fold-easing) both;
 }
 
 .talk-menu-shade.leaving {
   pointer-events: none;
+  opacity: var(--shown);
   animation: talk-menu-shade-out var(--fold) ease both;
 }
 
 @keyframes talk-menu-leave {
   to {
-    opacity: 0;
-    transform: translateY(4px);
+    --shown: 0;
+    --lift: 4px;
   }
 }
 
 @keyframes talk-menu-sink {
   to {
-    transform: translateY(100%);
+    --lift: 100%;
   }
 }
 
 @keyframes talk-menu-shade-out {
   to {
-    opacity: 0;
+    --shown: 0;
   }
 }
 
@@ -475,6 +483,8 @@
 }
 
 .talk-toast.talk-toast-in {
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
   animation: panel-rise var(--fold) var(--fold-easing) both;
 }
 

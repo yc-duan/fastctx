@@ -1572,6 +1572,9 @@
   border-radius: var(--radius-full);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
+  scale: var(--grow);
   animation: sheet-in var(--enter) var(--fold-easing) both;
 }
 
@@ -1783,6 +1786,9 @@ a.bubble-file:hover {
 }
 
 .picture-viewer[open] .pv-card {
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
+  scale: var(--grow);
   animation: sheet-in var(--enter) var(--fold-easing) both;
 }
 
@@ -1930,6 +1936,7 @@ a.bubble-file:hover {
   }
 
   .picture-viewer[open] .pv-card {
+    translate: var(--slide) var(--lift);
     animation-name: sheet-rise;
   }
 }
@@ -2066,6 +2073,7 @@ a.bubble-file:hover {
   bottom: 0;
   padding: var(--space-3) var(--space-3) calc(var(--space-4) + var(--safe-bottom));
   border-radius: var(--radius-l) var(--radius-l) 0 0;
+  translate: var(--slide) var(--lift);
   animation: file-menu-rise var(--enter) var(--ease-out) both;
 }
 
@@ -2075,7 +2083,7 @@ a.bubble-file:hover {
 
 @keyframes file-menu-rise {
   from {
-    transform: translateY(100%);
+    --lift: 100%;
   }
 }
 

@@ -227,6 +227,8 @@
   border-radius: var(--radius-l);
   background: var(--fill);
   text-align: center;
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
   animation: removal-rise var(--settle) var(--ease-out);
 }
 

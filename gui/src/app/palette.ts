@@ -4,6 +4,7 @@
 
 import { escape } from "../conversation/prose";
 import type { PaletteWords } from "./words";
+import { composing } from "../typing";
 
 export interface PaletteItem {
   group: string;
@@ -65,7 +66,7 @@ export class Palette {
         const step = event.key === "ArrowDown" ? 1 : -1;
         this.chosen = (this.chosen + step + this.shown.length) % Math.max(1, this.shown.length);
         this.mark();
-      } else if (event.key === "Enter" && !event.isComposing) {
+      } else if (event.key === "Enter" && !composing(event)) {
         event.preventDefault();
         this.run(this.chosen);
       }

@@ -117,6 +117,22 @@ export function foldedOf(nodes: readonly MapNode[], chosen: ReadonlyMap<string, 
 const LEGIBLE = 0.85;
 const MOST_GROWN = 2;
 
+/** The scale the drawing fits itself no smaller than: its machines' names
+ *  about twelve pixels high. */
+const READABLE = 0.8;
+
+/** Room round a hub's point for its name over it, in the drawing's units. */
+const HUB_ROOM = 64;
+
+/** The smallest box holding all of `boxes`. */
+function enclosing(boxes: readonly Bounds[]): Bounds {
+  const x = Math.min(...boxes.map((box) => box.x));
+  const y = Math.min(...boxes.map((box) => box.y));
+  const right = Math.max(...boxes.map((box) => box.x + box.width));
+  const bottom = Math.max(...boxes.map((box) => box.y + box.height));
+  return { x, y, width: right - x, height: bottom - y };
+}
+
 /** Zoom levels: below the first the drawing is far, above the second near. */
 const LEVELS: [number, number] = [0.55, 1.2];
 const SVG = "http://www.w3.org/2000/svg";
@@ -174,6 +190,7 @@ export class MachineMap {
       still: options.still ?? false,
       minScale: 1 / 16,
       maxScale: 4,
+      fitFloor: READABLE,
       levels: LEVELS,
       validTarget: () => false,
       event: (event) => options.event(event),
@@ -448,7 +465,14 @@ export class MachineMap {
     const folds = [...scene.folded].sort().join("|");
     const folding = this.placedFolds !== null && folds !== this.placedFolds;
     this.placedFolds = folds;
-    this.surface.setScene(items, [], fitted, folding);
+    // Too large to read whole, the drawing shows its hubs and the account's
+    // own machines first; the rest is a drag away.
+    const firsts = [
+      ...[...placement.hubs.values()].map(([x, y]): Bounds => ({ x: x - HUB_ROOM, y: y - HUB_ROOM, width: HUB_ROOM * 2, height: HUB_ROOM * 2 })),
+      ...placement.groups.filter((group) => group.kind === "mine").map((group) => group.box),
+    ];
+    const focus = this.narrow || !firsts.length ? null : enclosing(firsts);
+    this.surface.setScene(items, [], fitted, folding, focus);
     const selected = scene.selected && items.some((item) => item.key === scene.selected) ? scene.selected : null;
     if (this.surface.selection !== selected) this.surface.setSelection(selected);
   }

@@ -214,6 +214,7 @@
   justify-content: center;
   padding: calc(var(--safe-top) + 52px) var(--gutter) calc(var(--safe-bottom) + var(--space-8));
   background: var(--bg);
+  opacity: var(--shown);
   animation: film-theater-in var(--fold) var(--fold-easing) both;
 }
 
@@ -625,6 +626,7 @@
   gap: var(--space-4);
   padding: var(--space-6) var(--gutter);
   background: var(--scrim-film);
+  opacity: var(--shown);
   animation: film-theater-in var(--fold) var(--fold-easing) both;
 }
 
@@ -648,6 +650,6 @@
 
 @keyframes film-theater-in {
   from {
-    opacity: 0;
+    --shown: 0;
   }
 }

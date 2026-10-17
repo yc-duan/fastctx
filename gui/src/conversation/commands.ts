@@ -11,6 +11,7 @@
 import { layerOpened } from "../app/back";
 import { escape } from "./prose";
 import type { CommandArguments, CommandOffer, ControlKind, ModelOffer, Offers } from "../world/control";
+import { composing } from "../typing";
 
 export interface CommandWords {
   world: string;
@@ -147,7 +148,7 @@ export class Menu<T> {
       this.draw("");
       return true;
     }
-    if ((event.key === "Enter" || event.key === "Tab") && !event.shiftKey && !event.isComposing) {
+    if ((event.key === "Enter" || event.key === "Tab") && !event.shiftKey && !composing(event)) {
       const item = this.items[this.chosen];
       if (!item) return false;
       this.pick(item);

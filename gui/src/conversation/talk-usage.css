@@ -67,6 +67,7 @@
     max-height: 86dvh;
     padding: var(--space-4) var(--space-5) calc(var(--space-5) + var(--safe-bottom));
     border-radius: var(--radius-l) var(--radius-l) 0 0;
+    translate: var(--slide) var(--lift);
     animation-name: sheet-rise;
   }
 }

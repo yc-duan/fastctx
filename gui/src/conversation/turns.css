@@ -181,6 +181,7 @@
 .turn-info:focus-visible .turn-info-card,
 .turn-info:focus .turn-info-card {
   display: grid;
+  opacity: var(--shown);
   animation: paper-in var(--quick) ease both;
 }
 
@@ -238,13 +239,13 @@
 
 @keyframes sheet-rise {
   from {
-    transform: translateY(100%);
+    --lift: 100%;
   }
 }
 
 @keyframes sheet-scrim {
   from {
-    opacity: 0;
+    --shown: 0;
   }
 }
 

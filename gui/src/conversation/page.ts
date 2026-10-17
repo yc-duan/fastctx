@@ -47,6 +47,7 @@ import { detailOf } from "../app/problem";
 import { DraftFit } from "./fit-draft";
 import { Popover } from "./popover";
 import { Steady } from "../app/steady";
+import { composing } from "../typing";
 
 /** How many events the page holds at most, and how many its latest part
  *  holds before what comes before its newest turns is let go, down to how
@@ -183,6 +184,19 @@ export interface PageOptions {
 /** How many times what a conversation offers is asked again after asking
  *  failed, before only a turn's end asks again. */
 const OFFERS_TRIES = 5;
+
+/** How long after the reader's own wheel, finger, key or scroll bar the
+ *  view is theirs: nothing keeps it at the newest meanwhile. */
+const READING_MS = 150;
+
+/** Whether something between `target` and `region` scrolls up by itself
+ *  before the region would. */
+function scrollsUpWithin(target: Element | null, region: HTMLElement): boolean {
+  for (let at = target; at && at !== region; at = at.parentElement) {
+    if (at.scrollTop > 0 && at.scrollHeight > at.clientHeight && /(auto|scroll)/.test(getComputedStyle(at).overflowY)) return true;
+  }
+  return false;
+}
 
 export class ConversationPage {
   readonly element: HTMLElement;
@@ -516,7 +530,7 @@ export class ConversationPage {
       }
       // Enter sends where there is a keyboard; on a touch screen it is a new
       // line, and the button sends.
-      if (event.key === "Enter" && !event.shiftKey && !event.isComposing && !matchMedia("(pointer: coarse)").matches) {
+      if (event.key === "Enter" && !event.shiftKey && !composing(event) && !matchMedia("(pointer: coarse)").matches) {
         event.preventDefault();
         this.submit();
       }
@@ -526,25 +540,65 @@ export class ConversationPage {
     // The region itself shrinks when the composer grows (an attachment, a
     // longer draft): the same holds.
     const keep = new ResizeObserver(() => {
-      if (this.following) this.scroller.scrollTop = this.scroller.scrollHeight;
+      if (this.following && !this.reading()) this.scroller.scrollTop = this.scroller.scrollHeight;
     });
     keep.observe(main);
     keep.observe(this.scroller);
-    // Only a scroll the reader made says whether they still follow: one
-    // that comes with the region or its content changing size (the
-    // browser keeping the view anchored) does not.
+    // A wheel, a finger, a key or the scroll bar moving the view says the
+    // reader scrolls: upward, they stop following at once, and for a moment
+    // after any of them nothing pulls the view back to the foot. While words
+    // stream in, the browser merges the reader's scroll with the one that
+    // kept the newest in view, so the scroll alone cannot tell them apart.
+    const reading = () => {
+      this.readAt = performance.now();
+    };
+    const up = () => {
+      reading();
+      this.following = false;
+      this.drawLatest();
+    };
+    // A wheel over something in it that scrolls up by itself (a long code
+    // block) moves that, not the view; keys in a field move its caret.
+    this.scroller.addEventListener(
+      "wheel",
+      (event) => (event.deltaY < 0 && !scrollsUpWithin(event.target as Element, this.scroller) ? up() : reading()),
+      { passive: true },
+    );
+    this.scroller.addEventListener("touchmove", reading, { passive: true });
+    // The scroll bar is the region itself, not anything in it.
+    this.scroller.addEventListener("pointerdown", (event) => {
+      if (event.target === this.scroller) reading();
+    });
+    this.scroller.addEventListener("keydown", (event) => {
+      if ((event.target as Element).closest("input, textarea, select, [contenteditable]")) return;
+      if (event.key === "PageUp" || event.key === "ArrowUp" || event.key === "Home") up();
+      else if (event.key === "PageDown" || event.key === "ArrowDown" || event.key === "End" || event.key === " ") reading();
+    });
+    // Otherwise only a scroll the reader made says whether they still
+    // follow: one that comes with the region or its content changing size
+    // (the browser keeping the view anchored) does not.
     let sized = { client: 0, content: 0 };
     this.scroller.addEventListener("scroll", () => {
       const { scrollTop, clientHeight, scrollHeight } = this.scroller;
       this.element.classList.toggle("scrolled", scrollTop > 0);
-      if (clientHeight !== sized.client || scrollHeight !== sized.content) {
-        sized = { client: clientHeight, content: scrollHeight };
+      const resized = clientHeight !== sized.client || scrollHeight !== sized.content;
+      sized = { client: clientHeight, content: scrollHeight };
+      if (resized && !this.reading()) {
         if (this.following) this.scroller.scrollTop = scrollHeight;
         return;
       }
       this.following = scrollTop + clientHeight >= scrollHeight - 48;
       this.drawLatest();
     });
+  }
+
+  /** When the reader last moved the view themselves. */
+  private readAt = -Infinity;
+
+  /** Whether the reader is moving the view now: a moment after their last
+   *  wheel, finger, key or scroll bar. */
+  private reading(): boolean {
+    return performance.now() - this.readAt < READING_MS;
   }
 
   /** The way back to the newest, shown when the reader is far from it: more
@@ -660,7 +714,7 @@ export class ConversationPage {
     this.finder.refresh();
     this.drawState();
     this.drawAction();
-    if (follow) this.scroller.scrollTop = this.scroller.scrollHeight;
+    if (follow && !this.reading()) this.scroller.scrollTop = this.scroller.scrollHeight;
     this.drawLatest();
     this.bound();
   }
@@ -1224,7 +1278,7 @@ export class ConversationPage {
       this.drawState();
     };
     field.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.isComposing) {
+      if (event.key === "Enter" && !composing(event)) {
         event.preventDefault();
         finish(true);
         this.name.focus();

@@ -402,8 +402,7 @@ a.text-button {
 }
 
 .side-account-sep {
-  margin: 0 5px;
-  color: var(--text-3);
+  margin: 0 0.5em;
 }
 
 .side-account-body {

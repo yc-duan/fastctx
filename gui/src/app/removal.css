@@ -117,6 +117,8 @@
   align-items: flex-start;
   gap: var(--space-3);
   min-height: 0;
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
   animation: removal-rise var(--settle) var(--ease-out);
 }
 
@@ -127,8 +129,8 @@
 
 @keyframes removal-rise {
   from {
-    opacity: 0;
-    transform: translateY(6px);
+    --shown: 0;
+    --lift: 6px;
   }
 }
 
@@ -317,12 +319,13 @@
 }
 
 .removal-button.armed {
+  translate: 0 var(--lift);
   animation: removal-armed var(--armed) ease-in-out infinite;
 }
 
 @keyframes removal-armed {
   50% {
-    transform: translateY(-1px);
+    --lift: -1px;
     box-shadow: 0 4px 14px color-mix(in srgb, var(--wrong) 40%, transparent);
   }
 }

@@ -65,6 +65,7 @@ import { FindContent, displayedDiff, toolText } from "./find-content";
 import { clockSays, sections, stretchSays, thoughtOnly, thoughtText, thoughtTook } from "./stretch-says";
 import { displayedText, htmlText as displayedTextHtml, type TextMatch } from "./find-text";
 import { GAP, type FindChanges, type FindMatch, type FindPart } from "./find-index";
+import { composing } from "../typing";
 
 export interface Context {
   words: Words;
@@ -325,7 +326,7 @@ export class ConversationView {
     root.addEventListener("keydown", (event) => {
       if (!this.own(event)) return;
       const field = (event.target as HTMLElement).closest(".ask-card .ask-input, .question-card .ask-input");
-      if (!field || event.key !== "Enter" || event.isComposing) return;
+      if (!field || event.key !== "Enter" || composing(event)) return;
       event.preventDefault();
       field.closest(".ask-card, .question-card")?.querySelector<HTMLButtonElement>(".ask-primary")?.click();
     });

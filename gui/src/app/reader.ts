@@ -164,7 +164,7 @@ export class ReaderPage implements Page {
   private async read(): Promise<void> {
     const { words, machine, path, tail } = this.options;
     const asked = ++this.asked;
-    this.facts.innerHTML = `<span class="fact">${escape(machine)}</span><span class="sep">·</span><span class="fact reader-path">${escape(path)}</span><span class="sep">·</span><span class="fact">${escape(words.reading)}</span>`;
+    this.facts.innerHTML = `<span class="fact">${escape(machine)}</span><span class="sep"></span><span class="fact reader-path">${escape(path)}</span><span class="sep"></span><span class="fact">${escape(words.reading)}</span>`;
     const ending = /\.([a-z0-9]+)$/i.exec(path)?.[1]?.toLowerCase() ?? "";
     const held = this.hold(asked);
     if (ending === "pdf") return this.readPdf(asked, held);
@@ -258,7 +258,7 @@ export class ReaderPage implements Page {
       escape(words.modified(this.options.ago(new Date(info.file.modified)))),
       info.offset > 0 ? escape(words.tail(words.bytes(info.length), size)) : "",
     ].filter(Boolean);
-    this.facts.innerHTML = facts.map((fact) => `<span class="fact">${fact}</span>`).join(`<span class="sep">·</span>`);
+    this.facts.innerHTML = facts.map((fact) => `<span class="fact">${fact}</span>`).join(`<span class="sep"></span>`);
   }
 
   private draw(read: TextRead | (BytesRead & { image: string })): void {

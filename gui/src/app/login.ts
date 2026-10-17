@@ -26,6 +26,7 @@ import { RemoteWorld, type RemoteSeams } from "./remote-world";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import type { Store } from "./store";
+import { composing } from "../typing";
 
 /** An address of this computer another might reach it at. */
 export interface HereAddress {
@@ -174,7 +175,7 @@ export class LoginPage implements Page {
     // A code is one line however it wraps: Enter goes on.
     this.element.addEventListener("keydown", (event) => {
       const field = event.target as HTMLElement;
-      if (event.key !== "Enter" || event.shiftKey || event.isComposing || !field.matches("[name=code]")) return;
+      if (event.key !== "Enter" || event.shiftKey || composing(event) || !field.matches("[name=code]")) return;
       event.preventDefault();
       field.closest("form")?.requestSubmit();
     });
@@ -604,7 +605,8 @@ export class LoginPage implements Page {
   /** This device's logins now, as `hub/account`, the store asked first. */
   private async loginsNow(): Promise<Set<string>> {
     await this.options.store.refresh();
-    return new Set(loginsOf(this.options.store.world.peek()?.accounts).map((login) => `${login.hub}/${login.account}`));
+    // Every network this device is in: the one shown may not be the one joined.
+    return new Set(loginsOf(this.options.store.whole.peek()?.accounts).map((login) => `${login.hub}/${login.account}`));
   }
 
   /** After an error, whether this device is in all the same: an answer
@@ -614,7 +616,7 @@ export class LoginPage implements Page {
    *  such login. */
   private async inAnyway(before: Set<string>, account: string | null): Promise<LoggedIn | null> {
     await this.options.store.refresh();
-    const world = this.options.store.world.peek();
+    const world = this.options.store.whole.peek();
     const login = loginsOf(world?.accounts).find(
       (one) => !before.has(`${one.hub}/${one.account}`) && (!account || one.account === account),
     );

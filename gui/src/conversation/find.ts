@@ -9,6 +9,7 @@ import { glyph } from "./glyphs";
 import { escape } from "./prose";
 import { FindIndex, type FarHits, type FarMatch, type FindChanges, type FindMatch } from "./find-index";
 import { FindHighlights } from "./find-highlights";
+import { composing } from "../typing";
 
 interface FindView {
   findChanges(): FindChanges;
@@ -88,7 +89,7 @@ export class Finder {
     this.count = this.element.querySelector<HTMLElement>(".find-count")!;
     this.input.addEventListener("input", () => this.search(true));
     this.input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.isComposing) {
+      if (event.key === "Enter" && !composing(event)) {
         event.preventDefault();
         void this.step(event.shiftKey ? -1 : 1);
       }

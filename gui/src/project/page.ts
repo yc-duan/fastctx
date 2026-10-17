@@ -187,7 +187,7 @@ export class ProjectPage {
           <span class="page-link-body">
             <span class="page-link-title">${escape(current.title || page)}${current.withdrawn ? `<span class="tag">${escape(words.withdrawnMark)}</span>` : ""}</span>
             ${current.description ? `<span class="page-link-about">${escape(current.description)}</span>` : ""}
-            <span class="page-link-facts">${facts.map(escape).join(`<span class="sep">·</span>`)}</span>
+            <span class="page-link-facts">${facts.map(escape).join(`<span class="sep"></span>`)}</span>
           </span>
         </a></li>`;
       })

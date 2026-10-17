@@ -20,7 +20,7 @@ export function askLanguage(first: Language): Promise<Language> {
   const page = document.createElement("main");
   page.className = "first-language";
   page.innerHTML = `${MARK}
-    <h1 class="first-title" lang="zh-CN">选择语言 <span lang="en">· Choose a language</span></h1>
+    <h1 class="first-title" lang="zh-CN">选择语言<span class="first-title-en" lang="en">Choose a language</span></h1>
     <div class="first-choices" role="radiogroup" aria-label="Language / 语言">${order
       .map((language) => `<button class="first-choice" type="button" role="radio" aria-checked="false" data-language="${language}" lang="${language === "zh" ? "zh-CN" : "en"}">${NAMES[language]}</button>`)
       .join("")}</div>`;

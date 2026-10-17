@@ -14,6 +14,8 @@
   border-radius: var(--radius-l);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
   animation: panel-rise var(--fold) var(--fold-easing) both;
 }
 
@@ -138,8 +140,8 @@
 
 @keyframes panel-rise {
   from {
-    opacity: 0;
-    transform: translateY(6px);
+    --shown: 0;
+    --lift: 6px;
   }
 }
 
@@ -152,6 +154,7 @@
     width: auto;
     padding: var(--space-4) var(--space-5) calc(var(--space-5) + var(--safe-bottom));
     border-radius: var(--radius-l) var(--radius-l) 0 0;
+    translate: var(--slide) var(--lift);
     animation-name: sheet-rise;
   }
 
@@ -167,6 +170,7 @@
     inset: 0;
     z-index: 4;
     background: var(--scrim);
+    opacity: var(--shown);
     animation: sheet-scrim var(--fold) ease both;
   }
 
@@ -228,6 +232,8 @@
   border-radius: var(--radius-l);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
   animation: panel-rise var(--fold) var(--fold-easing) both;
 }
 
@@ -418,6 +424,7 @@ button.job-what:hover .job-command {
     max-height: 60dvh;
     padding-bottom: calc(var(--space-4) + var(--safe-bottom));
     border-radius: var(--radius-l) var(--radius-l) 0 0;
+    translate: var(--slide) var(--lift);
     animation-name: sheet-rise;
   }
 
@@ -455,13 +462,15 @@ button.job-what:hover .job-command {
 .model-panel.popover-leaving,
 .jobs-pop.popover-leaving,
 .usage-pop.popover-leaving {
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
   animation: panel-settle var(--fold) var(--fold-easing) both;
 }
 
 @keyframes panel-settle {
   to {
-    opacity: 0;
-    transform: translateY(6px);
+    --shown: 0;
+    --lift: 6px;
   }
 }
 
@@ -469,23 +478,25 @@ button.job-what:hover .job-command {
   .model-panel.popover-leaving,
   .jobs-pop.popover-leaving,
   .usage-pop.popover-leaving {
+    translate: var(--slide) var(--lift);
     animation-name: sheet-sink;
   }
 
   .composer-dock:has(.popover-leaving)::after {
+    opacity: var(--shown);
     animation: sheet-scrim-out var(--fold) ease both;
   }
 }
 
 @keyframes sheet-sink {
   to {
-    transform: translateY(100%);
+    --lift: 100%;
   }
 }
 
 @keyframes sheet-scrim-out {
   to {
-    opacity: 0;
+    --shown: 0;
   }
 }
 

@@ -503,7 +503,7 @@ export class MachinePage implements Page {
     this.put(
       "heading",
       this.heading,
-      `<span class="mp-dot ${state.kind}" title="${escape(state.said)}"></span><h1 class="page-title mp-name">${escape(machine.written)}</h1>${rename}${
+      `<h1 class="page-title mp-name ${state.kind}" title="${escape(state.said)}">${escape(machine.written)}</h1>${rename}${
         former.length ? `<span class="mp-former" tabindex="0" title="${escape(words.formerly(former))}">${glyph("history", 14)}</span>` : ""
       }${late.length ? `<span class="mp-late" tabindex="0" title="${escape(words.notFollowed(late))}">${glyph("relay", 14)}</span>` : ""}<span class="mp-tags">${tags}</span>`,
     );
@@ -561,7 +561,7 @@ export class MachinePage implements Page {
       "id",
       this.id,
       `<span class="mp-id-mark" aria-hidden="true">${glyph(form, 28)}</span><div class="mp-id-text"><p class="mp-id-system"${stats?.kernel ? ` title="${escape(stats.kernel)}"` : ""}>${escape(system)}</p><p class="mp-id-hardware">${bits
-        .map((bit, at) => `<span class="mp-id-bit">${escape(bit)}${at < bits.length - 1 ? `<span class="sep">·</span>` : ""}</span>`)
+        .map((bit, at) => `<span class="mp-id-bit">${escape(bit)}${at < bits.length - 1 ? `<span class="sep"></span>` : ""}</span>`)
         .join("")}</p></div>${right}`,
     );
   }
@@ -692,7 +692,7 @@ export class MachinePage implements Page {
             <div class="mp-net-head"><span class="mp-net-name" title="${escape(card.name)}">${escape(card.name)}</span>${card.speed ? `<span class="tag">${escape(bits(card.speed))}</span>` : ""}${
               card.hardware ? "" : `<span class="tag mp-tag-quiet">${escape(words.virtualCard)}</span>`
             }${card.up ? `<span class="mp-net-rates"><span class="mp-rate down"><span class="mp-arrow" aria-hidden="true">↓</span><span class="mp-rate-value"></span></span><span class="mp-rate up"><span class="mp-arrow" aria-hidden="true">↑</span><span class="mp-rate-value"></span></span></span>` : `<span class="mp-net-off">${escape(words.cardOff)}</span>`}</div>
-            ${(card.addresses ?? []).length ? `<p class="mp-net-at">${(card.addresses ?? []).map(escape).join(`<span class="sep">·</span>`)}</p>` : ""}
+            ${(card.addresses ?? []).length ? `<p class="mp-net-at">${(card.addresses ?? []).map(escape).join(`<span class="sep"></span>`)}</p>` : ""}
             ${card.up ? `<p class="mp-net-moved"></p>` : ""}
           </li>`,
         )
@@ -1284,7 +1284,7 @@ function directSaid(machine: Machine, world: WorldNow, words: MachinesWords): st
     const peer = name(one.a === key ? one.b : one.a);
     return one.up ? `<span class="direct-up">${escape(words.directUp(peer, one.ms))}</span>` : `<span class="direct-down">${escape(words.directDown(peer, one.why))}</span>`;
   });
-  return `<div class="panel-direct"><span class="panel-direct-list">${said.join(`<span class="sep">·</span>`)}</span>${
+  return `<div class="panel-direct"><span class="panel-direct-list">${said.join(`<span class="sep"></span>`)}</span>${
     at.length ? `<p class="panel-direct-at">${escape(words.takesDirectAt(at.join("、")))}</p>` : ""
   }</div>`;
 }

@@ -62,12 +62,16 @@ for (const path of files.filter((one) => one.endsWith(".css"))) {
   });
 }
 
-// Words: no fact strung on a middle dot. Specimens and stand-ins may.
+// Words: no fact strung on a middle dot, written in words or set between
+// spans. Specimens and stand-ins may; so may Claude's own words quoted,
+// the drawing's handle, whose mark is a dot, and a gauge's typing noise.
 for (const path of files.filter((one) => one.endsWith(".ts") && !/specimen/.test(one))) {
   readFileSync(path, "utf8")
     .split("\n")
     .forEach((line, index) => {
-      if (line.includes(" · ") && !/Please run \/login/.test(line)) say(path, index + 1, `a middle dot: ${line.trim().slice(0, 100)}`);
+      if (/^\s*(\/\/|\*)/.test(line) || !line.includes("·")) return;
+      if (/Please run \/login|textContent = "·"|talk-gauge-noise/.test(line)) return;
+      say(path, index + 1, `a middle dot: ${line.trim().slice(0, 100)}`);
     });
 }
 

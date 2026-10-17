@@ -173,6 +173,8 @@
   border-radius: var(--radius-l);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
   animation: panel-rise var(--fold) var(--fold-easing) both;
 }
 
@@ -238,6 +240,7 @@
     max-height: 72dvh;
     padding: var(--space-4) var(--space-5) calc(var(--space-5) + var(--safe-bottom));
     border-radius: var(--radius-l) var(--radius-l) 0 0;
+    translate: var(--slide) var(--lift);
     animation-name: sheet-rise;
   }
 
@@ -303,6 +306,7 @@
     inset: 0;
     z-index: 4;
     background: var(--scrim);
+    opacity: var(--shown);
     animation: sheet-scrim var(--fold) ease both;
   }
 }

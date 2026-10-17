@@ -11,6 +11,7 @@ import type { TalkActs } from "./talk-acts";
 import type { TalkMenu } from "./talk-menu";
 import type { TalkMenuWords } from "./talk-menu-words";
 import type { RowActs } from "./talk-row";
+import { composing } from "../typing";
 
 /** How long a finger rests on a row before its menu rises, as Android
  *  counts a long press. */
@@ -179,7 +180,7 @@ export class TalkList {
       this.options.redraw();
     };
     field.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.isComposing) {
+      if (event.key === "Enter" && !composing(event)) {
         event.preventDefault();
         finish(true);
       } else if (event.key === "Escape") {

@@ -69,6 +69,7 @@ import { DraftFit } from "../conversation/fit-draft";
 import { Steady } from "./steady";
 import type { Store } from "./store";
 import type { FocusWords, NewTalkWords } from "./words";
+import { composing } from "../typing";
 
 export interface Begun {
   agent: string;
@@ -334,7 +335,7 @@ export class NewTalk {
       this.drawStart();
     });
     this.input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.shiftKey && !event.isComposing && !coarse()) {
+      if (event.key === "Enter" && !event.shiftKey && !composing(event) && !coarse()) {
         event.preventDefault();
         void this.submit();
       }

@@ -12,12 +12,26 @@
 .conversation-page > .page-head {
   position: relative;
   z-index: 2;
-  box-shadow: 0 1px 0 transparent;
-  transition: box-shadow var(--hover) ease;
 }
 
-.conversation-page.scrolled > .page-head {
-  box-shadow: 0 1px 0 var(--hairline);
+/* What scrolls up to the head fades into it rather than being cut, as it
+   fades out beneath the composer; the fade grows in once the conversation
+   has left its top. A shade over the words, not a mask on them: masked,
+   the whole conversation would lose its subpixel smoothing on Windows. */
+.conversation-page > .page-head::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: var(--edge);
+  background: linear-gradient(to bottom, var(--bg), transparent);
+  pointer-events: none;
+  transition: --edge var(--hover) ease;
+}
+
+.conversation-page.scrolled > .page-head::after {
+  --edge: var(--space-6);
 }
 
 .talk-scroller {
@@ -189,6 +203,8 @@ button.who-seal:hover {
   box-shadow: var(--shadow-float);
   cursor: pointer;
   transform: translateX(-50%);
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
   animation: to-latest-in var(--enter) ease-out;
   transition: color var(--hover) ease;
 }
@@ -203,7 +219,10 @@ button.who-seal:hover {
 }
 
 @keyframes to-latest-in {
-  from { opacity: 0; transform: translate(-50%, 6px); }
+  from {
+    --shown: 0;
+    --lift: 6px;
+  }
 }
 
 /* Back to each step's context, after one of its rows was opened in the
@@ -220,6 +239,9 @@ button.who-seal:hover {
   border-radius: var(--radius-full);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-float);
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
+  scale: var(--grow);
   animation: sheet-in var(--enter) var(--fold-easing) both;
 }
 
@@ -282,12 +304,7 @@ button.who-seal:hover {
     width: 38px;
     height: 38px;
     transform: none;
-    animation-name: to-latest-in-side;
   }
-}
-
-@keyframes to-latest-in-side {
-  from { opacity: 0; transform: translateY(6px); }
 }
 
 /* The conversation fades out beneath the composer rather than being cut. */
@@ -493,6 +510,9 @@ button.who-seal:hover {
   border-radius: var(--radius-m);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
+  scale: var(--grow);
   animation: sheet-in var(--enter) var(--fold-easing) both;
 }
 
@@ -590,12 +610,13 @@ button.who-seal:hover {
 
 /* Asked to stop: it breathes until the turn has ended. */
 .composer-action.stopping {
+  opacity: var(--shown);
   animation: stopping var(--armed) ease-in-out infinite alternate;
 }
 
 @keyframes stopping {
   to {
-    opacity: 0.45;
+    --shown: 0.45;
   }
 }
 
@@ -624,6 +645,9 @@ button.who-seal:hover {
   border-radius: var(--radius-l);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
+  scale: var(--grow);
   animation: sheet-in var(--enter) var(--fold-easing) both;
 }
 

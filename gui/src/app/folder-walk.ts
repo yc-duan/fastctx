@@ -9,6 +9,7 @@
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Folders } from "../world/focus";
+import { composing } from "../typing";
 
 export interface FolderWalkWords {
   up: string;
@@ -75,7 +76,7 @@ export class FolderWalk {
     // on Enter here and never submits anything.
     this.element.addEventListener("keydown", (event) => {
       const input = (event.target as HTMLElement).closest<HTMLInputElement>(".folder-walk-path");
-      if (!input || event.key !== "Enter" || event.isComposing) return;
+      if (!input || event.key !== "Enter" || composing(event)) return;
       event.preventDefault();
       event.stopPropagation();
       const typed = input.value.trim();

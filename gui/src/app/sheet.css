@@ -17,13 +17,17 @@
 }
 
 .sheet[open] .sheet-body {
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
+  scale: var(--grow);
   animation: sheet-in var(--enter) var(--fold-easing) both;
 }
 
 @keyframes sheet-in {
   from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.99);
+    --shown: 0;
+    --lift: 8px;
+    --grow: 0.99;
   }
 }
 
@@ -210,15 +214,11 @@
     border-radius: var(--radius-l) var(--radius-l) 0 0;
   }
 
+  /* It rises from the foot of the screen, as every sheet on a phone
+     (`turns.css`). */
   .sheet[open] .sheet-body {
+    translate: var(--slide) var(--lift);
     animation-name: sheet-rise;
-  }
-
-  @keyframes sheet-rise {
-    from {
-      transform: translateY(24px);
-      opacity: 0;
-    }
   }
 
   .choice-row {
@@ -463,6 +463,7 @@
 .field-tip:hover .field-tip-card,
 .field-tip:focus .field-tip-card {
   display: block;
+  opacity: var(--shown);
   animation: paper-in var(--quick) ease both;
 }
 

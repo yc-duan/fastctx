@@ -144,6 +144,11 @@ interface Act {
 }
 
 
+/** How long a finger rests before it is a long press, as Android counts it,
+ *  and how far it may drift meanwhile, in CSS pixels. */
+const LONG_PRESS_MS = 500;
+const PRESS_SLOP = 10;
+
 /** How long a taking back can be undone from the drawing's corner. */
 const UNDO_MS = 6_000;
 
@@ -255,6 +260,13 @@ export class MachinesPage implements Page {
   private framing: string[] = [];
   /** The list's row a range chosen with Shift starts from. */
   private anchor: string | null = null;
+  /** Choosing several on a touch screen: begun by a finger resting on a
+   *  machine's row, the rows show their boxes, a press ticks one, and the
+   *  page's head says how many until it is let go. */
+  private selecting = false;
+  /** The press a long press ends in, which opens nothing. */
+  private longPressed = false;
+  private readonly selectLayer: Layer = { isOpen: () => this.selecting && this.element.isConnected, close: () => this.setPicked([]) };
   private readonly chosen: FramedPanel;
   private readonly removing: RemoveMachineSheet;
   /** Groups the user folded or opened, by key; the rest follow the
@@ -331,6 +343,17 @@ export class MachinesPage implements Page {
       <div class="machines-intro" hidden><div class="machines-film"></div><p class="machines-hub-is">${escape(words.hubIs)}</p><div class="machines-ways"><a class="sheet-go" href="${link({ kind: "login", way: "new" })}">${escape(words.newNetwork)}</a><a class="text-button quiet-button" href="${link({ kind: "login", way: "join" })}">${escape(words.joinNetwork)}</a></div></div>
       <div class="machines-layout"><div class="machines-canvas"><div class="ml-list scroller" role="list" hidden></div><div class="map-undo" role="status" hidden></div><div class="map-choose" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div><form class="map-card" tabindex="-1" hidden></form></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
     this.panel = this.element.querySelector<HTMLElement>(".machine-panel")!;
+    // Choosing several on a touch screen has a head of its own over the
+    // page's: let them go, how many, every one.
+    const selectHead = document.createElement("div");
+    selectHead.className = "ml-select-head";
+    selectHead.innerHTML = `<button class="icon-button" type="button" data-select="stop" aria-label="${escape(options.batch.clear)}" title="${escape(options.batch.clear)}">${glyph("close", 18)}</button><span class="ml-select-count" aria-live="polite"></span><button class="text-button" type="button" data-select="all"></button>`;
+    this.element.querySelector(".page-head")?.append(selectHead);
+    selectHead.addEventListener("click", (event) => {
+      const what = (event.target as HTMLElement).closest<HTMLElement>("[data-select]")?.dataset.select;
+      if (what === "stop") this.setPicked([]);
+      else if (what === "all") this.selectAll();
+    });
     this.intro = this.element.querySelector<HTMLElement>(".machines-intro")!;
     this.layout = this.element.querySelector<HTMLElement>(".machines-layout")!;
     this.canvas = this.element.querySelector<HTMLElement>(".machines-canvas")!;
@@ -350,6 +373,12 @@ export class MachinesPage implements Page {
     this.list.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
       const press = event as MouseEvent;
+      // The press a long press ends in opens nothing.
+      if (this.longPressed) {
+        this.longPressed = false;
+        event.preventDefault();
+        return;
+      }
       const all = target.closest<HTMLElement>("[data-ml-pick-all]")?.dataset.mlPickAll;
       if (all) {
         event.preventDefault();
@@ -357,7 +386,8 @@ export class MachinesPage implements Page {
       }
       const box = target.closest<HTMLElement>("[data-ml-pick]")?.dataset.mlPick;
       const row = target.closest<HTMLElement>("[data-ml-key]")?.dataset.mlKey;
-      if (box || (row && (press.ctrlKey || press.metaKey))) {
+      // While several are being chosen on a touch screen, a press ticks.
+      if (box || (row && (press.ctrlKey || press.metaKey || this.selecting))) {
         event.preventDefault();
         return this.pickOne((box ?? row)!);
       }
@@ -373,6 +403,7 @@ export class MachinesPage implements Page {
       const login = hub ? this.hubLogin(hub) : null;
       if (login) this.invite(login);
     });
+    this.longPresses();
     // The film of what a network is for, over the drawing, once in one:
     // the last word of the line of hints under it.
     const again = document.createElement("button");
@@ -623,8 +654,9 @@ export class MachinesPage implements Page {
       // Kept for this visit only.
     }
     // What is chosen stays chosen: one machine alone is the one chosen on
-    // the drawing, and ticked in the list.
-    if (view === "list" && !this.framed.length && this.selected && this.isPickable(this.selected)) {
+    // the drawing, and ticked in the list. On a narrow page the list ticks
+    // only what a long press began to choose.
+    if (view === "list" && !this.framed.length && this.selected && this.isPickable(this.selected) && !this.narrow()) {
       this.framed = [this.selected];
       this.selected = null;
     } else if (view === "map" && this.framed.length === 1) {
@@ -691,6 +723,7 @@ export class MachinesPage implements Page {
       this.framed = keys;
       if (keys.length) this.selected = null;
     }
+    if (!this.framed.length) this.selecting = false;
     if (this.framed.join("\n") !== before) this.chosen.forget();
     this.closeMenu();
     this.closeCard();
@@ -720,6 +753,70 @@ export class MachinesPage implements Page {
 
   private isPickable(key: string): boolean {
     return this.pickableKeys().has(key);
+  }
+
+  /** A finger resting on a machine's row starts choosing several, that one
+   *  ticked, as phones do; the system's own long-press menu gives way. */
+  private longPresses(): void {
+    this.list.dataset.ownPress = "";
+    let timer = 0;
+    let start: { x: number; y: number; key: string } | null = null;
+    const cancel = () => {
+      clearTimeout(timer);
+      start = null;
+    };
+    const begin = (key: string) => {
+      cancel();
+      this.longPressed = true;
+      navigator.vibrate?.(8);
+      this.selecting = true;
+      layerOpened(this.selectLayer);
+      this.anchor = key;
+      this.setPicked([key]);
+    };
+    this.list.addEventListener(
+      "pointerdown",
+      (event) => {
+        this.longPressed = false;
+        if (event.pointerType === "mouse" || this.selecting) return;
+        const key = (event.target as HTMLElement).closest<HTMLElement>("[data-ml-key]")?.dataset.mlKey;
+        if (!key || !this.isPickable(key)) return;
+        start = { x: event.clientX, y: event.clientY, key };
+        timer = window.setTimeout(() => begin(key), LONG_PRESS_MS);
+      },
+      { passive: true },
+    );
+    this.list.addEventListener(
+      "pointermove",
+      (event) => {
+        if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > PRESS_SLOP) cancel();
+      },
+      { passive: true },
+    );
+    this.list.addEventListener("pointerup", cancel, { passive: true });
+    this.list.addEventListener("pointercancel", cancel, { passive: true });
+    // A system that raises its own menu first has the long press begin then.
+    this.list.addEventListener("contextmenu", (event) => {
+      if (start) begin(start.key);
+      if (this.longPressed || this.selecting) event.preventDefault();
+    });
+  }
+
+  /** The head of choosing several: how many, and every one or none. */
+  private drawSelectHead(count: number): void {
+    const head = this.element.querySelector<HTMLElement>(".ml-select-head");
+    if (!head) return;
+    const { words, batch } = this.options;
+    head.querySelector(".ml-select-count")!.textContent = words.framedTitle(count);
+    const every = this.pickableKeys().size;
+    head.querySelector("[data-select=all]")!.textContent = every && count >= every ? batch.selectNone : batch.selectAll;
+  }
+
+  /** Every machine that may be chosen, or none once they all are. */
+  private selectAll(): void {
+    const all = [...this.pickableKeys()];
+    const now = this.pickedNow();
+    this.setPicked(all.every((key) => now.includes(key)) ? [] : all);
   }
 
   /** A row's box, or a row pressed with Ctrl: it is added or taken out. */
@@ -1004,9 +1101,18 @@ export class MachinesPage implements Page {
     // at once, its actions a row in it.
     const narrow = this.narrow();
     const framed = this.framed.filter((key) => spots.get(key)?.kind === "machine");
+    // Choosing several on a touch screen ends with the list, or once none
+    // is chosen.
+    if (this.selecting && (this.view !== "list" || !framed.length)) this.selecting = false;
+    this.element.classList.toggle("selecting", this.selecting);
+    if (this.selecting) this.drawSelectHead(framed.length);
     // In the list one machine ticked is enough for what is done to them
     // together; on the drawing one alone is the one chosen.
     const together = framed.length > (this.view === "list" ? 0 : 1);
+    // On a narrow page what is done to several chosen by a long press is a
+    // bar along the bottom; an update of them planned is the whole panel.
+    const bar = together && this.selecting && narrow && !this.chosen.planning;
+    this.panel.classList.toggle("as-bar", bar);
     const open = (!!spot && (narrow || this.detailsOpen)) || together;
     if (open && this.panel.hidden) layerOpened(this.detailsLayer);
     this.panel.hidden = !open;
@@ -1025,6 +1131,7 @@ export class MachinesPage implements Page {
     this.canvas.classList.toggle("listing", listing);
     this.list.hidden = !listing;
     this.list.classList.toggle("picking", framed.length > 0);
+    this.list.classList.toggle("selecting", this.selecting);
     // Beside the list on a wide page the panel takes its own room.
     this.canvas.classList.toggle("beside", listing && open && !narrow);
     if (listing) {
@@ -1057,7 +1164,9 @@ export class MachinesPage implements Page {
     const html = alone
       ? ""
       : together
-        ? this.chosen.html(this.pickedMachines(world), world)
+        ? bar
+          ? this.chosen.bar(this.pickedMachines(world), world)
+          : this.chosen.html(this.pickedMachines(world), world)
       : spot && open
         ? `${grip}<button class="icon-button panel-close" type="button" data-act="close-details" aria-label="${escape(words.closeDetails)}" title="${escape(words.closeDetails)}">${glyph("close", 16)}</button>${spot.kind === "hub" ? this.hubPanel(spot.hub, world, acts) : spot.kind === "assist" ? this.assistPanel(spot.assistants, world, now, acts) : spot.kind === "device" ? this.phonePanel(spot.member, spot.owner, spot.here, now, acts) : this.machinePanel(spot.machine, world, now, acts)}`
         : "";
@@ -1865,9 +1974,10 @@ export class MachinesPage implements Page {
     return { kind: "unknown", said: words.unknown };
   }
 
-  /** The head of the panel: a name, its tags, and whether it is online. */
-  private panelHead(name: string, tags: string[], state: { kind: string; said: string }, assisting = false): string {
-    return `<header class="panel-head ${state.kind}${assisting ? " assist" : ""}"><span class="dot" aria-hidden="true"></span><h2 class="panel-title">${escape(name)}</h2>${tags.join("")}<span class="panel-state">${escape(state.said)}</span></header>`;
+  /** The head of the panel: a name, grey while it is away, its tags, and
+   *  whether it is online in words. */
+  private panelHead(name: string, tags: string[], state: { kind: string; said: string }): string {
+    return `<header class="panel-head ${state.kind}"><h2 class="panel-title">${escape(name)}</h2>${tags.join("")}<span class="panel-state">${escape(state.said)}</span></header>`;
   }
 
   private tag(text: string, kind = "", title = ""): string {
@@ -1923,7 +2033,7 @@ export class MachinesPage implements Page {
     const facts = "Ok" in machine.facts && machine.facts.Ok ? machine.facts.Ok : null;
     const route = !machine.here && machine.online === true && machine.through ? words.via(machine.through) : "";
     const factLine = facts
-      ? [osName(facts.os), facts.arch, `fastctx ${facts.version}`, route].filter(Boolean).map(escape).join(`<span class="sep">·</span>`)
+      ? [osName(facts.os), facts.arch, `fastctx ${facts.version}`, route].filter(Boolean).map(escape).join(`<span class="sep"></span>`)
       : "Err" in machine.facts && machine.facts.Err && machine.online !== false
         ? `<span title="${escape(machine.facts.Err)}">${escape(words.factsUnknown(machine.facts.Err))}</span>`
         : escape(route);
@@ -2003,7 +2113,7 @@ export class MachinesPage implements Page {
       const peer = name(link.a === key ? link.b : link.a);
       return link.up ? `<span class="direct-up">${escape(words.directUp(peer, link.ms))}</span>` : `<span class="direct-down">${escape(words.directDown(peer, link.why))}</span>`;
     });
-    return `<div class="panel-direct"><span class="given-label">${escape(words.directRow)}</span><span class="panel-direct-list">${said.join(`<span class="sep">·</span>`)}</span>${at.length ? `<p class="panel-direct-at">${escape(words.takesDirectAt(at.join("、")))}</p>` : ""}</div>`;
+    return `<div class="panel-direct"><span class="given-label">${escape(words.directRow)}</span><span class="panel-direct-list">${said.join(`<span class="sep"></span>`)}</span>${at.length ? `<p class="panel-direct-at">${escape(words.takesDirectAt(at.join("、")))}</p>` : ""}</div>`;
   }
 
   /** What is known of a machine of another's whose agent assists: whose
@@ -2016,7 +2126,7 @@ export class MachinesPage implements Page {
     const tags = [this.tag(words.assistShort(first.owner ?? ""), "tag-assist", words.assistantSaid(first.owner ?? "")), reaching ? this.tag(words.reaching, "tag-reach", words.reachingWhat) : ""];
     const state = this.stateOf(first.online, first.since, false, now);
     return `<article class="panel-machine" data-machine="${escape(first.machine)}">
-      ${this.panelHead(first.written, tags, state, true)}
+      ${this.panelHead(first.written, tags, state)}
       ${acts}
       <p class="panel-said" title="${escape(words.assistantSaid(first.owner ?? ""))}">${glyph("colleague", 14)}<span>${escape(words.assistantNote)}</span></p>
       ${assistants

@@ -27,6 +27,11 @@
   text-align: center;
 }
 
+/* The same ask in English, a space apart. */
+.first-title-en {
+  margin-left: 1em;
+}
+
 .first-choices {
   display: flex;
   flex-direction: column;

@@ -702,6 +702,8 @@ html.framed .page-head {
   white-space: pre-line;
   pointer-events: none;
   box-shadow: var(--shadow-pop);
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
   animation: hint-rise var(--hover) ease-out;
 }
 
@@ -716,8 +718,8 @@ html.framed .page-head {
 
 @keyframes hint-rise {
   from {
-    opacity: 0;
-    transform: translateY(3px);
+    --shown: 0;
+    --lift: 3px;
   }
 }
 
@@ -861,24 +863,28 @@ html.framed .page-head {
   border-radius: var(--radius-l);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
   animation: network-drop var(--fold) var(--fold-easing) both;
 }
 
 .network-pop.popover-leaving {
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
   animation: network-lift var(--fold) var(--fold-easing) both;
 }
 
 @keyframes network-drop {
   from {
-    opacity: 0;
-    transform: translateY(-4px);
+    --shown: 0;
+    --lift: -4px;
   }
 }
 
 @keyframes network-lift {
   to {
-    opacity: 0;
-    transform: translateY(-4px);
+    --shown: 0;
+    --lift: -4px;
   }
 }
 
