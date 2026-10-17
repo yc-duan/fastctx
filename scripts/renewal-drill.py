@@ -163,15 +163,26 @@ def run(program, later, version):
               and sha256(protected(names["hub"]) / "payload.exe") == digest, 120)
         for kind, name in names.items():
             adopted = protected(name) / "adopted.json"
-            said = json.loads(adopted.read_text(encoding="utf-8")) if adopted.is_file() else {}
-            check(f"the {kind}'s guardian says it took it", not said.get("why") and said.get("digest"), said)
+
+            def said():
+                return json.loads(adopted.read_text(encoding="utf-8")) if adopted.is_file() else {}
+
+            def took():
+                now = said()
+                return not now.get("why") and now.get("digest") == digest
+
+            # The guardian says so just after it put the program in place.
+            if not until(f"the {kind}'s guardian says it took it", took, 30):
+                print(f"     {said()}", flush=True)
 
         def serving_later():
             node = renewal().get("node") or {}
             return (node.get("build") or {}).get("version") == version and node.get("supervised") and not node.get("bridge")
 
         until("the node service's node runs the later release", serving_later, 120)
-        until("the hub listens again", listening, 120)
+        # Started again by the renewal at once, not by the service's check
+        # at the next minute.
+        until("the hub listens again within half a minute", listening, 30)
         for kind in names:
             state = status(kind, home if kind == "node" else home / "hub")
             check(f"the {kind} service runs", state.get("state", "").lower() == "running", state)
