@@ -186,7 +186,7 @@ button.who-seal:hover {
   border-radius: 50%;
   background: var(--bg-elevated);
   color: var(--text-2);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+  box-shadow: var(--shadow-float);
   cursor: pointer;
   transform: translateX(-50%);
   animation: to-latest-in var(--enter) ease-out;
@@ -219,7 +219,7 @@ button.who-seal:hover {
   padding: 2px;
   border-radius: var(--radius-full);
   background: var(--bg-elevated);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+  box-shadow: var(--shadow-float);
   animation: sheet-in var(--enter) var(--fold-easing) both;
 }
 
@@ -308,7 +308,7 @@ button.who-seal:hover {
   padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4);
   border-radius: var(--radius-l);
   background: var(--bg-elevated);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14);
+  box-shadow: var(--shadow-sheet);
 }
 
 /* Archived or deleted: a quiet slip where the composer was, saying so, and
@@ -590,7 +590,7 @@ button.who-seal:hover {
 
 /* Asked to stop: it breathes until the turn has ended. */
 .composer-action.stopping {
-  animation: stopping 1.2s ease-in-out infinite alternate;
+  animation: stopping var(--armed) ease-in-out infinite alternate;
 }
 
 @keyframes stopping {
@@ -1120,49 +1120,6 @@ button.composer-context[hidden] {
   height: 100%;
   border-radius: inherit;
   background: var(--accent);
-}
-
-/* The context in its parts: one ink, a lighter shade for each part. */
-.usage-stack {
-  display: flex;
-  height: 4px;
-}
-
-.usage-stack > span {
-  flex: none;
-  border-radius: 0;
-  background: color-mix(in oklab, var(--accent) var(--tone), var(--hairline));
-}
-
-.usage-parts {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: var(--space-3);
-  row-gap: 2px;
-  margin-top: 2px;
-  font-size: var(--size-small);
-  color: var(--text-2);
-}
-
-.usage-part {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: var(--space-1);
-  font-variant-numeric: tabular-nums;
-}
-
-.usage-part > span:first-of-type {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.usage-part > i {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: color-mix(in oklab, var(--accent) var(--tone), var(--hairline));
 }
 
 /* A conversation's title, renamed in place. */

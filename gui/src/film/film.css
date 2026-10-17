@@ -36,7 +36,7 @@
 }
 
 .film-caption.fresh {
-  animation: film-say 480ms ease-out both;
+  animation: film-say var(--say) ease-out both;
 }
 
 @keyframes film-say {

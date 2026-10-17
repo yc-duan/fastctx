@@ -39,11 +39,11 @@
 /* The mark is drawn once, a stroke at a time, when an agent is chosen. */
 .new-talk-mark svg :is(path, rect, circle) {
   stroke-dasharray: 1;
-  animation: mark-draw 1100ms var(--fold-easing) both;
+  animation: mark-draw var(--draw) var(--fold-easing) both;
 }
 
 .new-talk-mark svg :is(path, rect, circle):nth-child(2) {
-  animation-delay: 320ms;
+  animation-delay: calc(var(--quick) + var(--enter));
 }
 
 @keyframes mark-draw {
@@ -302,7 +302,7 @@
     position: fixed;
     inset: 0;
     z-index: 4;
-    background: rgba(0, 0, 0, 0.36);
+    background: var(--scrim);
     animation: sheet-scrim var(--fold) ease both;
   }
 }

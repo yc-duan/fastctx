@@ -181,7 +181,7 @@
 .turn-info:focus-visible .turn-info-card,
 .turn-info:focus .turn-info-card {
   display: grid;
-  animation: paper-in 0.12s ease both;
+  animation: paper-in var(--quick) ease both;
 }
 
 .turn-info-label {
@@ -622,7 +622,7 @@
 /* A stretch's line under way: the step in hand fades in where the last was. */
 .group-title.fresh {
   opacity: var(--rise);
-  animation: rise 0.24s ease both;
+  animation: rise var(--enter) ease both;
 }
 
 :root[data-reduced] .group-title.fresh {

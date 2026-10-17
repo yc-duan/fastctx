@@ -86,12 +86,57 @@
   --enter: 220ms;
   /* A turn's line comes in softly, and goes at once. */
   --line-in: 240ms;
+  /* The scale of what comes and goes: a quick change, an entrance, a thing
+     settling in its place, a slow arrival, one that lingers, a line said
+     under a film, a mark drawn in; one step of a stagger. Things that stay
+     moving have loops of their own: a breath, a slower one, a heading's
+     glow, the pen along a line, a found row's wash, a fresh row's, a held
+     button's. */
+  --quick: 120ms;
+  --settle: 380ms;
+  --slow: 700ms;
+  --linger: 1.4s;
+  --say: 480ms;
+  --draw: 1100ms;
+  --stagger: 60ms;
+  --breath: 1.6s;
+  --breath-slow: 2.6s;
+  --glow: 2.2s;
+  --flow: 2.8s;
+  --flow-slow: 3.4s;
+  --found: 1.8s;
+  --fresh: 2.4s;
+  --armed: 1.2s;
+  /* Coming to rest: fast, then easing in. */
+  --ease-out: cubic-bezier(0.33, 1, 0.68, 1);
   /* Words sent rise from the input into their place: up along
      --send-easing, across along the slower --send-drift, so they travel on
      a curve. */
   --send: 560ms;
   --send-easing: cubic-bezier(0.3, 0.2, 0.15, 1);
   --send-drift: cubic-bezier(0.55, 0, 0.3, 1);
+
+  /* Shade and lift. A layer that floats casts the theme's --shadow-pop; a
+     control resting a little above the page --shadow-lift, lifted further
+     under the pointer; a small mark floating over the page --shadow-float;
+     the composer --shadow-sheet; a page of a document on the desk
+     --shadow-page. Cards on the page cast none. A sheet's scrim dims what
+     is under it, a film's darker; words on a scrim are near white. */
+  --shadow-lift: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-lift-hover: 0 3px 12px rgba(0, 0, 0, 0.12);
+  --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.16);
+  --shadow-sheet: 0 6px 24px rgba(0, 0, 0, 0.14);
+  --shadow-page: 0 6px 18px rgba(0, 0, 0, 0.18);
+  --scrim: rgba(0, 0, 0, 0.38);
+  --scrim-film: rgba(0, 0, 0, 0.62);
+  --on-scrim: rgba(255, 255, 255, 0.82);
+  --on-scrim-strong: rgba(255, 255, 255, 0.94);
+  /* What is the system's, not ours: the window's close as the platform
+     draws it, and the white a code is scanned off. */
+  --window-close: #c42b1c;
+  --window-close-pressed: #b0271a;
+  --on-window-close: #ffffff;
+  --qr-paper: #ffffff;
 
   /* Android supplies the bars' heights before the page paints; browsers
      use their own safe areas. Content at an edge keeps clear by these. */
@@ -295,6 +340,13 @@
   --enter: 0ms;
   --line-in: 0ms;
   --send: 0ms;
+  --quick: 0ms;
+  --settle: 0ms;
+  --slow: 0ms;
+  --linger: 0ms;
+  --say: 0ms;
+  --draw: 0ms;
+  --stagger: 0ms;
 }
 
 /* Every glyph at its nominal size times the scale, in whole pixels; where

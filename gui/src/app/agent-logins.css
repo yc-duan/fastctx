@@ -720,7 +720,7 @@
 .logins-found-row.fresh,
 .logins-folder.fresh,
 .logins-row.fresh {
-  animation: logins-fresh 2400ms ease-out both;
+  animation: logins-fresh var(--fresh) ease-out both;
 }
 
 .logins-folder {

@@ -166,7 +166,7 @@
     position: fixed;
     inset: 0;
     z-index: 4;
-    background: rgba(0, 0, 0, 0.36);
+    background: var(--scrim);
     animation: sheet-scrim var(--fold) ease both;
   }
 
@@ -207,7 +207,7 @@
   color: var(--accent);
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: ink-breathe 2.6s ease-in-out infinite;
+  animation: ink-breathe var(--breath-slow) ease-in-out infinite;
 }
 
 /* The panel of commands still running, as tall as an output needs from

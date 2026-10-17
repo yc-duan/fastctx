@@ -117,7 +117,7 @@
   align-items: flex-start;
   gap: var(--space-3);
   min-height: 0;
-  animation: removal-rise 0.28s cubic-bezier(0.33, 1, 0.68, 1);
+  animation: removal-rise var(--settle) var(--ease-out);
 }
 
 /* Drawn again for a press within the step, it stays where it rose to. */
@@ -317,7 +317,7 @@
 }
 
 .removal-button.armed {
-  animation: removal-armed 1.2s ease-in-out infinite;
+  animation: removal-armed var(--armed) ease-in-out infinite;
 }
 
 @keyframes removal-armed {

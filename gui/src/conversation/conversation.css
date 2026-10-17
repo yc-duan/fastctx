@@ -116,7 +116,7 @@
 .gap-row.loading .gap-line {
   transform: scaleX(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: gap-draw 1.4s var(--fold-easing) infinite alternate;
+  animation: gap-draw var(--linger) var(--fold-easing) infinite alternate;
 }
 
 :root[data-reduced] .gap-row.loading .gap-line {
@@ -438,7 +438,7 @@
    brightening and dimming. They stay drawn as words: painted through a
    moving background they would lose their subpixel smoothing. */
 .group-head.going .group-title {
-  animation: heading-glow 2.2s ease-in-out infinite;
+  animation: heading-glow var(--glow) ease-in-out infinite;
 }
 
 @keyframes heading-glow {
@@ -767,7 +767,7 @@
   background: var(--accent);
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: pulse 1.6s ease-in-out infinite;
+  animation: pulse var(--breath) ease-in-out infinite;
 }
 
 .row-running .row-action,
@@ -1139,7 +1139,7 @@
   vertical-align: 0.05em;
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: pulse 1.6s ease-in-out infinite;
+  animation: pulse var(--breath) ease-in-out infinite;
 }
 
 :root[data-reduced] .prose.writing > :last-child::after {
@@ -1195,7 +1195,7 @@
   box-shadow: inset 0 0 0 2px var(--accent);
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: pulse 1.6s ease-in-out infinite;
+  animation: pulse var(--breath) ease-in-out infinite;
 }
 
 .ask-waiting::before {
@@ -1206,7 +1206,7 @@
   box-shadow: inset 0 0 0 2px var(--accent);
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: pulse 1.6s ease-in-out infinite;
+  animation: pulse var(--breath) ease-in-out infinite;
 }
 
 .ask-title {
@@ -1779,7 +1779,7 @@ a.bubble-file:hover {
 }
 
 .picture-viewer::backdrop {
-  background: rgba(0, 0, 0, 0.42);
+  background: var(--scrim);
 }
 
 .picture-viewer[open] .pv-card {
@@ -2066,7 +2066,7 @@ a.bubble-file:hover {
   bottom: 0;
   padding: var(--space-3) var(--space-3) calc(var(--space-4) + var(--safe-bottom));
   border-radius: var(--radius-l) var(--radius-l) 0 0;
-  animation: file-menu-rise 0.22s cubic-bezier(0.33, 1, 0.68, 1) both;
+  animation: file-menu-rise var(--enter) var(--ease-out) both;
 }
 
 .file-menu.as-sheet .file-menu-item {

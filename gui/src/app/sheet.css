@@ -13,7 +13,7 @@
 }
 
 .sheet::backdrop {
-  background: rgba(0, 0, 0, 0.42);
+  background: var(--scrim);
 }
 
 .sheet[open] .sheet-body {
@@ -463,7 +463,7 @@
 .field-tip:hover .field-tip-card,
 .field-tip:focus .field-tip-card {
   display: block;
-  animation: paper-in 0.12s ease both;
+  animation: paper-in var(--quick) ease both;
 }
 
 .field input,
@@ -572,7 +572,7 @@
   width: min(232px, 64vw);
   padding: 10px;
   border-radius: var(--radius-m);
-  background: #fff;
+  background: var(--qr-paper);
 }
 
 .qr {

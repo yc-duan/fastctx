@@ -24,7 +24,7 @@
 /* The viewer: a card over the dimmed page, of a size of its own; its lines
    scroll inside it. */
 .lv-viewer { margin: auto; padding: 0; border: 0; max-width: none; max-height: none; background: transparent; color: var(--text); overflow: visible; }
-.lv-viewer::backdrop { background: rgba(0, 0, 0, 0.42); }
+.lv-viewer::backdrop { background: var(--scrim); }
 .lv-viewer[open] .lv-card { animation: sheet-in var(--enter) var(--fold-easing) both; }
 .lv-card { display: flex; flex-direction: column; gap: var(--space-2); width: min(1040px, 100vw - 48px); height: min(760px, 86dvh); padding: var(--space-3) var(--space-4) var(--space-4); border-radius: var(--radius-l); background: var(--bg-elevated); box-shadow: var(--shadow-pop); }
 .lv-viewer-head, .lv-viewer-tools { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }

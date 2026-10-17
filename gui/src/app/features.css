@@ -536,7 +536,7 @@
   width: 100%;
   max-width: 1040px;
   margin: 0 auto;
-  padding: var(--space-6) var(--space-5) var(--space-7);
+  padding: var(--space-6) var(--space-5) var(--space-8);
   gap: var(--space-5);
 }
 
@@ -624,7 +624,7 @@
   justify-content: center;
   gap: var(--space-4);
   padding: var(--space-6) var(--gutter);
-  background: rgba(0, 0, 0, 0.62);
+  background: var(--scrim-film);
   animation: film-theater-in var(--fold) var(--fold-easing) both;
 }
 
@@ -634,16 +634,16 @@
 
 .film-theater-close {
   flex: none;
-  color: rgba(255, 255, 255, 0.82);
+  color: var(--on-scrim);
 }
 
 .film-theater-close:hover {
-  color: #fff;
+  color: var(--on-scrim-strong);
 }
 
 /* Over the dimmed page the words are light in every theme. */
 .film-theater .film-caption {
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--on-scrim-strong);
 }
 
 @keyframes film-theater-in {

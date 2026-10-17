@@ -232,18 +232,18 @@
 }
 
 .map-live .chosen {
-  animation: paper-in 0.35s cubic-bezier(0.33, 1, 0.68, 1) both;
+  animation: paper-in var(--settle) var(--ease-out) both;
 }
 
 .map-live .arrived {
-  animation: arrived 1.4s cubic-bezier(0.33, 1, 0.68, 1) both;
+  animation: arrived var(--linger) var(--ease-out) both;
 }
 
 /* The machines that can take the server, while its new place is chosen:
    their clay rings breathe; the rest of the names are faint. */
 .map-live .lit {
   opacity: 0.6;
-  animation: paper-in 0.35s cubic-bezier(0.33, 1, 0.68, 1) both, lit-breathe 2.4s ease-in-out 0.35s infinite;
+  animation: paper-in var(--settle) var(--ease-out) both, lit-breathe var(--breath-slow) ease-in-out var(--settle) infinite;
 }
 
 .map-live .moons path {
@@ -266,7 +266,7 @@
   stroke-width: 2.4;
   stroke-linecap: round;
   stroke-dasharray: 3 14 6 11;
-  animation: pen-flow 2.8s linear infinite;
+  animation: pen-flow var(--flow) linear infinite;
 }
 
 /* A way asked for and not yet taken: a pencil line, dashed, still being
@@ -278,7 +278,7 @@
   stroke-linecap: round;
   stroke-dasharray: 5 9;
   opacity: 0.85;
-  animation: pen-flow-slow 3.4s linear infinite;
+  animation: pen-flow-slow var(--flow-slow) linear infinite;
 }
 
 @keyframes pen-flow-slow {
@@ -354,7 +354,7 @@
   color: var(--text-2);
   pointer-events: auto;
   cursor: pointer;
-  animation: paper-in 0.2s ease both;
+  animation: paper-in var(--enter) ease both;
 }
 
 .map-act:hover,
@@ -389,7 +389,7 @@
   box-shadow: var(--shadow-pop);
   font-size: var(--size-small);
   color: var(--text-2);
-  animation: paper-in 0.2s ease both;
+  animation: paper-in var(--enter) ease both;
 }
 
 /* The menu of the right button, or of a long press. */
@@ -446,7 +446,7 @@
   max-height: 60dvh;
   padding: var(--space-3) var(--space-3) calc(var(--space-4) + var(--safe-bottom));
   border-radius: var(--radius-l) var(--radius-l) 0 0;
-  animation: map-sheet-rise 0.22s cubic-bezier(0.33, 1, 0.68, 1) both;
+  animation: map-sheet-rise var(--enter) var(--ease-out) both;
 }
 
 .map-menu.as-sheet .map-menu-item {
@@ -486,7 +486,7 @@
   box-shadow: var(--shadow-pop);
   color: var(--text-2);
   outline: none;
-  animation: paper-in 0.2s ease both;
+  animation: paper-in var(--enter) ease both;
 }
 
 .map-card.as-sheet {
@@ -501,7 +501,7 @@
   overflow: auto;
   padding: var(--space-4) var(--space-4) calc(var(--space-4) + var(--safe-bottom));
   border-radius: var(--radius-l) var(--radius-l) 0 0;
-  animation: map-sheet-rise 0.22s cubic-bezier(0.33, 1, 0.68, 1) both;
+  animation: map-sheet-rise var(--enter) var(--ease-out) both;
 }
 
 .map-card-pictures {
@@ -897,7 +897,7 @@
     padding: var(--space-4) var(--space-4) calc(var(--space-5) + var(--safe-bottom));
     border-radius: var(--radius-l) var(--radius-l) 0 0;
     box-shadow: var(--shadow-pop);
-    animation: map-sheet-rise 0.24s cubic-bezier(0.33, 1, 0.68, 1) both;
+    animation: map-sheet-rise var(--enter) var(--ease-out) both;
   }
 
   /* Solid, so the drawing beneath does not show through. */
@@ -1161,7 +1161,7 @@
   max-height: 64dvh;
   padding-bottom: calc(var(--space-4) + var(--safe-bottom));
   border-radius: var(--radius-l) var(--radius-l) 0 0;
-  animation: map-sheet-rise 0.22s cubic-bezier(0.33, 1, 0.68, 1) both;
+  animation: map-sheet-rise var(--enter) var(--ease-out) both;
 }
 
 .map-log-head {

@@ -73,7 +73,7 @@
 
 .agent-now.fresh .agent-now-said {
   opacity: var(--rise);
-  animation: rise 0.24s ease both;
+  animation: rise var(--enter) ease both;
 }
 
 /* What an agent did, opened under its row: its own conversation, drawn as
@@ -197,7 +197,7 @@
 /* Pressed in the picture of them all: the row is found with a wash that
    fades. */
 .row.row-found > .row-line {
-  animation: row-found 1.8s ease both;
+  animation: row-found var(--found) ease both;
 }
 
 /* It stays washed a moment, then fades back. */
@@ -233,7 +233,7 @@
   color: var(--accent);
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: ink-breathe 2.6s ease-in-out infinite;
+  animation: ink-breathe var(--breath-slow) ease-in-out infinite;
 }
 
 .agents-pop {
@@ -358,7 +358,7 @@
   transform-origin: center;
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: lane-breathe 1.6s ease-in-out infinite;
+  animation: lane-breathe var(--breath) ease-in-out infinite;
 }
 
 .state-waiting .lane-head {

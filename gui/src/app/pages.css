@@ -259,7 +259,6 @@
 .welcome-way:focus-visible {
   outline: 0;
   background: var(--fill-strong);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
   transform: translateY(-2px);
 }
 
@@ -741,7 +740,7 @@
   margin-bottom: var(--space-12);
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-m);
-  background: var(--code-bg, var(--hairline));
+  background: var(--surface-code);
   font-family: var(--font-code);
   font-variation-settings: var(--code-axes);
   font-size: var(--size-small);
@@ -793,7 +792,7 @@ a.details-job {
 /* Each page a sheet of paper on the desk: its own white, a soft edge. */
 .reader-pdf .world-pdf-page {
   border-radius: var(--radius-s);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-page);
 }
 
 .reader-pdf .world-pdf-pages {
@@ -913,7 +912,7 @@ a.details-job {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  animation: removal-rise 0.4s cubic-bezier(0.33, 1, 0.68, 1);
+  animation: removal-rise var(--settle) var(--ease-out);
 }
 
 /* Drawn again for a press on it, it stays where it rose to. */
@@ -1265,7 +1264,7 @@ a.details-job {
 }
 
 .welcome-done-who {
-  font-family: var(--font-body, inherit);
+  font-family: var(--font-reading);
   letter-spacing: 0.02em;
 }
 

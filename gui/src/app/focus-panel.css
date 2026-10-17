@@ -262,7 +262,7 @@
     position: fixed;
     inset: 0;
     z-index: -1;
-    background: rgba(0, 0, 0, 0.36);
+    background: var(--scrim);
     animation: sheet-scrim var(--fold) ease both;
   }
 }

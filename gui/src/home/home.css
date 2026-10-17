@@ -187,7 +187,7 @@
   box-shadow: inset 0 0 0 2px var(--accent);
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: pulse 1.6s ease-in-out infinite;
+  animation: pulse var(--breath) ease-in-out infinite;
 }
 
 .someone-body {
