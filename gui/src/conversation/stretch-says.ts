@@ -97,7 +97,7 @@ export function stretchSays(
     ? began === null ? "" : clockSays(steps, began, words)
     : only
       ? figures
-      : [steps < 2 ? "" : words.steps(steps), began !== null && ended !== null ? words.took(ended - began) : ""].filter(Boolean).join(" · ");
+      : [steps < 2 ? "" : words.steps(steps), began !== null && ended !== null ? words.took(ended - began) : ""].filter(Boolean).join(words.figureGap);
   return { title, added, removed, steps, running, only, bare, figures, began, ended, time };
 }
 
@@ -116,7 +116,7 @@ export interface StretchAgents {
 
 /** A running stretch's clock: its steps when more than one, and how long. */
 export function clockSays(steps: number, since: number, words: Words): string {
-  return [steps < 2 ? "" : words.steps(steps), words.took(Date.now() - since)].filter(Boolean).join(" · ");
+  return [steps < 2 ? "" : words.steps(steps), words.took(Date.now() - since)].filter(Boolean).join(words.figureGap);
 }
 
 /** Whether a stretch is nothing but thinking: one run of it, said by its

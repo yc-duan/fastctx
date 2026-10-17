@@ -162,6 +162,8 @@ export interface Words {
   assistFrom(owner: string): string;
   /** Between the names in a short list. */
   listSeparator: string;
+  /** Between figures said side by side: a step count and a time. */
+  figureGap: string;
   /** The button under the first lines of something long: "+ 28 行". */
   moreLines(n: number): string;
   unchangedLines(n: number): string;
@@ -346,9 +348,9 @@ export const zh: Words = {
     if (t.delegated) parts.push(`委派 ${t.delegated} 个子代理`);
     if (t.coordinated) parts.push(`调度子代理 ${t.coordinated} 次`);
     if (t.other) parts.push(`调用 ${t.other} 个工具`);
-    let heading = parts.join(" · ");
+    let heading = parts.join("　");
     if (!heading) heading = t.thinking ? "Thought" : "活动";
-    return t.failed ? `${heading} · ${t.failed} 个失败` : heading;
+    return t.failed ? `${heading}　${t.failed} 个失败` : heading;
   },
   thinking: "Thinking…",
   thinkingAbout: (title) => `Thinking… ${title}`,
@@ -411,6 +413,7 @@ export const zh: Words = {
   on: (machine) => machine,
   assistFrom: (owner) => `来自 ${owner}`,
   listSeparator: "、",
+  figureGap: "　",
   moreLines: (n) => `+ ${n.toLocaleString("zh-CN")} 行`,
   unchangedLines: (n) => `${n} 行未改动`,
   fullScreen: "查看全部",
@@ -595,7 +598,7 @@ export const en: Words = {
     let heading = parts.join(", ");
     if (!heading) heading = t.thinking ? "Thought" : "Activity";
     heading = heading.charAt(0).toUpperCase() + heading.slice(1);
-    return t.failed ? `${heading} · ${t.failed} failed` : heading;
+    return t.failed ? `${heading}, ${t.failed} failed` : heading;
   },
   thinking: "Thinking…",
   thinkingAbout: (title) => `Thinking… ${title}`,
@@ -658,6 +661,7 @@ export const en: Words = {
   on: (machine) => machine,
   assistFrom: (owner) => `from ${owner}`,
   listSeparator: ", ",
+  figureGap: " ",
   moreLines: (n) => `+ ${n.toLocaleString("en")} more line${n === 1 ? "" : "s"}`,
   unchangedLines: (n) => `${n} unchanged lines`,
   fullScreen: "View all",

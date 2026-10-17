@@ -1695,7 +1695,7 @@ export class ConversationView {
       line.added !== null && line.removed !== null
         ? `<span class="row-stats"><span class="add">+${line.added}</span><span class="del">−${line.removed}</span></span>`
         : "";
-    const elsewhere = write.machine !== this.context.residentMachine ? `<span class="row-machine">${escape(words.on(write.machine))}</span>` : "";
+    const elsewhere = write.machine !== this.context.residentMachine ? `<span class="row-machine">${glyph("machine", 12)}${escape(words.on(write.machine))}</span>` : "";
     const chevron = expandable ? `<span class="row-chevron">${glyph("chevron", 16)}</span>` : "";
     const fold = expandable ? `<div class="fold-box"${open ? "" : " style=\"height:0\" inert"}><div class="fold-content"></div></div>` : "";
     // A change that could not be read line by line says why on hover.
@@ -1730,7 +1730,7 @@ export class ConversationView {
     const expandable = this.hasDetails(entry.tool);
     const elsewhere =
       entry.tool.machine && entry.tool.machine !== this.context.residentMachine
-        ? `<span class="row-machine">${escape(words.on(entry.tool.machine))}</span>`
+        ? `<span class="row-machine">${glyph("machine", 12)}${escape(words.on(entry.tool.machine))}</span>`
         : "";
     const stats =
       line.added !== null && line.removed !== null
@@ -1765,7 +1765,7 @@ export class ConversationView {
     const open = this.openRows.has(entry.key);
     const elsewhere =
       entry.tool.machine && entry.tool.machine !== this.context.residentMachine
-        ? `<span class="row-machine">${escape(words.on(entry.tool.machine))}</span>`
+        ? `<span class="row-machine">${glyph("machine", 12)}${escape(words.on(entry.tool.machine))}</span>`
         : "";
     return `<div class="row row-tool row-agent${enter}" data-row="${escape(entry.key)}"><span class="rail"></span><button class="row-line" type="button" data-open="${escape(entry.key)}" aria-expanded="${open}"><span class="row-action">${escape(line.action)}</span><span class="row-rest"><span class="row-object agent-object"><span class="agent-kind" hidden></span><span class="agent-task">${escape(line.object ?? "")}</span></span><span class="row-meta"><span class="agent-meta"></span>${elsewhere}<span class="row-chevron">${glyph("chevron", 16)}</span></span></span></button><div class="agent-now" hidden><span class="agent-now-mark"></span><span class="agent-now-said"></span></div><div class="fold-box"${open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div></div>`;
   }

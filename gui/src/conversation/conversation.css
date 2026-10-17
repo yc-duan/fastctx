@@ -393,10 +393,14 @@
 /* An activity group: a heading that says what the stretch did, and the
    rail beneath it. */
 
+/* The heading runs across the column: what the stretch did on the left,
+   cut where it must; how many steps and how long at the right, before the
+   arrow, standing over the rows' own figures. */
 .group-head {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: var(--space-1);
+  width: 100%;
   max-width: 100%;
   min-height: var(--row-line);
   line-height: var(--row-leading);
@@ -642,15 +646,20 @@
 }
 
 .row-outcome,
+/* Done on another machine than the conversation's: a small machine and
+   its name after the object, never cut. */
 .row-machine {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   white-space: nowrap;
+  color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
 
-.row-machine::before {
-  content: "·";
-  margin-right: var(--space-2);
+.row-machine > .glyph {
+  flex: none;
 }
 
 /* The arrow that opens a row shows under a pointer, on focus and while the

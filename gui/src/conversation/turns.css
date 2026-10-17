@@ -25,15 +25,12 @@
   padding-top: var(--space-1);
 }
 
-/* The stretch's heading: what it does, then how many steps and how long,
-   in figures that do not move as they count. */
-.group-head {
-  display: flex;
-  width: fit-content;
-}
-
+/* The stretch's heading: what it does, then, at the right, how many steps
+   and how long, in figures that do not move as they count. */
 .group-time {
   flex: none;
+  margin-left: auto;
+  padding-left: var(--space-4);
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
 }
@@ -46,11 +43,6 @@
 .group-stats {
   flex: none;
   margin-left: 6px;
-}
-
-.group-time::before {
-  content: "·";
-  margin: 0 var(--space-1) 0 2px;
 }
 
 /* Long text under a row: its first lines, the button for the rest, the
