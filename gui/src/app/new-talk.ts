@@ -395,6 +395,9 @@ export class NewTalk {
   /** Which agents the picker shows, and the people opened or closed in it. */
   private kind: PickerKind = "all";
   private readonly pickerFolds = new Map<string, boolean>();
+  /** The reader opened a person or chose an agent: the table changes within
+   *  the panel's size, scrolling, and the panel does not grow for it. */
+  private keepSize = false;
 
   private fit(): void {
     this.fitter ??= new DraftFit(this.input);
@@ -788,9 +791,11 @@ export class NewTalk {
         break;
       case "kind":
         this.kind = value === "codex" || value === "claude" ? value : "all";
+        this.keepSize = true;
         break;
       case "fold":
         this.pickerFolds.set(value, target.getAttribute("aria-expanded") !== "true");
+        this.keepSize = true;
         break;
       case "town":
         this.town = value || null;
@@ -940,7 +945,8 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
           : "";
       const { machines, html: table } = this.picker(lines);
       this.drawAgents(lines, agentKinds(machines, this.pickerWords(), this.kind), `${table}${account}`);
-      this.popSteady?.settle();
+      if (!this.keepSize) this.popSteady?.settle();
+      this.keepSize = false;
       return;
     } else if (this.opened === "town") {
       html = `<h3 class="picker-title">${escape(words.project)}</h3>${this.list("town", words.project, towns, this.town ?? "")}`;
