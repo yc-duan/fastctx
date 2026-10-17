@@ -281,9 +281,11 @@ def managed(lab, root, archive):
     # line, whatever became of its output.
     marks = work / "marks.txt"
     marks.unlink(missing_ok=True)
-    (work / "run.cmd").write_bytes((f"@echo off\r\necho started> {marks}\r\n{line} > {out} 2>&1\r\n"
-                                    f"echo after the line %errorlevel%>> {marks}\r\necho EXIT=%errorlevel%>> {out}\r\n"
-                                    f"echo wrote its end>> {marks}\r\n").encode("ascii"))
+    # The redirections go first: written after `%errorlevel%`, its digit
+    # would be taken for the handle to redirect (`EXIT=0>> file`).
+    (work / "run.cmd").write_bytes((f"@echo off\r\n> {marks} echo started\r\n{line} > {out} 2>&1\r\n"
+                                    f">> {marks} echo after the line %errorlevel%\r\n>> {out} echo EXIT=%errorlevel%\r\n"
+                                    f">> {marks} echo wrote its end\r\n").encode("ascii"))
     task = "fastctx-smoke-managed"
     home = data / "Fastctx"
     first = len(RESULTS)
