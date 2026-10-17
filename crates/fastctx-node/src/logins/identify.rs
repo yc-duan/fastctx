@@ -41,15 +41,7 @@ pub(super) async fn codex(node: &Arc<Node>, dir: &Path, limits: bool) -> Asked {
         });
         return asked_codex(at, said, launcher);
     }
-    let path = node
-        .codex
-        .environment()
-        .iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case("PATH"))
-        .map(|(_, value)| value.clone());
-    let default = node.codex.default().config_home().to_path_buf();
-    let program_home = (!crate::homes::same_dir(&default, dir)).then_some(default);
-    let launch = match fastctx_hosts::codex::launch::discover_for(dir, program_home.as_deref(), path.as_ref()) {
+    let launch = match codex_launch(node, dir) {
         Ok(Some(launch)) => launch,
         Ok(None) => {
             return failed(at, "neither the ChatGPT desktop app nor a codex command was found to ask it".into());
@@ -82,6 +74,36 @@ pub(super) async fn codex(node: &Arc<Node>, dir: &Path, limits: bool) -> Asked {
             models: Vec::new(),
             limits: None,
         },
+    }
+}
+
+/// The Codex the login in `dir` starts now, as the node starts it: what the
+/// desktop app records in the configuration, read again each time, since the
+/// app moves its program when it upgrades (`fastctx_hosts::codex::launch`).
+pub(super) fn codex_launch(node: &Node, dir: &Path) -> Result<Option<fastctx_hosts::codex::launch::Launch>, String> {
+    let path = node
+        .codex
+        .environment()
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("PATH"))
+        .map(|(_, value)| value.clone());
+    let default = node.codex.default().config_home().to_path_buf();
+    let program_home = (!crate::homes::same_dir(&default, dir)).then_some(default);
+    fastctx_hosts::codex::launch::discover_for(dir, program_home.as_deref(), path.as_ref())
+}
+
+/// The program a Codex login was last asked with, as it stands now: the
+/// desktop app's moves with each upgrade, so the one recorded is looked up
+/// again; the recorded version holds only while the program is the same.
+pub(super) fn current_launcher(node: &Node, dir: &Path, recorded: Launcher) -> Launcher {
+    if !recorded.desktop_app {
+        return recorded;
+    }
+    match codex_launch(node, dir) {
+        Ok(Some(launch)) if launch.binary != recorded.path => {
+            Launcher { path: launch.binary, version: None, desktop_app: launch.source == ProgramSource::DesktopApp }
+        }
+        _ => recorded,
     }
 }
 

@@ -221,7 +221,9 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
                 unattended,
                 auto_title: agent == "codex"
                     && kept.codex.titled.iter().any(|known| crate::homes::same_dir(known, dir)),
-                launcher: known.and_then(|login| login.launcher.clone()),
+                launcher: known.and_then(|login| login.launcher.clone()).map(|launcher| {
+                    if agent == "codex" { identify::current_launcher(node, dir, launcher) } else { launcher }
+                }),
                 models,
                 change,
                 drift: if listed { refresh::of(node, agent, dir) } else { None },
