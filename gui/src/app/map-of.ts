@@ -89,9 +89,9 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
       group: boxOf(owner ? { key: `of:${owner}`, label: words.ownedBy(owner) } : { key: "mine", label: words.mineGroup }, member?.group),
     });
   }
-  // The phones signed in to the account stand in its box after its
+  // The phones signed in to an account stand in its box after its
   // machines: where a phone added from this page is seen to arrive.
-  for (const { hub, member } of phonesOf(world)) {
+  for (const { hub, member, owner } of phonesOf(world)) {
     if (!hubs.some((one) => one.id === hub.hub)) continue;
     nodes.push({
       key: deviceKey(hub.hub, member.name),
@@ -101,11 +101,11 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
       here: member.name === world.accounts.machine && !isComputer(world),
       online: member.online,
       since: member.since ?? null,
-      hold: "mine",
+      hold: owner ? "others" : "mine",
       reaching: false,
       busy: 0,
-      title: [member.name, words.phoneWhat].join(" · "),
-      group: { key: "mine", label: words.mineGroup },
+      title: [member.name, words.phoneWhat, owner ? words.ownedBy(owner) : ""].filter(Boolean).join(" · "),
+      group: owner ? { key: `of:${owner}`, label: words.ownedBy(owner) } : { key: "mine", label: words.mineGroup },
       device: true,
     });
   }
@@ -152,15 +152,25 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
   return { hubs, nodes, hubLabels, links: linksOf(world, nodes), people: peopleOf(world, words) };
 }
 
-/** The phones signed in to the accounts this device is logged in to, hub
- *  by hub, each with the login it is signed in under. */
-export function phonesOf(world: WorldNow): { hub: HubAccounts; member: MemberSeen; login: Login }[] {
+type Phone = { hub: HubAccounts; member: MemberSeen; login: Login; owner: string | null };
+
+/** The phones this device sees, hub by hub: those signed in to an account
+ *  it is logged in to, with that login and no owner; and, where it is the
+ *  network's administrator, those signed in to a member's account, with
+ *  the administrator's login and that member as their owner, as the
+ *  member's machines are (`world-gui.md`, 机器页). A visitor's phones stay
+ *  out of the administrator's reach, as their machines' insides do. */
+export function phonesOf(world: WorldNow): Phone[] {
   const logins = loginsOf(world.accounts);
   return world.accounts.hubs.flatMap((hub) =>
-    hub.members.flatMap((member) => {
+    hub.members.flatMap((member): Phone[] => {
       if (member.kind !== "phone") return [];
       const login = logins.find((one) => one.hub === hub.hub && member.logins.includes(one.account));
-      return login ? [{ hub, member, login }] : [];
+      if (login) return [{ hub, member, login, owner: null }];
+      const admin = logins.find((one) => one.hub === hub.hub && isSuper(world, one));
+      const visitors = new Set(hub.accounts.filter((account) => account.level === "visitor").map((account) => account.name));
+      const owner = admin ? member.logins.find((account) => !visitors.has(account)) : undefined;
+      return admin && owner ? [{ hub, member, login: admin, owner }] : [];
     }),
   );
 }

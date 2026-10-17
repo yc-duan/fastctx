@@ -128,7 +128,7 @@ type Spot =
   | { kind: "machine"; machine: Machine }
   | { kind: "assist"; assistants: Assistant[] }
   | { kind: "hub"; hub: HubAccounts }
-  | { kind: "device"; hub: HubAccounts; member: MemberSeen; login: Login; here: boolean };
+  | { kind: "device"; hub: HubAccounts; member: MemberSeen; login: Login; owner: string | null; here: boolean };
 
 type GlyphName = Parameters<typeof glyph>[0];
 
@@ -953,8 +953,8 @@ export class MachinesPage implements Page {
       if (known?.kind === "assist") known.assistants.push(assistant);
       else spots.set(key, { kind: "assist", assistants: [assistant] });
     }
-    for (const { hub, member, login } of phonesOf(world))
-      spots.set(deviceKey(hub.hub, member.name), { kind: "device", hub, member, login, here: member.name === world.accounts.machine && !isComputer(world) });
+    for (const { hub, member, login, owner } of phonesOf(world))
+      spots.set(deviceKey(hub.hub, member.name), { kind: "device", hub, member, login, owner, here: member.name === world.accounts.machine && !isComputer(world) });
     return spots;
   }
 
@@ -1021,7 +1021,7 @@ export class MachinesPage implements Page {
       : together
         ? this.chosen.html(this.pickedMachines(world), world)
       : spot && open
-        ? `${grip}<button class="icon-button panel-close" type="button" data-act="close-details" aria-label="${escape(words.closeDetails)}" title="${escape(words.closeDetails)}">${glyph("close", 16)}</button>${spot.kind === "hub" ? this.hubPanel(spot.hub, world, acts) : spot.kind === "assist" ? this.assistPanel(spot.assistants, world, now, acts) : spot.kind === "device" ? this.phonePanel(spot.member, spot.here, now, acts) : this.machinePanel(spot.machine, world, now, acts)}`
+        ? `${grip}<button class="icon-button panel-close" type="button" data-act="close-details" aria-label="${escape(words.closeDetails)}" title="${escape(words.closeDetails)}">${glyph("close", 16)}</button>${spot.kind === "hub" ? this.hubPanel(spot.hub, world, acts) : spot.kind === "assist" ? this.assistPanel(spot.assistants, world, now, acts) : spot.kind === "device" ? this.phonePanel(spot.member, spot.owner, spot.here, now, acts) : this.machinePanel(spot.machine, world, now, acts)}`
         : "";
     if (html !== this.drawn) {
       this.drawn = html;
@@ -1990,12 +1990,12 @@ export class MachinesPage implements Page {
     </article>`;
   }
 
-  /** A phone signed in to the account: whether it is there, and since
-   *  when it is signed in. */
-  private phonePanel(member: MemberSeen, here: boolean, now: Date, acts = ""): string {
+  /** A phone signed in to the account, or to `owner`'s for the network's
+   *  administrator: whether it is there, and since when it is signed in. */
+  private phonePanel(member: MemberSeen, owner: string | null, here: boolean, now: Date, acts = ""): string {
     const { words } = this.options;
     const state = this.stateOf(member.online, member.since ?? null, here, now);
-    const tags = [this.tag(words.phone, "", words.phoneWhat), here ? this.tag(words.here) : ""];
+    const tags = [this.tag(words.phone, "", words.phoneWhat), owner ? this.tag(words.ownedBy(owner)) : "", here ? this.tag(words.here) : ""];
     return `<article class="panel-machine" data-device="${escape(member.name)}">
       ${this.panelHead(member.name, tags, state)}
       ${acts}

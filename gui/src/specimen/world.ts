@@ -195,6 +195,8 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         { ...member("lab-a-01", "computer", [], "me", "11:02:00", true, "31d0c8e5"), managed: true, code: LAB_CODE, group: "机房 A" },
         { ...member("lab-a-02", "computer", [], "me", "12:31:00", false, "8a4b2f60"), managed: true, code: LAB_CODE, group: "机房 A" },
         member("cy-mac", "computer", ["cy"], "cy", "09:20:00", true, "e7c13d52"),
+        member("bo-phone", "phone", ["bo"], null, "14:02:00", true, "6c1d9b03"),
+        member("cy-phone", "phone", ["cy"], null, "09:25:00", true, "d4e8a217"),
       ],
       tokens: [
         { key: LAB_CODE, account: "me", label: "机房 A", kind: "computer", managed: true, uses: 40, used: 2, expires: daysAhead(6), way: "paste", made_by: "desktop", made_at: at("10:40:00") },
