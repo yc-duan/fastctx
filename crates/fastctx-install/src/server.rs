@@ -129,11 +129,12 @@ pub fn mac_command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> 
 }
 
 /// A failed attempt stays in the caller's home, apart from other versions
-/// and platforms. A complete archive is reused; an incorrect one is resumed
+/// and platforms; a root shell a remote manager started may have no home,
+/// and then it stays in `/var/tmp`, which a restart keeps. A complete archive is reused; an incorrect one is resumed
 /// and checked, then fetched afresh, just as in the Windows line.
 fn unix_download(version: &str, target: &str, directory: &str, options: &str, checksum: &str) -> String {
     format!(
-        "d=\"${{HOME:?HOME is not set}}/.cache/fastctx-install/v{version}/$a-{target}\";mkdir -p \"$d\";cd \"$d\";check(){{ echo \"$h  a\"|{checksum} -c - >/dev/null;}};download(){{ w=1;until curl --proto '=https' -fL -C - -o a{options} {}/fastctx-$a-{target}.tar.gz;do r=$?;[ $r = 33 ]&&rm -f a;echo \"download stopped (curl $r); again in $w s\" >&2;sleep $w;w=$((w*2));[ $w -gt 60 ]&&w=60;done;}};check 2>/dev/null||{{ download;check;}}||{{ rm -f a;download;check;}}||{{ echo \"fastctx: the download is not the release it should be; run the line again\" >&2;exit 1;}}",
+        "d=\"${{HOME:-/var/tmp}}/.cache/fastctx-install/v{version}/$a-{target}\";mkdir -p \"$d\";cd \"$d\";check(){{ echo \"$h  a\"|{checksum} -c - >/dev/null;}};download(){{ w=1;until curl --proto '=https' -fL -C - -o a{options} {}/fastctx-$a-{target}.tar.gz;do r=$?;[ $r = 33 ]&&rm -f a;echo \"download stopped (curl $r); again in $w s\" >&2;sleep $w;w=$((w*2));[ $w -gt 60 ]&&w=60;done;}};check 2>/dev/null||{{ download;check;}}||{{ rm -f a;download;check;}}||{{ echo \"fastctx: the download is not the release it should be; run the line again\" >&2;exit 1;}}",
         quote(directory),
     )
 }
