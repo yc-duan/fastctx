@@ -1,10 +1,12 @@
 //! What this process's tasks are doing and what each waits for
 //! (`specs/world-concurrency.md`).
 //!
-//! The locks that guard more than a leaf of bookkeeping are made here. Each
-//! knows its place in the order locks are taken in (`Rank`); a task that takes
-//! one while holding one of the same or a later place is told about
-//! (`set_reporter`), as that is how two tasks come to wait on each other.
+//! The locks that guard more than a leaf of bookkeeping are made here: tokio's
+//! for tasks, and `SyncMutex` for the short work on the node's own records
+//! that blocks its thread. Each knows its place in the order locks are taken
+//! in (`Rank`); a task or thread that takes one while holding one of the same
+//! or a later place is told about (`set_reporter`), as that is how two of
+//! them come to wait on each other.
 //! Every such lock held or waited for, and every wait on something outside
 //! the process (`outside`), is kept in one registry with what its task is
 //! doing (`doing`, `labeled`), so the process can say at any moment who waits for
@@ -13,6 +15,7 @@
 
 mod lock;
 mod registry;
+mod sync;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -26,6 +29,7 @@ pub use lock::{
     RwLockWriteGuard,
 };
 pub use registry::{Cycle, OutsideWait, Snapshot, Stuck, set_reporter, snapshot, violations};
+pub use sync::{SyncMutex, SyncMutexGuard};
 
 /// A lock's place in the order locks are taken in: a task holding a lock
 /// takes only locks of later places, or of the same place with a later
@@ -88,6 +92,19 @@ impl Rank {
     pub const WRITING: Rank = Rank(700);
     /// Syncing the ledger with the network.
     pub const SYNCING: Rank = Rank(710);
+
+    // The node's own records, after every lock above: a thread holding one
+    // reads and writes a few of its files and waits on nothing outside
+    // (`SyncMutex`).
+    /// Jobs' records kept from collection while they are made, read or
+    /// changed.
+    pub const DISK: Rank = Rank(800);
+    /// A command's call facts, emitted in order.
+    pub const EMITTING: Rank = Rank(810);
+    /// Conversations' records, each read and written as one transaction.
+    pub const RECORDS: Rank = Rank(820);
+    /// A command's write facts.
+    pub const WRITE_FACTS: Rank = Rank(830);
 }
 
 /// What each task says it does, latest last, by the token of each saying.
@@ -141,15 +158,26 @@ pub async fn labeled<F: Future>(label: impl Into<Arc<str>>, work: F) -> F::Outpu
 pub fn carried<R>(work: impl FnOnce() -> R) -> impl FnOnce() -> R {
     let label = label();
     move || {
+        // The pool's thread goes on to other work, also after a panic.
+        struct Said;
+        impl Drop for Said {
+            fn drop(&mut self) {
+                THREAD.with(|said| *said.borrow_mut() = None);
+            }
+        }
         THREAD.with(|said| *said.borrow_mut() = Some(label));
-        let result = work();
-        THREAD.with(|said| *said.borrow_mut() = None);
-        result
+        let _said = Said;
+        work()
     }
 }
 
-/// What the current task, or blocking thread, is doing, as it was said.
+/// What the current task, or blocking thread, is doing, as it was said. A
+/// blocking task runs work `carried` from the task that started it, which
+/// says what it does.
 pub fn label() -> Arc<str> {
+    if let Some(carried) = THREAD.with(|said| said.borrow().clone()) {
+        return carried;
+    }
     match tokio::task::try_id() {
         Some(task) => {
             let labels = LABELS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -159,7 +187,7 @@ pub fn label() -> Arc<str> {
                 .map(|(_, label)| label.clone())
                 .unwrap_or_else(|| Arc::from(format!("{UNSAID_TASK}{task}")))
         }
-        None => THREAD.with(|said| said.borrow().clone()).unwrap_or_else(|| Arc::from(UNSAID_THREAD)),
+        None => Arc::from(UNSAID_THREAD),
     }
 }
 

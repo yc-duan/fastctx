@@ -6,6 +6,7 @@ run commands through the World's `run`, are deleted while they work and opened a
 is ended at random moments and started again. Then the node is left to settle, and the drill checks:
 
 - sampled plain calls answered within a few seconds outside restarts;
+- commands left running end, and their ends go into their conversations as notices;
 - its log has no lock taken out of order, nothing stuck, no tasks waiting on each other in a circle;
 - every conversation settles: none is left working, no words are left on their way in;
 - each confirmed deletion leaves no directory, data listing or Codex rollout file;
@@ -416,10 +417,15 @@ class Drill:
                     time.sleep(2)
                     continue
             roll = self.rng.random()
-            if roll < 0.35:
+            if roll < 0.3:
                 self.speak(talk, "hello again")
-            elif roll < 0.6:
+            elif roll < 0.5:
                 self.speak(talk, f"[[run: echo w{index}; sleep {self.rng.choice(['0.2', '1', '2'])}]]")
+            elif roll < 0.6:
+                # Left running: its end comes back through the conversation's
+                # inbox while others' commands start (`world-concurrency.md`,
+                # 记录的锁).
+                self.speak(talk, f"[[later: echo l{index}; sleep {self.rng.choice(['2', '4'])}]]")
             elif roll < 0.7:
                 self.speak(talk, "[[run: sleep 25]]", timeout=300)
             elif roll < 0.78:
@@ -624,6 +630,8 @@ def main():
         opened = sum(1 for outcome in drill.outcomes if outcome[0] == "opened")
         failures = [outcome for outcome in drill.outcomes if outcome[0] == "open failed"]
         check("conversations opened and were spoken to", opened > 0 and len(mock.requests) > 0, failures[:3])
+        ends = sum(1 for request in mock.requests if re.search(r"=== j-\w+ on \S+ ended \(", json.dumps(request)))
+        check("commands left running ended and their ends went in as notices", ends > 0, f"{ends} ends heard")
         check("deletion was actually attempted while a conversation was working", drill.deleted_while_busy > 0)
         check("every deletion went through within two minutes of stopping what its conversation ran",
               bool(drill.deleted) and not drill.undeleted, drill.undeleted[:5] or "no deletion completed")

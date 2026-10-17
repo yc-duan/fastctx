@@ -1,12 +1,24 @@
-//! The control loop must remain schedulable while jobs and network I/O wait.
+//! The control loop must remain schedulable while jobs and network I/O wait,
+//! and so must the runtime's worker threads that carry every other task.
 
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
 
+use std::time::Duration;
+
 use fastctx_net::wire::{HEARTBEAT, SILENCE};
 use fastctx_platform::awake::Sample;
 use tokio::sync::Notify;
+
+/// How often a task on the worker threads says it ran.
+const BEAT: Duration = Duration::from_secs(2);
+
+/// How long the worker threads may run nothing at all before the node ends.
+/// Far longer than any wait a task should block a worker for; the node of
+/// 2026-10-17 had every worker blocked for twenty-five minutes while its
+/// control loop answered on the main thread.
+const WORKERS_SILENT: Duration = Duration::from_secs(90);
 
 pub(crate) struct Watchdog {
     progress: Arc<Progress>,
@@ -17,18 +29,35 @@ pub(crate) struct Watchdog {
 struct Progress {
     answered: AtomicU64,
     wake: Notify,
+    /// Beats of a task on the worker threads (`BEAT`).
+    workers: AtomicU64,
 }
 
 impl Watchdog {
     pub fn start(log: Arc<crate::log::Log>) -> io::Result<Self> {
         let initial = Sample::now()?;
-        let progress = Arc::new(Progress { answered: AtomicU64::new(0), wake: Notify::new() });
+        let progress =
+            Arc::new(Progress { answered: AtomicU64::new(0), wake: Notify::new(), workers: AtomicU64::new(0) });
+        // A task the worker threads run like any other: when it stops
+        // beating, nothing scheduled there runs, whatever the control loop
+        // on the main thread still answers.
+        let beating = progress.clone();
+        tokio::spawn(async move {
+            let mut every = tokio::time::interval(BEAT);
+            every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                every.tick().await;
+                beating.workers.fetch_add(1, Ordering::Release);
+            }
+        });
         let (stop, stopped) = mpsc::channel();
         let watched = progress.clone();
         let thread = std::thread::Builder::new().name("node-watchdog".to_string()).spawn(move || {
             let mut previous = initial;
             let mut missed = 0;
             let mut answered = 0;
+            let mut beats = 0;
+            let mut silent = 0;
             watched.wake.notify_one();
             loop {
                 match stopped.recv_timeout(HEARTBEAT) {
@@ -73,8 +102,22 @@ impl Watchdog {
                     // Exit from this independent OS thread, without unwinding.
                     std::process::exit(1);
                 }
+                // The worker threads, by the same observations: every one of
+                // them blocked in a synchronous wait leaves the tasks that
+                // answer calls, talk to the hub and watch the node unrun.
+                let beat = watched.workers.load(Ordering::Acquire);
+                if interrupted || beat != beats {
+                    silent = 0;
+                } else {
+                    silent += 1;
+                }
+                if HEARTBEAT * silent >= WORKERS_SILENT {
+                    log.line(format_args!("watchdog: no task ran on the node's worker threads for {silent} consecutive heartbeat observations; exiting for the service to restart it"));
+                    std::process::exit(1);
+                }
                 previous = now;
                 answered = current;
+                beats = beat;
                 watched.wake.notify_one();
             }
         })?;

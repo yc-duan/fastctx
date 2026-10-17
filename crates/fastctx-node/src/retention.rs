@@ -32,7 +32,7 @@ impl Default for Settings {
     }
 }
 
-pub(crate) use crate::job_receipts::{confirmed, received, received_from, wait_taken};
+pub(crate) use crate::job_receipts::{confirmed, confirmed_under, received, received_from, wait_taken};
 
 /// How many days full command output stays after the model got its answer.
 pub(crate) fn days(world: &fastctx_types::layout::WorldDir) -> io::Result<u32> {
@@ -109,7 +109,7 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
             }
             let retiring = node.clone();
             match tokio::task::spawn_blocking(move || {
-                let _collecting = retiring.disk.lock().expect("never poisoned");
+                let _collecting = retiring.disk.lock();
                 // Each step is told on its own when it fails.
                 [
                     ("retiring the bookkeeping of removed conversations", crate::books::retire(&retiring)),
@@ -146,7 +146,7 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
 }
 
 fn collect_immediate(node: &Arc<Node>) -> io::Result<()> {
-    let _gate = node.disk.lock().expect("never poisoned");
+    let _gate = node.disk.lock();
     let paths: Vec<_> = node.disk_due.lock().expect("never poisoned").drain().collect();
     let mut failures = Vec::new();
     for path in paths {
@@ -186,7 +186,7 @@ fn collect_immediate(node: &Arc<Node>) -> io::Result<()> {
 fn collect(node: &Arc<Node>, now: Timestamp) -> io::Result<()> {
     let settings: Settings = serde_json::from_slice(&fs::read(node.world.retention())?).map_err(io::Error::other)?;
     let lifetime = i64::from(settings.command_artifact_days) * DAY as i64;
-    let _collecting = node.disk.lock().expect("never poisoned");
+    let _collecting = node.disk.lock();
     collect_records(
         &node.world,
         now,
@@ -213,6 +213,11 @@ fn collect_records(
     forget: impl Fn(&Path) -> io::Result<()>,
     idle: impl Fn(&Path) -> bool,
 ) -> io::Result<()> {
+    // A job still in use is left for a later pass, as the rest go on.
+    let forget = |path: &Path| match forget(path) {
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(false),
+        result => result.map(|()| true),
+    };
     for parent in world.job_parents()? {
         for directory in entries(&parent)? {
             if fastctx_platform::owned_directory::is_link(&fs::symlink_metadata(&directory)?) {
@@ -245,10 +250,9 @@ fn collect_records(
                                         || !unfollowed(&path)
                                         || path.with_extension("owed").try_exists()?
                                         || !expired(now, delivery.at, lifetime)
+                                        || !forget(&path)?
                                     {
                                         pending = true;
-                                    } else {
-                                        forget(&path)?;
                                     }
                                 }
                                 None => pending = true,
@@ -273,11 +277,9 @@ fn collect_records(
                     pending = true;
                     continue;
                 }
-                if delivery.shown_whole || expired(now, delivery.at, lifetime) {
-                    // Watches still read the record after the supervisor exits.
-                    // Their own forgetting mechanism serializes that last reader.
-                    forget(&path)?;
-                } else {
+                // Watches still read the record after the supervisor exits.
+                // Their own forgetting mechanism serializes that last reader.
+                if !(delivery.shown_whole || expired(now, delivery.at, lifetime)) || !forget(&path)? {
                     pending = true;
                 }
             }

@@ -67,15 +67,29 @@ pub(crate) fn confirmed(
     delivery: JobDelivery,
     acting: Option<&Acting>,
 ) -> io::Result<()> {
+    let acting = acting.cloned().unwrap_or_else(|| {
+        node.residents.about(&owner.resident).map(|(about, _)| about.acting).unwrap_or_default()
+    });
+    let gate = node.disk.lock();
+    confirmed_under(&gate, node, owner, machine, delivery, Some(&acting))
+}
+
+/// `confirmed` by one already holding the disk's lock (`_gate`), as one
+/// that also holds the records' lock must: the disk's comes first.
+pub(crate) fn confirmed_under(
+    _gate: &fastctx_platform::doing::SyncMutexGuard<'_, ()>,
+    node: &Node,
+    owner: Address,
+    machine: MachineName,
+    delivery: JobDelivery,
+    acting: Option<&Acting>,
+) -> io::Result<()> {
     if node.is_me(&machine) {
-        received(node, &owner, &delivery)?;
+        received_here(node, &owner, &delivery, None, false, None, &mut HashSet::new())?;
     } else {
         let dispatched = crate::here::get_dispatched(node, &owner.resident, &delivery.job);
         let hub = dispatched.as_ref().and_then(|(destination, _)| destination.hub.clone());
-        let acting = acting.cloned().unwrap_or_else(|| {
-            node.residents.about(&owner.resident).map(|(about, _)| about.acting).unwrap_or_default()
-        });
-        let _gate = node.disk.lock().expect("never poisoned");
+        let acting = acting.cloned().unwrap_or_default();
         let key = (owner.resident.clone(), delivery.job.clone());
         enqueue(
             node,
@@ -171,7 +185,7 @@ pub(crate) fn received_from(
     through_exit: bool,
     account: Option<&HubAccount>,
 ) -> io::Result<()> {
-    let _gate = node.disk.lock().expect("never poisoned");
+    let _gate = node.disk.lock();
     received_here(node, owner, delivery, origin, through_exit, account, &mut HashSet::new())
 }
 
@@ -334,7 +348,7 @@ pub(crate) fn wait_taken(
     jobs: &[CompletedJob],
 ) -> io::Result<()> {
     let Some(caller) = caller else { return Ok(()) };
-    let _gate = node.disk.lock().expect("never poisoned");
+    let _gate = node.disk.lock();
     let parent = parent
         .map(|parent| {
             let path = crate::stop::find(&node.world, parent)?
@@ -402,7 +416,7 @@ pub(crate) fn on_taken(
     acting: &Acting,
     completion: OnCompletion<'_>,
 ) -> io::Result<()> {
-    let _gate = node.disk.lock().expect("never poisoned");
+    let _gate = node.disk.lock();
     let child = Child {
         completed: CompletedJob {
             machine: destination.name.clone(),
@@ -475,7 +489,7 @@ pub(crate) fn snapshot(node: &Node, path: &Path) -> io::Result<Vec<NoticeId>> {
 }
 
 pub(crate) fn snapshot_through(node: &Node, path: &Path, through_exit: bool) -> io::Result<Vec<NoticeId>> {
-    let _gate = node.disk.lock().expect("never poisoned");
+    let _gate = node.disk.lock();
     if through_exit
         && let Some(receipt) = fastctx_install::renewal::read_json::<ExitReceipt>(&path.with_extension("exit-receipt"))?
     {
@@ -581,7 +595,7 @@ pub(crate) async fn supports(node: &Node, acting: &Acting, destination: &Written
 /// A consumed end is durable even while its owner is offline. This phase
 /// suppresses notification; it contains no retention timestamp.
 pub(crate) fn consumed(node: &Node, owner: &Address, acting: &Acting, id: NoticeId, notice: Notice) -> io::Result<()> {
-    let _gate = node.disk.lock().expect("never poisoned");
+    let _gate = node.disk.lock();
     enqueue(
         node,
         Sending {
@@ -669,7 +683,7 @@ pub(crate) async fn forward(node: &std::sync::Arc<Node>) -> io::Result<()> {
             return Err(io::Error::other("invalid completion receipt phase"));
         };
         if sent {
-            let _gate = node.disk.lock().expect("never poisoned");
+            let _gate = node.disk.lock();
             if !take_sent(&path, &bytes)? {
                 node.disk_changed.notify_one();
             }

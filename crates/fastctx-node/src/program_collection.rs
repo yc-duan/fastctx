@@ -5,7 +5,7 @@ use std::fs;
 use crate::Node;
 
 pub(crate) fn collect(node: &Node) -> anyhow::Result<()> {
-    let _collecting = node.disk.lock().expect("never poisoned");
+    let _collecting = node.disk.lock();
     collect_legacy(&node.world)?;
     fastctx_install::program_collection::collect(&node.root)?;
     let Some(_apply) = fastctx_platform::FileLock::try_acquire(&node.root.join("apply.lock"))? else { return Ok(()) };

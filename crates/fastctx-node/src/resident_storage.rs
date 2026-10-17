@@ -2,10 +2,12 @@
 //! on this machine, so a record read and then written is not changed by
 //! another in between, and the order of session events is given out once.
 
-use std::sync::{Mutex, MutexGuard};
+use std::sync::LazyLock;
 
-static TRANSITION: Mutex<()> = Mutex::new(());
+use fastctx_platform::doing::SyncMutexGuard;
 
-pub fn lock() -> MutexGuard<'static, ()> {
-    TRANSITION.lock().expect("never poisoned")
+static TRANSITION: LazyLock<crate::ranked::Records> = LazyLock::new(Default::default);
+
+pub fn lock() -> SyncMutexGuard<'static, ()> {
+    TRANSITION.lock()
 }

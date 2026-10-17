@@ -23,7 +23,7 @@ pub(crate) async fn open(node: &Arc<Node>, path: &Path) -> Result<Lease, fastctx
     };
     let (node, path) = (node.clone(), path.to_path_buf());
     tokio::task::spawn_blocking(move || {
-        let _gate = node.disk.lock().expect("never poisoned");
+        let _gate = node.disk.lock();
         fastctx_hands::run::record::read(&path).map_err(|error| fastctx_types::ipc::Failure::new(error.to_string()))?;
         Ok(hold(&node, &path))
     })

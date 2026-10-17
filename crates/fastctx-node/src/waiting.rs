@@ -31,7 +31,7 @@ pub async fn wait(
     let registering = node.clone();
     let wanted = jobs.clone();
     let (paths, readers) = tokio::task::spawn_blocking(move || {
-        let _gate = registering.disk.lock().expect("never poisoned");
+        let _gate = registering.disk.lock();
         let mut paths = Vec::new();
         let mut readers = Vec::new();
         for job in wanted {

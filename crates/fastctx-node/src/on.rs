@@ -1162,7 +1162,7 @@ impl Follower {
     async fn new(node: &Arc<Node>, path: &Path) -> Result<Self, Failure> {
         let (node, path) = (node.clone(), path.to_path_buf());
         tokio::task::spawn_blocking(move || {
-            let _gate = node.disk.lock().expect("never poisoned");
+            let _gate = node.disk.lock();
             fastctx_hands::run::record::read(&path).map_err(|error| Failure::new(error.to_string()))?;
             Ok(Self::reserved(&node, &path))
         })

@@ -151,7 +151,7 @@ pub(crate) struct Node {
     machine: RwLock<machine::MachineFile>,
     jobs: jobs::Jobs,
     job_watches: job_watch::Watches,
-    disk: std::sync::Mutex<()>,
+    disk: ranked::Disk,
     /// Each conversation's place here, deleted alone (`data::places`).
     places: data::places::Places,
     disk_changed: tokio::sync::Notify,

@@ -114,3 +114,20 @@ machine_lock!(
     /// Reading an attached picture's record.
     Pictures: Mutex = PICTURES, "pictures"
 );
+machine_lock!(
+    /// Jobs' records kept from collection while they are made, read or
+    /// changed.
+    Disk: SyncMutex = DISK, "disk"
+);
+machine_lock!(
+    /// A command's call facts, emitted in order.
+    Emitting: SyncMutex = EMITTING, "call facts"
+);
+machine_lock!(
+    /// Conversations' records, each read and written as one transaction.
+    Records: SyncMutex = RECORDS, "records"
+);
+machine_lock!(
+    /// A command's write facts.
+    WriteFacts: SyncMutex = WRITE_FACTS, "write facts"
+);

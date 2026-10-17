@@ -157,8 +157,31 @@ pub fn pending(directory: &ConversationDir) -> io::Result<Vec<Pending>> {
 /// Something kept that went in: it leaves the inbox and goes on the
 /// `delivered` list. Returns it, or `None` when it was settled already.
 pub fn settle(node: &Node, directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<Pending>> {
-    let _transaction = crate::resident_storage::lock();
-    let Some(pending) = read_here(directory, id)? else { return Ok(None) };
+    // A command's end is confirmed to its job as it leaves the inbox, under
+    // the disk's lock, which comes before the records': found to be one, the
+    // records are let go and taken again after it.
+    let mut gate = None;
+    loop {
+        let transaction = crate::resident_storage::lock();
+        let Some(pending) = read_here(directory, id)? else { return Ok(None) };
+        if gate.is_none() && matches!(pending.delivery.notice, Notice::JobEnded { .. }) {
+            drop(transaction);
+            gate = Some(node.disk.lock());
+            continue;
+        }
+        return settle_read(node, directory, id, pending, gate.as_ref());
+    }
+}
+
+/// `settle` of `pending`, read under the records' lock its caller holds,
+/// with the disk's lock held too when it is a command's end.
+fn settle_read(
+    node: &Node,
+    directory: &ConversationDir,
+    id: &NoticeId,
+    pending: Pending,
+    gate: Option<&fastctx_platform::doing::SyncMutexGuard<'_, ()>>,
+) -> io::Result<Option<Pending>> {
     if delivered_here(directory, id)? {
         if crate::residents::read_removed(directory)?.is_none() {
             std::fs::remove_file(path(directory, id))?;
@@ -167,8 +190,10 @@ pub fn settle(node: &Node, directory: &ConversationDir, id: &NoticeId) -> io::Re
     }
     let removed = crate::residents::read_removed(directory)?.is_some();
     if let Notice::JobEnded { job, machine, output, .. } = &pending.delivery.notice {
+        let gate = gate.ok_or_else(|| io::Error::other("a command's end settled without the disk's lock"))?;
         let about: fastctx_types::residents::About = parse(&directory.about(), &std::fs::read(directory.about())?)?;
-        crate::retention::confirmed(
+        crate::retention::confirmed_under(
+            gate,
             node,
             fastctx_types::Address { machine: node.machine(), resident: about.id },
             machine.clone(),

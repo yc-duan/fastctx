@@ -41,7 +41,7 @@ pub(crate) fn restore(node: &Arc<Node>, path: &Path, record: &JobRecord) -> std:
 /// Releases transferred bytes after the final reader leaves. Metadata and
 /// scratch await the enclosing answer's host receipt.
 pub(crate) fn copied(node: &Arc<Node>, path: &Path) {
-    let _gate = node.disk.lock().expect("never poisoned");
+    let _gate = node.disk.lock();
     if let Err(error) =
         fastctx_platform::publish(&path.with_extension("copied"), b"", fastctx_platform::Permissions::Private)
     {

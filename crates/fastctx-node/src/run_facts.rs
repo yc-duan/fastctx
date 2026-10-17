@@ -17,10 +17,10 @@ use fastctx_types::session::{Happened, SessionEvent, What};
 use std::io;
 use std::path::Path;
 
-static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static WRITING: std::sync::LazyLock<crate::ranked::WriteFacts> = std::sync::LazyLock::new(Default::default);
 
 pub(crate) fn write(directory: &Path, fact: &WriteFact) -> io::Result<()> {
-    let _writing = WRITING.lock().expect("write fact lock");
+    let _writing = WRITING.lock();
     if fact.id.is_empty() || !fact.id.bytes().all(|byte| byte.is_ascii_hexdigit() || byte == b'-') {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid write fact identity"));
     }

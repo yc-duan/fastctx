@@ -5,7 +5,9 @@
 //! once and then again every ten minutes while it lasts, and is kept for its
 //! hubs and interfaces to show. Tasks that wait on each other in a circle
 //! cannot go on by themselves; one that is still there a minute later ends
-//! the node, for its service to start it again.
+//! the node, for its service to start it again. It looks from a thread of
+//! its own: a task would wait for the very worker threads whose blocking it
+//! is there to see.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -43,12 +45,14 @@ impl Stuck {
 pub(crate) fn start(node: &Arc<Node>) {
     let log = node.log.clone();
     doing::set_reporter(move |line| log.line(line));
-    let node = node.clone();
-    tokio::spawn(doing::labeled("watching this node", async move {
+    let watched = Arc::downgrade(node);
+    let spawned = std::thread::Builder::new().name("node-stuck".to_string()).spawn(move || {
         let mut told: HashMap<String, Instant> = HashMap::new();
         let mut circle: Option<(String, Instant)> = None;
         loop {
-            tokio::time::sleep(LOOK).await;
+            std::thread::sleep(LOOK);
+            // The node is gone when its last holder let go: nothing to watch.
+            let Some(node) = watched.upgrade() else { return };
             let snapshot = doing::snapshot(WAITS, HOLDS);
             let now = Instant::now();
             told.retain(|key, _| snapshot.stuck.iter().any(|stuck| &stuck.key == key));
@@ -88,5 +92,8 @@ pub(crate) fn start(node: &Arc<Node>) {
                 }
             }
         }
-    }));
+    });
+    if let Err(error) = spawned {
+        node.log.line(format_args!("starting to watch this node: {error}"));
+    }
 }

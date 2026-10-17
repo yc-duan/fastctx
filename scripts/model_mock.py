@@ -5,6 +5,8 @@ whose `base_url` points at it.
 What the "model" does is said in the latest user input, by markers:
 
     [[run: COMMAND]]   call the World's `run` tool with COMMAND, then answer once its output comes
+    [[later: COMMAND]] the same, asking the World to wait only a second: the command goes on, and its
+                       end comes back later as a notice of its own
     [[slow: SECONDS]]  wait that long before answering
     [[hang]]           never answer: the stream opens and nothing comes on it
     [[fail]]           answer with an HTTP 500
@@ -22,7 +24,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-MARKER = re.compile(r"\[\[(run|slow|hang|fail)(?::\s*(.*?))?\]\]", re.S)
+MARKER = re.compile(r"\[\[(run|later|slow|hang|fail)(?::\s*(.*?))?\]\]", re.S)
 
 
 class Quiet(ThreadingHTTPServer):
@@ -115,7 +117,7 @@ class Mock:
             return stream(handler, [message("no run tool was offered")])
         namespace, name = tool
         call = {"type": "function_call", "call_id": f"call_{uuid.uuid4().hex[:12]}", "name": name,
-                "arguments": json.dumps({"command": argument, "wait": 600})}
+                "arguments": json.dumps({"command": argument, "wait": 1 if kind == "later" else 600})}
         if namespace:
             call["namespace"] = namespace
         return stream(handler, [call])

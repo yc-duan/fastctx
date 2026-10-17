@@ -452,7 +452,7 @@ async fn claude_temp(node: &Arc<Node>, measured: &Measured) -> Result<(), Stop> 
 async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<(), Stop> {
     let (node, places) = (node.clone(), measured.places.clone());
     tokio::task::spawn_blocking(move || -> std::io::Result<()> {
-        let _collecting = node.disk.lock().expect("never poisoned");
+        let _collecting = node.disk.lock();
         let _transaction = crate::resident_storage::lock();
         if places
             .iter()

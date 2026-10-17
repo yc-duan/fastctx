@@ -4,9 +4,9 @@ use super::*;
 use fastctx_types::run::{JobRecord, RunState};
 use fastctx_types::run_facts::JobFacts;
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+use std::sync::LazyLock;
 
-static EMITTING: Mutex<()> = Mutex::new(());
+static EMITTING: LazyLock<crate::ranked::Emitting> = LazyLock::new(Default::default);
 
 #[derive(Default, Serialize, Deserialize)]
 struct Emitted {
@@ -17,7 +17,7 @@ struct Emitted {
 }
 
 pub(crate) fn job(node: &Node, record_path: &Path, writes: Vec<WriteFact>) -> io::Result<()> {
-    let _emitting = EMITTING.lock().expect("fact emitter lock");
+    let _emitting = EMITTING.lock();
     let record = fastctx_hands::run::record::read(record_path)?;
     let Some(call_id) = record.call_id.clone() else {
         return Ok(());

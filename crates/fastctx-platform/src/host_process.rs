@@ -2,6 +2,7 @@
 
 use fastctx_types::ProcessIdentity;
 use std::io;
+use std::time::Duration;
 
 mod asynchronous;
 pub use asynchronous::exited;
@@ -71,27 +72,48 @@ fn parent_of(pid: u32) -> io::Result<Option<u32>> {
 }
 
 /// Waits for this process identity to exit. Never sends it a signal.
-#[cfg(windows)]
 pub fn wait_for_exit(identity: &ProcessIdentity) -> io::Result<()> {
-    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0};
+    wait_until_exit(identity, None).map(drop)
+}
+
+/// Whether this process identity exits within `within`, waiting for it no
+/// longer. Never sends it a signal.
+pub fn exited_within(identity: &ProcessIdentity, within: Duration) -> io::Result<bool> {
+    wait_until_exit(identity, Some(within))
+}
+
+/// The time left until `deadline`, if there is one, in whole milliseconds
+/// rounded up, so a wait never ends before it.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn millis_left(deadline: Option<std::time::Instant>) -> Option<u128> {
+    deadline.map(|deadline| deadline.saturating_duration_since(std::time::Instant::now()).as_micros().div_ceil(1000))
+}
+
+/// Whether this process identity exited, waiting for it at most `within`,
+/// or for as long as it runs.
+#[cfg(windows)]
+fn wait_until_exit(identity: &ProcessIdentity, within: Option<Duration>) -> io::Result<bool> {
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0, WAIT_TIMEOUT};
     use windows_sys::Win32::System::Threading::{
         INFINITE, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, WaitForSingleObject,
     };
+    // A bounded wait never reaches INFINITE, which would make it unbounded.
+    let wait = within.map_or(INFINITE, |within| u32::try_from(within.as_millis()).unwrap_or(INFINITE - 1).min(INFINITE - 1));
     // SAFETY: the query/synchronize handle is owned here and always closed.
     unsafe {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE, 0, identity.pid);
         if handle.is_null() {
             let error = io::Error::last_os_error();
-            return if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) { Ok(()) } else { Err(error) };
+            return if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) { Ok(true) } else { Err(error) };
         }
         let result = (|| {
             if crate::identity::of_handle(handle, identity.pid)? != *identity {
-                return Ok(());
+                return Ok(true);
             }
-            if WaitForSingleObject(handle, INFINITE) == WAIT_OBJECT_0 {
-                Ok(())
-            } else {
-                Err(io::Error::last_os_error())
+            match WaitForSingleObject(handle, wait) {
+                WAIT_OBJECT_0 => Ok(true),
+                WAIT_TIMEOUT => Ok(false),
+                _ => Err(io::Error::last_os_error()),
             }
         })();
         CloseHandle(handle);
@@ -100,22 +122,28 @@ pub fn wait_for_exit(identity: &ProcessIdentity) -> io::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-pub fn wait_for_exit(identity: &ProcessIdentity) -> io::Result<()> {
+fn wait_until_exit(identity: &ProcessIdentity, within: Option<Duration>) -> io::Result<bool> {
+    let deadline = within.map(|within| std::time::Instant::now() + within);
     // SAFETY: opens a descriptor naming one lifetime, closed below.
     let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, identity.pid, 0) } as libc::c_int;
     if fd == -1 {
         let error = io::Error::last_os_error();
-        return if error.raw_os_error() == Some(libc::ESRCH) { Ok(()) } else { Err(error) };
+        return if error.raw_os_error() == Some(libc::ESRCH) { Ok(true) } else { Err(error) };
     }
     let result = (|| {
         if !crate::is_alive(identity)? {
-            return Ok(());
+            return Ok(true);
         }
         let mut poll = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
         loop {
+            let timeout = millis_left(deadline).map_or(-1, |left| i32::try_from(left).unwrap_or(i32::MAX));
             // SAFETY: poll receives one initialized descriptor.
-            if unsafe { libc::poll(&mut poll, 1, -1) } >= 0 {
-                return Ok(());
+            let ready = unsafe { libc::poll(&mut poll, 1, timeout) };
+            if ready > 0 {
+                return Ok(true);
+            }
+            if ready == 0 {
+                return Ok(false);
             }
             let error = io::Error::last_os_error();
             if error.kind() != io::ErrorKind::Interrupted {
@@ -133,19 +161,29 @@ pub fn wait_for_exit(identity: &ProcessIdentity) -> io::Result<()> {
 /// On macOS a kqueue tells of the process's exit; the registration comes
 /// before the identity is checked, so an exit in between is not missed.
 #[cfg(target_os = "macos")]
-pub fn wait_for_exit(identity: &ProcessIdentity) -> io::Result<()> {
-    let Some(queue) = exit_queue(identity.pid)? else { return Ok(()) };
+fn wait_until_exit(identity: &ProcessIdentity, within: Option<Duration>) -> io::Result<bool> {
+    let deadline = within.map(|within| std::time::Instant::now() + within);
+    let Some(queue) = exit_queue(identity.pid)? else { return Ok(true) };
     if !crate::is_alive(identity)? {
-        return Ok(());
+        return Ok(true);
     }
     use std::os::fd::AsRawFd as _;
     loop {
+        let timeout = millis_left(deadline).map(|left| libc::timespec {
+            tv_sec: libc::time_t::try_from(left / 1000).unwrap_or(libc::time_t::MAX),
+            tv_nsec: ((left % 1000) * 1_000_000) as libc::c_long,
+        });
+        let timeout = timeout.as_ref().map_or(std::ptr::null(), |timeout| timeout as *const libc::timespec);
         // SAFETY: a zeroed kevent is a valid output buffer for one event.
         let mut event: libc::kevent = unsafe { std::mem::zeroed() };
-        // SAFETY: waits on a kqueue owned here for one event, no timeout.
-        let got = unsafe { libc::kevent(queue.as_raw_fd(), std::ptr::null(), 0, &mut event, 1, std::ptr::null()) };
-        if got >= 0 {
-            return Ok(());
+        // SAFETY: waits on a kqueue owned here for one event, until `timeout`
+        // when there is one.
+        let got = unsafe { libc::kevent(queue.as_raw_fd(), std::ptr::null(), 0, &mut event, 1, timeout) };
+        if got > 0 {
+            return Ok(true);
+        }
+        if got == 0 {
+            return Ok(false);
         }
         let error = io::Error::last_os_error();
         if error.kind() != io::ErrorKind::Interrupted {
@@ -184,6 +222,6 @@ pub(crate) fn exit_queue(pid: u32) -> io::Result<Option<std::os::fd::OwnedFd>> {
 }
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-pub fn wait_for_exit(_identity: &ProcessIdentity) -> io::Result<()> {
+fn wait_until_exit(_identity: &ProcessIdentity, _within: Option<Duration>) -> io::Result<bool> {
     Err(io::Error::new(io::ErrorKind::Unsupported, "host process observation is not implemented on this platform"))
 }

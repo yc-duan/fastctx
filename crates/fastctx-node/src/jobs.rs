@@ -96,7 +96,7 @@ impl Jobs {
         let (world, names, executable) = (node.world.clone(), node.names(), node.fastctx.clone());
         let registering = node.clone();
         let launched = tokio::task::spawn_blocking(move || -> Result<run::Launched, Failure> {
-            let _collecting = registering.disk.lock().expect("never poisoned");
+            let _collecting = registering.disk.lock();
             let home = user_home().map_err(|error| failure("finding the home directory", error))?;
             let environment =
                 world_process_environment().map_err(|error| failure("reading the user's environment", error))?;
@@ -331,9 +331,15 @@ pub async fn forget(node: &Arc<Node>, town: Option<TownName>, owner: fastctx_typ
     }
 }
 
+/// How long collection, holding the disk's lock, waits for an ended job's
+/// supervisor to exit: it exits as soon as it has written the end, and one
+/// that has not by then is left for a later pass.
+const SUPERVISOR_EXIT: Duration = Duration::from_secs(5);
+
 /// Removes the files of the ended job whose record is at `path`; those of
 /// a job an `on` sent here include the package it came in and what was
-/// kept of its end. Gone already, there is nothing to remove.
+/// kept of its end. Gone already, there is nothing to remove; still in use,
+/// it fails as `WouldBlock`.
 pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
     let record = match record::read(path) {
         Ok(record) => record,
@@ -345,8 +351,10 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
     }
     // The supervisor writes its last record and then lets go of the log; on
     // Windows a file it still holds cannot go.
-    if let Some(supervisor) = &record.supervisor {
-        fastctx_platform::host_process::wait_for_exit(supervisor)?;
+    if let Some(supervisor) = &record.supervisor
+        && !fastctx_platform::host_process::exited_within(supervisor, SUPERVISOR_EXIT)?
+    {
+        return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "its supervisor has not exited"));
     }
     let delivered =
         fastctx_install::renewal::read_json::<fastctx_types::run::JobDelivery>(&path.with_extension("delivered"))?

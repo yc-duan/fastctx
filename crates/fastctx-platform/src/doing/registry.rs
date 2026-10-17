@@ -26,7 +26,8 @@ pub fn set_reporter(report: impl Fn(&str) + Send + Sync + 'static) {
     let _ = REPORTER.set(Box::new(report));
 }
 
-/// How many times a task took a lock out of order since the process began.
+/// How many times a task or thread took a lock out of order since the process
+/// began.
 pub fn violations() -> u64 {
     VIOLATIONS.load(Ordering::Relaxed)
 }
@@ -36,6 +37,13 @@ pub(super) fn report(line: &str) {
         Some(report) => report(line),
         None => eprintln!("{line}"),
     }
+}
+
+/// Who holds or waits for a lock: a task, or a thread that is in none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Who {
+    Task(tokio::task::Id),
+    Thread(std::thread::ThreadId),
 }
 
 #[derive(Default)]
@@ -50,7 +58,7 @@ struct State {
 #[derive(Clone)]
 struct Entry {
     lock: u64,
-    task: Option<tokio::task::Id>,
+    who: Option<Who>,
     rank: Rank,
     name: &'static str,
     subject: Arc<str>,
@@ -86,21 +94,32 @@ pub(super) struct Wait {
 }
 
 impl Wait {
-    /// Starts a wait for `lock`, checking it against the locks this task
-    /// already holds.
+    /// Starts a task's wait for `lock`, checking it against the locks this
+    /// task already holds. Outside a task it is not checked: futures run
+    /// together on one thread by `block_on` are not one holder.
     pub fn begin(lock: Lock<'_>, alone: bool) -> Self {
-        let task = tokio::task::try_id();
+        Self::start(lock, alone, tokio::task::try_id().map(Who::Task))
+    }
+
+    /// Starts a wait that blocks its thread until `lock` is taken alone,
+    /// checked against what its task holds, or, outside a task, its thread.
+    pub fn begin_blocking(lock: Lock<'_>) -> Self {
+        let who = tokio::task::try_id().map_or_else(|| Who::Thread(std::thread::current().id()), Who::Task);
+        Self::start(lock, true, Some(who))
+    }
+
+    fn start(lock: Lock<'_>, alone: bool, who: Option<Who>) -> Self {
         let label = super::label();
         let token = next();
         let mut state = state();
-        if let Some(task) = task {
+        if let Some(who) = who {
             // Locks of one place are taken in the order of their subjects,
             // as when one task takes those of several sessions.
             let late = state
                 .held
                 .values()
                 .filter(|held| {
-                    held.task == Some(task)
+                    held.who == Some(who)
                         && (held.rank > lock.rank || (held.rank == lock.rank && *held.subject >= **lock.subject))
                 })
                 .max_by_key(|held| held.rank)
@@ -122,7 +141,7 @@ impl Wait {
             token,
             Entry {
                 lock: lock.id,
-                task,
+                who,
                 rank: lock.rank,
                 name: lock.name,
                 subject: lock.subject.clone(),
@@ -162,7 +181,7 @@ pub(super) fn taken(lock: Lock<'_>, alone: bool) -> Hold {
         token,
         Entry {
             lock: lock.id,
-            task: tokio::task::try_id(),
+            who: tokio::task::try_id().map(Who::Task),
             rank: lock.rank,
             name: lock.name,
             subject: lock.subject.clone(),
@@ -296,49 +315,49 @@ pub fn snapshot(waits: Duration, holds: Duration) -> Snapshot {
     Snapshot { stuck, cycles }
 }
 
-/// The circles of tasks each waiting for a lock another of them holds. A
-/// writer waits for every holder; a reader waits for a writer holding the
-/// lock and for writers queued for it, which go first.
+/// The circles of tasks and threads each waiting for a lock another of them
+/// holds. A writer waits for every holder; a reader waits for a writer
+/// holding the lock and for writers queued for it, which go first.
 fn cycles(state: &State) -> Vec<Cycle> {
-    let mut waits_on: HashMap<tokio::task::Id, (Vec<tokio::task::Id>, &Entry)> = HashMap::new();
+    let mut waits_on: HashMap<Who, (Vec<Who>, &Entry)> = HashMap::new();
     for wait in state.waiting.values() {
-        let Some(task) = wait.task else { continue };
+        let Some(who) = wait.who else { continue };
         let holders = state
             .held
             .values()
             .filter(|held| held.lock == wait.lock && (wait.alone || held.alone))
-            .filter_map(|held| held.task);
+            .filter_map(|held| held.who);
         let queued = state
             .waiting
             .values()
             .filter(|queued| !wait.alone && queued.lock == wait.lock && queued.alone && queued.since < wait.since)
-            .filter_map(|queued| queued.task);
-        let blockers: Vec<_> = holders.chain(queued).filter(|blocker| *blocker != task).collect();
-        waits_on.insert(task, (blockers, wait));
+            .filter_map(|queued| queued.who);
+        let blockers: Vec<_> = holders.chain(queued).filter(|blocker| *blocker != who).collect();
+        waits_on.insert(who, (blockers, wait));
     }
     let mut found = Vec::new();
-    let mut seen: HashSet<tokio::task::Id> = HashSet::new();
+    let mut seen: HashSet<Who> = HashSet::new();
     for start in waits_on.keys() {
         if seen.contains(start) {
             continue;
         }
-        let mut path: Vec<tokio::task::Id> = Vec::new();
-        let mut on_path: HashSet<tokio::task::Id> = HashSet::new();
+        let mut path: Vec<Who> = Vec::new();
+        let mut on_path: HashSet<Who> = HashSet::new();
         walk(*start, &waits_on, &mut path, &mut on_path, &mut seen, &mut found);
     }
     found
 }
 
 fn walk(
-    task: tokio::task::Id,
-    waits_on: &HashMap<tokio::task::Id, (Vec<tokio::task::Id>, &Entry)>,
-    path: &mut Vec<tokio::task::Id>,
-    on_path: &mut HashSet<tokio::task::Id>,
-    seen: &mut HashSet<tokio::task::Id>,
+    who: Who,
+    waits_on: &HashMap<Who, (Vec<Who>, &Entry)>,
+    path: &mut Vec<Who>,
+    on_path: &mut HashSet<Who>,
+    seen: &mut HashSet<Who>,
     found: &mut Vec<Cycle>,
 ) {
-    if on_path.contains(&task) {
-        let at = path.iter().position(|step| *step == task).unwrap_or(0);
+    if on_path.contains(&who) {
+        let at = path.iter().position(|step| *step == who).unwrap_or(0);
         let links = path[at..]
             .iter()
             .filter_map(|step| waits_on.get(step))
@@ -347,15 +366,15 @@ fn walk(
         found.push(Cycle { links });
         return;
     }
-    if !seen.insert(task) {
+    if !seen.insert(who) {
         return;
     }
-    let Some((blockers, _)) = waits_on.get(&task) else { return };
-    path.push(task);
-    on_path.insert(task);
+    let Some((blockers, _)) = waits_on.get(&who) else { return };
+    path.push(who);
+    on_path.insert(who);
     for blocker in blockers {
         walk(*blocker, waits_on, path, on_path, seen, found);
     }
-    on_path.remove(&task);
+    on_path.remove(&who);
     path.pop();
 }
