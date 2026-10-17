@@ -336,7 +336,8 @@ def managed_mac(lab, root, line):
 
     check("its node is a LaunchDaemon", len(daemons()) == 1, daemons())
     listing = subprocess.run(["ps", "-axo", "user=,command="], capture_output=True, text=True).stdout
-    nodes = [said.split()[0] for said in listing.splitlines() if " node --dir /var/root/.fastctx" in said]
+    # /var is /private/var on a Mac: the World's path may be written either way.
+    nodes = [said.split()[0] for said in listing.splitlines() if " node --dir " in said and "/var/root/.fastctx" in said]
     check("its node runs as root, in root's home", bool(nodes) and set(nodes) == {"root"}, nodes)
     until("alpha sees the managed Mac online", lambda: lab.online("alpha", "managed"), 120)
     code, said = lab.run("alpha", "remove", "managed", "--everything", timeout=180)
