@@ -47,14 +47,15 @@ fn plain(text: &str) -> String {
 /// One address with no scheme or path, and with the hub's port where none
 /// is written.
 fn with_port(part: &str) -> String {
-    let part = part.split_once("://").map_or(part, |(_, rest)| rest);
-    let part = part.split('/').next().unwrap_or(part).trim_end_matches(':');
+    let part = part.split_once("://").filter(|(scheme, _)| !scheme.contains(':')).map_or(part, |(_, rest)| rest);
+    let part = part.split('/').next().unwrap_or(part);
     if part.parse::<SocketAddr>().is_ok() {
         return part.to_string();
     }
     if let Ok(ip) = part.trim_start_matches('[').trim_end_matches(']').parse::<IpAddr>() {
         return SocketAddr::new(ip, HUB_PORT).to_string();
     }
+    let part = part.trim_end_matches(':');
     match part.rsplit_once(':') {
         Some((_, port)) if port.parse::<u16>().is_ok() => part.to_string(),
         _ => format!("{part}:{HUB_PORT}"),
