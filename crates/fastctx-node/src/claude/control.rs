@@ -58,12 +58,44 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
         }
         // A choice for a session that is not running now is kept where its
         // mod reads it when the session runs again: the session is not woken
-        // for it.
-        Control::Model { model, effort } if !running(node, resident)? => keep_selection(node, resident, model, effort),
+        // for it. One made while Claude Code starts the session waits the
+        // few seconds until it names it, where the choice is kept.
+        Control::Model { model, effort } if !running(node, resident)? => {
+            named(node, resident).await?;
+            if running(node, resident)? {
+                let control = Control::Model { model, effort };
+                let result = invoke(node, resident, serde_json::to_value(control).expect("control serializes")).await?;
+                return serde_json::from_value(result)
+                    .map_err(|error| Failure::new(format!("Claude control reply: {error}")));
+            }
+            keep_selection(node, resident, model, effort)
+        }
         control => {
             let result = invoke(node, resident, serde_json::to_value(control).expect("control serializes")).await?;
             serde_json::from_value(result).map_err(|error| Failure::new(format!("Claude control reply: {error}")))
         }
+    }
+}
+
+/// How long a running session's mod is given to say what it offers.
+const OFFERS_WITHIN: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How long a choice made while Claude Code starts a session waits for it
+/// to name the session.
+const NAMING: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Waits until Claude Code has named the resident's session.
+async fn named(node: &Node, resident: &ResidentId) -> Result<(), Failure> {
+    let deadline = tokio::time::Instant::now() + NAMING;
+    loop {
+        let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
+        if about.session.is_some() {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(Failure::new("Claude Code has not started this conversation yet; choose again in a moment"));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 }
 
@@ -143,14 +175,30 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
                 && host.command_contract == Some(files::COMMAND_CONTRACT);
         }
     }
-    let mut offers = if running {
-        let value = invoke(node, resident, json!({"do":"offers"})).await?;
-        let mut offers =
-            serde_json::from_value::<Offers>(value).map_err(|error| Failure::new(format!("Claude offers: {error}")))?;
+    // The models are the World's own table (`fastctx_hosts::claude::models`):
+    // the picker is there whatever the session's mod answers. A running
+    // mod adds its commands and checkpoints, and names the aliases its
+    // login offers; when it does not answer, or not soon, as in the middle
+    // of a turn, the conversation is offered as a sleeping one is. A reply
+    // that comes later is cleared away by `look`.
+    let asked = if running {
+        match tokio::time::timeout(OFFERS_WITHIN, invoke(node, resident, json!({"do":"offers"}))).await {
+            Ok(answer) => answer.and_then(|value| {
+                serde_json::from_value::<Offers>(value).map_err(|error| Failure::new(format!("Claude offers: {error}")))
+            }),
+            Err(_) => Err(Failure::new("Claude did not say what it offers in time")),
+        }
+    } else {
+        Err(Failure::new("not running"))
+    };
+    let mut offers = if let Ok(mut offers) = asked {
         // The mod lists the aliases this login's Claude Code offers; the
         // World offers its own table's rows of those families.
         let aliases: Vec<String> = offers.models.drain(..).map(|model| model.id).collect();
         offers.models = fastctx_hosts::claude::models::model_offers(Some(&aliases));
+        if !offers.controls.contains(&ControlKind::Model) {
+            offers.controls.push(ControlKind::Model);
+        }
         offers
     } else {
         let selected = about
@@ -173,8 +221,8 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
         };
         // A sleeping session's model is chosen as a running one's is: kept
         // for its next turn, among the models its login was last seen to
-        // offer. Before Claude Code names the session there is nowhere to
-        // keep a choice, for the few seconds it starts.
+        // offer. One chosen before Claude Code names the session, in the few
+        // seconds it starts, waits for the name (`named`).
         let aliases = about
             .session
             .as_ref()
@@ -187,7 +235,7 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
             .map_err(failure)?
             .flatten();
         Offers {
-            controls: if about.session.is_some() { vec![ControlKind::Model] } else { Vec::new() },
+            controls: vec![ControlKind::Model],
             checkpoints: checkpoints.as_ref().map(|value| {
                 value["turns"]
                     .as_object()

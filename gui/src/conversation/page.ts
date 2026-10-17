@@ -177,6 +177,10 @@ export interface PageOptions {
   agentRecord?: ((agent: string) => Promise<AgentActivity>) | undefined;
 }
 
+/** How many times what a conversation offers is asked again after asking
+ *  failed, before only a turn's end asks again. */
+const OFFERS_TRIES = 5;
+
 export class ConversationPage {
   readonly element: HTMLElement;
   private view: ConversationView;
@@ -624,7 +628,9 @@ export class ConversationPage {
     // turn ends; nothing else it offers changes with a turn, and what does
     // change is said by the host (commands, above).
     const moving = this.options.conversation.moving();
-    if (this.wasMoving && !moving && (this.offered?.checkpoints || !this.offered)) void this.askOffers();
+    // So does an answer given without the host's own part (its commands),
+    // as when its host was too busy to say in the middle of a turn.
+    if (this.wasMoving && !moving && (this.offered?.checkpoints || !this.offered?.commands.length)) void this.askOffers();
     this.wasMoving = moving;
     this.releaseQueued();
     if (!this.frame) this.frame = requestAnimationFrame(() => this.render());
@@ -1314,13 +1320,15 @@ export class ConversationPage {
       this.offered = await controls.offers();
       this.offersFailed = 0;
     } catch {
-      // A conversation just opened on another machine may not be there
-      // yet, or the way to it broke for a moment: what it offers, its
-      // models among them, is asked again, soon and then less often, for
-      // as long as the page is open (`world-gui.md`, 输入框).
+      // The way to its machine broke for a moment: asked again a few times,
+      // soon and then less often; after that, when a turn ends. Its machine
+      // offers a model picker whatever its host answers, so only a machine
+      // out of reach leaves it out.
       this.offered = null;
-      const wait = Math.min(30_000, 1000 * 2 ** this.offersFailed++);
-      this.offersAgain = window.setTimeout(() => void this.askOffers(), wait);
+      if (this.offersFailed < OFFERS_TRIES) {
+        const wait = 1000 * 2 ** this.offersFailed++;
+        this.offersAgain = window.setTimeout(() => void this.askOffers(), wait);
+      }
     }
     if (this.left) return;
     this.drawChip();
