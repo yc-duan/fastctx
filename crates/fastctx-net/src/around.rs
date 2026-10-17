@@ -25,12 +25,25 @@ pub enum Heard {
     NoAnswer(String),
 }
 
-/// A machine to ask, through one hub and for one account.
+/// A machine to ask, through one hub and for one account. `written` is
+/// how the asker writes it: with its hub where another hub the asker is on
+/// has a machine of that name, so the answer can be told apart and sent
+/// back through the hub it came by (`world-network.md`, 机器的名字).
 pub struct Reachable {
     pub link: Arc<Link>,
     pub name: MachineName,
     pub account: AccountName,
     pub key: crate::sign::PublicKey,
+    pub written: Written,
+}
+
+/// How a machine named `name` on `link`'s hub is written among `links`: its
+/// name, with the hub where another of them has a machine of that name,
+/// the same computer or another.
+pub fn written_among(links: &[Arc<Link>], link: &Link, name: &MachineName) -> Written {
+    let elsewhere =
+        links.iter().any(|other| other.membership().id != link.membership().id && other.view().member(name).is_some());
+    Written { name: name.clone(), hub: elsewhere.then(|| link.hub_name()) }
 }
 
 /// The target and account of a completed question, retained even on failure.
@@ -109,16 +122,13 @@ async fn ask<F: Future<Output = Result<(), String>>>(
     let mut asks = FuturesUnordered::new();
     let sources: Vec<_> = machines
         .iter()
-        .map(|machine| {
-            let hub = machine.link.membership().id.clone();
-            MachineSource {
-                hub,
-                key: machine.key.to_string(),
-                written: Written { name: machine.name.clone(), hub: Some(machine.link.hub_name()) },
-            }
+        .map(|machine| MachineSource {
+            hub: machine.link.membership().id.clone(),
+            key: machine.key.to_string(),
+            written: machine.written.clone(),
         })
         .collect();
-    for (Reachable { link, name, account, key }, mut source) in machines.into_iter().zip(sources) {
+    for (Reachable { link, name, account, key, .. }, mut source) in machines.into_iter().zip(sources) {
         let fresh = refreshed(&link);
         let call = call(&name);
         asks.push(async move {

@@ -1558,7 +1558,13 @@ async fn nodes(node: &Arc<Node>, acting: &fastctx_types::access::Acting) -> Resu
             .filter(|machine| !view.is_me(&machine.name))
             .filter_map(|machine| {
                 view.account_for(&logins, &view.me, &machine.name, fastctx_types::access::Purpose::Hands).map(
-                    |account| Reachable { link: link.clone(), name: machine.name.clone(), account, key: machine.key },
+                    |account| Reachable {
+                        link: link.clone(),
+                        name: machine.name.clone(),
+                        account,
+                        key: machine.key,
+                        written: (&machine.name).into(),
+                    },
                 )
             })
             .collect();

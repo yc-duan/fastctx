@@ -26,7 +26,9 @@ impl Device {
     /// The machines this device's accounts may use, on every hub it is on.
     fn reachable(&self) -> Vec<Reachable> {
         let mut reachable = Vec::new();
-        for session in self.sessions() {
+        let sessions = self.sessions();
+        let links: Vec<_> = sessions.iter().map(|session| session.link.clone()).collect();
+        for session in sessions {
             let view = session.link.view();
             let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
             for machine in view.machines() {
@@ -36,6 +38,7 @@ impl Device {
                         name: machine.name.clone(),
                         key: machine.key,
                         account: account.clone(),
+                        written: fastctx_net::around::written_among(&links, &session.link, &machine.name),
                     });
                 }
             }
@@ -49,7 +52,9 @@ impl Device {
     /// hub asks as each and merges what it hears.
     fn reachable_each(&self) -> Vec<Reachable> {
         let mut reachable = Vec::new();
-        for session in self.sessions() {
+        let sessions = self.sessions();
+        let links: Vec<_> = sessions.iter().map(|session| session.link.clone()).collect();
+        for session in sessions {
             let view = session.link.view();
             let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
             for machine in view.machines() {
@@ -59,6 +64,7 @@ impl Device {
                         name: machine.name.clone(),
                         key: machine.key,
                         account: account.clone(),
+                        written: fastctx_net::around::written_among(&links, &session.link, &machine.name),
                     });
                 }
             }

@@ -584,16 +584,18 @@ pub async fn find_for(node: &Arc<Node>, acting: &Acting, to: &ResidentId) -> Res
         }
         unanswered.extend(missing);
     }
+    // One machine says it lives there: that is where it is, whoever else did
+    // not answer. A resident's id is its own; a second one of the same id
+    // behind an account that did not answer is not a reason to refuse the
+    // one found. Only when none is found does who did not answer matter.
     let names = found.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
-    // A bare location cannot express partial discovery. Do not silently select
-    // one while another account may reveal a second conversation with this id.
-    if !unanswered.is_empty() {
-        let known = if found.is_empty() { "no answering machine has it".into() } else { format!("found on {names}") };
-        return Err(Failure::new(format!("looking for {to}: {known}; not answered: {}", unanswered.join("; "))));
-    }
     match found.as_slice() {
         [machine] => Ok(machine.clone()),
-        [] => Err(Failure::new(format!("no machine that answered has a resident {to}"))),
+        [] if unanswered.is_empty() => Err(Failure::new(format!("no machine that answered has a resident {to}"))),
+        [] => Err(Failure::new(format!(
+            "no machine that answered has a resident {to}; not answered: {}",
+            unanswered.join("; ")
+        ))),
         _ => Err(Failure::new(format!(
             "{to} lives on more than one machine ({names}); name the one you mean as {to}@<machine>"
         ))),

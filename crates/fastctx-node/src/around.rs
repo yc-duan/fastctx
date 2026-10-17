@@ -13,9 +13,10 @@ use crate::Node;
 pub(crate) fn reachable(node: &Node, acting: &Acting, purpose: Purpose) -> Vec<Reachable> {
     let mut reachable = Vec::new();
     let mut keys = Vec::new();
-    for link in node.links() {
+    let links = node.links();
+    for link in &links {
         let view = link.view();
-        let accounts = node.accounts_on(&link, acting);
+        let accounts = node.accounts_on(link, acting);
         // This computer as its hub calls it, which a hub that has not
         // followed a rename yet calls it otherwise.
         let here = &view.me;
@@ -25,7 +26,14 @@ pub(crate) fn reachable(node: &Node, acting: &Acting, purpose: Purpose) -> Vec<R
             }
             if let Some(account) = view.account_for(&accounts, here, &machine.name, purpose) {
                 keys.push(machine.key);
-                reachable.push(Reachable { link: link.clone(), name: machine.name.clone(), account, key: machine.key });
+                let written = fastctx_net::around::written_among(&links, link, &machine.name);
+                reachable.push(Reachable {
+                    link: link.clone(),
+                    name: machine.name.clone(),
+                    account,
+                    key: machine.key,
+                    written,
+                });
             }
         }
     }
@@ -39,9 +47,10 @@ pub(crate) fn reachable(node: &Node, acting: &Acting, purpose: Purpose) -> Vec<R
 /// it hears by hub and machine key.
 pub(crate) fn reachable_each(node: &Node, acting: &Acting, purpose: Purpose) -> Vec<Reachable> {
     let mut reachable = Vec::new();
-    for link in node.links() {
+    let links = node.links();
+    for link in &links {
         let view = link.view();
-        let accounts = node.accounts_on(&link, acting);
+        let accounts = node.accounts_on(link, acting);
         for machine in view.machines().filter(|machine| !view.is_me(&machine.name)) {
             for account in &accounts {
                 if let Some(account) = view.account_for(std::slice::from_ref(account), &view.me, &machine.name, purpose)
@@ -54,6 +63,7 @@ pub(crate) fn reachable_each(node: &Node, acting: &Acting, purpose: Purpose) -> 
                         name: machine.name.clone(),
                         account,
                         key: machine.key,
+                        written: fastctx_net::around::written_among(&links, link, &machine.name),
                     });
                 }
             }
