@@ -1,17 +1,14 @@
 //! Executable identity without opening a World or an agent's configuration.
 
-use std::io::Read;
+mod answer;
+
+use answer::answer;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
 use fastctx_types::renewal::Build;
-
-/// How long a program may take to say what it is. Its first run on a slow
-/// machine can wait while the system looks it over.
-const ANSWERS_WITHIN: Duration = Duration::from_secs(120);
 
 /// Identifies a modern kernel and verifies its claimed content identity.
 /// A released pre-maintenance executable is recognized by its exact version
@@ -70,36 +67,6 @@ fn identify(path: &Path) -> anyhow::Result<Build> {
         identified.status
     );
     Ok(Build { version: version.into(), protocol: 0, digest, built: None })
-}
-
-/// Runs a question to the program, ending it if it does not answer in time.
-fn answer(command: &mut Command, path: &Path) -> anyhow::Result<Output> {
-    let mut child = command.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
-    let drain = |pipe: Option<Box<dyn Read + Send>>| {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            if let Some(mut pipe) = pipe {
-                let _ = pipe.read_to_end(&mut bytes);
-            }
-            bytes
-        })
-    };
-    let stdout = drain(child.stdout.take().map(|pipe| Box::new(pipe) as Box<dyn Read + Send>));
-    let stderr = drain(child.stderr.take().map(|pipe| Box::new(pipe) as Box<dyn Read + Send>));
-    let deadline = Instant::now() + ANSWERS_WITHIN;
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            anyhow::bail!("{} did not answer within {} seconds", path.display(), ANSWERS_WITHIN.as_secs());
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    };
-    let joined = |reader: std::thread::JoinHandle<Vec<u8>>| reader.join().unwrap_or_default();
-    Ok(Output { status, stdout: joined(stdout), stderr: joined(stderr) })
 }
 
 /// Identical images are reusable. A different image needs a strictly newer
