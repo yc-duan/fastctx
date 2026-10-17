@@ -170,6 +170,19 @@ function keptView(): View {
   }
 }
 
+/** Where this device keeps which of the list's groups and people the viewer
+ *  opened or closed, by their keys. */
+const FOLDS_KEY = "machines.folds";
+
+function keptFolds(): Map<string, boolean> {
+  try {
+    const kept = JSON.parse(localStorage.getItem(FOLDS_KEY) ?? "{}") as Record<string, unknown>;
+    return new Map(Object.entries(kept).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"));
+  } catch {
+    return new Map();
+  }
+}
+
 export class MachinesPage implements Page {
   private policySheet: UpdatePolicySheet | null = null;
   private policyLogin: Login | null = null;
@@ -190,6 +203,8 @@ export class MachinesPage implements Page {
   private cardFor: string | null = null;
   private drawn = "";
   private floated = "";
+  /** The list's groups and people the viewer opened or closed. */
+  private readonly listFolds = keptFolds();
   private readonly stop: () => void;
   /** The spot chosen, by its key on the map. */
   private selected: string | null;
@@ -350,6 +365,8 @@ export class MachinesPage implements Page {
         event.preventDefault();
         return this.pickRange(row);
       }
+      const fold = target.closest<HTMLElement>("[data-ml-fold]");
+      if (fold?.dataset.mlFold) return this.foldRow(fold.dataset.mlFold, fold.getAttribute("aria-expanded") !== "true");
       const open = target.closest<HTMLElement>("[data-ml-open]")?.dataset.mlOpen;
       if (open) return this.details(open);
       const hub = target.closest<HTMLElement>("[data-ml-add]")?.dataset.mlAdd;
@@ -795,6 +812,18 @@ export class MachinesPage implements Page {
     this.redraw();
   }
 
+  /** A group's or a person's row pressed: it opens or closes, and stays so
+   *  on this device. */
+  private foldRow(key: string, open: boolean): void {
+    this.listFolds.set(key, open);
+    try {
+      localStorage.setItem(FOLDS_KEY, JSON.stringify(Object.fromEntries(this.listFolds)));
+    } catch {
+      // Kept for this visit only.
+    }
+    this.redraw();
+  }
+
   private details(key: string): void {
     this.selected = key;
     this.detailsOpen = true;
@@ -1001,7 +1030,16 @@ export class MachinesPage implements Page {
     if (listing) {
       const adds = world.accounts.hubs.filter((hub) => this.hubLogin(hub.hub)).map((hub) => hub.hub);
       const html = machineList(
-        { world, now, selected: open ? this.selected : null, adds, when: this.options.when, picked: new Set(framed), pick: { one: this.options.batch.pickOne, all: this.options.batch.pickAll } },
+        {
+          world,
+          now,
+          selected: open ? this.selected : null,
+          adds,
+          when: this.options.when,
+          picked: new Set(framed),
+          pick: { one: this.options.batch.pickOne, all: this.options.batch.pickAll },
+          open: (key, byDefault) => this.listFolds.get(key) ?? byDefault,
+        },
         words,
       );
       if (html !== this.listed) {

@@ -198,12 +198,6 @@ export interface Words {
   /** Under a turn's last message: copy all it said, ask the same again. */
   copyAnswer: string;
   regenerate: string;
-  /** A job's end, told to the session, as one line. */
-  jobDone(code: number | null): string;
-  jobStoppedByYou: string;
-  jobStopped: string;
-  jobInterrupted: string;
-  jobCouldNotRun: string;
   /** A colleague handed back its answer: "GPT · laptop 交回 · 14 分钟". */
   answered(label: string, took: string | null): string;
   answerFailed(label: string): string;
@@ -454,11 +448,6 @@ export const zh: Words = {
   steps: (n) => `${n} 步`,
   copyAnswer: "复制回答",
   regenerate: "重新回答",
-  jobDone: (code) => (code === null ? "后台命令已结束" : `后台命令已结束 · 退出 ${code}`),
-  jobStoppedByYou: "后台命令已被你停下",
-  jobStopped: "后台命令已停下",
-  jobInterrupted: "后台命令中断",
-  jobCouldNotRun: "后台命令没能运行",
   answered: (label, took) => (took ? `${label} 交回 · ${took}` : `${label} 交回`),
   answerFailed: (label) => `${label} 本轮失败`,
   watchEnded: () => "已停止同步",
@@ -706,11 +695,6 @@ export const en: Words = {
   steps: (n) => `${n} step${n === 1 ? "" : "s"}`,
   copyAnswer: "Copy answer",
   regenerate: "Answer again",
-  jobDone: (code) => (code === null ? "Background command finished" : `Background command finished · exit ${code}`),
-  jobStoppedByYou: "You stopped a background command",
-  jobStopped: "Background command stopped",
-  jobInterrupted: "Background command interrupted",
-  jobCouldNotRun: "Background command couldn't run",
   answered: (label, took) => (took ? `${label} handed back · ${took}` : `${label} handed back`),
   answerFailed: (label) => `${label}: turn failed`,
   watchEnded: () => "Sync stopped",

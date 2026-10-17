@@ -24,54 +24,140 @@
   flex: 1;
 }
 
+/* A conversation's head, one line by design: the agent's seal, which says
+   who it is; the title, in the display face; where it lives, quietly, on a
+   computer; then, at the right, what it is pointed at and the tools. That it
+   works is the conversation's own line and the composer's to say; only
+   trouble with the line or the conversation is said here, in words. */
 .who {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   min-width: 0;
 }
 
+.who-seal {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  color: var(--text-2);
+  transition: color var(--hover) ease;
+}
+
+button.who-seal {
+  cursor: pointer;
+}
+
+button.who-seal:hover {
+  color: var(--text-strong);
+}
+
+.who-seal.gone {
+  opacity: 0.55;
+}
+
 .who-name {
+  min-width: 0;
   margin: 0;
-  font-family: var(--font-emphasis);
+  font-family: var(--font-display);
   font-weight: 400;
-  font-size: var(--size-h2);
-  line-height: var(--leading-heading);
+  font-size: var(--size-head);
+  line-height: 1.25;
+  letter-spacing: 0.02em;
   color: var(--text-strong);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.who-at {
-  font-family: var(--font-reading);
-  color: var(--text-2);
-}
-
-.who-state {
-  display: flex;
+.who-home {
+  flex: none;
+  display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 5px;
   font-size: var(--size-small);
   color: var(--text-3);
   white-space: nowrap;
-  overflow: hidden;
 }
 
-.who-state span:last-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.who-state.working {
-  color: var(--text-2);
-}
-
-.who-state.gone {
-  color: var(--caution);
-}
-
-.who-state .pulse {
+.who-home .glyph {
   flex: none;
-  width: 6px;
-  height: 6px;
+}
+
+.who-state {
+  flex: none;
+  font-size: var(--size-small);
+  color: var(--caution);
+  white-space: nowrap;
+}
+
+.who-state[hidden] {
+  display: none;
+}
+
+/* What the conversation is pointed at, in the head's line before its tools,
+   its panel opening below it at the right. */
+.page-head .focus-strip {
+  z-index: 5;
+  margin-right: var(--space-2);
+  padding: 0;
+}
+
+.page-head .focus-chip {
+  margin-left: 0;
+}
+
+.page-head .focus-pop {
+  top: calc(100% + 6px);
+  right: 0;
+  left: auto;
+}
+
+.focus-count {
+  display: none;
+}
+
+/* On a phone the line keeps the seal, the title, the machines as a mark and
+   a count, and the "⋯"; where it lives, finding and the details are a
+   press of the seal or the "⋯" away. */
+@media (max-width: 760px) {
+  .who {
+    gap: 10px;
+  }
+
+  .who-seal {
+    width: 28px;
+    height: 28px;
+  }
+
+  .who-home {
+    display: none;
+  }
+
+  .page-head .focus-strip {
+    margin-right: 0;
+  }
+
+  .page-head .focus-chip :is(.talk-chip-name, .talk-chip-sub, .focus-more),
+  .page-head .focus-chip > .glyph:last-child {
+    display: none;
+  }
+
+  .page-head .focus-count {
+    display: inline;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .page-head-actions:has(.talk-menu-toggle) :is(.find-toggle, .details-toggle) {
+    display: none;
+  }
 }
 
 /* The composer: a raised sheet resting on the foot of the page. */
@@ -732,15 +818,6 @@
   }
 }
 
-.who-state.waiting .who-first {
-  color: var(--accent);
-}
-
-.who-state .ask-mark {
-  flex: none;
-  width: 7px;
-  height: 7px;
-}
 
 /* What is attached to the words: a row of small cards above them, each
    with its picture or its kind, its name and how it is going. */

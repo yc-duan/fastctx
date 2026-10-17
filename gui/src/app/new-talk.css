@@ -328,15 +328,22 @@
   display: block;
 }
 
-/* Which agent: every login in one table (`agent-picker.ts`). The groups and
-   the machines run across it; each login is a row on the table's own
-   columns, so the agents, who is logged in, the plans and the bars line up
-   all the way down, whatever machine they are on. */
+/* Which agent: every login in one table (`agent-picker.ts`), drawn as the
+   machine list's tree. The groups, the people and the machines run across
+   it; each login is a row on the table's own columns, so the agents, who is
+   logged in, the plans and the bars line up all the way down, whatever
+   machine they are on. A login's mark stands under its machine's name. */
 .agent-picker {
   display: grid;
   grid-template-columns: max-content max-content minmax(0, 1fr) max-content max-content max-content;
   column-gap: var(--space-3);
   padding: var(--space-1) 0 var(--space-2);
+  /* The tree's measures, as on the machine list: a level in is one icon
+     and its gap less the glyph's own margin. */
+  --ap-pad: var(--space-2);
+  --ap-twisty: 14px;
+  --ap-icon: round(nearest, calc(15px * var(--icon-scale)), 1px);
+  --ap-step: calc(var(--ap-icon) + var(--space-2) - 3px);
 }
 
 .agent-group {
@@ -356,29 +363,55 @@
   margin-top: 0;
 }
 
-/* A group and a machine are only ways to narrow the table: their rows
-   stand on the table's own columns. */
+/* A group, a person and a machine are only ways to narrow the table: their
+   rows stand on the table's own columns. A person closed keeps theirs out
+   of sight, but not while something typed is looked for. */
 .agent-hold,
-.agent-host {
+.agent-host,
+.agent-people,
+.agent-people-body {
+  display: contents;
+}
+
+.agent-people-body[data-folded] {
+  display: none;
+}
+
+.agent-picker.narrowing .agent-people-body[data-folded] {
   display: contents;
 }
 
 .agent-hold[hidden],
 .agent-host[hidden],
+.agent-people[hidden],
 .agent-row[hidden],
 .agent-none[hidden] {
   display: none;
 }
 
-/* Past ten logins, what narrows them: a solid field at the top that stays
-   there as the table scrolls. */
-.agent-filter {
+/* Over the table, staying as it scrolls: the field that narrows it past ten
+   logins, and the choice of all agents or one. */
+.agent-top {
   position: sticky;
   top: calc(-1 * var(--space-3));
   z-index: 1;
-  display: block;
-  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
   margin: calc(-1 * var(--space-3)) 0 var(--space-2);
+  padding: var(--space-3) 0 var(--space-1);
+  background: var(--bg-elevated);
+}
+
+.agent-top[hidden] {
+  display: none;
+}
+
+.agent-filter {
+  flex: 1 1 240px;
+  display: block;
+  min-width: 0;
   padding: 8px var(--space-3);
   border: 0;
   border-radius: var(--radius-m);
@@ -387,11 +420,44 @@
   color: var(--text);
   font: inherit;
   font-size: var(--size-ui);
-  box-shadow: 0 var(--space-3) 0 var(--bg-elevated), 0 calc(-1 * var(--space-3)) 0 var(--bg-elevated);
 }
 
 .agent-filter::placeholder {
   color: var(--text-3);
+}
+
+.picker-kinds {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  margin-left: auto;
+  padding: 2px;
+  border-radius: var(--radius-full);
+  background: var(--fill);
+}
+
+.picker-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--size-small);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.picker-kind:hover {
+  color: var(--text-2);
+}
+
+.picker-kind.chosen {
+  background: var(--accent-wash);
+  color: var(--text);
 }
 
 .agent-group::after {
@@ -403,37 +469,94 @@
   mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
 }
 
-.agent-machine {
+/* A machine, and a person whose machines open under them: the twisty or
+   its room, the icon, the name and what follows it. */
+.agent-machine,
+.agent-person {
   grid-column: 1 / -1;
   display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
+  align-items: center;
   min-width: 0;
-  padding: var(--space-2) var(--space-2) 2px;
+  padding: var(--space-2) var(--space-2) 2px calc(var(--ap-pad) + var(--depth, 0) * var(--ap-step));
   font-size: var(--size-ui);
   color: var(--text-strong);
 }
 
-.agent-machine-dot {
-  flex: none;
-  align-self: center;
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-full);
-  background: var(--text-3);
-}
-
-.agent-machine.online .agent-machine-dot {
-  background: var(--alive);
-}
-
-.agent-machine.offline .agent-machine-dot {
+.agent-person {
+  min-height: 36px;
+  padding-bottom: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-m);
   background: none;
-  box-shadow: inset 0 0 0 1.2px var(--text-3);
+  font: inherit;
+  font-size: var(--size-ui);
+  text-align: left;
+  transition: background-color var(--hover) ease;
 }
 
+.agent-person:hover {
+  background: var(--fill);
+}
+
+.agent-twisty {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--ap-twisty);
+  margin-right: var(--space-2);
+  overflow: visible;
+  color: var(--text-2);
+}
+
+.agent-twisty .glyph {
+  flex: none;
+  width: calc(var(--ap-twisty) + 6px);
+  height: calc(var(--ap-twisty) + 6px);
+}
+
+.agent-person:not(.open) .agent-twisty .glyph {
+  transform: rotate(-90deg);
+}
+
+/* Plex Serif's lowercase sits low in its line: the icon comes down to meet
+   it. */
+.agent-icon {
+  position: relative;
+  top: 1.5px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--ap-icon);
+  height: var(--ap-icon);
+  margin-right: var(--space-2);
+  color: var(--text-2);
+}
+
+.agent-icon .glyph {
+  width: var(--ap-icon);
+  height: var(--ap-icon);
+}
+
+.agent-face {
+  display: grid;
+  place-items: center;
+  width: var(--ap-icon);
+  height: var(--ap-icon);
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  color: var(--text-2);
+  font-size: calc(var(--ap-icon) * 0.6);
+  line-height: 1;
+}
+
+/* Away: its icon and name go grey together. */
 .agent-machine.offline .agent-machine-name {
   color: var(--text-3);
+}
+
+.agent-machine.offline .agent-icon {
+  color: var(--text-3);
+  opacity: 0.6;
 }
 
 .agent-machine-name {
@@ -445,24 +568,20 @@
 
 .agent-machine-note {
   flex: none;
+  margin-left: var(--space-3);
   font-size: var(--size-small);
   color: var(--text-3);
   white-space: nowrap;
 }
 
-.agent-machine-note + .agent-machine-note::before {
-  content: "·";
-  margin-right: var(--space-2);
-}
-
-/* A login: set in under its machine's name, past the dot. */
+/* A login: its mark under its machine's name. */
 .agent-row {
   grid-column: 1 / -1;
   display: grid;
   grid-template-columns: subgrid;
   align-items: center;
   min-height: 36px;
-  padding: 0 var(--space-3) 0 calc(var(--space-2) + 15px);
+  padding: 0 var(--space-3) 0 calc(var(--ap-pad) + (var(--depth, 0) + 1) * var(--ap-step) + var(--ap-twisty) + var(--space-2));
   border-radius: var(--radius-m);
   text-align: left;
   color: var(--text-2);
@@ -486,8 +605,15 @@
 }
 
 .agent-row-mark {
+  position: relative;
+  top: 1.5px;
   display: inline-flex;
-  color: var(--text-3);
+  color: var(--text-2);
+}
+
+.agent-row-mark .glyph {
+  width: var(--ap-icon);
+  height: var(--ap-icon);
 }
 
 .agent-row.chosen .agent-row-mark {
@@ -504,15 +630,20 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--size-small);
+  font-size: var(--size-ui);
+  color: var(--text);
+}
+
+.agent-row:disabled .agent-row-who {
+  color: var(--text-3);
 }
 
 .agent-row-plan .tag {
   font-size: 12px;
 }
 
-/* Each window a short bar and how much of it is spent; past nine tenths in
-   the caution colour, spent in the warning colour. */
+/* Each window a short bar in graphite and how much of it is spent; past
+   nine tenths in clay, spent in the warning colour. */
 .agent-row-limits {
   display: flex;
   align-items: center;
@@ -531,10 +662,10 @@
 
 .agent-limit-track {
   position: relative;
-  width: 32px;
+  width: 40px;
   height: 4px;
   border-radius: var(--radius-full);
-  background: var(--hairline);
+  background: var(--fill-strong);
   overflow: hidden;
 }
 
@@ -542,7 +673,7 @@
   position: absolute;
   inset: 0 auto 0 0;
   border-radius: inherit;
-  background: var(--pen-clay);
+  background: var(--pen-graphite);
 }
 
 .agent-limit-used {
@@ -552,11 +683,11 @@
 }
 
 .agent-limit.high .agent-limit-track > i {
-  background: var(--caution);
+  background: var(--accent);
 }
 
 .agent-limit.high .agent-limit-used {
-  color: var(--caution);
+  color: var(--accent);
 }
 
 .agent-limit.spent .agent-limit-track > i {
@@ -566,7 +697,6 @@
 .agent-limit.spent .agent-limit-used {
   color: var(--wrong);
 }
-
 
 .agent-row-note {
   font-size: var(--size-small);
@@ -585,28 +715,28 @@
 
 .agent-none {
   grid-column: 1 / -1;
-  margin: 2px 0 var(--space-1) calc(var(--space-2) + 15px);
+  margin: 2px 0 var(--space-1) calc(var(--ap-pad) + (var(--depth, 0) + 1) * var(--ap-step) + var(--ap-twisty) + var(--space-2));
   font-size: var(--size-small);
   color: var(--text-3);
 }
 
-/* On a phone a login takes two lines: the agent, who is logged in and the
-   plan; under them the windows, and any note at the end. */
+/* On a phone a login takes two lines: its mark, who is logged in and the
+   plan; under them the windows, and any note at the end. The mark says
+   which agent. */
 @media (max-width: 760px) {
   .agent-picker {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .agent-row {
-    grid-template-columns: 18px max-content minmax(0, 1fr) auto;
+    grid-template-columns: var(--ap-icon) minmax(0, 1fr) minmax(0, 1fr) auto;
     grid-template-areas:
-      "mark agent who plan"
+      "mark who who plan"
       ". limits limits note";
     column-gap: var(--space-2);
     row-gap: 4px;
     padding-top: var(--space-2);
     padding-bottom: var(--space-2);
-    padding-left: var(--space-3);
     min-height: 52px;
   }
 
@@ -615,7 +745,7 @@
   }
 
   .agent-row-agent {
-    grid-area: agent;
+    display: none;
   }
 
   .agent-row-plan {
@@ -630,13 +760,36 @@
     grid-area: who;
   }
 
+  /* The bars give way to a note at the end of the line. */
   .agent-row-limits {
     grid-area: limits;
+    min-width: 0;
+    overflow: hidden;
   }
 
+  .agent-limit {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
 
-  .agent-none {
-    margin-left: var(--space-3);
+  .agent-limit-track {
+    flex: 1 1 40px;
+    min-width: 12px;
+  }
+
+  .agent-limit-name,
+  .agent-limit-used {
+    flex: none;
+  }
+
+  .picker-kinds {
+    flex: 1 1 100%;
+  }
+
+  .picker-kind {
+    flex: 1;
+    justify-content: center;
+    min-height: 36px;
   }
 }
 

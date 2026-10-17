@@ -28,6 +28,16 @@ http://scripts.sil.org/OFL
 
 Complete font license: noto-sans-sc/OFL.txt
 
+lxgw-wenkai/LXGWWenKai-500.woff2
+SHA-256: 9a2cf2308baba89df9ebf9f557ff5f1a38861ba4b40ac9f1071caf8c63c061b2
+Copyright 2021-2026 LXGW (https://github.com/lxgw/LxgwWenKai)
+Copyright 2020 The Klee Project Authors (https://github.com/fontworks-fonts/Klee)
+Subset to the characters of the bundled Noto Sans SC, with Latin and punctuation.
+
+https://openfontlicense.org
+
+Complete font license: lxgw-wenkai/OFL.txt
+
 recursive/Recursive-VF.woff2
 SHA-256: 14ef41458aeba3d812284c4e32ee956910b88845062c61e91cc8578c2b78bccb
 Copyright 2019 The Recursive Project Authors (github.com/arrowtype/recursive)

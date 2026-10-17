@@ -83,18 +83,13 @@ export class FindContent {
     const part = (key: string, stamp: string, target: Omit<FindTarget, "block">, read: FindPart["read"]): FindPart =>
       ({ key: `${block.key}/${key}`, stamp, target: { block: block.key, ...target }, read });
     const stamp = String(block.stamp);
-    const long = (key: string, row: string | undefined, index: number, text: string): FindPart =>
-      part(key, stamp, { ...(row ? { row } : {}), long: index }, () => text.replace(/\n$/, ""));
     // Turns not held are found by the shell, not here.
     if (block.kind === "gap") return;
     if (block.kind !== "activity-group") {
       yield part("body", stamp, {}, () => this.rendering.entry(block));
       if (block.kind === "heard" && this.rendering.notice(block)) {
         const notice = block.notice!;
-        if (notice.kind === "job_ended" && notice.last?.text) {
-          yield long("last", block.key, 0, notice.last.text);
-          yield part("path", stamp, { row: block.key, selector: ".notice-path" }, () => `${notice.machine} · ${notice.output}`);
-        } else if (notice.kind === "answer" && notice.end.last_message) {
+        if (notice.kind === "answer" && notice.end.last_message) {
           yield part("answer", stamp, { row: block.key, selector: ".notice-answer" }, () => htmlText(render(notice.end.last_message!)));
         } else if (notice.kind === "world" && (notice.fact.fact === "moved" || notice.fact.fact === "focus")) {
           yield part("brief", stamp, { row: block.key, selector: ".told-plain" }, () => htmlText(plain(block.text)));

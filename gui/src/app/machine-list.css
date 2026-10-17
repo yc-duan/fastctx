@@ -1,8 +1,10 @@
-/* The machines as a list: a quiet column of rows on the paper, grouped
-   under small names each followed by a hand-drawn line. A row has the same
-   columns down the whole list; it is not boxed, only washed when pointed at
-   or when its details are open. The choice between drawing and list sits in
-   the page's head as one small segmented fill. */
+/* The machines as a list: a quiet tree of rows on the paper, in sections
+   under small names each followed by a hand-drawn line. Every row is a
+   twisty, an icon and a name, and has the same columns down the whole list;
+   a row is not boxed, only washed when pointed at or when its details are
+   open. Whether a machine is there is its icon and name in ink or in grey.
+   The choice between drawing and list sits in the page's head as one small
+   segmented fill. */
 
 .ml-views {
   display: flex;
@@ -60,6 +62,11 @@
   overflow-y: auto;
   padding: var(--space-2) var(--space-2) var(--space-8);
   container: ml / inline-size;
+  /* The tree's measures. A level in is one icon and its gap less the
+     glyph's own margin, so a child's icon stands under its parent's name. */
+  --ml-twisty: 14px;
+  --ml-icon: round(nearest, calc(15px * var(--icon-scale)), 1px);
+  --ml-step: calc(var(--ml-icon) + var(--space-2) - 3px);
 }
 
 .ml-list[hidden] {
@@ -99,33 +106,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* A group of the owner's inside their section: its name over its rows,
-   level with the rows' names, quieter than the section's own head; its box
-   stands in the column of the rows' boxes. */
-.ml-band-head {
-  position: relative;
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  margin: var(--space-4) 0 0;
-  padding: 0 var(--space-3) 0 calc(var(--space-3) * 3 + 18px + 16px);
-  font-family: var(--font-emphasis);
-  font-weight: 400;
-  font-size: var(--size-small);
-  color: var(--text-2);
-}
-
-.ml-band-head .ml-group-sub {
-  font-family: var(--font-reading);
-}
-
-.ml-band-head .ml-pick {
-  position: absolute;
-  top: 50%;
-  left: var(--space-3);
-  transform: translateY(-50%);
-}
-
 /* A machine's box, and a heading's for all its machines: a small solid
    fill, no line round it, filled with clay once chosen, half when some of
    a heading's are. It shows where pointed at, and on every row once any
@@ -150,7 +130,6 @@
 .ml-row:hover .ml-pick,
 .ml-row:focus-visible .ml-pick,
 .ml-group-head:hover .ml-pick,
-.ml-band-head:hover .ml-pick,
 .ml-list.picking .ml-pick {
   opacity: 1;
 }
@@ -187,11 +166,13 @@
   mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
 }
 
-/* A row: the mark, the name with its tags, what it is, how it reaches the
-   hub, whom it is shared with, the agents at work on it, and the way in. */
+/* A row: its box, the name cell (twisty, icon, name and tags), what it is,
+   how it reaches the hub, whom it is shared with, the agents at work on it,
+   and the way in. */
 .ml-row {
+  position: relative;
   display: grid;
-  grid-template-columns: 16px 18px minmax(140px, 1.4fr) minmax(110px, 0.9fr) minmax(120px, 1fr) minmax(0, 1fr) 64px 16px;
+  grid-template-columns: 16px minmax(180px, 1.6fr) minmax(90px, 0.7fr) minmax(110px, 1fr) minmax(0, 0.8fr) 64px 16px;
   align-items: center;
   column-gap: var(--space-3);
   width: 100%;
@@ -219,33 +200,78 @@
   background: var(--accent-wash);
 }
 
-.ml-mark {
+/* A level in: a hairline down from the parent's icon. */
+.ml-row[data-depth]::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--space-3) * 2 + 16px + (var(--depth) - 1) * var(--ml-step) + var(--ml-twisty) + var(--space-2) + var(--ml-icon) / 2);
+  width: 1px;
+  background: var(--rule);
+}
+
+.ml-name {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding-left: calc(var(--depth, 0) * var(--ml-step));
+  font-size: var(--size-ui);
+  color: var(--text-strong);
+}
+
+.ml-twisty {
+  flex: none;
   display: grid;
   place-items: center;
-  color: var(--text-3);
+  width: var(--ml-twisty);
+  margin-right: var(--space-2);
+  overflow: visible;
+  color: var(--text-2);
 }
 
-.ml-dot {
-  width: 7px;
-  height: 7px;
+/* The chevron fills little of its square: drawn larger than the twisty's
+   room, it reads at the size of the names. */
+.ml-twisty .glyph {
+  flex: none;
+  width: calc(var(--ml-twisty) + 6px);
+  height: calc(var(--ml-twisty) + 6px);
+}
+
+.ml-fold:not(.open) .ml-twisty .glyph {
+  transform: rotate(-90deg);
+}
+
+/* The icon: a machine's kind, a group's sheets, a person's initial. Plex
+   Serif's lowercase sits low in its line, so the icon comes down to meet
+   it. */
+.ml-icon {
+  position: relative;
+  top: 1.5px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--ml-icon);
+  height: var(--ml-icon);
+  margin-right: var(--space-2);
+  color: var(--text-2);
+}
+
+.ml-icon .glyph {
+  width: var(--ml-icon);
+  height: var(--ml-icon);
+}
+
+.ml-face {
+  display: grid;
+  place-items: center;
+  width: var(--ml-icon);
+  height: var(--ml-icon);
   border-radius: var(--radius-full);
-  background: var(--text-3);
-}
-
-.ml-row.online .ml-dot {
-  background: var(--alive);
-}
-
-.ml-row.offline .ml-dot {
-  background: none;
-  box-shadow: inset 0 0 0 1.2px var(--text-3);
-}
-
-/* An assisting agent's machine is not the account's: its dot is the clay
-   ring the drawing gives it. */
-.ml-row.assist .ml-dot {
-  background: none;
-  box-shadow: inset 0 0 0 1.4px var(--pen-clay);
+  background: var(--fill-strong);
+  color: var(--text-2);
+  font-size: calc(var(--ml-icon) * 0.6);
+  line-height: 1;
 }
 
 .ml-knot {
@@ -258,15 +284,6 @@
   color: var(--text-3);
 }
 
-.ml-name {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  font-size: var(--size-ui);
-  color: var(--text-strong);
-}
-
 .ml-name-text {
   min-width: 0;
   overflow: hidden;
@@ -274,23 +291,38 @@
   white-space: nowrap;
 }
 
-.ml-name .tag {
+.ml-name .tag,
+.ml-name .ml-direct {
   flex: none;
+  margin-left: var(--space-2);
 }
 
-.ml-row.offline .ml-name {
+/* Away: the icon and the name go grey together. */
+.ml-row.offline .ml-name,
+.ml-row.offline .ml-system {
   color: var(--text-3);
+}
+
+.ml-row.offline .ml-icon {
+  color: var(--text-3);
+  opacity: 0.6;
+}
+
+/* A visitor's, which the administrator only sees: faint, going nowhere. */
+.ml-row.visitor {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .ml-direct {
   display: inline-grid;
-  flex: none;
   color: var(--text-3);
 }
 
 .ml-system,
 .ml-link,
-.ml-given {
+.ml-given,
+.ml-count {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -300,7 +332,13 @@
   color: var(--text-3);
 }
 
-.ml-system > span,
+/* A group's and a person's count runs under what a machine's two middle
+   columns say. */
+.ml-count {
+  grid-column: span 2;
+  font-variant-numeric: tabular-nums;
+}
+
 .ml-given > span,
 .ml-link {
   text-overflow: ellipsis;
@@ -310,13 +348,8 @@
   overflow: hidden;
 }
 
-.ml-system .glyph,
 .ml-given .glyph {
   flex: none;
-}
-
-.ml-system .glyph + span + .glyph {
-  margin-left: var(--space-2);
 }
 
 .ml-ms {
@@ -332,7 +365,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--text-3);
+  color: var(--accent);
   font-variant-numeric: tabular-nums;
 }
 
@@ -357,23 +390,21 @@
   opacity: 1;
 }
 
-.ml-add {
-  color: var(--text-3);
-}
-
-.ml-add .ml-name {
+.ml-add .ml-name,
+.ml-add .ml-icon {
   font-size: var(--size-small);
   color: var(--text-3);
 }
 
-.ml-add:hover .ml-name {
+.ml-add:hover .ml-name,
+.ml-add:hover .ml-icon {
   color: var(--text-2);
 }
 
 /* Narrower: whom it is shared with gives way first. */
 @container ml (max-width: 760px) {
   .ml-row {
-    grid-template-columns: 16px 18px minmax(120px, 1.4fr) minmax(90px, 0.9fr) minmax(100px, 1fr) 48px 16px;
+    grid-template-columns: 16px minmax(150px, 1.6fr) minmax(80px, 0.7fr) minmax(100px, 1fr) 48px 16px;
   }
 
   .ml-given {
@@ -381,31 +412,27 @@
   }
 }
 
-/* A phone: two lines a row, the name and the agents at work over what it is
-   and how it reaches the hub; the way in always shown. */
+/* A phone: a machine in two lines, the name and the agents at work over
+   what it is and how it reaches the hub, level with the name; a group, a
+   person and adding one line. The way in always shown. */
 @container ml (max-width: 520px) {
   .ml-row {
-    grid-template-columns: 18px minmax(0, 1fr) auto 16px;
+    grid-template-columns: minmax(0, 1fr) auto 16px;
     grid-template-areas:
-      "mark name busy go"
-      ". about about go";
+      "name busy go"
+      "about about go";
     row-gap: 2px;
     min-height: 56px;
     padding: var(--space-2) var(--space-3);
   }
 
-  .ml-mark {
-    grid-area: mark;
+  .ml-row[data-depth]::before {
+    left: calc(var(--space-3) + (var(--depth) - 1) * var(--ml-step) + var(--ml-twisty) + var(--space-2) + var(--ml-icon) / 2);
   }
 
   /* No pointer rests on a phone: machines are chosen on a larger screen. */
-  .ml-pick,
-  .ml-band-head .ml-pick {
+  .ml-pick {
     display: none;
-  }
-
-  .ml-band-head {
-    padding-left: calc(var(--space-3) * 2 + 18px);
   }
 
   .ml-name {
@@ -415,6 +442,7 @@
 
   .ml-system {
     grid-area: about;
+    padding-left: calc(var(--depth, 0) * var(--ml-step) + var(--ml-twisty) + var(--ml-icon) + var(--space-2) * 2);
   }
 
   .ml-link {
@@ -431,9 +459,21 @@
     opacity: 1;
   }
 
-  .ml-add {
+  .ml-fold {
+    grid-template-columns: minmax(0, max-content) minmax(0, 1fr) auto 16px;
+    grid-template-areas: "name count busy go";
     min-height: 48px;
-    grid-template-areas: "mark name busy go";
+  }
+
+  .ml-count {
+    grid-area: count;
+    grid-column: auto;
+    margin-left: var(--space-2);
+  }
+
+  .ml-add {
+    grid-template-areas: "name busy go";
+    min-height: 48px;
   }
 }
 

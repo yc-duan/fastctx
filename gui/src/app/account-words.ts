@@ -602,6 +602,12 @@ export interface MachinesWords {
   groups: GroupWords;
   /** Under a group's name on the drawing: how many, how many online. */
   groupSub(count: number, online: number): string;
+  /** The list's sections past the account's own: the machines shared with
+   *  it, the members' its administrator sees, and those whose agents
+   *  assist it. */
+  sharedSection: string;
+  membersSection: string;
+  assistSection: string;
   /** The page's two ways of showing the machines, and what the choice is. */
   viewMap: string;
   viewList: string;
@@ -860,7 +866,10 @@ export const zhMachines: MachinesWords = {
     groupNameLong: "组名最多 32 个字",
     groupNameEmpty: "写一个组名",
   },
-  groupSub: (count, online) => `${count} 台 · ${online} 在线`,
+  groupSub: (count, online) => `${count} 台　${online} 在线`,
+  sharedSection: "共享给我的",
+  membersSection: "其他成员的",
+  assistSection: "协助我的",
   viewMap: "图",
   viewList: "列表",
   views: "显示方式",
@@ -1165,7 +1174,10 @@ export const enMachines: MachinesWords = {
     groupNameLong: "A group's name is at most 32 characters",
     groupNameEmpty: "Give the group a name",
   },
-  groupSub: (count, online) => `${count} · ${online} online`,
+  groupSub: (count, online) => `${count}, ${online} online`,
+  sharedSection: "Shared with me",
+  membersSection: "Other members'",
+  assistSection: "Assisting me",
   viewMap: "Map",
   viewList: "List",
   views: "Show as",

@@ -31,7 +31,6 @@
 
 import { ActsMenu } from "../app/acts-menu";
 import type { AgentActivity, Content, Health, MachineName, Notice, Speaker, Tool, TurnEnd } from "../world/events";
-import { STOPPED_BY_USER } from "../world/events";
 import type { Attachment } from "../world/attachments";
 import type { Decoding } from "../world/remote-lines";
 import type { RunFacts, WriteFact } from "../world/run-facts";
@@ -1287,12 +1286,12 @@ export class ConversationView {
   }
 
   /** The notice a heard entry carries, when it is one the page draws as a
-   *  line of its own: the World's facts, a job's end, a colleague's answer
-   *  or trouble. Words another agent wrote stay words. */
+   *  line of its own: the World's facts, a colleague's answer or trouble.
+   *  Words another agent wrote stay words; a job's end is not drawn. */
   private noticeOf(entry: HeardEntry): Notice | null {
     const notice = entry.notice;
     if (!notice || entry.from?.kind === "user") return null;
-    return notice.kind === "job_ended" || notice.kind === "answer" || notice.kind === "health" || notice.kind === "world" ? notice : null;
+    return notice.kind === "answer" || notice.kind === "health" || notice.kind === "world" ? notice : null;
   }
 
   private heardEntry(entry: HeardEntry): string {
@@ -1331,24 +1330,6 @@ export class ConversationView {
     let ok = true;
     let more = "";
     switch (notice.kind) {
-      case "job_ended": {
-        const byUser = notice.stop?.by === STOPPED_BY_USER;
-        const code = notice.status && "code" in notice.status ? notice.status.code : null;
-        if (byUser) said = words.jobStoppedByYou;
-        else if (notice.how.kind === "failed") {
-          said = words.jobCouldNotRun;
-          ok = false;
-        } else if (notice.how.kind === "interrupted") {
-          said = words.jobInterrupted;
-          ok = false;
-        } else if (notice.how.kind === "stopped") said = words.jobStopped;
-        else {
-          said = code === null ? words.jobDone(null) : words.jobDone(code);
-          ok = code === null || code === 0;
-        }
-        more = notice.last?.text ? "last" : "";
-        break;
-      }
       case "answer": {
         const failed = notice.end.how === "failed";
         ok = !failed;
@@ -1387,24 +1368,12 @@ export class ConversationView {
     return `<div class="notice-line${ok ? "" : " failed"}"><button class="notice-open" type="button" data-open="${escape(entry.key)}" aria-expanded="${open}">${line}${glyph("chevron", 14)}</button></div><div class="fold-box notice-box"${open ? "" : " style=\"height:0\" inert"}><div class="fold-content"></div></div>`;
   }
 
-  /** What a notice holds, opened: a job's last lines and where its output
-   *  is, a colleague's answer, what the World handed over. */
+  /** What a notice holds, opened: a colleague's answer, what the World
+   *  handed over. */
   private noticeDetails(entry: HeardEntry, into: HTMLElement): void {
     const notice = entry.notice;
     if (!notice) return;
-    if (notice.kind === "job_ended") {
-      const longs: LongText[] = [];
-      if (notice.last?.text) {
-        const text = new LongText(notice.last.text, notice.job, this.layoutAnchor, this.longWords());
-        longs.push(text);
-        into.append(text.element);
-      }
-      const where = document.createElement("p");
-      where.className = "notice-path";
-      where.textContent = `${notice.machine} · ${notice.output}`;
-      into.append(where);
-      this.longs.set(entry.key, longs);
-    } else if (notice.kind === "answer" && notice.end.last_message) {
+    if (notice.kind === "answer" && notice.end.last_message) {
       into.innerHTML = `<div class="prose notice-answer">${render(notice.end.last_message)}</div>`;
     } else if (notice.kind === "world") {
       into.innerHTML = `<div class="told-plain">${plain(entry.text)}</div>`;

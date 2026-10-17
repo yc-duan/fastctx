@@ -7,6 +7,7 @@
 // pointed at. An update of several shows its plan in the rows, then how
 // each goes (`machine-batch.ts`).
 
+import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { AccountChange, Login } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
@@ -110,7 +111,7 @@ export class FramedPanel {
     } else if (machine.online === false) tail = words.away;
     const manageable = machine.here || !!(updaterLoginOf(machine, world) || removerLoginOf(machine, world) || ownerLoginOf(machine, world) || groupingOf(machine, world));
     const state = `${machine.online === false ? " offline" : ""}${manageable ? "" : " faint"}${kind}`;
-    return `<li><button class="framed-row${state}" type="button" data-act="framed-pick" data-key="m:${escape(machine.written)}"${manageable ? "" : ` title="${escape(words.notYours)}"`}><span class="dot" aria-hidden="true"></span><span class="framed-name">${escape(machine.written)}</span>${planned ? "" : `<span class="framed-sub">${escape(facts ? osName(facts.os) : "")}</span>`}<span class="framed-tail"${tail ? ` title="${escape(tail)}"` : ""}>${escape(tail)}</span></button></li>`;
+    return `<li><button class="framed-row${state}" type="button" data-act="framed-pick" data-key="m:${escape(machine.written)}"${manageable ? "" : ` title="${escape(words.notYours)}"`}><span class="framed-icon" aria-hidden="true">${glyph(facts?.form === "laptop" ? "laptop" : facts?.form === "server" ? "server" : "desktop", 15)}</span><span class="framed-name">${escape(machine.written)}</span>${planned ? "" : `<span class="framed-sub">${escape(facts ? osName(facts.os) : "")}</span>`}<span class="framed-tail"${tail ? ` title="${escape(tail)}"` : ""}>${escape(tail)}</span></button></li>`;
   }
 
   /** What an update of several makes of a machine, planned or as it goes. */

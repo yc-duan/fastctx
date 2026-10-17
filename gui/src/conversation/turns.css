@@ -350,11 +350,6 @@
   color: var(--text-3);
 }
 
-.notice-path {
-  margin: var(--space-1) 0 0;
-  overflow-wrap: anywhere;
-}
-
 .notice-box .prose,
 .notice-box .told-plain {
   font-size: inherit;

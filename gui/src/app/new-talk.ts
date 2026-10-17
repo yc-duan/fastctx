@@ -47,7 +47,7 @@ import type { WorldNow } from "../world/bridge";
 import type { Offers } from "../world/control";
 import type { Address } from "../world/events";
 import { accountOf, homeChoice, homeLabel, homesOf, installed, listed, loggedOut, type HomeWords } from "./agent-homes";
-import { agentPicker, FILTER_PAST, narrowPicker, type PickerMachine, type PickerRow } from "./agent-picker";
+import { agentKinds, agentPicker, FILTER_PAST, narrowPicker, type PickerKind, type PickerMachine, type PickerRow } from "./agent-picker";
 import type { ConsentHome } from "./claude-consent";
 import {
   assistantsOf,
@@ -392,6 +392,9 @@ export class NewTalk {
   private popSteady: Steady | null = null;
   /** What narrows the table of agents, while it is open. */
   private narrowed = "";
+  /** Which agents the picker shows, and the people opened or closed in it. */
+  private kind: PickerKind = "all";
+  private readonly pickerFolds = new Map<string, boolean>();
 
   private fit(): void {
     this.fitter ??= new DraftFit(this.input);
@@ -679,7 +682,7 @@ export class NewTalk {
 
   /** The agents the user may begin with: the machines as the user holds
    *  them, a row a login, in one table (`./agent-picker`). */
-  private picker(lines: Line[]): string {
+  private picker(lines: Line[]): { machines: PickerMachine[]; html: string } {
     const { words } = this.options;
     const now = new Date();
     const machines: PickerMachine[] = lines.map((line) => {
@@ -688,23 +691,40 @@ export class NewTalk {
         line.hold === "assist"
           ? [words.assistFrom(line.owner ?? ""), assistant?.until ? words.assistUntil(new Date(assistant.until), now) : ""]
           : [line.here ? words.here : "", line.owner && line.hold !== "mine" ? words.ownedBy(line.owner) : ""];
+      const facts = this.machineOf(line);
+      const form = facts?.form === "laptop" ? "laptop" : facts?.form === "server" ? "server" : "desktop";
       return {
         hold: line.hold === "others" ? (line.shared ? "shared" : "others") : line.hold,
         written: line.written,
+        owner: line.owner,
+        form,
         online: line.online,
         notes: [...notes, line.online === false ? words.offline : ""].filter(Boolean),
         rows: line.options.map((option) => this.row(option, line)),
       };
     });
-    return agentPicker(machines, {
+    return { machines, html: agentPicker(machines, this.pickerWords(), { kind: this.kind, open: (key, byDefault) => this.pickerFolds.get(key) ?? byDefault }) };
+  }
+
+  private pickerWords() {
+    const { words } = this.options;
+    return {
       holds: { mine: words.mine, shared: words.others(true), others: words.others(false), assist: words.assisting },
       agent: words.agent,
+      allAgents: words.allAgents,
       noAgents: words.noAgents,
       noMachine: words.noMachine,
       token: words.token,
       onCredits: words.onCredits,
       reset: words.limitReset,
-    });
+      personSub: words.personSub,
+    };
+  }
+
+  /** What is known of a line's computer: its kind, for its icon. */
+  private machineOf(line: Line) {
+    const machine = machinesOf(this.options.store.world.peek()).find((one) => one.written === line.written);
+    return machine && "Ok" in machine.facts && machine.facts.Ok ? machine.facts.Ok : null;
   }
 
   /** A short list to choose one from, the chosen one marked. */
@@ -765,6 +785,12 @@ export class NewTalk {
         break;
       case "account":
         this.account = value;
+        break;
+      case "kind":
+        this.kind = value === "codex" || value === "claude" ? value : "all";
+        break;
+      case "fold":
+        this.pickerFolds.set(value, target.getAttribute("aria-expanded") !== "true");
         break;
       case "town":
         this.town = value || null;
@@ -912,7 +938,8 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
               logins.chosen ? `${logins.chosen.hub}/${logins.chosen.account}` : "",
             )}</div>`
           : "";
-      this.drawAgents(lines, `${this.picker(lines)}${account}`);
+      const { machines, html: table } = this.picker(lines);
+      this.drawAgents(lines, agentKinds(machines, this.pickerWords(), this.kind), `${table}${account}`);
       this.popSteady?.settle();
       return;
     } else if (this.opened === "town") {
@@ -929,16 +956,25 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
   /** The table of agents, under the field that narrows it once there are
    *  many; the field and what is typed in it stay as the table is drawn
    *  again. */
-  private drawAgents(lines: Line[], html: string): void {
+  private drawAgents(lines: Line[], kinds: string, html: string): void {
     const pop = this.pop;
+    let top = pop.querySelector<HTMLElement>(":scope > .agent-top");
     let list = pop.querySelector<HTMLElement>(":scope > .agent-list");
-    let field = pop.querySelector<HTMLInputElement>(":scope > .agent-filter");
-    if (!list) {
+    let field = top?.querySelector<HTMLInputElement>(":scope > .agent-filter") ?? null;
+    if (!list || !top) {
       pop.replaceChildren();
+      top = document.createElement("div");
+      top.className = "agent-top";
       list = document.createElement("div");
       list.className = "agent-list";
-      pop.append(list);
+      pop.append(top, list);
       field = null;
+    }
+    // The choice of agents stands beside the field, or alone above the table.
+    const shown = top.querySelector<HTMLElement>(":scope > .picker-kinds");
+    if ((shown?.outerHTML ?? "") !== kinds) {
+      shown?.remove();
+      if (kinds) top.insertAdjacentHTML("beforeend", kinds);
     }
     const many = lines.reduce((sum, line) => sum + line.options.length, 0) > FILTER_PAST;
     if (many && !field) {
@@ -951,9 +987,9 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
       field.spellcheck = false;
       field.addEventListener("input", () => {
         this.narrowed = field!.value;
-        narrowPicker(list!, this.narrowed);
+        narrowPicker(list!, this.narrowed, this.kind);
       });
-      pop.prepend(field);
+      top.prepend(field);
     } else if (!many && field) {
       field.remove();
       this.narrowed = "";
@@ -963,7 +999,8 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
       list.innerHTML = html;
       pop.scrollTop = scroll;
     }
-    narrowPicker(list, this.narrowed);
+    top.hidden = !top.childElementCount;
+    narrowPicker(list, this.narrowed, this.kind);
   }
 
   /** The machines its account may use: where it lives and those the

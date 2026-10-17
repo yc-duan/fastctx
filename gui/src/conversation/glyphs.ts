@@ -25,7 +25,7 @@ type Frame =
  *  agent asks the user. None is a maker's mark: the agents are told apart by
  *  shapes of our own. */
 type Marks =
-  | "claude" | "codex" | "desktop" | "laptop" | "server" | "features" | "agents" | "folder" | "fork" | "info" | "regenerate"
+  | "claude" | "codex" | "desktop" | "laptop" | "server" | "group" | "features" | "agents" | "folder" | "fork" | "info" | "regenerate"
   | "terminal" | "cross" | "fit" | "ask";
 
 const paths: Record<Named, string> = {
@@ -37,6 +37,8 @@ const paths: Record<Named, string> = {
   desktop: '<rect x="3.75" y="4.25" width="12.5" height="8.75" rx="1.25"/><path d="M7.5 15.75h5M10 13v2.75"/>',
   laptop: '<path d="M5.25 5.75a1 1 0 0 1 1-1h7.5a1 1 0 0 1 1 1v6.25h-9.5z"/><path d="M3.25 14.75h13.5l-1.1-2.75H4.35z"/>',
   server: '<rect x="4.25" y="3.75" width="11.5" height="5.25" rx="1"/><rect x="4.25" y="11" width="11.5" height="5.25" rx="1"/><circle cx="7" cy="6.4" r="0.6" fill="currentColor"/><circle cx="7" cy="13.6" r="0.6" fill="currentColor"/>',
+  // Two sheets, one behind the other: an owner's group of machines.
+  group: '<rect x="3.75" y="6.75" width="10" height="9" rx="1.25"/><path d="M6.75 4.25h8.5a1 1 0 0 1 1 1v8"/>',
   features: '<rect x="4" y="4" width="5" height="5" rx="1.25"/><rect x="11" y="4" width="5" height="5" rx="1.25"/><rect x="4" y="11" width="5" height="5" rx="1.25"/><path d="M13.5 11v5M11 13.5h5"/>',
   agents: '<rect x="3.75" y="4.75" width="12.5" height="10.5" rx="2"/><path d="M6.75 8.5l2 1.5-2 1.5M10.5 11.75h3"/>',
   folder: '<path d="M3.75 6.25a1 1 0 0 1 1-1h3.2l1.5 1.5h5.8a1 1 0 0 1 1 1v6.75a1 1 0 0 1-1 1H4.75a1 1 0 0 1-1-1z"/>',

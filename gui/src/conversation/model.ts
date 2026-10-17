@@ -1335,6 +1335,9 @@ export class Fold {
     };
     for (const entry of this.entries) {
       if (entry.kind === "prose" && entry.prose === "message" && entry.writing && !entry.text.trim()) continue;
+      // A job's end is the World's word to the model alone; the jobs still
+      // running are in the composer's panel (`world-gui.md`, 对话).
+      if (entry.kind === "heard" && entry.notice?.kind === "job_ended" && entry.from?.kind !== "user") continue;
       if (entry.kind === "heard" && entry.sending !== undefined && entry.intoTurn) {
         below.push(entry);
         continue;

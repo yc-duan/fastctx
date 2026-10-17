@@ -58,6 +58,9 @@ const KEEP_SCREENS = 3;
 const LATEST_MOST = 2400;
 const LATEST_KEPT = 800;
 
+/** The mark of an agent named "Claude" or "Codex". */
+const markOf = (agent: string) => (/claude/i.test(agent) ? "claude" : "codex");
+
 export interface Someone {
   /** "Claude" or "Codex": the agent by the name it goes by. */
   agent: string;
@@ -247,8 +250,10 @@ export class ConversationPage {
     this.element.innerHTML = `
       ${options.head(
         `<div class="who">
-        <h1 class="who-name">${escape(someone.agent)}<span class="who-at"> · ${escape(someone.machine)}</span></h1>
-        <div class="who-state"></div>
+        ${options.details ? `<button class="who-seal" type="button" aria-expanded="false">${glyph(markOf(someone.agent), 16)}</button>` : `<span class="who-seal">${glyph(markOf(someone.agent), 16)}</span>`}
+        <h1 class="who-name">${escape(someone.agent)}</h1>
+        <span class="who-home">${glyph("machine", 14)}<span>${escape(someone.assistFrom ? words.assistFrom(someone.assistFrom) : someone.machine)}</span></span>
+        <span class="who-state" hidden></span>
       </div>`,
         `<button class="icon-button find-toggle" type="button" aria-label="${escape(words.find.find)}" title="${escape(words.find.find)}">${glyph("search", 18)}</button>${
           options.details
@@ -343,6 +348,8 @@ export class ConversationPage {
       this.element.append(card.element);
       const toggle = this.element.querySelector<HTMLButtonElement>(".details-toggle")!;
       toggle.addEventListener("click", () => this.toggleDetails(!card.open));
+      // The seal says who the agent is: pressed, everything known of it.
+      this.element.querySelector(".who-seal")!.addEventListener("click", () => this.toggleDetails(!card.open));
       this.element.addEventListener("keydown", (event) => {
         if (event.key === "Escape" && card.open) this.toggleDetails(false);
       });
@@ -965,12 +972,15 @@ export class ConversationPage {
     if (open && !details.card.open) layerOpened({ isOpen: () => details.card.open && this.element.isConnected, close: () => this.toggleDetails(false) });
     details.card.open = open;
     toggle?.setAttribute("aria-expanded", String(open));
+    const seal = this.element.querySelector<HTMLElement>("button.who-seal");
+    seal?.setAttribute("aria-expanded", String(open));
     clearTimeout(this.looking);
     if (open) {
       details.card.element.focus({ preventScroll: true });
       void this.lookAgain();
     } else if (inside) {
-      toggle?.focus({ preventScroll: true });
+      // Back to what opened it: on a phone the seal, the head's only way in.
+      (toggle?.offsetParent ? toggle : seal)?.focus({ preventScroll: true });
     }
   }
 
@@ -1169,6 +1179,11 @@ export class ConversationPage {
   private renaming = false;
 
   /** Renames the conversation in its title, as from its "⋯". */
+  /** Finds in the conversation: from the head's "⋯" on a phone. */
+  showFind(): void {
+    this.finder.show();
+  }
+
   startRename(): void {
     this.rename();
   }
@@ -1778,7 +1793,8 @@ export class ConversationPage {
     strip.className = "focus-strip";
     strip.hidden = true;
     strip.innerHTML = `<button type="button" class="talk-chip focus-chip" aria-haspopup="dialog" aria-expanded="false"></button><span class="focus-state" aria-live="polite"></span><div class="focus-pop" role="dialog" hidden></div>`;
-    this.element.querySelector(".page-head")?.after(strip);
+    // In the head's one line, before its tools.
+    this.element.querySelector(".page-head-actions")?.prepend(strip);
     const chip = strip.querySelector<HTMLButtonElement>(".focus-chip")!;
     const pop = strip.querySelector<HTMLElement>(".focus-pop")!;
     chip.addEventListener("click", () => (pop.hidden ? this.openFocus(focus) : this.closeFocus(focus)));
@@ -1871,7 +1887,9 @@ export class ConversationPage {
     if (!focus) return;
     const chip = strip.querySelector<HTMLButtonElement>(".focus-chip")!;
     const summary = focusSummary(focus, words);
-    const html = `${glyph("machine", 16)}${summary ? summary.html : `<span class="talk-chip-name">${escape(words.none)}</span>`}${glyph("chevron", 12)}`;
+    // On a phone the chip is its machine and how many places it holds.
+    const count = focus.machines.reduce((sum, chosen) => sum + Math.max(1, chosen.folders.length), 0);
+    const html = `${glyph("machine", 16)}${summary ? summary.html : `<span class="talk-chip-name">${escape(words.none)}</span>`}${count ? `<span class="focus-count">${count}</span>` : ""}${glyph("chevron", 12)}`;
     if (chip.innerHTML !== html) chip.innerHTML = html;
     chip.classList.toggle("quiet", !summary);
     chip.title = summary ? `${words.title} · ${summary.said}` : words.title;
@@ -1930,12 +1948,10 @@ export class ConversationPage {
 
   private drawState(): void {
     const { words, someone, conversation } = this.options;
-    // The host's own title for the conversation, once it gives one, with
-    // who and where in the line under it.
+    // The host's own title for the conversation, once it gives one; until
+    // then the agent's name. Where it lives follows, on a computer.
     const title = conversation.title;
-    const name = title
-      ? `${escape(title)}`
-      : `${escape(someone.agent)}<span class="who-at"> · ${escape(someone.machine)}</span>`;
+    const name = escape(title ?? someone.agent);
     if (!this.renaming && this.name.innerHTML !== name) this.name.innerHTML = name;
     const renamable = !!this.offered?.controls.includes("rename");
     this.name.classList.toggle("renamable", renamable);
@@ -1965,24 +1981,21 @@ export class ConversationPage {
             : words.idle);
     // A screen reader hears the conversation change state, once each time:
     // its words as they stream would be too many to hear.
-    if (this.said !== null && this.said !== now) this.spoken.textContent = `${someone.agent} · ${now}`;
+    if (this.said !== null && this.said !== now) this.spoken.textContent = `${someone.agent}　${now}`;
     this.said = now;
-    // Under the title, where it lives, and whose agent assists.
-    const facts = [
-      now,
-      title ? `${someone.agent} · ${someone.machine}` : null,
-      someone.assistFrom ? words.assistFrom(someone.assistFrom) : null,
-      someone.project,
-      // The model that answered, by its name rather than its id.
-      this.options.conversation.answeredBy ? modelName(this.options.conversation.answeredBy) : someone.model,
-    ].filter(Boolean) as string[];
-    const mark = waiting ? `<span class="ask-mark" aria-hidden="true"></span>` : working ? `<span class="pulse" aria-hidden="true"></span>` : "";
-    // Waiting for the user is said in the accent; the rest stays quiet.
-    const [first, ...rest] = facts.map(escape);
-    this.state.innerHTML = `${mark}<span><span class="who-first">${first}</span>${rest.map((fact) => ` · ${fact}`).join("")}</span>`;
-    this.state.classList.toggle("working", working);
-    this.state.classList.toggle("waiting", waiting);
-    this.state.classList.toggle("gone", this.gone !== null);
+    // The seal says who; how it stands is on a pointer's rest. That it works
+    // or waits is the conversation's own to show, below; only what is wrong
+    // with the line or the conversation is said in words, after the title.
+    const seal = this.element.querySelector<HTMLElement>(".who-seal")!;
+    seal.classList.toggle("gone", this.gone !== null || this.away !== null);
+    const model = this.options.conversation.answeredBy ? modelName(this.options.conversation.answeredBy) : someone.model;
+    const sealSaid = [someone.agent, now, model].filter(Boolean).join("　");
+    seal.title = sealSaid;
+    seal.setAttribute("aria-label", sealSaid);
+    const trouble = this.gone ?? (this.away !== null ? now : null);
+    this.state.hidden = !trouble;
+    if (this.state.textContent !== (trouble ?? "")) this.state.textContent = trouble ?? "";
+    this.state.classList.toggle("gone", trouble !== null);
     // How long it has been broken is as of when the pointer comes to it.
     const why = this.interrupted && this.brokenSince
       ? words.brokenFor(words.took(Date.now() - this.brokenSince.getTime()), this.brokenWhy)

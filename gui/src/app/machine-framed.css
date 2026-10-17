@@ -30,17 +30,22 @@
   background: var(--fill-strong);
 }
 
-.framed-row .dot {
+/* The machine's kind, in ink while it is there, grey with its name while
+   it is away, as on the list. */
+.framed-icon {
   flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-full);
-  background: var(--text-2);
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
 }
 
-.framed-row.offline .dot {
-  background: none;
-  box-shadow: inset 0 0 0 1.4px var(--text-3);
+.framed-row.offline .framed-icon {
+  color: var(--text-3);
+  opacity: 0.6;
+}
+
+.framed-row.offline .framed-name {
+  color: var(--text-3);
 }
 
 .framed-name {

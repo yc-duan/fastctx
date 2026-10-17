@@ -159,6 +159,11 @@ export interface NewTalkWords {
   others(shared: boolean): string;
   assisting: string;
   ownedBy(owner: string): string;
+  /** Over the table: all agents, rather than one of them. */
+  allAgents: string;
+  /** Another person's row in the table: how many machines, how many
+   *  logins. */
+  personSub(machines: number, logins: number): string;
   noAgents: string;
   /** The field that narrows many agents to those typed for. */
   narrow: string;
@@ -220,6 +225,8 @@ export const zhNewTalk: NewTalkWords = {
   others: (shared) => (shared ? "共享给我的" : "其他成员的"),
   assisting: "协助我的",
   ownedBy: (owner) => `${owner} 的`,
+  allAgents: "全部",
+  personSub: (machines, logins) => `${machines} 台　${logins} 个登录`,
   noAgents: "没有可用的智能体",
   narrow: "按机器、智能体、账号筛选",
   assistantGone: "该登录已不可用",
@@ -262,6 +269,8 @@ export const enNewTalk: NewTalkWords = {
   others: (shared) => (shared ? "Shared with me" : "Other members'"),
   assisting: "Assisting me",
   ownedBy: (owner) => `${owner}'s`,
+  allAgents: "All",
+  personSub: (machines, logins) => `${machines} machine${machines === 1 ? "" : "s"}, ${logins} login${logins === 1 ? "" : "s"}`,
   noAgents: "No agents available",
   narrow: "Filter by machine, agent or account",
   assistantGone: "Login unavailable",

@@ -765,7 +765,7 @@ function talkManage(address: Address, page: () => ConversationPage) {
     words: { more: talkMenuWords.more, archived: talkMenuWords.archivedNote, restore: talkMenuWords.restore, deleted: talkMenuWords.deletedNote },
     open: (anchor: HTMLElement) => {
       const r = listedAt(store.world.peek(), address);
-      if (r) talkMenu.open(r, { anchor, rename: () => page().startRename(), deleted: () => replacePlace(link({ kind: "home" })) });
+      if (r) talkMenu.open(r, { anchor, rename: () => page().startRename(), find: () => page().showFind(), deleted: () => replacePlace(link({ kind: "home" })) });
     },
     restore: () => {
       const r = listedAt(store.world.peek(), address);

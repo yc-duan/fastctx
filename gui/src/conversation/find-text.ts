@@ -30,7 +30,7 @@ export function textMatches(text: string, query: string): TextMatch[] {
 }
 
 const OMIT = "script, style, svg title, svg desc, .katex-mathml, .turn-acts, .code-copy, .io-more, .long-text-full, .unnumbered .diff-num, [hidden]";
-const SEPARATE = "p, pre, li, h1, h2, h3, h4, h5, h6, tr, .lv-line, .row-line, .row-sub, .group-title, .group-time, .notice-path, .io-end, .plan-label, .code-language";
+const SEPARATE = "p, pre, li, h1, h2, h3, h4, h5, h6, tr, .lv-line, .row-line, .row-sub, .group-title, .group-time, .io-end, .plan-label, .code-language";
 const INLINE = "td, th, .diff-num, .diff-sign, .diff-code, .row-action, .row-object, .row-outcome, .row-machine, .row-stats .add, .row-stats .del";
 
 /** Text shared by the search projection and its DOM ranges. Folds remain

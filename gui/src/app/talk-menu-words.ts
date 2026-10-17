@@ -7,6 +7,8 @@ export interface TalkMenuWords {
   more: string;
   move: string;
   rename: string;
+  /** Finding in the conversation, from its head's "⋯" on a phone. */
+  find: string;
   archive: string;
   restore: string;
   delete: string;
@@ -53,6 +55,7 @@ export const zhTalkMenu: TalkMenuWords = {
   more: "更多",
   move: "移入项目",
   rename: "重命名",
+  find: "查找",
   archive: "归档",
   restore: "恢复",
   delete: "删除",
@@ -89,6 +92,7 @@ export const enTalkMenu: TalkMenuWords = {
   more: "More",
   move: "Move to project",
   rename: "Rename",
+  find: "Find",
   archive: "Archive",
   restore: "Restore",
   delete: "Delete",

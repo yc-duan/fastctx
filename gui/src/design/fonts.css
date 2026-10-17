@@ -1,8 +1,10 @@
 /* The World's faces, all SIL OFL 1.1 (licences beside each file).
    Latin is IBM Plex Serif; CJK is Noto Sans SC (思源黑体): a Song face's
    hairline horizontals break up at screen sizes, so the reading face for
-   Chinese is a Hei (`world-gui.md`, 审美). Code is Recursive locked to its
-   linear monospace instance.
+   Chinese is a Hei (`world-gui.md`, 审美). Titles from 20px up speak in
+   LXGW WenKai, a Kai drawn by hand as the pen layer is, cut to the
+   characters Noto Sans SC carries. Code is Recursive locked to its linear
+   monospace instance.
 
    Every weight is a family of its own, declared at 400: `Emphasis` at
    weight 400 is the real SemiBold master. Asking any of these for a
@@ -46,6 +48,14 @@
   src: url("/fonts/noto-sans-sc/NotoSansSC-600.woff2") format("woff2");
   unicode-range: U+3000-303F, U+3040-309F, U+30A0-30FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+FE30-FE4F,
     U+FF00-FFEF;
+}
+
+@font-face {
+  font-family: "Display";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/lxgw-wenkai/LXGWWenKai-500.woff2") format("woff2");
 }
 
 @font-face {
