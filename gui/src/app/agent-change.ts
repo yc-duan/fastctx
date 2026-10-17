@@ -12,6 +12,7 @@
 // same card, saying what is put back and what the user changed since that
 // stays.
 
+import { Sketch } from "../pen/sketch";
 import { counts, parse } from "../conversation/diff";
 import { diffPaint, memoryDiff } from "../conversation/diff-lines";
 import { glyph } from "../conversation/glyphs";
@@ -455,15 +456,64 @@ function plannedSteps(target: AgentChangeTarget, preview: ChangePreview | null):
 }
 
 /** The agent's own hands, struck through, and the World's run beside them:
- *  drawn one way to hook up, the other to remove. */
+ *  drawn one way to hook up, the other to remove. The interface's marks are
+ *  drawn as the interface draws them; the strike, the way across and the
+ *  ring round the World's are the pen's. */
 function handsDrawing(into: boolean): string {
-  const own = `<g class="ach-own">${`<g transform="translate(14 14)">${glyph("terminal", 20)}</g><g transform="translate(14 40)">${glyph("image", 20)}</g>`}</g>`;
+  const sheet = new Sketch(into ? "change-into" : "change-out").ring([125, 37], 22, 1.6, "clay");
+  if (into)
+    sheet.stroke(
+      [
+        [8, 70],
+        [22, 52],
+        [36, 30],
+        [48, 8],
+      ],
+      2.2,
+      "clay",
+      0.1,
+    );
+  const [from, to] = into ? [58, 102] : [102, 58];
+  const head = into ? -7 : 7;
+  sheet
+    .stroke(
+      [
+        [from, 38],
+        [(from + to) / 2, 32.5],
+        [to, 37],
+      ],
+      1.6,
+      "graphite",
+      0.08,
+    )
+    .stroke(
+      [
+        [to + head, 31],
+        [to, 37],
+        [to + head, 42],
+      ],
+      1.6,
+      "graphite",
+      0.2,
+    );
+  const own = `<g class="ach-own"><g transform="translate(14 14)">${glyph("terminal", 20)}</g><g transform="translate(14 40)">${glyph("image", 20)}</g></g>`;
   const run = `<g class="ach-run" transform="translate(112 24)">${glyph("terminal", 26)}</g>`;
-  const strike = `<path class="ach-strike" d="M8 70 C 24 50, 36 30, 48 8"/>`;
-  const arrow = `<path class="ach-arrow" d="${into ? "M58 38 C 74 32, 88 32, 102 37 M95 31 L102 37 L94 42" : "M102 38 C 86 32, 72 32, 58 37 M65 31 L58 37 L66 42"}"/>`;
-  return `<svg class="agent-change-drawing" viewBox="0 0 150 76" aria-hidden="true"><g filter="url(#pen-marker-lite)">${own}${into ? strike : ""}${arrow}<circle class="ach-ring" cx="125" cy="37" r="22"/>${run}</g></svg>`;
+  return sheet.svg(150, 76, "agent-change-drawing").replace("</svg>", `${own}${run}</svg>`);
 }
 
+/** Done: a clay ring with a tick in it. */
 function stampDrawing(): string {
-  return `<svg class="agent-change-stampmark" viewBox="0 0 24 24" aria-hidden="true" filter="url(#pen-marker)"><circle cx="12" cy="12" r="9"/><path d="M7.5 12.3 L10.6 15.2 L16.6 8.8"/></svg>`;
+  return new Sketch("change-stamp")
+    .ring([12, 12], 9, 1.5, "clay")
+    .stroke(
+      [
+        [7.5, 12.3],
+        [10.6, 15.2],
+        [16.6, 8.8],
+      ],
+      1.8,
+      "clay",
+      0.2,
+    )
+    .svg(24, 24, "agent-change-stampmark");
 }

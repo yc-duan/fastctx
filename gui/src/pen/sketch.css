@@ -1,0 +1,48 @@
+/* The still drawings' pens and washes (`sketch.ts`): the interface's own
+   surfaces for things, graphite for structure, clay for the mark that
+   matters. On dark paper the inks lighten what they cross; on light paper
+   they darken it, as ink does. */
+
+.sk-box {
+  fill: var(--fill-strong);
+}
+
+.sk-field {
+  fill: var(--bg-elevated);
+}
+
+.sk-clay {
+  fill: var(--pen-clay);
+}
+
+.sk-graphite {
+  fill: var(--pen-graphite);
+}
+
+.sk-paper {
+  fill: var(--bg-elevated);
+}
+
+.sk-current {
+  fill: currentColor;
+}
+
+/* The interface's marks are lines in their pen's colour. */
+.sk-mark {
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sk-mark.sk-graphite {
+  stroke: var(--pen-graphite);
+}
+
+.sk-mark.sk-clay {
+  stroke: var(--pen-clay);
+}
+
+.sk-mark.sk-paper {
+  stroke: var(--bg-elevated);
+}

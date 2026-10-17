@@ -10,6 +10,8 @@
 // much to become one. Once in, the page only confirms it; on a World just
 // made another device can be added at once.
 
+import type { Point } from "../pen/shapes";
+import { Sketch } from "../pen/sketch";
 import { escape } from "../conversation/prose";
 import type { KeptNow, LoggedIn, NameProblem, Setup } from "../world/bridge";
 import type { Login, TokenPeek } from "../world/accounts";
@@ -816,27 +818,100 @@ export class LoginPage implements Page {
   }
 }
 
-/** The World's mark, large, drawn with the marker: rings round a knot. */
+/** The World's mark, large: machines as rings drawn round a knot of clay,
+ *  each joined to it by a fine line that stops at its ring. */
 function heroMark(): string {
-  return `<svg class="welcome-mark" viewBox="0 0 120 96" aria-hidden="true"><g filter="url(#pen-marker)" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><circle cx="60" cy="50" r="7"/><circle cx="22" cy="24" r="14"/><circle cx="98" cy="27" r="14"/><circle cx="58" cy="82" r="11"/><path d="M34 31 L53 45M86 34 L67 46M59 57 L58 70"/></g></svg>`;
+  const sheet = new Sketch("welcome-hero");
+  const knot: Point = [60, 50];
+  const machines: [Point, number][] = [
+    [[24, 25], 12],
+    [[96, 28], 12],
+    [[58, 82], 10],
+  ];
+  for (const [at, radius] of machines) {
+    const dx = at[0] - knot[0];
+    const dy = at[1] - knot[1];
+    const length = Math.hypot(dx, dy);
+    sheet.rule([knot[0] + (dx / length) * 7, knot[1] + (dy / length) * 7], [at[0] - (dx / length) * (radius + 3), at[1] - (dy / length) * (radius + 3)], 1.4, "graphite");
+    sheet.ring(at, radius, 1.8, "graphite");
+  }
+  return sheet.blot(knot, 5, "clay").svg(120, 96, "welcome-mark");
 }
 
-/** Joining: a ring drawn towards a knot that is there already. */
+/** Joining: a computer coming towards a knot that is there already. */
 function joinMark(): string {
-  return `<svg class="welcome-way-mark" viewBox="0 0 96 64" aria-hidden="true"><g filter="url(#pen-marker)" fill="none" stroke-linecap="round"><g class="ink-graphite" stroke-width="3"><circle cx="66" cy="32" r="7"/><circle cx="66" cy="32" r="2" fill="currentColor"/></g><g class="ink-clay" stroke-width="3"><circle cx="20" cy="32" r="11"/><path d="M34 32 C42 28 48 28 55 31"/><path d="M50 26 L56 31 L50 36"/></g></g></svg>`;
+  const sheet = new Sketch("welcome-join").blot([68, 32], 5, "graphite").ring([68, 32], 11, 1.2, "graphite").blot([20, 32], 8, "clay");
+  sheet.dashed([32, 32], [52, 31], 1.6, "clay", 4, 4);
+  return sheet
+    .stroke(
+      [
+        [48, 26],
+        [54, 31],
+        [48, 36],
+      ],
+      1.8,
+      "clay",
+      0.2,
+    )
+    .svg(96, 64, "welcome-way-mark");
 }
 
-/** Creating: a knot with its first ring round it, the second being drawn. */
+/** Creating: a knot with its first machine joined, the next being drawn. */
 function createMark(): string {
-  return `<svg class="welcome-way-mark" viewBox="0 0 96 64" aria-hidden="true"><g filter="url(#pen-marker)" fill="none" stroke-linecap="round"><g class="ink-graphite" stroke-width="3"><circle cx="48" cy="34" r="6"/><circle cx="20" cy="18" r="10"/><path d="M28 23 L43 31"/></g><g class="ink-clay" stroke-width="3"><path d="M70 36 A11 11 0 1 1 82 50"/><path d="M54 37 L62 40"/></g></g></svg>`;
+  return new Sketch("welcome-create")
+    .rule([42, 31], [29, 23], 1.4, "graphite")
+    .ring([22, 19], 8, 1.6, "graphite")
+    .blot([46, 34], 5, "clay")
+    .arc([74, 40], 10, Math.PI * 1.05, Math.PI * 2.6, 1.8, "clay")
+    .rule([52, 36], [61, 39], 1.4, "clay")
+    .svg(96, 64, "welcome-way-mark");
 }
 
-/** Scanning: the four corners of a code's frame, drawn with the marker. */
+/** Scanning: the four corners of a code's frame, the line that reads it. */
 function scanMark(): string {
-  return `<svg class="welcome-way-mark" viewBox="0 0 64 64" aria-hidden="true"><g filter="url(#pen-marker)" fill="none" stroke-linecap="round" stroke-width="3"><g class="ink-graphite"><path d="M10 22 V10 H22M42 10 H54 V22M54 42 V54 H42M22 54 H10 V42"/></g><g class="ink-clay"><path d="M20 32 H44"/></g></g></svg>`;
+  const sheet = new Sketch("welcome-scan");
+  const corners: [Point, Point, Point][] = [
+    [
+      [10, 22],
+      [10, 10],
+      [22, 10],
+    ],
+    [
+      [42, 10],
+      [54, 10],
+      [54, 22],
+    ],
+    [
+      [54, 42],
+      [54, 54],
+      [42, 54],
+    ],
+    [
+      [22, 54],
+      [10, 54],
+      [10, 42],
+    ],
+  ];
+  for (const corner of corners) sheet.stroke(corner, 2, "graphite", 0.15);
+  return sheet.rule([18, 32], [46, 32], 2, "clay").svg(64, 64, "welcome-way-mark");
 }
 
 /** On a server: a box with a knot inside it, the line reaching it drawn. */
 function remoteMark(): string {
-  return `<svg class="welcome-way-mark" viewBox="0 0 96 64" aria-hidden="true"><g filter="url(#pen-marker)" fill="none" stroke-linecap="round"><g class="ink-graphite" stroke-width="3"><rect x="52" y="16" width="30" height="34" rx="4"/><circle cx="67" cy="33" r="5"/></g><g class="ink-clay" stroke-width="3"><circle cx="18" cy="33" r="9"/><path d="M29 33 C36 30 42 30 47 32"/></g></g></svg>`;
+  return new Sketch("welcome-remote")
+    .wash(52, 14, 32, 36, "box", 5)
+    .blot([68, 32], 4.5, "graphite")
+    .blot([18, 33], 7, "clay")
+    .stroke(
+      [
+        [28, 33],
+        [36, 31],
+        [44, 31],
+        [49, 32],
+      ],
+      1.6,
+      "clay",
+      0.1,
+    )
+    .svg(96, 64, "welcome-way-mark");
 }

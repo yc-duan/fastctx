@@ -224,27 +224,19 @@
   height: 16px;
 }
 
+/* A step's mark is drawn in the film's hand, in the colour of how it went. */
 .removal-mark svg {
   width: 16px;
   height: 16px;
-  fill: none;
-  stroke: var(--text-3);
-  stroke-width: 2;
-  stroke-linecap: round;
+  color: var(--text-3);
 }
 
 .removal-list li[data-result="done"] .removal-mark svg {
-  stroke: var(--pen-graphite);
+  color: var(--pen-graphite);
 }
 
 .removal-list li[data-result="failed"] .removal-mark svg {
-  stroke: var(--wrong);
-}
-
-.removal-list li[data-result] .removal-mark path {
-  stroke-dasharray: 30;
-  stroke-dashoffset: 30;
-  animation: way-draw 0.45s cubic-bezier(0.33, 1, 0.68, 1) forwards;
+  color: var(--wrong);
 }
 
 .removal-list li[data-result="failed"] .removal-what {

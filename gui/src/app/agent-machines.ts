@@ -34,6 +34,8 @@ export interface Pickable {
   /** The login of this device that owns it, which lets its agents assist
    *  others and sets their plans. */
   ownerLogin: AccountLogin | null;
+  /** What kind of computer it is, for its icon. */
+  form: "desktop" | "laptop" | "server";
 }
 
 export interface MachinePickWords {
@@ -58,6 +60,7 @@ export function pickables(world: WorldNow | null): Pickable[] {
     const shared = logins.some((login) => world?.accounts.hubs.some((hub) => hub.hub === login.hub && hub.shares.some((share) => share.machine === machine.name && share.account === login.account)));
     const hold: Hold = machine.here || ownerLogin ? "mine" : shared ? "shared" : "others";
     const group = world?.accounts.hubs.flatMap((hub) => hub.members).find((member) => member.kind === "computer" && names(member, machine.name) && member.group)?.group ?? null;
+    const facts = "Ok" in machine.facts && machine.facts.Ok ? machine.facts.Ok : null;
     picked.push({
       name: machine.name,
       written: machine.written,
@@ -68,11 +71,12 @@ export function pickables(world: WorldNow | null): Pickable[] {
       owner: hold === "mine" ? null : (logins.map((login) => ownerOf(machine, login)).find(Boolean) ?? null),
       group,
       ownerLogin,
+      form: facts?.form === "laptop" ? "laptop" : facts?.form === "server" ? "server" : "desktop",
     });
   }
   for (const assistant of assistantsOf(world)) {
     if (picked.some((one) => one.written === assistant.written)) continue;
-    picked.push({ name: assistant.machine, written: assistant.written, here: false, online: assistant.online, since: assistant.since, hold: "assist", owner: assistant.owner, group: null, ownerLogin: null });
+    picked.push({ name: assistant.machine, written: assistant.written, here: false, online: assistant.online, since: assistant.since, hold: "assist", owner: assistant.owner, group: null, ownerLogin: null, form: "desktop" });
   }
   // Within a hold, those in no group first, then each group by its name.
   const grouped = (a: Pickable, b: Pickable) => Number(a.group !== null) - Number(b.group !== null) || (a.group ?? "").localeCompare(b.group ?? "");
@@ -97,7 +101,7 @@ export function pickButton(machine: Pickable | null, words: MachinePickWords): s
   if (!machine) return "";
   const dot = machine.online === true ? " online" : machine.online === false ? " offline" : "";
   return `<button class="agents-pick" type="button" data-pick-open aria-haspopup="menu" aria-label="${escape(words.pickMachine)}" title="${escape(words.pickMachine)}">
-    <span class="agents-pick-dot${dot}" aria-hidden="true"></span><span class="agents-pick-name">${escape(machine.written)}</span>${machine.here ? `<span class="agents-pick-sub">${escape(words.here)}</span>` : ""}${glyph("chevron", 14)}</button>`;
+    <span class="agents-pick-icon${dot}" aria-hidden="true">${glyph(machine.form, 15)}</span><span class="agents-pick-name">${escape(machine.written)}</span>${machine.here ? `<span class="agents-pick-sub">${escape(words.here)}</span>` : ""}${glyph("chevron", 14)}</button>`;
 }
 
 /** The menu: a group for each hold, each machine with whether it is
@@ -113,7 +117,7 @@ export function pickMenu(machines: Pickable[], current: Pickable | null, words: 
         const dot = machine.online === true ? " online" : machine.online === false ? " offline" : "";
         const band = machine.group !== null && machine.group !== held[at - 1]?.group ? `<span class="agents-pick-band">${escape(machine.group)}</span>` : "";
         return `${band}<button class="agents-pick-item${on ? " current" : ""}" type="button" role="menuitemradio" aria-checked="${on}" data-pick="${escape(machine.written)}">
-          <span class="agents-pick-dot${dot}" aria-hidden="true"></span><span class="agents-pick-name">${escape(machine.written)}</span><span class="agents-pick-sub">${escape(sub(machine, words))}</span></button>`;
+          <span class="agents-pick-icon${dot}" aria-hidden="true">${glyph(machine.form, 15)}</span><span class="agents-pick-name">${escape(machine.written)}</span><span class="agents-pick-sub">${escape(sub(machine, words))}</span></button>`;
       })
       .join("");
     return `<div class="agents-pick-group" role="group" aria-label="${escape(words.holds[hold])}"><span class="agents-pick-hold">${escape(words.holds[hold])}</span>${items}</div>`;

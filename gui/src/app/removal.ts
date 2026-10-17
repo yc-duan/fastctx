@@ -7,6 +7,7 @@
 // listed at once and ticked off in place as it is done, and World closes and
 // uninstalls itself.
 
+import { Sketch } from "../pen/sketch";
 import { escape } from "../conversation/prose";
 import type { RemovalEvent, RemovalItem, RemovalPlan } from "../world/bridge";
 import { DrawnOnce } from "./drawn-once";
@@ -321,31 +322,70 @@ export class RemovalSection {
 /** A pencil tick for a step done, a cross for one that failed, a dash for
  *  one there was nothing to do for, a faint dot for one still to come. */
 export function mark(result: Result["result"] | null): string {
-  const path =
-    result === "done"
-      ? `<path d="M3 8.6 L6.6 12 L13 4.2"/>`
-      : result === "failed"
-        ? `<path d="M4 4 L12 12"/><path d="M12 4 L4 12"/>`
-        : result === "skipped"
-          ? `<path d="M4 8.5 L12 8"/>`
-          : `<circle cx="8" cy="8" r="1.6"/>`;
-  return `<svg viewBox="0 0 16 16" filter="url(#pen-marker)">${path}</svg>`;
+  const sheet = new Sketch(`removal-${result ?? "coming"}`);
+  if (result === "done")
+    sheet.stroke(
+      [
+        [3, 8.6],
+        [6.6, 12],
+        [13, 4.2],
+      ],
+      1.9,
+      "current",
+      0.18,
+    );
+  else if (result === "failed")
+    sheet
+      .stroke(
+        [
+          [4, 4],
+          [12, 12],
+        ],
+        1.9,
+        "current",
+      )
+      .stroke(
+        [
+          [12, 4],
+          [4, 12],
+        ],
+        1.9,
+        "current",
+      );
+  else if (result === "skipped") sheet.rule([4, 8.5], [12, 8], 1.8, "current");
+  else sheet.blot([8, 8], 1.6, "current");
+  return sheet.svg(16, 16, "removal-mark");
 }
 
 /** Keeping the data: the machine's ring drawn in dashes, going, and the
  *  knot of its records at the middle, staying. */
 function keepMark(): string {
-  const [cx, cy, r] = [44, 32, 21];
-  const point = (degrees: number) => {
-    const radians = (degrees * Math.PI) / 180;
-    return `${(cx + r * Math.cos(radians)).toFixed(1)} ${(cy + r * Math.sin(radians)).toFixed(1)}`;
-  };
-  const dashes = Array.from({ length: 8 }, (_, i) => `M${point(i * 45 - 80)} A${r} ${r} 0 0 1 ${point(i * 45 - 58)}`).join(" ");
-  return `<svg class="welcome-way-mark" viewBox="0 0 96 64" aria-hidden="true"><g filter="url(#pen-marker)" fill="none" stroke-linecap="round"><g class="ink-graphite" stroke-width="3"><path d="${dashes}"/></g><g class="ink-clay" stroke-width="3"><circle cx="${cx}" cy="${cy}" r="6"/><circle cx="${cx}" cy="${cy}" r="2" fill="currentColor"/></g></g></svg>`;
+  const sheet = new Sketch("removal-keep");
+  for (let i = 0; i < 8; i += 1) {
+    const from = ((i * 45 - 80) * Math.PI) / 180;
+    sheet.arc([44, 32], 21, from, from + (22 * Math.PI) / 180, 1.8, "graphite");
+  }
+  return sheet.blot([44, 32], 6, "clay").svg(96, 64, "welcome-way-mark");
 }
 
 /** Removing everything: the ring struck through, and the crumbs of an
  *  eraser beside it. */
 function eraseMark(): string {
-  return `<svg class="welcome-way-mark" viewBox="0 0 96 64" aria-hidden="true"><g filter="url(#pen-marker)" fill="none" stroke-linecap="round"><g class="ink-graphite" stroke-width="3"><circle cx="40" cy="32" r="19"/></g><g class="ink-clay" stroke-width="3"><path d="M14 54 C30 40 48 26 68 9"/><path d="M76 42 L80 44"/><path d="M71 51 L76 52"/><path d="M82 52 L85 55"/></g></g></svg>`;
+  return new Sketch("removal-erase")
+    .ring([40, 32], 19, 1.8, "graphite")
+    .stroke(
+      [
+        [14, 54],
+        [30, 41],
+        [48, 26],
+        [68, 9],
+      ],
+      2.4,
+      "clay",
+      0.1,
+    )
+    .blot([78, 43], 1.6, "clay")
+    .blot([73, 51.5], 1.5, "clay")
+    .blot([83.5, 53.5], 1.4, "clay")
+    .svg(96, 64, "welcome-way-mark");
 }

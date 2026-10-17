@@ -267,48 +267,13 @@
   transform: translateY(0);
 }
 
+/* Each way in, drawn in the film's hand (`../pen/sketch.css`). */
 .welcome-way-mark {
   width: 84px;
   height: auto;
   margin: 0 0 var(--space-3) -6px;
-  mix-blend-mode: var(--pen-blend);
 }
 
-.welcome-way-mark .ink-graphite {
-  color: var(--pen-graphite);
-  stroke: var(--pen-graphite);
-}
-
-.welcome-way-mark .ink-clay {
-  stroke: var(--pen-clay);
-}
-
-/* The stroke of each drawing is drawn in when the page opens. */
-.welcome-way-mark path,
-.welcome-way-mark circle {
-  stroke-dasharray: 200;
-  stroke-dashoffset: 200;
-  animation: way-draw 1.1s cubic-bezier(0.33, 1, 0.68, 1) 0.2s forwards;
-}
-
-.welcome-way-mark .ink-clay path,
-.welcome-way-mark .ink-clay circle {
-  animation-delay: 0.55s;
-}
-
-/* A drawing drawn in once stays drawn when what is around it is drawn
-   again. */
-.welcome-way-mark.drawn path,
-.welcome-way-mark.drawn circle {
-  animation: none;
-  stroke-dashoffset: 0;
-}
-
-@keyframes way-draw {
-  to {
-    stroke-dashoffset: 0;
-  }
-}
 
 .welcome-way-title {
   font-family: var(--font-emphasis);

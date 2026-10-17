@@ -2,24 +2,11 @@
    adds a device, the card a computer sees before joining by one, and the
    one page a managed machine has. */
 
-/* The drawings: graphite for what is there, clay for what moves. */
+/* The drawings, in the film's hand (`../pen/sketch.css`). */
 .managed-art,
 .managed-step-art {
   display: block;
   height: auto;
-  mix-blend-mode: var(--pen-blend);
-}
-
-.managed-art .ink-graphite,
-.managed-step-art .ink-graphite {
-  color: var(--pen-graphite);
-  stroke: var(--pen-graphite);
-}
-
-.managed-art .ink-clay,
-.managed-step-art .ink-clay {
-  color: var(--pen-clay);
-  stroke: var(--pen-clay);
 }
 
 /* How many computers a code lets in: one, any, or a number typed into the
@@ -388,7 +375,7 @@
 }
 
 .managed-link.on .managed-dot {
-  background: var(--alive);
+  background: var(--text-2);
   box-shadow: none;
 }
 

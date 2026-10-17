@@ -50,16 +50,22 @@
   white-space: nowrap;
 }
 
-.agents-pick-dot {
+/* A machine's kind, in ink while it is there and grey with its name while
+   it is away, as on the machine list. */
+.agents-pick-icon {
   flex: none;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--pen-trace);
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
 }
 
-.agents-pick-dot.online {
-  background: var(--alive);
+.agents-pick-icon.offline {
+  color: var(--text-3);
+  opacity: 0.6;
+}
+
+.agents-pick-icon.offline + .agents-pick-name {
+  color: var(--text-3);
 }
 
 .agents-pick-menu {
@@ -807,24 +813,6 @@
   color: var(--text-2);
 }
 
-.agent-change-drawing .ach-strike,
-.agent-change-drawing .ach-arrow {
-  fill: none;
-  stroke: var(--pen-clay);
-  stroke-width: 2.2;
-  stroke-linecap: round;
-}
-
-.agent-change-drawing .ach-arrow {
-  stroke: var(--pen-graphite);
-}
-
-.agent-change-drawing .ach-ring {
-  fill: none;
-  stroke: var(--pen-clay);
-  stroke-width: 2;
-}
-
 .agent-change-drawing .ach-run {
   color: var(--text-strong);
 }
@@ -999,11 +987,6 @@
 .agent-change-stampmark {
   width: 26px;
   height: 26px;
-  fill: none;
-  stroke: var(--pen-clay);
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
 }
 
 .agent-change-kept li {

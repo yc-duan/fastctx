@@ -1,10 +1,11 @@
 // The paper and the pen: SVG filters that give a drawn shape the grain of
-// a marker or a dry brush on paper, and its edge the slight waver of a
-// hand. A high-frequency noise, turned to alpha, is taken out of the shape
-// (the grain); a low-frequency noise displaces it a little (the waver).
-// Three pens: a marker, a dry brush that leaves more paper showing, and a
-// ruling pen for lines drawn against a straight edge. Each has a light form
-// without the waver, for shapes that move or are many.
+// a marker or a dry brush on paper. A high-frequency noise, turned to alpha,
+// is taken out of the shape (the grain); for the dry brush and the ruling
+// pen a low-frequency noise also displaces it a little (the waver). The
+// marker has no waver: its shapes already carry the hand in their outline
+// (`shapes.ts`), and a jittering edge on an even line reads as a child's
+// scribble. Each pen has a light form without the waver, for shapes that
+// move or are many.
 //
 // Decoration only: text is never drawn through these, so it stays sharp.
 
@@ -14,7 +15,7 @@ interface Pen {
 }
 
 const pens: Record<string, Pen> = {
-  "pen-marker": { grain: { frequency: 0.55, seed: 7, amount: 0.3 }, waver: { frequency: 0.11, seed: 11, scale: 2.6 } },
+  "pen-marker": { grain: { frequency: 0.55, seed: 7, amount: 0.3 }, waver: null },
   "pen-dry": { grain: { frequency: 0.9, seed: 4, amount: 0.55 }, waver: { frequency: 0.18, seed: 9, scale: 1.8 } },
   "pen-rule": { grain: { frequency: 0.72, seed: 5, amount: 0.12 }, waver: { frequency: 0.07, seed: 3, scale: 0.6 } },
   "pen-marker-lite": { grain: { frequency: 0.55, seed: 7, amount: 0.3 }, waver: null },

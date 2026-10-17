@@ -107,7 +107,7 @@
 }
 
 .me-link.online i {
-  background: var(--alive);
+  background: var(--text-2);
 }
 
 .me-link.connecting i {
