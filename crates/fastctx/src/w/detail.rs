@@ -5,41 +5,32 @@ pub(super) fn detail(looked: &LookedUp, now: Timestamp) -> String {
     if looked.found.is_empty() {
         text.push_str(&format!("=== w {}: no answering machine has it ===\n", looked.id));
     } else if looked.found.len() > 1 {
-        let machines = looked
-            .found
-            .iter()
-            .map(|found| match found {
-                Looked::Resident(detail) => detail.resident.about.machine.as_str(),
-                Looked::Job { record } => record.machine.as_str(),
-            })
-            .collect::<Vec<_>>();
+        let machines = looked.found.iter().map(|found| found.written().to_string()).collect::<Vec<_>>();
         text.push_str(&format!("{} exists on {}; use {}@machine.\n", looked.id, machines.join(", "), looked.id));
     } else {
         for found in &looked.found {
             match found {
                 Looked::Resident(detail) => text.push_str(&resident_detail(detail, now)),
-                Looked::Job { record } => text.push_str(&job_detail(record, now)),
+                Looked::Job { record, source } => text.push_str(&job_detail(record, source.as_ref(), now)),
             }
         }
     }
-    // Only when nothing answered with it can it be on a machine that did not
-    // answer; a random id found once does not need the rest of the World.
-    if looked.found.is_empty() && !looked.unasked.is_empty() {
+    if !looked.unasked.is_empty() {
         text.push_str(&format!("not answered: {}\n", looked.unasked.join(", ")));
     }
     for job in &looked.jobs {
         text.push_str(&format!(
             "{} on {}, {} ({}): {}\n  output: {} {}\n",
             job.job,
-            job.machine,
+            job.written(),
             ago(job.started_at, now),
             job.owner,
             job.command,
-            job.machine,
+            job.written(),
             shown(&job.output)
         ));
         if let Some(stderr) = &job.stderr {
-            text.push_str(&format!("         stderr: {} {}\n", job.machine, shown(stderr)));
+            text.push_str(&format!("         stderr: {} {}\n", job.written(), shown(stderr)));
         }
     }
     text
@@ -58,7 +49,7 @@ fn record_path(base: &str, file: &str) -> String {
 fn resident_detail(detail: &ResidentDetail, now: Timestamp) -> String {
     let resident = &detail.resident;
     let about = &resident.about;
-    let machine = &about.machine;
+    let machine = resident.written();
     let mut agent = host(&about.host);
     if !about.host.version.is_empty() {
         agent.push_str(&format!(" {}", about.host.version));
@@ -67,7 +58,7 @@ fn resident_detail(detail: &ResidentDetail, now: Timestamp) -> String {
         agent.push_str(&format!(", model {model}"));
     }
     let origin = match &about.origin {
-        Origin::Colleague { asked_by, .. } => format!(", for {}", render::person(asked_by, machine)),
+        Origin::Colleague { asked_by, .. } => format!(", for {}", render::person(asked_by, &about.machine)),
         Origin::User => String::new(),
     };
     let mut text =
@@ -98,14 +89,14 @@ fn resident_detail(detail: &ResidentDetail, now: Timestamp) -> String {
         text.push_str(&format!(
             "         {} on {}, {}: {}\n         output: {} {}\n",
             job.job,
-            job.machine,
+            job.written(),
             ago(job.started_at, now),
             job.command,
-            job.machine,
+            job.written(),
             shown(&job.output)
         ));
         if let Some(stderr) = &job.stderr {
-            text.push_str(&format!("         stderr: {} {}\n", job.machine, shown(stderr)));
+            text.push_str(&format!("         stderr: {} {}\n", job.written(), shown(stderr)));
         }
     }
     if detail.actions_total > 0 {
@@ -116,7 +107,8 @@ fn resident_detail(detail: &ResidentDetail, now: Timestamp) -> String {
             record_path(&detail.records, "actions")
         ));
         for action in &detail.actions {
-            let elsewhere = if action.machine == *machine { String::new() } else { format!("  {}", action.machine) };
+            let elsewhere =
+                if action.machine == about.machine { String::new() } else { format!("  {}", action.machine) };
             text.push_str(&format!(
                 "  {}{elsewhere}  {}  {} -> {}\n",
                 when(action.at, now),
@@ -146,17 +138,18 @@ fn resident_detail(detail: &ResidentDetail, now: Timestamp) -> String {
     text
 }
 
-fn job_detail(record: &JobRecord, now: Timestamp) -> String {
+fn job_detail(
+    record: &JobRecord,
+    source: Option<&fastctx_types::observation::MachineSource>,
+    now: Timestamp,
+) -> String {
+    let machine = source.map_or_else(|| (&record.machine).into(), |source| source.written.clone());
     let owner = match record.owner.resident() {
         Some(address) => render::person(address, &record.machine),
         None => record.owner.to_string(),
     };
-    let mut text = format!(
-        "=== w {}: on {}, started by {owner} {} ago ===\n",
-        record.id,
-        record.machine,
-        ago(record.started_at, now)
-    );
+    let mut text =
+        format!("=== w {}: on {}, started by {owner} {} ago ===\n", record.id, machine, ago(record.started_at, now));
     let state = match (&record.end, &record.exit) {
         (Some(end), exit) => {
             let how = match (&end.how, exit) {
@@ -176,9 +169,9 @@ fn job_detail(record: &JobRecord, now: Timestamp) -> String {
     };
     text.push_str(&format!("state    {state}\n"));
     text.push_str(&format!("command  {}\n", first_line(&record.script)));
-    text.push_str(&format!("output   {} {}\n", record.machine, shown(&record.output)));
+    text.push_str(&format!("output   {} {}\n", machine, shown(&record.output)));
     if let Some(stderr) = &record.stderr {
-        text.push_str(&format!("stderr   {} {}\n", record.machine, shown(stderr)));
+        text.push_str(&format!("stderr   {} {}\n", machine, shown(stderr)));
     }
     text
 }

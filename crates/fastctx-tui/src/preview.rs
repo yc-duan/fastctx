@@ -61,6 +61,7 @@ fn resident(
     here_for: i64,
 ) -> ResidentNow {
     ResidentNow {
+        source: None,
         about: About {
             id: id(who),
             host: Host {
@@ -193,6 +194,7 @@ fn residents(now: Timestamp) -> (Vec<ResidentNow>, Vec<RunningJob>) {
 
     let jobs = vec![
         RunningJob {
+            source: None,
             town: Some(town("mark50")),
             job: JobId::try_from("j-k3x9a2").expect("a job id"),
             machine: machine("laptop"),
@@ -205,6 +207,7 @@ fn residents(now: Timestamp) -> (Vec<ResidentNow>, Vec<RunningJob>) {
             account: None,
         },
         RunningJob {
+            source: None,
             town: Some(town("mark50")),
             job: JobId::try_from("j-p0q1r2").expect("a job id"),
             machine: machine("desktop"),
@@ -263,6 +266,7 @@ fn who(now: Timestamp, scope: WhoScope) -> WorldWho {
         scope,
         machines: vec![
             MachineWho::Answered {
+                observation: None,
                 reply: WhoReply {
                     history: None,
                     machine: machine("desktop"),
@@ -272,6 +276,7 @@ fn who(now: Timestamp, scope: WhoScope) -> WorldWho {
                 },
             },
             MachineWho::Answered {
+                observation: None,
                 reply: WhoReply {
                     history: None,
                     machine: machine("laptop"),
@@ -280,7 +285,12 @@ fn who(now: Timestamp, scope: WhoScope) -> WorldWho {
                     busy: None,
                 },
             },
-            MachineWho::Offline { machine: machine("server"), since: Some(ago(now, 95)), last: None },
+            MachineWho::Offline {
+                observation: None,
+                machine: machine("server"),
+                since: Some(ago(now, 95)),
+                last: None,
+            },
         ],
     }
 }
@@ -765,7 +775,7 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
     let mut in_town =
         who(now, WhoScope::Town { town: town("mark50"), record: Some(Box::new(towns(now).remove(0).record)) });
     for machine in &mut in_town.machines {
-        if let MachineWho::Answered { reply } = machine {
+        if let MachineWho::Answered { reply, .. } = machine {
             reply.residents.retain(|resident| resident.town.is_some());
         }
     }

@@ -80,7 +80,7 @@ pub fn run(args: WArgs) -> anyhow::Result<()> {
         for name in &args.names {
             anyhow::ensure!(is_id(name), "{name} is not a resident or job id; look at a town on its own");
             let (id, machine) = match name.split_once('@') {
-                Some((id, machine)) => (id, Some(fastctx_types::access::Written::parse(machine)?.name)),
+                Some((id, machine)) => (id, Some(fastctx_types::access::Written::parse(machine)?)),
                 None => (name.as_str(), None),
             };
             ids.push(id.to_string());
@@ -96,17 +96,24 @@ pub fn run(args: WArgs) -> anyhow::Result<()> {
         };
         for (one, machine) in looked.iter_mut().zip(machines) {
             if let Some(machine) = machine {
-                one.found.retain(|found| match found {
-                    Looked::Resident(detail) => detail.resident.about.machine == machine,
-                    Looked::Job { record } => record.machine == machine,
-                });
+                let matches = |written: &fastctx_types::access::Written| {
+                    written.name == machine.name
+                        && machine.hub.as_ref().is_none_or(|hub| written.hub.as_ref() == Some(hub))
+                };
+                one.found.retain(|found| matches(&found.written()));
                 if JobId::try_from(one.id.as_str()).is_ok() {
                     one.unasked.retain(|unasked| {
-                        unasked.split_whitespace().next().and_then(|first| MachineName::try_from(first).ok())
-                            == Some(machine.clone())
+                        unasked
+                            .split_whitespace()
+                            .next()
+                            .and_then(|first| fastctx_types::access::Written::parse(first).ok())
+                            .is_some_and(|written| matches(&written))
                     });
                 }
-                one.jobs.retain(|job| job.owner.resident().is_some_and(|owner| owner.machine == machine));
+                one.jobs.retain(|job| {
+                    job.owner.resident().is_some_and(|owner| owner.machine == machine.name)
+                        && machine.hub.as_ref().is_none_or(|hub| job.written().hub.as_ref() == Some(hub))
+                });
             }
         }
         looked.iter().map(|one| detail::detail(one, now)).collect()

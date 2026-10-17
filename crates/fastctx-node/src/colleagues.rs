@@ -481,10 +481,10 @@ pub async fn message(
     let here = node.machine();
     let at = Timestamp::now();
     let machine = match to_machine {
-        Some(machine) => machine,
+        Some(machine) => machine.into(),
         None => locate(node, &from, &to).await?,
     };
-    let to = Address { machine, resident: to };
+    let to = Address { machine: machine.name.clone(), resident: to };
     let sender = Address { machine: here, resident: from.clone() };
     let acting = match crate::collab::asked_account(node, &from, &to)? {
         Some(account) if node.serves(&choices.acting, &account.hub, &account.account) => {
@@ -518,7 +518,8 @@ pub async fn message(
         }
     }
     let notice = Notice::Words { from: Speaker::Resident { address: sender.clone() }, text };
-    let landed = speech::tell(node, &acting, &to, speech::new_id("words"), notice, Owed::Speaker(sender)).await?;
+    let landed =
+        speech::tell_at(node, &acting, &to, &machine, speech::new_id("words"), notice, Owed::Speaker(sender)).await?;
     let result = match &landed {
         Landed::NewTurn { .. } => "started a turn".to_string(),
         Landed::JoinedTurn { .. } => "joined its turn".to_string(),
@@ -541,7 +542,7 @@ pub async fn message(
 /// Which machine the resident `to` lives on, for words from `from`: the
 /// machine `from` asked it on, when it did; this machine, when it lives
 /// here; otherwise whichever machine says it lives there.
-async fn locate(node: &Arc<Node>, from: &ResidentId, to: &ResidentId) -> Result<MachineName, Failure> {
+async fn locate(node: &Arc<Node>, from: &ResidentId, to: &ResidentId) -> Result<Written, Failure> {
     let here = node.machine();
     let actions = node.world.conversation(from).actions();
     let asked = tokio::task::spawn_blocking({
@@ -551,10 +552,10 @@ async fn locate(node: &Arc<Node>, from: &ResidentId, to: &ResidentId) -> Result<
     .await
     .map_err(|error| Failure::new(format!("reading what was asked: {error}")))?;
     if let Some(machine) = asked {
-        return Ok(machine);
+        return Ok(machine.into());
     }
     if node.residents.about(to).is_some() {
-        return Ok(here);
+        return Ok(here.into());
     }
     find(node, from, to).await
 }
@@ -562,7 +563,7 @@ async fn locate(node: &Arc<Node>, from: &ResidentId, to: &ResidentId) -> Result<
 /// Which other machine says the resident `to` lives there, of those
 /// `from`, a resident here, may look at. One id on several machines is said
 /// as it is, never chosen between.
-pub async fn find(node: &Arc<Node>, from: &ResidentId, to: &ResidentId) -> Result<MachineName, Failure> {
+pub async fn find(node: &Arc<Node>, from: &ResidentId, to: &ResidentId) -> Result<Written, Failure> {
     let here = node.machine();
     let acting = node.residents.about(from).map(|(about, _)| about.acting).unwrap_or_default();
     find_for(node, &acting, to).await.map_err(|failure| {
@@ -571,52 +572,31 @@ pub async fn find(node: &Arc<Node>, from: &ResidentId, to: &ResidentId) -> Resul
 }
 
 /// Which machine `acting` may look at says the resident `to` lives there.
-pub async fn find_for(node: &Arc<Node>, acting: &Acting, to: &ResidentId) -> Result<MachineName, Failure> {
-    // Asked as each account `acting` works for: a machine says a resident
-    // lives there to the accounts it works for alone.
+pub async fn find_for(node: &Arc<Node>, acting: &Acting, to: &ResidentId) -> Result<Written, Failure> {
     let machines = crate::around::reachable_each(node, acting, Purpose::Look);
-    use crate::around::Heard as Answer;
     let heard = crate::around::ask_each(machines, |_| RemoteCall::Find { resident: to.clone() }).await;
     let mut found = Vec::new();
-    let mut answered = Vec::new();
-    let mut offline = Vec::new();
     let mut unanswered = Vec::new();
-    for (name, heard) in heard {
-        match heard {
-            Answer::Answered(RemoteReply::Found { lives_here: true }) if !found.contains(&name) => {
-                found.push(name.clone());
-                answered.push(name);
-            }
-            Answer::Answered(_) => answered.push(name),
-            Answer::Offline(_) if !offline.contains(&name.to_string()) => offline.push(name.to_string()),
-            Answer::NoAnswer(reason) => unanswered.push((name, reason)),
-            Answer::Offline(_) => {}
+    for answers in fastctx_net::around::answers::collect(heard) {
+        let (source, lives_here, missing) = answers.find();
+        if lives_here {
+            found.push(source.written);
         }
+        unanswered.extend(missing);
     }
-    let unanswered: Vec<String> = unanswered
-        .into_iter()
-        .filter(|(name, _)| !answered.contains(name))
-        .map(|(name, reason)| format!("{name} ({reason})"))
-        .collect();
+    let names = found.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+    // A bare location cannot express partial discovery. Do not silently select
+    // one while another account may reveal a second conversation with this id.
+    if !unanswered.is_empty() {
+        let known = if found.is_empty() { "no answering machine has it".into() } else { format!("found on {names}") };
+        return Err(Failure::new(format!("looking for {to}: {known}; not answered: {}", unanswered.join("; "))));
+    }
     match found.as_slice() {
         [machine] => Ok(machine.clone()),
-        [] => {
-            let mut text = format!("no machine that answered has a resident {to}");
-            if !offline.is_empty() {
-                text.push_str(&format!("; offline: {}", offline.join(", ")));
-            }
-            if !unanswered.is_empty() {
-                text.push_str(&format!("; no answer from: {}", unanswered.join(", ")));
-            }
-            Err(Failure::new(text))
-        }
-        several => {
-            let names: Vec<String> = several.iter().map(ToString::to_string).collect();
-            Err(Failure::new(format!(
-                "{to} lives on more than one machine ({}); name the one you mean as {to}@<machine>",
-                names.join(", ")
-            )))
-        }
+        [] => Err(Failure::new(format!("no machine that answered has a resident {to}"))),
+        _ => Err(Failure::new(format!(
+            "{to} lives on more than one machine ({names}); name the one you mean as {to}@<machine>"
+        ))),
     }
 }
 

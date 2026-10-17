@@ -33,27 +33,22 @@ impl WhoReply {
     /// conversations working for it alone.
     pub fn merge(&mut self, more: WhoReply) {
         for resident in more.residents {
-            if !self.residents.iter().any(|known| known.about.id == resident.about.id) {
+            if let Some(known) = self.residents.iter_mut().find(|known| known.about.id == resident.about.id) {
+                *known = resident;
+            } else {
                 self.residents.push(resident);
             }
         }
         for job in more.jobs {
-            if !self.jobs.iter().any(|known| known.job == job.job) {
+            if let Some(known) = self.jobs.iter_mut().find(|known| known.job == job.job) {
+                *known = job;
+            } else {
                 self.jobs.push(job);
             }
         }
         match (&mut self.history, more.history) {
             (Some(history), Some(more)) => {
-                for event in more.events {
-                    if !history.events.iter().any(|known| known.id == event.id) {
-                        history.events.push(event);
-                    }
-                }
-                for fact in more.undated {
-                    if !history.undated.contains(&fact) {
-                        history.undated.push(fact);
-                    }
-                }
+                history.merge(more);
             }
             (history @ None, more) => *history = more,
             (Some(_), None) => {}
@@ -276,6 +271,8 @@ impl ResidentNow {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResidentNow {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<crate::observation::MachineSource>,
     pub about: About,
     pub town: Option<TownName>,
     /// Whether it is here: a session of it is connected, or, for a
@@ -308,6 +305,8 @@ pub struct CurrentTool {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunningJob {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<crate::observation::MachineSource>,
     pub job: JobId,
     #[serde(default)]
     pub town: Option<TownName>,
@@ -352,6 +351,8 @@ pub struct WorldWho {
 /// for (`world-network.md`, 共享机器与借出智能体).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WhoFor {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<crate::observation::MachineSource>,
     pub machine: MachineName,
     pub id: String,
     pub accounts: Vec<crate::AccountName>,
@@ -372,12 +373,16 @@ pub enum WhoScope {
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum MachineWho {
     Answered {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        observation: Option<crate::observation::Observation>,
         reply: WhoReply,
     },
     /// Not connected; `since` is when it was last seen, when known. `last`
     /// is what was afoot on it as it last told, when that is known
     /// (`world-network.md`, 近况).
     Offline {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        observation: Option<crate::observation::Observation>,
         machine: MachineName,
         since: Option<Timestamp>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -385,6 +390,8 @@ pub enum MachineWho {
     },
     /// Connected, or thought to be, but its answer did not come.
     NoAnswer {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        observation: Option<crate::observation::Observation>,
         machine: MachineName,
         reason: String,
     },
@@ -395,7 +402,11 @@ pub enum MachineWho {
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Looked {
     Resident(Box<ResidentDetail>),
-    Job { record: Box<JobRecord> },
+    Job {
+        record: Box<JobRecord>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<crate::observation::MachineSource>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -434,7 +445,7 @@ impl WorldWho {
     pub fn mark_others(
         &mut self,
         mine: impl Fn(&crate::access::HubAccount) -> bool,
-        logged_in: impl Fn(&MachineName) -> Vec<crate::access::HubAccount>,
+        logged_in: impl Fn(&MachineName, Option<&crate::observation::MachineSource>) -> Vec<crate::access::HubAccount>,
     ) {
         use crate::access::{Acting, HubAccount};
         let names = |accounts: &[HubAccount]| {
@@ -444,16 +455,22 @@ impl WorldWho {
         };
         let mut others = Vec::new();
         for machine in &self.machines {
-            let MachineWho::Answered { reply } = machine else { continue };
+            let MachineWho::Answered { reply, observation } = machine else { continue };
+            let source = observation.as_ref().map(|observation| &observation.source);
             let mut working = std::collections::HashMap::new();
             for resident in &reply.residents {
                 let accounts = match &resident.about.acting {
                     Acting::Accounts { accounts } => accounts.clone(),
-                    Acting::Here => logged_in(&reply.machine),
+                    Acting::Here => logged_in(&reply.machine, source),
                 };
                 if !accounts.is_empty() && !accounts.iter().any(&mine) {
                     let id = resident.about.id.to_string();
-                    others.push(WhoFor { machine: reply.machine.clone(), id, accounts: names(&accounts) });
+                    others.push(WhoFor {
+                        source: source.cloned(),
+                        machine: reply.machine.clone(),
+                        id,
+                        accounts: names(&accounts),
+                    });
                 }
                 working.insert(resident.about.id.clone(), accounts);
             }
@@ -467,7 +484,12 @@ impl WorldWho {
                 };
                 if !accounts.is_empty() && !accounts.iter().any(&mine) {
                     let id = job.job.to_string();
-                    others.push(WhoFor { machine: reply.machine.clone(), id, accounts: names(&accounts) });
+                    others.push(WhoFor {
+                        source: source.cloned(),
+                        machine: reply.machine.clone(),
+                        id,
+                        accounts: names(&accounts),
+                    });
                 }
             }
         }
@@ -489,26 +511,31 @@ impl WorldWho {
         };
         for machine in &mut self.machines {
             history.machines.push(match machine {
-                MachineWho::Answered { reply } => match reply.history.take() {
+                MachineWho::Answered { reply, observation } => match reply.history.take() {
                     Some(mut read) => {
                         history.events.append(&mut read.events);
                         history.undated.append(&mut read.undated);
-                        MachineSince::Answered { reply: read.coverage }
+                        MachineSince::Answered { reply: read.coverage, observation: observation.clone() }
                     }
                     None => MachineSince::NoAnswer {
                         machine: reply.machine.clone(),
+                        observation: observation.clone(),
                         reason: "answered current activity without the requested history".into(),
                     },
                 },
-                MachineWho::Offline { machine, since, .. } => {
-                    MachineSince::Offline { machine: machine.clone(), since: *since }
+                MachineWho::Offline { machine, since, observation, .. } => {
+                    MachineSince::Offline { machine: machine.clone(), since: *since, observation: observation.clone() }
                 }
-                MachineWho::NoAnswer { machine, reason } => {
-                    MachineSince::NoAnswer { machine: machine.clone(), reason: reason.clone() }
-                }
+                MachineWho::NoAnswer { machine, reason, observation } => MachineSince::NoAnswer {
+                    machine: machine.clone(),
+                    reason: reason.clone(),
+                    observation: observation.clone(),
+                },
             });
         }
         history.events = merge_events(history.events, &mut history.issues);
+        let facts = std::mem::take(&mut history.undated);
+        crate::observation::union(&mut history.undated, facts);
         self.history = Some(history);
     }
 }
@@ -523,12 +550,16 @@ impl LookedUp {
                 };
                 for job in &self.jobs {
                     if job.owner == owner
+                        && crate::observation::same_network(job.source.as_ref(), detail.resident.source.as_ref())
                         && !detail.jobs.iter().any(|held| held.machine == job.machine && held.job == job.job)
                     {
                         detail.jobs.push(job.clone());
                     }
                 }
-                self.jobs.retain(|job| job.owner != owner);
+                self.jobs.retain(|job| {
+                    job.owner != owner
+                        || !crate::observation::same_network(job.source.as_ref(), detail.resident.source.as_ref())
+                });
                 detail.jobs.sort_by_key(|job| (job.machine.clone(), job.started_at));
             }
         }
@@ -571,5 +602,56 @@ impl CurrentTool {
             machine: tool.machine.clone(),
             detail,
         })
+    }
+}
+
+impl MachineWho {
+    pub fn observation(&self) -> Option<&crate::observation::Observation> {
+        match self {
+            Self::Answered { observation, .. }
+            | Self::Offline { observation, .. }
+            | Self::NoAnswer { observation, .. } => observation.as_ref(),
+        }
+    }
+
+    pub fn machine(&self) -> &MachineName {
+        match self {
+            Self::Answered { reply, .. } => &reply.machine,
+            Self::Offline { machine, .. } | Self::NoAnswer { machine, .. } => machine,
+        }
+    }
+
+    pub fn written(&self) -> crate::access::Written {
+        crate::observation::written(self.machine(), self.observation().map(|observation| &observation.source))
+    }
+}
+
+impl ResidentNow {
+    pub fn written(&self) -> crate::access::Written {
+        self.source.as_ref().map_or_else(|| (&self.about.machine).into(), |source| source.written.clone())
+    }
+}
+
+impl RunningJob {
+    pub fn written(&self) -> crate::access::Written {
+        self.source.as_ref().map_or_else(|| (&self.machine).into(), |source| source.written.clone())
+    }
+}
+
+impl Looked {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Resident(detail) => detail.resident.about.id.as_str(),
+            Self::Job { record, .. } => record.id.as_str(),
+        }
+    }
+
+    pub fn written(&self) -> crate::access::Written {
+        match self {
+            Self::Resident(detail) => detail.resident.written(),
+            Self::Job { record, source } => {
+                source.as_ref().map_or_else(|| (&record.machine).into(), |source| source.written.clone())
+            }
+        }
     }
 }

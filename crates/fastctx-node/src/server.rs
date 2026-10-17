@@ -1491,63 +1491,19 @@ async fn who(
     let works_here = node.works_here(acting).is_ok();
     if works_here && asks_for(&here) {
         machines.push(match who_here(node, all, town.clone(), since).await {
-            Ok(reply) => MachineWho::Answered { reply: crate::admission::seen::who_here(node, acting, reply) },
-            Err(error) => MachineWho::NoAnswer { machine: here.clone(), reason: error.message },
+            Ok(reply) => {
+                MachineWho::Answered { observation: None, reply: crate::admission::seen::who_here(node, acting, reply) }
+            }
+            Err(error) => MachineWho::NoAnswer { observation: None, machine: here.clone(), reason: error.message },
         });
     }
     let reachable: Vec<_> = crate::around::reachable_each(node, acting, fastctx_types::access::Purpose::Look)
         .into_iter()
         .filter(|machine| asks_for(&machine.name))
         .collect();
-    // A project may name machines out of the asker's reach: those go
-    // unnamed rather than said unreachable.
-    let mut within: Vec<MachineName> = reachable.iter().map(|machine| machine.name.clone()).collect();
-    if works_here {
-        within.push(here.clone());
-    }
     let heard = crate::around::ask_each(reachable, |_| RemoteCall::Who { all, town: town.clone(), since }).await;
-    for (machine, heard) in heard {
-        // A machine asked as several accounts: what each was shown, as one
-        // answer; one that answered stands over one that did not.
-        let known = machines.iter().position(|answer| match answer {
-            MachineWho::Answered { reply } => reply.machine == machine,
-            MachineWho::Offline { machine: name, .. } | MachineWho::NoAnswer { machine: name, .. } => *name == machine,
-        });
-        if let Some(at) = known {
-            if let crate::around::Heard::Answered(RemoteReply::Who(reply)) = heard
-                && reply.machine == machine
-            {
-                match &mut machines[at] {
-                    MachineWho::Answered { reply: answer } => answer.merge(reply),
-                    other => *other = MachineWho::Answered { reply },
-                }
-            }
-            continue;
-        }
-        machines.push(match heard {
-            crate::around::Heard::Answered(RemoteReply::Who(reply)) if reply.machine == machine => {
-                MachineWho::Answered { reply }
-            }
-            crate::around::Heard::Answered(_) => {
-                MachineWho::NoAnswer { machine, reason: "it answered something else".to_string() }
-            }
-            crate::around::Heard::Offline(since) => MachineWho::Offline { machine, since, last: None },
-            crate::around::Heard::NoAnswer(reason) => MachineWho::NoAnswer { machine, reason },
-        });
-    }
-    if let Some(asked) = asked {
-        for name in asked.into_iter().filter(|name| within.contains(name)) {
-            if !machines.iter().any(|answer| match answer {
-                MachineWho::Answered { reply } => reply.machine == name,
-                MachineWho::Offline { machine, .. } | MachineWho::NoAnswer { machine, .. } => *machine == name,
-            }) {
-                machines.push(MachineWho::NoAnswer {
-                    machine: name,
-                    reason: "the town names this machine, but it could not be reached through this node".into(),
-                });
-            }
-        }
-    }
+    machines
+        .extend(fastctx_net::around::answers::collect(heard).into_iter().map(|answers| answers.who(since.is_some())));
     let mut reply = WorldWho { machine: here, scope, machines, you: None, history: None, others: Vec::new() };
     crate::who::mark_others(node, acting, &mut reply);
     if let Some(since) = since {
@@ -1601,16 +1557,21 @@ async fn nodes(node: &Arc<Node>, acting: &fastctx_types::access::Acting) -> Resu
             .machines()
             .filter(|machine| !view.is_me(&machine.name))
             .filter_map(|machine| {
-                view.account_for(&logins, &view.me, &machine.name, fastctx_types::access::Purpose::Hands)
-                    .map(|account| Reachable { link: link.clone(), name: machine.name.clone(), account })
+                view.account_for(&logins, &view.me, &machine.name, fastctx_types::access::Purpose::Hands).map(
+                    |account| Reachable { link: link.clone(), name: machine.name.clone(), account, key: machine.key },
+                )
             })
             .collect();
         let online_known = fresh.is_ok();
         let heard = around::ask_refreshed(reachable, |_| RemoteCall::Facts, fresh).await;
         let machines = heard
             .into_iter()
-            .map(|(name, heard)| {
-                let seen = view.member(&name).expect("a machine selected from this view");
+            .map(|(asked, heard)| {
+                let name = asked.source.written.name;
+                let seen = view
+                    .machines()
+                    .find(|machine| machine.key.to_string() == asked.source.key)
+                    .expect("a machine selected from this view");
                 let facts = match heard {
                     Heard::Answered(RemoteReply::Facts(facts)) => Ok(facts),
                     Heard::Answered(_) => Err("it answered something else".to_string()),

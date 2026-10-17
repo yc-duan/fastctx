@@ -52,20 +52,20 @@ pub async fn talk(
 ) -> Result<(Address, Landed), Failure> {
     let here = node.machine();
     let machine = match machine {
-        Some(machine) => machine,
+        Some(machine) => machine.into(),
         None => locate(node, &to).await?,
     };
-    if node.is_me(&machine) {
+    if machine.hub.is_none() && node.is_me(&machine.name) {
         let landed = talk_here(node, &here, &to, text, attachments, files_on.as_ref(), id.as_deref()).await?;
         return Ok((Address { machine: here, resident: to }, landed));
     }
     let call = RemoteCall::Talk { to: to.clone(), text, attachments, files_on, id };
     match node
-        .call(&Acting::Here, &(&machine).into(), Purpose::Agents, call)
+        .call(&Acting::Here, &machine, Purpose::Agents, call)
         .await
         .map_err(|failure| Failure::unanswered(failure.to_string()))?
     {
-        Ok(RemoteReply::Said { landed }) => Ok((Address { machine, resident: to }, landed)),
+        Ok(RemoteReply::Said { landed }) => Ok((Address { machine: machine.name, resident: to }, landed)),
         Ok(_) => Err(Failure::new(format!("{machine} answered something other than a talk"))),
         Err(failure) => Err(failure),
     }
@@ -102,11 +102,11 @@ pub async fn watch(
     now: bool,
 ) -> Result<mpsc::UnboundedReceiver<Result<Watched, Failure>>, Failure> {
     let machine = match machine {
-        Some(machine) => machine,
+        Some(machine) => machine.into(),
         None => locate(node, &resident).await?,
     };
     let (sender, receiver) = mpsc::unbounded_channel();
-    if node.is_me(&machine) {
+    if machine.hub.is_none() && node.is_me(&machine.name) {
         let mut told = Told::new(node, &resident, now && composer.is_none());
         let (lease, opened) = opening(node, &resident, composer, held.as_ref()).await?;
         let Opening { pieces, mut events, slim } = opened;
@@ -137,7 +137,8 @@ pub async fn watch(
     let watch = u64::from_le_bytes(
         fastctx_net::sign::random::<8>().map_err(|error| Failure::new(format!("naming the watch: {error}")))?,
     );
-    let written: Written = (&machine).into();
+    let written = machine;
+    let machine = written.name.clone();
     let links = node.locate(&written)?;
     let feed = {
         let (sender, from) = (sender.clone(), machine.clone());
@@ -889,17 +890,17 @@ pub async fn stop(
 ) -> Result<(Address, bool), Failure> {
     let here = node.machine();
     let machine = match machine {
-        Some(machine) => machine,
+        Some(machine) => machine.into(),
         None => locate(node, &resident).await?,
     };
-    if node.is_me(&machine) {
+    if machine.hub.is_none() && node.is_me(&machine.name) {
         let stopped = stop_here(node, &resident).await?;
         return Ok((Address { machine: here, resident }, stopped));
     }
     let call = RemoteCall::Stop { resident: resident.clone() };
-    let reply = node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await;
+    let reply = node.call(&Acting::Here, &machine, Purpose::Agents, call).await;
     match reply.map_err(|failure| Failure::new(failure.to_string()))? {
-        Ok(RemoteReply::Stopped { stopped }) => Ok((Address { machine, resident }, stopped)),
+        Ok(RemoteReply::Stopped { stopped }) => Ok((Address { machine: machine.name, resident }, stopped)),
         Ok(_) => Err(Failure::new(format!("{machine} answered something other than a stop"))),
         Err(failure) => Err(failure),
     }
@@ -958,9 +959,9 @@ pub async fn stop_and_wait(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fail
 
 /// Which machine the resident `id` lives on: this one when it lives here,
 /// otherwise whichever says it does.
-async fn locate(node: &Arc<Node>, id: &ResidentId) -> Result<MachineName, Failure> {
+async fn locate(node: &Arc<Node>, id: &ResidentId) -> Result<Written, Failure> {
     if node.residents.about(id).is_some() {
-        return Ok(node.machine());
+        return Ok(node.machine().into());
     }
     if !node.connected_anywhere() {
         return Err(crate::forget::gone(node, id));

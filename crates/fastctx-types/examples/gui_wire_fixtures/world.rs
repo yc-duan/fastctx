@@ -68,6 +68,7 @@ fn residents() -> Vec<ResidentNow> {
         .into_iter()
         .enumerate()
         .map(|(i, activity)| ResidentNow {
+            source: None,
             tools: vec![CurrentTool {
                 turn: "turn-1".into(),
                 id: "call-1".into(),
@@ -205,6 +206,7 @@ fn who(towns: &[TownSummary]) -> Vec<WorldWho> {
             scope,
             machines: vec![
                 MachineWho::Answered {
+                    observation: None,
                     reply: WhoReply {
                         history: None,
                         busy: Some(2),
@@ -213,6 +215,7 @@ fn who(towns: &[TownSummary]) -> Vec<WorldWho> {
                         jobs: [None, Some(u32::MAX)]
                             .into_iter()
                             .map(|pid| RunningJob {
+                                source: None,
                                 town: None,
                                 job: "j-abc123".parse().unwrap(),
                                 machine: machine(),
@@ -231,6 +234,7 @@ fn who(towns: &[TownSummary]) -> Vec<WorldWho> {
                     },
                 },
                 MachineWho::Offline {
+                    observation: None,
                     machine: "laptop".parse().unwrap(),
                     since: Some(at()),
                     last: Some(Box::new(WhoReply {
@@ -241,10 +245,15 @@ fn who(towns: &[TownSummary]) -> Vec<WorldWho> {
                         jobs: Vec::new(),
                     })),
                 },
-                MachineWho::Offline { machine: "unknown".parse().unwrap(), since: None, last: None },
-                MachineWho::NoAnswer { machine: "lab".parse().unwrap(), reason: "node disconnected".into() },
+                MachineWho::Offline { observation: None, machine: "unknown".parse().unwrap(), since: None, last: None },
+                MachineWho::NoAnswer {
+                    observation: None,
+                    machine: "lab".parse().unwrap(),
+                    reason: "node disconnected".into(),
+                },
             ],
             others: vec![fastctx_types::town::WhoFor {
+                source: None,
                 machine: machine(),
                 id: "j-abc123".into(),
                 accounts: vec!["bob".parse().unwrap()],

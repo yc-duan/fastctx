@@ -20,16 +20,16 @@ pub async fn manage(
     action: Management,
 ) -> Result<(Address, Managed), Failure> {
     let machine = match machine {
-        Some(machine) => machine,
-        None if node.residents.about(&resident).is_some() => node.machine(),
+        Some(machine) => machine.into(),
+        None if node.residents.about(&resident).is_some() => node.machine().into(),
         None => crate::colleagues::find_for(node, &Acting::Here, &resident).await?,
     };
-    let managed = if node.is_me(&machine) {
+    let managed = if machine.hub.is_none() && node.is_me(&machine.name) {
         here(node, &resident, action).await?
     } else {
         let call = RemoteCall::Manage { resident: resident.clone(), action };
         match node
-            .call(&Acting::Here, &(&machine).into(), Purpose::Agents, call)
+            .call(&Acting::Here, &machine, Purpose::Agents, call)
             .await
             .map_err(|error| Failure::new(error.to_string()))??
         {
@@ -37,7 +37,7 @@ pub async fn manage(
             _ => return Err(Failure::new(format!("{machine} answered something other than a management result"))),
         }
     };
-    Ok((Address { machine, resident }, managed))
+    Ok((Address { machine: machine.name, resident }, managed))
 }
 
 pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Result<Managed, Failure> {

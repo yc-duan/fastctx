@@ -198,10 +198,18 @@ pub fn fixtures() -> Fixtures {
         replies: vec![Reply::Agents(WorldAgents {
             machine: machine.clone(),
             machines: vec![
-                MachineAgents::Answered { reply: answer.clone() },
-                MachineAgents::Offline { machine: "laptop".parse().unwrap(), since: Some(checked_at) },
-                MachineAgents::Offline { machine: "unknown".parse().unwrap(), since: None },
-                MachineAgents::NoAnswer { machine: "lab".parse().unwrap(), reason: "connection broke".into() },
+                MachineAgents::Answered { observation: None, reply: answer.clone() },
+                MachineAgents::Offline {
+                    observation: None,
+                    machine: "laptop".parse().unwrap(),
+                    since: Some(checked_at),
+                },
+                MachineAgents::Offline { observation: None, machine: "unknown".parse().unwrap(), since: None },
+                MachineAgents::NoAnswer {
+                    observation: None,
+                    machine: "lab".parse().unwrap(),
+                    reason: "connection broke".into(),
+                },
             ],
         })],
         remote_calls: vec![

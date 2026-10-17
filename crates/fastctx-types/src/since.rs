@@ -37,9 +37,23 @@ pub struct WorldSince {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum MachineSince {
-    Answered { reply: SinceCoverage },
-    Offline { machine: MachineName, since: Option<Timestamp> },
-    NoAnswer { machine: MachineName, reason: String },
+    Answered {
+        reply: SinceCoverage,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        observation: Option<crate::observation::Observation>,
+    },
+    Offline {
+        machine: MachineName,
+        since: Option<Timestamp>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        observation: Option<crate::observation::Observation>,
+    },
+    NoAnswer {
+        machine: MachineName,
+        reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        observation: Option<crate::observation::Observation>,
+    },
 }
 
 /// One machine's telephone answer, before the querying node merges the facts.
@@ -80,6 +94,11 @@ pub enum SinceTown {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SinceEvent {
+    /// The network owning this fact, including locally read ledger copies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub: Option<crate::access::HubId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<crate::observation::MachineSource>,
     /// Stable identity across repeated queries and replicated ledger copies.
     pub id: String,
     /// Timestamp of the fact as defined by its kind below; never file mtime.
@@ -204,6 +223,8 @@ pub enum SinceKind {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UndatedFact {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub: Option<crate::access::HubId>,
     pub resident: Address,
     pub town: SinceTown,
     pub source: Location,
@@ -228,7 +249,7 @@ impl MachineSince {
     /// The machine the outcome is of.
     pub fn machine(&self) -> &MachineName {
         match self {
-            MachineSince::Answered { reply } => &reply.machine,
+            MachineSince::Answered { reply, .. } => &reply.machine,
             MachineSince::Offline { machine, .. } | MachineSince::NoAnswer { machine, .. } => machine,
         }
     }
@@ -238,12 +259,13 @@ impl MachineSince {
 /// copies is one event with every source; copies that disagree are both
 /// kept, and the disagreement is an issue.
 pub fn merge_events(events: Vec<SinceEvent>, issues: &mut Vec<SinceIssue>) -> Vec<SinceEvent> {
-    let mut unique = std::collections::BTreeMap::<String, SinceEvent>::new();
+    let mut unique = std::collections::BTreeMap::<(Option<crate::access::HubId>, String), SinceEvent>::new();
     let mut conflicts = Vec::new();
     for mut event in events {
-        match unique.get_mut(&event.id) {
+        let key = (event.hub.clone(), event.id.clone());
+        match unique.get_mut(&key) {
             None => {
-                unique.insert(event.id.clone(), event);
+                unique.insert(key, event);
             }
             Some(prior) if prior.at == event.at && prior.machine == event.machine && prior.what == event.what => {
                 for source in event.sources.drain(..) {
@@ -289,5 +311,37 @@ pub fn merge_town(prior: &mut SinceTown, other: &SinceTown) {
         }
         (SinceTown::Unrecorded { .. }, SinceTown::Known { .. }) => *prior = other.clone(),
         _ => {}
+    }
+}
+
+impl SinceCoverage {
+    /// The union of the read intervals and every reported omission.
+    pub fn merge(&mut self, more: Self) {
+        self.read_started_at = self.read_started_at.min(more.read_started_at);
+        self.read_finished_at = self.read_finished_at.max(more.read_finished_at);
+        crate::observation::union(&mut self.issues, more.issues);
+    }
+}
+
+impl SinceReply {
+    pub fn merge(&mut self, more: Self) {
+        self.coverage.merge(more.coverage);
+        self.events.extend(more.events);
+        self.events = merge_events(std::mem::take(&mut self.events), &mut self.coverage.issues);
+        crate::observation::union(&mut self.undated, more.undated);
+    }
+}
+
+impl MachineSince {
+    pub fn observation(&self) -> Option<&crate::observation::Observation> {
+        match self {
+            Self::Answered { observation, .. }
+            | Self::Offline { observation, .. }
+            | Self::NoAnswer { observation, .. } => observation.as_ref(),
+        }
+    }
+
+    pub fn written(&self) -> crate::access::Written {
+        crate::observation::written(self.machine(), self.observation().map(|observation| &observation.source))
     }
 }

@@ -246,7 +246,7 @@ pub fn looked(node: &Node, asker: &Asker, looked: Option<Looked>) -> Option<Look
             looker,
             &Address { machine: detail.resident.about.machine.clone(), resident: detail.resident.about.id.clone() },
         ),
-        Some(Looked::Job { record }) => {
+        Some(Looked::Job { record, .. }) => {
             let account = record.account.as_ref().or(record.on.as_ref().and_then(|on| on.account.as_ref()));
             running(node, asker, &record.owner, account)
         }

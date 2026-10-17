@@ -47,14 +47,18 @@ pub async fn stop(
                 Ok(Err(failure)) => Heard::NoAnswer(failure.message),
                 Err(failure) => Heard::NoAnswer(failure.to_string()),
             };
-            vec![(written.name, answer)]
+            vec![(written, answer)]
         }
         None => {
             if !node.connected_anywhere() {
                 return Err(Failure::new(format!("{here} has no job {job}")));
             }
             let machines = crate::around::reachable(node, acting, Purpose::Hands);
-            crate::around::ask_each(machines, |_| call.clone()).await
+            crate::around::ask_each(machines, |_| call.clone())
+                .await
+                .into_iter()
+                .map(|(asked, heard)| (asked.source.written, heard))
+                .collect()
         }
     };
     let mut stopped = Vec::new();
@@ -69,7 +73,7 @@ pub async fn stop(
     match stopped.len() {
         1 => {
             let (machine, record) = stopped.remove(0);
-            Ok(Reply::JobStopped { machine, record })
+            Ok(Reply::JobStopped { machine: machine.name, record })
         }
         0 if failed.is_empty() => Err(Failure::new(format!("no machine that could be asked has a job {job}"))),
         0 => Err(Failure::new(format!("no job {job} was stopped: {}", failed.join("; ")))),

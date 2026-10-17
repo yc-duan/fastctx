@@ -114,7 +114,7 @@ pub(crate) async fn open(
     let (job_record, notes_record) = match &decoding {
         Decoding::Output { job } => {
             let found = crate::look::look_here(node, job.as_str()).await?.0;
-            let Some(fastctx_types::town::Looked::Job { record }) = found else {
+            let Some(fastctx_types::town::Looked::Job { record, .. }) = found else {
                 return Err(Failure::output_not_retained("the output job is no longer retained"));
             };
             let expected = PathBuf::from(&record.output);

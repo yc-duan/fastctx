@@ -56,7 +56,7 @@ pub(super) fn render(history: &WorldSince, previous: bool, full: bool, now: Time
         lines.push(format!(
             "  {}  {}  {}{}\n",
             when(event.at, now),
-            event.machine,
+            fastctx_types::observation::written(&event.machine, event.source.as_ref()),
             fact(event),
             if history.town.is_some()
                 && matches!(&event.town, SinceTown::Unrecorded { recorded_in } if !recorded_in.is_empty())
@@ -73,14 +73,23 @@ pub(super) fn render(history: &WorldSince, previous: bool, full: bool, now: Time
         .map(|issue| format!("  could not read {}: {}\n", issue.source, issue.reason))
         .collect::<String>();
     for machine in &history.machines {
+        if let Some(observation) = machine.observation() {
+            for missing in &observation.unanswered {
+                issues.push_str(&format!("  {}: {missing}\n", machine.written()));
+            }
+        }
         match machine {
-            MachineSince::Answered { reply } => {
+            MachineSince::Answered { reply, .. } => {
                 for issue in &reply.issues {
-                    issues
-                        .push_str(&format!("  {} could not read {}: {}\n", reply.machine, issue.source, issue.reason));
+                    issues.push_str(&format!(
+                        "  {} could not read {}: {}\n",
+                        machine.written(),
+                        issue.source,
+                        issue.reason
+                    ));
                 }
             }
-            MachineSince::NoAnswer { machine, reason } if reason.starts_with("answered current activity") => {
+            MachineSince::NoAnswer { machine, reason, .. } if reason.starts_with("answered current activity") => {
                 issues.push_str(&format!("  {machine}: {reason}\n"))
             }
             _ => {}

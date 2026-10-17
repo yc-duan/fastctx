@@ -29,23 +29,23 @@ pub(crate) async fn read(
     agent: String,
 ) -> Result<(Address, AgentActivity), Failure> {
     let machine = match machine {
-        Some(machine) => machine,
-        None if node.residents.about(&resident).is_some() => node.machine(),
+        Some(machine) => machine.into(),
+        None if node.residents.about(&resident).is_some() => node.machine().into(),
         None => crate::colleagues::find_for(node, &fastctx_types::access::Acting::Here, &resident).await?,
     };
-    if node.is_me(&machine) {
+    if machine.hub.is_none() && node.is_me(&machine.name) {
         let activity = here(node, &resident, &agent).await?;
-        return Ok((Address { machine, resident }, activity));
+        return Ok((Address { machine: machine.name, resident }, activity));
     }
     let call = fastctx_types::remote::RemoteCall::AgentActivity { resident: resident.clone(), agent };
-    let written: fastctx_types::access::Written = (&machine).into();
+    let written = &machine;
     match node
-        .call(&fastctx_types::access::Acting::Here, &written, fastctx_types::access::Purpose::Agents, call)
+        .call(&fastctx_types::access::Acting::Here, written, fastctx_types::access::Purpose::Agents, call)
         .await
         .map_err(|failure| Failure::new(failure.to_string()))?
     {
         Ok(fastctx_types::remote::RemoteReply::AgentActivity { activity }) => {
-            Ok((Address { machine, resident }, *activity))
+            Ok((Address { machine: machine.name, resident }, *activity))
         }
         Ok(_) => Err(Failure::new(format!("{machine} answered something other than an agent's record"))),
         Err(failure) => Err(failure),

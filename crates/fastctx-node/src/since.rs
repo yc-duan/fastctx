@@ -6,13 +6,12 @@ use std::sync::Arc;
 
 use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
-use fastctx_types::remote::{RemoteCall, RemoteReply};
+use fastctx_types::remote::RemoteCall;
 use fastctx_types::since::*;
 use fastctx_types::{MachineName, TownName};
 use jiff::Timestamp;
 
 use crate::Node;
-use crate::around::Heard;
 
 pub async fn here(node: &Node, since: Timestamp, town: Option<TownName>) -> Result<SinceReply, Failure> {
     let (world, machine) = (node.world.clone(), node.machine());
@@ -67,9 +66,13 @@ pub async fn query(
             Ok(mut reply) => {
                 events.append(&mut reply.events);
                 undated.append(&mut reply.undated);
-                answers.push(MachineSince::Answered { reply: reply.coverage });
+                answers.push(MachineSince::Answered { observation: None, reply: reply.coverage });
             }
-            Err(failure) => answers.push(MachineSince::NoAnswer { machine: machine.clone(), reason: failure.message }),
+            Err(failure) => answers.push(MachineSince::NoAnswer {
+                observation: None,
+                machine: machine.clone(),
+                reason: failure.message,
+            }),
         }
     } else if let Some(town) = &town {
         // The queried ledger is available even when all of its member
@@ -80,72 +83,25 @@ pub async fn query(
         .into_iter()
         .filter(|machine| asks_for(&machine.name))
         .collect();
-    let mut asked_here: Vec<_> = reachable.iter().map(|machine| (machine.link.clone(), machine.name.clone())).collect();
-    asked_here.dedup_by(|a, b| a.1 == b.1);
     let heard = crate::around::ask_each(reachable, |_| RemoteCall::Since { since, town: town.clone() }).await;
-    // Who connected and left, as the hubs had it when they were just asked.
-    for (link, name) in &asked_here {
-        if let Some(seen) = link.view().member(name) {
-            events.extend(presence(name, seen.online, seen.since, since));
+    for group in fastctx_net::around::answers::collect(heard) {
+        let source = group.source.clone();
+        let (status, read) = group.since();
+        if !matches!(status, MachineSince::NoAnswer { .. })
+            && let Some(link) = node.link_of(&source.hub)
+            && let Some(seen) = link.view().member(&source.written.name)
+        {
+            events.extend(fastctx_net::around::answers::presence(&source, seen.online, seen.since, since));
         }
-    }
-    for (name, heard) in heard {
-        // A machine asked as several accounts answers each with what works
-        // for it; their events merge below, and one answer stands for it.
-        if let Some(at) = answers.iter().position(|answer| answer.machine() == &name) {
-            if let Heard::Answered(RemoteReply::Since(mut reply)) = heard
-                && reply.coverage.machine == name
-            {
-                events.append(&mut reply.events);
-                undated.append(&mut reply.undated);
-                if !matches!(answers[at], MachineSince::Answered { .. }) {
-                    answers[at] = MachineSince::Answered { reply: reply.coverage };
-                }
-            }
-            continue;
+        if let Some(mut reply) = read {
+            events.append(&mut reply.events);
+            fastctx_types::observation::union(&mut undated, reply.undated);
         }
-        answers.push(match heard {
-            Heard::Answered(RemoteReply::Since(mut reply)) if reply.coverage.machine == name => {
-                events.append(&mut reply.events);
-                undated.append(&mut reply.undated);
-                MachineSince::Answered { reply: reply.coverage }
-            }
-            Heard::Answered(_) => {
-                MachineSince::NoAnswer { machine: name, reason: "it answered something else".to_string() }
-            }
-            Heard::Offline(since) => MachineSince::Offline { machine: name, since },
-            Heard::NoAnswer(reason) => MachineSince::NoAnswer { machine: name, reason },
-        });
-    }
-    // A machine the town names that is out of the asker's reach goes
-    // unnamed (`world-network.md`, 一个居民替谁干活); one within it that did
-    // not answer is said so.
-    if let Some(asked) = asked {
-        let unasked: Vec<_> = asked
-            .into_iter()
-            .filter(|name| asked_here.iter().any(|(_, asked)| asked == name) || (works_here && *name == machine))
-            .filter(|name| !answers.iter().any(|answer| answer.machine() == name))
-            .collect();
-        for name in unasked {
-            answers.push(MachineSince::NoAnswer { machine: name, reason: "it did not answer".to_string() });
-        }
+        answers.push(status);
     }
     answers.sort_by(|a, b| a.machine().cmp(b.machine()));
     let events = merge_events(events, &mut issues);
     Ok(WorldSince { machine, since, town, machines: answers, events, undated, issues, limitations: limitations() })
-}
-
-/// A machine connecting or leaving after `since`, as its hub saw it.
-fn presence(name: &MachineName, online: bool, at: Option<Timestamp>, since: Timestamp) -> Option<SinceEvent> {
-    let at = at.filter(|at| *at > since)?;
-    Some(SinceEvent {
-        id: records::identity("presence", &[name.key(), &at.to_string(), if online { "on" } else { "off" }]),
-        at,
-        machine: name.clone(),
-        town: SinceTown::Unrecorded { recorded_in: Vec::new() },
-        sources: Vec::new(),
-        what: if online { SinceKind::MachineConnected } else { SinceKind::MachineOffline },
-    })
 }
 
 async fn ledger_events(
@@ -179,17 +135,20 @@ pub(crate) async fn presence_for_who(node: &Node, who: &mut fastctx_types::town:
     use fastctx_types::town::MachineWho;
     let Some(history) = &mut who.history else { return Ok(()) };
     for machine in &who.machines {
-        let name = match machine {
-            MachineWho::Answered { reply } => &reply.machine,
-            MachineWho::Offline { machine, .. } => machine,
-            MachineWho::NoAnswer { .. } => continue,
-        };
-        if *name == who.machine {
+        if matches!(machine, MachineWho::NoAnswer { .. }) {
             continue;
         }
-        let seen = node.links().iter().find_map(|link| link.view().member(name).map(|seen| (seen.online, seen.since)));
-        if let Some((online, at)) = seen {
-            history.events.extend(presence(name, online, at, history.since));
+        let Some(observation) = machine.observation() else { continue };
+        let source = &observation.source;
+        if let Some(link) = node.link_of(&source.hub)
+            && let Some(seen) = link.view().member(&source.written.name)
+        {
+            history.events.extend(fastctx_net::around::answers::presence(
+                source,
+                seen.online,
+                seen.since,
+                history.since,
+            ));
         }
     }
     // A queried town's ledger can be present even when none of its machines
@@ -197,7 +156,7 @@ pub(crate) async fn presence_for_who(node: &Node, who: &mut fastctx_types::town:
     if !who
         .machines
         .iter()
-        .any(|machine| matches!(machine, MachineWho::Answered { reply } if reply.machine == who.machine))
+        .any(|machine| matches!(machine, MachineWho::Answered { reply, .. } if reply.machine == who.machine))
         && let Some(town) = &history.town
     {
         let town = town.clone();

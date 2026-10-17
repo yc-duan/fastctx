@@ -1,6 +1,6 @@
 //! Asking every machine something at once (`world-town.md`, `fastctx w`):
 //! the machines whoever asks may use, on every hub this computer is on,
-//! each asked for one of the accounts it works for, the online ones at once.
+//! each asked for the accounts it works for, the online ones at once.
 
 pub(crate) use fastctx_net::around::{Heard, Reachable, ask_each};
 use fastctx_types::access::{Acting, Purpose};
@@ -25,7 +25,7 @@ pub(crate) fn reachable(node: &Node, acting: &Acting, purpose: Purpose) -> Vec<R
             }
             if let Some(account) = view.account_for(&accounts, here, &machine.name, purpose) {
                 keys.push(machine.key);
-                reachable.push(Reachable { link: link.clone(), name: machine.name.clone(), account });
+                reachable.push(Reachable { link: link.clone(), name: machine.name.clone(), account, key: machine.key });
             }
         }
     }
@@ -35,28 +35,27 @@ pub(crate) fn reachable(node: &Node, acting: &Acting, purpose: Purpose) -> Vec<R
 /// As `reachable`, but each machine once for every account `acting` works
 /// for that may ask `purpose` of it there. A machine shows each account the
 /// conversations that work for it alone (`admission::seen`), so a computer
-/// logged in to several accounts on a hub asks as each and merges what it
-/// hears.
+/// logged in to several accounts asks as each on every hub and merges what
+/// it hears by hub and machine key.
 pub(crate) fn reachable_each(node: &Node, acting: &Acting, purpose: Purpose) -> Vec<Reachable> {
     let mut reachable = Vec::new();
-    let mut keys = Vec::new();
     for link in node.links() {
         let view = link.view();
         let accounts = node.accounts_on(&link, acting);
-        let here = &view.me;
         for machine in view.machines().filter(|machine| !view.is_me(&machine.name)) {
-            if keys.contains(&machine.key) {
-                continue;
-            }
-            let mut asked = false;
             for account in &accounts {
-                if let Some(account) = view.account_for(std::slice::from_ref(account), here, &machine.name, purpose) {
-                    asked = true;
-                    reachable.push(Reachable { link: link.clone(), name: machine.name.clone(), account });
+                if let Some(account) = view.account_for(std::slice::from_ref(account), &view.me, &machine.name, purpose)
+                    && !reachable.iter().any(|asked: &Reachable| {
+                        asked.link.membership().id == view.hub && asked.key == machine.key && asked.account == account
+                    })
+                {
+                    reachable.push(Reachable {
+                        link: link.clone(),
+                        name: machine.name.clone(),
+                        account,
+                        key: machine.key,
+                    });
                 }
-            }
-            if asked {
-                keys.push(machine.key);
             }
         }
     }

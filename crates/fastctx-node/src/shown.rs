@@ -22,7 +22,7 @@ use crate::Node;
 pub(crate) async fn now(node: &Arc<Node>) -> Result<WorldNow, Failure> {
     let here = node.machine();
     let towns = crate::ledger::query::held(node).await?;
-    let mut machines = vec![MachineWho::Answered { reply: this(node).await? }];
+    let mut machines = vec![MachineWho::Answered { observation: None, reply: this(node).await? }];
     machines.extend(elsewhere(node));
     let who = WorldWho {
         machine: here.clone(),
@@ -97,16 +97,19 @@ fn elsewhere(node: &Node) -> Vec<MachineWho> {
         let name = reachable.name.clone();
         machines.push(match (member.online, afoot) {
             (false, afoot) => MachineWho::Offline {
+                observation: None,
                 machine: name,
                 since: member.since,
                 last: afoot.map(|afoot| Box::new(reply(afoot))),
             },
-            (true, Some(afoot)) => MachineWho::Answered { reply: reply(afoot) },
+            (true, Some(afoot)) => MachineWho::Answered { observation: None, reply: reply(afoot) },
             (true, None) if !view.afoot => MachineWho::NoAnswer {
+                observation: None,
                 machine: name,
                 reason: "the hub runs an older Fastctx, which does not pass on what is on each machine".to_string(),
             },
             (true, None) => MachineWho::NoAnswer {
+                observation: None,
                 machine: name,
                 reason: "it runs an older Fastctx, which does not tell what is on it".to_string(),
             },
@@ -118,7 +121,7 @@ fn elsewhere(node: &Node) -> Vec<MachineWho> {
 
 fn machine_of(who: &MachineWho) -> &MachineName {
     match who {
-        MachineWho::Answered { reply } => &reply.machine,
+        MachineWho::Answered { reply, .. } => &reply.machine,
         MachineWho::Offline { machine, .. } | MachineWho::NoAnswer { machine, .. } => machine,
     }
 }

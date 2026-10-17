@@ -7,7 +7,7 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
         .machines
         .iter()
         .filter_map(|state| match state {
-            MachineState::Answered(machine) => Some(machine.as_str()),
+            MachineState::Answered(machine) => Some(machine.to_string()),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -28,6 +28,7 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
             MachineState::NoAnswer { machine, reason } => machines.push(format!("{machine} did not answer ({reason})")),
         }
     }
+    machines.extend(view.unanswered.iter().map(|missing| format!("not answered: {missing}")));
     let place = match &view.scope {
         Scope::Town { town, .. } => town.as_str(),
         Scope::World { .. } => "all projects",
@@ -89,13 +90,19 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
             }
             None => job.owner.to_string(),
         };
-        let owner = match view.works_for(&job.machine, job.job.as_str()) {
+        let owner = match view.works_for_in(&job.machine, job.job.as_str(), job.source.as_ref()) {
             Some(accounts) => format!("{owner} for {accounts}"),
             None => owner,
         };
         running.push((
             job.machine.clone(),
-            format!("  {}  {}  {}  {owner}  {}\n", job.machine, job.job, ago(job.started_at, now), brief(&job.command)),
+            format!(
+                "  {}  {}  {}  {owner}  {}\n",
+                job.written(),
+                job.job,
+                ago(job.started_at, now),
+                brief(&job.command)
+            ),
         ));
     }
     for resident in &view.residents {
@@ -109,7 +116,7 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
                 .unwrap_or_else(|| "duration unrecorded".into());
             running.push((
                 resident.about.machine.clone(),
-                format!("  {}  desk  {time}  {}  Computer Use\n", resident.about.machine, resident.about.id),
+                format!("  {}  desk  {time}  {}  Computer Use\n", resident.written(), resident.about.id),
             ));
         }
     }
@@ -128,13 +135,13 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
         if busy(resident) || (resident.here && resident.now.is_none()) {
             let mark = if Some(&address(resident)) == you { " (you)" } else { "" };
             let whom = view
-                .works_for(&resident.about.machine, resident.about.id.as_str())
+                .works_for_in(&resident.about.machine, resident.about.id.as_str(), resident.source.as_ref())
                 .map(|accounts| format!(" for {accounts}"))
                 .unwrap_or_default();
             let line = format!(
                 "  {}{mark}  {}  {}{whom}{}  {}",
                 resident.about.id,
-                resident.about.machine,
+                resident.written(),
                 host(&resident.about.host),
                 task(resident),
                 brief(&step(resident, now))
@@ -177,7 +184,7 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
             resting.push_str(&format!(
                 "  {}  {}  {}{}  {state}{last}\n",
                 resident.about.id,
-                resident.about.machine,
+                resident.written(),
                 host(&resident.about.host),
                 task(resident)
             ));
@@ -193,7 +200,7 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
                     waiting.push_str(&format!(
                         "  {} on {} owes {} an answer{time}\n",
                         resident.about.id,
-                        resident.about.machine,
+                        resident.written(),
                         person(reader, &resident.about.machine)
                     ));
                 }
@@ -202,7 +209,8 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
                 let time = state.waiting_since.map(|at| format!(", {}", ago(at, now))).unwrap_or_default();
                 waiting.push_str(&format!(
                     "  {} on {} waits for the user to answer{time}\n",
-                    resident.about.id, resident.about.machine
+                    resident.about.id,
+                    resident.written()
                 ));
             }
         }

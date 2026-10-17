@@ -83,15 +83,15 @@ pub async fn upload(
 ) -> Result<Uploaded, Failure> {
     validate_file(&file)?;
     let machine = match machine {
-        Some(machine) => machine,
+        Some(machine) => machine.into(),
         None if composer.is_some() => match &target {
-            UploadTarget::Resident { resident } if node.residents.about(resident).is_some() => node.machine(),
+            UploadTarget::Resident { resident } if node.residents.about(resident).is_some() => node.machine().into(),
             UploadTarget::Resident { resident } => crate::colleagues::find_for(node, &Acting::Here, resident).await?,
             _ => return Err(failure("a shared composer upload needs an existing resident")),
         },
-        None => node.machine(),
+        None => node.machine().into(),
     };
-    if node.is_me(&machine) {
+    if machine.hub.is_none() && node.is_me(&machine.name) {
         let _place = using_target(node, &target).await;
         let (mut arriving, mut guard) =
             match arrival(node, &node.machine(), target, file, composer.as_ref(), true).await? {
@@ -121,7 +121,8 @@ pub async fn upload(
         return result;
     }
     // The bytes come once, so the upload is tried for one account.
-    let (link, account) = node.speaking(&Acting::Here, &(&machine).into(), Purpose::Agents).map_err(failure)?;
+    let (link, account) = node.speaking(&Acting::Here, &machine, Purpose::Agents).map_err(failure)?;
+    let machine = machine.name;
     let resumes = composer.is_some() && resumes_there(&link, &machine, &account).await?;
     let size = file.size;
     let source_error = Arc::new(Mutex::new(None));

@@ -38,9 +38,23 @@ pub struct WorldAgents {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum MachineAgents {
-    Answered { reply: AgentsReply },
-    Offline { machine: MachineName, since: Option<Timestamp> },
-    NoAnswer { machine: MachineName, reason: String },
+    Answered {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        observation: Option<crate::observation::Observation>,
+        reply: AgentsReply,
+    },
+    Offline {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        observation: Option<crate::observation::Observation>,
+        machine: MachineName,
+        since: Option<Timestamp>,
+    },
+    NoAnswer {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        observation: Option<crate::observation::Observation>,
+        machine: MachineName,
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

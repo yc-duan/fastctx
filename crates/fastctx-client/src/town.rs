@@ -5,6 +5,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use fastctx_types::access::{HubId, Written};
+use fastctx_types::observation::MachineSource;
 use fastctx_types::project::{Record, TownSummary};
 use fastctx_types::residents::{Activity, Origin};
 use fastctx_types::town::{MachineWho, ResidentNow, RunningJob, WhoScope, WorldWho};
@@ -25,11 +27,13 @@ pub struct TownView {
     /// Every job still running on the machines that answered.
     pub jobs: Vec<RunningJob>,
     /// Everyone here on the machines that answered, shown or not.
-    present: BTreeSet<Address>,
-    known: BTreeMap<Address, ResidentNow>,
+    present: BTreeSet<(Option<HubId>, Address)>,
+    known: BTreeMap<(Option<HubId>, Address), ResidentNow>,
+    /// Account answers missing from otherwise successful machine replies.
+    pub unanswered: Vec<String>,
     /// Whom the residents and jobs that work for other accounts than the
     /// asker's work for, by machine and id.
-    others: BTreeMap<(MachineName, String), Vec<fastctx_types::AccountName>>,
+    others: BTreeMap<(Option<HubId>, MachineName, String), Vec<fastctx_types::AccountName>>,
 }
 
 #[derive(Clone, Debug)]
@@ -56,9 +60,9 @@ pub struct TownCount {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MachineState {
-    Answered(MachineName),
-    Offline { machine: MachineName, since: Option<Timestamp> },
-    NoAnswer { machine: MachineName, reason: String },
+    Answered(Written),
+    Offline { machine: Written, since: Option<Timestamp> },
+    NoAnswer { machine: Written, reason: String },
 }
 
 impl MachineState {
@@ -66,7 +70,7 @@ impl MachineState {
         match self {
             MachineState::Answered(machine)
             | MachineState::Offline { machine, .. }
-            | MachineState::NoAnswer { machine, .. } => machine,
+            | MachineState::NoAnswer { machine, .. } => &machine.name,
         }
     }
 }
@@ -77,21 +81,38 @@ impl TownView {
         let mut machines = Vec::new();
         let mut residents = Vec::new();
         let mut jobs = Vec::new();
-        let others = who.others.into_iter().map(|other| ((other.machine, other.id), other.accounts)).collect();
+        let others = who
+            .others
+            .into_iter()
+            .map(|other| ((hub(other.source.as_ref()), other.machine, other.id), other.accounts))
+            .collect();
+        let mut unanswered = Vec::new();
         for machine in who.machines {
+            let written = machine.written();
+            if !matches!(machine, MachineWho::NoAnswer { .. })
+                && let Some(observation) = machine.observation()
+            {
+                unanswered.extend(observation.unanswered.iter().map(|missing| format!("{written} ({missing})")));
+            }
             match machine {
-                MachineWho::Answered { reply } => {
-                    machines.push(MachineState::Answered(reply.machine));
+                MachineWho::Answered { reply, .. } => {
+                    machines.push(MachineState::Answered(written));
                     residents.extend(reply.residents);
                     jobs.extend(reply.jobs);
                 }
-                MachineWho::Offline { machine, since, .. } => machines.push(MachineState::Offline { machine, since }),
-                MachineWho::NoAnswer { machine, reason } => machines.push(MachineState::NoAnswer { machine, reason }),
+                MachineWho::Offline { since, .. } => machines.push(MachineState::Offline { machine: written, since }),
+                MachineWho::NoAnswer { reason, .. } => {
+                    machines.push(MachineState::NoAnswer { machine: written, reason })
+                }
             }
         }
         jobs.sort_by_key(|job| (job.machine.clone(), job.started_at));
-        let known = residents.iter().map(|r| (address(r), r.clone())).collect();
-        let present = residents.iter().filter(|resident| resident.here).map(address).collect();
+        let known = residents.iter().map(|r| ((hub(r.source.as_ref()), address(r)), r.clone())).collect();
+        let present = residents
+            .iter()
+            .filter(|resident| resident.here)
+            .map(|resident| (hub(resident.source.as_ref()), address(resident)))
+            .collect();
         let scope = match who.scope {
             WhoScope::Town { town, record } => Scope::Town { town, record },
             WhoScope::World { towns } => {
@@ -119,18 +140,33 @@ impl TownView {
             }
         };
         residents.sort_by_key(|resident| (Some(&address(resident)) != you, std::cmp::Reverse(latest(resident))));
-        Self { machine: who.machine, scope, machines, residents, jobs, present, known, others }
+        Self { machine: who.machine, scope, machines, residents, jobs, present, known, others, unanswered }
     }
 
     /// Whom the resident or job `id` on `machine` works for, when that is
     /// other accounts than the asker's: `bob`, or `bob, carol`.
     pub fn works_for(&self, machine: &MachineName, id: &str) -> Option<String> {
-        let accounts = self.others.get(&(machine.clone(), id.to_string()))?;
+        let mut matches = self
+            .others
+            .iter()
+            .filter(|((_, name, known), _)| name == machine && known == id)
+            .map(|(_, accounts)| accounts);
+        let accounts = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+        Some(accounts.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "))
+    }
+
+    pub fn works_for_in(&self, machine: &MachineName, id: &str, source: Option<&MachineSource>) -> Option<String> {
+        let accounts = self.others.get(&(hub(source), machine.clone(), id.to_string()))?;
         Some(accounts.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "))
     }
 
     pub fn known(&self, address: &Address) -> Option<&ResidentNow> {
-        self.known.get(address)
+        let mut matches = self.known.iter().filter(|((_, known), _)| known == address).map(|(_, resident)| resident);
+        let first = matches.next()?;
+        matches.next().is_none().then_some(first)
     }
 
     /// How many of those shown are here, and how many busy.
@@ -142,7 +178,10 @@ impl TownView {
 
     /// The jobs a resident started that still run.
     pub fn jobs_of(&self, resident: &ResidentNow) -> Vec<&RunningJob> {
-        self.jobs_by(&address(resident))
+        self.jobs
+            .iter()
+            .filter(|job| job.owner == address(resident) && hub(job.source.as_ref()) == hub(resident.source.as_ref()))
+            .collect()
     }
 
     /// What `owner` started that still runs, on whichever machine.
@@ -162,12 +201,19 @@ impl TownView {
 
     /// What runs on with nobody here who started it.
     pub fn unattended(&self) -> Vec<&RunningJob> {
-        self.jobs.iter().filter(|job| job.owner.resident().is_none_or(|owner| !self.present.contains(owner))).collect()
+        self.jobs
+            .iter()
+            .filter(|job| {
+                job.owner
+                    .resident()
+                    .is_none_or(|owner| !self.present.contains(&(hub(job.source.as_ref()), owner.clone())))
+            })
+            .collect()
     }
 
     /// Whether `machine` answered.
     pub fn answered(&self, machine: &MachineName) -> bool {
-        self.machines.iter().any(|state| matches!(state, MachineState::Answered(answered) if answered == machine))
+        self.machines.iter().any(|state| matches!(state, MachineState::Answered(answered) if &answered.name == machine))
     }
 }
 
@@ -193,4 +239,8 @@ pub fn latest(resident: &ResidentNow) -> Timestamp {
         .chain(resident.tools.iter().filter_map(|tool| tool.started_at))
         .max()
         .unwrap_or(resident.about.born_at)
+}
+
+fn hub(source: Option<&MachineSource>) -> Option<HubId> {
+    source.map(|source| source.hub.clone())
 }

@@ -154,22 +154,24 @@ pub(crate) async fn item_detail(
     item: String,
 ) -> Result<(Address, Option<serde_json::Value>), Failure> {
     let machine = match machine {
-        Some(machine) => machine,
-        None if node.residents.about(&resident).is_some() => node.machine(),
+        Some(machine) => machine.into(),
+        None if node.residents.about(&resident).is_some() => node.machine().into(),
         None => crate::colleagues::find_for(node, &fastctx_types::access::Acting::Here, &resident).await?,
     };
-    if node.is_me(&machine) {
+    if machine.hub.is_none() && node.is_me(&machine.name) {
         let detail = item_detail_here(node, &resident, turn.as_deref(), &item).await?;
-        return Ok((Address { machine, resident }, detail));
+        return Ok((Address { machine: machine.name, resident }, detail));
     }
     let call = fastctx_types::remote::RemoteCall::ItemDetail { resident: resident.clone(), turn, item };
-    let written: fastctx_types::access::Written = (&machine).into();
+    let written = &machine;
     match node
-        .call(&fastctx_types::access::Acting::Here, &written, fastctx_types::access::Purpose::Agents, call)
+        .call(&fastctx_types::access::Acting::Here, written, fastctx_types::access::Purpose::Agents, call)
         .await
         .map_err(|failure| Failure::new(failure.to_string()))?
     {
-        Ok(fastctx_types::remote::RemoteReply::ItemDetail { detail }) => Ok((Address { machine, resident }, detail)),
+        Ok(fastctx_types::remote::RemoteReply::ItemDetail { detail }) => {
+            Ok((Address { machine: machine.name, resident }, detail))
+        }
         Ok(_) => Err(Failure::new(format!("{machine} answered something other than an item's record"))),
         Err(failure) => Err(failure),
     }

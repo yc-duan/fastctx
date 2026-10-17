@@ -123,7 +123,7 @@ async fn here_agents(world: &World, machine: MachineName) -> Result<fastctx_type
         .machines
         .into_iter()
         .find_map(|answer| match answer {
-            fastctx_types::agents::MachineAgents::Answered { reply } if reply.machine == machine => Some(reply),
+            fastctx_types::agents::MachineAgents::Answered { reply, .. } if reply.machine == machine => Some(reply),
             _ => None,
         })
         .ok_or_else(|| format!("{machine} did not answer for its agents"))

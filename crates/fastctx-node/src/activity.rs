@@ -105,7 +105,7 @@ pub fn who(
         others: Vec::new(),
         machine: machine.name,
         scope,
-        machines: vec![MachineWho::Answered { reply: local }],
+        machines: vec![MachineWho::Answered { observation: None, reply: local }],
         you,
         history: None,
     };

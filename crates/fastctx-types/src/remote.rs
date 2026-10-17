@@ -564,6 +564,8 @@ pub enum RemoteReply {
         lives_here: bool,
     },
     Looked {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        read_at: Option<jiff::Timestamp>,
         looked: Option<Looked>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         jobs: Vec<crate::town::RunningJob>,

@@ -7,7 +7,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use fastctx_net::link::CallFailure;
 use fastctx_types::access::{Acting, HubAccount, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::logins::{ChangePreview, FolderChange, LoginChange, MachineLogins, MachineLoginsHeard, WorldLogins};
@@ -17,7 +16,6 @@ use fastctx_types::{AgentName, MachineName};
 
 use crate::Node;
 use crate::admission::Asker;
-use crate::around::Heard;
 
 /// The record of `machine`, or of this one and every machine `acting` may
 /// look at.
@@ -33,41 +31,30 @@ pub(crate) async fn query(
         // from another machine (`admission::local::logins`).
         let works_here = node.works_here(acting).is_ok();
         machines.push(match super::here(node).await {
-            Ok(logins) if works_here => MachineLoginsHeard::Answered { logins: Box::new(logins) },
-            Ok(logins) => {
-                MachineLoginsHeard::Answered { logins: Box::new(crate::admission::local::logins(node, acting, logins)) }
-            }
-            Err(error) => MachineLoginsHeard::NoAnswer { machine: here.clone(), reason: error.message },
-        });
-    }
-    let heard = match machine.filter(|machine| !node.is_me(machine)) {
-        None => {
-            crate::around::ask_each(crate::around::reachable(node, acting, Purpose::Look), |_| RemoteCall::AgentLogins)
-                .await
-        }
-        Some(name) => {
-            let heard = match node.call(acting, &(&name).into(), Purpose::Look, RemoteCall::AgentLogins).await {
-                Ok(Ok(reply)) => Heard::Answered(reply),
-                Ok(Err(failure)) => Heard::NoAnswer(failure.message),
-                Err(CallFailure::Offline { last_seen, .. }) => Heard::Offline(last_seen),
-                Err(failure) => return Err(Failure::new(failure.to_string())),
-            };
-            vec![(name, heard)]
-        }
-    };
-    for (name, heard) in heard {
-        machines.push(match heard {
-            Heard::Answered(RemoteReply::AgentLogins(logins)) if logins.machine == name => {
-                MachineLoginsHeard::Answered { logins }
-            }
-            Heard::Answered(_) => MachineLoginsHeard::NoAnswer {
-                machine: name,
-                reason: "it answered something else; the World there may be older".into(),
+            Ok(logins) if works_here => MachineLoginsHeard::Answered { observation: None, logins: Box::new(logins) },
+            Ok(logins) => MachineLoginsHeard::Answered {
+                observation: None,
+                logins: Box::new(crate::admission::local::logins(node, acting, logins)),
             },
-            Heard::Offline(since) => MachineLoginsHeard::Offline { machine: name, since },
-            Heard::NoAnswer(reason) => MachineLoginsHeard::NoAnswer { machine: name, reason },
+            Err(error) => {
+                MachineLoginsHeard::NoAnswer { observation: None, machine: here.clone(), reason: error.message }
+            }
         });
     }
+    let reachable = crate::around::reachable_each(node, acting, Purpose::Look);
+    let reachable = match machine.filter(|machine| !node.is_me(machine)) {
+        Some(name) => {
+            node.locate(&(&name).into())?;
+            let selected: Vec<_> = reachable.into_iter().filter(|target| target.name == name).collect();
+            if selected.is_empty() {
+                return Err(Failure::new(format!("{name} is not a machine this caller may ask")));
+            }
+            selected
+        }
+        None => reachable,
+    };
+    let heard = crate::around::ask_each(reachable, |_| RemoteCall::AgentLogins).await;
+    machines.extend(fastctx_net::around::answers::collect(heard).into_iter().map(|answers| answers.logins()));
     Ok(WorldLogins { machine: here, machines })
 }
 

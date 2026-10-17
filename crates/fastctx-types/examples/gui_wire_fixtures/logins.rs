@@ -333,10 +333,11 @@ pub fn fixtures() -> Fixtures {
             Reply::AgentLogins(WorldLogins {
                 machine: machine.clone(),
                 machines: vec![
-                    MachineLoginsHeard::Answered { logins: Box::new(record.clone()) },
-                    MachineLoginsHeard::Answered { logins: Box::new(empty) },
-                    MachineLoginsHeard::Offline { machine: "gpu".parse().unwrap(), since: Some(at) },
+                    MachineLoginsHeard::Answered { observation: None, logins: Box::new(record.clone()) },
+                    MachineLoginsHeard::Answered { observation: None, logins: Box::new(empty) },
+                    MachineLoginsHeard::Offline { observation: None, machine: "gpu".parse().unwrap(), since: Some(at) },
                     MachineLoginsHeard::NoAnswer {
+                        observation: None,
                         machine: "old".parse().unwrap(),
                         reason: "it answered something else".into(),
                     },

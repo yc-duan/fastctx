@@ -36,10 +36,10 @@ pub(super) fn present(reply: &Reply) -> bool {
                 || who
                     .machines
                     .iter()
-                    .any(|machine| matches!(machine, MachineWho::Answered { reply } if jobs(&reply.jobs)))
+                    .any(|machine| matches!(machine, MachineWho::Answered { reply , ..} if jobs(&reply.jobs)))
         }
         Reply::Looked { looked } => looked.iter().flat_map(|looked| &looked.found).any(|found| match found {
-            Looked::Job { record } => matches!(record.owner, JobOwner::Page { .. }),
+            Looked::Job { record, .. } => matches!(record.owner, JobOwner::Page { .. }),
             Looked::Resident(detail) => {
                 jobs(&detail.jobs)
                     || detail

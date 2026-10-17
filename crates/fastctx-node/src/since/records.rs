@@ -77,6 +77,8 @@ pub(super) fn read(
         let address = Address { machine: machine.clone(), resident: about.id.clone() };
         for (from, moved) in places.departures() {
             scan.events.push(SinceEvent {
+                hub: None,
+                source: None,
                 id: identity("moved", &[&address.key(), &directory.path().to_string_lossy(), &moved.at.to_string()]),
                 at: moved.at,
                 machine: machine.clone(),
@@ -88,6 +90,7 @@ pub(super) fn read(
         if !removed {
             match crate::residents::read_now(directory) {
                 Ok(Some(now)) if now.activity == Activity::Asleep => scan.undated.push(UndatedFact {
+                    hub: None,
                     resident: address.clone(),
                     town: known(places.now()),
                     source: scan.location(&directory.now()),
@@ -243,6 +246,8 @@ impl Scan<'_> {
             let Some(end) = job.end else { continue };
             let account = job.account.or_else(|| job.on.and_then(|on| on.account));
             self.events.push(SinceEvent {
+                hub: None,
+                source: None,
                 id: identity("job-end", &[job.machine.key(), &job.owner.key(), job.id.as_str()]),
                 at: end.at,
                 machine: job.machine,
@@ -323,6 +328,8 @@ impl Scan<'_> {
                 Turn { at: line.at, end, readers: Some(owed), rank: 2, sources: vec![scan.location(&path)] },
             ),
             MessageKind::Told { to, turn, outcome } => scan.events.push(SinceEvent {
+                hub: None,
+                source: None,
                 id: identity("answer-delivery", &[&address.key(), &path.to_string_lossy(), &number.to_string()]),
                 at: line.at,
                 machine: scan.machine.clone(),
@@ -337,6 +344,7 @@ impl Scan<'_> {
             let town = files.town_at(action.at);
             if matches!(action.hand.as_str(), "write" | "edit" | "apply_patch") {
                 scan.events.push(SinceEvent {
+                    hub: None,
                     id: identity("write", &[&address.key(), &path.to_string_lossy(), &number.to_string()]),
                     at: action.at,
                     machine: action.machine,
@@ -348,6 +356,7 @@ impl Scan<'_> {
                         paths: action.what,
                         result: action.result,
                     },
+                    source: None,
                 });
                 return;
             }
@@ -356,6 +365,8 @@ impl Scan<'_> {
             }
             match action.result.parse::<ResidentId>() {
                 Ok(id) => scan.events.push(SinceEvent {
+                    hub: None,
+                    source: None,
                     id: identity("asked", &[&address.key(), &path.to_string_lossy(), &number.to_string()]),
                     at: action.at,
                     machine: scan.machine.clone(),
@@ -427,6 +438,8 @@ impl Scan<'_> {
         let about = files.about.as_ref().expect("a resident has an about record");
         let address = Address { machine: self.machine.clone(), resident: id.clone() };
         self.events.push(SinceEvent {
+            hub: None,
+            source: None,
             id: identity("born", &[&address.key()]),
             at: about.born_at,
             machine: self.machine.clone(),
@@ -440,6 +453,8 @@ impl Scan<'_> {
         });
         for (turn, finished) in &files.turns {
             self.events.push(SinceEvent {
+                hub: None,
+                source: None,
                 id: identity("turn-ended", &[&address.key(), turn]),
                 at: finished.at,
                 machine: self.machine.clone(),
@@ -457,6 +472,8 @@ impl Scan<'_> {
             let place = uncertain.at.map_or_else(|| files.town_now(), |at| files.town_at(at));
             match uncertain.at {
                 Some(at) => self.events.push(SinceEvent {
+                    hub: None,
+                    source: None,
                     id: identity("submission-uncertain", &[&address.key(), delivery.as_str()]),
                     at,
                     machine: self.machine.clone(),
@@ -471,6 +488,7 @@ impl Scan<'_> {
                     },
                 }),
                 None => self.undated.push(UndatedFact {
+                    hub: None,
                     resident: address.clone(),
                     town: place,
                     source: uncertain.sources[0].clone(),
@@ -496,6 +514,8 @@ impl Scan<'_> {
                 if let Some(at) = registration.at {
                     let place = files.town_at(at);
                     self.events.push(SinceEvent {
+                        hub: None,
+                        source: None,
                         id: identity(
                             "claude-registered",
                             &[
@@ -517,6 +537,7 @@ impl Scan<'_> {
                     });
                 } else {
                     self.undated.push(UndatedFact {
+                        hub: None,
                         resident: address.clone(),
                         town: place.clone(),
                         source: self.location(&path),
@@ -529,6 +550,7 @@ impl Scan<'_> {
             }
             for path in self.files(&directory.join("closed")) {
                 self.undated.push(UndatedFact {
+                    hub: None,
                     resident: address.clone(),
                     town: place.clone(),
                     source: self.location(&path),
@@ -568,6 +590,8 @@ impl Scan<'_> {
         for file in entry.files {
             match ledger_fact(town, &file.path, &file.bytes.0) {
                 Ok(Some((at, machine, what))) => self.events.push(SinceEvent {
+                    hub: Some(entry.hub.clone()),
+                    source: None,
                     id: identity("ledger-fact", &[town.as_str(), &file.path]),
                     at,
                     machine,

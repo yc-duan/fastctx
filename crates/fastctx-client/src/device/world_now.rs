@@ -143,16 +143,19 @@ impl Device {
                 };
                 machines.push(match (member.online, afoot) {
                     (false, afoot) => MachineWho::Offline {
+                        observation: None,
                         machine: name.clone(),
                         since: member.since,
                         last: afoot.map(|afoot| Box::new(reply(afoot))),
                     },
-                    (true, Some(afoot)) => MachineWho::Answered { reply: reply(afoot) },
+                    (true, Some(afoot)) => MachineWho::Answered { observation: None, reply: reply(afoot) },
                     (true, None) if !view.afoot => MachineWho::NoAnswer {
+                        observation: None,
                         machine: name.clone(),
                         reason: "the hub runs an older Fastctx, which does not pass on what is on each machine".into(),
                     },
                     (true, None) => MachineWho::NoAnswer {
+                        observation: None,
                         machine: name.clone(),
                         reason: "it runs an older Fastctx, which does not tell what is on it".into(),
                     },
@@ -277,7 +280,7 @@ impl Device {
 
 fn machine_of(who: &MachineWho) -> &MachineName {
     match who {
-        MachineWho::Answered { reply } => &reply.machine,
+        MachineWho::Answered { reply, .. } => &reply.machine,
         MachineWho::Offline { machine, .. } | MachineWho::NoAnswer { machine, .. } => machine,
     }
 }

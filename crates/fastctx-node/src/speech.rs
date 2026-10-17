@@ -53,7 +53,20 @@ pub async fn tell(
     notice: Notice,
     owed: Owed,
 ) -> Result<Landed, Failure> {
-    if node.is_me(&to.machine) {
+    tell_at(node, acting, to, &(&to.machine).into(), id, notice, owed).await
+}
+
+/// Tells a resident through the hub that answered a location query.
+pub(crate) async fn tell_at(
+    node: &Arc<Node>,
+    acting: &fastctx_types::access::Acting,
+    to: &Address,
+    machine: &fastctx_types::access::Written,
+    id: NoticeId,
+    notice: Notice,
+    owed: Owed,
+) -> Result<Landed, Failure> {
+    if machine.hub.is_none() && node.is_me(&to.machine) {
         let delivery = Delivery { id, at: Timestamp::now(), notice };
         if crate::on_delivery::park(node, &to.resident, &delivery)
             .map_err(|error| Failure::new(format!("keeping the on completion: {error}")))?
@@ -72,7 +85,7 @@ pub async fn tell(
         }
         notice => Letter::Notice { to: to.resident.clone(), notice: Box::new(notice) },
     };
-    crate::letters::send(node, acting, &(&to.machine).into(), id, letter)
+    crate::letters::send(node, acting, machine, id, letter)
         .map_err(|error| Failure::new(format!("sending to {}: {error}", to.machine)))?;
     Ok(Landed::Sent)
 }

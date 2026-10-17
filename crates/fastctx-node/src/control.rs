@@ -21,17 +21,17 @@ pub async fn control(
     control: Control,
 ) -> Result<(Address, Controlled), Failure> {
     let machine = machine_of(node, &resident, machine).await?;
-    if node.is_me(&machine) {
+    if machine.hub.is_none() && node.is_me(&machine.name) {
         let controlled = control_here(node, &resident, control).await?;
-        return Ok((Address { machine, resident }, controlled));
+        return Ok((Address { machine: machine.name, resident }, controlled));
     }
     let call = RemoteCall::Control { resident: resident.clone(), control };
     match node
-        .call(&Acting::Here, &(&machine).into(), Purpose::Agents, call)
+        .call(&Acting::Here, &machine, Purpose::Agents, call)
         .await
         .map_err(|failure| Failure::new(failure.to_string()))?
     {
-        Ok(RemoteReply::Controlled(controlled)) => Ok((Address { machine, resident }, controlled)),
+        Ok(RemoteReply::Controlled(controlled)) => Ok((Address { machine: machine.name, resident }, controlled)),
         Ok(_) => Err(Failure::new(format!("{machine} answered something other than what was done"))),
         Err(failure) => Err(failure),
     }
@@ -43,17 +43,17 @@ pub async fn offers(
     machine: Option<MachineName>,
 ) -> Result<(Address, Offers), Failure> {
     let machine = machine_of(node, &resident, machine).await?;
-    if node.is_me(&machine) {
+    if machine.hub.is_none() && node.is_me(&machine.name) {
         let offers = offers_here(node, &resident).await?;
-        return Ok((Address { machine, resident }, offers));
+        return Ok((Address { machine: machine.name, resident }, offers));
     }
     let call = RemoteCall::Offers { resident: resident.clone() };
     match node
-        .call(&Acting::Here, &(&machine).into(), Purpose::Agents, call)
+        .call(&Acting::Here, &machine, Purpose::Agents, call)
         .await
         .map_err(|failure| Failure::new(failure.to_string()))?
     {
-        Ok(RemoteReply::Offers(offers)) => Ok((Address { machine, resident }, *offers)),
+        Ok(RemoteReply::Offers(offers)) => Ok((Address { machine: machine.name, resident }, *offers)),
         Ok(_) => Err(Failure::new(format!("{machine} answered something other than what it offers"))),
         Err(failure) => Err(failure),
     }
@@ -107,10 +107,10 @@ async fn machine_of(
     node: &Arc<Node>,
     resident: &ResidentId,
     machine: Option<MachineName>,
-) -> Result<MachineName, Failure> {
+) -> Result<fastctx_types::access::Written, Failure> {
     match machine {
-        Some(machine) => Ok(machine),
-        None if node.residents.about(resident).is_some() => Ok(node.machine()),
+        Some(machine) => Ok(machine.into()),
+        None if node.residents.about(resident).is_some() => Ok(node.machine().into()),
         None => crate::colleagues::find_for(node, &Acting::Here, resident).await,
     }
 }

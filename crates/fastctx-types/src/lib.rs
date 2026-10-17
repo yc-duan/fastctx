@@ -34,6 +34,7 @@ pub mod machine_log;
 pub mod management;
 pub mod names;
 pub mod node_lifetime;
+pub mod observation;
 pub mod on;
 pub mod pages;
 pub mod password;

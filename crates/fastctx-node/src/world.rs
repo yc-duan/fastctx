@@ -928,7 +928,11 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::Look { id } => {
                     let (looked, mut jobs) = crate::look::look_here(&node, &id).await?;
                     jobs.retain(|job| crate::admission::seen::job(&node, &asker, job));
-                    Ok(RemoteReply::Looked { looked: crate::admission::seen::looked(&node, &asker, looked), jobs })
+                    Ok(RemoteReply::Looked {
+                        looked: crate::admission::seen::looked(&node, &asker, looked),
+                        jobs,
+                        read_at: Some(jiff::Timestamp::now()),
+                    })
                 }
                 RemoteCall::Find { resident } => {
                     let lives_here = crate::admission::seen::resident(
