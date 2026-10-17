@@ -86,7 +86,7 @@ export class FramedPanel {
     const { words, batch } = this.options;
     const local = this.options.updates?.state.peek() ?? null;
     const plan = this.batch;
-    const title = plan ? `${words.framedTitle(machines.length)} · ${batch.planTitle(plan.version)}` : words.framedTitle(machines.length);
+    const title = plan ? `${words.framedTitle(machines.length)} ${batch.planTitle(plan.version)}` : words.framedTitle(machines.length);
     return `<header class="panel-head"><h2 class="panel-title">${escape(title)}</h2></header>
       <ul class="framed-list">${machines.map((machine) => this.row(machine, world, local)).join("")}</ul>
       <div class="framed-acts">${this.acts(machines, world, local)}</div>`;
@@ -106,7 +106,7 @@ export class FramedPanel {
     else if (set) ({ text: tail, kind } = { text: set.text, kind: set.wrong ? " wrong" : "" });
     else if (running) {
       const newer = newestKnown(local, running);
-      tail = `${running} · ${machine.online === false ? words.away : newer ? words.newer : words.latest}`;
+      tail = `${running} ${machine.online === false ? words.away : newer ? words.newer : words.latest}`;
       if (newer && machine.online !== false) kind = " newer";
     } else if (machine.online === false) tail = words.away;
     const manageable = machine.here || !!(updaterLoginOf(machine, world) || removerLoginOf(machine, world) || ownerLoginOf(machine, world) || groupingOf(machine, world));
@@ -258,7 +258,7 @@ export class FramedPanel {
             : olderOf(machine, local)
               ? words.skipOlderWays
               : null;
-      if (why) skipped.push(`${machine.written} · ${why}`);
+      if (why) skipped.push(`${machine.written}: ${why}`);
       else able.push(machine);
     }
     if (!able.length) return;

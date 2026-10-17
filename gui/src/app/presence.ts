@@ -37,7 +37,7 @@ export interface PresenceWords {
 export interface PresenceOptions {
   store: Store;
   words: PresenceWords;
-  /** "Codex · laptop". */
+  /** "Codex laptop". */
   someone(resident: ResidentNow): string;
   /** Stops the turn of the conversation a notification is about. */
   stop(address: Address): Promise<unknown>;
@@ -141,7 +141,7 @@ export function startPresence(options: PresenceOptions): void {
     for (const one of now.filter((one) => !before.has(key(one)))) {
       if (called.has(key(one))) continue;
       called.add(key(one));
-      const where = `${one.hub} · ${one.arrival.account}`;
+      const where = `${one.hub} ${one.arrival.account}`;
       void call(`arrived:${key(one)}`, {
         title: one.arrival.code ? words.arrivedManaged(where) : words.arrived(one.arrival.name, one.arrival.device, where),
         body: words.arrivedBody,

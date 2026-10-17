@@ -42,7 +42,7 @@ export async function markdownOf(conversation: Conversation, words: Words, names
               ? words.world
               : entry.from.kind === "page"
                 ? words.aPage(entry.from.page.page)
-                : `${entry.from.address.resident} · ${entry.from.address.machine}`,
+                : `${entry.from.address.resident} (${entry.from.address.machine})`,
         );
         out.push(entry.text);
         break;
@@ -63,7 +63,7 @@ export async function markdownOf(conversation: Conversation, words: Words, names
         break;
       case "ask":
         turnTo(names.agent);
-        out.push(`> ${names.waiting} · ${entry.request}`);
+        out.push(`> ${names.waiting}: ${entry.request}`);
         break;
       case "agent-told": {
         flush();

@@ -210,7 +210,7 @@ function call(tool: Tool, tense: Tense, say: (act: Act) => string, words: Words)
       return { glyph: "tasks", action: say("tasks"), object: null, ...plain };
     default: {
       // Another server's tool keeps the name it acts by.
-      const name = tool.server ? `${tool.server} · ${tool.name}` : tool.name;
+      const name = tool.server ? `${tool.server} ${tool.name}` : tool.name;
       return { glyph: "tool", action: tense === "failed" ? words.failedTool(name) : name, object: null, ...plain };
     }
   }

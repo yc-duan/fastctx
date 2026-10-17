@@ -236,7 +236,7 @@ export class MapCanvas {
         this.buttons.set(item.key, entry);
       }
       entry.item = item;
-      entry.button.setAttribute("aria-label", [item.label, item.sub].filter(Boolean).join(" · "));
+      entry.button.setAttribute("aria-label", [item.label, item.sub].filter(Boolean).join(" "));
       entry.button.dataset.kind = item.kind;
       entry.label.dataset.side = item.side ?? "";
       const text = [item.label, item.sub].filter(Boolean).join("\n");

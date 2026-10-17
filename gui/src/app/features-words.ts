@@ -51,7 +51,7 @@ export interface FeaturesWords {
   rulesHint: string;
   now: string;
   nobodyNow: string;
-  /** "for Claude · desktop". */
+  /** "for Claude desktop". */
   workingFor(asker: string): string;
   save: string;
   saved: string;

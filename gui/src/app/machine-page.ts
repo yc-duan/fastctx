@@ -579,7 +579,7 @@ export class MachinePage implements Page {
       text = words.failed;
       title = this.problem;
     } else if (!stats) text = words.reading;
-    if (text && stats) text = `${text} · ${words.lastRead(this.options.ago(Date.now() - heard))}`;
+    if (text && stats) text = `${text} ${words.lastRead(this.options.ago(Date.now() - heard))}`;
     this.note.hidden = !text;
     set(this.note, text);
     this.note.title = title;
@@ -738,7 +738,7 @@ export class MachinePage implements Page {
       .map((disk) => {
         // A disk's share moves by the byte; drawn to a five-hundredth.
         const used = disk.total ? Math.round((1 - disk.free / disk.total) * 500) / 500 : 0;
-        return `<li class="mp-disk"><div class="mp-disk-head"><span class="mp-disk-at">${escape(diskName(disk.at))}</span><span class="mp-disk-kind">${escape([disk.label, disk.fs].filter(Boolean).join(" · "))}</span><span class="mp-disk-free">${escape(
+        return `<li class="mp-disk"><div class="mp-disk-head"><span class="mp-disk-at">${escape(diskName(disk.at))}</span><span class="mp-disk-kind">${escape([disk.label, disk.fs].filter(Boolean).join(" "))}</span><span class="mp-disk-free">${escape(
           words.free(bytesSaid(disk.free), bytesSaid(disk.total)),
         )}</span></div>${diskBar(used, `${stats.machine}:${disk.at}`)}</li>`;
       })
@@ -770,7 +770,7 @@ export class MachinePage implements Page {
       if (!view) return;
       set(view.hub, line.hub);
       const lasted = words.span(Math.max(0, now - Date.parse(line.since)));
-      set(view.state, line.up ? [words.lineUp(lasted), line.through ? words.lineVia(line.through) : ""].filter(Boolean).join(" · ") : words.lineDown(lasted));
+      set(view.state, line.up ? [words.lineUp(lasted), line.through ? words.lineVia(line.through) : ""].filter(Boolean).join(" ") : words.lineDown(lasted));
       view.element.classList.toggle("down", !line.up);
       const trips = tripsHeld(line);
       set(view.trip, trips.last === null ? "" : `${trips.last} ms`);
@@ -783,7 +783,7 @@ export class MachinePage implements Page {
       const { stretches, moments } = daysOf(line, from, now);
       const said = (kind: string, start: number, end: number, why: string) =>
         kind === "up"
-          ? `${words.lineUp(words.span(end - start))} · ${stamp(start)}–${stamp(end)}`
+          ? `${words.lineUp(words.span(end - start))} ${stamp(start)}–${stamp(end)}`
           : kind === "down"
             ? end >= now && !line.up
               ? words.stillDown(stamp(start), why)
@@ -797,7 +797,7 @@ export class MachinePage implements Page {
       });
       view.strip.draw(spans, marks, from, now);
       const held = heldOf(stretches, moments);
-      set(view.held, [held.online === null ? "" : words.available(percentOf(held.online)), words.drops(held.drops), held.drops ? words.longest(words.span(held.longest)) : ""].filter(Boolean).join(" · "));
+      set(view.held, [held.online === null ? "" : words.available(percentOf(held.online)), words.drops(held.drops), held.drops ? words.longest(words.span(held.longest)) : ""].filter(Boolean).join(" "));
     });
     const axis = this.axis(from, now);
     for (const view of this.lines) if (view.axis.innerHTML !== axis) view.axis.innerHTML = axis;
@@ -890,7 +890,7 @@ export class MachinePage implements Page {
     const networks = machine.here
       ? world.nodes.hubs.map((hub) => {
           const stand = hub.home ? machines.registeredUnder(hub.home) : hub.logins.length ? machines.onlyLogins(hub.logins.join(machines.separator)) : "";
-          return { label: hub.name, value: [linkSaid(hub.link, machines), stand].filter(Boolean).join(" · "), title: linkWhy(hub.link) };
+          return { label: hub.name, value: [linkSaid(hub.link, machines), stand].filter(Boolean).join(" "), title: linkWhy(hub.link) };
         })
       : machine.on.filter((on) => on.owner).map((on) => ({ label: on.hubName, value: machines.registeredUnder(on.owner!), title: "" }));
     this.whereBox.hidden = !networks.length;
@@ -906,7 +906,7 @@ export class MachinePage implements Page {
       : "";
     const rows = [
       `<dt>${escape(words.name)}</dt><dd><span>${escape(machine.written)}</span>${rename}</dd>`,
-      grouped.length ? `<dt>${escape(words.group)}</dt><dd><span>${escape(grouped.join(" · "))}</span></dd>` : "",
+      grouped.length ? `<dt>${escape(words.group)}</dt><dd><span>${escape(grouped.join(" "))}</span></dd>` : "",
     ].join("");
     this.namingBox.hidden = false;
     this.put("naming", this.namingBox, `<dl class="mp-rows">${rows}</dl>`);
@@ -967,7 +967,7 @@ export class MachinePage implements Page {
       .map(
         (r) =>
           `<li><a href="${talkLink({ resident: r.about.id, machine: r.about.machine })}"><span class="mark ${r.now?.waiting_for_user ? "mark-ask" : "mark-busy"}" aria-hidden="true"></span>${escape(
-            [agentName(r.about.host.agent), titleOf(r)].filter(Boolean).join(" · "),
+            [agentName(r.about.host.agent), titleOf(r)].filter(Boolean).join(" "),
           )}${r.town ? `<span class="tag">${escape(r.town)}</span>` : ""}</a></li>`,
       )
       .join("");
@@ -1022,12 +1022,12 @@ export class MachinePage implements Page {
     const assisting = assists.length
       ? `<div class="given-row"><span class="given-label">${escape(machines.assisting)}</span>${assists
           .map((assist) => {
-            const label = `${agentName(assist.agent)} · ${assist.account}`;
+            const label = `${agentName(assist.agent)} ${assist.account}`;
             const at = `data-to="${escape(assist.account)}" data-agent="${escape(assist.agent)}"${assist.home ? ` data-home="${escape(assist.home)}"` : ""}${assist.until ? ` data-until="${escape(assist.until)}"` : ""}`;
             const until = assist.until ? new Date(assist.until) : null;
             const said = until ? access.moment.until(until, now) : access.when.none;
             const day = until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : "";
-            return `<span class="chip assist-chip"><button class="assist-tag-open" type="button" data-act="assist-edit" ${at} title="${escape(`${access.changeUntil} · ${said}`)}">${escape(label)}${day}</button><button class="chip-x" type="button" data-act="assist-end" ${at} aria-label="${escape(machines.endAssist(assist.account))}" title="${escape(machines.endAssist(assist.account))}">${glyph("close", 12)}</button></span>`;
+            return `<span class="chip assist-chip"><button class="assist-tag-open" type="button" data-act="assist-edit" ${at} title="${escape(`${access.changeUntil}\n${said}`)}">${escape(label)}${day}</button><button class="chip-x" type="button" data-act="assist-end" ${at} aria-label="${escape(machines.endAssist(assist.account))}" title="${escape(machines.endAssist(assist.account))}">${glyph("close", 12)}</button></span>`;
           })
           .join("")}</div>`
       : "";
@@ -1130,7 +1130,7 @@ export class MachinePage implements Page {
           void this.takeBack(
             button,
             owner,
-            `${agentName(agent)} · ${to}`,
+            `${agentName(agent)} ${to}`,
             { change: "assist", machine: machine.name, to, agent, ...home, assisting: false },
             { change: "assist", machine: machine.name, to, agent, ...home, assisting: true, ...until },
           );
@@ -1166,7 +1166,7 @@ export class MachinePage implements Page {
   private assist(login: Login, machine: Machine, agent: string, home: string | null, editing: string | null): void {
     const { options } = this;
     const assistances = (): Assistance[] => assistancesIn(hubOf(options.store.world.peek(), login)?.assists ?? [], machine.name, agent, home);
-    const name = home ? `${agentName(agent)} · ${home.split(/[\\/]/).filter(Boolean).pop() ?? home}` : agentName(agent);
+    const name = home ? `${agentName(agent)} ${home.split(/[\\/]/).filter(Boolean).pop() ?? home}` : agentName(agent);
     this.assistSheet.open(
       options.access.assistTitle(name, machine.written),
       assistances(),

@@ -82,7 +82,7 @@
 }
 
 .me-facts > span + span::before {
-  content: "·";
+  content: "";
   margin-right: var(--space-2);
 }
 

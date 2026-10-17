@@ -24,10 +24,10 @@ export interface ManagedWords {
 
 export const zhManaged: ManagedWords = {
   title: "受管机器",
-  whose: (owner, machine, hub) => `${owner} 的 ${machine} · 在 ${hub}`,
+  whose: (owner, machine, hub) => `${hub} 上 ${owner} 的 ${machine}`,
   online: "已连接",
-  onlineMs: (ms) => `已连接 · ${ms} 毫秒`,
-  away: (at) => `断开 · 从 ${at} 起`,
+  onlineMs: (ms) => `已连接　${ms} 毫秒`,
+  away: (at) => `${at} 起断开`,
   removed: "已被移出网络",
   removedWhose: (owner, hub) => `原是 ${owner} 在 ${hub} 里的机器`,
   rejoin: "用入网码重新加入",
@@ -40,9 +40,9 @@ export const zhManaged: ManagedWords = {
 
 export const enManaged: ManagedWords = {
   title: "Managed machine",
-  whose: (owner, machine, hub) => `${owner}'s ${machine} · on ${hub}`,
+  whose: (owner, machine, hub) => `${owner}'s ${machine} on ${hub}`,
   online: "Connected",
-  onlineMs: (ms) => `Connected · ${ms} ms`,
+  onlineMs: (ms) => `Connected, ${ms} ms`,
   away: (at) => `Disconnected since ${at}`,
   removed: "Taken off the network",
   removedWhose: (owner, hub) => `It was ${owner}'s machine on ${hub}`,

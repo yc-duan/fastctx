@@ -186,7 +186,7 @@ export function focusSummary(focus: Focus, words: FocusWords): { html: string; s
   );
   const first = items[0];
   if (!first) return null;
-  const said = items.map((item) => (item.folder ? `${item.machine} · ${item.folder}` : item.machine)).join(", ");
+  const said = items.map((item) => (item.folder ? `${item.machine}: ${item.folder}` : item.machine)).join(", ");
   const more = items.length > 1 ? `<span class="focus-more">${escape(words.more(items.length - 1))}</span>` : "";
   const html = `<span class="talk-chip-name">${escape(first.folder ?? first.machine)}</span>${first.folder ? `<span class="talk-chip-sub">${escape(first.machine)}</span>` : ""}${more}`;
   return { html, said };

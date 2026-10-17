@@ -131,7 +131,7 @@ export class MePage implements Page {
         const weekly = assist.weekly ? assist.weekly / 1_000_000 : null;
         const give = assistChange(assist.machine, assist.agent, assist.home, assist.account, until, weekly, true);
         const take = assistChange(assist.machine, assist.agent, assist.home, assist.account, null, null, false);
-        return void this.takeBack(login, `assist\n${assistKey(assist)}`, words.assistLabel(`${agentName(assist.agent)} · ${assist.machine}`, assist.account), take, give);
+        return void this.takeBack(login, `assist\n${assistKey(assist)}`, words.assistLabel(`${agentName(assist.agent)} ${assist.machine}`, assist.account), take, give);
       }
       case "leave":
         return this.leaveNetwork(login);
@@ -427,10 +427,10 @@ export class MePage implements Page {
         .map((assist) => {
           const until = assist.until ? `<span class="chip-more">${glyph("history", 12)}${escape(short(new Date(assist.until), now))}</span>` : "";
           const weekly = assist.weekly ? `<span class="chip-more">${escape(words.weeklyShort(wholeDollars(assist.weekly / 1_000_000)))}</span>` : "";
-          return chip(assist.account, `data-act="unassist" data-assist="${escape(assistKey(assist))}"`, words.takeBack(words.assistLabel(`${agentName(assist.agent)} · ${assist.machine}`, assist.account)), until + weekly);
+          return chip(assist.account, `data-act="unassist" data-assist="${escape(assistKey(assist))}"`, words.takeBack(words.assistLabel(`${agentName(assist.agent)} ${assist.machine}`, assist.account)), until + weekly);
         })
         .join("");
-      return row(glyph(first.agent === "claude" ? "claude" : "codex", 16), escape(agentName(first.agent)), escape([first.machine, home].filter(Boolean).join(" · ")), words.assisting, chips);
+      return row(glyph(first.agent === "claude" ? "claude" : "codex", 16), escape(agentName(first.agent)), escape([first.machine, home].filter(Boolean).join(" ")), words.assisting, chips);
     });
     return part(words.given, "", `<ul class="me-rows">${[...machines, ...logins].join("")}</ul>`);
   }
@@ -464,7 +464,7 @@ export class MePage implements Page {
       return row(
         glyph(device.kind === "phone" ? "phone" : "web", 16),
         `${escape(device.name)}${here ? `<span class="tag">${escape(words.thisOne)}</span>` : ""}`,
-        escape([words.since(when(new Date(device.added), now)), state].join(" · ")),
+        escape([words.since(when(new Date(device.added), now)), state].join(" ")),
         "",
         here ? "" : `<button class="text-button quiet-button" type="button" data-act="remove-device" data-name="${escape(device.name)}">${escape(words.removeDevice)}</button>`,
         device.online ? " online" : "",

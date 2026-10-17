@@ -18,7 +18,7 @@ import { isUnreached, residentsOf, unreachedOf } from "./store";
 import type { TalkActs } from "./talk-acts";
 
 export interface TalkRowWords {
-  /** "Claude · laptop". */
+  /** "Claude laptop". */
   someone(agent: string, machine: string): string;
   busy(lasted: string): string;
   waiting: string;
@@ -84,7 +84,7 @@ export function talkRow(r: ResidentNow, place: Place, now: Date, facts: Map<stri
   const known = facts.get(r.about.machine);
   // A node too old to say what it is runs on a computer more often than not.
   const form = known?.form ?? "desktop";
-  const device = [r.about.machine, known ? osName(known.os) : ""].filter(Boolean).join(" · ");
+  const device = [r.about.machine, known ? osName(known.os) : ""].filter(Boolean).join(" ");
   const named =
     acts?.renaming !== null && acts?.renaming !== undefined
       ? `<input class="talk-rename" value="${escape(acts.renaming)}" aria-label="${escape(name)}" spellcheck="false" autocomplete="off">`
@@ -105,7 +105,7 @@ export function talkRow(r: ResidentNow, place: Place, now: Date, facts: Map<stri
 function quick(acts: RowActs, archived: boolean, name: string): string {
   const now = archived ? acts.restore : acts.archive;
   const act = acts.reachable
-    ? `<button class="talk-quick-act" type="button" data-quick="${archived ? "restore" : "archive"}" aria-label="${escape(`${now} · ${name}`)}" title="${escape(now)}">${glyph(archived ? "unarchive" : "archive", 16)}</button>`
+    ? `<button class="talk-quick-act" type="button" data-quick="${archived ? "restore" : "archive"}" aria-label="${escape(`${now} ${name}`)}" title="${escape(now)}">${glyph(archived ? "unarchive" : "archive", 16)}</button>`
     : "";
-  return `<span class="talk-quick">${act}<button class="talk-more" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(`${acts.more} · ${name}`)}">${glyph("more", 18)}</button></span>`;
+  return `<span class="talk-quick">${act}<button class="talk-more" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(`${acts.more} ${name}`)}">${glyph("more", 18)}</button></span>`;
 }

@@ -256,10 +256,10 @@ export class LoginUsagePage implements Page {
     const share = window && !reset ? window.used_tenths / 1000 : null;
     const left = window?.resets_at && !reset ? logins.resetsIn(new Date(window.resets_at), new Date(now)) : "";
     const said = !window
-      ? `${name} · ${logins.notRead(this.options.agent)}`
+      ? `${name}: ${logins.notRead(this.options.agent)}`
       : reset
-        ? [`${name} · ${logins.reset}`, logins.usedBefore(percent), read].join("\n")
-        : [`${name} · ${logins.used(percent)}`, window.resets_at ? logins.resets(new Date(window.resets_at), new Date(now)) : "", read].filter(Boolean).join("\n");
+        ? [`${name}: ${logins.reset}`, logins.usedBefore(percent), read].join("\n")
+        : [`${name}: ${logins.used(percent)}`, window.resets_at ? logins.resets(new Date(window.resets_at), new Date(now)) : "", read].filter(Boolean).join("\n");
     const under = !window ? words.notRead : reset ? logins.reset : left ? words.resetsIn(left) : "";
     return `<div class="ledger-ring" title="${escape(said)}">
       <span class="ledger-ring-face">${ring(share, `${this.key}:${minutes}`)}<span class="ledger-ring-num"><span>${share === null ? "–" : `${Math.round(share * 100)}<small>%</small>`}</span></span></span>
@@ -279,7 +279,7 @@ export class LoginUsagePage implements Page {
     const rows = usage.people
       .map((person) => {
         const assisted = assists.find(({ hub, assist }) => person.key === `${hub}:${assist.account}`)?.assist;
-        const why = assisted ? [words.assistUntil(assisted.until ? new Date(assisted.until) : null, now), assisted.weekly ? words.weekly(wholeDollars(assisted.weekly / 1_000_000)) : ""].filter(Boolean).join(" · ") : "";
+        const why = assisted ? [words.assistUntil(assisted.until ? new Date(assisted.until) : null, now), assisted.weekly ? words.weekly(wholeDollars(assisted.weekly / 1_000_000)) : ""].filter(Boolean).join("\n") : "";
         const value = valueOf(person.week, unit);
         const state = this.only === person.key ? " on" : this.only ? " faded" : "";
         return `<button class="ledger-person${state}" type="button" data-only="${escape(person.key)}">

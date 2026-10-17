@@ -696,7 +696,7 @@ export class MachineMap {
       const point = placement.machines.get(node.key);
       if (!point) continue;
       const through = node.through ? words.viaShort(node.through) : "";
-      nameAt(node.key, point, node.name, [node.sub, through].filter(Boolean).join(" · "), node.online === false || node.hold === "visitor");
+      nameAt(node.key, point, node.name, [node.sub, through].filter(Boolean).join(" "), node.online === false || node.hold === "visitor");
     }
     this.names.innerHTML = text.join("");
   }

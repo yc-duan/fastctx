@@ -135,7 +135,7 @@ export class ContextSheet {
     ].filter((part) => share(part.tokens) >= 1);
     return [
       figure(tokensShort(last.context), words.stepsNow),
-      ...parts.map((part) => figure(`${tokensShort(part.tokens)} · ${share(part.tokens)}%`, part.label, part.ink)),
+      ...parts.map((part) => figure(`${tokensShort(part.tokens)} ${share(part.tokens)}%`, part.label, part.ink)),
       compactions ? figure(String(compactions), words.compactions(compactions)) : "",
     ].join("");
   }

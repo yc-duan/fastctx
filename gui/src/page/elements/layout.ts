@@ -2,7 +2,7 @@
 // folds to one column on a phone, and a number said large with what it is.
 //
 //   <w-grid columns="3"> … </w-grid>
-//   <w-card title="训练" note="lab · 跑了 4 小时"> … </w-card>
+//   <w-card title="训练" note="lab 跑了 4 小时"> … </w-card>
 //   <w-stat label="验证损失" value="0.412" delta="-0.031" good="down"></w-stat>
 
 import { BOUND, PageElement, escape, sheet } from "../element";

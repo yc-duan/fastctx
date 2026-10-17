@@ -416,7 +416,7 @@ export class RemoteWorld {
     if (this.options.adding) return "";
     const { words } = this.options;
     const host = this.stage === "server" ? "" : this.typed.host.trim();
-    return `<h2 class="welcome-form-title">${escape(words.remote)}${host ? ` · <span class="mono">${escape(host)}</span>` : ""}</h2>
+    return `<h2 class="welcome-form-title">${escape(words.remote)}${host ? ` <span class="mono">${escape(host)}</span>` : ""}</h2>
       ${progressSteps(words.remoteStages, STAGE_OF[this.stage], words.remote)}`;
   }
 
@@ -426,7 +426,7 @@ export class RemoteWorld {
     const here = this.options.here?.();
     const port = this.looked?.hub?.port ? String(this.looked.hub.port) : this.typed.hubPort.trim();
     const rows: [string, string][] = [
-      [words.remoteStages[1], `${this.typed.world.trim()} · ${this.looked?.hub?.address ?? this.reachedAt(port)}`],
+      [words.remoteStages[1], `${this.typed.world.trim()} ${this.looked?.hub?.address ?? this.reachedAt(port)}`],
       [words.remoteStages[2], this.typed.admin.trim()],
     ];
     if (this.serverJoins()) rows.push([words.remoteStages[0], this.typed.name.trim()]);

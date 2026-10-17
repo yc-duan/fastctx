@@ -23,11 +23,11 @@ export interface Amounts {
   axis(value: number): string;
 }
 
-/** Each person's part of an amount, for a hover: "我 约 $3.20 · ada 约 $1.10". */
+/** Each person's part of an amount, for a hover: "我 约 $3.20 ada 约 $1.10". */
 function split(values: Map<number, number> | undefined, people: Person[], amounts: Amounts): string {
   if (!values || people.length < 2) return "";
   const parts = people.filter((person) => (values.get(person.index) ?? 0) > 0).map((person) => `${person.name} ${amounts.say(values.get(person.index)!)}`);
-  return parts.length > 1 ? `\n${parts.join(" · ")}` : "";
+  return parts.length > 1 ? `\n${parts.join("\n")}` : "";
 }
 
 /** A ring for a window: how much of it is used, clay turning to caution near

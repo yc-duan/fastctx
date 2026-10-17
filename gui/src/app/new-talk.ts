@@ -347,7 +347,7 @@ export class NewTalk {
   get title(): string {
     const { words, store } = this.options;
     const town = this.options.town ? store.world.peek()?.towns.find((one) => one.town === this.options.town) : null;
-    return town ? `${words.title} · ${town.record.name}` : words.title;
+    return town ? `${words.title} ${town.record.name}` : words.title;
   }
 
   /** The page is shown again: what each machine has is asked again, as a
@@ -882,8 +882,8 @@ export class NewTalk {
       const who = this.who(option, line);
       const asking = !this.factsOf(option) && this.askingAll;
       const assistant = option.assistant;
-      const sub = assistant ? [words.assistFrom(assistant.owner ?? ""), assistant.until ? words.assistUntil(new Date(assistant.until), new Date()) : ""].filter(Boolean).join(" · ") : option.written;
-      const said = [programName(option.agent), sub, who].filter(Boolean).join(" · ");
+      const sub = assistant ? [words.assistFrom(assistant.owner ?? ""), assistant.until ? words.assistUntil(new Date(assistant.until), new Date()) : ""].filter(Boolean).join(" ") : option.written;
+      const said = [programName(option.agent), sub, who].filter(Boolean).join(" ");
       chips.push(
         label(
           "agent",
@@ -899,13 +899,13 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
     }
     if (towns.length > 1 || this.town) {
       const name = this.town ? (world?.towns.find((one) => one.town === this.town)?.record.name ?? this.town) : words.outsideProject;
-      chips.push(label("town", "folder", `<span class="talk-chip-name">${escape(name)}</span>`, `${words.project} · ${name}`, this.town ? "" : " quiet"));
+      chips.push(label("town", "folder", `<span class="talk-chip-name">${escape(name)}</span>`, `${words.project}\n${name}`, this.town ? "" : " quiet"));
     }
     if (option) {
       const summary = focusSummary(this.focus, focusWords);
       chips.push(
         summary
-          ? label("focus", "machine", summary.html, `${focusWords.title} · ${summary.said}`)
+          ? label("focus", "machine", summary.html, `${focusWords.title}\n${summary.said}`)
           : label("focus", "machine", `<span class="talk-chip-name">${escape(focusWords.none)}</span>`, focusWords.title, " quiet"),
       );
     }
@@ -1195,7 +1195,7 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
       if (this.starting) {
         // Said under the words that went; the words come back to the input
         // to be sent again.
-        this.starting.failed(error instanceof NotSent ? `${words.filesNotSent} · ${why}` : why);
+        this.starting.failed(error instanceof NotSent ? `${words.filesNotSent}: ${why}` : why);
         if (!this.input.value) {
           this.input.value = text;
           this.fit();

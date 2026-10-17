@@ -110,7 +110,7 @@
 }
 
 .talk-chip-sub::before {
-  content: "·";
+  content: "";
   margin-right: 6px;
 }
 

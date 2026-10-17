@@ -150,7 +150,7 @@ export class Shell {
     this.page = page;
     this.place = place;
     this.main.append(page.element);
-    document.title = page.title ? `${page.title} · ${this.options.words.app}` : this.options.words.app;
+    document.title = page.title ? `${page.title} - ${this.options.words.app}` : this.options.words.app;
     this.sidebar.draw();
   }
 
@@ -172,7 +172,7 @@ export class Shell {
 
   /** Names the page shown, once it knows its own name. */
   retitle(title: string): void {
-    document.title = `${title} · ${this.options.words.app}`;
+    document.title = `${title} - ${this.options.words.app}`;
   }
 
   private fold(shut: boolean): void {

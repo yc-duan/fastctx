@@ -538,7 +538,7 @@ export class MachinesPage implements Page {
           void this.takeBack(
             button,
             login,
-            `${agentName(agent)} · ${to}`,
+            `${agentName(agent)} ${to}`,
             { change: "assist", machine, to, agent, ...home, assisting: false },
             { change: "assist", machine, to, agent, ...home, assisting: true, ...until },
           );
@@ -930,7 +930,7 @@ export class MachinesPage implements Page {
   private assist(login: Login, machine: string, agent: string, home: string | null, editing: string | null): void {
     const { options } = this;
     const assistances = (): Assistance[] => assistancesIn(this.hubOf(login)?.assists ?? [], machine, agent, home);
-    const name = home ? `${agentName(agent)} · ${home.split(/[\\/]/).filter(Boolean).pop() ?? home}` : agentName(agent);
+    const name = home ? `${agentName(agent)} ${home.split(/[\\/]/).filter(Boolean).pop() ?? home}` : agentName(agent);
     this.assistSheet.open(
       options.access.assistTitle(name, machine),
       assistances(),
@@ -1932,7 +1932,7 @@ export class MachinesPage implements Page {
       ? world.nodes.hubs
           .map((hub) => {
             const stand = hub.home ? words.registeredUnder(hub.home) : hub.logins.length ? words.onlyLogins(hub.logins.join(words.separator)) : "";
-            return `<li class="panel-hub ${hub.link.kind}"><span class="panel-hub-name">${escape(hub.name)}</span><span${linkWhy(hub.link) ? ` title="${escape(linkWhy(hub.link))}"` : ""}>${escape([linkSaid(hub.link, words), stand].filter(Boolean).join(" · "))}</span></li>`;
+            return `<li class="panel-hub ${hub.link.kind}"><span class="panel-hub-name">${escape(hub.name)}</span><span${linkWhy(hub.link) ? ` title="${escape(linkWhy(hub.link))}"` : ""}>${escape([linkSaid(hub.link, words), stand].filter(Boolean).join(" "))}</span></li>`;
           })
           .join("")
       : "";
@@ -1942,7 +1942,7 @@ export class MachinesPage implements Page {
       .map(
         (login) =>
           `<div class="panel-give" data-hub="${escape(login.hub)}" data-account="${escape(login.account)}">${this.givenRow(
-            owners.length > 1 ? `${words.sharedTo} · ${login.hubName}` : words.sharedTo,
+            owners.length > 1 ? `${words.sharedTo} ${login.hubName}` : words.sharedTo,
             this.sharedWith(login, machine.name),
             (to) => `data-act="unshare" data-to="${escape(to)}"`,
             this.button("share", words.share, "", glyph("plus", 13)),
@@ -1959,12 +1959,12 @@ export class MachinesPage implements Page {
         if (!assists.length) return "";
         const chips = assists
           .map((assist) => {
-            const label = `${agentName(assist.agent)} · ${assist.account}`;
+            const label = `${agentName(assist.agent)} ${assist.account}`;
             const at = `data-to="${escape(assist.account)}" data-agent="${escape(assist.agent)}"${assist.home ? ` data-home="${escape(assist.home)}"` : ""}${assist.until ? ` data-until="${escape(assist.until)}"` : ""}`;
             const until = assist.until ? new Date(assist.until) : null;
             const said = until ? access.moment.until(until, now) : access.when.none;
             const day = until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : "";
-            return `<span class="chip assist-chip"><button class="assist-tag-open" type="button" data-act="assist-edit" ${at} title="${escape(`${access.changeUntil} · ${said}`)}">${escape(label)}${day}</button><button class="chip-x" type="button" data-act="assist-end" ${at} aria-label="${escape(words.endAssist(assist.account))}" title="${escape(words.endAssist(assist.account))}">${glyph("close", 12)}</button></span>`;
+            return `<span class="chip assist-chip"><button class="assist-tag-open" type="button" data-act="assist-edit" ${at} title="${escape(`${access.changeUntil}\n${said}`)}">${escape(label)}${day}</button><button class="chip-x" type="button" data-act="assist-end" ${at} aria-label="${escape(words.endAssist(assist.account))}" title="${escape(words.endAssist(assist.account))}">${glyph("close", 12)}</button></span>`;
           })
           .join("");
         return `<div class="panel-give" data-hub="${escape(login.hub)}" data-account="${escape(login.account)}"><div class="given-row"><span class="given-label">${escape(words.assisting)}</span>${chips}</div></div>`;
@@ -2089,7 +2089,7 @@ export class MachinesPage implements Page {
       ? `<ul class="machine-agents">${residents
           .map(
             (r) =>
-              `<li><a href="${talkLink({ resident: r.about.id, machine: r.about.machine })}"><span class="mark ${r.now?.waiting_for_user ? "mark-ask" : r.now?.activity === "busy" ? "mark-busy" : "mark-idle"}" aria-hidden="true"></span>${escape([agentName(r.about.host.agent), titleOf(r)].filter(Boolean).join(" · "))}${r.town ? `<span class="tag">${escape(r.town)}</span>` : ""}</a></li>`,
+              `<li><a href="${talkLink({ resident: r.about.id, machine: r.about.machine })}"><span class="mark ${r.now?.waiting_for_user ? "mark-ask" : r.now?.activity === "busy" ? "mark-busy" : "mark-idle"}" aria-hidden="true"></span>${escape([agentName(r.about.host.agent), titleOf(r)].filter(Boolean).join(" "))}${r.town ? `<span class="tag">${escape(r.town)}</span>` : ""}</a></li>`,
           )
           .join("")}</ul>`
       : "";

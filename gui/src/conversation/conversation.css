@@ -219,7 +219,7 @@
 }
 
 .relayed-how::before {
-  content: "·";
+  content: "";
   margin-right: var(--space-2);
 }
 
@@ -238,7 +238,7 @@
 }
 
 .told-how::before {
-  content: "·";
+  content: "";
   margin-right: var(--space-2);
 }
 

@@ -206,7 +206,7 @@ export class AgentBox {
             run.model ?? "",
           ]
             .filter(Boolean)
-            .join(" · ");
+            .join(" ");
     this.foot.hidden = !said;
     if (this.foot.textContent !== said) this.foot.textContent = said;
     this.foot.classList.toggle("wrong", run.state === "failed");

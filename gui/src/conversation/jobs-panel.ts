@@ -104,7 +104,7 @@ export class JobsPanel {
         this.list.append(row.element);
       }
       row.job = job;
-      const where = `${job.machine} · ${words.lasted(now.getTime() - Date.parse(job.started_at))}`;
+      const where = `${job.machine} ${words.lasted(now.getTime() - Date.parse(job.started_at))}`;
       const shown = row.element.querySelector<HTMLElement>(".job-where")!;
       if (shown.textContent !== where) shown.textContent = where;
     }
@@ -140,7 +140,7 @@ export class JobsPanel {
     row.element.classList.add("ended");
     row.element.querySelector(".job-stop")?.remove();
     row.element.querySelector(".jobs-confirm")?.remove();
-    row.element.querySelector<HTMLElement>(".job-where")!.textContent = `${row.job.machine} · ${this.options.words.ended}`;
+    row.element.querySelector<HTMLElement>(".job-where")!.textContent = `${row.job.machine} ${this.options.words.ended}`;
   }
 
   private remove(row: Row): void {
@@ -191,7 +191,7 @@ export class JobsPanel {
         // Why, in its own words, beside it: the user decides what next.
         const why = this.options.detail(error);
         const said = confirm.querySelector("span")!;
-        said.textContent = `${words.notStopped} · ${why}`;
+        said.textContent = `${words.notStopped}: ${why}`;
         said.title = why;
         target.disabled = false;
       }

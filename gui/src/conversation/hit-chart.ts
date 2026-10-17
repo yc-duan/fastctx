@@ -193,7 +193,7 @@ export class HitChart {
               .join("")
           : "";
       const dots = this.points
-        .map((point, index) => `<path class="talk-chart-dot" d="${blot(at(index), 3.1, random)}"><title>${escape(`${clock(point.at, first, final)} · ${percentFine(point.hit)}`)}</title></path>`)
+        .map((point, index) => `<path class="talk-chart-dot" d="${blot(at(index), 3.1, random)}"><title>${escape(`${clock(point.at, first, final)}\n${percentFine(point.hit)}`)}</title></path>`)
         .join("");
       ink = `${thread ? `<path class="talk-chart-thread" d="${thread}"/>` : ""}<g filter="url(#pen-marker-lite)">${dots}</g>`;
     }

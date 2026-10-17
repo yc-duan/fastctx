@@ -159,7 +159,7 @@ export const zhAgentLogins: AgentLoginsWords = {
   noneBelow: "没找到",
   notSearched: "还没找过",
   searched: (directories, unreadable, when) =>
-    [`看了 ${directories.toLocaleString("zh-CN")} 个文件夹`, unreadable ? `${unreadable.toLocaleString("zh-CN")} 个打不开` : "", when].filter(Boolean).join(" · "),
+    [`看了 ${directories.toLocaleString("zh-CN")} 个文件夹`, unreadable ? `${unreadable.toLocaleString("zh-CN")} 个打不开` : "", when].filter(Boolean).join("，"),
   forget: "不再找这个文件夹",
   moreFound: (n) => `还有 ${n} 处`,
   chooseOn: (machine) => `在 ${machine} 上选择文件夹`,
@@ -262,7 +262,7 @@ export const enAgentLogins: AgentLoginsWords = {
   noneBelow: "None found",
   notSearched: "Not searched yet",
   searched: (directories, unreadable, when) =>
-    [`${directories.toLocaleString("en")} folders seen`, unreadable ? `${unreadable.toLocaleString("en")} unreadable` : "", when].filter(Boolean).join(" · "),
+    [`${directories.toLocaleString("en")} folders seen`, unreadable ? `${unreadable.toLocaleString("en")} unreadable` : "", when].filter(Boolean).join(", "),
   forget: "Stop searching this folder",
   moreFound: (n) => `${n} more`,
   chooseOn: (machine) => `Choose a folder on ${machine}`,

@@ -107,7 +107,7 @@ export class MachineLog {
     const choice =
       logins.length > 1
         ? `<div class="map-log-logins">${logins
-            .map((login, index) => `<button class="chip${index === this.chosen ? " current" : ""}" type="button" data-log-login="${index}">${escape(`${login.hubName} · ${login.account}`)}</button>`)
+            .map((login, index) => `<button class="chip${index === this.chosen ? " current" : ""}" type="button" data-log-login="${index}">${escape(`${login.hubName} ${login.account}`)}</button>`)
             .join("")}</div>`
         : "";
     const rows = this.records
@@ -136,7 +136,7 @@ export class MachineLog {
     const done = record.outcome.kind === "done";
     const by = [words.logBy(record.actor.account, record.actor.member), record.actor.authenticated ? "" : words.logUnverified, this.when(new Date(record.at))]
       .filter(Boolean)
-      .join(" · ");
+      .join(" ");
     const why = record.outcome.kind === "refused" ? record.outcome.reason : "";
     return `<li class="map-log-row${done ? "" : " refused"}"${why ? ` title="${escape(why)}"` : ""}><span class="map-log-mark">${glyph(done ? "check" : "cross", 14)}</span><span class="map-log-said">${escape(said)}</span><span class="map-log-by">${escape(by)}</span></li>`;
   }

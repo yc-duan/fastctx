@@ -114,7 +114,7 @@ function serversHtml(servers: Server[], words: SaidWords): string {
   return `<ul class="said-list">${servers
     .map(
       (server) =>
-        `<li><span class="said-name">${escape(server.name)}</span><span class="said-what">${escape([server.state ? words.server(server.state) : "", words.tools(server.tools)].filter(Boolean).join(" · "))}${server.error ? ` · <span title="${escape(server.error)}">${escape(words.toolsFailed(server.error))}</span>` : ""}</span></li>`,
+        `<li><span class="said-name">${escape(server.name)}</span><span class="said-what">${escape([server.state ? words.server(server.state) : "", words.tools(server.tools)].filter(Boolean).join(" "))}${server.error ? ` <span title="${escape(server.error)}">${escape(words.toolsFailed(server.error))}</span>` : ""}</span></li>`,
     )
     .join("")}</ul>`;
 }

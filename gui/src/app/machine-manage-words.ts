@@ -88,7 +88,7 @@ export const zhManage: ManageWords = {
   upToDate: "已是最新",
   canTake: (version) => `可更新到 ${version}`,
   update: "更新…",
-  fetching: (received, total, network) => `下载中 ${total ? `${received} / ${total}` : received}${network ? " · 经网络" : ""}`,
+  fetching: (received, total, network) => `下载中 ${total ? `${received} / ${total}` : received}${network ? "，经网络" : ""}`,
   phase: {
     staged: "新版本已就绪",
     preparing: "正在准备…",
@@ -158,7 +158,7 @@ export const enManage: ManageWords = {
   upToDate: "Up to date",
   canTake: (version) => `${version} available`,
   update: "Update…",
-  fetching: (received, total, network) => `Downloading ${total ? `${received} of ${total}` : received}${network ? " · through the network" : ""}`,
+  fetching: (received, total, network) => `Downloading ${total ? `${received} of ${total}` : received}${network ? ", through the network" : ""}`,
   phase: {
     staged: "Update ready",
     preparing: "Preparing…",

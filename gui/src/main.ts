@@ -744,7 +744,7 @@ function askForget(r: ResidentNow, then?: () => void): void {
   const words = talkMenuWords;
   const shown = talkActs.view(r);
   const agent = agentName(r.about.host.agent);
-  const name = titleOf(shown) ?? `${agent} · ${r.about.machine}`;
+  const name = titleOf(shown) ?? `${agent} ${r.about.machine}`;
   const working = !isUnreached(r) && (r.now?.activity === "busy" || !!r.now?.turn);
   const also = [working ? words.deleteWorking : "", isUnreached(r) ? words.deleteAway(r.about.machine) : ""].filter(Boolean);
   forgetConfirm.ask({
@@ -1025,7 +1025,7 @@ function windowDrops(on: { over(over: boolean): void; dropped(paths: string[]): 
 function exported(conversation: Conversation, someone: Someone): () => Promise<string> {
   return () =>
     markdownOf(conversation, words, {
-      title: conversation.title ?? `${someone.agent} · ${someone.machine}`,
+      title: conversation.title ?? `${someone.agent} ${someone.machine}`,
       agent: someone.agent,
       you: homeWords.you,
       plan: words.plan,
@@ -1033,11 +1033,11 @@ function exported(conversation: Conversation, someone: Someone): () => Promise<s
     });
 }
 
-/** "Claude · laptop" for a resident the World knows, archived or away; its
+/** "Claude laptop" for a resident the World knows, archived or away; its
  *  id where it does not. */
 function someoneAt(address: Address): string {
   const known = listedAt(store.world.peek(), address);
-  return known ? shellWords.someone(agentName(known.about.host.agent), known.about.machine) : `${address.resident} · ${address.machine}`;
+  return known ? shellWords.someone(agentName(known.about.host.agent), known.about.machine) : `${address.resident} ${address.machine}`;
 }
 
 /** The card about the agent in a conversation, and how to fill it. */
@@ -1721,7 +1721,7 @@ function liveTalk(address: Address): KeepablePage {
       });
   return {
     element: page.element,
-    title: `${someone.agent} · ${someone.machine}`,
+    title: `${someone.agent} ${someone.machine}`,
     suspend: () => page.suspend(),
     resume: () => page.resume(),
     leave() {
@@ -2389,7 +2389,7 @@ new Palette({
         .map((r) => ({
           group: paletteWords.agents,
           label: titleOf(r) ?? shellWords.someone(agentName(r.about.host.agent), r.about.machine),
-          note: [titleOf(r) ? shellWords.someone(agentName(r.about.host.agent), r.about.machine) : null, r.town].filter(Boolean).join(" · "),
+          note: [titleOf(r) ? shellWords.someone(agentName(r.about.host.agent), r.about.machine) : null, r.town].filter(Boolean).join(" "),
           run: go({ kind: "talk", address: { resident: r.about.id, machine: r.about.machine } }),
         })),
       ...(inNoNetwork(world) ? [] : machinesOf(world)).map((machine) => ({

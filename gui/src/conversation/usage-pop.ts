@@ -63,7 +63,7 @@ export class UsagePop {
     const holds = used?.used ?? (latest ? contextOf(latest) : 0);
     const figures: string[] = [];
     if (holds) {
-      const share = used?.window ? ` · ${Math.round((holds / used.window) * 100)}%` : "";
+      const share = used?.window ? ` ${Math.round((holds / used.window) * 100)}%` : "";
       figures.push(figure("context", tokensShort(holds), `${words.context}${share}`, words.contextTitle(holds, used?.window ?? null)));
     }
     if (latest && contextOf(latest)) {
@@ -144,8 +144,8 @@ export class UsagePop {
         const share = percent === null ? null : percent / 100;
         const reset = past ? words.reset : resets ? words.resetsIn(resets.getTime() - Date.now()) : "";
         const said = past
-          ? [words.window(limit.name), words.reset, read === null ? "" : words.usedBefore(String(read)), asOf].filter(Boolean).join(" · ")
-          : [words.window(limit.name), percent === null ? "" : words.used(String(percent)), resets ? words.resets(resets) : "", asOf].filter(Boolean).join(" · ");
+          ? [words.window(limit.name), words.reset, read === null ? "" : words.usedBefore(String(read)), asOf].filter(Boolean).join("\n")
+          : [words.window(limit.name), percent === null ? "" : words.used(String(percent)), resets ? words.resets(resets) : "", asOf].filter(Boolean).join("\n");
         return `<span class="talk-usage-ring" title="${escape(said)}"><span class="talk-usage-ring-face">${ring(share, `talk:${limit.name}`, 44)}<span class="talk-usage-ring-num"><span>${percent === null ? "–" : `${Math.round(percent)}<small>%</small>`}</span></span></span><span class="talk-usage-ring-text"><span class="talk-usage-ring-name">${escape(words.window(limit.name))}</span><span class="talk-usage-ring-when">${escape(reset)}</span></span></span>`;
       })
       .join("");

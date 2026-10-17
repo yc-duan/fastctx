@@ -181,12 +181,12 @@ export class FastctxBlock {
     if (state.fetching) {
       const { received, total, via, version } = state.fetching;
       const percent = total ? Math.min(100, Math.floor((received / total) * 100)) : null;
-      return `<span>${escape(version)} · ${escape(words.fetching(megabytes(received), total ? megabytes(total) : null, via === "network"))}</span><span class="fx-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"${percent === null ? "" : ` aria-valuenow="${percent}"`}><span style="width:${percent ?? 6}%"></span></span>`;
+      return `<span>${escape(version)} ${escape(words.fetching(megabytes(received), total ? megabytes(total) : null, via === "network"))}</span><span class="fx-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"${percent === null ? "" : ` aria-valuenow="${percent}"`}><span style="width:${percent ?? 6}%"></span></span>`;
     }
     if (state.renewing) {
       const { version, phase, error } = state.renewing;
       const said = phase === "failed" ? words.failed(error ?? words.phase.failed) : words.phase[phase];
-      const step = `<span${phase === "failed" ? ` class="fx-wrong"` : ""}>${escape(`${version} · ${said}`)}</span>`;
+      const step = `<span${phase === "failed" ? ` class="fx-wrong"` : ""}>${escape(`${version} ${said}`)}</span>`;
       if (phase !== "awaiting_administrator") return step;
       return `${step}<span class="fx-admin"><span>${escape(words.adminThere)}</span><code class="mono">${escape(ADMIN_LINE)}</code>${copyButton(ADMIN_LINE, words.copy, `data-act="fx-copy"`)}</span>`;
     }

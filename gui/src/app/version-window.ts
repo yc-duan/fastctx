@@ -216,7 +216,7 @@ export class VersionWindow {
       )
       .join("");
     const facts = (row: Row) =>
-      [row.day ? words.day(row.day) : "", row.size ? words.size(row.size) : ""].filter(Boolean).join(" · ");
+      [row.day ? words.day(row.day) : "", row.size ? words.size(row.size) : ""].filter(Boolean).join(" ");
     const act = (row: Row): string => {
       if (purpose.kind === "minimum") {
         if (row.version === minimum) return `<span class="vw-now">${escape(words.asked)}</span>`;

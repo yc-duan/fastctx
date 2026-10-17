@@ -103,7 +103,7 @@ export class Sidebar {
     this.element.innerHTML = `
       <div class="sidebar-head">
         <button class="network-switch" type="button" aria-haspopup="menu">${mark()}<span class="network-name"></span>${glyph("chevron", 14)}</button>
-        <button class="icon-button sidebar-fold" type="button" aria-label="${escape(words.foldSidebar)}" title="${escape(words.foldSidebar)} · Ctrl+B">${glyph("sidebar", 18)}</button>
+        <button class="icon-button sidebar-fold" type="button" aria-label="${escape(words.foldSidebar)}" title="${escape(words.foldSidebar)} Ctrl+B">${glyph("sidebar", 18)}</button>
         <div class="network-pop" role="menu" aria-label="${escape(words.networks)}" hidden></div>
       </div>
       <button class="new-talk" type="button">${glyph("plus", 18)}<span>${escape(words.newTalk)}</span><kbd>Ctrl N</kbd></button>
@@ -291,7 +291,7 @@ export class Sidebar {
         (network) => `<li class="network-row">
           <button class="network-pick${network.hub === shown ? " current" : ""}" type="button" role="menuitemradio" aria-checked="${network.hub === shown}" data-network="${escape(network.hub)}">
             <span class="network-dot${network.online ? " online" : ""}" aria-hidden="true"></span>
-            <span class="network-row-text"><span class="network-row-name">${escape(network.name)}</span><span class="network-row-note">${escape(network.admin ? words.admin : words.member)} · ${escape(words.machinesCount(network.machines))}</span></span>
+            <span class="network-row-text"><span class="network-row-name">${escape(network.name)}</span><span class="network-row-note">${escape(network.admin ? words.admin : words.member)} ${escape(words.machinesCount(network.machines))}</span></span>
             ${network.hub === shown ? glyph("check", 14) : ""}
           </button>
         </li>`,

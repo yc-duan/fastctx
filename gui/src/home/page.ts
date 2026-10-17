@@ -187,7 +187,7 @@ export class HomePage {
 
   private nameOf(address: Address): string {
     const known = this.knownAt(address);
-    return known ? this.name(known) : `${address.resident} · ${address.machine}`;
+    return known ? this.name(known) : `${address.resident} ${address.machine}`;
   }
 
   /** What a pointer resting on a conversation's name is told beyond the name
@@ -346,7 +346,7 @@ export class HomePage {
         const left = Math.min(100, Math.max(0, ((one.at.getTime() - start) / span) * 100));
         const name = this.nameOf(one.address);
         const mark = blot([7, 7], 3.6, seeded(one.key));
-        return `<a class="front-mark${one.failed ? " failed" : ""}" data-came="${escape(one.key)}" href="${this.options.link(one.address)}" style="left:${left.toFixed(2)}%" title="${escape(`${name} · ${this.when(one.at)}`)}" aria-label="${escape(name)}"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="${mark}" fill="currentColor"/></svg></a>`;
+        return `<a class="front-mark${one.failed ? " failed" : ""}" data-came="${escape(one.key)}" href="${this.options.link(one.address)}" style="left:${left.toFixed(2)}%" title="${escape(`${name} ${this.when(one.at)}`)}" aria-label="${escape(name)}"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="${mark}" fill="currentColor"/></svg></a>`;
       })
       .join("");
     return `<div class="front-timeline"><svg class="front-rule" viewBox="0 0 1000 12" preserveAspectRatio="none" aria-hidden="true"><path d="${line}" fill="currentColor"/></svg>${marks}<span class="front-from">${escape(this.when(from))}</span><span class="front-to">${escape(words.present)}</span></div>`;
@@ -387,7 +387,7 @@ export class HomePage {
     const name = this.name(r);
     const trouble = r.now?.trouble;
     const lasted = words.lasted(Math.max(0, this.now.getTime() - Date.parse(r.now!.since)));
-    const pulse = `<span class="front-pulse${trouble ? " troubled" : ""}"${trouble ? ` title="${escape(`${trouble.text} · ${words.ago(this.now.getTime() - Date.parse(trouble.at))}`)}"` : ""} aria-hidden="true"></span>`;
+    const pulse = `<span class="front-pulse${trouble ? " troubled" : ""}"${trouble ? ` title="${escape(`${trouble.text}\n${words.ago(this.now.getTime() - Date.parse(trouble.at))}`)}"` : ""} aria-hidden="true"></span>`;
     const rest = called.length ? `<ul class="front-rows front-called">${called.map((one) => this.row(one, [])).join("")}</ul>` : "";
     return `<li><a class="front-row" href="${this.options.link(addressOf(r))}">
       ${pulse}${this.agent(r)}<span class="front-name" title="${escape(this.about(r, name))}">${escape(name)}</span>${this.device(r.about.machine)}<span class="front-for">${escape(lasted)}</span>
@@ -434,7 +434,7 @@ export class HomePage {
     const busy = this.stopping.has(`${job.machine}\n${job.job}`) ? " disabled" : "";
     const asking =
       this.confirming === `${job.machine}\n${job.job}`
-        ? `<div class="jobs-confirm"><span${why ? ` title="${escape(why)}"` : ""}>${escape(why ? `${words.jobNotStopped} · ${why}` : words.stopJobAsk)}</span><button class="ask-button" type="button" data-job="${key}" data-act="cancel">${escape(words.cancel)}</button><button class="ask-button ask-primary" type="button" data-job="${key}" data-act="stop"${busy}>${escape(words.stopJob)}</button></div>`
+        ? `<div class="jobs-confirm"><span${why ? ` title="${escape(why)}"` : ""}>${escape(why ? `${words.jobNotStopped}: ${why}` : words.stopJobAsk)}</span><button class="ask-button" type="button" data-job="${key}" data-act="cancel">${escape(words.cancel)}</button><button class="ask-button ask-primary" type="button" data-job="${key}" data-act="stop"${busy}>${escape(words.stopJob)}</button></div>`
         : "";
     return `<li><div class="front-job-line"><a class="front-job" href="${escape(fileLink(job.machine, job.output, true))}" title="${escape(about)}">
       <span class="front-job-glyph" aria-hidden="true">${glyph("command", 16)}</span><code class="front-command">${escape(first)}</code>${whose ? `<span class="front-whose">${glyph("person", 12)}<span>${escape(whose)}</span></span>` : ""}${this.device(job.machine)}<span class="front-for">${escape(lasted)}</span>

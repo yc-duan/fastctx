@@ -145,7 +145,7 @@ export class TalkMenu {
     const machine = r.about.machine;
     const away = !this.options.reachable(r);
     const head = narrow.matches
-      ? `<div class="talk-menu-head"><span class="talk-menu-host">${glyph(r.about.host.agent === "claude" || r.about.host.agent === "codex" ? r.about.host.agent : "agents", 18)}</span><span class="talk-menu-name">${escape(titleOf(r) ?? `${agentName(r.about.host.agent)} · ${machine}`)}</span></div>`
+      ? `<div class="talk-menu-head"><span class="talk-menu-host">${glyph(r.about.host.agent === "claude" || r.about.host.agent === "codex" ? r.about.host.agent : "agents", 18)}</span><span class="talk-menu-name">${escape(titleOf(r) ?? `${agentName(r.about.host.agent)} ${machine}`)}</span></div>`
       : "";
     const note = away ? `<p class="talk-menu-note">${escape(words.offline(machine))}</p>` : "";
     const item = (act: string, icon: Parameters<typeof glyph>[0], label: string, disabled: boolean, end = "") =>

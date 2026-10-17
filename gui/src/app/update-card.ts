@@ -50,7 +50,7 @@ export class UpdateCard {
     const megabytes = (bytes: number) => (bytes / 1_000_000).toFixed(1);
     const facts = [offered.size ? words.size(megabytes(offered.size)) : "", stage.kind === "fetching" && stage.network ? words.viaNetwork : ""]
       .filter(Boolean)
-      .join(" · ");
+      .join(" ");
     const percent =
       stage.kind === "fetching" && stage.total ? Math.min(100, Math.floor((stage.received / stage.total) * 100)) : null;
     const go = (label: string) => `<button class="sheet-go" type="button" data-update-go>${escape(label)}</button>`;

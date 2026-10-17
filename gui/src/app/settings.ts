@@ -342,7 +342,7 @@ export class SettingsPage implements Page {
                 ? words.dissolved
                 : words.stopped(link.reason);
       const why = link.kind === "connecting" ? (link.last_error ?? "") : link.kind === "stopped" ? link.reason : "";
-      return [words.hub(hub.name), [linked, words.as(hub.logins.join(", "))].filter(Boolean).join(" · "), why];
+      return [words.hub(hub.name), [linked, words.as(hub.logins.join(", "))].filter(Boolean).join(" "), why];
     });
     // The version is said once, by the local service's own row below; a
     // computer's name has its own row above.

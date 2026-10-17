@@ -88,8 +88,8 @@ export class Machine extends LiveElement {
     const agents = now.agents.filter((a) => a.machine === name);
     const busy = agents.filter((a) => a.state === "working").length;
     this.shadow.innerHTML = `
-      <div class="row"><span class="mark ${machine.online ? "on" : ""}"></span><span class="name">${escape(name)}</span><span class="sub">${escape([machine.online ? w.online : w.offline, machine.device ? w.device : machine.system].filter(Boolean).join(" · "))}</span></div>
-      ${machine.device ? "" : `<div class="sub">${escape(w.agents(agents.length))}${busy ? ` · ${escape(w.state.working)} ${busy}` : ""}</div>`}`;
+      <div class="row"><span class="mark ${machine.online ? "on" : ""}"></span><span class="name">${escape(name)}</span><span class="sub">${escape([machine.online ? w.online : w.offline, machine.device ? w.device : machine.system].filter(Boolean).join(" "))}</span></div>
+      ${machine.device ? "" : `<div class="sub">${escape(w.agents(agents.length))}${busy ? ` ${escape(w.state.working)} ${busy}` : ""}</div>`}`;
   }
 }
 
@@ -127,7 +127,7 @@ export class Agent extends LiveElement {
       return;
     }
     this.shadow.innerHTML = `<button class="agent" type="button">
-      <div class="row"><span class="mark ${agent.state}"></span><span class="name">${escape(agent.title ?? `${agent.agent} · ${agent.machine}`)}</span><span class="sub state ${agent.state}">${escape(w.state[agent.state])}</span></div>
+      <div class="row"><span class="mark ${agent.state}"></span><span class="name">${escape(agent.title ?? `${agent.agent} ${agent.machine}`)}</span><span class="sub state ${agent.state}">${escape(w.state[agent.state])}</span></div>
       ${agent.last ? `<div class="sub">${escape(agent.last)}</div>` : ""}
     </button>`;
   }
@@ -154,7 +154,7 @@ export class Journal extends LiveElement {
       ? entries
           .map(
             (entry) =>
-              `<div class="entry"><div class="sub">${escape(new Date(entry.at).toLocaleString(world().context.locale, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }))} · ${escape(entry.by)}</div><div class="entry-text">${escape(entry.text.slice(0, 600))}</div></div>`,
+              `<div class="entry"><div class="sub">${escape(new Date(entry.at).toLocaleString(world().context.locale, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }))} ${escape(entry.by)}</div><div class="entry-text">${escape(entry.text.slice(0, 600))}</div></div>`,
           )
           .join("")
       : `<span class="faint">${escape(words().noEntries)}</span>`;
@@ -219,7 +219,7 @@ export class Job extends LiveElement {
     }
     const w = words();
     this.shadow.innerHTML = `
-      <div class="row"><span class="mark ${job.state === "running" ? "working" : ""}"></span><span class="name">${escape(job.job)}</span><span class="sub">${escape(w.jobState[job.state] ?? job.state)}${job.exit !== null ? ` · ${escape(w.exit(job.exit))}` : ""}${job.signal != null ? ` · ${escape(w.signal(job.signal))}` : ""}</span></div>
+      <div class="row"><span class="mark ${job.state === "running" ? "working" : ""}"></span><span class="name">${escape(job.job)}</span><span class="sub">${escape(w.jobState[job.state] ?? job.state)}${job.exit !== null ? ` ${escape(w.exit(job.exit))}` : ""}${job.signal != null ? ` ${escape(w.signal(job.signal))}` : ""}</span></div>
       <div class="sub" style="margin:2px 0 var(--space-2)"><code>${escape(job.command)}</code></div>
       ${job.output ? `<pre>${escape(job.output)}</pre>` : ""}`;
     const pre = this.shadow.querySelector("pre");

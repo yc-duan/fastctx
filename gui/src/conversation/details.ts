@@ -19,7 +19,7 @@ import { agentName, titleOf } from "../world/names";
 
 export interface DetailsOptions {
   words: DetailsWords;
-  /** "Claude · laptop", for a resident named elsewhere. */
+  /** "Claude laptop", for a resident named elsewhere. */
   someone(address: Address): string;
   link(address: Address): string;
   /** Says a span of time: "4 分钟". */
@@ -32,7 +32,7 @@ export interface DetailsOptions {
   attach?: (() => Promise<void>) | undefined;
   /** The conversation as Markdown, for copying out. */
   markdown?: (() => Promise<string>) | undefined;
-  /** "home · ada" for each account it works for; empty for this
+  /** "home ada" for each account it works for; empty for this
    *  computer's logins. */
   actingFor(resident: ResidentNow): string[];
   /** Whose agent it is, for one of another account assisting the user;
@@ -194,12 +194,12 @@ export class Details {
       [words.login, login],
       [words.assistFrom, assistFrom ?? ""],
       [words.actingFor, acting.join(words.separator)],
-      [words.host, `${agentName(about.host.agent)} ${about.host.version}${about.world_started ? ` · ${words.startedByWorld}` : ""}`],
+      [words.host, `${agentName(about.host.agent)} ${about.host.version}${about.world_started ? ` ${words.startedByWorld}` : ""}`],
       [words.origin, origin],
       [words.here, words.since(ago(about.born_at))],
     ];
     const trouble = r.now?.trouble
-      ? `<p class="details-trouble">${escape(r.now.trouble.text)} · ${escape(words.since(ago(r.now.trouble.at)))}</p>`
+      ? `<p class="details-trouble">${escape(r.now.trouble.text)} ${escape(words.since(ago(r.now.trouble.at)))}</p>`
       : "";
     const busy = r.now?.activity === "busy";
     // Only what the World started has an interface of its own to open; a
@@ -212,7 +212,7 @@ export class Details {
       ? `<ul class="details-people">${colleagues
           .map(
             (c) =>
-              `<li><a href="${this.options.link({ resident: c.about.id, machine: c.about.machine })}"><span class="mark ${c.now?.activity === "busy" ? "mark-busy" : "mark-idle"}" aria-hidden="true"></span><span>${escape(titleOf(c) ?? c.about.id)}</span><span class="details-faint">${escape(`${agentName(c.about.host.agent)} · ${c.about.machine}`)}</span></a></li>`,
+              `<li><a href="${this.options.link({ resident: c.about.id, machine: c.about.machine })}"><span class="mark ${c.now?.activity === "busy" ? "mark-busy" : "mark-idle"}" aria-hidden="true"></span><span>${escape(titleOf(c) ?? c.about.id)}</span><span class="details-faint">${escape(`${agentName(c.about.host.agent)} ${c.about.machine}`)}</span></a></li>`,
           )
           .join("")}</ul>`
       : "";
@@ -220,7 +220,7 @@ export class Details {
       ? `<ul class="details-jobs">${detail.jobs
           .map(
             (job) =>
-              `<li><a class="details-job" href="${escape(fileLink(job.machine, job.output, true))}">${escape(job.job)}</a><span class="details-faint">${escape(`${job.machine} · ${ago(job.started_at)}`)}</span><code>${escape(job.command)}</code></li>`,
+              `<li><a class="details-job" href="${escape(fileLink(job.machine, job.output, true))}">${escape(job.job)}</a><span class="details-faint">${escape(`${job.machine} ${ago(job.started_at)}`)}</span><code>${escape(job.command)}</code></li>`,
           )
           .join("")}</ul>`
       : "";
@@ -229,7 +229,7 @@ export class Details {
           .reverse()
           .map(
             (action) =>
-              `<li><time>${escape(clock(new Date(action.at)))}</time><span class="details-what"><span class="details-hand">${escape(action.hand)}</span>${action.machine !== about.machine ? `<span class="details-faint">${escape(action.machine)} · </span>` : ""}${escape(action.what)}</span><span class="details-result">${escape(action.result)}</span></li>`,
+              `<li><time>${escape(clock(new Date(action.at)))}</time><span class="details-what"><span class="details-hand">${escape(action.hand)}</span>${action.machine !== about.machine ? `<span class="details-faint">${escape(action.machine)} </span>` : ""}${escape(action.what)}</span><span class="details-result">${escape(action.result)}</span></li>`,
           )
           .join("")}</ol>`
       : `<p class="quiet">${escape(words.noActions)}</p>`;

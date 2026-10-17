@@ -36,7 +36,7 @@ export interface PageScreenOptions {
   /** Where this page is at a version, or its current one. */
   link(version: number | null): string;
   ago(at: Date): string;
-  /** "Codex · lab", for the resident at an address. */
+  /** "Codex lab", for the resident at an address. */
   someone(address: Address): string;
   world: PageWorld;
   /** The tools an open version calls, carried out for it; the files they
@@ -213,7 +213,7 @@ export class PageScreen {
       case "run":
         return `<span class="act-what">${escape(words.run(act.machine))}</span><code class="act-command">${escape(act.script)}</code>`;
       case "say":
-        return `<span class="act-what">${escape(words.say(this.options.someone(act.to)))}</span><span class="act-detail">${escape(`${act.to.resident} · ${act.to.machine}`)}</span>`;
+        return `<span class="act-what">${escape(words.say(this.options.someone(act.to)))}</span><span class="act-detail">${escape(`${act.to.resident} ${act.to.machine}`)}</span>`;
       case "journal":
         return `<span class="act-what">${escape(words.journal(act.journal))}</span>`;
     }
@@ -298,7 +298,7 @@ export class PageScreen {
           const shown = version.version === view.publication.version;
           return `<li class="page-version${shown ? " shown" : ""}">
             <div class="page-version-line"><span class="page-version-n">${escape(words.version(version.version))}</span>${marks.map((mark) => `<span class="tag">${escape(mark)}</span>`).join("")}</div>
-            <div class="page-version-by">${escape(words.written(this.writer(version.by), this.options.ago(new Date(version.at))))}${version.title ? ` · ${escape(version.title)}` : ""}</div>
+            <div class="page-version-by">${escape(words.written(this.writer(version.by), this.options.ago(new Date(version.at))))}${version.title ? ` ${escape(version.title)}` : ""}</div>
             <div class="page-version-go">${
               version.withdrawn || shown ? "" : `<a class="text-button" href="${escape(this.options.link(version === latest ? null : version.version))}">${escape(words.look)}</a>`
             }${version === latest || version.withdrawn ? "" : `<button class="text-button" type="button" data-bring="${version.version}">${escape(words.bringBack)}</button>`}</div>

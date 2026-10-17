@@ -168,7 +168,7 @@ export class ProjectPage {
 
   private writer(writer: Writer | PageWriter): string {
     if (writer.kind === "user") return this.options.words.you;
-    if (writer.kind === "resident") return `${writer.address.resident} · ${writer.address.machine}`;
+    if (writer.kind === "resident") return `${writer.address.resident} ${writer.address.machine}`;
     if (writer.kind === "page") return writer.page.page;
     return agentName(writer.agent);
   }
@@ -206,7 +206,7 @@ export class ProjectPage {
     const doing = waiting
       ? home.waitingFor
       : r.last_action
-        ? `${r.last_action.machine !== r.about.machine ? `${r.last_action.machine} · ` : ""}${r.last_action.what}`
+        ? `${r.last_action.machine !== r.about.machine ? `${r.last_action.machine} ` : ""}${r.last_action.what}`
         : "";
     const who = home.someone(agentName(r.about.host.agent), r.about.machine);
     const title = titleOf(r);
@@ -233,15 +233,15 @@ export class ProjectPage {
       return this.jobLine(job, now, home.startedBy(home.aPage("page" in job.owner ? job.owner.page.page : "")));
     }
     const owner = known.find((r) => r.about.id === address.resident && r.about.machine === address.machine);
-    const name = owner ? home.someone(agentName(owner.about.host.agent), owner.about.machine) : `${address.resident} · ${address.machine}`;
-    const by = owner?.here && !owner.removed ? home.startedBy(name) : `${home.startedBy(name)} · ${words.ownerLeft}`;
+    const name = owner ? home.someone(agentName(owner.about.host.agent), owner.about.machine) : `${address.resident} ${address.machine}`;
+    const by = owner?.here && !owner.removed ? home.startedBy(name) : `${home.startedBy(name)} ${words.ownerLeft}`;
     return this.jobLine(job, now, by);
   }
 
   private jobLine(job: RunningJob, now: Date, by: string): string {
     const { home } = this.options;
     const whose = accountTag(worksFor(this.others, job.machine, job.job), home.forAccounts);
-    return `<li class="job"><a class="job-id" href="${escape(fileLink(job.machine, job.output, true))}">${escape(job.job)}</a><span class="job-where">${escape(job.machine)} · ${escape(home.for(home.lasted(now.getTime() - Date.parse(job.started_at))))}${whose}</span><code class="job-command">${escape(job.command)}</code><span class="detail">${escape(by)}</span></li>`;
+    return `<li class="job"><a class="job-id" href="${escape(fileLink(job.machine, job.output, true))}">${escape(job.job)}</a><span class="job-where">${escape(job.machine)} ${escape(home.for(home.lasted(now.getTime() - Date.parse(job.started_at))))}${whose}</span><code class="job-command">${escape(job.command)}</code><span class="detail">${escape(by)}</span></li>`;
   }
 
   private places(map: MapView): string {

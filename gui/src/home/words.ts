@@ -48,7 +48,7 @@ export interface HomeWords {
   renewThere: string;
   /** The way to set this computer up, beside the World it could not ask. */
   setUp: string;
-  /** "Claude · laptop": an agent by its program and machine. */
+  /** "laptop 上的 Claude": an agent by its program and machine. */
   someone(agent: string, machine: string): string;
   colleagueOf(asker: string): string;
   for(duration: string): string;
@@ -125,13 +125,13 @@ export const zhHome: HomeWords = {
   oldWorld: (node, client) => `本机服务版本 ${node} 与界面 ${client} 不兼容`,
   renewThere: "前往设置更新",
   setUp: "设置这台电脑",
-  someone: (agent, machine) => `${agent} · ${machine}`,
+  someone: (agent, machine) => `${machine} 上的 ${agent}`,
   colleagueOf: (asker) => `${asker} 调用的模型`,
   for: (duration) => duration,
   ago: (ms) => `${zhSpan(ms)}前`,
   lasted: zhSpan,
   clock: (at) => `${pad(at.getHours())}:${pad(at.getMinutes())}`,
-  day: (at) => `${zhNumber(at.getMonth() + 1)}月${zhNumber(at.getDate())}日 · ${zhWeek[at.getDay()]}`,
+  day: (at) => `${zhNumber(at.getMonth() + 1)}月${zhNumber(at.getDate())}日　${zhWeek[at.getDay()]}`,
   earlier: (at, yesterday) => `${yesterday ? "昨天" : `${at.getMonth() + 1}月${at.getDate()}日`} ${pad(at.getHours())}:${pad(at.getMinutes())}`,
   you: "你",
   unasked: (list) => `未获取：${list}`,
@@ -178,7 +178,7 @@ export const enHome: HomeWords = {
   oldWorld: (node, client) => `Local service ${node} isn't compatible with this app (${client})`,
   renewThere: "Update in Settings",
   setUp: "Set up this computer",
-  someone: (agent, machine) => `${agent} · ${machine}`,
+  someone: (agent, machine) => `${agent} on ${machine}`,
   colleagueOf: (asker) => `called by ${asker}`,
   for: (duration) => duration,
   ago: (ms) => `${enSpan(ms)} ago`,

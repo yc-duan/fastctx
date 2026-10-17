@@ -107,7 +107,7 @@ export class UsageBadge {
     // With nothing to measure, the button still opens the account's limits.
     this.button.querySelector<HTMLElement>(".talk-gauge-bare")!.hidden = this.shows;
     const label = [...this.figures.values()].filter((element) => !element.hidden).map((element) => element.title);
-    this.button.setAttribute("aria-label", [words.title, ...label].join(" · "));
+    this.button.setAttribute("aria-label", [words.title, ...label].join(" "));
     this.tick(left);
   }
 

@@ -188,7 +188,7 @@ export function usageOf(command: MenuCommand): string {
 }
 
 export function modelRow(model: ModelOffer, current: string | null, words: CommandWords): string {
-  return `<span class="menu-name">${escape(model.name ?? model.id)}${model.id === current ? `<span class="menu-current"> · ${escape(words.current)}</span>` : ""}</span><span class="menu-what">${escape(model.description ?? "")}</span>${
+  return `<span class="menu-name">${escape(model.name ?? model.id)}${model.id === current ? `<span class="menu-current"> ${escape(words.current)}</span>` : ""}</span><span class="menu-what">${escape(model.description ?? "")}</span>${
     model.efforts.length ? `<span class="menu-source">${escape(words.effort)}：${model.efforts.map(escape).join(" / ")}</span>` : ""
   }`;
 }

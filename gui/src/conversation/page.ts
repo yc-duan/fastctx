@@ -1197,7 +1197,7 @@ export class ConversationPage {
     const field = document.createElement("input");
     field.className = "who-rename";
     field.value = this.options.conversation.title ?? "";
-    field.placeholder = `${this.options.someone.agent} · ${this.options.someone.machine}`;
+    field.placeholder = `${this.options.someone.agent} ${this.options.someone.machine}`;
     field.setAttribute("aria-label", controls.words.commands.rename);
     this.name.replaceChildren(field);
     field.focus();
@@ -1601,7 +1601,7 @@ export class ConversationPage {
     const model = offered.models.find((one) => one.id === offered.model);
     const tier = offered.service_tier && offered.service_tier !== "default" ? (model?.service_tiers.find((one) => one.id === offered.service_tier)?.name ?? offered.service_tier) : null;
     const effort = offered.effort ? effortLabel(offered.effort, this.options.words.english) : null;
-    this.say(words.model(model?.name ?? offered.model ?? "", [effort, tier].filter(Boolean).join(" · ") || null));
+    this.say(words.model(model?.name ?? offered.model ?? "", [effort, tier].filter(Boolean).join(" ") || null));
   }
 
   /** Does a command, the World's own control or the host's; says whether
@@ -1863,7 +1863,7 @@ export class ConversationPage {
     focus
       .set(next)
       .then((unfinished) => {
-        state.textContent = unfinished.join(" · ");
+        state.textContent = unfinished.join(" ");
       })
       .catch((error: unknown) => {
         this.options.someone.focus = before;
@@ -1892,7 +1892,7 @@ export class ConversationPage {
     const html = `${glyph("machine", 16)}${summary ? summary.html : `<span class="talk-chip-name">${escape(words.none)}</span>`}${count ? `<span class="focus-count">${count}</span>` : ""}${glyph("chevron", 12)}`;
     if (chip.innerHTML !== html) chip.innerHTML = html;
     chip.classList.toggle("quiet", !summary);
-    chip.title = summary ? `${words.title} · ${summary.said}` : words.title;
+    chip.title = summary ? `${words.title}\n${summary.said}` : words.title;
     chip.disabled = this.focusSaving;
   }
 

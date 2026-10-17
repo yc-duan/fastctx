@@ -297,7 +297,7 @@ export class RemovalSection {
       .map((group) => {
         const inside = groups
           .get(group)!
-          .map((item) => [this.label(item), item.where].filter(Boolean).join(" · "))
+          .map((item) => [this.label(item), item.where].filter(Boolean).join(" "))
           .join("\n");
         return `<li class="removal-chip" title="${escape(inside)}">${escape(this.words.groups[group])}</li>`;
       })

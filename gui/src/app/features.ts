@@ -346,7 +346,7 @@ export class FeaturesPage implements Page {
 
   private loginLabel(agent: "codex" | "claude", machine: string, facts: AgentFacts): string {
     const who = accountOf(facts).email ?? homeLabel(facts, this.options.homeWords);
-    return `${agentName(agent)} · ${machine} · ${who}`;
+    return `${agentName(agent)} ${machine} ${who}`;
   }
 
   private dirty(): boolean {
@@ -559,7 +559,7 @@ export class FeaturesPage implements Page {
           <label class="callee-field"><span>${escape(words.useWhen)}</span><input type="text" value="${escape(callee.use_when)}" data-field="use" data-index="${index}"></label>
           <label class="callee-field"><span>${escape(words.login)}</span><select data-field="login" data-index="${index}">${codex
             .map(({ known, index: i }) => `<option value="${i}"${at?.index === i ? " selected" : ""}>${escape(known.label)}</option>`)
-            .join("")}${at ? "" : `<option selected disabled>${escape(`${callee.login.machine} · ${callee.login.home ?? ""}`)}</option>`}</select></label>
+            .join("")}${at ? "" : `<option selected disabled>${escape(`${callee.login.machine} ${callee.login.home ?? ""}`)}</option>`}</select></label>
           <label class="callee-field"><span>${escape(words.model)}</span><select data-field="model" data-index="${index}"><option value=""${callee.model ? "" : " selected"}>${escape(words.modelDefault)}</option>${models
             .map((model) => `<option value="${escape(model.model)}"${callee.model === model.model ? " selected" : ""}>${escape(model.display_name)}</option>`)
             .join("")}</select></label>
@@ -613,8 +613,8 @@ export class FeaturesPage implements Page {
           .map((r) => {
             const origin = r.about.origin.kind === "colleague" ? r.about.origin : null;
             const asker = origin ? residents.find((one) => one.about.id === origin.asked_by.resident && one.about.machine === origin.asked_by.machine) : undefined;
-            const askerName = asker ? (titleOf(asker) ?? `${agentName(asker.about.host.agent)} · ${asker.about.machine}`) : (origin?.asked_by.resident ?? "");
-            return `<li><a href="${link({ kind: "talk", address: { resident: r.about.id, machine: r.about.machine } })}">${glyph("codex", 14)}<span>${escape(titleOf(r) ?? r.about.id)}</span><span class="feature-now-for">${escape(words.workingFor(askerName))} · ${escape(r.about.machine)}</span></a></li>`;
+            const askerName = asker ? (titleOf(asker) ?? `${agentName(asker.about.host.agent)} ${asker.about.machine}`) : (origin?.asked_by.resident ?? "");
+            return `<li><a href="${link({ kind: "talk", address: { resident: r.about.id, machine: r.about.machine } })}">${glyph("codex", 14)}<span>${escape(titleOf(r) ?? r.about.id)}</span><span class="feature-now-for">${escape(words.workingFor(askerName))} ${escape(r.about.machine)}</span></a></li>`;
           })
           .join("")
       : `<li class="feature-quiet">${escape(words.nobodyNow)}</li>`;

@@ -69,7 +69,7 @@ export const zhData: DataWords = {
     if (minutes < 1440) return `${Math.round(minutes / 60)} 小时前`;
     return `${Math.round(minutes / 1440)} 天前`;
   },
-  delete: (n, size) => `删除 ${n} 段 · ${size}`,
+  delete: (n, size) => `删除 ${n} 段，${size}`,
   deleteTitle: (n) => `删除 ${n} 段对话在这台电脑上的数据？`,
   deleteWhat: (home, guests) =>
     [
@@ -112,7 +112,7 @@ export const enData: DataWords = {
     if (minutes < 1440) return `${Math.round(minutes / 60)} h ago`;
     return `${Math.round(minutes / 1440)} d ago`;
   },
-  delete: (n, size) => `Delete ${n} · ${size}`,
+  delete: (n, size) => `Delete ${n}, ${size}`,
   deleteTitle: (n) => (n === 1 ? "Delete this conversation's data here?" : `Delete ${n} conversations' data here?`),
   deleteWhat: (home, guests) =>
     [

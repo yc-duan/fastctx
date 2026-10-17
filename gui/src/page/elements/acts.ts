@@ -123,7 +123,7 @@ export class Say extends Act {
   protected draw(): void {
     this.shadow.innerHTML = `
       <button class="act" type="button"${this.busy ? " disabled" : ""}>${escape(this.getAttribute("label") ?? words().say)}</button>
-      <div class="what">→ ${escape(this.getAttribute("resident"))} · ${escape(this.getAttribute("text"))}</div>
+      <div class="what">→ ${escape(this.getAttribute("resident"))} ${escape(this.getAttribute("text"))}</div>
       ${this.said ? `<div class="said${this.wrong ? " wrong" : ""}" role="status">${escape(this.said)}</div>` : ""}`;
   }
 }

@@ -520,7 +520,7 @@ export function drawAsk(key: string, ask: Ask, state: AskState, machine: string,
             q.other || q.options.length === 0
               ? `<input class="ask-input" data-question="${index}" type="${q.secret ? "password" : "text"}" autocomplete="off" aria-label="${escape(q.options.length ? words.otherAnswer : q.header || q.question)}" placeholder="${escape(q.options.length ? words.otherAnswer : q.secret ? words.secret : "")}">`
               : "";
-          return `<div class="ask-question" role="group" aria-label="${escape(q.header || q.question)}">${q.header || q.multi ? `<div class="ask-question-head">${escape([q.header, q.multi ? words.several : ""].filter(Boolean).join(" · "))}</div>` : ""}<div class="ask-question-text">${plain(q.question)}</div>${options ? `<div class="ask-options">${options}</div>` : ""}${free}</div>`;
+          return `<div class="ask-question" role="group" aria-label="${escape(q.header || q.question)}">${q.header || q.multi ? `<div class="ask-question-head">${escape([q.header, q.multi ? words.several : ""].filter(Boolean).join(" "))}</div>` : ""}<div class="ask-question-text">${plain(q.question)}</div>${options ? `<div class="ask-options">${options}</div>` : ""}${free}</div>`;
         })
         .join("");
       body = `${head(ask.questions.length > 1 ? words.questions(ask.questions.length) : words.question)}${questions}<div class="ask-actions"><button type="button" class="ask-button ask-primary" data-ask="${key}" data-submit="answer">${escape(words.submit)}</button><button type="button" class="ask-button ask-no" data-ask="${key}" data-submit="skip">${escape(words.skip)}</button></div>`;

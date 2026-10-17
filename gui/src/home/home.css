@@ -237,7 +237,7 @@
 }
 
 .someone-doing .where::after {
-  content: "·";
+  content: "";
   margin: 0 0.45em;
   color: var(--text-3);
 }

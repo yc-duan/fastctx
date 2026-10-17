@@ -183,7 +183,7 @@ interface Slot {
 /** A change of the machines and folders, as one line. */
 function focusSaid(focus: Focus, words: Words): string {
   const items = focus.machines.flatMap((chosen) =>
-    chosen.folders.length ? chosen.folders.map((folder) => `${chosen.machine} · ${folderName(folder)}`) : [chosen.machine],
+    chosen.folders.length ? chosen.folders.map((folder) => `${chosen.machine}: ${folderName(folder)}`) : [chosen.machine],
   );
   return items.length ? words.focusChanged(items.join(words.listSeparator)) : words.focusCleared;
 }
@@ -1071,7 +1071,7 @@ export class ConversationView {
       case "question":
         return this.question(entry);
       case "forked": {
-        const from = `${entry.source.resident} · ${entry.source.machine}`;
+        const from = `${entry.source.resident} ${entry.source.machine}`;
         const link = this.context.link ? `<a href="${escape(this.context.link(entry.source))}">${escape(from)}</a>` : escape(from);
         return `<div class="divider"><span>${words.forkedFrom(link)}</span></div>`;
       }
@@ -1155,7 +1155,7 @@ export class ConversationView {
   /** A request as its card: what it asks, and the answers it takes. */
   private ask(entry: AskEntry): string {
     const asks = this.context.asks;
-    if (!asks) return `<div class="note caution">${escape(this.context.words.waitingForYou)} · ${escape(entry.request)}</div>`;
+    if (!asks) return `<div class="note caution">${escape(this.context.words.waitingForYou)}: ${escape(entry.request)}</div>`;
     const ask = readAsk(entry.request, entry.params, asks.words);
     // A change waiting for approval is the edit already shown above: its
     // files are named from there.
@@ -1339,7 +1339,7 @@ export class ConversationView {
       }
       case "health":
         ok = false;
-        said = `${notice.label} · ${healthSaid(notice.health, words)}`;
+        said = `${notice.label}: ${healthSaid(notice.health, words)}`;
         break;
       case "world": {
         const fact = notice.fact;
@@ -1401,7 +1401,7 @@ export class ConversationView {
     // written for the model are said again in the interface's words.
     const world = from.kind === "world";
     const told = readTold(text);
-    let label = world ? words.world : from.kind === "page" ? words.aPage(from.page.page) : `${from.address.resident} · ${from.address.machine}`;
+    let label = world ? words.world : from.kind === "page" ? words.aPage(from.page.page) : `${from.address.resident} ${from.address.machine}`;
     let how = "";
     let body: string;
     switch (told.kind) {
@@ -1409,7 +1409,7 @@ export class ConversationView {
         body = `<p class="told-line">${escape(words.jobEnded(told.job, told.machine))}<span class="told-how">${escape(words.ended(told.how))}</span></p><p class="told-path">${escape(told.output)}</p>`;
         break;
       case "colleague":
-        label = `${told.colleague} · ${told.machine}`;
+        label = `${told.colleague} ${told.machine}`;
         how = words.ended(told.how);
         body = `<div class="prose">${render(told.body)}</div>`;
         break;
@@ -1789,7 +1789,7 @@ export class ConversationView {
     const steps = run.tools ?? run.steps.length;
     if (run.going) return run.began === null ? "" : clockSays(steps, run.began, words);
     const took = run.duration ?? (run.ended !== null && run.began !== null ? run.ended - run.began : null);
-    return [steps ? words.steps(steps) : "", took !== null ? words.took(took) : ""].filter(Boolean).join(" · ");
+    return [steps ? words.steps(steps) : "", took !== null ? words.took(took) : ""].filter(Boolean).join(words.figureGap);
   }
 
   /** The agents a call names, as the row says them: each by its name, its

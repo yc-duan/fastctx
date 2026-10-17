@@ -128,7 +128,7 @@ export class AgentsPanel {
     this.button.hidden = runs.length === 0;
     if (!runs.length) this.popover.hide();
     this.button.classList.toggle("going", going > 0);
-    this.button.setAttribute("aria-label", going ? `${words.agents.title} · ${words.agents.running(going)}` : words.agents.title);
+    this.button.setAttribute("aria-label", going ? `${words.agents.title} ${words.agents.running(going)}` : words.agents.title);
     const html = `${glyph("delegate", 16)}${going ? `<span class="agents-count">${going}</span>` : ""}`;
     if (this.button.innerHTML !== html) this.button.innerHTML = html;
     if (this.popover.open) {
@@ -148,7 +148,7 @@ export class AgentsPanel {
     const { words } = this.options;
     const now = Date.now();
     const working = this.runs.filter((run) => run.going).length;
-    const said = working ? `${words.agents.title} · ${words.agents.running(working)}` : words.agents.title;
+    const said = working ? `${words.agents.title} ${words.agents.running(working)}` : words.agents.title;
     if (this.title.textContent !== said) this.title.textContent = said;
     this.width = this.groups.clientWidth;
     const groups = groupsOf(this.runs, now);
@@ -301,7 +301,7 @@ export class AgentsPanel {
     // The clock of one that works moves with its group's.
     if (run.going && run.began !== null) {
       const steps = run.tools ?? run.steps.length;
-      const said = [steps ? words.steps(steps) : "", words.took(now - run.began)].filter(Boolean).join(" · ");
+      const said = [steps ? words.steps(steps) : "", words.took(now - run.began)].filter(Boolean).join(" ");
       if (lane.meta.textContent !== said) lane.meta.textContent = said;
     }
   }
@@ -318,7 +318,7 @@ export class AgentsPanel {
     const taskSaid = run.task ?? run.name ?? run.kind ?? run.id;
     if (task.textContent !== taskSaid) task.textContent = taskSaid;
     const button = lane.element.querySelector<HTMLElement>(".lane-what")!;
-    button.title = `${words.agents.goTo} · ${run.prompt ?? taskSaid}`;
+    button.title = `${words.agents.goTo}: ${run.prompt ?? taskSaid}`;
     lane.element.style.setProperty("--depth", String(depthOf(run, runs)));
     if (run.going) return;
     const steps = run.tools ?? run.steps.length;
@@ -328,7 +328,7 @@ export class AgentsPanel {
         ? words.agents.failed
         : run.state === "stopped"
           ? words.agents.stopped
-          : [steps ? words.steps(steps) : "", took !== null ? words.took(took) : ""].filter(Boolean).join(" · ");
+          : [steps ? words.steps(steps) : "", took !== null ? words.took(took) : ""].filter(Boolean).join(" ");
     if (lane.meta.textContent !== said) lane.meta.textContent = said;
   }
 

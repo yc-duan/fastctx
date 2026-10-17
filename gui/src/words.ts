@@ -200,7 +200,7 @@ export interface Words {
   /** Under a turn's last message: copy all it said, ask the same again. */
   copyAnswer: string;
   regenerate: string;
-  /** A colleague handed back its answer: "GPT · laptop 交回 · 14 分钟". */
+  /** A colleague handed back its answer: "GPT 交回　14 分钟". */
   answered(label: string, took: string | null): string;
   answerFailed(label: string): string;
   /** The watch on the session ended: the node ended it, or the connection
@@ -318,8 +318,8 @@ export const zh: Words = {
   questions: zhQuestions,
   queue: {
     waiting: (count) => `排队 ${count} 条`,
-    held: "已暂停 · 本轮停止",
-    notTaken: "已暂停 · 上一条没送出",
+    held: "已暂停，本轮停止",
+    notTaken: "已暂停，上一条没送出",
     unsure: "不知是否送到",
     sendNow: "立即发送",
     sendNowTitle: "不等本轮结束，立即发送",
@@ -372,7 +372,7 @@ export const zh: Words = {
     next: "下一个",
     close: "关闭查找",
   },
-  you: (machine) => `你 · ${machine}`,
+  you: (machine) => `来自 ${machine}`,
   world: "Fastctx",
   aPage: (name) => `页面「${name}」`,
   compacted: "上下文已压缩",
@@ -439,7 +439,7 @@ export const zh: Words = {
     spent: (input, cached, output, reasoning) =>
       [`输入 ${input.toLocaleString("zh-CN")}`, cached ? `缓存命中 ${cached.toLocaleString("zh-CN")}` : "", `输出 ${output.toLocaleString("zh-CN")}`, reasoning ? `其中推理 ${reasoning.toLocaleString("zh-CN")}` : ""]
         .filter(Boolean)
-        .join(" · "),
+        .join("，"),
   },
   took: (ms) => {
     const seconds = Math.max(0, Math.round(ms / 1000));
@@ -451,12 +451,12 @@ export const zh: Words = {
   steps: (n) => `${n} 步`,
   copyAnswer: "复制回答",
   regenerate: "重新回答",
-  answered: (label, took) => (took ? `${label} 交回 · ${took}` : `${label} 交回`),
+  answered: (label, took) => (took ? `${label} 交回　${took}` : `${label} 交回`),
   answerFailed: (label) => `${label} 本轮失败`,
   watchEnded: () => "已停止同步",
   watchRefused: "你的账号看不了这段对话",
   watchInterrupted: () => "连接中断，正在重连…",
-  brokenFor: (took, why) => (why ? `已断开 ${took} · ${why}` : `已断开 ${took}`),
+  brokenFor: (took, why) => (why ? `已断开 ${took}：${why}` : `已断开 ${took}`),
   notSent: () => "发送失败",
   waitingToSend: "等待发送",
   health: {
@@ -476,8 +476,8 @@ export const zh: Words = {
     on: (machine, path) => `${machine} 上的 ${path}`,
     openFailed: (why) => `打不开这个文件：${why}`,
     gone: "原件已不在",
-    fetching: (name, share) => (share === null ? `正在取 ${name}` : `正在取 ${name} · ${share}%`),
-    fetchInterrupted: (name) => `连接中断，正在重连… · ${name}`,
+    fetching: (name, share) => (share === null ? `正在取 ${name}` : `正在取 ${name}　${share}%`),
+    fetchInterrupted: (name) => `${name}：连接中断，正在重连…`,
   },
   pictures: {
     close: "关闭",
@@ -508,9 +508,9 @@ export const zh: Words = {
     reading: "正在读取…",
     unreadable: "读不到它的记录",
     nothing: "还没开始",
-    done: (task) => (task ? `子代理已完成 · ${task}` : "子代理已完成"),
-    failedTold: (task) => (task ? `子代理失败 · ${task}` : "子代理失败"),
-    stoppedTold: (task) => (task ? `子代理已停止 · ${task}` : "子代理已停止"),
+    done: (task) => (task ? `子代理已完成：${task}` : "子代理已完成"),
+    failedTold: (task) => (task ? `子代理失败：${task}` : "子代理失败"),
+    stoppedTold: (task) => (task ? `子代理已停止：${task}` : "子代理已停止"),
     tools: (n) => `${n} 次工具调用`,
     goTo: "转到它",
     now: "现在",
@@ -524,7 +524,7 @@ export const zh: Words = {
   jobOutputLoading: "正在读取…",
   jobOutputFailed: (why) => `读不到输出：${why}`,
   jobOver: "已结束",
-  jobRunning: (job, machine, lasted) => `${job} · ${machine} · ${lasted}`,
+  jobRunning: (job, machine, lasted) => `${job}　${machine}　${lasted}`,
   minutes: (n) => (n < 1 ? "不到 1 分钟" : `${n} 分钟`),
   hours: (hours, minutes) => (minutes ? `${hours} 小时 ${minutes} 分` : `${hours} 小时`),
   landed: (how, machine) =>
@@ -564,8 +564,8 @@ export const en: Words = {
   questions: enQuestions,
   queue: {
     waiting: (count) => `${count} queued`,
-    held: "Paused · turn stopped",
-    notTaken: "Paused · last one not sent",
+    held: "Paused, turn stopped",
+    notTaken: "Paused, last one not sent",
     unsure: "Delivery unknown",
     sendNow: "Send now",
     sendNowTitle: "Send now without waiting for this turn",
@@ -620,7 +620,7 @@ export const en: Words = {
     next: "Next",
     close: "Close find",
   },
-  you: (machine) => `You · ${machine}`,
+  you: (machine) => `From ${machine}`,
   world: "Fastctx",
   aPage: (name) => `the page “${name}”`,
   compacted: "Context compacted",
@@ -687,7 +687,7 @@ export const en: Words = {
     spent: (input, cached, output, reasoning) =>
       [`${input.toLocaleString("en")} in`, cached ? `${cached.toLocaleString("en")} cached` : "", `${output.toLocaleString("en")} out`, reasoning ? `${reasoning.toLocaleString("en")} reasoning` : ""]
         .filter(Boolean)
-        .join(" · "),
+        .join(", "),
   },
   took: (ms) => {
     const seconds = Math.max(0, Math.round(ms / 1000));
@@ -699,12 +699,12 @@ export const en: Words = {
   steps: (n) => `${n} step${n === 1 ? "" : "s"}`,
   copyAnswer: "Copy answer",
   regenerate: "Answer again",
-  answered: (label, took) => (took ? `${label} handed back · ${took}` : `${label} handed back`),
+  answered: (label, took) => (took ? `${label} handed back after ${took}` : `${label} handed back`),
   answerFailed: (label) => `${label}: turn failed`,
   watchEnded: () => "Sync stopped",
   watchRefused: "Your account can't see this conversation",
   watchInterrupted: () => "Disconnected, reconnecting…",
-  brokenFor: (took, why) => (why ? `Disconnected for ${took} · ${why}` : `Disconnected for ${took}`),
+  brokenFor: (took, why) => (why ? `Disconnected for ${took}: ${why}` : `Disconnected for ${took}`),
   notSent: () => "Couldn't send",
   waitingToSend: "Waiting to send",
   health: {
@@ -724,8 +724,8 @@ export const en: Words = {
     on: (machine, path) => `${path} on ${machine}`,
     openFailed: (why) => `Couldn't open the file: ${why}`,
     gone: "The original is gone",
-    fetching: (name, share) => (share === null ? `Fetching ${name}` : `Fetching ${name} · ${share}%`),
-    fetchInterrupted: (name) => `Disconnected, reconnecting… · ${name}`,
+    fetching: (name, share) => (share === null ? `Fetching ${name}` : `Fetching ${name}, ${share}%`),
+    fetchInterrupted: (name) => `${name}: disconnected, reconnecting…`,
   },
   pictures: {
     close: "Close",
@@ -756,9 +756,9 @@ export const en: Words = {
     reading: "Reading…",
     unreadable: "Its record can't be read",
     nothing: "Not started yet",
-    done: (task) => (task ? `Agent finished · ${task}` : "Agent finished"),
-    failedTold: (task) => (task ? `Agent failed · ${task}` : "Agent failed"),
-    stoppedTold: (task) => (task ? `Agent stopped · ${task}` : "Agent stopped"),
+    done: (task) => (task ? `Agent finished: ${task}` : "Agent finished"),
+    failedTold: (task) => (task ? `Agent failed: ${task}` : "Agent failed"),
+    stoppedTold: (task) => (task ? `Agent stopped: ${task}` : "Agent stopped"),
     tools: (n) => (n === 1 ? "1 tool call" : `${n} tool calls`),
     goTo: "Go to it",
     now: "now",
@@ -772,7 +772,7 @@ export const en: Words = {
   jobOutputLoading: "Reading…",
   jobOutputFailed: (why) => `Couldn't read the output: ${why}`,
   jobOver: "Ended",
-  jobRunning: (job, machine, lasted) => `${job} · ${machine} · ${lasted}`,
+  jobRunning: (job, machine, lasted) => `${job} on ${machine}, ${lasted}`,
   minutes: (n) => (n < 1 ? "under a minute" : `${n} min`),
   hours: (hours, minutes) => (minutes ? `${hours} h ${minutes} min` : `${hours} h`),
   landed: (how, machine) =>
@@ -821,7 +821,7 @@ interface EndedWords {
 function endedIn(how: string, say: EndedWords): string {
   const timed = /^(.*), (\d+[smhd](?:\d+[mh])?)$/.exec(how);
   const what = timed ? timed[1] : how;
-  const took = timed ? ` · ${timed[2]}` : "";
+  const took = timed ? `　${timed[2]}` : "";
   let said: string;
   let match: RegExpExecArray | null;
   if ((match = /^exited (\S+)$/.exec(what))) said = say.exited(match[1]);

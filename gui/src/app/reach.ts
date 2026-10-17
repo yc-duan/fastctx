@@ -297,9 +297,9 @@ export function sameHome(home: string | null, dir: string | null): boolean {
   return plain(home) === plain(dir);
 }
 
-/** "home · ada": a login as the user reads it. */
+/** "home ada": a login as the user reads it. */
 export function loginLabel(login: Login): string {
-  return `${login.hubName} · ${login.account}`;
+  return `${login.hubName} ${login.account}`;
 }
 
 export function sameLogin(a: Login, b: { hub: HubId; account: AccountName }): boolean {

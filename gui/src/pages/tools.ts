@@ -40,7 +40,7 @@ function writer(by: Writer): string {
     case "user":
       return "user";
     case "resident":
-      return `${by.address.resident} · ${by.address.machine}`;
+      return `${by.address.resident} ${by.address.machine}`;
     case "session":
       return agentName(by.agent);
     case "page":

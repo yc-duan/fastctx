@@ -537,7 +537,7 @@ export class LoginPage implements Page {
           ? `<div class="welcome-slip"><span title="${escape(done.unkept ?? "")}">${escape(wanting.kept)}</span>${this.options.keep && (kept?.kind === "declined" || done.unkept) ? `<button class="text-button keep-now" type="button">${escape(words.keepGo)}</button>` : ""}</div>`
           : "",
     ].join("");
-    const who = [done.account, this.options.device ? "" : done.name].filter(Boolean).join(" · ");
+    const who = [done.account, this.options.device ? "" : done.name].filter(Boolean).join(" ");
     // A picture, not a place to work: the drawing is shown, never pointed
     // at or pressed (`world-gui.md`, 登录或新建成功之后).
     this.body.innerHTML = `

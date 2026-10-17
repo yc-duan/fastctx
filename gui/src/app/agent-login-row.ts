@@ -112,10 +112,10 @@ export function bars(agent: Agent, limits: Fact<AgentLimits>, now: Date, words: 
     const percent = `${Math.round(window.used_tenths / 10)}%`;
     const name = escape(words.window(window.name, window.minutes ?? null));
     if (isReset(window, now.getTime())) {
-      const said = [words.reset, words.usedBefore(percent), read].join(" · ");
+      const said = [words.reset, words.usedBefore(percent), read].join("\n");
       return `<span class="logins-bar reset" title="${escape(said)}"><span class="logins-bar-name">${name}</span><span class="logins-bar-track"></span><span class="logins-bar-used"></span><span class="logins-bar-reset">${escape(words.reset)}</span></span>`;
     }
-    const said = [words.used(percent), window.resets_at ? words.resets(new Date(window.resets_at), now) : "", read, credits ? words.credits(credits.balance ?? null, credits.unlimited) : ""].filter(Boolean).join(" · ");
+    const said = [words.used(percent), window.resets_at ? words.resets(new Date(window.resets_at), now) : "", read, credits ? words.credits(credits.balance ?? null, credits.unlimited) : ""].filter(Boolean).join("\n");
     const width = Math.min(100, window.used_tenths / 10).toFixed(1);
     const onCredits = window.used_tenths >= 1000 && !!credits;
     const left = window.resets_at ? words.resetsIn(new Date(window.resets_at), now) : "";
@@ -131,8 +131,8 @@ export function bars(agent: Agent, limits: Fact<AgentLimits>, now: Date, words: 
 function assistanceTag(machine: string, dir: string, assistance: Assistance, now: Date, words: AgentLoginsWords, access: AccessWords): string {
   const at = `data-machine="${escape(machine)}" data-dir="${escape(dir)}" data-to="${escape(assistance.to)}"`;
   const until = assistance.until ? new Date(assistance.until) : null;
-  const said = [until ? access.moment.until(until, now) : access.when.none, assistance.weekly ? access.weeklyOf(wholeDollars(assistance.weekly)) : ""].filter(Boolean).join(" · ");
-  return `<span class="tag assist-tag"><button class="assist-tag-open" type="button" data-act="assist-edit" ${at} title="${escape(`${access.changeUntil} · ${said}`)}">${escape(assistance.to)}${until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : ""}${assistance.weekly ? `<span class="assist-tag-until">${escape(words.weeklyShort(wholeDollars(assistance.weekly)))}</span>` : ""}</button><button class="assist-tag-x" type="button" data-act="assist-end" ${at} aria-label="${escape(words.endAssist(assistance.to))}" title="${escape(words.endAssist(assistance.to))}">${glyph("cross", 12)}</button></span>`;
+  const said = [until ? access.moment.until(until, now) : access.when.none, assistance.weekly ? access.weeklyOf(wholeDollars(assistance.weekly)) : ""].filter(Boolean).join("\n");
+  return `<span class="tag assist-tag"><button class="assist-tag-open" type="button" data-act="assist-edit" ${at} title="${escape(`${access.changeUntil}\n${said}`)}">${escape(assistance.to)}${until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : ""}${assistance.weekly ? `<span class="assist-tag-until">${escape(words.weeklyShort(wholeDollars(assistance.weekly)))}</span>` : ""}</button><button class="assist-tag-x" type="button" data-act="assist-end" ${at} aria-label="${escape(words.endAssist(assistance.to))}" title="${escape(words.endAssist(assistance.to))}">${glyph("cross", 12)}</button></span>`;
 }
 
 /** The assistance the reader has of it: from whom, until when, and what it
@@ -141,7 +141,7 @@ function assistedTag(mine: { assist: AssistSeen; owner: string | null }, now: Da
   const { assist, owner } = mine;
   const until = assist.until ? new Date(assist.until) : null;
   const weekly = assist.weekly ? assist.weekly / 1_000_000 : null;
-  const said = [usageWords.assistUntil(until, now), weekly ? usageWords.weekly(wholeDollars(weekly)) : usageWords.weeklyNone].join(" · ");
+  const said = [usageWords.assistUntil(until, now), weekly ? usageWords.weekly(wholeDollars(weekly)) : usageWords.weeklyNone].join("\n");
   return `<span class="tag logins-assisted" title="${escape(said)}">${escape(words.assistedFrom(owner ?? "–"))}${until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : ""}${weekly ? `<span class="assist-tag-until">${escape(words.weeklyShort(wholeDollars(weekly)))}</span>` : ""}</span>`;
 }
 
@@ -164,7 +164,7 @@ export function planName(plan: string): string {
 
 export function programLine(program: FoundProgram, words: AgentLoginsWords): string {
   const what = program.within ? words.within(program.within.name, program.within.version ?? null) : words.how[program.how];
-  return [program.path ?? program.within?.path ?? "", program.version ?? "", what, program.on_path ? words.onPath : ""].filter(Boolean).join(" · ");
+  return [program.path ?? program.within?.path ?? "", program.version ?? "", what, program.on_path ? words.onPath : ""].filter(Boolean).join("\n");
 }
 
 function levelOf(window: LimitWindow): string {

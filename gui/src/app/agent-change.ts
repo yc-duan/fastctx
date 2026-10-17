@@ -70,8 +70,8 @@ export interface AgentChangeWords {
 }
 
 export const zhAgentChange: AgentChangeWords = {
-  applyTitle: (who, machine) => `接入 ${who} · ${machine}`,
-  removeTitle: (who, machine) => `移除 ${who} · ${machine}`,
+  applyTitle: (who, machine) => `接入 ${machine} 上的 ${who}`,
+  removeTitle: (who, machine) => `移除 ${machine} 上的 ${who}`,
   putIn: "换上",
   putInWhat: "Fastctx 的 run：跑命令、看文件与图片、改文件、去别的机器",
   putInTags: ["run"],
@@ -117,8 +117,8 @@ export const zhAgentChange: AgentChangeWords = {
 };
 
 export const enAgentChange: AgentChangeWords = {
-  applyTitle: (who, machine) => `Hook up ${who} · ${machine}`,
-  removeTitle: (who, machine) => `Remove ${who} · ${machine}`,
+  applyTitle: (who, machine) => `Hook up ${who} on ${machine}`,
+  removeTitle: (who, machine) => `Remove ${who} on ${machine}`,
   putIn: "Puts in",
   putInWhat: "Fastctx's run: commands, files and images, edits, other machines",
   putInTags: ["run"],
@@ -360,7 +360,7 @@ export class AgentChangeSheet {
         const mark = file.how === "created" ? "plus" : file.how === "removed" ? "minus" : "edit";
         const said = file.how === "created" ? words.created : file.how === "removed" ? words.removed : words.changed;
         return `<li class="agent-change-file${open.has(index) ? " open" : ""}" data-file="${index}">
-          <button class="agent-change-file-line" type="button" data-change="file" aria-expanded="${open.has(index)}" title="${escape(said)} · ${escape(file.path)}">
+          <button class="agent-change-file-line" type="button" data-change="file" aria-expanded="${open.has(index)}" title="${escape(said)}\n${escape(file.path)}">
             <span class="agent-change-file-mark">${glyph(mark, 14)}</span><span class="agent-change-path">${escape(shortPath(file.path))}</span>
             <span class="row-stats"><span class="add">+${added}</span><span class="del">−${removed}</span></span><span class="agent-change-chevron">${glyph("chevron", 14)}</span>
           </button>

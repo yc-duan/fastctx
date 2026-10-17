@@ -68,7 +68,7 @@ export class UpdateRows {
       const parts = [words.latest];
       if (state.looked.github === false) parts.push(words.unreachable);
       if (state.looked.github === false && state.network?.[state.channel === "beta" ? "beta" : "stable"]) parts.push(words.heardFromNetwork);
-      line = escape(parts.join(" · "));
+      line = escape(parts.join(" "));
     }
     const choices = (kind: string, options: [string, string][], chosen: string) =>
       `<div class="choice-options">${options

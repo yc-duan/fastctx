@@ -22,7 +22,7 @@ export interface FileLinkWords {
   openFailed(why: string): string;
   /** A file the user sent that is nowhere to be had any more. */
   gone: string;
-  /** A file coming here that takes a while: "正在取 report.html · 45%". */
+  /** A file coming here that takes a while: "正在取 report.html 45%". */
   fetching(name: string, share: number | null): string;
   /** Its way broke; it comes on once the way is back. */
   fetchInterrupted(name: string): string;
