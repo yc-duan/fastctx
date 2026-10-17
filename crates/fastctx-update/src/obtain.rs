@@ -74,20 +74,20 @@ pub(crate) async fn run(
     let hub = async {
         let link = request.link.as_ref().ok_or("no hub supplies packages")?;
         from_hub(link, version, target, package.size, hub_file, &mut hub_heard).await?;
-        crate::verify::file(hub_file, &package.signature, version)?;
+        verified(hub_file, &package.signature, version).await?;
         Ok::<_, String>(())
     };
     let local_source = local.clone();
     let github = async {
         let source = local_source.borrow().clone();
         let speed = if let Some(carried) = source.carried {
-            std::fs::copy(&carried, local_file).map_err(|error| format!("{}: {error}", carried.display()))?;
+            tokio::fs::copy(&carried, local_file).await.map_err(|error| format!("{}: {error}", carried.display()))?;
             None
         } else {
             let url = package.url.as_deref().ok_or("the release publishes it nowhere else")?;
             crate::download::patiently(url, local_file, &mut github_heard).await?
         };
-        crate::verify::file(local_file, &package.signature, version)?;
+        verified(local_file, &package.signature, version).await?;
         Ok::<_, String>(speed)
     };
     tokio::pin!(hub, github);
@@ -139,6 +139,15 @@ pub(crate) async fn run(
             return Err(failures.join("; "));
         }
     }
+}
+
+/// `verify::file` on a blocking thread: reading a whole package to check
+/// its signature holds no async worker meanwhile.
+async fn verified(path: &Path, signature: &str, version: &str) -> Result<(), String> {
+    let (path, signature, version) = (path.to_path_buf(), signature.to_string(), version.to_string());
+    tokio::task::spawn_blocking(move || crate::verify::file(&path, &signature, &version))
+        .await
+        .map_err(|error| format!("checking the package's signature: {error}"))?
 }
 
 async fn from_hub(

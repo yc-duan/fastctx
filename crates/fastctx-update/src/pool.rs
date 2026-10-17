@@ -215,9 +215,15 @@ impl Pool {
     }
 }
 
+/// How long a try's file is tried to be deleted, as something else (an
+/// antivirus, an indexer) may hold it for a moment. The owner, and everyone
+/// waiting on it, waits that long at most: one left is deleted as the
+/// program next starts (`Cache::clear_attempts`).
+const CLEANUP_TRIES: u32 = 30;
+
 async fn cleanup(path: &std::path::Path, log: &Log) {
     let mut last = None;
-    loop {
+    for _ in 0..CLEANUP_TRIES {
         match tokio::fs::remove_file(path).await {
             Ok(()) => return,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
@@ -231,4 +237,5 @@ async fn cleanup(path: &std::path::Path, log: &Log) {
         }
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
+    log(format!("left temporary package {} for the next start to delete", path.display()));
 }
