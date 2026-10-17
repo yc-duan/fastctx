@@ -5,6 +5,7 @@
 // a specimen stands in, so the interface can be looked at in a plain
 // browser.
 
+import { loginsOf } from "../world/accounts";
 import { inShell, watchWorld, worldNow, type WorldNow } from "../world/bridge";
 import type { Address } from "../world/events";
 import type { ResidentNow, RunningJob, WhoFor } from "../world/world";
@@ -182,11 +183,22 @@ function keep(): void {
 
 /** The residents of machines that did not answer this time, as they last
  *  answered: listed, marked as out of reach, never taken for live; those
- *  archived too when `archived`. */
+ *  archived too when `archived`. Only those working for an account this
+ *  device is logged in to now: what was kept under another login, or an
+ *  older World that answered with every conversation, is not listed. */
 export function unreachedOf(world: WorldNow | null, archived = false): ResidentNow[] {
-  return (world?.who.machines ?? []).flatMap((machine) => {
+  if (!world) return [];
+  const ours = loginsOf(world.accounts);
+  const theirs = (machine: string): { hub: string; account: string }[] =>
+    world.accounts.hubs.flatMap((hub) => (hub.members.find((member) => member.name === machine)?.logins ?? []).map((account) => ({ hub: hub.hub, account })));
+  const worksForUs = (resident: ResidentNow): boolean => {
+    const acting = resident.about.acting;
+    const accounts = !acting || acting.kind === "here" ? theirs(resident.about.machine) : acting.accounts;
+    return accounts.some((account) => ours.some((login) => login.hub === account.hub && login.account === account.account));
+  };
+  return world.who.machines.flatMap((machine) => {
     if (machine.kind === "answered") return [];
-    const residents = (lastAnswered.get(machine.machine) ?? []).filter((r) => archived || !r.removed);
+    const residents = (lastAnswered.get(machine.machine) ?? []).filter((r) => (archived || !r.removed) && worksForUs(r));
     for (const r of residents) unreached.add(r);
     return residents;
   });

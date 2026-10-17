@@ -221,7 +221,8 @@ export function groupsOf(world: WorldNow | null): Group[] {
 }
 
 /** The logins that see a resident: those it works for, among this
- *  computer's; otherwise every one that may use the machine it is on. */
+ *  computer's. One working for none of them is no one's here
+ *  (`world-gui.md`, 侧栏、首页与机器页上列的对话). */
 export function residentIn(world: WorldNow, group: Group, resident: ResidentNow): boolean {
   const lives = resident.about.machine;
   if (!group.machines.some((machine) => machine.name === lives) && !group.assistants.some((one) => one.machine === lives)) return false;
@@ -229,7 +230,7 @@ export function residentIn(world: WorldNow, group: Group, resident: ResidentNow)
   if (!acting || acting.kind === "here") return true;
   const ours = loginsOf(world.accounts);
   const mine = acting.accounts.filter((account) => ours.some((login) => login.hub === account.hub && login.account === account.account));
-  return !mine.length || mine.some((account) => account.hub === group.login.hub && account.account === group.login.account);
+  return mine.some((account) => account.hub === group.login.hub && account.account === group.login.account);
 }
 
 /** The assisting login a resident is of, where it is one: it lives on a
