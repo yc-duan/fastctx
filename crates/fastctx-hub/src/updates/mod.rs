@@ -473,6 +473,25 @@ pub(crate) async fn look_every(hub: Weak<Hub>) {
     }
 }
 
+/// What `health.json` says of the packages the hub keeps for the network
+/// (`world-network.md`, 中枢看着自己): which it holds, which it brings in
+/// now, and which machines fetch them for it.
+pub(crate) fn health(hub: &Hub) -> serde_json::Value {
+    let named = |held: &Held| format!("{} {}", held.target, held.version);
+    let (cache, coming, helping) = {
+        let updates = hub.updates.lock().expect("never poisoned");
+        let coming: Vec<String> = updates.obtaining.keys().map(named).collect();
+        let helping: Vec<serde_json::Value> = updates
+            .fetches
+            .values()
+            .map(|fetching| serde_json::json!({ "member": fetching.helper.to_string(), "package": named(&fetching.held) }))
+            .collect();
+        (updates.cache.clone(), coming, helping)
+    };
+    let held: Vec<String> = cache.held().iter().map(named).collect();
+    serde_json::json!({ "held": held, "coming": coming, "fetching_for_it": helping })
+}
+
 /// How long a release asked for is kept as asked: a batch asks one machine
 /// after another, three at a time.
 const ASKED_LATELY: Duration = Duration::from_secs(3600);
