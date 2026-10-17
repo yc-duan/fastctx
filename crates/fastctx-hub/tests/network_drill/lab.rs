@@ -71,6 +71,11 @@ impl Lab {
         self.got.lock().expect("never poisoned").clone()
     }
 
+    /// How many letters were taken, each counted once.
+    pub fn received(&self) -> usize {
+        self.got.lock().expect("never poisoned").len()
+    }
+
     pub fn connections(&self) -> usize {
         self.connected.load(Ordering::SeqCst)
     }

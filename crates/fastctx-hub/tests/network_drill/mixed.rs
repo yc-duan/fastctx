@@ -169,8 +169,13 @@ pub async fn earlier_node(world: &World, program: &Path, report: &mut Report) ->
         format!("the hub took all {wanted} letters for it"),
         format!("numbered {:?} from {numbered_before}", next_for(world, "delta")),
     );
+    // Numbered within a second, the letters may all come after the health
+    // last written, which then still says the hub holds none.
+    let numbered_at = jiff::Timestamp::now();
     let taken = until(Duration::from_secs(120), || {
-        world.hub.health().is_some_and(|health| health["letters"]["held"].as_u64() == Some(0))
+        world.hub.health().is_some_and(|health| {
+            crate::health::written_after(&health, numbered_at) && health["letters"]["held"].as_u64() == Some(0)
+        })
     })
     .await;
     report.check(

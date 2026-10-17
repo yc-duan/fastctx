@@ -16,16 +16,14 @@ pub async fn settled(hub: &Hub, since: jiff::Timestamp, sessions: u64, within: D
     let began = Instant::now();
     let mut last = "no health written".to_string();
     loop {
-        if let Some(health) = hub.health() {
-            let fresh =
-                health["at"].as_str().and_then(|at| at.parse::<jiff::Timestamp>().ok()).is_some_and(|at| at > since);
-            if fresh {
-                let left = left_over(&health, sessions);
-                if left.is_empty() {
-                    return Ok(began.elapsed());
-                }
-                last = left.join(", ");
+        if let Some(health) = hub.health()
+            && written_after(&health, since)
+        {
+            let left = left_over(&health, sessions);
+            if left.is_empty() {
+                return Ok(began.elapsed());
             }
+            last = left.join(", ");
         }
         if began.elapsed() > within {
             return Err(last);
@@ -66,7 +64,7 @@ pub async fn fresh(hub: &Hub, since: jiff::Timestamp, within: Duration) -> Optio
     let began = Instant::now();
     loop {
         if let Some(health) = hub.health()
-            && health["at"].as_str().and_then(|at| at.parse::<jiff::Timestamp>().ok()).is_some_and(|at| at > since)
+            && written_after(&health, since)
         {
             return Some(health);
         }
@@ -75,6 +73,12 @@ pub async fn fresh(hub: &Hub, since: jiff::Timestamp, within: Duration) -> Optio
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+/// Whether the hub wrote `health` after `since`: one written before says
+/// nothing of what happened since, however well it reads.
+pub fn written_after(health: &Value, since: jiff::Timestamp) -> bool {
+    health["at"].as_str().and_then(|at| at.parse::<jiff::Timestamp>().ok()).is_some_and(|at| at > since)
 }
 
 /// How many letters the hub holds now for every member together.

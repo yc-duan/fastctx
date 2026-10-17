@@ -16,7 +16,7 @@ use fastctx_types::world::Path;
 
 use crate::health;
 use crate::lab::{self, IN_A_MESSAGE, OVER_DATA};
-use crate::letters::{arrived, send};
+use crate::letters::{arrived, flow, send};
 use crate::report::{Report, seconds};
 use crate::world::{World, until};
 
@@ -56,12 +56,12 @@ pub async fn cuts(world: &World, report: &mut Report) -> anyhow::Result<()> {
     const CUTS: usize = 8;
     let gamma = world.machine("gamma");
     let before: Vec<usize> = world.machines.iter().map(|machine| machine.lab.connections()).collect();
-    let mut sending = send(world, &["alpha", "beta"], "gamma", "cuts", 1500);
+    let mut sending = flow(world, &["alpha", "beta"], "gamma", "cuts", 1500);
     let mut rng = crate::Rng(0x2545_f491_4f6c_dd1d);
     let mut amid = 0;
     for _ in 0..CUTS {
         tokio::time::sleep(Duration::from_millis(rng.between(400, 1600))).await;
-        amid += usize::from(gamma.lab.got().len() < sending.wanted.len());
+        amid += usize::from(sending.on_their_way(&gamma.lab));
         for machine in &world.machines {
             machine.line.cut();
         }
@@ -172,13 +172,13 @@ pub async fn refused(world: &World, report: &mut Report) -> anyhow::Result<()> {
 pub async fn crash(world: &World, report: &mut Report) -> anyhow::Result<()> {
     const KILLS: usize = 5;
     let gamma = world.machine("gamma");
-    let mut sending = send(world, &["alpha", "beta"], "gamma", "crash", 1500);
+    let mut sending = flow(world, &["alpha", "beta"], "gamma", "crash", 1500);
     let mut rng = crate::Rng(0x6a09_e667_f3bc_c908);
     let mut amid = 0;
     let mut pids = vec![world.hub.pid()];
     for _ in 0..KILLS {
         tokio::time::sleep(Duration::from_millis(rng.between(800, 2500))).await;
-        amid += usize::from(gamma.lab.got().len() < sending.wanted.len());
+        amid += usize::from(sending.on_their_way(&gamma.lab));
         world.hub.restart(Duration::from_millis(rng.between(100, 1000))).await?;
         pids.push(world.hub.pid());
     }
@@ -209,12 +209,12 @@ pub async fn restart(world: &World, report: &mut Report) -> anyhow::Result<()> {
     const RESTARTS: usize = 6;
     let gamma = world.machine("gamma");
     let before = gamma.lab.connections();
-    let mut sending = send(world, &["alpha", "beta"], "gamma", "restart", 1500);
+    let mut sending = flow(world, &["alpha", "beta"], "gamma", "restart", 1500);
     let mut rng = crate::Rng(0xbb67_ae85_84ca_a73b);
     let mut amid = 0;
     for _ in 0..RESTARTS {
         tokio::time::sleep(Duration::from_millis(rng.between(500, 2500))).await;
-        amid += usize::from(gamma.lab.got().len() < sending.wanted.len());
+        amid += usize::from(sending.on_their_way(&gamma.lab));
         gamma.stop();
         tokio::time::sleep(Duration::from_millis(rng.between(500, 2000))).await;
         let connected = gamma.lab.connections();
@@ -391,14 +391,27 @@ pub async fn cancel(world: &World, report: &mut Report) -> anyhow::Result<()> {
     const ASKED: usize = 20;
     let (alpha, beta) = (world.machine("alpha"), world.machine("beta"));
     beta.lab.stall(true);
+    // How many beta answered at once before alpha gave them up: once the
+    // first is given up, beta may stop it before the last is.
+    let most = Arc::new(AtomicUsize::new(0));
+    let watching = {
+        let (lab, most) = (beta.lab.clone(), most.clone());
+        tokio::spawn(async move {
+            loop {
+                most.fetch_max(lab.answering(), Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+    };
     let gave_up = give_up(world, "alpha", "beta", ASKED).await?;
-    let answering = beta.lab.answering();
+    watching.abort();
+    let answering = most.load(Ordering::SeqCst);
     let stopped = until(Duration::from_secs(15), || beta.lab.answering() == 0).await;
     beta.lab.stall(false);
     report.check(
         gave_up == ASKED && answering == ASKED,
         format!("alpha gave up {ASKED} questions while beta was answering every one"),
-        format!("gave up {gave_up}, beta answering {answering}"),
+        format!("gave up {gave_up}, beta answering {answering} at once"),
     );
     report.check(
         stopped.is_some() && beta.lab.stopped() == ASKED,
