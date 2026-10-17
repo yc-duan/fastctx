@@ -14,6 +14,16 @@ pub struct Snapshot {
     changed: (i64, i64),
 }
 
+impl Snapshot {
+    /// Whether `other` is of the same file with the same bytes, as far as
+    /// the filesystem says: its identity, size and last write. A change of
+    /// its metadata alone is not one, as when Windows or an antivirus marks
+    /// a program the first time it runs.
+    pub fn same_contents(&self, other: &Snapshot) -> bool {
+        self.identity == other.identity && self.size == other.size && self.modified == other.modified
+    }
+}
+
 /// Opens for reading with concurrent writers allowed. Special files must
 /// still be rejected from the returned handle's metadata by the caller.
 pub fn open(path: &Path) -> io::Result<File> {

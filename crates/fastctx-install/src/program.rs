@@ -15,12 +15,18 @@ pub fn inspect(path: &Path) -> anyhow::Result<Build> {
     let revision = revision(&path)?;
     let cache = CACHE.get_or_init(|| Mutex::new(std::collections::BTreeMap::new()));
     if let Some((held, build)) = cache.lock().expect("kernel identity cache").get(&path)
-        && *held == revision
+        && held.same_contents(&revision)
     {
         return Ok(build.clone());
     }
     let build = identify(&path)?;
-    ensure!(revision == self::revision(&path)?, "kernel changed during identification: {}", path.display());
+    // Running it for its identity may itself get it marked, by Windows or an
+    // antivirus, with no byte of it changed.
+    ensure!(
+        revision.same_contents(&self::revision(&path)?),
+        "kernel changed during identification: {}",
+        path.display()
+    );
     cache.lock().expect("kernel identity cache").insert(path, (revision, build.clone()));
     Ok(build)
 }
