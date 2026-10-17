@@ -103,6 +103,14 @@ pub fn mac_command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> 
     for value in [kernel.x86_64_sha256, kernel.aarch64_sha256].into_iter().flatten() {
         digest(value)?;
     }
+    ensure!(
+        kernel.x86_64_sha256.is_some() || kernel.aarch64_sha256.is_some(),
+        "fastctx {} for Macs is unavailable from this source; make the line again in a few minutes, or place {} or {} with {} on the hub",
+        kernel.version,
+        fastctx_types::kernel::DARWIN_AARCH64_ARCHIVE,
+        fastctx_types::kernel::DARWIN_X86_64_ARCHIVE,
+        fastctx_types::kernel::SUMS
+    );
     let (directory, insecure) = match source {
         Source::GitHub => (format!("https://github.com/yc-duan/fastctx/releases/download/v{}", kernel.version), ""),
         Source::Hub { release_directory, .. } => {
