@@ -168,7 +168,6 @@ impl Node {
     /// why.
     pub(crate) fn works_here(&self, acting: &Acting) -> Result<(), String> {
         let Acting::Accounts { accounts } = acting else { return Ok(()) };
-        let here = self.machine();
         let may = accounts.iter().any(|account| {
             self.link_of(&account.hub).is_some_and(|link| {
                 let view = link.view();
@@ -178,9 +177,11 @@ impl Node {
         if may {
             return Ok(());
         }
+        // The computer goes unnamed: it is not one the session may use
+        // (`world-network.md`, 一个居民替谁干活).
         let names: Vec<&str> = accounts.iter().map(|account| account.account.as_str()).collect();
         let whom = if names.len() == 1 { "the account" } else { "the accounts" };
-        Err(format!("{whom} {} may not work on {here}", names.join(", ")))
+        Err(format!("{whom} {} may not work on the computer this session runs on", names.join(", ")))
     }
 
     /// Calls `to`, for whom `acting` works, asking `purpose` of it: for each

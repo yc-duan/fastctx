@@ -1128,7 +1128,12 @@ fn link(link: &LinkState, now: Timestamp) -> String {
 }
 
 fn render_nodes(reply: &NodesReply, now: Timestamp) -> String {
-    let mut text = format!("=== nodes: {} ===\n", reply.machine);
+    // Without its facts, this computer is not one the asker may work on,
+    // and goes unnamed.
+    let mut text = match reply.facts {
+        Some(_) => format!("=== nodes: {} ===\n", reply.machine),
+        None => "=== nodes ===\n".to_string(),
+    };
     if let Some(facts) = &reply.facts {
         text.push_str(&format!("{}  this computer  {}\n", reply.machine, facts_line(facts)));
     }

@@ -22,8 +22,11 @@ pub fn notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Option<He
         None => 0,
     };
     let now = Heard { town: town.clone(), ledger };
+    // A session that may not work on this computer is not told it is here
+    // (`world-network.md`, 一个居民替谁干活).
+    let works_here = node.residents.about(id).is_none_or(|(about, _)| node.works_here(&about.acting).is_ok());
     let notes = match node.residents.heard(id) {
-        None => vec![introduction(&node.world, id, &here, town.as_ref())?],
+        None => vec![introduction(&node.world, id, works_here.then_some(&here), town.as_ref())?],
         // It moved: entering gave it the new town's record.
         Some(heard) if heard.town != town => Vec::new(),
         Some(heard) if heard.ledger >= ledger => return Ok((Vec::new(), None)),
@@ -38,16 +41,22 @@ pub fn notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Option<He
     Ok((notes, Some(now)))
 }
 
-fn introduction(world: &WorldDir, id: &ResidentId, here: &MachineName, town: Option<&TownName>) -> io::Result<String> {
+fn introduction(
+    world: &WorldDir,
+    id: &ResidentId,
+    here: Option<&MachineName>,
+    town: Option<&TownName>,
+) -> io::Result<String> {
+    let on = here.map(|here| format!(" on {here}")).unwrap_or_default();
     Ok(match town {
         Some(town) => match super::instructions::text(world, town)? {
-            Some(record) => format!("=== you are {id} on {here}, working in the project {town} ===\n{record}"),
-            None => format!(
-                "=== you are {id} on {here}, working in the project {town}; its record: `fastctx project show` ==="
-            ),
+            Some(record) => format!("=== you are {id}{on}, working in the project {town} ===\n{record}"),
+            None => {
+                format!("=== you are {id}{on}, working in the project {town}; its record: `fastctx project show` ===")
+            }
         },
         // When to enter a project is said once, in the session's guidance.
-        None => format!("=== you are {id} on {here}, in no project ==="),
+        None => format!("=== you are {id}{on}, in no project ==="),
     })
 }
 

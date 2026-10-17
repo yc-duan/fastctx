@@ -119,8 +119,12 @@ pub async fn query(node: &Arc<Node>, acting: &Acting, machine: Option<MachineNam
     let here = node.machine();
     let mut machines = Vec::new();
     if machine.as_ref().is_none_or(|machine| node.is_me(machine)) {
+        // One that may not work here sees the logins that assist an account
+        // it works for alone (`admission::local::agents`).
+        let works_here = node.works_here(acting).is_ok();
         machines.push(match self::here(node).await {
-            Ok(reply) => MachineAgents::Answered { reply },
+            Ok(reply) if works_here => MachineAgents::Answered { reply },
+            Ok(reply) => MachineAgents::Answered { reply: crate::admission::local::agents(node, acting, reply) },
             Err(error) => MachineAgents::NoAnswer { machine: here.clone(), reason: error.message },
         });
     }

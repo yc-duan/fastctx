@@ -57,7 +57,9 @@ pub async fn query(
     let mut answers = Vec::new();
     let mut events = Vec::new();
     let mut undated = Vec::new();
-    if asks_for(&machine) {
+    // This machine answers only to whom may work on it, as for `who`.
+    let works_here = node.works_here(acting).is_ok();
+    if works_here && asks_for(&machine) {
         // This machine's own records are filtered as the other machines
         // filter theirs: by whom each conversation works for.
         let looker = crate::admission::seen::Looker::Here(acting);
@@ -115,14 +117,17 @@ pub async fn query(
             Heard::NoAnswer(reason) => MachineSince::NoAnswer { machine: name, reason },
         });
     }
+    // A machine the town names that is out of the asker's reach goes
+    // unnamed (`world-network.md`, 一个居民替谁干活); one within it that did
+    // not answer is said so.
     if let Some(asked) = asked {
-        let unasked: Vec<_> =
-            asked.into_iter().filter(|name| !answers.iter().any(|answer| answer.machine() == name)).collect();
+        let unasked: Vec<_> = asked
+            .into_iter()
+            .filter(|name| asked_here.iter().any(|(_, asked)| asked == name) || (works_here && *name == machine))
+            .filter(|name| !answers.iter().any(|answer| answer.machine() == name))
+            .collect();
         for name in unasked {
-            answers.push(MachineSince::NoAnswer {
-                machine: name,
-                reason: "the town names this machine, but it is not one this may look at".to_string(),
-            });
+            answers.push(MachineSince::NoAnswer { machine: name, reason: "it did not answer".to_string() });
         }
     }
     answers.sort_by(|a, b| a.machine().cmp(b.machine()));

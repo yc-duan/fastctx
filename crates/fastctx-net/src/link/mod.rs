@@ -193,8 +193,10 @@ pub enum Status {
 pub enum CallFailure {
     #[error("this machine is not connected to the hub now ({reason}); nothing was sent")]
     NotConnected { reason: String },
-    #[error("there is no machine named {name}; the machines are {}", machines.iter().map(MachineName::as_str).collect::<Vec<_>>().join(", "))]
-    NotMember { name: MachineName, machines: Vec<MachineName> },
+    /// The machines are not listed: a session sees only those it may reach
+    /// (`world-network.md`, 一个居民替谁干活), which `fastctx nodes` lists.
+    #[error("there is no machine named {name}; `fastctx nodes` lists those within reach")]
+    NotMember { name: MachineName },
     #[error("{name} is offline{}", last_seen.map(offline_for).unwrap_or_default())]
     Offline { name: MachineName, last_seen: Option<Timestamp> },
     #[error("the hub did not pass the call to {name}: {reason}; nothing ran there")]
@@ -923,10 +925,9 @@ impl Inner {
         self.view().member(name).map(|member| member.key)
     }
 
-    /// A call to `name`, which is no member, refused with the machines there are.
+    /// A call to `name`, which is no member, refused.
     fn not_member(&self, name: &MachineName) -> CallFailure {
-        let machines = self.view().machines().map(|member| member.name.clone()).collect();
-        CallFailure::NotMember { name: name.clone(), machines }
+        CallFailure::NotMember { name: name.clone() }
     }
 
     /// Asks the hub for the view again. Of the many that may ask at once, as

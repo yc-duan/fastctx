@@ -29,8 +29,14 @@ pub(crate) async fn query(
     let here = node.machine();
     let mut machines = Vec::new();
     if machine.as_ref().is_none_or(|machine| node.is_me(machine)) {
+        // One that may not work here sees what an account it works for would
+        // from another machine (`admission::local::logins`).
+        let works_here = node.works_here(acting).is_ok();
         machines.push(match super::here(node).await {
-            Ok(logins) => MachineLoginsHeard::Answered { logins: Box::new(logins) },
+            Ok(logins) if works_here => MachineLoginsHeard::Answered { logins: Box::new(logins) },
+            Ok(logins) => {
+                MachineLoginsHeard::Answered { logins: Box::new(crate::admission::local::logins(node, acting, logins)) }
+            }
             Err(error) => MachineLoginsHeard::NoAnswer { machine: here.clone(), reason: error.message },
         });
     }
@@ -92,6 +98,21 @@ pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut login
             login.programs.clear();
             login.change = None;
         }
+    }
+    logins
+}
+
+/// What this machine's record shows a caller that works for no account of
+/// its hubs: no login, no folder, no scan.
+pub(crate) fn seen_by_none(mut logins: MachineLogins) -> MachineLogins {
+    logins.scan = None;
+    logins.folders.clear();
+    for agent in super::AGENTS {
+        let side = logins.of_mut(agent).expect("an agent that keeps logins");
+        side.programs.clear();
+        side.candidates.clear();
+        side.elsewhere.clear();
+        side.listed.clear();
     }
     logins
 }
