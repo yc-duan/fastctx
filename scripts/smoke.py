@@ -280,6 +280,7 @@ def managed(lab, root, archive):
     (work / "run.cmd").write_bytes((f"@echo off\r\n{line} > {out} 2>&1\r\necho EXIT=%errorlevel%>> {out}\r\n").encode("ascii"))
     task = "fastctx-smoke-managed"
     home = data / "Fastctx"
+    first = len(RESULTS)
     try:
         made = subprocess.run(["schtasks", "/create", "/tn", task, "/ru", "SYSTEM", "/sc", "once", "/st", "00:00",
                                "/tr", f"cmd /c {work / 'run.cmd'}", "/f"], capture_output=True, text=True)
@@ -316,8 +317,36 @@ def managed(lab, root, archive):
 
         until("it uninstalls itself, its service with it", uninstalled, 300)
     finally:
+        if not all(RESULTS[first:]):
+            managed_diagnostics(data, home, out)
         subprocess.run(["schtasks", "/delete", "/tn", task, "/f"], capture_output=True)
         shutil.rmtree(work, ignore_errors=True)
+
+
+def managed_diagnostics(data, home, out):
+    """What the managed Windows computer's line, processes, services and logs said."""
+    print("\n--- managed computer", flush=True)
+    print(f"== {out.name}")
+    print(out.read_text(encoding="utf-8", errors="replace") if out.is_file() else "(none)")
+    print("== fastctx processes: id, parent, owner, command line")
+    print(subprocess.run(["powershell", "-NoProfile", "-Command",
+                          "Get-CimInstance Win32_Process | Where-Object { $_.Name -in 'fastctx.exe','cmd.exe' } | "
+                          "ForEach-Object { '{0} {1} {2} {3}' -f $_.ProcessId, $_.ParentProcessId, "
+                          "(Invoke-CimMethod -InputObject $_ -MethodName GetOwner).User, $_.CommandLine }"],
+                         capture_output=True, text=True).stdout)
+    services = subprocess.run(["sc", "query", "type=", "service", "state=", "all"], capture_output=True, text=True).stdout
+    for name in sorted(set(re.findall(r"SERVICE_NAME: (fastctx\S*)", services))):
+        print(f"== service {name}")
+        print(subprocess.run(["sc", "queryex", name], capture_output=True, text=True).stdout)
+        print(subprocess.run(["sc", "qc", name], capture_output=True, text=True).stdout)
+    logs = [*home.glob("*/world/node.log"), *home.glob("*/guardian.log"), *home.glob("*/service-*.log"),
+            *(data / "fastctx-services").glob("**/*.log")]
+    for log in logs:
+        print(f"== {log}")
+        try:
+            print("\n".join(log.read_text(encoding="utf-8", errors="replace").splitlines()[-80:]))
+        except OSError as error:
+            print(f"({error.strerror})")
 
 
 def managed_mac(lab, root, line):
