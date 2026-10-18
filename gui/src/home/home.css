@@ -254,17 +254,18 @@
   align-self: center;
   color: var(--text-3);
   transform: rotate(-90deg);
-  opacity: 0;
-  transition: opacity var(--hover) ease;
+  --shown: 0;
+  opacity: var(--shown);
+  transition: --shown var(--hover) ease;
 }
 
 .someone:hover .someone-go {
-  opacity: 1;
+  --shown: 1;
 }
 
 @media (hover: none) {
   .someone-go {
-    opacity: 1;
+    --shown: 1;
   }
 }
 

@@ -303,8 +303,9 @@ pre code {
   height: 28px;
   border-radius: var(--radius-s);
   color: var(--text-3);
-  opacity: 0;
-  transition: opacity var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
+  --shown: 0;
+  opacity: var(--shown);
+  transition: --shown var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
   background-repeat: no-repeat;
   background-position: center;
 }
@@ -328,7 +329,7 @@ pre code {
 .code-block:hover .code-copy,
 .code-copy:focus-visible,
 .code-copy.copied {
-  opacity: 1;
+  --shown: 1;
 }
 
 .code-copy:hover {
@@ -339,7 +340,7 @@ pre code {
 /* Where nothing hovers, the copy button is always there. */
 @media (hover: none) {
   .code-copy {
-    opacity: 1;
+    --shown: 1;
   }
 }
 
@@ -485,7 +486,8 @@ pre code {
   height: 13px;
   border-radius: var(--radius-full);
   background: var(--bg);
-  transition: transform var(--hover) var(--fold-easing);
+  translate: var(--slide) var(--lift);
+  transition: --slide var(--hover) var(--fold-easing);
 }
 
 [role="switch"][aria-checked="true"] .switch-track {
@@ -493,5 +495,5 @@ pre code {
 }
 
 [role="switch"][aria-checked="true"] .switch-knob {
-  transform: translateX(13px);
+  --slide: 13px;
 }

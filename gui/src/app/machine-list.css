@@ -119,8 +119,9 @@
   border-radius: 4px;
   background: var(--fill-strong);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity var(--hover) ease, background-color var(--hover) ease;
+  --shown: 0;
+  opacity: var(--shown);
+  transition: --shown var(--hover) ease, background-color var(--hover) ease;
 }
 
 .ml-pick.none {
@@ -131,7 +132,7 @@
 .ml-row:focus-visible .ml-pick,
 .ml-group-head:hover .ml-pick,
 .ml-list.picking .ml-pick {
-  opacity: 1;
+  --shown: 1;
 }
 
 .ml-pick[aria-checked="true"],
@@ -380,14 +381,15 @@
   display: grid;
   place-items: center;
   color: var(--text-3);
-  opacity: 0;
+  --shown: 0;
+  opacity: var(--shown);
   transform: rotate(-90deg);
-  transition: opacity var(--hover) ease;
+  transition: --shown var(--hover) ease;
 }
 
 .ml-row:hover .ml-go,
 .ml-row:focus-visible .ml-go {
-  opacity: 1;
+  --shown: 1;
 }
 
 .ml-add .ml-name,
@@ -456,7 +458,7 @@
 
   .ml-go {
     grid-area: go;
-    opacity: 1;
+    --shown: 1;
   }
 
   .ml-fold {
@@ -497,7 +499,7 @@
   .ml-list.selecting .ml-pick {
     display: grid;
     grid-area: pick;
-    opacity: 1;
+    --shown: 1;
   }
 
   .ml-list.selecting .ml-go {

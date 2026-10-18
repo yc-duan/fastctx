@@ -386,11 +386,12 @@ a.text-button {
 .side-account-fold .glyph {
   flex: none;
   color: var(--text-3);
-  transition: transform var(--fold) var(--fold-easing);
+  rotate: var(--turn);
+  transition: --turn var(--fold) var(--fold-easing);
 }
 
 .sidebar-account.shut .side-account-fold .glyph {
-  transform: rotate(-90deg);
+  --turn: -90deg;
 }
 
 .side-account-name {

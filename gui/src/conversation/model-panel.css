@@ -50,12 +50,13 @@
 
 .model-name .glyph {
   color: var(--text-3);
-  transform: rotate(-90deg);
-  transition: transform var(--fold) var(--fold-easing);
+  --turn: -90deg;
+  rotate: var(--turn);
+  transition: --turn var(--fold) var(--fold-easing);
 }
 
 .model-name[aria-expanded="true"] .glyph {
-  transform: rotate(0deg);
+  --turn: 0deg;
 }
 
 /* In the controls' place, filling the panel, which keeps the size of the

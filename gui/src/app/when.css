@@ -42,11 +42,12 @@
   padding: var(--space-3);
   border-radius: var(--radius-m);
   background: var(--bg-sunken);
-  transition: opacity var(--hover) ease;
+  opacity: var(--shown);
+  transition: --shown var(--hover) ease;
 }
 
 .when:not(.open) .when-pick {
-  opacity: 0.5;
+  --shown: 0.5;
 }
 
 .when-month {

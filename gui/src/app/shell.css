@@ -98,7 +98,16 @@ body {
   height: 32px;
   border-radius: var(--radius-s);
   color: var(--text-3);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  scale: var(--press);
+  transition: color var(--hover) ease, background-color var(--hover) ease, --press var(--settle) var(--spring);
+}
+
+/* Pressed, a control gives a little at once and springs back as it is let
+   go: a registered property, so its mark stays smooth on Windows. */
+.icon-button:active:not(:disabled) {
+  --press: 0.94;
+  transition-duration: var(--hover), var(--hover), var(--quick);
+  transition-timing-function: ease, ease, var(--ease-out);
 }
 
 .icon-button:hover {
@@ -142,12 +151,13 @@ body {
   font-variation-settings: var(--code-axes);
   font-size: 11px;
   color: var(--text-3);
-  opacity: 0;
-  transition: opacity var(--hover) ease;
+  --shown: 0;
+  opacity: var(--shown);
+  transition: --shown var(--hover) ease;
 }
 
 .new-talk:hover kbd {
-  opacity: 1;
+  --shown: 1;
 }
 
 .sidebar-places {
@@ -250,13 +260,14 @@ body {
   margin-right: -4px;
   border-radius: var(--radius-s);
   color: var(--text-3);
-  opacity: 0;
-  transition: opacity var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
+  --shown: 0;
+  opacity: var(--shown);
+  transition: --shown var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
 }
 
 .sidebar-group:hover .side-add,
 .side-add:focus-visible {
-  opacity: 1;
+  --shown: 1;
 }
 
 .side-add:hover {
@@ -266,7 +277,7 @@ body {
 
 @media (hover: none) {
   .side-add {
-    opacity: 1;
+    --shown: 1;
   }
 }
 
@@ -301,17 +312,19 @@ body {
   height: 24px;
   border-radius: var(--radius-s);
   color: var(--text-3);
-  opacity: 0;
-  transition: opacity var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
+  --shown: 0;
+  opacity: var(--shown);
+  transition: --shown var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
 }
 
 .place-fold .glyph {
-  transition: transform var(--fold) var(--fold-easing);
+  rotate: var(--turn);
+  transition: --turn var(--fold) var(--fold-easing);
 }
 
 .place-row:hover .place-fold,
 .place-fold:focus-visible {
-  opacity: 1;
+  --shown: 1;
 }
 
 .place-fold:hover {
@@ -320,12 +333,12 @@ body {
 }
 
 .shut .place-fold .glyph {
-  transform: rotate(-90deg);
+  --turn: -90deg;
 }
 
 @media (hover: none) {
   .place-fold {
-    opacity: 1;
+    --shown: 1;
   }
 }
 
@@ -584,8 +597,9 @@ body {
     bottom: 0;
     left: 0;
     width: min(86vw, 320px);
-    transform: translateX(-102%);
-    transition: transform var(--fold) var(--fold-easing);
+    --slide: -102%;
+    translate: var(--slide) var(--lift);
+    transition: --slide var(--fold) var(--fold-easing);
     box-shadow: var(--shadow-pop);
   }
 
@@ -594,7 +608,7 @@ body {
   }
 
   .shell.drawer-open .sidebar-frame {
-    transform: none;
+    --slide: 0%;
   }
 
   .sidebar {
@@ -607,13 +621,14 @@ body {
     inset: 0;
     z-index: 19;
     background: var(--scrim);
-    opacity: 0;
+    --shown: 0;
+  opacity: var(--shown);
     pointer-events: none;
-    transition: opacity var(--fold) ease;
+    transition: --shown var(--fold) ease;
   }
 
   .shell.drawer-open .scrim {
-    opacity: 1;
+    --shown: 1;
     pointer-events: auto;
   }
 
@@ -835,11 +850,12 @@ html.framed .page-head {
 .network-switch .glyph {
   flex: none;
   color: var(--text-3);
-  transition: transform var(--fold) var(--fold-easing);
+  rotate: var(--turn);
+  transition: --turn var(--fold) var(--fold-easing);
 }
 
 .network-switch[aria-expanded="true"] .glyph {
-  transform: rotate(180deg);
+  --turn: 180deg;
 }
 
 /* In no network the name is only a name. */

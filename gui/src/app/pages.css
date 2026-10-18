@@ -111,8 +111,9 @@
 .machine-acts {
   margin: var(--space-2) 0 0;
   padding-left: calc(8px + 2px + var(--space-2) - var(--space-3));
-  opacity: 0;
-  transition: opacity var(--hover) ease;
+  --shown: 0;
+  opacity: var(--shown);
+  transition: --shown var(--hover) ease;
 }
 
 .machine-acts:focus-within {
@@ -121,7 +122,7 @@
 
 @media (hover: none) {
   .machine-acts {
-    opacity: 1;
+    --shown: 1;
   }
 }
 
@@ -252,18 +253,19 @@
   border-radius: var(--radius-l);
   background: var(--fill);
   text-align: left;
-  transition: background-color var(--hover) ease, transform var(--hover) ease, box-shadow var(--hover) ease;
+  translate: var(--slide) var(--lift);
+  transition: background-color var(--hover) ease, --lift var(--hover) ease, box-shadow var(--hover) ease;
 }
 
 .welcome-way:hover,
 .welcome-way:focus-visible {
   outline: 0;
   background: var(--fill-strong);
-  transform: translateY(-2px);
+  --lift: -2px;
 }
 
 .welcome-way:active {
-  transform: translateY(0);
+  --lift: 0px;
 }
 
 /* Each way in, drawn in the film's hand (`../pen/sketch.css`). */
@@ -362,7 +364,7 @@
 
 :root[data-reduced] .welcome-way,
 :root[data-reduced] .welcome-way:hover {
-  transform: none;
+  --lift: 0px;
 }
 
 :root[data-reduced] .welcome-way-mark path,
@@ -515,18 +517,19 @@
 
 .host-home .home-hide {
   margin-left: auto;
-  opacity: 0;
-  transition: opacity var(--hover) ease;
+  --shown: 0;
+  opacity: var(--shown);
+  transition: --shown var(--hover) ease;
 }
 
 .host-home:hover .home-hide,
 .home-hide:focus-visible {
-  opacity: 1;
+  --shown: 1;
 }
 
 @media (hover: none) {
   .host-home .home-hide {
-    opacity: 1;
+    --shown: 1;
   }
 }
 

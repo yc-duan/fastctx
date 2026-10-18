@@ -314,7 +314,8 @@
   margin: -11px 0 0 -11px;
   border-radius: var(--radius-full);
   color: var(--text-2);
-  transition: color var(--hover) ease, transform var(--hover) ease;
+  scale: var(--grow);
+  transition: color var(--hover) ease, --grow var(--hover) ease;
 }
 
 .front-mark svg {
@@ -329,7 +330,7 @@
 .front-mark:focus-visible {
   outline: 0;
   color: var(--accent);
-  transform: scale(1.35);
+  --grow: 1.35;
 }
 
 .front-mark.failed.lit {

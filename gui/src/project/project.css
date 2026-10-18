@@ -34,7 +34,14 @@
   color: var(--text-2);
   font-size: var(--size-ui);
   white-space: nowrap;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  scale: var(--press);
+  transition: color var(--hover) ease, background-color var(--hover) ease, --press var(--settle) var(--spring);
+}
+
+.text-button:active:not(:disabled) {
+  --press: 0.97;
+  transition-duration: var(--hover), var(--hover), var(--quick);
+  transition-timing-function: ease, ease, var(--ease-out);
 }
 
 .text-button:hover {

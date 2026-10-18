@@ -593,7 +593,8 @@ button.who-seal:hover {
   place-items: center;
   background: var(--accent);
   color: var(--bg);
-  transition: background-color var(--hover) ease, opacity var(--hover) ease, transform var(--hover) ease;
+  scale: var(--press);
+  transition: background-color var(--hover) ease, --press var(--settle) var(--spring);
 }
 
 .composer-action:hover:not(:disabled) {
@@ -601,7 +602,9 @@ button.who-seal:hover {
 }
 
 .composer-action:active:not(:disabled) {
-  transform: scale(0.94);
+  --press: 0.94;
+  transition-duration: var(--hover), var(--quick);
+  transition-timing-function: ease, var(--ease-out);
 }
 
 .composer-action:disabled {

@@ -87,6 +87,20 @@
   initial-value: 0px;
 }
 
+/* How far a chevron is turned, from pointing down (`rotate`). */
+@property --turn {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+/* How far a control gives under a press (`scale`), springing back. */
+@property --press {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
 /* How strongly a machine that can take the server shows while its new
    place is chosen, breathing (`machines.css`). */
 @property --lit {

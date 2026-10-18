@@ -70,13 +70,14 @@
   border-radius: var(--radius-s);
   background: var(--surface-header);
   color: var(--text-3);
-  opacity: 0;
-  transition: opacity var(--hover) ease, color var(--hover) ease;
+  --shown: 0;
+  opacity: var(--shown);
+  transition: --shown var(--hover) ease, color var(--hover) ease;
 }
 
 .long-text-box:hover .long-text-full,
 .long-text-full:focus-visible {
-  opacity: 1;
+  --shown: 1;
 }
 
 .long-text-full:hover {
@@ -89,7 +90,7 @@
 
 @media (hover: none) {
   .long-text-full {
-    opacity: 1;
+    --shown: 1;
     width: 44px;
     height: 44px;
   }
@@ -101,15 +102,16 @@
   display: flex;
   gap: 2px;
   margin-top: var(--space-1);
-  opacity: 0;
-  transition: opacity var(--hover) ease;
+  --shown: 0;
+  opacity: var(--shown);
+  transition: --shown var(--hover) ease;
 }
 
 .turn-acts.latest,
 .block:hover > .turn-acts,
 .block:hover > .message-acts > .turn-acts,
 .turn-acts:focus-within {
-  opacity: 1;
+  --shown: 1;
 }
 
 /* A message's actions follow its words as if they were the block's own. */
@@ -199,7 +201,7 @@
    own words carry none, and held, theirs float up beside them. */
 @media (hover: none) {
   .turn-acts {
-    opacity: 1;
+    --shown: 1;
   }
 
   .user-acts {
@@ -313,12 +315,13 @@
 
 .notice-open > .glyph:last-child {
   color: var(--text-3);
-  transform: rotate(-90deg);
-  transition: transform var(--fold) var(--fold-easing);
+  --turn: -90deg;
+  rotate: var(--turn);
+  transition: --turn var(--fold) var(--fold-easing);
 }
 
 .notice-open[aria-expanded="true"] > .glyph:last-child {
-  transform: none;
+  --turn: 0deg;
 }
 
 .notice-box {

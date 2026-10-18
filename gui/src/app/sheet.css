@@ -186,7 +186,8 @@
   background: var(--accent);
   color: var(--bg);
   font-size: var(--size-ui);
-  transition: background-color var(--hover) ease, transform var(--hover) ease;
+  scale: var(--press);
+  transition: background-color var(--hover) ease, --press var(--settle) var(--spring);
 }
 
 .sheet-go:hover:not(:disabled) {
@@ -194,7 +195,9 @@
 }
 
 .sheet-go:active:not(:disabled) {
-  transform: scale(0.97);
+  --press: 0.97;
+  transition-duration: var(--hover), var(--quick);
+  transition-timing-function: ease, var(--ease-out);
 }
 
 .sheet-go:disabled {

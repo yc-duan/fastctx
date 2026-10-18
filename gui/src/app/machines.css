@@ -179,12 +179,13 @@
   height: 11px;
   border-radius: 46% 54% 43% 57% / 55% 45% 58% 42%;
   background: var(--pen-clay);
-  transition: transform var(--hover) ease;
+  scale: var(--grow);
+  transition: --grow var(--hover) ease;
 }
 
 .machine-map .canvas-handle:hover::after,
 .machine-map .canvas-handle:focus-visible::after {
-  transform: scale(1.35);
+  --grow: 1.35;
 }
 
 .machine-map .canvas-name {

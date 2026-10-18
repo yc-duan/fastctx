@@ -886,12 +886,13 @@
 }
 
 .agent-change-toggle .glyph {
-  transform: rotate(-90deg);
-  transition: transform var(--hover) ease;
+  --turn: -90deg;
+  rotate: var(--turn);
+  transition: --turn var(--hover) ease;
 }
 
 .agent-change-toggle[aria-expanded="true"] .glyph {
-  transform: none;
+  --turn: 0deg;
 }
 
 /* The details, once opened: the files a line each, scrolling here alone. */
@@ -946,12 +947,13 @@
   flex: none;
   display: inline-flex;
   color: var(--text-3);
-  transform: rotate(-90deg);
-  transition: transform var(--hover) ease;
+  --turn: -90deg;
+  rotate: var(--turn);
+  transition: --turn var(--hover) ease;
 }
 
 .agent-change-file.open .agent-change-chevron {
-  transform: none;
+  --turn: 0deg;
 }
 
 .agent-change-diff:not(:empty) {

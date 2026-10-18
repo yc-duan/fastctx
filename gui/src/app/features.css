@@ -436,16 +436,18 @@
   margin-top: var(--space-6);
   padding: var(--space-3) 0 calc(var(--space-3) + var(--safe-bottom));
   background: var(--bg);
-  opacity: 0;
+  --shown: 0;
+  opacity: var(--shown);
   pointer-events: none;
-  transform: translateY(6px);
-  transition: opacity var(--hover) ease, transform var(--hover) ease;
+  --lift: 6px;
+  translate: var(--slide) var(--lift);
+  transition: --shown var(--hover) ease, --lift var(--hover) ease;
 }
 
 .feature-save-bar.shown {
-  opacity: 1;
+  --shown: 1;
   pointer-events: auto;
-  transform: none;
+  --lift: 0px;
 }
 
 .feature-save {
@@ -608,11 +610,12 @@
 }
 
 .feature-still .film-stage {
-  transition: opacity var(--hover) ease;
+  opacity: var(--shown);
+  transition: --shown var(--hover) ease;
 }
 
 .feature-still:hover .film-stage {
-  opacity: 0.85;
+  --shown: 0.85;
 }
 
 .film-theater {

@@ -236,7 +236,8 @@
   border-radius: var(--radius-s);
   text-align: left;
   font-size: var(--size-ui);
-  transition: background-color var(--hover) ease, opacity var(--hover) ease;
+  opacity: var(--shown);
+  transition: background-color var(--hover) ease, --shown var(--hover) ease;
 }
 
 .ledger-person:hover {
@@ -248,7 +249,7 @@
 }
 
 .ledger-person.faded {
-  opacity: 0.45;
+  --shown: 0.45;
 }
 
 .ledger-swatch {

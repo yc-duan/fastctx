@@ -16,15 +16,16 @@
   display: flex;
   gap: 2px;
   transform: translateY(-50%);
-  opacity: 0;
+  --shown: 0;
+  opacity: var(--shown);
   pointer-events: none;
-  transition: opacity var(--hover) ease;
+  transition: --shown var(--hover) ease;
 }
 
 .talk-item:hover .talk-quick,
 .talk-item:focus-within .talk-quick,
 .talk-item.menu-open .talk-quick {
-  opacity: 1;
+  --shown: 1;
   pointer-events: auto;
 }
 
@@ -34,7 +35,7 @@
 .talk-item:hover .talk-state,
 .talk-item:focus-within .talk-state,
 .talk-item.menu-open .talk-state {
-  opacity: 0;
+  --shown: 0;
 }
 
 .talk-more,
@@ -82,13 +83,14 @@
 
   .talk-item:focus-within .talk-device,
   .talk-item:focus-within .talk-state {
-    opacity: 1;
+    --shown: 1;
   }
 }
 
 .talk-device,
 .talk-state {
-  transition: opacity var(--hover) ease;
+  opacity: var(--shown);
+  transition: --shown var(--hover) ease;
 }
 
 /* Being deleted: quieter, the state said in words where the mark was. */
@@ -124,7 +126,7 @@
 }
 
 .talk-item:has(.deleting) .talk-state {
-  opacity: 1;
+  --shown: 1;
 }
 
 /* An archived conversation at the sidebar's foot: listed, quieter. */
@@ -168,11 +170,12 @@
 }
 
 .side-archived-head .glyph {
-  transition: transform var(--fold) var(--fold-easing);
+  rotate: var(--turn);
+  transition: --turn var(--fold) var(--fold-easing);
 }
 
 .side-archived.shut .side-archived-head .glyph:first-child {
-  transform: rotate(-90deg);
+  --turn: -90deg;
 }
 
 .side-archived-count {
@@ -349,7 +352,7 @@
 }
 
 .talk-menu-toggle[aria-checked="true"] .switch-knob {
-  transform: translateX(13px);
+  --slide: 13px;
 }
 
 /* On a narrow screen the menu rises from below, headed by its conversation,
