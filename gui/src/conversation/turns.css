@@ -593,7 +593,17 @@
 .bubble-ghost {
   z-index: 60;
   pointer-events: none;
-  will-change: transform;
+  translate: var(--fly-x) var(--fly-y);
+}
+
+/* What came with the words comes up quietly once they have landed. */
+.bubble-landing {
+  opacity: var(--rise);
+  animation: rise var(--enter) ease-out both;
+}
+
+:root[data-reduced] .bubble-landing {
+  animation: none;
 }
 
 /* The input stays quiet while the words it sent are on their way: its

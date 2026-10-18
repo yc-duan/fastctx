@@ -66,6 +66,19 @@
   initial-value: 1;
 }
 
+/* Where words sent are on their way into the conversation (`flight.ts`). */
+@property --fly-x {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --fly-y {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
 /* How tall the shade is that the conversation fades into under its head
    once scrolled (`app.css`). */
 @property --edge {

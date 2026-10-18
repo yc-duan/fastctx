@@ -13,6 +13,7 @@ import { folderName, type Focus, type Folders } from "../world/focus";
 import { allowPrivacy } from "../world/files";
 import { FolderWalk } from "./folder-walk";
 import type { FocusWords } from "./words";
+import { redrawKeepingFocus } from "./focus";
 
 /** A machine the conversation's account may use. */
 export interface FocusPlace {
@@ -148,11 +149,21 @@ export class FocusPanel {
 
   private draw(): void {
     if (this.walk) {
+      this.drawn = "";
       this.element.replaceChildren(this.walk.element);
       return;
     }
-    this.element.innerHTML = this.machines();
+    // Drawn again only when it changed, the control pressed keeping focus.
+    const html = this.machines();
+    if (html === this.drawn) return;
+    this.drawn = html;
+    redrawKeepingFocus(this.element, () => {
+      this.element.innerHTML = html;
+    });
   }
+
+  /** What the list was last drawn as. */
+  private drawn = "";
 
   private machines(): string {
     const { words } = this.options;

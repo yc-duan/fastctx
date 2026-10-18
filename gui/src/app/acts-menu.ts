@@ -7,6 +7,7 @@
 import { glyph, type GlyphName } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { layerOpened, type Layer } from "./back";
+import { stepped } from "./menu-keys";
 
 export interface MenuAct {
   act: string;
@@ -55,7 +56,13 @@ export class ActsMenu {
       if (event.key === "Escape") {
         event.stopPropagation();
         this.close();
+        return;
       }
+      const items = [...this.element.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+      const next = stepped(items, document.activeElement, event.key);
+      if (next === null) return;
+      event.preventDefault();
+      items[next]?.focus({ preventScroll: true });
     });
     this.element.addEventListener("animationend", (event) => {
       if (event.target === this.element && !this.shown) this.settle();

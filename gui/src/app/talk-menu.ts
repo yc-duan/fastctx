@@ -13,6 +13,7 @@ import type { ResidentNow } from "../world/world";
 import { layerOpened, type Layer } from "./back";
 import type { TalkActs } from "./talk-acts";
 import type { TalkMenuWords } from "./talk-menu-words";
+import { stepped } from "./menu-keys";
 
 export interface TalkMenuOptions {
   words: TalkMenuWords;
@@ -254,11 +255,10 @@ export class TalkMenu {
       this.close();
       return;
     }
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-    event.preventDefault();
     const items = this.items();
-    const at = items.indexOf(document.activeElement as HTMLButtonElement);
-    const next = event.key === "ArrowDown" ? (at + 1) % items.length : (at - 1 + items.length) % items.length;
+    const next = stepped(items, document.activeElement, event.key);
+    if (next === null) return;
+    event.preventDefault();
     items[next]?.focus({ preventScroll: true });
   }
 }

@@ -62,8 +62,14 @@ export function fly(find: () => HTMLElement | null, from: Departure, done: () =>
     width: `${landing.width}px`,
     maxWidth: "none",
     margin: "0",
-    transform: `translate(${start.x}px, ${start.y}px)`,
   });
+  // Where it is moves registered properties (`turns.css`), so the words in
+  // flight stay smooth on Windows.
+  const place = (x: number, y: number) => {
+    ghost.style.setProperty("--fly-x", `${x}px`);
+    ghost.style.setProperty("--fly-y", `${y}px`);
+  };
+  place(start.x, start.y);
   document.body.append(ghost);
   bubble.style.visibility = "hidden";
   const hushed = from.hush?.() ?? (() => {});
@@ -95,7 +101,7 @@ export function fly(find: () => HTMLElement | null, from: Departure, done: () =>
     const to = target.getBoundingClientRect();
     const x = start.x + (to.left - start.x) * drift(progress);
     const y = start.y + (to.top - start.y) * rise(progress);
-    ghost.style.transform = `translate(${x}px, ${y}px)`;
+    place(x, y);
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
@@ -108,7 +114,8 @@ function settle(bubble: HTMLElement): void {
   if (!block) return;
   for (const other of block.children) {
     if (other === bubble || !(other instanceof HTMLElement)) continue;
-    other.animate([{ opacity: 0 }, { opacity: 1 }], { duration: time(getComputedStyle(other), "--enter"), easing: "ease-out" });
+    other.classList.add("bubble-landing");
+    other.addEventListener("animationend", () => other.classList.remove("bubble-landing"), { once: true });
   }
 }
 
