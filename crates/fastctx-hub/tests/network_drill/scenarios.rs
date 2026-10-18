@@ -627,6 +627,8 @@ fn fails_with(answer: &Result<RemoteResult, CallFailure>, holds: impl Fn(&str) -
 /// What an answer was, for the report.
 fn said(answer: &Result<RemoteResult, CallFailure>) -> String {
     match answer {
+        // A long failure is the drill's own filler; a short one says what went wrong.
+        Ok(Err(failure)) if failure.message.len() <= 200 => format!("a failure: {}", failure.message),
         Ok(Err(failure)) => format!("a failure of {} bytes", failure.message.len()),
         Ok(Ok(_)) => "an answer".to_string(),
         Err(failure) => failure.to_string(),
