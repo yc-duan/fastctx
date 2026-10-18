@@ -55,7 +55,7 @@
 .new-talk-title {
   margin: 0;
   max-width: min(var(--column), 100%);
-  font-family: var(--font-emphasis);
+  font-family: var(--font-display);
   font-weight: 400;
   font-size: calc(var(--body-size) * 1.6);
   line-height: var(--leading-heading);
@@ -292,6 +292,12 @@
 
   .talk-chip[data-pop="town"] {
     flex-shrink: 3;
+  }
+
+  /* Machines and folders not chosen yet are their mark alone; what they
+     are is said where a finger rests on it. */
+  .talk-chip[data-pop="focus"].quiet > .talk-chip-name {
+    display: none;
   }
 
   .talk-chip-sub.who {

@@ -412,7 +412,7 @@ export class AgentLoginsPage implements Page {
             const who = login.identity?.who.kind === "known" ? (login.identity.who.value.email ?? null) : null;
             const changing = login.change && !login.change.end;
             const fresh = freshness(this.fresh, `d:${machine.name}:${login.dir}`);
-            return `<li class="logins-candidate${fresh}>${glyph(this.agent, 16)}<span class="logins-candidate-name" title="${escape(login.dir)}">${escape(who ?? dirName(login.dir))}</span>${login.default ? `<span class="tag">${escape(words.defaultLogin)}</span>` : ""}${who ? `<code class="logins-dir">${escape(dirName(login.dir))}</code>` : ""}
+            return `<li class="logins-candidate${fresh}>${glyph(this.agent, 16)}<span class="logins-candidate-name" title="${escape(login.dir)}">${escape(who ?? dirName(login.dir))}</span>${login.default ? `<span class="tag">${escape(words.defaultLogin)}</span>` : ""}${who ? `<span class="logins-dir">${escape(dirName(login.dir))}</span>` : ""}
           <button class="text-button logins-apply" type="button" data-act="apply" data-machine="${escape(machine.name)}" data-dir="${escape(login.dir)}"${changing ? " disabled" : ""}>${escape(changing ? words.applying : words.apply)}</button></li>`;
           })
           .join("")

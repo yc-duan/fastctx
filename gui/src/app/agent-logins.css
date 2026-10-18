@@ -581,7 +581,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font-code);
   font-size: var(--size-small);
   color: var(--text-3);
 }
@@ -589,9 +588,13 @@
 /* 「接入」 stands out on its row: the one thing to do with a candidate. */
 .logins-apply {
   margin-left: auto;
-  color: var(--accent);
-  font-family: var(--font-emphasis);
-  font-weight: 400;
+  height: 28px;
+  background: var(--fill);
+  color: var(--text-strong);
+}
+
+.logins-apply:hover:not(:disabled) {
+  background: var(--fill-strong);
 }
 
 /* 「添加文件夹…」, and the folders searched for logins: a row each, the
@@ -647,8 +650,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
   font-size: var(--size-small);
   color: var(--text-3);
 }
@@ -699,8 +700,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
   font-size: var(--size-small);
   color: var(--text);
   cursor: default;

@@ -126,7 +126,7 @@ function foundRows(view: FoldersView, folder: Folder, found: FoundIn[]): string 
       const take = mine
         ? `<button class="text-button logins-apply" type="button" data-act="take" data-machine="${escape(machine)}" data-dir="${escape(full)}" data-folder="${escape(folder.dir)}"${taking ? " disabled" : ""}>${taking ? `<span class="pulse" aria-hidden="true"></span>` : ""}${escape(words.apply)}</button>`
         : "";
-      return `<li class="logins-found-row${fresh}>${glyph(agent, 16)}<code class="logins-found-path" title="${escape(`${full}\n${one.traces.join("\n")}`)}">${escape(one.path)}</code>${take}</li>`;
+      return `<li class="logins-found-row${fresh}>${glyph(agent, 16)}<span class="logins-found-path" title="${escape(`${full}\n${one.traces.join("\n")}`)}">${escape(one.path)}</span>${take}</li>`;
     })
     .join("");
   const more = open
