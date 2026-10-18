@@ -420,6 +420,11 @@
   white-space: nowrap;
 }
 
+/* Each kind of thing a stretch did stands whole or not at all. */
+.group-part {
+  display: inline-block;
+}
+
 .group-head .glyph {
   flex: none;
   color: var(--text-3);

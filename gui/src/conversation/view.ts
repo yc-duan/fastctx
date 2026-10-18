@@ -1548,7 +1548,7 @@ export class ConversationView {
         named: (tool) => this.agentsObject(tool, null),
       },
     );
-    const { title, added, removed, steps, running, only, bare, began } = said;
+    const { title, parts, added, removed, steps, running, only, bare, began } = said;
     const stats = added || removed ? `<span class="add">+${added}</span><span class="del">−${removed}</span>` : "";
     stretch.head.classList.toggle("bare", bare);
     stretch.head.classList.toggle("thought", only);
@@ -1556,8 +1556,18 @@ export class ConversationView {
     const titleElement = stretch.head.querySelector<HTMLElement>(".group-title")!;
     if (titleElement.textContent !== title) {
       // The step in hand changes in place: the new words fade in, the line
-      // keeps its height.
-      titleElement.textContent = title;
+      // keeps its height. What it did is said in whole parts, so a narrow
+      // line ends on an ellipsis after the last that fits.
+      if (parts.length > 1) {
+        titleElement.replaceChildren(
+          ...parts.flatMap((part, index) => {
+            const span = document.createElement("span");
+            span.className = "group-part";
+            span.textContent = part;
+            return index ? [words.tallyGap, span] : [span];
+          }),
+        );
+      } else titleElement.textContent = title;
       if (running) {
         titleElement.classList.remove("fresh");
         void titleElement.offsetWidth;

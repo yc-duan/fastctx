@@ -92,7 +92,10 @@ export interface Words {
   questions: QuestionWords;
   act(act: Act, tense: Tense): string;
   failedTool(name: string): string;
-  tally(tally: Tally): string;
+  /** What a finished stretch did, by kind: its heading's parts in the order
+   *  read, set apart by `tallyGap`. */
+  tally(tally: Tally): string[];
+  tallyGap: string;
   /** Thinking under way, as both hosts say it, in every language. */
   thinking: string;
   /** Thinking under way, on the section its words are now under. */
@@ -348,10 +351,11 @@ export const zh: Words = {
     if (t.delegated) parts.push(`委派 ${t.delegated} 个子代理`);
     if (t.coordinated) parts.push(`调度子代理 ${t.coordinated} 次`);
     if (t.other) parts.push(`调用 ${t.other} 个工具`);
-    let heading = parts.join("　");
-    if (!heading) heading = t.thinking ? "Thought" : "活动";
-    return t.failed ? `${heading}　${t.failed} 个失败` : heading;
+    if (!parts.length) parts.push(t.thinking ? "Thought" : "活动");
+    if (t.failed) parts.push(`${t.failed} 个失败`);
+    return parts;
   },
+  tallyGap: "　",
   thinking: "Thinking…",
   thinkingAbout: (title) => `Thinking… ${title}`,
   thought: "Thought",
@@ -595,11 +599,12 @@ export const en: Words = {
     if (t.delegated) parts.push(`delegated ${plural(t.delegated, "agent", "agents")}`);
     if (t.coordinated) parts.push(t.coordinated === 1 ? "coordinated agents once" : `coordinated agents ${t.coordinated} times`);
     if (t.other) parts.push(plural(t.other, "tool call", "tool calls"));
-    let heading = parts.join(", ");
-    if (!heading) heading = t.thinking ? "Thought" : "Activity";
-    heading = heading.charAt(0).toUpperCase() + heading.slice(1);
-    return t.failed ? `${heading}, ${t.failed} failed` : heading;
+    if (!parts.length) parts.push(t.thinking ? "Thought" : "Activity");
+    parts[0] = parts[0]!.charAt(0).toUpperCase() + parts[0]!.slice(1);
+    if (t.failed) parts.push(`${t.failed} failed`);
+    return parts;
   },
+  tallyGap: ", ",
   thinking: "Thinking…",
   thinkingAbout: (title) => `Thinking… ${title}`,
   thought: "Thought",
