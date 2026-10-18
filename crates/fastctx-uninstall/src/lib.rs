@@ -40,9 +40,10 @@ pub(crate) fn entries(path: &std::path::Path) -> std::io::Result<Vec<std::fs::Di
 }
 
 pub(crate) fn read<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> anyhow::Result<Option<T>> {
+    use anyhow::Context as _;
     match std::fs::read(path) {
-        Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+        Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes).with_context(|| format!("reading {}", path.display()))?)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.into()),
+        Err(error) => Err(anyhow::Error::new(error).context(format!("reading {}", path.display()))),
     }
 }

@@ -6,7 +6,10 @@
 //! and moved over the target in one step. On Windows the move uses POSIX
 //! semantics, so readers that share delete access can keep reading the old
 //! bytes. Windows handles that deny delete sharing can still cause a sharing
-//! violation; that failure is returned without truncating the target.
+//! violation; that failure is returned without truncating the target. On Unix
+//! a file root publishes into a directory another account owns becomes that
+//! account's, as the files around it are: a hub's service runs as root over a
+//! hub kept in its user's World, and the user's own commands read its records.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -140,6 +143,7 @@ mod imp {
             {
                 file.set_permissions(fs::Permissions::from_mode(existing.permissions().mode() & 0o7777))?;
             }
+            owned_as_directory(&file, path)?;
             file.sync_all()?;
             verify()?;
             if replace {
@@ -232,6 +236,7 @@ mod imp {
 
         pub fn commit(mut self) -> io::Result<()> {
             let file = self.file.take().expect("open until committed");
+            owned_as_directory(&file, &self.target)?;
             file.sync_all()?;
             drop(file);
             fs::rename(&self.temporary, &self.target)?;
@@ -253,6 +258,24 @@ mod imp {
             Some(parent) if !parent.as_os_str().is_empty() => File::open(parent)?.sync_all(),
             _ => File::open(".")?.sync_all(),
         }
+    }
+
+    /// Gives `file`, about to become `target`, the owner of the directory it
+    /// goes into when root writes it there for another account.
+    fn owned_as_directory(file: &File, target: &Path) -> io::Result<()> {
+        use std::os::unix::fs::MetadataExt as _;
+        // SAFETY: geteuid has no preconditions and cannot fail.
+        if unsafe { libc::geteuid() } != 0 {
+            return Ok(());
+        }
+        let directory = match target.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => fs::metadata(parent)?,
+            _ => fs::metadata(".")?,
+        };
+        if directory.uid() == 0 {
+            return Ok(());
+        }
+        std::os::unix::fs::fchown(file, Some(directory.uid()), Some(directory.gid()))
     }
 }
 
