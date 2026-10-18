@@ -117,6 +117,10 @@ export function foldedOf(nodes: readonly MapNode[], chosen: ReadonlyMap<string, 
 const LEGIBLE = 0.85;
 const MOST_GROWN = 2;
 
+/** Names that would be drawn smaller than this share of their size, grown as
+ *  far as they may, are not drawn at all: under ten pixels high. */
+const BARE = 0.75;
+
 /** The scale the drawing fits itself no smaller than: its machines' names
  *  about twelve pixels high. */
 const READABLE = 0.8;
@@ -168,6 +172,9 @@ export class MachineMap {
   /** How many times their size a still drawing's names are drawn, as it
    *  was laid for. */
   private grow = 1;
+  /** Whether a still drawing is laid too small for its machines' names to
+   *  be read however they grow, and leaves them out. */
+  private bare = false;
   /** Measures a still drawing's names for the room they take. */
   private measuring: CanvasRenderingContext2D | null = null;
   /** The faces are loading, and the drawing is laid again when they are in. */
@@ -306,37 +313,82 @@ export class MachineMap {
    *  largest in its frame; ten to a column until the frame has a size. Its
    *  names grow back to stay readable as it is drawn small, and take the
    *  room they need: each way of laying it is laid again for the size its
-   *  names will be, a few times over, as the two settle. */
+   *  names will be, a few times over, as the two settle. Too small for its
+   *  machines' names to be read even grown, as a phone's frame is for all
+   *  but the smallest network, it leaves them out and its machines stand
+   *  closer: the rings, the marks and the boxes' names alone. */
   private fill(scene: MachineMapScene): Placement {
     const width = this.element.clientWidth;
     const height = this.element.clientHeight;
     this.framed = `${width}x${height}`;
-    const room = this.nameRoom(scene);
-    const lay = (rows: number, grow: number) =>
+    const named = this.nameRoom(scene);
+    const lay = (rows: number, grow: number, room: number | undefined) =>
       this.layout.update(scene.hubs, scene.nodes, { links: scene.links, folded: scene.folded, rows, vacant: scene.adds.length > 0, grow, ...(room === undefined ? {} : { room }) });
     if (!width || !height) {
       this.grow = 1;
-      return lay(ROWS, 1);
+      this.bare = false;
+      return lay(ROWS, 1, named);
     }
     // The canvas leaves a tenth of the shorter side round what it fits.
     const pad = Math.max(24, Math.min(76, Math.min(width, height) * 0.1));
     const scaleOf = ({ bounds }: Placement) => Math.min((width - 2 * pad) / bounds.width, (height - 2 * pad) / bounds.height);
-    let best: { placement: Placement; scale: number; grow: number } | null = null;
-    for (let rows = 1; rows <= ROWS; rows += 1) {
-      let grow = 1;
-      let placement = lay(rows, grow);
-      let scale = scaleOf(placement);
-      for (let round = 0; round < 4; round += 1) {
-        const next = Math.min(MOST_GROWN, Math.max(1, LEGIBLE / scale));
-        if (Math.abs(next - grow) < 0.02) break;
-        grow = next;
-        placement = lay(rows, grow);
-        scale = scaleOf(placement);
+    const largest = (room: number | undefined) => {
+      let best: { placement: Placement; scale: number; grow: number } | null = null;
+      for (let rows = 1; rows <= ROWS; rows += 1) {
+        let grow = 1;
+        let placement = lay(rows, grow, room);
+        let scale = scaleOf(placement);
+        for (let round = 0; round < 4; round += 1) {
+          const next = Math.min(MOST_GROWN, Math.max(1, LEGIBLE / scale));
+          if (Math.abs(next - grow) < 0.02) break;
+          grow = next;
+          placement = lay(rows, grow, room);
+          scale = scaleOf(placement);
+        }
+        if (!best || scale > best.scale + 1e-6) best = { placement, scale, grow };
       }
-      if (!best || scale > best.scale + 1e-6) best = { placement, scale, grow };
+      return best!;
+    };
+    let best = largest(named);
+    this.bare = best.scale * best.grow < BARE;
+    if (this.bare) {
+      // Its machines stand as close as they may, or further apart as far as
+      // its frame has the room without drawing it smaller: the room its
+      // boxes' names then have.
+      const close = largest(0);
+      best = close;
+      for (const share of [0.5, 0.25]) {
+        const wider = largest((named ?? 0) * share);
+        if (wider.scale < close.scale * 0.98) continue;
+        best = wider;
+        break;
+      }
     }
-    this.grow = best!.grow;
-    return best!.placement;
+    this.grow = best.grow;
+    return best.placement;
+  }
+
+  /** What a box's strip says of whose it is: its label, or drawn bare,
+   *  as much of it as its strip has the room for. */
+  private labelOf(group: Placement["groups"][number]): string {
+    if (!this.bare) return group.label;
+    const { x, width } = group.box;
+    return this.fitted(group.label, x + width - (this.moreOf(group) ? MORE : 10) - (x + TRUNK + 14));
+  }
+
+  /** A box's `label` if it fits `room` of the drawing's units at the size
+   *  its name is laid for, or as much as does cut short with an ellipsis
+   *  while three letters are left; otherwise nothing. */
+  private fitted(label: string, room: number): string {
+    const context = this.measuring;
+    if (!context) return label;
+    const family = getComputedStyle(document.documentElement).getPropertyValue("--font-emphasis").trim() || "serif";
+    context.font = `${(14 * this.grow).toFixed(1)}px ${family}`;
+    if (context.measureText(label).width <= room) return label;
+    const letters = [...label];
+    while (letters.length && context.measureText(`${letters.join("").trimEnd()}…`).width > room) letters.pop();
+    const kept = letters.join("").trimEnd();
+    return [...kept].length >= 3 ? `${kept}…` : "";
   }
 
   /** How wide the widest of the machines' names is, or the line under
@@ -435,8 +487,8 @@ export class MachineMap {
         ];
       }),
       // A box is pressed anywhere else on its title strip, a group on its
-      // band.
-      ...placement.groups.map((group): CanvasItem => ({
+      // band, where it is drawn.
+      ...placement.groups.filter((group) => !(this.bare && group.within && !this.labelOf(group))).map((group): CanvasItem => ({
         key: group.key,
         kind: "group",
         point: group.point,
@@ -506,6 +558,8 @@ export class MachineMap {
     const key = JSON.stringify([
       near,
       marks,
+      this.bare,
+      this.grow,
       scene.hubs,
       [...scene.hubLabels],
       scene.adds,
@@ -654,8 +708,9 @@ export class MachineMap {
         const tone = owner === "mine" ? "mine" : owner.startsWith("assist:") ? "assist" : "others";
         const locked = group.person?.locked ? " locked" : "";
         const visitor = group.person?.visitor ? " visitor" : "";
-        // A group's band lies in its owner's box over the group's machines.
-        if (group.within) return `<g class="box ${tone}"><rect class="box-band" x="${x}" y="${y}" width="${width}" height="${group.strip}" rx="6"/></g>`;
+        // A group's band lies in its owner's box over the group's machines;
+        // drawn bare with no room for its name, not at all.
+        if (group.within) return this.bare && !this.labelOf(group) ? "" : `<g class="box ${tone}"><rect class="box-band" x="${x}" y="${y}" width="${width}" height="${group.strip}" rx="6"/></g>`;
         const strip = height <= TITLE
           ? `<rect class="box-title" x="${x}" y="${y}" width="${width}" height="${TITLE}" rx="7"/>`
           : `<rect class="box-body" x="${x}" y="${y}" width="${width}" height="${height}" rx="7"/><path class="box-title" d="M${x} ${y + TITLE}V${y + 7}Q${x} ${y} ${x + 7} ${y}H${x + width - 7}Q${x + width} ${y} ${x + width} ${y + 7}V${y + TITLE}Z"/>`;
@@ -694,9 +749,12 @@ export class MachineMap {
       // A visitor's box says so, and so does one asked to become a member.
       const people = this.options.people;
       const role = !people ? "" : group.person?.promotion ? people.waitingTag : group.person?.visitor ? people.visitorTag : "";
-      text.push(
-        `<text class="box-name${locked}${band}" x="${folds ? arrowAt + 12 : x + TRUNK + 14}" y="${middle + 5}"><tspan>${escapeText(group.label)}</tspan>${role ? `<tspan class="box-role" dx="8">${escapeText(role)}</tspan>` : ""}<tspan class="box-count" dx="10">${escapeText(this.countOf(group))}</tspan></text>`,
-      );
+      const nameX = folds ? arrowAt + 12 : x + TRUNK + 14;
+      // Drawn bare, a box says whose it is and no more, in the room it has;
+      // its rings say how many and which are online.
+      const label = this.labelOf(group);
+      const after = this.bare ? "" : `${role ? `<tspan class="box-role" dx="8">${escapeText(role)}</tspan>` : ""}<tspan class="box-count" dx="10">${escapeText(this.countOf(group))}</tspan>`;
+      if (label) text.push(`<text class="box-name${locked}${band}" x="${nameX}" y="${middle + 5}"><tspan>${escapeText(label)}</tspan>${after}</text>`);
       if (this.moreOf(group)) {
         // A small lock while the person is locked, then the "⋯".
         const end = x + width - MORE / 2;
@@ -712,11 +770,11 @@ export class MachineMap {
           : `<text class="machine-name${quiet ? " quiet" : ""}" data-name="${escapeText(key)}" x="${x}" y="${point[1] + 5}">${escapeText(name)}</text>`,
       );
     };
-    for (const hub of scene.adds) {
+    for (const hub of this.bare ? [] : scene.adds) {
       const at = this.pointOf(addKey(hub));
       if (at) nameAt(addKey(hub), at, scene.waiting.has(hub) ? words.waitingJoin : words.addMachine, "", true);
     }
-    for (const node of scene.nodes) {
+    for (const node of this.bare ? [] : scene.nodes) {
       const point = placement.machines.get(node.key);
       if (!point) continue;
       const through = node.through ? words.viaShort(node.through) : "";
