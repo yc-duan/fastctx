@@ -123,10 +123,15 @@ async fn pass(
                         let _ = (inbound.set_nodelay(true), outbound.set_nodelay(true));
                         let (from_machine, machine_end) = inbound.into_split();
                         let (from_hub, hub_end) = outbound.into_split();
-                        tokio::select! {
-                            () = pipe(from_machine, hub_end, &fault.to_hub, &fault.rate, &fault.blocked) => {}
-                            () = pipe(from_hub, machine_end, &fault.to_machine, &fault.rate, &fault.blocked) => {}
-                        }
+                        // Each way ends by itself, as on a real line: one side
+                        // done sending is told so, while what the other still
+                        // sends goes on. Ending both at the first end would
+                        // drop a connection with words unread, and the reset
+                        // could overtake a close still on its way.
+                        tokio::join!(
+                            pipe(from_machine, hub_end, &fault.to_hub, &fault.rate, &fault.blocked),
+                            pipe(from_hub, machine_end, &fault.to_machine, &fault.rate, &fault.blocked),
+                        );
                     };
                     tokio::select! { () = connect => {}, _ = cutting.changed() => {} }
                 });
@@ -156,9 +161,9 @@ async fn pipe(
         let limit = rate.load(Ordering::SeqCst);
         let want =
             if limit == 0 { buffer.len() } else { usize::try_from(limit / 10).unwrap_or(1).clamp(1, buffer.len()) };
-        let Ok(read) = from.read(&mut buffer[..want]).await else { return };
+        let Ok(read) = from.read(&mut buffer[..want]).await else { break };
         if read == 0 {
-            return;
+            break;
         }
         if frozen.load(Ordering::SeqCst) {
             blocked.fetch_add(read as u64, Ordering::SeqCst);
@@ -167,10 +172,11 @@ async fn pipe(
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         if to.write_all(&buffer[..read]).await.is_err() {
-            return;
+            break;
         }
         if limit > 0 {
             tokio::time::sleep(Duration::from_millis(read as u64 * 1000 / limit)).await;
         }
     }
+    let _ = to.shutdown().await;
 }

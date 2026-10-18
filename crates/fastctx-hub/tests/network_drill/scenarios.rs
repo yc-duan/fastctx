@@ -313,8 +313,11 @@ async fn dead_line(world: &World, report: &mut Report, one_way: bool) -> anyhow:
     tokio::time::sleep(FROZEN.saturating_sub(froze.elapsed())).await;
     gamma.line.freeze(false);
     let back = world.sees("alpha", &gamma.name, true, Duration::from_secs(90)).await;
+    // Gamma counts its connection once it has the hub's view, a little after
+    // the others see it online.
+    let reconnected = until(Duration::from_secs(30), || gamma.lab.connections() > before).await;
     report.check(
-        back.is_some() && gamma.lab.connections() > before,
+        back.is_some() && reconnected.is_some(),
         "gamma came back by itself once its line did",
         back.map_or("not within 90 s".to_string(), seconds),
     );

@@ -19,20 +19,15 @@ use crate::report::{Report, seconds};
 use crate::scenarios::{self, give_up};
 use crate::world::{Said, World, earlier, until, with_password};
 
-/// How long a question waits for its answer (`fastctx_types::contract`),
-/// past which the machine answering it stops it by itself.
-const QUESTION: Duration = Duration::from_secs(60);
-
-/// An earlier hub serving this release's machines: what it does not pass
-/// on, giving a question up, the machine answering stops by itself; who is
-/// online comes in whole directories; letters, answers of every size, cuts
-/// and a crash go as with this release's hub. Then it is updated in place
-/// while letters wait for a machine away: they are kept where this release
-/// keeps them, those after numbered on past them, and every one comes once.
+/// An earlier hub serving this release's machines: questions given up are
+/// passed on and stopped, who is online comes as changes, and letters,
+/// answers of every size, cuts and a crash go as with this release's hub.
+/// Then it is updated in place while letters wait for a machine away: they
+/// are kept where this release keeps them, those after numbered on past
+/// them, and every one comes once.
 pub async fn earlier_hub(world: &World, report: &mut Report) -> anyhow::Result<()> {
     let (alpha, beta) = (world.machine("alpha"), world.machine("beta"));
     beta.lab.stall(true);
-    let asked = Instant::now();
     let gave_up = give_up(world, "alpha", "beta", 3).await?;
     let link = alpha.link();
     let look = RemoteCall::Updates { update: UpdateCall::Look };
@@ -42,17 +37,15 @@ pub async fn earlier_hub(world: &World, report: &mut Report) -> anyhow::Result<(
         "alpha gave three questions up, and its session went on to the next call",
         format!("gave up {gave_up}"),
     );
-    scenarios::answers(world, report).await?;
-    scenarios::presence(world, report, false).await?;
-    let stopped =
-        until(QUESTION + Duration::from_secs(20) - asked.elapsed().min(QUESTION), || beta.lab.answering() == 0).await;
-    let took = asked.elapsed();
+    let stopped = until(Duration::from_secs(15), || beta.lab.answering() == 0).await;
     beta.lab.stall(false);
     report.check(
-        stopped.is_some() && beta.lab.stopped() == 3 && took >= QUESTION - Duration::from_secs(5),
-        "beta stopped the three by itself, a little past the time their caller waits",
-        format!("{} stopped after {}", beta.lab.stopped(), seconds(took)),
+        stopped.is_some() && beta.lab.stopped() == 3,
+        "the earlier hub passed the three on as given up, and beta stopped them",
+        format!("{} stopped, {}", beta.lab.stopped(), stopped.map_or("not within 15 s".to_string(), seconds)),
     );
+    scenarios::answers(world, report).await?;
+    scenarios::presence(world, report, true).await?;
 
     let gamma = world.machine("gamma");
     let mut sending = send(world, &["alpha", "beta"], "gamma", "earlier-hub", 800);
