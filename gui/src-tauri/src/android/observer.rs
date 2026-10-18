@@ -136,7 +136,7 @@ fn observe(who: WorldWho, bridge: &Bridge, observed: &mut Observed) -> Result<()
         return Ok(());
     }
     for machine in who.machines {
-        let MachineWho::Answered { reply } = machine else { continue };
+        let MachineWho::Answered { reply, .. } = machine else { continue };
         let residents: Vec<_> = reply.residents.into_iter().filter(|resident| resident.removed.is_none()).collect();
         let names: Vec<_> = residents.iter().map(|r| key_of(&r.about)).collect();
         let removed: Vec<_> = observed
