@@ -128,10 +128,16 @@ button.who-seal:hover {
   margin-left: 0;
 }
 
-.page-head .focus-pop {
-  top: calc(100% + 6px);
-  right: 0;
-  left: auto;
+/* Its panel hangs from the chip's right edge, as wide as its own content
+   wants, not as narrow as the chip; on a phone it is a sheet from below
+   (`focus-panel.css`). */
+@media (min-width: 761px) {
+  .page-head .focus-pop {
+    top: calc(100% + 6px);
+    right: 0;
+    left: auto;
+    width: min(440px, calc(100vw - 2 * var(--space-4)));
+  }
 }
 
 .focus-count {

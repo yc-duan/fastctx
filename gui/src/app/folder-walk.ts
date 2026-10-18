@@ -47,10 +47,26 @@ export class FolderWalk {
   private keptPrivate = false;
   /** The latest ask; an answer to an earlier one is dropped. */
   private asks = 0;
+  /** The field a path is typed in, the folders, and choosing: made once, so
+   *  an answer coming while a path is typed neither takes the field's focus
+   *  nor writes over what is typed. */
+  private readonly field: HTMLInputElement;
+  private readonly list: HTMLElement;
+  private readonly pick: HTMLButtonElement;
+  /** The path last put in the field: one typed over it stays. */
+  private shown = "";
 
   constructor(private readonly options: FolderWalkOptions) {
     this.element = document.createElement("div");
     this.element.className = "folder-walk";
+    const { words, machine, back } = options;
+    const head = back
+      ? `<div class="folder-walk-head"><button type="button" class="icon-button" data-walk="back" aria-label="${escape(words.back)}" title="${escape(words.back)}">${glyph("back", 18)}</button><span class="folder-walk-machine">${escape(machine)}</span></div>`
+      : "";
+    this.element.innerHTML = `${head}<div class="folder-walk-go"><input class="folder-walk-path" type="text" placeholder="${escape(words.path)}" aria-label="${escape(words.path)}" spellcheck="false" autocomplete="off" autocapitalize="off" enterkeyhint="go"></div><div class="pop-list folder-walk-list"></div><div class="folder-walk-foot"><button type="button" class="sheet-go" data-walk="pick" disabled>${escape(words.choose)}</button></div>`;
+    this.field = this.element.querySelector<HTMLInputElement>(".folder-walk-path")!;
+    this.list = this.element.querySelector<HTMLElement>(".folder-walk-list")!;
+    this.pick = this.element.querySelector<HTMLButtonElement>("[data-walk=pick]")!;
     this.element.addEventListener("click", (event) => {
       const target = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-walk]");
       if (!target || target.disabled) return;
@@ -86,6 +102,8 @@ export class FolderWalk {
 
   /** Asks the machine for the folders in `path`, or its places to start. */
   go(path: string | null): void {
+    // Going somewhere, by a folder or a typed path, the field follows again.
+    this.shown = this.field.value;
     const asked = ++this.asks;
     this.path = path;
     this.error = null;
@@ -111,7 +129,7 @@ export class FolderWalk {
   }
 
   private draw(): void {
-    const { words, machine, back } = this.options;
+    const { words } = this.options;
     const listing = this.listing;
     let rows = "";
     if (this.path !== null) rows += `<button type="button" class="pop-row folder-walk-up" data-walk="up">${glyph("back", 14)}<span class="pop-label">${escape(words.up)}</span></button>`;
@@ -129,10 +147,11 @@ export class FolderWalk {
         )
         .join("");
     const where = listing?.path ?? this.path ?? "";
-    const head = back
-      ? `<div class="folder-walk-head"><button type="button" class="icon-button" data-walk="back" aria-label="${escape(words.back)}" title="${escape(words.back)}">${glyph("back", 18)}</button><span class="folder-walk-machine">${escape(machine)}</span></div>`
-      : "";
-    this.element.innerHTML = `${head}<div class="folder-walk-go"><input class="folder-walk-path" type="text" value="${escape(where)}" placeholder="${escape(words.path)}" aria-label="${escape(words.path)}" spellcheck="false" autocomplete="off" autocapitalize="off" enterkeyhint="go"></div><div class="pop-list folder-walk-list">${rows}</div><div class="folder-walk-foot"><button type="button" class="sheet-go" data-walk="pick"${listing?.path ? "" : " disabled"}>${escape(words.choose)}</button></div>`;
-    this.element.querySelector<HTMLElement>(".folder-walk-list")?.scrollTo({ top: 0 });
+    // The field follows the walk until something is typed over it.
+    if (this.field.value === this.shown) this.field.value = where;
+    this.shown = where;
+    this.list.innerHTML = rows;
+    this.list.scrollTo({ top: 0 });
+    this.pick.disabled = !listing?.path;
   }
 }
