@@ -1,0 +1,276 @@
+name: Warm the caches
+
+# A version tag's run reads only its own caches and the default branch's, so without these a release
+# compiles every dependency from nothing. After a release main holds the release's own tree: this
+# builds it again so the compiled dependencies wait on main for the next release. Each job here is
+# the job of the same name in `release.yml` up to its build, with the same key, job name and
+# environment, which make the cache key the release looks for; nothing is tested, signed or
+# uploaded. Keep these in step with `release.yml`.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  kernel-windows:
+    name: kernel ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-pc-windows-msvc, aarch64-pc-windows-msvc]
+    runs-on: windows-11-arm
+    defaults:
+      run:
+        shell: bash
+    env:
+      RUSTFLAGS: '-C target-feature=+crt-static'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Keep the antivirus off the build's own files
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup"
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: kernel-${{ matrix.target }}
+          cache-on-failure: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node scripts/kernel.mjs '${{ matrix.target }}'
+
+  kernel-linux:
+    name: kernel ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            build: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            build: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          targets: ${{ matrix.build }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: kernel-${{ matrix.target }}
+          cache-on-failure: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install zig and cargo-zigbuild
+        run: |
+          python -m pip install ziglang==0.14.1
+          cargo install --locked cargo-zigbuild --version 0.23.0
+          # The kernel's debug sections and symbols are stripped with zig itself, which pip installs as a module.
+          mkdir -p "$RUNNER_TEMP/zig-bin"
+          printf '#!/bin/sh\nexec %s -m ziglang "$@"\n' "$(command -v python)" > "$RUNNER_TEMP/zig-bin/zig"
+          chmod +x "$RUNNER_TEMP/zig-bin/zig"
+          echo "$RUNNER_TEMP/zig-bin" >> "$GITHUB_PATH"
+      - run: node scripts/kernel.mjs '${{ matrix.target }}'
+
+  kernel-macos:
+    name: kernel ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          targets: ${{ matrix.target }}
+      - if: matrix.target == 'x86_64-apple-darwin'
+        name: Let Apple silicon run what is built for Intel
+        run: softwareupdate --install-rosetta --agree-to-license || /usr/bin/arch -x86_64 /usr/bin/true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: kernel-${{ matrix.target }}
+          cache-on-failure: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node scripts/kernel.mjs '${{ matrix.target }}'
+
+  gui-windows:
+    name: gui ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            arch: x64
+          - target: aarch64-pc-windows-msvc
+            arch: arm64
+    runs-on: windows-11-arm
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Keep the antivirus off the build's own files
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup"
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          components: rust-docs
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+          key: gui-${{ matrix.target }}
+          cache-on-failure: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python scripts/cargo-about.py
+      - name: Fetch the application's dependencies
+        working-directory: gui
+        run: |
+          npm ci --no-audit --no-fund
+          cargo fetch --locked --manifest-path src-tauri/Cargo.toml
+      - name: Compile the application
+        working-directory: gui
+        run: node scripts/release.mjs --prepare --kernel-signed --target '${{ matrix.target }}'
+
+  gui-macos:
+    name: gui ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: aarch64
+          - target: x86_64-apple-darwin
+            arch: x64
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          components: rust-docs
+          targets: ${{ matrix.target }}
+      - if: matrix.target == 'x86_64-apple-darwin'
+        name: Let Apple silicon run what is built for Intel
+        run: softwareupdate --install-rosetta --agree-to-license || /usr/bin/arch -x86_64 /usr/bin/true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+          key: gui-${{ matrix.target }}
+          cache-on-failure: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python scripts/cargo-about.py
+      - name: Fetch the application's dependencies
+        working-directory: gui
+        run: |
+          npm ci --no-audit --no-fund
+          cargo fetch --locked --manifest-path src-tauri/Cargo.toml
+      - name: Compile the application
+        working-directory: gui
+        run: node scripts/release.mjs --prepare --target '${{ matrix.target }}'
+
+  gui-linux:
+    name: gui x86_64-unknown-linux-gnu
+    runs-on: ubuntu-22.04
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/gui/src-tauri/target
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the build's system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev patchelf squashfs-tools xvfb x11-utils imagemagick file libfuse2
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          components: rust-docs
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+          key: gui-linux
+          cache-on-failure: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python scripts/cargo-about.py
+      - name: Fetch the application's dependencies
+        working-directory: gui
+        run: |
+          npm ci --no-audit --no-fund
+          cargo fetch --locked --manifest-path src-tauri/Cargo.toml
+      - name: Compile the application
+        working-directory: gui
+        run: node scripts/release.mjs --prepare
+
+  android:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          components: rust-docs
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+          key: android
+          cache-on-failure: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python scripts/cargo-about.py
+      - name: Install the Android SDK parts the build takes
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" "ndk;29.0.14206865" > /dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
+      - name: Fetch the application's dependencies
+        working-directory: gui
+        run: |
+          npm ci --no-audit --no-fund
+          cargo fetch --locked --manifest-path src-tauri/Cargo.toml
+      - name: Build the APK for every phone's processor
+        working-directory: gui
+        run: node scripts/android.mjs build --apk

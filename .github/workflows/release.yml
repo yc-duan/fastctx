@@ -1,9 +1,20 @@
 name: Release
 
-# Every platform's installer from one commit: the command-line programs built, tested and run on the
-# machines they are for; World's installers carrying those very programs; each package signed bound
-# to the release's version; and, for a version tag, a GitHub release of them with the manifest the
-# updater reads. A push to a ci/ branch runs everything but the release. Nothing goes to npm.
+# Every platform's installer from one commit: the command-line programs built and run on the machines
+# they are for; World's installers carrying those very programs; each package signed bound to the
+# release's version; and, for a version tag, a GitHub release of them with the manifest the updater
+# reads. Nothing goes to npm.
+#
+# A version tag's run tests what a release cannot go without: each program's smoke test on the
+# machines it is for, on Linux once more as an old kernel, the installers installed and opened, the
+# updater taking a later version, and the interface reading what the World writes. A push to a ci/ branch runs the drills as well (the
+# network drill against the earlier release, the concurrency drill, the guardians' renewal, and the
+# bundled ripgrep, the node's lifetime, job control and byte streams) and releases nothing.
+#
+# The notices the programs carry are the tree's own (`dist/THIRD_PARTY_LICENSES.md`), so no build
+# waits for them; the notices job writes them again, and nothing is released when they differ. The
+# compiled dependencies come from the caches `warm.yml` leaves on main after a release, since a tag's
+# run reads only its own caches and the default branch's; this workflow saves none.
 #
 # The jobs start together. One that needs what another uploads does what it can before
 # (`scripts/ci-await.py`): an application compiles while the kernel it carries is still being built.
@@ -28,8 +39,12 @@ env:
   # The release before this one: the network drill runs its hub with this one's machines, and its
   # node on this one's hub, from its Linux package.
   EARLIER_RELEASE: 1.0.1-beta.4
+  # The drills run on a ci/ branch, never for a version tag.
+  DRILLS: ${{ github.ref_type == 'branch' }}
 
 jobs:
+  # The notices in the tree must be the ones scripts/notices.py writes for it; when they are not,
+  # nothing is released and the ones to commit are uploaded.
   notices:
     runs-on: ubuntu-24.04
     steps:
@@ -37,26 +52,28 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: rust-docs
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: notices
-          cache-on-failure: true
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
       - run: python scripts/cargo-about.py
       - run: cargo fetch --locked
-      - name: Write the notices
+      - name: Write the notices again and compare them with the tree's
         run: |
           # The syntax definitions' notices are data two-face carries; an unoptimized build prints the same.
-          cargo run --locked -p fastctx-tui --example syntax_notices > syntax-notices.md
-          python scripts/notices.py --syntax-notices syntax-notices.md --output dist/THIRD_PARTY_LICENSES.md
-      - name: Upload the notices
+          cargo run --locked -p fastctx-tui --example syntax_notices > "$RUNNER_TEMP/syntax-notices.md"
+          python scripts/notices.py --syntax-notices "$RUNNER_TEMP/syntax-notices.md" \
+            --output "$RUNNER_TEMP/notices/THIRD_PARTY_LICENSES.md"
+          if ! cmp -s "$RUNNER_TEMP/notices/THIRD_PARTY_LICENSES.md" dist/THIRD_PARTY_LICENSES.md; then
+            echo "::error::dist/THIRD_PARTY_LICENSES.md is not what scripts/notices.py writes for this tree; commit the one this run uploads"
+            exit 1
+          fi
+      - if: failure()
+        name: Upload the notices this tree should carry
         uses: actions/upload-artifact@v4
         with:
           name: notices
-          path: dist/THIRD_PARTY_LICENSES.md
-          if-no-files-found: error
+          path: ${{ runner.temp }}/notices/THIRD_PARTY_LICENSES.md
+          if-no-files-found: ignore
 
   kernel-windows:
     name: kernel ${{ matrix.target }}
@@ -83,22 +100,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: kernel-${{ matrix.target }}
-          cache-on-failure: true
+          save-if: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node scripts/check-launcher.cjs "$RUNNER_TEMP"
-      - name: Wait for the notices
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python scripts/ci-await.py "notices=Upload the notices"
-      - uses: actions/download-artifact@v4
-        with:
-          name: notices
-          path: dist
+      - if: env.DRILLS == 'true'
+        run: node scripts/check-launcher.cjs "$RUNNER_TEMP"
       - run: node scripts/kernel.mjs '${{ matrix.target }}'
       - name: Verify version and package the native program
         run: |
@@ -120,9 +130,10 @@ jobs:
           name: archive-${{ matrix.target }}
           path: dist/fastctx-*.zip
           if-no-files-found: error
-      - name: Build the release tests
+      - if: env.DRILLS == 'true'
+        name: Build the release tests
         run: node scripts/kernel.mjs --tests '${{ matrix.target }}' tests
-      - if: matrix.target == 'x86_64-pc-windows-msvc'
+      - if: matrix.target == 'x86_64-pc-windows-msvc' && env.DRILLS == 'true'
         name: Upload the tests
         uses: actions/upload-artifact@v4
         with:
@@ -132,7 +143,7 @@ jobs:
       - if: matrix.target == 'aarch64-pc-windows-msvc'
         name: Smoke test on this machine
         run: python scripts/smoke.py kernel/fastctx.exe
-      - if: matrix.target == 'aarch64-pc-windows-msvc'
+      - if: matrix.target == 'aarch64-pc-windows-msvc' && env.DRILLS == 'true'
         name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams
         run: |
           python scripts/ripgrep.py verify
@@ -141,7 +152,7 @@ jobs:
           tests/offline.exe
           tests/own_lifetime.exe
           tests/job_lifecycle.exe
-      - if: matrix.target == 'aarch64-pc-windows-msvc'
+      - if: matrix.target == 'aarch64-pc-windows-msvc' && env.DRILLS == 'true'
         name: Network drill
         run: tests/network_drill.exe --root "$(cygpath -m "$RUNNER_TEMP")"
 
@@ -159,9 +170,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          tests=()
+          if [[ "$DRILLS" == true ]]; then tests=("kernel x86_64-pc-windows-msvc=Upload the tests"); fi
           python scripts/ci-await.py "kernel x86_64-pc-windows-msvc=Upload the kernel" \
-            "kernel x86_64-pc-windows-msvc=Upload the archive" \
-            "kernel x86_64-pc-windows-msvc=Upload the tests" "gui x86_64-pc-windows-msvc=Upload the installer"
+            "kernel x86_64-pc-windows-msvc=Upload the archive" "${tests[@]}" "gui x86_64-pc-windows-msvc=Upload the installer"
       - uses: actions/download-artifact@v4
         with:
           name: kernel-x86_64-pc-windows-msvc
@@ -170,7 +182,8 @@ jobs:
         with:
           name: archive-x86_64-pc-windows-msvc
           path: archive
-      - uses: actions/download-artifact@v4
+      - if: env.DRILLS == 'true'
+        uses: actions/download-artifact@v4
         with:
           name: tests-x86_64-pc-windows-msvc
           path: tests
@@ -183,7 +196,8 @@ jobs:
       # A real Codex app-server whose model is a mock on this machine: no
       # request goes to any vendor (`scripts/concurrency.py`). The node finds
       # Codex on the user's PATH as the system keeps it.
-      - name: Concurrency and lifecycle drill
+      - if: env.DRILLS == 'true'
+        name: Concurrency and lifecycle drill
         shell: pwsh
         run: |
           $dir = Join-Path $env:RUNNER_TEMP 'codex-bin'
@@ -192,7 +206,8 @@ jobs:
           [Environment]::SetEnvironmentVariable('Path', "$dir;" + [Environment]::GetEnvironmentVariable('Path', 'User'), 'User')
           $env:Path = "$dir;$env:Path"
           python scripts/concurrency.py kernel/fastctx.exe --codex (Join-Path $dir 'codex.exe') --minutes 4 --restarts --root $env:RUNNER_TEMP
-      - name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams
+      - if: env.DRILLS == 'true'
+        name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams
         run: |
           python scripts/ripgrep.py verify
           export FASTCTX_TEST_BASH="$(cygpath -m /usr/bin/bash.exe)"
@@ -200,7 +215,8 @@ jobs:
           tests/offline.exe
           tests/own_lifetime.exe
           tests/job_lifecycle.exe
-      - name: Network drill
+      - if: env.DRILLS == 'true'
+        name: Network drill
         run: tests/network_drill.exe --root "$(cygpath -m "$RUNNER_TEMP")"
       - name: Install it and open it
         shell: pwsh
@@ -246,7 +262,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: kernel-${{ matrix.target }}
-          cache-on-failure: true
+          save-if: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -262,15 +278,8 @@ jobs:
           printf '#!/bin/sh\nexec %s -m ziglang "$@"\n' "$(command -v python)" > "$RUNNER_TEMP/zig-bin/zig"
           chmod +x "$RUNNER_TEMP/zig-bin/zig"
           echo "$RUNNER_TEMP/zig-bin" >> "$GITHUB_PATH"
-      - run: node scripts/check-launcher.cjs "$RUNNER_TEMP"
-      - name: Wait for the notices
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python scripts/ci-await.py "notices=Upload the notices"
-      - uses: actions/download-artifact@v4
-        with:
-          name: notices
-          path: dist
+      - if: env.DRILLS == 'true'
+        run: node scripts/check-launcher.cjs "$RUNNER_TEMP"
       - run: node scripts/kernel.mjs '${{ matrix.target }}'
       - name: Verify version and package the native program
         run: |
@@ -294,16 +303,27 @@ jobs:
           if-no-files-found: error
       - name: Smoke test on this machine
         run: python scripts/smoke.py kernel/fastctx --service
+      # The servers people bring are often far older than this one. The same smoke test runs again
+      # with every system call Linux 3.13 lacked answering ENOSYS, as such a kernel answers it, so a
+      # call the World makes with no way for an old kernel stops the release. As root, since a
+      # program kept from new privileges cannot sudo.
+      - if: matrix.target == 'x86_64-unknown-linux-gnu'
+        name: Smoke test as an old kernel
+        run: |
+          gcc -O2 -o "$RUNNER_TEMP/oldkernel" scripts/oldkernel.c
+          sudo "$RUNNER_TEMP/oldkernel" 314 python3 scripts/smoke.py kernel/fastctx
       # A real Codex app-server whose model is a mock on this machine: no
       # request goes to any vendor (`scripts/concurrency.py`). The node finds
       # Codex on the login PATH.
-      - name: Concurrency and lifecycle drill
+      - if: env.DRILLS == 'true'
+        name: Concurrency and lifecycle drill
         run: |
           arch="$(uname -m)"
           curl -fsSL "https://github.com/openai/codex/releases/download/rust-v0.160.0/codex-${arch}-unknown-linux-musl.tar.gz" | tar -xz -C "$RUNNER_TEMP"
           sudo install -m 0755 "$RUNNER_TEMP/codex-${arch}-unknown-linux-musl" /usr/local/bin/codex
           python scripts/concurrency.py kernel/fastctx --codex /usr/local/bin/codex --minutes 4 --restarts --root "$RUNNER_TEMP"
-      - name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams
+      - if: env.DRILLS == 'true'
+        name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams
         run: |
           node scripts/kernel.mjs --tests '${{ matrix.target }}' tests
           python scripts/ripgrep.py verify
@@ -312,7 +332,8 @@ jobs:
           tests/own_lifetime
           tests/job_lifecycle
       # With the earlier release's hub and node too, where its Linux package runs.
-      - name: Network drill
+      - if: env.DRILLS == 'true'
+        name: Network drill
         run: |
           earlier=()
           if [[ "$(uname -m)" == x86_64 ]]; then
@@ -341,22 +362,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: kernel-${{ matrix.target }}
-          cache-on-failure: true
+          save-if: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node scripts/check-launcher.cjs "$RUNNER_TEMP"
-      - name: Wait for the notices
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python scripts/ci-await.py "notices=Upload the notices"
-      - uses: actions/download-artifact@v4
-        with:
-          name: notices
-          path: dist
+      - if: env.DRILLS == 'true'
+        run: node scripts/check-launcher.cjs "$RUNNER_TEMP"
       - run: node scripts/kernel.mjs '${{ matrix.target }}'
       - name: Verify version and package the native program
         run: |
@@ -381,9 +395,10 @@ jobs:
       - if: matrix.target == 'aarch64-apple-darwin'
         name: Smoke test on this machine, with a managed Mac installed as root
         run: python scripts/smoke.py kernel/fastctx --service --managed dist/fastctx-aarch64-apple-darwin.tar.gz
-      - name: Build the release tests
+      - if: env.DRILLS == 'true'
+        name: Build the release tests
         run: node scripts/kernel.mjs --tests '${{ matrix.target }}' tests
-      - if: matrix.target == 'aarch64-apple-darwin'
+      - if: matrix.target == 'aarch64-apple-darwin' && env.DRILLS == 'true'
         name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams, in the bash a Mac comes with
         run: |
           python scripts/ripgrep.py verify
@@ -391,10 +406,10 @@ jobs:
           tests/offline
           tests/own_lifetime
           tests/job_lifecycle
-      - if: matrix.target == 'aarch64-apple-darwin'
+      - if: matrix.target == 'aarch64-apple-darwin' && env.DRILLS == 'true'
         name: Network drill
         run: tests/network_drill --root "$RUNNER_TEMP"
-      - if: matrix.target == 'x86_64-apple-darwin'
+      - if: matrix.target == 'x86_64-apple-darwin' && env.DRILLS == 'true'
         name: Upload the tests
         uses: actions/upload-artifact@v4
         with:
@@ -419,13 +434,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          tests=()
+          if [[ "$DRILLS" == true ]]; then tests=("kernel x86_64-apple-darwin=Upload the tests"); fi
           python scripts/ci-await.py "kernel x86_64-apple-darwin=Upload the kernel" \
-            "kernel x86_64-apple-darwin=Upload the tests" "gui x86_64-apple-darwin=Upload the application"
+            "${tests[@]}" "gui x86_64-apple-darwin=Upload the application"
       - uses: actions/download-artifact@v4
         with:
           name: kernel-x86_64-apple-darwin
           path: kernel
-      - uses: actions/download-artifact@v4
+      - if: env.DRILLS == 'true'
+        uses: actions/download-artifact@v4
         with:
           name: tests-x86_64-apple-darwin
           path: tests
@@ -435,16 +453,19 @@ jobs:
           path: dist
       - name: Smoke test on an Intel Mac
         run: |
-          chmod +x kernel/fastctx tests/*
+          chmod +x kernel/fastctx
           python scripts/smoke.py kernel/fastctx --service --expect-bash 3.2
-      - name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams
+      - if: env.DRILLS == 'true'
+        name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams
         run: |
+          chmod +x tests/*
           python scripts/ripgrep.py verify
           export FASTCTX_TEST_BASH=/bin/bash FASTCTX_TEST_ROOT="$RUNNER_TEMP"
           tests/offline
           tests/own_lifetime
           tests/job_lifecycle
-      - name: Network drill
+      - if: env.DRILLS == 'true'
+        name: Network drill
         run: tests/network_drill --root "$RUNNER_TEMP"
       - name: Open the application
         run: |
@@ -546,7 +567,7 @@ jobs:
         with:
           workspaces: gui/src-tauri
           key: gui-${{ matrix.target }}
-          cache-on-failure: true
+          save-if: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -559,14 +580,6 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           cargo fetch --locked --manifest-path src-tauri/Cargo.toml
-      - name: Wait for the notices
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python scripts/ci-await.py "notices=Upload the notices"
-      - uses: actions/download-artifact@v4
-        with:
-          name: notices
-          path: dist
       - name: Compile the application while its kernel is built
         working-directory: gui
         run: node scripts/release.mjs --prepare --kernel-signed --target '${{ matrix.target }}'
@@ -661,7 +674,7 @@ jobs:
         with:
           workspaces: gui/src-tauri
           key: gui-${{ matrix.target }}
-          cache-on-failure: true
+          save-if: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -674,14 +687,6 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           cargo fetch --locked --manifest-path src-tauri/Cargo.toml
-      - name: Wait for the notices
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python scripts/ci-await.py "notices=Upload the notices"
-      - uses: actions/download-artifact@v4
-        with:
-          name: notices
-          path: dist
       - name: Compile the application while its kernel is built
         working-directory: gui
         run: node scripts/release.mjs --prepare --target '${{ matrix.target }}'
@@ -813,7 +818,7 @@ jobs:
         with:
           workspaces: gui/src-tauri
           key: gui-linux
-          cache-on-failure: true
+          save-if: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -831,14 +836,6 @@ jobs:
       - name: Check the interface reads what the World writes
         working-directory: gui
         run: node scripts/check-wire.mjs --rust
-      - name: Wait for the notices
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python scripts/ci-await.py "notices=Upload the notices"
-      - uses: actions/download-artifact@v4
-        with:
-          name: notices
-          path: dist
       - name: Compile the application while its kernel is built
         working-directory: gui
         run: node scripts/release.mjs --prepare
@@ -926,7 +923,7 @@ jobs:
         with:
           workspaces: gui/src-tauri
           key: android
-          cache-on-failure: true
+          save-if: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -944,14 +941,6 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           cargo fetch --locked --manifest-path src-tauri/Cargo.toml
-      - name: Wait for the notices
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python scripts/ci-await.py "notices=Upload the notices"
-      - uses: actions/download-artifact@v4
-        with:
-          name: notices
-          path: dist
       - name: Build the APK for every phone's processor
         working-directory: gui
         run: |
@@ -1029,6 +1018,7 @@ jobs:
   # kernel keeps a hub and a node as Windows services; the same source, built as a later release and
   # signed as one, goes to the renewal, and the protected guardians take it with no administrator.
   renewal-windows:
+    if: github.ref_type == 'branch'
     runs-on: windows-2025
     defaults:
       run:
@@ -1044,28 +1034,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: renewal-x86_64-pc-windows-msvc
-          cache-on-failure: true
+          save-if: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Wait for the notices
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python scripts/ci-await.py "notices=Upload the notices"
-      - uses: actions/download-artifact@v4
-        with:
-          name: notices
-          path: dist
       - name: Build the same source as a later release
         run: |
           version="$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
           later="$(python scripts/renewal-drill.py bump "$version")"
           node scripts/kernel.mjs x86_64-pc-windows-msvc
           mkdir -p later && cp target/x86_64-pc-windows-msvc/release/fastctx.exe later/fastctx.exe
-          git checkout -- Cargo.toml Cargo.lock
+          git checkout -- Cargo.toml Cargo.lock dist/THIRD_PARTY_LICENSES.md
           echo "LATER=$later" >> "$GITHUB_ENV"
       - name: Sign the later release
         env:
@@ -1084,7 +1066,7 @@ jobs:
         run: python scripts/renewal-drill.py run kernel/fastctx.exe later/fastctx.exe "$LATER"
 
   manifest:
-    needs: [kernel-windows, windows-x64, kernel-linux, kernel-macos, macos-intel, sign-kernels, gui-windows, gui-macos, gui-linux, android, update-windows, renewal-windows]
+    needs: [notices, kernel-windows, windows-x64, kernel-linux, kernel-macos, macos-intel, sign-kernels, gui-windows, gui-macos, gui-linux, android, update-windows]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

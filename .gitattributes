@@ -5,6 +5,7 @@
 gui/fixtures/wire.json text eol=lf
 # Embedded legal texts must have the same bytes in every release checkout.
 /LICENSE-APACHE text eol=lf
+/dist/THIRD_PARTY_LICENSES.md text eol=lf
 /NOTICE text eol=lf
 /licenses/** text eol=lf
 /gui/licenses/** text eol=lf

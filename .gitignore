@@ -1,6 +1,7 @@
 # Rust
 /target
-/dist
+/dist/*
+!/dist/THIRD_PARTY_LICENSES.md
 /cargo-zigbuild
 
 # Python caches
