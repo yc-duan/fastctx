@@ -5,7 +5,12 @@ import { onMotion, reducedMotion } from "../motion";
  * lets the view go. Nothing is added past the content's ends to hold it
  * there: at the end of a short or scrolled-down conversation the content
  * settles against the edge as a box closes, so the reader can never scroll
- * into empty room that a fold left behind. */
+ * into empty room that a fold left behind.
+ *
+ * What it makes up for is only what the motion moves: where the pressed
+ * element is in the content, not on the screen. The reader may scroll while
+ * a box opens or closes, and their scroll is theirs; a box growing below
+ * the element moves nothing above it, so then the view is never touched. */
 export class AnchorLayout {
   private locks = 0;
   private previousAnchor = "";
@@ -13,8 +18,16 @@ export class AnchorLayout {
 
   constructor(readonly scroller: HTMLElement) {}
 
+  /** Where `element` is in the scrolled content: what layout moves, and
+   *  scrolling does not. */
+  private inContent(element: HTMLElement): number {
+    return element.getBoundingClientRect().top - this.scroller.getBoundingClientRect().top + this.scroller.scrollTop;
+  }
+
   hold(anchor: HTMLElement): { correct: () => number; release: () => void } {
-    const y = anchor.getBoundingClientRect().top;
+    let last = this.inContent(anchor);
+    // What is owed in whole pixels: Chromium rounds scrollTop to them.
+    let owed = 0;
     if (this.locks++ === 0) {
       this.previousAnchor = this.scroller.style.overflowAnchor;
       this.previousBehavior = this.scroller.style.scrollBehavior;
@@ -23,9 +36,20 @@ export class AnchorLayout {
     }
     return {
       correct: () => {
-        const delta = anchor.getBoundingClientRect().top - y;
-        if (delta) this.scroller.scrollTop += delta;
-        return anchor.getBoundingClientRect().top - y;
+        // An element drawn anew meanwhile is no longer where anything is.
+        if (!anchor.isConnected) return 0;
+        const now = this.inContent(anchor);
+        owed += now - last;
+        last = now;
+        const step = Math.round(owed);
+        if (step) {
+          const before = this.scroller.scrollTop;
+          this.scroller.scrollTop = before + step;
+          owed -= this.scroller.scrollTop - before;
+          // Against an end of the content nothing more can be made up.
+          if (this.scroller.scrollTop === before) owed = 0;
+        }
+        return owed;
       },
       release: () => {
         if (--this.locks === 0) {
