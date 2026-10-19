@@ -221,7 +221,7 @@ fn collect(
 ) -> anyhow::Result<OnPackage> {
     let scratch = match std::env::var_os("FASTCTX_SCRATCH") {
         Some(scratch) => PathBuf::from(scratch),
-        None => std::env::temp_dir(),
+        None => fastctx_platform::temp_dir().context("finding the temporary directory")?,
     };
     let directory = scratch.join(format!("on-{}", random()?));
     std::fs::create_dir_all(&directory).with_context(|| format!("making {}", directory.display()))?;

@@ -8,11 +8,21 @@
 
 use std::ffi::OsString;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// SYSTEM's home, when this process runs as SYSTEM on Windows.
 pub fn home() -> io::Result<Option<PathBuf>> {
     imp::home()
+}
+
+/// The temporary folder in SYSTEM's home, when this process runs as SYSTEM
+/// on Windows.
+pub fn temporary() -> io::Result<Option<PathBuf>> {
+    Ok(home()?.map(|home| local_data(&home).join("Temp")))
+}
+
+fn local_data(home: &Path) -> PathBuf {
+    home.join("AppData").join("Local")
 }
 
 /// The variables that point a process at SYSTEM's home: its profile,
@@ -21,7 +31,7 @@ pub fn home() -> io::Result<Option<PathBuf>> {
 pub fn variables() -> io::Result<Vec<(OsString, OsString)>> {
     let Some(home) = home()? else { return Ok(Vec::new()) };
     let roaming = home.join("AppData").join("Roaming");
-    let local = home.join("AppData").join("Local");
+    let local = local_data(&home);
     let temporary = local.join("Temp");
     Ok([
         ("USERPROFILE", home.clone()),

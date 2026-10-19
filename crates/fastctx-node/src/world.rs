@@ -563,21 +563,22 @@ pub fn accounts(node: &Node) -> AccountsReply {
 
 /// What this machine is like.
 pub fn facts(node: &Node) -> MachineFacts {
-    let home =
-        fastctx_platform::user_home().map(|path| native(&path)).unwrap_or_else(|error| format!("(not known: {error})"));
+    let known = |path: std::io::Result<std::path::PathBuf>| {
+        path.map(|path| native(&path)).unwrap_or_else(|error| format!("(not known: {error})"))
+    };
     MachineFacts {
         name: node.machine(),
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
-        home,
-        temp: native(&std::env::temp_dir()),
+        home: known(fastctx_platform::user_home()),
+        temp: known(fastctx_platform::temp_dir()),
         path_separator: if cfg!(windows) { ';' } else { ':' },
         case_sensitive: !cfg!(any(windows, target_os = "macos")),
         version: env!("CARGO_PKG_VERSION").to_string(),
         completion_receipts: true,
         upload_resumes: true,
         stats: true,
-        shell: shell().clone(),
+        shell: shell(),
         form: Some(form()),
         node_lifetime: Some(Box::new(node.lifetime.clone())),
     }
@@ -590,29 +591,32 @@ fn form() -> fastctx_types::world::Form {
     *FORM.get_or_init(fastctx_platform::form::form)
 }
 
-/// The bash `run` starts here and its version, asked once: the answer only
-/// changes when the machine's bash is reinstalled, which a node restart
-/// follows.
-fn shell() -> &'static String {
+/// The bash `run` starts here and its version. Once found it is kept for the
+/// node's life; until then it is looked for each time it is asked, since a
+/// managed computer often has Git installed after the node that keeps
+/// running.
+fn shell() -> String {
     static SHELL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    SHELL.get_or_init(|| {
-        let bash = match fastctx_hands::run::shell::bash() {
-            Ok(bash) => bash,
-            Err(error) => return format!("no bash: {error}"),
-        };
-        let mut asking = std::process::Command::new(&bash);
-        asking.arg("--version").stdin(std::process::Stdio::null());
-        let version = fastctx_platform::bounded::output(asking, "bash --version", std::time::Duration::from_secs(10))
-            .ok()
-            .and_then(|output| {
-                // "GNU bash, version 5.2.37(1)-release (x86_64-pc-msys)"
-                let text = String::from_utf8_lossy(&output.stdout).into_owned();
-                let rest = text.lines().next()?.split("version ").nth(1)?.to_string();
-                Some(rest.split(['(', ' ']).next()?.to_string())
-            });
-        let version = version.map(|version| format!("bash {version}")).unwrap_or_else(|| "bash".to_string());
-        if cfg!(windows) { format!("{version} (Git for Windows, MSYS)") } else { version }
-    })
+    if let Some(shell) = SHELL.get() {
+        return shell.clone();
+    }
+    let bash = match fastctx_hands::run::shell::bash() {
+        Ok(bash) => bash,
+        Err(error) => return format!("no bash: {error}"),
+    };
+    let mut asking = std::process::Command::new(&bash);
+    asking.arg("--version").stdin(std::process::Stdio::null());
+    let version = fastctx_platform::bounded::output(asking, "bash --version", std::time::Duration::from_secs(10))
+        .ok()
+        .and_then(|output| {
+            // "GNU bash, version 5.2.37(1)-release (x86_64-pc-msys)"
+            let text = String::from_utf8_lossy(&output.stdout).into_owned();
+            let rest = text.lines().next()?.split("version ").nth(1)?.to_string();
+            Some(rest.split(['(', ' ']).next()?.to_string())
+        });
+    let version = version.map(|version| format!("bash {version}")).unwrap_or_else(|| "bash".to_string());
+    let shell = if cfg!(windows) { format!("{version} (Git for Windows, MSYS)") } else { version };
+    SHELL.get_or_init(|| shell).clone()
 }
 
 /// A path as the World writes it: in full, with no trailing slash, and on

@@ -46,6 +46,15 @@ pub fn user_home() -> io::Result<PathBuf> {
     imp::user_home()
 }
 
+/// The temporary directory the commands this process starts are given:
+/// for SYSTEM the one in the home Fastctx gives it (`crate::system_home`),
+/// the system's for anyone else. `std::env::temp_dir` cannot say it for
+/// SYSTEM: it asks Windows' `GetTempPath2`, which answers SYSTEM with
+/// `C:\Windows\SystemTemp` whatever `TEMP` says.
+pub fn temp_dir() -> io::Result<PathBuf> {
+    Ok(crate::system_home::temporary()?.unwrap_or_else(std::env::temp_dir))
+}
+
 /// The numeric id of the user this process runs as; none on Windows, which
 /// has no such id.
 pub fn user_id() -> Option<u32> {
