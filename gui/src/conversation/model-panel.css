@@ -209,7 +209,7 @@
 }
 
 .composer-jobs .glyph {
-  color: var(--accent);
+  color: var(--text-2);
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
   animation: ink-breathe var(--breath-slow) ease-in-out infinite;

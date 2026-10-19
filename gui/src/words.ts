@@ -153,6 +153,8 @@ export interface Words {
   showLess: string;
   copy: string;
   copied: string;
+  /** A change's card: its whole as a unified diff. */
+  copyDiff: string;
   sendPlaceholder(agent: string): string;
   send: string;
   stop: string;
@@ -416,6 +418,7 @@ export const zh: Words = {
   showLess: "− 收起",
   copy: "复制",
   copied: "已复制",
+  copyDiff: "复制改动",
   sendPlaceholder: (agent) => `发消息给 ${agent}…`,
   send: "发送",
   stop: "停止",
@@ -667,6 +670,7 @@ export const en: Words = {
   showLess: "− show less",
   copy: "Copy",
   copied: "Copied",
+  copyDiff: "Copy diff",
   sendPlaceholder: (agent) => `Message ${agent}…`,
   send: "Send",
   stop: "Stop",

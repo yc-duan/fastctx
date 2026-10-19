@@ -128,8 +128,9 @@ export class FindContent {
               const rows = parse(change.diff);
               const lines = memoryDiff(rows).lines;
               const numberedRows = numbered(rows);
-              if (member.tool.does.changes.length > 1) yield part(`${row.key}/path/${index}`, rowStamp,
-                { row: row.key, selector: `.diff-path:nth-of-type(${index + 1})` }, () => change.path);
+              // Each change's card says its path in its head.
+              yield part(`${row.key}/path/${index}`, rowStamp,
+                { row: row.key, selector: `.diff-card:nth-of-type(${index + 1}) .diff-card-path` }, () => change.path);
               yield part(`${row.key}/diff/${index}`, rowStamp, { row: row.key, long: index }, () => {
                 return lines.map((line) => displayedDiff(line, numberedRows, words.unchangedLines)).join("\n");
               });

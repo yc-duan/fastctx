@@ -644,12 +644,3 @@
   pointer-events: none;
 }
 
-/* A stretch's line under way: the step in hand fades in where the last was. */
-.group-title.fresh {
-  opacity: var(--rise);
-  animation: rise var(--enter) ease both;
-}
-
-:root[data-reduced] .group-title.fresh {
-  animation: none;
-}

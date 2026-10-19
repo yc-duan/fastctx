@@ -4,7 +4,7 @@
 
 /* A call that started an agent: its kind as a small chip before what it
    was asked, how it stands after; under it, while it works, the step it
-   takes now, faded in where the last was. */
+   takes now, in place of the last. */
 .row-agent .agent-object {
   display: inline-flex;
   align-items: baseline;
@@ -69,11 +69,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.agent-now.fresh .agent-now-said {
-  opacity: var(--rise);
-  animation: rise var(--enter) ease both;
 }
 
 /* What an agent did, opened under its row: its own conversation, drawn as
@@ -229,7 +224,7 @@
 }
 
 .composer-agents.going .glyph {
-  color: var(--accent);
+  color: var(--text-2);
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
   animation: ink-breathe var(--breath-slow) ease-in-out infinite;
@@ -410,6 +405,3 @@
 :root[data-reduced] .agents-pop,
 :root[data-reduced] .lane-head,
 :root[data-reduced] .row.row-found > .row-line,
-:root[data-reduced] .agent-now.fresh .agent-now-said {
-  animation: none;
-}

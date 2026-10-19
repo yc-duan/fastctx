@@ -29,6 +29,7 @@
 // quiet line on the left; what was done to a turn (copy, ask again, fork)
 // appears only once the turn is over.
 
+import { diffCard, unifiedDiff, type DiffCard, type DiffKind } from "./diff-card";
 import { handOnAtEdge } from "../scroll-handoff";
 import { ActsMenu } from "../app/acts-menu";
 import type { AgentActivity, Content, Health, MachineName, Notice, Speaker, Tool, TurnEnd } from "../world/events";
@@ -1590,14 +1591,9 @@ export class ConversationView {
       .join("");
     if (titleElement.dataset.drawn !== drawn) {
       titleElement.dataset.drawn = drawn;
+      // The step in hand changes in place, quietly; the line keeps its
+      // height.
       titleElement.innerHTML = drawn;
-      // The step in hand changes in place: the new words fade in, the line
-      // keeps its height.
-      if (running) {
-        titleElement.classList.remove("fresh");
-        void titleElement.offsetWidth;
-        titleElement.classList.add("fresh");
-      }
     }
     stretch.head.classList.toggle("going", running);
     const time = stretch.head.querySelector<HTMLElement>(".group-time")!;
@@ -1889,12 +1885,7 @@ export class ConversationView {
       const said = doing ? [doing.action, doing.object].filter(Boolean).join(" ") : this.context.words.thinking;
       const markName = doing ? doing.glyph : "thinking";
       const saidElement = now.querySelector<HTMLElement>(".agent-now-said")!;
-      if (saidElement.textContent !== said) {
-        saidElement.textContent = said;
-        now.classList.remove("fresh");
-        void now.offsetWidth;
-        now.classList.add("fresh");
-      }
+      if (saidElement.textContent !== said) saidElement.textContent = said;
       const markElement = now.querySelector<HTMLElement>(".agent-now-mark")!;
       if (markElement.dataset.glyph !== markName) {
         markElement.dataset.glyph = markName;
@@ -2000,6 +1991,7 @@ export class ConversationView {
         ...(Array.isArray(lines) ? { source: new DiffLines(lines as readonly string[]) } : {}),
         paint: diffPaint(path, this.context.words.unchangedLines, numberedRows),
         kind: "diff",
+        scroll: true,
       },
       path,
       this.layoutAnchor,
@@ -2007,14 +1999,33 @@ export class ConversationView {
     );
   }
 
-  /** What a write changed, read from the machine that keeps it: a few rows
-   *  are read whole and shown outright, more are read a screen at a time. */
+  /** A change's card, the rows put in it once there are some: `shown`
+   *  has them put. */
+  private changeCard(path: string, machine: string | null, kind: DiffKind): { card: DiffCard; shown: (long: LongText) => void } {
+    const { words } = this.context;
+    let held: LongText | null = null;
+    const card = diffCard(path, machine, { copy: words.copyDiff, copied: words.copied }, async (signal) => unifiedDiff(path, kind, held ? await held.all(signal) : []));
+    return {
+      card,
+      shown: (long) => {
+        held = long;
+        const full = long.takeFull();
+        if (full) card.act(full);
+      },
+    };
+  }
+
+  /** What a write changed, read from the machine that keeps it, in its
+   *  card: a few rows are read whole, more a screen at a time. */
   private fillWrite(key: string, write: WriteFact, into: HTMLElement): void {
+    const { card, shown } = this.changeCard(write.path, write.machine, write.kind === "added" ? "added" : write.kind === "deleted" ? "deleted" : "modified");
+    into.append(card.element);
     const kept = this.heldRows(key, write);
     if (kept) {
       const long = this.diffText(kept, write.path, true);
       this.longs.set(key, [long]);
-      into.append(long.element);
+      card.body.append(long.element);
+      shown(long);
       return;
     }
     const diff = write.diff;
@@ -2024,7 +2035,7 @@ export class ConversationView {
     const note = document.createElement("p");
     note.className = "io-note";
     note.textContent = words.output.reading;
-    into.append(note);
+    card.body.append(note);
     const request = new AbortController();
     const held: { raw: OpenedLines | null } = { raw: null };
     const close = () => {
@@ -2056,6 +2067,7 @@ export class ConversationView {
         }
         this.longs.set(key, [long]);
         note.replaceWith(long.element);
+        shown(long);
       } catch (error) {
         if (request.signal.aborted) return;
         close();
@@ -2161,21 +2173,17 @@ export class ConversationView {
     const { words } = this.context;
     const { tool } = entry;
     if (tool.does.as === "edit") {
-      // One file's change needs no name above it: its row has said it.
-      const several = tool.does.changes.length > 1;
+      // Each file's change in a card of its own, saying which file it is.
       const longs: LongText[] = [];
       for (const change of tool.does.changes) {
         const rows = parse(change.diff);
         const long = this.diffText(memoryDiff(rows).lines, change.path, numbered(rows));
         longs.push(long);
-        if (several) {
-          const head = document.createElement("p");
-          head.className = "diff-path";
-          head.title = change.path;
-          head.textContent = change.path;
-          content.append(head);
-        }
-        content.append(long.element);
+        const how = change.how;
+        const { card, shown } = this.changeCard(change.path, tool.machine ?? this.context.residentMachine ?? null, how === "added" ? "added" : how === "deleted" ? "deleted" : "modified");
+        card.body.append(long.element);
+        shown(long);
+        content.append(card.element);
       }
       this.longs.set(key, longs);
       return;

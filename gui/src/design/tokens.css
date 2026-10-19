@@ -91,8 +91,8 @@
   /* The scale of what comes and goes: a quick change, an entrance, a thing
      settling in its place, a slow arrival, one that lingers, a line said
      under a film, a mark drawn in; one step of a stagger. Things that stay
-     moving have loops of their own: a breath, a slower one, a heading's
-     glow, the pen along a line, a found row's wash, a fresh row's, a held
+     moving have loops of their own: a breath, a slower one, the pen along
+     a line, a found row's wash, a fresh row's, a held
      button's. */
   --quick: 120ms;
   --settle: 380ms;
@@ -103,7 +103,6 @@
   --stagger: 60ms;
   --breath: 1.6s;
   --breath-slow: 2.6s;
-  --glow: 2.2s;
   --flow: 2.8s;
   --flow-slow: 3.4s;
   --found: 1.8s;

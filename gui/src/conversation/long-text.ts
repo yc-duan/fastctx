@@ -57,6 +57,9 @@ export interface LongLines {
   others?: readonly OtherSource[];
   /** A class the lines' holder takes, for how they read (a diff). */
   kind?: string;
+  /** Shown whole in a box that scrolls from the start, as a change is: no
+   *  first lines and button for the rest, however few or many. */
+  scroll?: boolean;
 }
 
 /** Lines shown before the rest is asked for, and how many more lines are
@@ -68,6 +71,8 @@ export const FEW = PREVIEW + SLACK;
 /** How much of the conversation's height open text takes at most before
  *  it scrolls in its box. */
 const TALLEST = 0.7;
+/** How much of it a box that scrolls from the start takes at most. */
+const SCROLLING = 0.5;
 
 export class LongText {
   readonly element = document.createElement("div");
@@ -75,6 +80,8 @@ export class LongText {
   private viewport: LineViewport | null = null;
   private motion: AnchoredHeight | null = null;
   private full = false;
+  /** A box that scrolls from the start (`LongLines.scroll`). */
+  private readonly scrolling: boolean;
   private readonly more = document.createElement("button");
   private readonly box = document.createElement("div");
   private corner: HTMLButtonElement | null = null;
@@ -92,7 +99,8 @@ export class LongText {
     this.source = given.source ?? (lines ? new MemoryLines(lines, true) : (given.lines as LineSource));
     this.element.className = `long-text${given.kind ? ` ${given.kind}` : ""}`;
     const inline = given.inline ?? given.paint;
-    if (lines && lines.length <= FEW && !others.length) {
+    this.scrolling = !!given.scroll;
+    if (lines && lines.length <= FEW && !others.length && !this.scrolling) {
       this.element.append(inline ? painted(lines, inline) : plainText(lines));
       return;
     }
@@ -115,7 +123,7 @@ export class LongText {
     });
     this.viewport = new LineViewport(this.source, {
       label,
-      limit: PREVIEW,
+      ...(this.scrolling ? {} : { limit: PREVIEW }),
       failed: viewerWords.failed,
       interrupted: viewerWords.interrupted,
       numbers: false,
@@ -125,14 +133,14 @@ export class LongText {
     this.more.type = "button";
     this.more.className = "io-more";
     this.more.addEventListener("click", () => void this.setFull(!this.full));
-    this.element.append(this.box, this.more);
+    this.element.append(this.box, ...(this.scrolling ? [] : [this.more]));
     this.motion = new AnchoredHeight(this.box, layout);
     this.label_();
     // A source read from elsewhere may grow while it is shown.
     if (!lines) {
       this.unsubscribe = this.source.subscribe(() => {
         this.label_();
-        if (!this.full) this.settle();
+        if (!this.full || this.scrolling) this.settle();
       });
     }
     queueMicrotask(() => this.settle());
@@ -142,7 +150,7 @@ export class LongText {
    *  the line it shares with what else is said under the text; none where
    *  the text is short enough to be shown whole. */
   takeMore(): HTMLElement | null {
-    if (!this.viewport) return null;
+    if (!this.viewport || this.scrolling) return null;
     this.more.remove();
     return this.more;
   }
@@ -161,6 +169,10 @@ export class LongText {
   }
 
   private label_(): void {
+    if (this.scrolling) {
+      this.more.hidden = true;
+      return;
+    }
     const rest = this.length - PREVIEW;
     this.more.hidden = rest <= 0 && !this.full;
     this.more.textContent = this.full ? this.words.less : this.words.more(rest);
@@ -169,6 +181,7 @@ export class LongText {
 
   private height(): number {
     const row = this.viewport?.rowHeight ?? 0;
+    if (this.scrolling) return Math.round(Math.min(this.layout.scroller.clientHeight * SCROLLING, this.length * row));
     const lines = this.full ? this.length : Math.min(this.length, PREVIEW);
     return Math.round(this.full ? Math.min(this.layout.scroller.clientHeight * TALLEST, lines * row) : lines * row);
   }
@@ -184,9 +197,9 @@ export class LongText {
   /** Brings a search hit beyond the preview into the existing line box. */
   async reveal(line: number): Promise<void> {
     if (!this.viewport) return;
-    if (line >= PREVIEW) await this.setFull(true);
+    if (line >= PREVIEW && !this.scrolling) await this.setFull(true);
     this.settle();
-    this.viewport.setLimit(this.full ? undefined : PREVIEW);
+    this.viewport.setLimit(this.full || this.scrolling ? undefined : PREVIEW);
     this.viewport.jump(line);
     await this.viewport.ready;
   }
@@ -212,6 +225,11 @@ export class LongText {
       this.viewport.setLimit(PREVIEW);
       this.viewport.setTop(0);
     }
+  }
+
+  /** Every line, read from wherever they are kept. */
+  async all(signal: AbortSignal): Promise<readonly string[]> {
+    return this.source.read(0, this.length, signal);
   }
 
   destroy(): void {

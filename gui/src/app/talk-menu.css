@@ -157,7 +157,7 @@
   background: transparent;
   color: var(--text-3);
   font: inherit;
-  font-size: var(--size-small);
+  font-size: var(--size-ui);
   text-align: left;
   cursor: pointer;
   transition: color var(--hover) ease;

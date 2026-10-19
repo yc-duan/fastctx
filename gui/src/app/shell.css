@@ -126,14 +126,14 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 38px;
+  height: 40px;
   margin: var(--space-2) 0 var(--space-3);
   padding: 0 var(--space-3);
   border-radius: var(--radius-m);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-lift);
   color: var(--text);
-  font-size: var(--size-ui);
+  font-size: var(--body-size);
   transition: box-shadow var(--hover) ease, background-color var(--hover) ease;
 }
 
@@ -173,11 +173,11 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 32px;
+  min-height: 34px;
   padding: 4px var(--space-3);
   border-radius: var(--radius-s);
   color: var(--text-2);
-  font-size: var(--size-ui);
+  font-size: var(--body-size);
   line-height: var(--leading-ui);
   text-decoration: none;
   transition: color var(--hover) ease, background-color var(--hover) ease;
@@ -241,7 +241,7 @@ body {
   padding: 0 var(--space-3);
   font-family: var(--font-reading);
   font-weight: 400;
-  font-size: var(--size-small);
+  font-size: var(--size-ui);
   letter-spacing: 0.04em;
   color: var(--text-3);
 }
@@ -399,7 +399,7 @@ body {
 .project-empty {
   margin: 1px 0 var(--space-1);
   padding: 6px var(--space-3) 6px calc(var(--space-3) + 28px);
-  font-size: var(--size-small);
+  font-size: var(--size-ui);
   color: var(--text-3);
 }
 
@@ -444,11 +444,11 @@ body {
   grid-template-columns: 16px minmax(0, 1fr) 10px 16px;
   align-items: center;
   column-gap: 9px;
-  min-height: 32px;
+  min-height: 34px;
   padding: 4px var(--space-3);
   border-radius: var(--radius-s);
   color: var(--text-2);
-  font-size: var(--size-ui);
+  font-size: var(--body-size);
   line-height: var(--leading-ui);
   text-decoration: none;
   transition: color var(--hover) ease, background-color var(--hover) ease;
@@ -510,7 +510,7 @@ body {
 
 .talk-all {
   color: var(--text-3);
-  font-size: var(--size-small);
+  font-size: var(--size-ui);
 }
 
 .talk-all .count {

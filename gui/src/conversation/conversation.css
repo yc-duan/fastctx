@@ -471,23 +471,6 @@
   color: var(--text-2);
 }
 
-/* While something runs, the heading says what, its words slowly
-   brightening and dimming. They stay drawn as words: painted through a
-   moving background they would lose their subpixel smoothing. */
-.group-head.going .group-title {
-  animation: heading-glow var(--glow) ease-in-out infinite;
-}
-
-@keyframes heading-glow {
-  0%,
-  100% {
-    color: var(--text-2);
-  }
-  50% {
-    color: var(--text-strong);
-  }
-}
-
 /* Folding: one duration and one curve, the height carried by the grid so
    nothing is measured. */
 .fold {
@@ -748,10 +731,6 @@
   white-space: nowrap;
 }
 
-.row-thinking.row-running .row-said {
-  color: var(--text);
-}
-
 .row-figures {
   flex: none;
   white-space: nowrap;
@@ -804,20 +783,18 @@
   line-height: var(--leading-prose);
 }
 
-/* A running tool: its glyph gives way to a slow pulse. */
+/* A running tool, an agent at work among them: its glyph gives way to a
+   slow pulse in the ink of the glyphs around it. The pulse is all that says
+   it runs: its words, its stretch's heading and the rest of the turn read as
+   they do once it is done. */
 .pulse {
   width: 7px;
   height: 7px;
   border-radius: var(--radius-full);
-  background: var(--accent);
+  background: var(--text-2);
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
   animation: pulse var(--breath) ease-in-out infinite;
-}
-
-.row-running .row-action,
-.row-tool.row-running .row-action {
-  color: var(--text);
 }
 
 /* A tool that arrives in a live conversation comes in once, quietly. */
@@ -825,11 +802,6 @@
   opacity: var(--rise);
   translate: 0 calc((1 - var(--rise)) * 4px);
   animation: rise var(--enter) var(--fold-easing) both;
-}
-
-:root[data-reduced] .group-head.going .group-title {
-  animation: none;
-  color: var(--text);
 }
 
 :root[data-reduced] .pulse {
@@ -886,9 +858,109 @@
   overflow: hidden;
 }
 
-.long-text.diff + .diff-path,
-.long-text.diff + .long-text.diff {
+/* A change to a file: one solid card, its head a shade deeper saying which
+   file it is and on which machine, the change scrolling beneath it. */
+.diff-card {
+  border-radius: var(--radius-m);
+  background: var(--surface-code);
+  overflow: hidden;
+}
+
+.diff-card + .diff-card {
   margin-top: var(--space-2);
+}
+
+.diff-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 34px;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  background: var(--surface-header);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.diff-card-machine {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+/* The path: its folders give way from the front, the file's name stays. */
+.diff-card-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  white-space: nowrap;
+}
+
+.diff-card-folder {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+}
+
+.diff-card-folder > bdi {
+  direction: ltr;
+}
+
+.diff-card-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+}
+
+.diff-card-acts {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* The way to the whole of it stands in the head, always there, as the
+   copy does. */
+.diff-card-acts .long-text-full {
+  position: static;
+  background: transparent;
+  --shown: 1;
+}
+
+.diff-card-acts .icon-button,
+.diff-card-acts .long-text-full {
+  width: 28px;
+  height: 28px;
+  color: var(--text-3);
+}
+
+.diff-card-acts .icon-button:hover,
+.diff-card-acts .long-text-full:hover {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.diff-card-copy.copied,
+.diff-card-copy.copied:hover {
+  color: var(--alive);
+}
+
+@media (hover: none) {
+  .diff-card-acts .icon-button,
+  .diff-card-acts .long-text-full {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+.diff-card .long-text.diff {
+  border-radius: 0;
+  background: transparent;
 }
 
 /* Tinted rows run to the box's edge. */
@@ -898,17 +970,6 @@
 
 .long-text.diff .io-more {
   margin: var(--space-1) 0 0 var(--space-3);
-}
-
-.diff-path {
-  margin: 0 0 var(--space-1);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  direction: rtl;
-  text-align: left;
-  font-size: var(--size-small);
-  color: var(--text-3);
 }
 
 .lv-line.diff-row,
