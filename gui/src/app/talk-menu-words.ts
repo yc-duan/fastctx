@@ -9,6 +9,13 @@ export interface TalkMenuWords {
   rename: string;
   /** Finding in the conversation, from its head's "⋯" on a phone. */
   find: string;
+  /** The whole conversation onto the clipboard, and that it is there. */
+  copyMarkdown: string;
+  copied: string;
+  /** Opening it in its agent's own program on this computer, and that it
+   *  opened. */
+  openOwn(agent: string): string;
+  openedOwn: string;
   archive: string;
   restore: string;
   delete: string;
@@ -56,6 +63,10 @@ export const zhTalkMenu: TalkMenuWords = {
   move: "移入项目",
   rename: "重命名",
   find: "查找",
+  copyMarkdown: "复制为 Markdown",
+  copied: "已复制",
+  openOwn: (agent) => `在 ${agent} 中打开`,
+  openedOwn: "已在新终端窗口中打开",
   archive: "归档",
   restore: "恢复",
   delete: "删除",
@@ -93,6 +104,10 @@ export const enTalkMenu: TalkMenuWords = {
   move: "Move to project",
   rename: "Rename",
   find: "Find",
+  copyMarkdown: "Copy as Markdown",
+  copied: "Copied",
+  openOwn: (agent) => `Open in ${agent}`,
+  openedOwn: "Opened in a new terminal window",
   archive: "Archive",
   restore: "Restore",
   delete: "Delete",

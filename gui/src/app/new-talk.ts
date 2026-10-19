@@ -47,7 +47,10 @@ import type { WorldNow } from "../world/bridge";
 import type { Offers } from "../world/control";
 import type { Address } from "../world/events";
 import { accountOf, homeChoice, homeLabel, homesOf, installed, listed, loggedOut, type HomeWords } from "./agent-homes";
-import { agentKinds, agentPicker, FILTER_PAST, narrowPicker, type PickerKind, type PickerMachine, type PickerRow } from "./agent-picker";
+import { agentKinds, agentPicker, foldInPicker, narrowPicker, type PickerKind, type PickerMachine, type PickerRow } from "./agent-picker";
+import { resizeUpward } from "./resize-upward";
+import { keepChoice, keptEffort, keptModel } from "./model-memory";
+import { focusPlace } from "./focus-places";
 import type { ConsentHome } from "./claude-consent";
 import {
   assistantsOf,
@@ -196,6 +199,17 @@ function remember(key: string, value: string | null): void {
   }
 }
 
+/** The machines and people the user opened or closed in the picker, as
+ *  they left them last. */
+function rememberedFolds(): Map<string, boolean> {
+  try {
+    const kept = JSON.parse(remembered("pickerFolds") ?? "[]") as unknown;
+    return new Map(Array.isArray(kept) ? kept.filter((one): one is [string, boolean] => Array.isArray(one) && typeof one[0] === "string" && typeof one[1] === "boolean") : []);
+  } catch {
+    return new Map();
+  }
+}
+
 /** A login an agent can start in: its program is there and it is not
  *  known to be logged out. */
 function usable(facts: AgentFacts): boolean {
@@ -288,6 +302,9 @@ export class NewTalk {
       model: async (model, effort) => {
         this.model = model;
         this.effort = effort;
+        // Chosen here, it is what the next new conversation begins with.
+        const agent = this.chosenOption()?.agent;
+        if (agent) keepChoice(agent, model, effort);
         this.drawModel();
       },
       tier: async () => {},
@@ -303,6 +320,8 @@ export class NewTalk {
           this.focusTouched = true;
           this.draw();
         },
+        marks: (machine) => this.projectMarks(machine),
+        resize: (change) => resizeUpward(this.pop, this.popSteady, change),
       },
       this.focus,
     );
@@ -313,7 +332,9 @@ export class NewTalk {
     document.addEventListener("pointerdown", (event) => {
       if (!this.opened || !this.element.isConnected) return;
       const target = event.target as HTMLElement;
-      if (!this.pop.contains(target) && !target.closest("[data-pop]")) this.choose(null);
+      // A window opened from the choices, such as a machine's folders, is
+      // part of them.
+      if (!this.pop.contains(target) && !target.closest("[data-pop]") && !target.closest("dialog")) this.choose(null);
     });
     this.element.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && this.opened) {
@@ -393,11 +414,14 @@ export class NewTalk {
   private popSteady: Steady | null = null;
   /** What narrows the table of agents, while it is open. */
   private narrowed = "";
-  /** Which agents the picker shows, and the people opened or closed in it. */
-  private kind: PickerKind = "all";
-  private readonly pickerFolds = new Map<string, boolean>();
-  /** The reader opened a person or chose an agent: the table changes within
-   *  the panel's size, scrolling, and the panel does not grow for it. */
+  /** Which agent's logins the picker shows, and the machines and people
+   *  opened or closed in it. */
+  private kind: PickerKind = remembered("agent") === "claude" ? "claude" : "codex";
+  private readonly pickerFolds = rememberedFolds();
+  /** The table as last drawn, so it is drawn again only when it differs. */
+  private agentsDrawn = "";
+  /** The reader chose an agent: the table changes within the panel's
+   *  size, and the panel does not grow for it. */
   private keepSize = false;
 
   private fit(): void {
@@ -715,8 +739,7 @@ export class NewTalk {
     return {
       holds: { mine: words.mine, shared: words.others(true), others: words.others(false), assist: words.assisting },
       agent: words.agent,
-      allAgents: words.allAgents,
-      noAgents: words.noAgents,
+      noneOf: words.noneOf,
       noMachine: words.noMachine,
       token: words.token,
       onCredits: words.onCredits,
@@ -736,7 +759,7 @@ export class NewTalk {
     return `<div class="pop-list" role="radiogroup" aria-label="${escape(label)}">${choices
       .map((choice) => {
         const on = choice.value === chosen;
-        return `<button type="button" class="pop-row${on ? " chosen" : ""}" role="radio" aria-checked="${on}" data-choice="${kind}" data-value="${escape(choice.value)}"${choice.disabled ? " disabled" : ""}><span class="pop-label">${escape(choice.label)}</span>${choice.note ? `<span class="choice-note">${escape(choice.note)}</span>` : ""}${on ? glyph("check", 14) : ""}</button>`;
+        return `<button type="button" class="pop-row${on ? " chosen" : ""}" role="radio" aria-checked="${on}" data-choice="${kind}" data-value="${escape(choice.value)}"${choice.disabled ? " disabled" : ""}><span class="pop-label">${escape(choice.label)}</span>${choice.note ? `<span class="choice-note">${escape(choice.note)}</span>` : ""}</button>`;
       })
       .join("")}</div>`;
   }
@@ -760,6 +783,11 @@ export class NewTalk {
       layerOpened({ isOpen: () => this.opened === pop && this.element.isConnected, close: () => this.choose(null) });
     }
     const opening = pop !== null && pop !== this.opened;
+    // The agents open at the one chosen.
+    if (opening && pop === "agent") {
+      const chosen = this.chosenOption();
+      if (chosen) this.kind = chosen.agent === "claude" ? "claude" : "codex";
+    }
     this.opened = pop;
     this.narrowed = "";
     this.popSteady ??= new Steady(this.pop, true);
@@ -772,7 +800,7 @@ export class NewTalk {
   }
 
   private click(event: Event): void {
-    const target = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-pop], [data-choice]");
+    const target = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-pop], [data-choice]");
     if (!target || target.disabled || this.busy) return;
     if (target.dataset.pop) {
       const pop = target.dataset.pop as Pop;
@@ -790,14 +818,27 @@ export class NewTalk {
       case "account":
         this.account = value;
         break;
-      case "kind":
-        this.kind = value === "codex" || value === "claude" ? value : "all";
-        this.keepSize = true;
-        break;
-      case "fold":
-        this.pickerFolds.set(value, target.getAttribute("aria-expanded") !== "true");
-        this.keepSize = true;
-        break;
+      case "kind": {
+        // The panel takes the other agent's table, growing or shrinking
+        // upward, the choice under the pointer where it was.
+        const kind: PickerKind = value === "claude" ? "claude" : "codex";
+        if (kind !== this.kind) {
+          this.kind = kind;
+          remember("agent", kind);
+          resizeUpward(this.pop, this.popSteady, () => this.draw());
+        }
+        return;
+      }
+      case "fold": {
+        // A machine or a person opens or closes where it is, what is under
+        // it sliding in or out within the panel's size.
+        const open = target.getAttribute("aria-expanded") !== "true";
+        this.pickerFolds.set(value, open);
+        remember("pickerFolds", JSON.stringify([...this.pickerFolds]));
+        foldInPicker(this.pop, value, open);
+        this.agentsDrawn = this.agentsHtml(this.lines(this.options.store.world.peek()));
+        return;
+      }
       case "town":
         this.town = value || null;
         // Another project: its machines and places, whatever was chosen.
@@ -894,7 +935,7 @@ export class NewTalk {
         label(
           "agent",
           markOf(option.agent),
-          `<span class="talk-chip-name">${escape(programName(option.agent))}</span><span class="talk-chip-sub">${escape(sub)}</span>${who ? `<span class="talk-chip-sub who">${escape(who)}</span>` : ""}${asking ? `<span class="talk-chip-sub">${escape(words.asking)}</span>` : ""}`,
+          `<span class="talk-chip-name">${escape(sub)}</span>${who ? `<span class="talk-chip-sub who">${escape(who)}</span>` : ""}${asking ? `<span class="talk-chip-sub">${escape(words.asking)}</span>` : ""}`,
           option.assistant ? `${said}
 ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
           option.assistant ? " assist" : "",
@@ -935,17 +976,7 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
     }
     let html = "";
     if (this.opened === "agent") {
-      const account =
-        logins.all.length > 1
-          ? `<div class="pop-section"><h3 class="picker-title">${escape(words.account)}</h3>${this.pills(
-              "account",
-              words.account,
-              logins.all.map((one) => ({ value: `${one.hub}/${one.account}`, label: loginLabel(one) })),
-              logins.chosen ? `${logins.chosen.hub}/${logins.chosen.account}` : "",
-            )}</div>`
-          : "";
-      const { machines, html: table } = this.picker(lines);
-      this.drawAgents(lines, agentKinds(machines, this.pickerWords(), this.kind), `${table}${account}`);
+      this.drawAgents(agentKinds(this.pickerWords(), this.kind), this.agentsHtml(lines, logins));
       if (!this.keepSize) this.popSteady?.settle();
       this.keepSize = false;
       return;
@@ -960,32 +991,41 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
     this.popSteady?.settle();
   }
 
-  /** The table of agents, under the field that narrows it once there are
-   *  many; the field and what is typed in it stay as the table is drawn
+  /** The table of agents and, where this device holds several accounts,
+   *  which of them it works for. */
+  private agentsHtml(lines: Line[], logins = this.openers(this.options.store.world.peek(), this.chosenOption(lines))): string {
+    const { words } = this.options;
+    const account =
+      logins.all.length > 1
+        ? `<div class="pop-section"><h3 class="picker-title">${escape(words.account)}</h3>${this.pills(
+            "account",
+            words.account,
+            logins.all.map((one) => ({ value: `${one.hub}/${one.account}`, label: loginLabel(one) })),
+            logins.chosen ? `${logins.chosen.hub}/${logins.chosen.account}` : "",
+          )}</div>`
+        : "";
+    return `${this.picker(lines).html}${account}`;
+  }
+
+  /** The table of agents, and at the panel's foot, nearest the input, the
+   *  field that narrows it and the choice of Codex or Claude: as the table
+   *  changes, the panel grows or shrinks upward and they stay where they
+   *  are. The field and what is typed in it stay as the table is drawn
    *  again. */
-  private drawAgents(lines: Line[], kinds: string, html: string): void {
+  private drawAgents(kinds: string, html: string): void {
     const pop = this.pop;
-    let top = pop.querySelector<HTMLElement>(":scope > .agent-top");
+    let foot = pop.querySelector<HTMLElement>(":scope > .picker-foot");
     let list = pop.querySelector<HTMLElement>(":scope > .agent-list");
-    let field = top?.querySelector<HTMLInputElement>(":scope > .agent-filter") ?? null;
-    if (!list || !top) {
+    if (!list || !foot) {
       pop.replaceChildren();
-      top = document.createElement("div");
-      top.className = "agent-top";
       list = document.createElement("div");
       list.className = "agent-list";
-      pop.append(top, list);
-      field = null;
-    }
-    // The choice of agents stands beside the field, or alone above the table.
-    const shown = top.querySelector<HTMLElement>(":scope > .picker-kinds");
-    if ((shown?.outerHTML ?? "") !== kinds) {
-      shown?.remove();
-      if (kinds) top.insertAdjacentHTML("beforeend", kinds);
-    }
-    const many = lines.reduce((sum, line) => sum + line.options.length, 0) > FILTER_PAST;
-    if (many && !field) {
-      field = document.createElement("input");
+      foot = document.createElement("div");
+      foot.className = "picker-foot";
+      const search = document.createElement("label");
+      search.className = "picker-search";
+      search.innerHTML = glyph("search", 16);
+      const field = document.createElement("input");
       field.className = "agent-filter";
       field.type = "search";
       field.placeholder = this.options.words.narrow;
@@ -993,21 +1033,26 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
       field.autocomplete = "off";
       field.spellcheck = false;
       field.addEventListener("input", () => {
-        this.narrowed = field!.value;
-        narrowPicker(list!, this.narrowed, this.kind);
+        this.narrowed = field.value;
+        resizeUpward(pop, this.popSteady, () => narrowPicker(list!, this.narrowed));
       });
-      top.prepend(field);
-    } else if (!many && field) {
-      field.remove();
-      this.narrowed = "";
+      search.append(field);
+      foot.append(search);
+      pop.append(list, foot);
+      this.agentsDrawn = "";
     }
-    if (list.innerHTML !== html) {
+    const shown = foot.querySelector<HTMLElement>(":scope > .picker-kinds");
+    if ((shown?.outerHTML ?? "") !== kinds) {
+      shown?.remove();
+      foot.insertAdjacentHTML("beforeend", kinds);
+    }
+    if (this.agentsDrawn !== html) {
       const scroll = pop.scrollTop;
       list.innerHTML = html;
+      this.agentsDrawn = html;
       pop.scrollTop = scroll;
     }
-    top.hidden = !top.childElementCount;
-    narrowPicker(list, this.narrowed, this.kind);
+    narrowPicker(list, this.narrowed);
   }
 
   /** The machines its account may use: where it lives and those the
@@ -1018,7 +1063,14 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
     const login = this.loginFor(world, option);
     const lives = this.lives(world, option);
     const machines = option?.assistant ? (login ? filePlaces(world, login) : []) : lives ? workPlaces(world, lives, login) : [];
-    return machines.map((machine) => ({ written: machine.written, name: machine.name, here: machine.here, online: machine.here ? true : machine.online }));
+    return machines.map((machine) => focusPlace(world, machine));
+  }
+
+  /** The places the project chosen names on a machine. */
+  private projectMarks(machine: string): { name: string; path: string }[] {
+    const record = this.town ? this.options.store.world.peek()?.towns.find((one) => one.town === this.town)?.record : null;
+    const name = machine.split(".")[0];
+    return (record?.places ?? []).filter((place) => place.machine === name || place.machine === machine).map((place) => ({ name: place.what, path: place.path }));
   }
 
   /** The machines and folders, kept to those its account may use; in a
@@ -1060,13 +1112,13 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
     const agent = option?.agent ?? "";
     const model =
       models.find((m) => m.model === this.model) ??
-      models.find((m) => m.model === remembered(`model:${agent}`)) ??
+      models.find((m) => m.model === keptModel(agent)) ??
       models.find((m) => m.is_default) ??
       models[0] ??
       null;
     this.model = model?.model ?? null;
     const efforts = model?.reasoning_efforts.map((e) => e.effort) ?? [];
-    this.effort = [this.effort, remembered(`effort:${agent}`), model?.default_reasoning_effort].find((e) => e && efforts.includes(e)) ?? null;
+    this.effort = [this.effort, keptEffort(agent, this.model), model?.default_reasoning_effort].find((e) => e && efforts.includes(e)) ?? null;
     const offers: Offers = {
       controls: models.length ? ["model"] : [],
       commands: [],
@@ -1145,8 +1197,7 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
     const world = this.options.store.world.peek();
     const login = this.loginFor(world, option);
     if (login && !option.assistant) remember("account", `${login.hub}/${login.account}`);
-    if (this.model) remember(`model:${option.agent}`, this.model);
-    if (this.effort) remember(`effort:${option.agent}`, this.effort);
+    keepChoice(option.agent, this.model, this.effort);
     const { words } = this.options;
     // The words go into the conversation at once; what happens on the way
     // stays out of sight unless it fails.

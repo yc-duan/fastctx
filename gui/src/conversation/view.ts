@@ -29,13 +29,15 @@
 // quiet line on the left; what was done to a turn (copy, ask again, fork)
 // appears only once the turn is over.
 
+import { ownWork, tripItems } from "./trip";
+import { fillStep, stepKey, stepRowHtml, stepRowText, type StepItem } from "./trip-rows";
 import { diffCard, unifiedDiff, type DiffCard, type DiffKind } from "./diff-card";
 import { handOnAtEdge } from "../scroll-handoff";
 import { ActsMenu } from "../app/acts-menu";
 import type { AgentActivity, Content, Health, MachineName, Notice, Speaker, Tool, TurnEnd } from "../world/events";
 import type { Attachment } from "../world/attachments";
 import type { Decoding } from "../world/remote-lines";
-import type { RunFacts, WriteFact } from "../world/run-facts";
+import type { RunFacts, RunStep, WriteFact } from "../world/run-facts";
 import type { JsonValue } from "../world/wire";
 import { folderName, type Focus } from "../world/focus";
 import { answerOf, drawAsk, readAsk, type AskWords } from "./asks";
@@ -135,6 +137,8 @@ interface Row {
 
 /** A write's row is keyed by its run's row and the write. */
 const WRITE = "~";
+/** Between a run's key and one of its steps' (`trip.ts`). */
+const STEP = "^";
 /** The most bytes of rows a change is read ahead in, not kept with the
  *  conversation: larger ones are read as they are opened. */
 const PREFETCH = 1024 * 1024;
@@ -1639,23 +1643,61 @@ export class ConversationView {
       return [{ key: member.key, signature: this.runSignature(thoughts), html: () => this.thinkingRow(thoughts, this.entering(member.key)), text: () => this.thinkingRowText(thoughts) }];
     }
     const own: Row = { key: member.key, signature: this.memberSignature(member), html: () => this.member(member), text: () => this.findRowText(member) };
-    const writes = member.kind === "tool" ? (member.tool.run?.writes ?? []) : [];
-    if (!writes.length || member.kind !== "tool") return [own];
-    return [
-      ...(onlyWrites(member.tool) ? [] : [own]),
-      ...writes.map((write) => {
-        const key = `${member.key}${WRITE}${write.id}`;
-        return {
-          key, signature: JSON.stringify(write),
-          html: () => this.writeRow(key, write),
-          text: () => {
-            const line = writeHeadline(write, this.context.words);
-            const stats = line.added !== null && line.removed !== null ? `+${line.added} −${line.removed}` : "";
-            return [line.action, line.object, stats, write.machine !== this.context.residentMachine ? this.context.words.on(write.machine) : ""].filter(Boolean).join(" ");
-          },
-        };
-      }),
-    ];
+    if (member.kind !== "tool") return [own];
+    const steps = member.tool.run?.steps ?? [];
+    if (steps.length) return this.tripRows(member, steps);
+    const writes = member.tool.run?.writes ?? [];
+    if (!writes.length) return [own];
+    return [...(onlyWrites(member.tool) ? [] : [own]), ...writes.map((write) => this.writeRowOf(member, write))];
+  }
+
+  /** A run that did things through the World, as the things it did, each
+   *  where it happened (`trip.ts`): what the script did on its own machine
+   *  first, named by the command that does work. */
+  private tripRows(member: ToolEntry, steps: readonly RunStep[]): Row[] {
+    const tool = member.tool;
+    const script = tool.does.as === "command" ? tool.does.command : "";
+    const said = ownWork(script) ?? undefined;
+    const draw = { words: this.context.words, resident: this.context.residentMachine ?? null };
+    return tripItems(script, steps, tool.run?.writes ?? []).map((item): Row => {
+      if (item.kind === "own") return { key: member.key, signature: `${this.memberSignature(member)}|own`, html: () => this.member(member, said), text: () => this.findRowText(member, said) };
+      if (item.kind === "write") return this.writeRowOf(member, item.write);
+      const key = `${member.key}${STEP}${stepKey(item)}`;
+      return {
+        key,
+        signature: JSON.stringify(item),
+        html: () => stepRowHtml(key, item, { ...draw, enter: this.entering(key), open: this.openRows.has(key) }),
+        text: () => stepRowText(item, draw),
+      };
+    });
+  }
+
+  /** A file a run wrote, as its row. */
+  private writeRowOf(member: ToolEntry, write: WriteFact): Row {
+    const key = `${member.key}${WRITE}${write.id}`;
+    return {
+      key,
+      signature: JSON.stringify(write),
+      html: () => this.writeRow(key, write),
+      text: () => {
+        const line = writeHeadline(write, this.context.words);
+        const stats = line.added !== null && line.removed !== null ? `+${line.added} −${line.removed}` : "";
+        return [line.action, line.object, stats, write.machine !== this.context.residentMachine ? this.context.words.on(write.machine) : ""].filter(Boolean).join(" ");
+      },
+    };
+  }
+
+  /** What a step of a run holds, opened under its row. */
+  private fillTripStep(key: string, owner: string, part: string, content: HTMLElement): void {
+    const entry = this.conversation.get(owner);
+    if (entry?.kind !== "tool") return;
+    const tool = entry.tool;
+    const script = tool.does.as === "command" ? tool.does.command : "";
+    const item = tripItems(script, tool.run?.steps ?? [], tool.run?.writes ?? []).find(
+      (one): one is StepItem => one.kind !== "own" && one.kind !== "write" && stepKey(one) === part,
+    );
+    if (!item) return;
+    this.longs.set(key, fillStep(item, content, this.context.words, (text, label) => new LongText(text, label, this.layoutAnchor, this.longWords())));
   }
 
   /** What a run of thinking is drawn from: its parts, and the tokens told
@@ -1693,11 +1735,12 @@ export class ConversationView {
     return [writing ? words.thinking : took === null ? words.thought : words.thoughtFor(took), title ?? "", tokens === null ? "" : words.thinkingTokens(tokens)].filter(Boolean).join(" ");
   }
 
-  private findRowText(entry: Entry): string {
+  private findRowText(entry: Entry, said?: string): string {
     const { words } = this.context;
     if (entry.kind === "activity") return entry.text;
     if (entry.kind !== "tool") return "";
     const line = headline(entry.tool, entry.ended, words, (path) => this.conversation.attachmentName(path), true);
+    if (said !== undefined) line.object = said;
     const tense = tenseOf(entry.ended);
     const stats = line.added !== null && line.removed !== null ? `+${line.added} −${line.removed}` : "";
     const where = entry.tool.machine && entry.tool.machine !== this.context.residentMachine ? words.on(entry.tool.machine) : "";
@@ -1745,7 +1788,9 @@ export class ConversationView {
   /** What is being drawn came as history. */
   private reading = false;
 
-  private member(entry: Entry): string {
+  /** A member's row; `said` names a run by what its script did of its own,
+   *  where its other doings are rows of their own. */
+  private member(entry: Entry, said?: string): string {
     if (entry.kind === "tool" && startsAgent(entry.tool)) return this.agentRow(entry);
     const enter = this.entering(entry.key);
     if (entry.kind === "activity") {
@@ -1754,6 +1799,7 @@ export class ConversationView {
     if (entry.kind !== "tool") return `<div data-row="${escape(entry.key)}"></div>`;
     const { words } = this.context;
     const line = headline(entry.tool, entry.ended, words, (path) => this.conversation.attachmentName(path), true);
+    if (said !== undefined) line.object = said;
     const tense = tenseOf(entry.ended);
     const open = this.openRows.has(entry.key);
     const expandable = this.hasDetails(entry.tool);
@@ -1796,7 +1842,7 @@ export class ConversationView {
       entry.tool.machine && entry.tool.machine !== this.context.residentMachine
         ? `<span class="row-machine">${glyph("machine", 12)}${escape(words.on(entry.tool.machine))}</span>`
         : "";
-    return `<div class="row row-tool row-agent${enter}" data-row="${escape(entry.key)}"><span class="rail"></span><button class="row-line" type="button" data-open="${escape(entry.key)}" aria-expanded="${open}"><span class="row-action">${escape(line.action)}</span><span class="row-rest"><span class="row-object agent-object"><span class="agent-kind" hidden></span><span class="agent-task">${escape(line.object ?? "")}</span></span><span class="row-meta"><span class="agent-meta"></span>${elsewhere}<span class="row-chevron">${glyph("chevron", 16)}</span></span></span></button><div class="agent-now" hidden><span class="agent-now-mark"></span><span class="agent-now-said"></span></div><div class="fold-box"${open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div></div>`;
+    return `<div class="row row-tool row-agent${enter}" data-row="${escape(entry.key)}"><span class="rail"></span><button class="row-line" type="button" data-open="${escape(entry.key)}" aria-expanded="${open}"><span class="row-action">${escape(line.action)}</span><span class="row-rest"><span class="row-object agent-object"><span class="agent-kind" hidden></span><span class="agent-task">${escape(line.object ?? "")}</span></span><span class="row-meta"><span class="agent-meta"></span>${elsewhere}<span class="row-chevron">${glyph("chevron", 16)}</span></span></span></button><div class="fold-box"${open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div></div>`;
   }
 
   /** How a call that started an agent stands: as its agent does, once the
@@ -1876,22 +1922,8 @@ export class ConversationView {
       if (meta.textContent !== said) meta.textContent = said;
     }
     meta.classList.toggle("wrong", tense === "failed");
-    // The step in hand, under the row while the agent works.
-    const now = row.querySelector<HTMLElement>(".agent-now")!;
-    const step = run?.going ? run.doing() : null;
-    now.hidden = !run?.going;
-    if (run?.going) {
-      const doing = step ? headline(step.tool, null, this.context.words, (path) => this.conversation.attachmentName(path)) : null;
-      const said = doing ? [doing.action, doing.object].filter(Boolean).join(" ") : this.context.words.thinking;
-      const markName = doing ? doing.glyph : "thinking";
-      const saidElement = now.querySelector<HTMLElement>(".agent-now-said")!;
-      if (saidElement.textContent !== said) saidElement.textContent = said;
-      const markElement = now.querySelector<HTMLElement>(".agent-now-mark")!;
-      if (markElement.dataset.glyph !== markName) {
-        markElement.dataset.glyph = markName;
-        markElement.innerHTML = glyph(markName, 14);
-      }
-    }
+    // One line while it works, as when it is done: what it does is seen
+    // by opening it.
     if (run) this.boxes.get(key)?.update(run);
   }
 
@@ -2143,6 +2175,11 @@ export class ConversationView {
     if (!content) return;
     this.letGo(key);
     content.replaceChildren();
+    const stepAt = key.indexOf(STEP);
+    if (stepAt !== -1) {
+      this.fillTripStep(key, key.slice(0, stepAt), key.slice(stepAt + 1), content);
+      return;
+    }
     const split = key.indexOf(WRITE);
     if (split !== -1) {
       const owner = this.conversation.get(key.slice(0, split));

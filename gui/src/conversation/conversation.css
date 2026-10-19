@@ -455,6 +455,12 @@
   display: inline-block;
 }
 
+/* A heading of one part, the step in hand above all, ends on an ellipsis
+   where it does not fit rather than being cut. */
+.group-part:only-child {
+  display: inline;
+}
+
 .group-head .glyph {
   flex: none;
   color: var(--text-3);
@@ -686,6 +692,152 @@
 
 .row-machine > .glyph {
   flex: none;
+}
+
+/* A copy's way between machines, each with its mark. */
+.row-route {
+  margin: 0 2px;
+}
+
+/* How many of the machines one command went to did not end well. */
+.row-trouble {
+  white-space: nowrap;
+  color: var(--wrong);
+}
+
+/* A command whose input flowed straight from the row above begins with a
+   small hook from it, in the ink of the machines' marks. */
+.row-fed {
+  display: inline-flex;
+  vertical-align: -0.12em;
+  margin-right: 2px;
+  color: var(--text-3);
+}
+
+/* One command sent to many machines, opened: a quiet grid, a tile for each
+   machine, those that did not end well first in the colour of a fault; a
+   tile pressed shows that machine's command and last lines beneath. */
+.fan {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-1) 0 var(--space-3);
+}
+
+/* However many machines, the grid stops at half the view and scrolls in
+   itself; those that did not end well are at its top. */
+.fan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 4px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.fan-tile {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  background: var(--surface-code);
+  color: var(--text-2);
+  font-size: var(--size-small);
+  text-align: left;
+  transition: background-color var(--hover) ease, color var(--hover) ease;
+}
+
+.fan-tile > .glyph,
+.fan-tile > .pulse {
+  flex: none;
+  color: var(--text-3);
+}
+
+.fan-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fan-tile:hover {
+  background: var(--surface-header);
+  color: var(--text);
+}
+
+.fan-tile.troubled,
+.fan-tile.troubled > .glyph {
+  color: var(--wrong);
+}
+
+.fan-tile[aria-pressed="true"] {
+  background: var(--accent-wash);
+  color: var(--text-strong);
+}
+
+@media (hover: none) {
+  .fan-tile {
+    min-height: 44px;
+  }
+}
+
+/* What a copy moved, or a look read: the facts, plainly, on a solid sheet. */
+.step-facts {
+  display: grid;
+  gap: 4px;
+  margin: var(--space-1) 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--surface-code);
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.step-facts dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px var(--space-3);
+  margin: 0;
+}
+
+.step-facts dt {
+  color: var(--text-3);
+}
+
+.step-facts dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.step-machine {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: var(--space-2);
+  color: var(--text-3);
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.step-machine > .glyph {
+  flex: none;
+}
+
+.step-path {
+  overflow-wrap: anywhere;
+}
+
+.step-sum {
+  margin: 0;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.step-problems {
+  display: grid;
+  margin: 0;
+  color: var(--wrong);
 }
 
 /* The arrow that opens a row shows under a pointer, on focus and while the

@@ -31,7 +31,7 @@ import type { AgentLoginsWords } from "./agent-logins-words";
 import { chosen, pickButton, pickMenu, pickables, type Pickable } from "./agent-machines";
 import { AssistSheet, assistChange, assistancesIn, namesOn, type Assistance } from "./assist-sheet";
 import type { Confirm } from "./confirm";
-import { FolderSheet } from "./folder-sheet";
+import { FolderPicker } from "./folder-picker";
 import { redrawKeepingFocus } from "./focus";
 import { detailOf } from "./problem";
 import { isVisitor } from "./reach";
@@ -114,7 +114,7 @@ export class AgentLoginsPage implements Page {
   private readonly stop: () => void;
   private readonly sheet: AgentChangeSheet;
   private readonly assistSheet: AssistSheet;
-  private readonly choosing: FolderSheet;
+  private readonly choosing: FolderPicker;
   private agent: Agent = keptTab();
   /** The machine shown, as the menu writes it. */
   private machine: string | null;
@@ -187,7 +187,7 @@ export class AgentLoginsPage implements Page {
       } else if (target.closest("[data-pick-open]")) this.openMachines();
     });
     this.element.querySelector(".logins-machine-state")!.addEventListener("click", (event) => void this.click(event));
-    this.choosing = new FolderSheet(options.words);
+    this.choosing = new FolderPicker(options.words.picker);
     this.body.addEventListener("click", (event) => void this.click(event));
     this.stop = effect(() => {
       options.store.world.get();
@@ -698,7 +698,7 @@ export class AgentLoginsPage implements Page {
    *  the machine's folders walked by its node anywhere else. */
   private chooseFolder(machine: string): void {
     const here = this.shown(this.options.store.world.peek())?.here ?? false;
-    const walk = () => this.choosing.open(machine, (path) => this.options.folders(machine, path), (dir) => void this.choose(machine, dir));
+    const walk = () => this.choosing.open({ machine, folders: (path) => this.options.folders(machine, path), chosen: (dir) => void this.choose(machine, dir) });
     const pick = this.options.pick;
     if (!here || !pick) {
       walk();

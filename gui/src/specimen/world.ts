@@ -100,18 +100,45 @@ function node(name: string, online: boolean | null, since: string, owner: string
 /** With `?many` in the address, a team's network of about a hundred
  *  machines: twenty-five more of the account's own and others' shared with
  *  it, every seventh out of reach. */
-function many(): Node[] {
+interface ManyOne {
+  name: string;
+  owner: string;
+  online: boolean;
+  group: string | null;
+}
+
+/** The machines `?many` adds: the user's own in the groups a school's would
+ *  be in, most of them away at any hour, and the members' by team. */
+function manyOnes(): ManyOne[] {
   if (!new URLSearchParams(location.search).has("many")) return [];
-  const teams: [string, number][] = [["me", 25], ["ada", 18], ["bo", 21], ["chen", 14], ["dee", 9], ["eva", 7]];
+  const ones: ManyOne[] = [];
+  const floors: [string, string[]][] = [
+    ["国际部2楼", ["A1", "A2", "A3", "A4", "A5", "B1", "B2", "B3", "B4", "B5", "C1", "C2", "C3", "C4", "D1", "D2", "D3", "D4", "E1", "E2"]],
+    ["国际部3楼", ["AG4", "AG5", "AG6", "AG7", "AG8", "AG9", "AG10", "AG11", "AG12", "B2", "B3", "B4", "教师机"]],
+    ["科技馆3楼", Array.from({ length: 24 }, (_, n) => `AG${n + 1}`)],
+  ];
   let index = 0;
-  return teams.flatMap(([owner, count]) =>
-    Array.from({ length: count }, (_, n) => {
+  for (const [floor, seats] of floors) {
+    for (const seat of seats) {
       index += 1;
-      const linux = index % 3 !== 0;
-      const name = `${owner === "me" ? "node" : owner}-${String(n + 1).padStart(2, "0")}`;
-      return node(name, index % 7 !== 0, "01:00:00", owner, linux ? "linux" : "windows", linux ? `/home/${owner}` : `C:/Users/${owner}`, ["me", true, true]);
-    }),
-  );
+      ones.push({ name: `${floor}${seat}`, owner: "me", online: index % 9 === 0, group: floor });
+    }
+  }
+  const teams: [string, number][] = [["ada", 12], ["bo", 9]];
+  for (const [owner, count] of teams) {
+    for (let n = 1; n <= count; n += 1) {
+      index += 1;
+      ones.push({ name: `${owner}-${String(n).padStart(2, "0")}`, owner, online: index % 4 !== 0, group: null });
+    }
+  }
+  return ones;
+}
+
+function many(): Node[] {
+  return manyOnes().map((one, index) => {
+    const linux = index % 3 !== 0;
+    return node(one.name, one.online, "01:00:00", one.owner, linux ? "linux" : "windows", linux ? `/home/${one.owner}` : `C:/Users/${one.owner}`, ["me", true, true]);
+  });
 }
 
 /** The hubs this desktop is logged in to, as `nodes` and `accounts` see
@@ -197,6 +224,10 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         member("cy-mac", "computer", ["cy"], "cy", "09:20:00", true, "e7c13d52"),
         member("bo-phone", "phone", ["bo"], null, "14:02:00", true, "6c1d9b03"),
         member("cy-phone", "phone", ["cy"], null, "09:25:00", true, "d4e8a217"),
+        ...manyOnes().map((one, index) => {
+          const seen = member(one.name, "computer", [one.owner], one.owner, "01:00:00", one.online, `m${String(index).padStart(7, "0")}`);
+          return one.group ? { ...seen, group: one.group } : seen;
+        }),
       ],
       tokens: [
         { key: LAB_CODE, account: "me", label: "机房 A", kind: "computer", managed: true, uses: 40, used: 2, expires: daysAhead(6), way: "paste", made_by: "desktop", made_at: at("10:40:00") },

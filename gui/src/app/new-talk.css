@@ -90,7 +90,7 @@
   height: 28px;
   padding: 0 var(--space-2);
   border-radius: var(--radius-full);
-  font-size: var(--size-small);
+  font-size: var(--body-size);
   color: var(--text-2);
   white-space: nowrap;
   transition: color var(--hover) ease, background-color var(--hover) ease;
@@ -120,7 +120,7 @@
   text-overflow: ellipsis;
 }
 
-.talk-chip.assist .talk-chip-sub:not(.who) {
+.talk-chip.assist .talk-chip-name {
   color: var(--accent);
 }
 
@@ -165,6 +165,8 @@
   right: var(--space-3);
   bottom: calc(100% + var(--space-2));
   z-index: 6;
+  display: flex;
+  flex-direction: column;
   max-height: min(56dvh, 460px);
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -183,6 +185,19 @@
   width: min(320px, calc(100% - var(--space-6)));
 }
 
+.talk-pop[hidden] {
+  display: none;
+}
+
+/* What it holds sits at its foot when there is room above. */
+.talk-pop > * {
+  flex: none;
+}
+
+.talk-pop > :first-child {
+  margin-top: auto;
+}
+
 /* The picker's own space below it is the room between it and these. */
 .pop-section {
   margin-top: var(--space-1);
@@ -198,18 +213,25 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 34px;
+  min-height: 36px;
   padding: 0 var(--space-2);
-  border-radius: var(--radius-s);
+  border-radius: var(--radius-m);
   text-align: left;
-  font-size: var(--size-ui);
+  font-size: var(--body-size);
   color: var(--text-2);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
 }
 
-.pop-row:hover:not(:disabled),
-.pop-row.chosen {
+.pop-row:hover:not(:disabled) {
   color: var(--text);
-  background: var(--hairline);
+  background: var(--fill);
+}
+
+/* The one chosen is washed in clay, as every choice in these panels. */
+.pop-row.chosen,
+.pop-row.chosen:hover:not(:disabled) {
+  color: var(--text-strong);
+  background: var(--accent-wash);
 }
 
 .pop-row:disabled {
@@ -224,9 +246,12 @@
   white-space: nowrap;
 }
 
-.pop-row > .glyph {
-  flex: none;
-  color: var(--accent);
+/* What rises over the input speaks in the body's one size. */
+.talk-pop .picker-title,
+.talk-pop .choice-note,
+.talk-pop .choice-none {
+  font-size: var(--body-size);
+  letter-spacing: 0;
 }
 
 @media (max-width: 760px) {
@@ -277,13 +302,13 @@
   }
 
   /* What gives way first: the machine the agent lives on, then the
-     project, then the machines and folders; the agent's name never. */
+     project, then the machines and folders; the agent's mark never. */
   .talk-chip[data-pop="agent"] {
     flex-shrink: 6;
   }
 
   .talk-chip[data-pop="agent"] > .talk-chip-name {
-    flex: none;
+    min-width: 0;
   }
 
   .talk-chip[data-pop="agent"] > .talk-chip-sub {
@@ -338,22 +363,22 @@
   display: block;
 }
 
-/* Which agent: every login in one table (`agent-picker.ts`), drawn as the
-   machine list's tree. The groups, the people and the machines run across
-   it; each login is a row on the table's own columns, so the agents, who is
-   logged in, the plans and the bars line up all the way down, whatever
-   machine they are on. A login's mark stands under its machine's name. */
+/* Which agent: every login of Codex or of Claude in one table
+   (`agent-picker.ts`), in the body's one size. A group is a quiet name and
+   a pencil line; a machine, or a person whose machines are theirs, a row
+   that opens and closes onto what is under it, as a project does in the
+   sidebar; a login a row a small step in, on the table's own columns, so
+   who is logged in, the plans and the bars line up all the way down,
+   whatever machine they are on. */
 .agent-picker {
   display: grid;
-  grid-template-columns: max-content max-content minmax(0, 1fr) max-content max-content max-content;
-  column-gap: var(--space-3);
-  padding: var(--space-1) 0 var(--space-2);
-  /* The tree's measures, as on the machine list: a level in is one icon
-     and its gap less the glyph's own margin. */
+  grid-template-columns: minmax(0, 1fr) max-content max-content max-content;
+  column-gap: var(--space-4);
+  font-size: var(--body-size);
+  /* A level in is one small step, as in the sidebar. */
   --ap-pad: var(--space-2);
-  --ap-twisty: 14px;
+  --ap-step: 18px;
   --ap-icon: round(nearest, calc(15px * var(--icon-scale)), 1px);
-  --ap-step: calc(var(--ap-icon) + var(--space-2) - 3px);
 }
 
 .agent-group {
@@ -361,113 +386,16 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin: var(--space-4) 0 var(--space-1);
+  margin: var(--space-3) 0 var(--space-1);
+  padding: 0 var(--ap-pad);
   font-family: var(--font-reading);
   font-weight: 400;
-  font-size: var(--size-small);
-  letter-spacing: 0.02em;
+  font-size: var(--body-size);
   color: var(--text-3);
 }
 
 .agent-picker > .agent-hold:first-child > .agent-group {
   margin-top: 0;
-}
-
-/* A group, a person and a machine are only ways to narrow the table: their
-   rows stand on the table's own columns. A person closed keeps theirs out
-   of sight, but not while something typed is looked for. */
-.agent-hold,
-.agent-host,
-.agent-people,
-.agent-people-body {
-  display: contents;
-}
-
-.agent-people-body[data-folded] {
-  display: none;
-}
-
-.agent-picker.narrowing .agent-people-body[data-folded] {
-  display: contents;
-}
-
-.agent-hold[hidden],
-.agent-host[hidden],
-.agent-people[hidden],
-.agent-row[hidden],
-.agent-none[hidden] {
-  display: none;
-}
-
-/* Over the table, staying as it scrolls: the field that narrows it past ten
-   logins, and the choice of all agents or one. */
-.agent-top {
-  position: sticky;
-  top: calc(-1 * var(--space-3));
-  z-index: 1;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  margin: calc(-1 * var(--space-3)) 0 var(--space-2);
-  padding: var(--space-3) 0 var(--space-1);
-  background: var(--bg-elevated);
-}
-
-.agent-top[hidden] {
-  display: none;
-}
-
-.agent-filter {
-  flex: 1 1 240px;
-  display: block;
-  min-width: 0;
-  padding: 8px var(--space-3);
-  border: 0;
-  border-radius: var(--radius-m);
-  outline: 0;
-  background: var(--field);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--size-ui);
-}
-
-.agent-filter::placeholder {
-  color: var(--text-3);
-}
-
-.picker-kinds {
-  display: flex;
-  flex: none;
-  gap: 2px;
-  margin-left: auto;
-  padding: 2px;
-  border-radius: var(--radius-full);
-  background: var(--fill);
-}
-
-.picker-kind {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 28px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: var(--radius-full);
-  background: none;
-  color: var(--text-3);
-  font: inherit;
-  font-size: var(--size-small);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
-}
-
-.picker-kind:hover {
-  color: var(--text-2);
-}
-
-.picker-kind.chosen {
-  background: var(--accent-wash);
-  color: var(--text);
 }
 
 .agent-group::after {
@@ -479,53 +407,41 @@
   mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
 }
 
-/* A machine, and a person whose machines open under them: the twisty or
-   its room, the icon, the name and what follows it. */
+/* A group, a person and a machine only gather rows: the rows stand on the
+   table's own columns. */
+.agent-hold,
+.agent-host,
+.agent-people {
+  display: contents;
+}
+
+.agent-hold[hidden],
+.agent-host[hidden],
+.agent-people[hidden],
+.agent-row[hidden] {
+  display: none;
+}
+
+/* A machine, or a person: the icon, the name, what follows it, and at the
+   end the arrow that says it opens. */
 .agent-machine,
 .agent-person {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
   min-width: 0;
-  padding: var(--space-2) var(--space-2) 2px calc(var(--ap-pad) + var(--depth, 0) * var(--ap-step));
-  font-size: var(--size-ui);
-  color: var(--text-strong);
-}
-
-.agent-person {
-  min-height: 36px;
-  padding-bottom: var(--space-1);
-  border: 0;
+  min-height: 34px;
+  padding: 0 var(--space-2) 0 calc(var(--ap-pad) + var(--depth, 0) * var(--ap-step));
   border-radius: var(--radius-m);
-  background: none;
-  font: inherit;
-  font-size: var(--size-ui);
+  font-size: var(--body-size);
+  color: var(--text-strong);
   text-align: left;
   transition: background-color var(--hover) ease;
 }
 
+button.agent-machine:hover,
 .agent-person:hover {
   background: var(--fill);
-}
-
-.agent-twisty {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: var(--ap-twisty);
-  margin-right: var(--space-2);
-  overflow: visible;
-  color: var(--text-2);
-}
-
-.agent-twisty .glyph {
-  flex: none;
-  width: calc(var(--ap-twisty) + 6px);
-  height: calc(var(--ap-twisty) + 6px);
-}
-
-.agent-person:not(.open) .agent-twisty .glyph {
-  transform: rotate(-90deg);
 }
 
 /* Plex Serif's lowercase sits low in its line: the icon comes down to meet
@@ -559,16 +475,6 @@
   line-height: 1;
 }
 
-/* Away: its icon and name go grey together. */
-.agent-machine.offline .agent-machine-name {
-  color: var(--text-3);
-}
-
-.agent-machine.offline .agent-icon {
-  color: var(--text-3);
-  opacity: 0.6;
-}
-
 .agent-machine-name {
   min-width: 0;
   overflow: hidden;
@@ -578,21 +484,75 @@
 
 .agent-machine-note {
   flex: none;
-  margin-left: var(--space-3);
-  font-size: var(--size-small);
+  margin-left: var(--space-2);
   color: var(--text-3);
   white-space: nowrap;
 }
 
-/* A login: its mark under its machine's name. */
+/* Away: its icon and name go grey together. */
+.agent-machine.offline {
+  color: var(--text-3);
+}
+
+.agent-machine.offline .agent-icon {
+  color: var(--text-3);
+  opacity: 0.6;
+}
+
+.agent-arrow {
+  flex: none;
+  display: grid;
+  margin-left: auto;
+  padding-left: var(--space-2);
+  color: var(--text-3);
+  --turn: -90deg;
+  rotate: var(--turn);
+  transition: --turn var(--fold) var(--fold-easing);
+}
+
+.open > .agent-arrow {
+  --turn: 0deg;
+}
+
+/* What a machine or a person holds slides in under it and out again: the
+   height is carried by the grid, so nothing is measured, and what is shut
+   is out of the way of the keyboard. While something typed is looked for,
+   all is open. */
+.agent-fold {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--fold) var(--fold-easing);
+}
+
+.agent-fold.shut {
+  grid-template-rows: 0fr;
+}
+
+.agent-picker.narrowing .agent-fold.shut {
+  grid-template-rows: 1fr;
+}
+
+.agent-fold-inner {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-content: start;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* A login: its mark a small step in under its machine's. */
 .agent-row {
   grid-column: 1 / -1;
   display: grid;
   grid-template-columns: subgrid;
   align-items: center;
   min-height: 36px;
-  padding: 0 var(--space-3) 0 calc(var(--ap-pad) + (var(--depth, 0) + 1) * var(--ap-step) + var(--ap-twisty) + var(--space-2));
+  padding: 0 var(--space-3) 0 calc(var(--ap-pad) + var(--depth, 1) * var(--ap-step));
   border-radius: var(--radius-m);
+  font-size: var(--body-size);
   text-align: left;
   color: var(--text-2);
   transition: color var(--hover) ease, background-color var(--hover) ease;
@@ -614,11 +574,19 @@
   cursor: default;
 }
 
+.agent-row-lead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
 .agent-row-mark {
   position: relative;
   top: 1.5px;
+  flex: none;
   display: inline-flex;
-  color: var(--text-2);
+  color: var(--text-3);
 }
 
 .agent-row-mark .glyph {
@@ -630,17 +598,11 @@
   color: var(--accent);
 }
 
-.agent-row-agent {
-  font-size: var(--size-ui);
-  white-space: nowrap;
-}
-
 .agent-row-who {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--size-ui);
   color: var(--text);
 }
 
@@ -648,8 +610,9 @@
   color: var(--text-3);
 }
 
-.agent-row-plan .tag {
-  font-size: 12px;
+.agent-row-plan {
+  color: var(--text-3);
+  white-space: nowrap;
 }
 
 /* Each window a short bar in graphite and how much of it is spent; past
@@ -658,7 +621,6 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  font-size: 12px;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -709,7 +671,6 @@
 }
 
 .agent-row-note {
-  font-size: var(--size-small);
   color: var(--text-3);
   white-space: nowrap;
   text-align: right;
@@ -725,37 +686,101 @@
 
 .agent-none {
   grid-column: 1 / -1;
-  margin: 2px 0 var(--space-1) calc(var(--ap-pad) + (var(--depth, 0) + 1) * var(--ap-step) + var(--ap-twisty) + var(--space-2));
-  font-size: var(--size-small);
+  margin: var(--space-2) 0;
+  padding: 0 var(--ap-pad);
   color: var(--text-3);
 }
 
+/* At the panel's foot, nearest the input, staying as the table scrolls:
+   the field that narrows it and the choice of Codex or Claude. */
+.picker-foot {
+  position: sticky;
+  bottom: calc(-1 * var(--space-3));
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 calc(-1 * var(--space-3));
+  padding: var(--space-2) 0 var(--space-3);
+  background: var(--bg-elevated);
+}
+
+.picker-search {
+  flex: 1 1 200px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  height: 36px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--field);
+  color: var(--text-3);
+}
+
+.picker-search > .glyph {
+  flex: none;
+}
+
+.agent-filter {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--body-size);
+}
+
+.agent-filter::placeholder {
+  color: var(--text-3);
+}
+
+.agent-filter::-webkit-search-cancel-button {
+  display: none;
+}
+
+.picker-kinds {
+  flex: none;
+  align-self: center;
+}
+
+.picker-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 3px 14px;
+  font-size: var(--body-size);
+}
+
+.picker-kind > .glyph {
+  flex: none;
+}
+
 /* On a phone a login takes two lines: its mark, who is logged in and the
-   plan; under them the windows, and any note at the end. The mark says
-   which agent. */
+   plan; under them the windows, and any note at the end. */
 @media (max-width: 760px) {
   .agent-picker {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .agent-row {
-    grid-template-columns: var(--ap-icon) minmax(0, 1fr) minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
-      "mark who who plan"
-      ". limits limits note";
-    column-gap: var(--space-2);
+      "lead plan"
+      "limits note";
+    column-gap: var(--space-3);
     row-gap: 4px;
+    min-height: 56px;
     padding-top: var(--space-2);
     padding-bottom: var(--space-2);
-    min-height: 52px;
   }
 
-  .agent-row-mark {
-    grid-area: mark;
-  }
-
-  .agent-row-agent {
-    display: none;
+  .agent-row-lead {
+    grid-area: lead;
   }
 
   .agent-row-plan {
@@ -766,15 +791,13 @@
     grid-area: note;
   }
 
-  .agent-row-who {
-    grid-area: who;
-  }
-
-  /* The bars give way to a note at the end of the line. */
+  /* The bars give way to a note at the end of the line, and stand under
+     who is logged in. */
   .agent-row-limits {
     grid-area: limits;
     min-width: 0;
     overflow: hidden;
+    padding-left: calc(var(--ap-icon) + var(--space-2));
   }
 
   .agent-limit {
@@ -792,6 +815,25 @@
     flex: none;
   }
 
+  .agent-machine,
+  .agent-person {
+    min-height: 44px;
+  }
+
+  /* The sheet's foot: the field over the whole width, the choice of agent
+     under it, nearest the thumb, both down to the sheet's own edge. */
+  .picker-foot {
+    flex-wrap: wrap;
+    bottom: calc(-1 * (var(--space-5) + var(--safe-bottom)));
+    margin-bottom: calc(-1 * (var(--space-5) + var(--safe-bottom)));
+    padding-bottom: calc(var(--space-5) + var(--safe-bottom));
+  }
+
+  .picker-search {
+    flex: 1 1 100%;
+    height: 44px;
+  }
+
   .picker-kinds {
     flex: 1 1 100%;
   }
@@ -799,7 +841,7 @@
   .picker-kind {
     flex: 1;
     justify-content: center;
-    min-height: 36px;
+    min-height: 40px;
   }
 }
 

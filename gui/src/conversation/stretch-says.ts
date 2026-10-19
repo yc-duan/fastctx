@@ -11,6 +11,7 @@ import type { TallyPart, Words } from "../words";
 import { counts } from "./diff";
 import { isThinking, runsOf, type Activity, type Entry } from "./model";
 import { groupHeading, headline } from "./tool";
+import { tripNow } from "./trip-rows";
 
 type ToolEntry = Extract<Entry, { kind: "tool" }>;
 export type ProseEntry = Extract<Entry, { kind: "prose" }>;
@@ -59,9 +60,12 @@ export function stretchSays(
   let added = 0;
   let removed = 0;
   if (runningTool) {
-    const line = headline(runningTool.tool, null, words, attachment);
-    const object = group.agents && runningTool.tool.does.as === "agent" && runningTool.tool.does.act !== "start" ? (agents.named(runningTool) ?? line.object) : line.object;
-    title = [line.action, object].filter(Boolean).join(" ");
+    const tool = runningTool.tool;
+    const line = headline(tool, null, words, attachment);
+    const object = group.agents && tool.does.as === "agent" && tool.does.act !== "start" ? (agents.named(runningTool) ?? line.object) : line.object;
+    // A run doing things through the World says the one it is on.
+    const now = tool.run?.steps?.length && tool.does.as === "command" ? tripNow(tool.does.command, tool.run.steps, tool.run.writes, words) : null;
+    title = now ? `${now.action} ${now.object}` : [line.action, object].filter(Boolean).join(" ");
   } else if (writing) {
     const last = sections(writing.text).at(-1);
     title = last ? words.thinkingAbout(last) : words.thinking;

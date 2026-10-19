@@ -751,38 +751,6 @@
   }
 }
 
-/* Choosing a folder on another machine: the sheet keeps its size as the
-   walk goes, and only the folders scroll. */
-.folder-sheet .sheet-body {
-  display: flex;
-  flex-direction: column;
-  width: min(520px, 100vw - 32px);
-  height: min(620px, 84vh);
-  overflow: hidden;
-}
-
-.folder-sheet .folder-walk {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.folder-sheet .folder-walk-list {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-}
-
-@media (max-width: 760px) {
-  .folder-sheet .sheet-body {
-    width: 100%;
-    height: min(80dvh, 640px);
-  }
-}
-
 /* The change card. It fits the screen whole; only its opened details
    scroll, in their own place, its head and foot staying put. */
 .agent-change-sheet .sheet-body {

@@ -41,6 +41,55 @@ export interface WriteFact {
   diff: DiffRef | null;
   /** Exact UTF-8 stdout-note bytes; line ending is part of text. */
   note?: WriteNote;
+  /** The `on` it was written in (`RunStep`), where it was written elsewhere
+   *  than where the script ran. */
+  step?: string;
+}
+
+/** One thing a run did through the World, in the order it began: a command
+ *  sent to a machine with `on`, files copied between machines, files looked
+ *  at. Its writes are their own facts, each naming the step it came in. */
+export type RunStep = OnStep | CopyStep | ViewStep;
+
+interface StepFacts {
+  id: string;
+  /** The `on` it ran inside, where one `on` sent another; null at the top. */
+  within: string | null;
+  /** When it began, and ended; null while it goes on. */
+  began: string;
+  ended: string | null;
+}
+
+export interface OnStep extends StepFacts {
+  kind: "on";
+  machine: MachineName;
+  /** What was sent: the command as one line, or the script it was given. */
+  command: string;
+  job: string;
+  /** How it ended, once it has. */
+  end: { kind: "exited"; code: number } | { kind: "stopped" } | { kind: "lost"; why: string } | null;
+  /** The step whose output flowed straight into this one's input, machine
+   *  to machine. */
+  fed: string | null;
+  /** Its last lines, as a job's end tells them: at most 20 lines, 2000
+   *  characters. */
+  tail: string | null;
+}
+
+export interface CopyStep extends StepFacts {
+  kind: "copy";
+  from: { machine: MachineName; path: string }[];
+  to: { machine: MachineName; path: string };
+  files: number;
+  bytes: number;
+  /** What could not be copied, each as the command said it. */
+  problems: string[];
+}
+
+export interface ViewStep extends StepFacts {
+  kind: "view";
+  machine: MachineName;
+  paths: string[];
 }
 
 /** A multi-file operation keeps its one exact note once, then references that fact. */
@@ -86,6 +135,8 @@ export interface RunFacts {
   output: OutputRef | null;
   visited: [MachineName, string][];
   writes: WriteFact[];
+  /** What it did through the World, step by step. */
+  steps?: RunStep[];
   spans: OutputSpan[];
   /** Raw byte offsets, end exclusive; these are not decoded viewer coordinates. */
   notes?: OutputNoteMatch[];

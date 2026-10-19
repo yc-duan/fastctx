@@ -1,6 +1,7 @@
 // What the frame around every page says: the sidebar, the new conversation,
 // the settings. In the user's words (`world-gui.md`, 用词).
 
+import type { FolderPickerWords } from "./folder-picker";
 import { dollars, underCent } from "../world/money";
 import type { AskWords } from "../conversation/asks";
 import type { SaidWords } from "../conversation/said";
@@ -91,23 +92,52 @@ export interface FocusWords {
   offline: string;
   addFolder: string;
   remove: string;
-  up: string;
-  reading: string;
-  noFolders: string;
   noMachine: string;
-  /** Where a folder's path can be typed. */
-  path: string;
-  choose: string;
-  back: string;
-  /** A folder macOS keeps private, and going to allow Fastctx in. */
-  privacy: string;
-  privacyGo: string;
+  /** Over the machines chosen. */
+  chosen: string;
+  /** Over the user's own machines, and another person's. */
+  mine: string;
+  theirs(owner: string): string;
+  /** The field that narrows the machines, and when none is left. */
+  search: string;
+  noMatch: string;
   done: string;
+  picker: FolderPickerWords;
   /** How many more are chosen than the chip names. */
   more(count: number): string;
   saving: string;
   failed(why: string): string;
 }
+
+export const zhFolderPicker: FolderPickerWords = {
+  title: (machine) => `选择 ${machine} 上的文件夹`,
+  close: "关闭",
+  home: "主目录",
+  up: "上一级",
+  reading: "读取中…",
+  noFolders: "没有子文件夹",
+  path: "路径",
+  unreadable: "打不开这个文件夹",
+  privacy: "macOS 没让 Fastctx 进这个文件夹：在「系统设置 › 隐私与安全性 › 完全磁盘访问权限」里打开 Fastctx，授权一次，换版也有效",
+  privacyGo: "去授权",
+  cancel: "取消",
+  choose: "选择文件夹",
+};
+
+export const enFolderPicker: FolderPickerWords = {
+  title: (machine) => `Choose a folder on ${machine}`,
+  close: "Close",
+  home: "Home",
+  up: "Up",
+  reading: "Reading…",
+  noFolders: "No folders here",
+  path: "Path",
+  unreadable: "This folder could not be opened",
+  privacy: "macOS keeps this folder from Fastctx: turn Fastctx on in System Settings › Privacy & Security › Full Disk Access; once is enough, across versions",
+  privacyGo: "Allow",
+  cancel: "Cancel",
+  choose: "Choose folder",
+};
 
 export const zhFocus: FocusWords = {
   title: "机器与文件夹",
@@ -116,16 +146,14 @@ export const zhFocus: FocusWords = {
   offline: "离线",
   addFolder: "文件夹",
   remove: "移除",
-  up: "上一级",
-  reading: "读取中…",
-  noFolders: "没有子文件夹",
   noMachine: "没有可用的机器",
-  path: "路径",
-  choose: "选这个文件夹",
-  back: "返回",
-  privacy: "macOS 没让 Fastctx 进这个文件夹：在「系统设置 › 隐私与安全性 › 完全磁盘访问权限」里打开 Fastctx，授权一次，换版也有效",
-  privacyGo: "去授权",
+  chosen: "已选",
+  mine: "我的机器",
+  theirs: (owner) => `${owner} 的机器`,
+  search: "搜索机器",
+  noMatch: "没有对得上的机器",
   done: "完成",
+  picker: zhFolderPicker,
   more: (count) => `+${count}`,
   saving: "保存中…",
   failed: (why) => `没改成：${why}`,
@@ -138,16 +166,14 @@ export const enFocus: FocusWords = {
   offline: "offline",
   addFolder: "Folder",
   remove: "Remove",
-  up: "Up",
-  reading: "Reading…",
-  noFolders: "No folders here",
   noMachine: "No machine available",
-  path: "Path",
-  choose: "Choose this folder",
-  back: "Back",
-  privacy: "macOS keeps this folder from Fastctx: turn Fastctx on in System Settings › Privacy & Security › Full Disk Access; once is enough, across versions",
-  privacyGo: "Allow",
+  chosen: "Chosen",
+  mine: "My machines",
+  theirs: (owner) => `${owner}'s machines`,
+  search: "Search machines",
+  noMatch: "No machine matches",
   done: "Done",
+  picker: enFolderPicker,
   more: (count) => `+${count}`,
   saving: "Saving…",
   failed: (why) => `Not changed: ${why}`,
@@ -167,11 +193,11 @@ export interface NewTalkWords {
   assisting: string;
   ownedBy(owner: string): string;
   /** Over the table: all agents, rather than one of them. */
-  allAgents: string;
   /** Another person's row in the table: how many machines, how many
    *  logins. */
   personSub(machines: number, logins: number): string;
-  noAgents: string;
+  /** Where none of the machines has a login of this agent. */
+  noneOf(agent: string): string;
   /** The field that narrows many agents to those typed for. */
   narrow: string;
   /** An assisting login, which its machine does not list. */
@@ -232,10 +258,9 @@ export const zhNewTalk: NewTalkWords = {
   others: (shared) => (shared ? "共享给我的" : "其他成员的"),
   assisting: "协助我的",
   ownedBy: (owner) => `${owner} 的`,
-  allAgents: "全部",
   personSub: (machines, logins) => `${machines} 台　${logins} 个登录`,
-  noAgents: "没有可用的智能体",
-  narrow: "按机器、智能体、账号筛选",
+  noneOf: (agent) => `没有可用的 ${agent}`,
+  narrow: "搜索机器或账号",
   assistantGone: "该登录已不可用",
   onCredits: "使用 credits",
   limitReset: "已重置",
@@ -276,10 +301,9 @@ export const enNewTalk: NewTalkWords = {
   others: (shared) => (shared ? "Shared with me" : "Other members'"),
   assisting: "Assisting me",
   ownedBy: (owner) => `${owner}'s`,
-  allAgents: "All",
   personSub: (machines, logins) => `${machines} machine${machines === 1 ? "" : "s"}, ${logins} login${logins === 1 ? "" : "s"}`,
-  noAgents: "No agents available",
-  narrow: "Filter by machine, agent or account",
+  noneOf: (agent) => `No ${agent} logins available`,
+  narrow: "Search machines or accounts",
   assistantGone: "Login unavailable",
   onCredits: "on credits",
   limitReset: "reset",
@@ -845,11 +869,16 @@ export interface ProjectFormWords {
   whatTip: string;
   machines: string;
   places: string;
-  placesHint: string;
+  /** Over the machines it spans and the places named on each. */
+  machinesPlaces: string;
+  noMachines: string;
+  /** What the form still needs, said beside the field. */
+  needName: string;
+  needWhat: string;
+  needMachine: string;
+  /** What is in a place, written beside its folder. */
   placeWhat: string;
   placePath: string;
-  /** The machine a place is on, named for a screen reader. */
-  placeMachine: string;
   addPlace: string;
   removePlace: string;
   canon: string;
@@ -876,11 +905,14 @@ export const zhProjectForm: ProjectFormWords = {
   whatTip: "写给在这个项目里干活的智能体：要照做的规矩，要知道的事。从 Fastctx 开的对话一开始就带着它，压缩之后也还在；改了以后，正在干活的对话下一次调用世界的工具时，会收到新的全文。",
   machines: "机器",
   places: "位置",
-  placesHint: "每行一项：名称、机器、绝对路径",
-  placeWhat: "名称",
+  machinesPlaces: "机器与位置",
+  noMachines: "还没有选机器",
+  needName: "写一个名称",
+  needWhat: "写几句须知",
+  needMachine: "至少选一台机器",
+  placeWhat: "这里放着什么",
   placePath: "路径",
-  placeMachine: "机器",
-  addPlace: "添加",
+  addPlace: "位置",
   removePlace: "删除",
   canon: "定论",
   canonHint: "定论所在文件夹",
@@ -906,11 +938,14 @@ export const enProjectForm: ProjectFormWords = {
   whatTip: "For every agent working in this project: what to follow and what to know. Conversations opened from Fastctx start with them and keep them after compacting; once they change, a conversation at work gets the new text with its next call of a World tool.",
   machines: "Machines",
   places: "Locations",
-  placesHint: "One per line: name, machine, absolute path",
-  placeWhat: "Name",
+  machinesPlaces: "Machines and locations",
+  noMachines: "No machine chosen",
+  needName: "Give it a name",
+  needWhat: "Write a few instructions",
+  needMachine: "Choose at least one machine",
+  placeWhat: "What is here",
   placePath: "Path",
-  placeMachine: "Machine",
-  addPlace: "Add",
+  addPlace: "Location",
   removePlace: "Delete",
   canon: "Decisions",
   canonHint: "Folder with the decisions",

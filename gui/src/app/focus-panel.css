@@ -1,56 +1,76 @@
 /* The machines and folders a conversation is pointed at
-   (`focus-panel.ts`): a list of machines, each chosen as a whole block, the
-   folders chosen on it as small solid chips under it; walking a machine's
-   folders (`folder-walk.css`) takes the panel's place until one is chosen. */
+   (`focus-panel.ts`), in the body's one size: the machines chosen first,
+   each with its folders as small solid chips; then every machine it may
+   use, under each person a quiet name and a pencil line, a group a row that
+   opens and closes onto its machines; a field that narrows them where the
+   panel is reached from. */
 
-.focus-machines {
+.focus-panel {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  margin: 0 calc(-1 * var(--space-2));
+  font-size: var(--body-size);
 }
 
-.focus-machine {
-  border-radius: var(--radius-m);
+.focus-body {
+  display: flex;
+  flex-direction: column;
 }
 
-.focus-machine.chosen {
-  background: var(--accent-wash);
+.focus-part + .focus-part {
+  margin-top: var(--space-3);
 }
 
-.focus-toggle {
+.focus-part > .picker-title {
+  margin-bottom: var(--space-1);
+  font-size: var(--body-size);
+  letter-spacing: 0;
+}
+
+.focus-none {
+  margin: var(--space-2) 0;
+  color: var(--text-3);
+}
+
+/* A machine to choose, or a group of them: its mark, its name and what
+   follows it; a step in under a group, as in the sidebar. */
+.focus-toggle,
+.focus-group {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   width: 100%;
   min-height: 36px;
-  padding: 0 var(--space-2);
+  padding: 0 var(--space-2) 0 calc(var(--space-2) + var(--depth, 0) * 18px);
   border-radius: var(--radius-m);
   text-align: left;
-  font-size: var(--size-ui);
   color: var(--text-2);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
 }
 
-.focus-toggle:hover {
-  background: var(--hairline);
+.focus-toggle:hover,
+.focus-group:hover {
+  color: var(--text);
+  background: var(--fill);
 }
 
-.focus-machine.chosen .focus-toggle {
+.focus-toggle.chosen,
+.focus-toggle.chosen:hover {
   color: var(--text-strong);
+  background: var(--accent-wash);
 }
 
-.focus-machine.chosen .focus-toggle:hover {
-  background: transparent;
-}
-
-.focus-toggle > .glyph {
-  flex: none;
+.focus-toggle.offline:not(.chosen) {
   color: var(--text-3);
 }
 
-.focus-toggle > .glyph:last-child {
-  margin-left: auto;
-  color: var(--accent);
+.focus-mark {
+  flex: none;
+  display: inline-grid;
+  color: var(--text-3);
+}
+
+.focus-toggle.offline .focus-mark {
+  opacity: 0.6;
 }
 
 .focus-name {
@@ -60,11 +80,105 @@
   white-space: nowrap;
 }
 
+.focus-note,
+.focus-count-of {
+  flex: none;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+/* How many of a group are chosen, in clay. */
+.focus-held-count {
+  flex: none;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--accent-wash);
+  color: var(--text-strong);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.focus-arrow {
+  flex: none;
+  display: grid;
+  margin-left: auto;
+  color: var(--text-3);
+  --turn: -90deg;
+  rotate: var(--turn);
+  transition: --turn var(--fold) var(--fold-easing);
+}
+
+.focus-group.open > .focus-arrow {
+  --turn: 0deg;
+}
+
+/* A group's machines slide in under it and out again; the height is the
+   grid's, so nothing is measured. */
+.focus-fold {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--fold) var(--fold-easing);
+}
+
+.focus-fold.shut {
+  grid-template-rows: 0fr;
+}
+
+.focus-fold-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* A machine chosen: its name, and under it its folders and a way to add
+   one; a press on its cross lets it go. */
+.focus-held {
+  padding: var(--space-1) 0 var(--space-2);
+  border-radius: var(--radius-m);
+}
+
+.focus-held-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 34px;
+  padding: 0 0 0 var(--space-2);
+  color: var(--text-strong);
+}
+
+.focus-held.offline .focus-held-head {
+  color: var(--text-3);
+}
+
+.focus-unpick {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  --shown: 0;
+  opacity: var(--shown);
+  transition: --shown var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.focus-held:hover .focus-unpick,
+.focus-unpick:focus-visible {
+  --shown: 1;
+}
+
+.focus-unpick:hover {
+  color: var(--text);
+  background: var(--fill);
+}
+
 .focus-folders {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 0 var(--space-2) var(--space-2) calc(var(--space-2) + 16px + var(--space-2));
+  padding: 0 var(--space-2) 0 calc(var(--space-2) + 16px + var(--space-2));
 }
 
 .focus-folder,
@@ -75,12 +189,12 @@
   max-width: 100%;
   min-height: 28px;
   border-radius: var(--radius-full);
-  font-size: var(--size-small);
+  font-size: var(--body-size);
 }
 
 .focus-folder {
   padding: 0 2px 0 10px;
-  background: var(--bg-elevated);
+  background: var(--fill);
   color: var(--text);
 }
 
@@ -112,23 +226,155 @@
 
 .focus-add {
   padding: 0 10px 0 8px;
-  background: color-mix(in srgb, var(--bg-elevated) 55%, transparent);
+  background: color-mix(in srgb, var(--fill) 55%, transparent);
   color: var(--text-2);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
 }
 
 .focus-add:hover:not(:disabled) {
   color: var(--text);
-  background: var(--bg-elevated);
+  background: var(--fill);
 }
 
 .focus-add:disabled {
   color: var(--text-3);
 }
 
+/* The field that narrows the machines, and where there is one, Done. It
+   stands at the foot of a panel risen over the input, nearest the input. */
 .focus-foot {
+  position: sticky;
+  bottom: calc(-1 * var(--space-3));
+  z-index: 1;
   display: flex;
-  justify-content: flex-end;
-  margin-top: var(--space-3);
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 calc(-1 * var(--space-3));
+  padding: var(--space-2) 0 var(--space-3);
+  background: var(--bg-elevated);
+}
+
+.focus-search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  height: 36px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--field);
+  color: var(--text-3);
+}
+
+.focus-search > .glyph {
+  flex: none;
+}
+
+.focus-filter {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+}
+
+.focus-filter::placeholder {
+  color: var(--text-3);
+}
+
+.focus-filter::-webkit-search-cancel-button {
+  display: none;
+}
+
+.focus-more {
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--hairline);
+  color: var(--text-2);
+}
+
+/* A conversation's strip under its head: what it is pointed at, opening the
+   same panel beneath it. */
+.focus-strip {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--gutter) var(--space-1);
+}
+
+.focus-strip[hidden] {
+  display: none;
+}
+
+.focus-chip {
+  min-width: 0;
+  margin-left: calc(-1 * var(--space-2));
+}
+
+.focus-chip.quiet .talk-chip-name {
+  color: var(--text-3);
+}
+
+.focus-chip:disabled {
+  opacity: 0.6;
+}
+
+.focus-state {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.focus-state.refused {
+  color: var(--wrong);
+}
+
+/* Opened down from the head, its content's size; the field stands at its
+   top, where it was reached from. */
+.focus-pop {
+  position: absolute;
+  top: 100%;
+  left: var(--gutter);
+  display: flex;
+  flex-direction: column;
+  width: min(460px, calc(100% - 2 * var(--gutter)));
+  max-height: min(64dvh, 540px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-l);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
+  animation: panel-rise var(--fold) var(--fold-easing) both;
+}
+
+.focus-pop[hidden] {
+  display: none;
+}
+
+.focus-pop .focus-foot {
+  order: -1;
+  top: calc(-1 * var(--space-3));
+  bottom: auto;
+  margin: calc(-1 * var(--space-3)) 0 var(--space-2);
+  padding: var(--space-3) 0 var(--space-2);
+}
+
+.focus-pop .focus-panel > .focus-foot {
+  order: -1;
 }
 
 /* The machines and folders the new conversation is pointed at, among the
@@ -188,16 +434,6 @@
   color: var(--wrong);
 }
 
-/* Walking to a folder, as tall as it may be at once: walking from one
-   folder to the next moves nothing (`../app/steady`). */
-.focus-pop:has(.folder-walk) {
-  min-height: min(64dvh, 520px);
-}
-
-.talk-pop:has(.folder-walk) {
-  min-height: min(56dvh, 460px);
-}
-
 .focus-pop {
   position: absolute;
   top: 100%;
@@ -216,19 +452,6 @@
   animation: panel-rise var(--fold) var(--fold-easing) both;
 }
 
-/* Inside a raised panel the chips are a step darker than it. */
-:is(.talk-pop, .focus-pop) .focus-folder {
-  background: var(--fill);
-}
-
-:is(.talk-pop, .focus-pop) .focus-add {
-  background: color-mix(in srgb, var(--fill) 55%, transparent);
-}
-
-:is(.talk-pop, .focus-pop) .focus-add:hover:not(:disabled) {
-  background: var(--fill);
-}
-
 @media (max-width: 760px) {
   .talk-pop[data-pop="focus"],
   .focus-pop {
@@ -245,18 +468,45 @@
     animation-name: sheet-rise;
   }
 
-  .focus-toggle {
+  .focus-toggle,
+  .focus-group {
     min-height: 44px;
   }
 
   .focus-folder,
   .focus-add {
-    min-height: 34px;
+    min-height: 36px;
   }
 
   .focus-remove {
-    width: 30px;
-    height: 30px;
+    width: 32px;
+    height: 32px;
+  }
+
+  /* Under a finger the cross that lets a machine go is always there. */
+  .focus-unpick {
+    width: 40px;
+    height: 40px;
+    --shown: 1;
+  }
+
+  .focus-search {
+    height: 44px;
+  }
+
+  /* A sheet from the bottom: the field at its foot, nearest the thumb,
+     down to the sheet's own edge. */
+  .focus-foot,
+  .focus-pop .focus-foot {
+    order: 0;
+    top: auto;
+    bottom: calc(-1 * (var(--space-5) + var(--safe-bottom)));
+    margin: var(--space-2) 0 calc(-1 * (var(--space-5) + var(--safe-bottom)));
+    padding: var(--space-2) 0 calc(var(--space-5) + var(--safe-bottom));
+  }
+
+  .focus-pop .focus-panel > .focus-foot {
+    order: 0;
   }
 
   /* As every sheet on a phone: a shade over the rest. */

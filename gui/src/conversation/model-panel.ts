@@ -1,19 +1,25 @@
 // The conversation's model and reasoning effort (`world-gui.md`, 对话): the
 // chip under the input says them; pressed, a small panel rises over it, on a
-// phone from the bottom. The model's name opens the host's list of models;
-// the effort is the hand-drawn slider, a step for each the model offers;
-// where the model offers a speed, a switch for it, and where it offers more
-// than one, a single choice among them and the standard one, since a turn
-// runs at one speed; and a way back to the default. What is chosen shows at once, in the panel and on the chip, and
-// goes to the host, which holds it from the next turn; choices made while
-// one is on its way follow it in turn, the latest of them only. A choice the
-// host refuses gives way to what the host has, and why is said under the
-// input. The chip names the speed only when it is not the standard one.
+// phone from the bottom. At its foot, nearest the chip, the model's name;
+// above it, past a ruled line, the effort as the hand-drawn slider, a step
+// for each the model offers, and where the model offers a speed, a switch
+// for it, or where it offers more than one, a single choice among them and
+// the standard one, since a turn runs at one speed. The name pressed, the
+// host's models take the controls' place above it, the chosen one washed,
+// and the panel grows or shrinks upward to fit, so it is never taller than
+// what it holds and the name under the pointer never moves. What is chosen shows at once, in
+// the panel and on the chip, and goes to the host, which holds it from the
+// next turn; choices made while one is on its way follow it in turn, the
+// latest of them only. A choice the host refuses gives way to what the host
+// has, and why is said under the input. The chip names the speed only when
+// it is not the standard one.
 
 import { EffortSlider, effortLabel } from "./effort-slider";
 import { Popover } from "./popover";
 import { glyph } from "./glyphs";
 import { escape } from "./prose";
+import { handOnAtEdge } from "../scroll-handoff";
+import { resizeUpward } from "../app/resize-upward";
 import type { ModelOffer, Offers } from "../world/control";
 
 export interface ModelPanelWords {
@@ -22,7 +28,6 @@ export interface ModelPanelWords {
   speed: string;
   /** The speed of a turn that asks for none of the faster ones. */
   standard: string;
-  backToDefault: string;
   noModels: string;
   /** The chip's words before the host has said its model. */
   chip: string;
@@ -30,8 +35,8 @@ export interface ModelPanelWords {
   tooLong: string;
 }
 
-export const zhModelPanel: ModelPanelWords = { model: "模型", effort: "推理强度", speed: "速度", standard: "标准", backToDefault: "回到默认", noModels: "没有可选的模型", chip: "模型", tooLong: "这段对话已超过它的上下文" };
-export const enModelPanel: ModelPanelWords = { model: "Model", effort: "Reasoning", speed: "Speed", standard: "Standard", backToDefault: "Back to default", noModels: "No models available", chip: "Model", tooLong: "This conversation is longer than its context" };
+export const zhModelPanel: ModelPanelWords = { model: "模型", effort: "推理强度", speed: "速度", standard: "标准", noModels: "没有可选的模型", chip: "模型", tooLong: "这段对话已超过它的上下文" };
+export const enModelPanel: ModelPanelWords = { model: "Model", effort: "Reasoning", speed: "Speed", standard: "Standard", noModels: "No models available", chip: "Model", tooLong: "This conversation is longer than its context" };
 
 export interface ModelChoice {
   /** The model and effort from the next turn on; null keeps what is. */
@@ -52,6 +57,7 @@ export class ModelPanel {
   private readonly slider: EffortSlider;
   private readonly popover: Popover;
   private offered: Offers | null = null;
+  /** The models are shown in the controls' place. */
   private listing = false;
   private wanted: Wanted | null = null;
   /** The panel as last drawn: drawn again only when it differs, so a
@@ -72,11 +78,13 @@ export class ModelPanel {
     this.element.hidden = true;
     this.element.setAttribute("role", "dialog");
     this.element.setAttribute("aria-label", words.model);
+    // It takes the focus itself on opening, so no control in it is ringed
+    // as if the keyboard had walked there.
+    this.element.tabIndex = -1;
     this.slider = new EffortSlider(words.effort, (effort) => this.want({ effort }));
     this.element.addEventListener("click", (event) => this.click(event));
     this.popover = new Popover(this.element, chip, () => {
       this.listing = false;
-      this.element.style.height = "";
     });
     chip.addEventListener("click", () => (this.popover.open ? this.hide() : this.show()));
     chip.setAttribute("aria-haspopup", "dialog");
@@ -99,25 +107,29 @@ export class ModelPanel {
     if (this.popover.open) this.draw();
   }
 
+  /** Opens the panel; `listing`, at the models. A model with nothing to
+   *  set but itself opens at them too. */
   show(listing = false): void {
     this.popover.show();
-    this.fit(listing);
-    this.element.querySelector<HTMLElement>("button, [tabindex]")?.focus({ preventScroll: true });
+    this.listing = listing || !this.controlled();
+    this.draw();
+    this.element.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+    this.element.focus({ preventScroll: true });
   }
 
-  /** The panel's size, for as long as it is open: as tall as the taller of
-   *  its two faces, the controls and the list of models, so turning from
-   *  one to the other moves nothing. Both are laid out at once, before it
-   *  is painted. */
-  private fit(listing: boolean): void {
-    this.element.style.height = "";
-    let tallest = 0;
-    for (const face of [!listing, listing]) {
-      this.listing = face;
+  /** Whether the model chosen has anything to set besides itself. */
+  private controlled(): boolean {
+    const model = this.current();
+    return !!model && (model.efforts.length > 1 || model.service_tiers.length > 0);
+  }
+
+  /** Turns between the controls and the models, the panel growing or
+   *  shrinking upward to fit what it holds now. */
+  private turn(listing: boolean): void {
+    resizeUpward(this.element, null, () => {
+      this.listing = listing;
       this.draw();
-      tallest = Math.max(tallest, this.element.getBoundingClientRect().height);
-    }
-    this.element.style.height = `${Math.ceil(tallest)}px`;
+    });
   }
 
   hide(): void {
@@ -154,37 +166,41 @@ export class ModelPanel {
     const model = this.current();
     const models = offered?.models ?? [];
     const used = offered?.usage?.context?.used ?? null;
-    const list = this.listing
-      ? `<ul class="model-list" role="listbox">${models.length ? models
-          .map((one) => {
-            // A conversation already longer than a model's window would be
-            // refused on it: marked, not hidden, so the choice stays the user's.
-            const tooLong = used !== null && one.context_window != null && used > one.context_window;
-            const title = tooLong ? words.tooLong : (one.description ?? "");
-            return `<li><button type="button" role="option" data-model="${escape(one.id)}" aria-selected="${one.id === model?.id}"${tooLong ? ` class="model-too-long"` : ""}${title ? ` title="${escape(title)}"` : ""}><span>${escape(one.name ?? one.id)}</span>${one.id === model?.id ? glyph("check", 14) : tooLong ? `<span class="model-mark" aria-hidden="true">${glyph("info", 13)}</span>` : ""}</button></li>`;
-          })
-          .join("") : `<li class="model-none">${escape(words.noModels)}</li>`}</ul>`
-      : "";
+    const list = `<ul class="model-list" role="listbox" aria-label="${escape(words.model)}">${
+      models.length
+        ? models
+            .map((one) => {
+              // A conversation already longer than a model's window would be
+              // refused on it: marked, not hidden, so the choice stays the user's.
+              const tooLong = used !== null && one.context_window != null && used > one.context_window;
+              const title = tooLong ? words.tooLong : (one.description ?? "");
+              return `<li><button type="button" class="model-option${tooLong ? " model-too-long" : ""}" role="option" data-model="${escape(one.id)}" aria-selected="${one.id === model?.id}"${title ? ` title="${escape(title)}"` : ""}><span class="model-option-name">${escape(one.name ?? one.id)}</span>${tooLong ? `<span class="model-mark" aria-hidden="true">${glyph("info", 13)}</span>` : ""}</button></li>`;
+            })
+            .join("")
+        : `<li class="model-none">${escape(words.noModels)}</li>`
+    }</ul>`;
     const tiers = model?.service_tiers ?? [];
     const chosen = tiers.find((tier) => tier.id === offered?.service_tier)?.id ?? "default";
     const speed =
       tiers.length === 1
-        ? `<div class="model-row"><button class="model-switch" type="button" role="switch" data-tier="${escape(tiers[0].id)}" aria-checked="${chosen === tiers[0].id}" title="${escape(tiers[0].description)}"><span>${escape(tiers[0].name)}</span><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span></button></div>`
+        ? `<button class="model-line model-switch" type="button" role="switch" data-tier="${escape(tiers[0].id)}" aria-checked="${chosen === tiers[0].id}" title="${escape(tiers[0].description)}"><span>${escape(tiers[0].name)}</span><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span></button>`
         : tiers.length > 1
-          ? `<div class="model-speed"><span class="model-label">${escape(words.speed)}</span><div class="segmented model-speeds" role="radiogroup" aria-label="${escape(words.speed)}">${[{ id: "default", name: words.standard, description: "" }, ...tiers]
+          ? `<div class="model-line"><span class="model-label">${escape(words.speed)}</span><div class="segmented model-speeds" role="radiogroup" aria-label="${escape(words.speed)}">${[{ id: "default", name: words.standard, description: "" }, ...tiers]
               .map((tier) => `<button class="segment${tier.id === chosen ? " chosen" : ""}" type="button" role="radio" data-tier="${escape(tier.id)}" aria-checked="${tier.id === chosen}"${tier.description ? ` title="${escape(tier.description)}"` : ""}>${escape(tier.name)}</button>`)
               .join("")}</div></div>`
           : "";
-    // The list of models takes the place of the controls under the name.
-    const controls = `${model && model.efforts.length > 1 ? `<div class="model-effort"><span class="model-label">${escape(words.effort)}</span><div class="model-slider"></div></div>` : ""}
-      ${speed}
-      <button class="text-button quiet-button model-default" type="button" data-default>${glyph("regenerate", 14)}<span>${escape(words.backToDefault)}</span></button>`;
-    const html = `
-      <button class="model-name" type="button" data-list aria-expanded="${this.listing}"><span class="model-label">${escape(words.model)}</span><span class="model-value">${escape(model?.name ?? offered?.model ?? "")}</span>${glyph("chevron", 14)}</button>
-      ${this.listing ? list : controls}`;
+    const effort = model && model.efforts.length > 1 ? `<div class="model-effort"><span class="model-label">${escape(words.effort)}</span><div class="model-slider"></div></div>` : "";
+    const controls = effort || speed ? `<div class="model-controls">${effort}${speed}</div>` : "";
+    // The model's name at the foot; above it, past a ruled line, the
+    // controls or, the name pressed, the models.
+    const head = `<button class="model-head" type="button" data-list aria-expanded="${this.listing}"><span class="model-label">${escape(words.model)}</span><span class="model-value">${escape(model?.name ?? offered?.model ?? "")}</span>${glyph("chevron", 14)}</button>`;
+    const above = this.listing ? list : controls;
+    const html = `${above}${above ? `<div class="model-rule" aria-hidden="true"></div>` : ""}${head}`;
     if (html !== this.drawn || !this.element.firstElementChild) {
       this.element.innerHTML = html;
       this.drawn = html;
+      const models = this.element.querySelector<HTMLElement>(".model-list");
+      if (models) handOnAtEdge(models);
     }
     const holder = this.element.querySelector<HTMLElement>(".model-slider");
     if (holder && model) {
@@ -197,8 +213,9 @@ export class ModelPanel {
     const target = (event.target as HTMLElement).closest<HTMLElement>("button");
     if (!target) return;
     if (target.dataset.list !== undefined) {
-      this.listing = !this.listing;
-      this.draw();
+      // A model with nothing else to set has only its models to show.
+      if (this.listing && !this.controlled()) return;
+      this.turn(!this.listing);
       return;
     }
     const offered = this.shown();
@@ -208,8 +225,9 @@ export class ModelPanel {
       // A model that has the effort chosen keeps it; one that has not takes
       // its own default.
       const effort = offered?.effort && chosen.efforts.includes(offered.effort) ? offered.effort : chosen.default_effort;
-      this.listing = false;
-      this.want({ model: chosen.id, effort });
+      this.want({ model: chosen.id, effort }, false);
+      // Chosen, the models give way to what it can set, if anything.
+      this.turn(!this.controlled());
       return;
     }
     if (target.dataset.tier) {
@@ -218,21 +236,16 @@ export class ModelPanel {
       if (target.getAttribute("role") === "radio") {
         if (!on) this.want({ tier: target.dataset.tier });
       } else this.want({ tier: on ? "default" : target.dataset.tier });
-      return;
-    }
-    if (target.dataset.default !== undefined) {
-      const fallback = offered?.models.find((one) => one.default) ?? offered?.models[0];
-      if (!fallback) return;
-      this.want({ model: fallback.id, effort: fallback.default_effort, tier: offered?.service_tier && offered.service_tier !== "default" ? "default" : null });
     }
   }
 
-  /** Shows a choice at once and sends it after those on their way. */
-  private want(next: Partial<Wanted>): void {
+  /** Shows a choice at once and sends it after those on their way; `draw`
+   *  false leaves the panel to whoever draws it next. */
+  private want(next: Partial<Wanted>, draw = true): void {
     const current = this.current();
     this.wanted = { model: this.wanted?.model ?? current?.id ?? null, effort: this.wanted?.effort ?? null, tier: this.wanted?.tier ?? null, ...next };
     this.drawChip();
-    if (this.popover.open) this.draw();
+    if (draw && this.popover.open) this.draw();
     const asked = ++this.asked;
     this.sending = this.sending.then(async () => {
       // A later choice carries this one along.

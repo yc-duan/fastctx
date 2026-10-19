@@ -505,7 +505,6 @@
   font-size: var(--size-small);
   color: var(--text-strong);
   white-space: nowrap;
-  transition: left var(--hover) ease-out;
 }
 
 .effort-slider:focus-visible .effort-name {
@@ -522,7 +521,6 @@
   }
 }
 
-:root[data-reduced] .effort-name,
 :root[data-reduced] .feature-save-bar {
   transition: none;
 }

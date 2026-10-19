@@ -1,16 +1,16 @@
 // Choosing which agent a new conversation goes to (`world-gui.md`, 新对话):
-// every login the user may begin with, as one table drawn as the machine
-// list's tree. The user's own machines come first, then those shared with
-// them and other members' an administrator may use, each person a row that
-// opens onto their machines, then those whose agents assist them. A machine
-// is its icon and name, grey while it is away; under it a row a login, the
-// login's mark standing under the machine's name. Every login row has the
-// same columns down the whole table: the agent, who is logged in, the plan,
-// each usage window as a short bar with how much of it is spent, and why it
-// cannot begin where it cannot. The chosen row is washed in clay. Above the
-// table, where both agents are there, a choice of all or one of them; past
-// ten logins a field narrows it to those whose machine, agent, account or
-// plan holds what is typed (`new-talk.ts`).
+// every login of one agent the user may begin with, Codex or Claude, as one
+// table. The user's own machines come first, then those shared with them and
+// other members' an administrator may use, each person a row that opens onto
+// their machines, then those whose agents assist them. A machine is a row
+// that opens and closes onto its logins, as a project does in the sidebar:
+// its icon and name, grey while it is away, and an arrow at the end. Its
+// logins stand a small step in, each the agent's mark, who is logged in,
+// the plan, each usage window as a short bar with how much of it is spent,
+// and why it cannot begin where it cannot, on the same columns down the
+// whole table. The chosen row is washed in clay. Above the table, a field
+// narrows it to the machines and logins that hold what is typed
+// (`new-talk.ts`).
 
 import { glyph, type GlyphName } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -19,8 +19,8 @@ import { accountOf, windowsShort } from "./agent-homes";
 
 export type PickerHold = "mine" | "shared" | "others" | "assist";
 
-/** Which agents the table shows. */
-export type PickerKind = "all" | "codex" | "claude";
+/** Which agent's logins the table shows. */
+export type PickerKind = "codex" | "claude";
 
 /** One machine as the picker shows it. */
 export interface PickerMachine {
@@ -54,8 +54,8 @@ export interface PickerRow {
 export interface PickerWords {
   holds: Record<PickerHold, string>;
   agent: string;
-  allAgents: string;
-  noAgents: string;
+  /** Where none of the user's machines has a login of this agent. */
+  noneOf(agent: string): string;
   noMachine: string;
   token: string;
   onCredits: string;
@@ -65,7 +65,8 @@ export interface PickerWords {
   personSub(machines: number, logins: number): string;
 }
 
-/** What the viewer set: which agents, and which people are open. */
+/** What the viewer set: which agent, and which machines and people are
+ *  open. */
 export interface PickerView {
   kind: PickerKind;
   open(key: string, byDefault: boolean): boolean;
@@ -73,34 +74,43 @@ export interface PickerView {
 
 const HOLDS: PickerHold[] = ["mine", "shared", "others", "assist"];
 
-/** Past this many logins the table can be narrowed by what is typed. */
-export const FILTER_PAST = 10;
-
 /** A person whose machines are shared with the user opens by itself up to
  *  this many logins; a member an administrator oversees waits closed. */
 const OPEN_PERSON = 6;
 
-const programName = (agent: string) => (agent === "codex" ? "Codex" : agent === "claude" ? "Claude" : agent);
+export const programName = (agent: string) => (agent === "codex" ? "Codex" : agent === "claude" ? "Claude" : agent);
 const markOf = (agent: string): GlyphName => (agent === "claude" ? "claude" : "codex");
 
+/** The key a machine's row opens and closes by. */
+export const machineKey = (written: string) => `machine:${written}`;
+
 export function agentPicker(machines: PickerMachine[], words: PickerWords, view: PickerView): string {
+  // Only this agent's logins; a machine with none of them is not listed.
+  const shown = machines
+    .map((machine) => ({ ...machine, rows: machine.rows.filter((row) => row.agent === view.kind) }))
+    .filter((machine) => machine.rows.length);
   const body = HOLDS.map((hold) => {
-    const held = machines.filter((machine) => machine.hold === hold);
+    const held = shown.filter((machine) => machine.hold === hold);
     if (!held.length) return "";
     const people = hold === "shared" || hold === "others";
-    const rows = people ? persons(held, hold === "shared", words, view) : held.map((machine) => machineRows(machine, 0, words)).join("");
+    const rows = people ? persons(held, hold === "shared", words, view) : held.map((machine) => machineRows(machine, 0, words, view)).join("");
     return `<div class="agent-hold"><h3 class="agent-group">${escape(words.holds[hold])}</h3>${rows}</div>`;
   }).join("");
-  return `<div class="agent-picker" role="radiogroup" aria-label="${escape(words.agent)}">${body || `<p class="agent-none">${escape(words.noMachine)}</p>`}</div>`;
+  const none = machines.length ? words.noneOf(programName(view.kind)) : words.noMachine;
+  return `<div class="agent-picker" role="radiogroup" aria-label="${escape(words.agent)}">${body || `<p class="agent-none">${escape(none)}</p>`}</div>`;
 }
 
-/** The choice of all agents or one, where the table holds both. */
-export function agentKinds(machines: PickerMachine[], words: PickerWords, kind: PickerKind): string {
-  const agents = new Set(machines.flatMap((machine) => machine.rows.map((row) => row.agent)));
-  if (!(agents.has("codex") && agents.has("claude"))) return "";
-  const choice = (value: PickerKind, label: string, mark?: GlyphName) =>
-    `<button type="button" class="picker-kind${kind === value ? " chosen" : ""}" role="radio" aria-checked="${kind === value}" data-choice="kind" data-value="${value}">${mark ? glyph(mark, 14) : ""}<span>${escape(label)}</span></button>`;
-  return `<div class="picker-kinds" role="radiogroup" aria-label="${escape(words.agent)}">${choice("all", words.allAgents)}${choice("codex", "Codex", "codex")}${choice("claude", "Claude", "claude")}</div>`;
+/** The choice of Codex or Claude, over the table. */
+export function agentKinds(words: PickerWords, kind: PickerKind): string {
+  const choice = (value: PickerKind) =>
+    `<button type="button" class="segment picker-kind${kind === value ? " chosen" : ""}" role="radio" aria-checked="${kind === value}" data-choice="kind" data-value="${value}">${glyph(markOf(value), 14)}<span>${programName(value)}</span></button>`;
+  return `<div class="segmented picker-kinds" role="radiogroup" aria-label="${escape(words.agent)}">${choice("codex")}${choice("claude")}</div>`;
+}
+
+/** A row that opens and closes what is under it, and what is under it. */
+function fold(key: string, open: boolean, head: string, inside: string, depth: number, className: string): string {
+  const at = depth ? ` style="--depth:${depth}"` : "";
+  return `<button type="button" class="${className}${open ? " open" : ""}" data-choice="fold" data-value="${escape(key)}" aria-expanded="${open}"${at}>${head}<span class="agent-arrow" aria-hidden="true">${glyph("chevron", 14)}</span></button><div class="agent-fold${open ? "" : " shut"}" data-fold="${escape(key)}"${open ? "" : " inert"}><div class="agent-fold-inner">${inside}</div></div>`;
 }
 
 /** Other people's machines: a row a person, opening onto theirs. A person
@@ -114,28 +124,28 @@ function persons(held: PickerMachine[], shared: boolean, words: PickerWords, vie
       const chosen = theirs.some((machine) => machine.rows.some((row) => row.chosen));
       const key = `person:${owner}`;
       const open = view.open(key, chosen || (shared && logins <= OPEN_PERSON));
-      const face = `<span class="agent-face">${escape([...owner][0]?.toUpperCase() ?? "")}</span>`;
-      const head = `<button type="button" class="agent-person${open ? " open" : ""}" data-choice="fold" data-value="${escape(key)}" aria-expanded="${open}">${twisty(true)}<span class="agent-icon" aria-hidden="true">${face}</span><span class="agent-machine-name">${escape(owner)}</span><span class="agent-machine-note">${escape(words.personSub(theirs.length, logins))}</span></button>`;
-      const inside = theirs.map((machine) => machineRows(machine, 1, words)).join("");
-      return `<div class="agent-people" data-find="${escape(owner.toLowerCase())}">${head}<div class="agent-people-body"${open ? "" : " data-folded"}>${inside}</div></div>`;
+      const head = `<span class="agent-icon" aria-hidden="true"><span class="agent-face">${escape([...owner][0]?.toUpperCase() ?? "")}</span></span><span class="agent-machine-name">${escape(owner)}</span><span class="agent-machine-note">${escape(words.personSub(theirs.length, logins))}</span>`;
+      const inside = theirs.map((machine) => machineRows(machine, 1, words, view)).join("");
+      return `<div class="agent-people" data-find="${escape(owner.toLowerCase())}">${fold(key, open, head, inside, 0, "agent-person")}</div>`;
     })
     .join("");
 }
 
-/** The twisty of a row that opens, or its room on one that does not. */
-function twisty(folds: boolean): string {
-  return `<span class="agent-twisty" aria-hidden="true">${folds ? glyph("chevron", 14) : ""}</span>`;
-}
-
-function machineRows(machine: PickerMachine, depth: number, words: PickerWords): string {
+function machineRows(machine: PickerMachine, depth: number, words: PickerWords, view: PickerView): string {
   const state = machine.online === false ? " offline" : machine.online === true ? " online" : "";
-  const at = depth ? ` style="--depth:${depth}"` : "";
   const notes = machine.notes.map((note) => `<span class="agent-machine-note">${escape(note)}</span>`).join("");
-  const head = `<div class="agent-machine${state}"${at}>${twisty(false)}<span class="agent-icon" aria-hidden="true">${glyph(machine.form, 15)}</span><span class="agent-machine-name">${escape(machine.written)}</span>${notes}</div>`;
+  const head = `<span class="agent-icon" aria-hidden="true">${glyph(machine.form, 15)}</span><span class="agent-machine-name">${escape(machine.written)}</span>${notes}`;
   const host = (inner: string) => `<div class="agent-host" data-find="${escape(machine.written.toLowerCase())}">${inner}</div>`;
-  if (machine.online === false) return host(head);
-  const rows = machine.rows.length ? machine.rows.map((row) => rowHtml(row, depth, words)).join("") : `<p class="agent-none quiet"${at}>${escape(words.noAgents)}</p>`;
-  return host(head + rows);
+  // Away, it is its name alone: nothing under it can begin.
+  if (machine.online === false) {
+    const at = depth ? ` style="--depth:${depth}"` : "";
+    return host(`<div class="agent-machine${state}"${at}>${head}</div>`);
+  }
+  const chosen = machine.rows.some((row) => row.chosen);
+  const key = machineKey(machine.written);
+  const open = view.open(key, true) || chosen;
+  const rows = machine.rows.map((row) => rowHtml(row, depth + 1, words)).join("");
+  return host(fold(key, open, head, rows, depth, `agent-machine${state}`));
 }
 
 function rowHtml(row: PickerRow, depth: number, words: PickerWords): string {
@@ -149,52 +159,58 @@ function rowHtml(row: PickerRow, depth: number, words: PickerWords): string {
   const credits = !row.note && onCredits(facts, now) ? words.onCredits : null;
   const note = row.note ?? row.caution ?? credits;
   const windows = limits ? windowsShort(facts?.limits, now).map((window) => `${window.label} ${window.reset ? words.reset : window.percent}`) : [];
-  const said = [name, row.who, plan, windows.join("　"), note].filter(Boolean).join("　");
+  const who = row.who ?? name;
+  const said = [name, who === name ? null : who, plan, windows.join("　"), note].filter(Boolean).join("　");
   const kind = row.note ? "" : row.caution ? " caution" : credits ? " credits" : "";
-  const find = [name, row.who, plan].filter(Boolean).join(" ").toLowerCase();
-  const at = depth ? ` style="--depth:${depth}"` : "";
-  return `<button type="button" class="agent-row${row.chosen ? " chosen" : ""}" role="radio" aria-checked="${row.chosen}" aria-label="${escape(said)}" title="${escape(said)}" data-choice="pick" data-value="${escape(row.key)}" data-agent="${escape(row.agent)}" data-find="${escape(find)}"${at}${row.startable ? "" : " disabled"}>
-    <span class="agent-row-mark">${glyph(markOf(row.agent), 15)}</span>
-    <span class="agent-row-agent">${escape(name)}</span>
-    <span class="agent-row-who">${escape(row.who ?? "")}</span>
-    <span class="agent-row-plan">${plan ? `<span class="tag">${escape(plan)}</span>` : ""}</span>
+  const find = [row.who, plan].filter(Boolean).join(" ").toLowerCase();
+  return `<button type="button" class="agent-row${row.chosen ? " chosen" : ""}" role="radio" aria-checked="${row.chosen}" aria-label="${escape(said)}" title="${escape(said)}" data-choice="pick" data-value="${escape(row.key)}" data-find="${escape(find)}" style="--depth:${depth}"${row.startable ? "" : " disabled"}>
+    <span class="agent-row-lead"><span class="agent-row-mark">${glyph(markOf(row.agent), 15)}</span><span class="agent-row-who">${escape(who)}</span></span>
+    <span class="agent-row-plan">${plan ? escape(plan) : ""}</span>
     <span class="agent-row-limits">${limits}</span>
     <span class="agent-row-note${kind}">${note ? escape(note) : ""}</span>
   </button>`;
 }
 
-/** Narrows the table drawn in `root` to one agent's logins, and to what
- *  holds `typed`: a machine whose name holds it keeps all its logins;
- *  otherwise the logins whose agent, account or plan holds it, under their
- *  machines. A person whose name holds it keeps all theirs. A machine with
- *  no login left goes, unless nothing is narrowed; a person or a group with
- *  none left goes. While something is typed, closed people open onto what
- *  matches. */
-export function narrowPicker(root: HTMLElement, typed: string, kind: PickerKind = "all"): void {
+/** Narrows the table drawn in `root` to what holds `typed`: a machine whose
+ *  name holds it keeps all its logins; otherwise the logins whose account or
+ *  plan holds it, under their machines. A person whose name holds it keeps
+ *  all theirs. A machine, a person or a group with nothing left goes. While
+ *  something is typed, whatever is closed opens onto what matches. */
+export function narrowPicker(root: HTMLElement, typed: string): void {
   const query = typed.trim().toLowerCase();
-  const narrowing = !!query || kind !== "all";
   root.querySelector(".agent-picker")?.classList.toggle("narrowing", !!query);
+  for (const shut of root.querySelectorAll<HTMLElement>(".agent-fold.shut")) shut.inert = !query;
   for (const hold of root.querySelectorAll<HTMLElement>(".agent-hold")) {
     let any = false;
-    for (const people of hold.querySelectorAll<HTMLElement>(".agent-people")) people.hidden = false;
     for (const host of hold.querySelectorAll<HTMLElement>(".agent-host")) {
       const person = host.closest<HTMLElement>(".agent-people");
       const named = !query || (host.dataset.find ?? "").includes(query) || (!!person && (person.dataset.find ?? "").includes(query));
       let rows = false;
       for (const row of host.querySelectorAll<HTMLElement>(".agent-row")) {
-        const shown = (kind === "all" || row.dataset.agent === kind) && (named || (row.dataset.find ?? "").includes(query));
+        const shown = named || (row.dataset.find ?? "").includes(query);
         row.hidden = !shown;
         rows ||= shown;
       }
-      for (const none of host.querySelectorAll<HTMLElement>(".agent-none")) none.hidden = narrowing;
-      host.hidden = narrowing ? !rows : false;
+      host.hidden = !!query && !rows && !named;
       any ||= !host.hidden;
     }
     for (const people of hold.querySelectorAll<HTMLElement>(".agent-people")) {
-      people.hidden = narrowing && !people.querySelector(".agent-host:not([hidden])");
+      people.hidden = !!query && !people.querySelector(".agent-host:not([hidden])");
     }
     hold.hidden = !any;
   }
+}
+
+/** Opens or closes one row's machines or logins where it is drawn: what is
+ *  under it slides in or out. */
+export function foldInPicker(root: HTMLElement, key: string, open: boolean): void {
+  const head = [...root.querySelectorAll<HTMLElement>("[data-choice='fold']")].find((one) => one.dataset.value === key);
+  const body = [...root.querySelectorAll<HTMLElement>(".agent-fold")].find((one) => one.dataset.fold === key);
+  if (!head || !body) return;
+  head.setAttribute("aria-expanded", String(open));
+  head.classList.toggle("open", open);
+  body.classList.toggle("shut", !open);
+  body.inert = !open && !root.querySelector(".agent-picker.narrowing");
 }
 
 /** Each usage window a short bar with how much of it is spent; one past

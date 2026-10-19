@@ -9,6 +9,7 @@
 // read to be saved goes on through breaks while the page is open, its bar
 // saying how it comes.
 
+import { onShade, watchShade } from "../app/shade-press";
 import { layerOpened } from "../app/back";
 import { CanvasCamera } from "../map-canvas";
 import type { MachineName } from "../world/events";
@@ -277,9 +278,10 @@ class PictureViewer {
       if (this.broken) this.note.title = this.options.broken(this.broken.since, this.broken.why);
     });
     document.body.append(this.element);
+    watchShade(this.element);
     this.element.addEventListener("click", (event) => {
       // The dialog itself is pressed only beside the card.
-      if (event.target === this.element) {
+      if (onShade(this.element, event)) {
         this.close();
         return;
       }

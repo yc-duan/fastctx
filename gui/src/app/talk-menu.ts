@@ -37,6 +37,11 @@ export interface MenuOpening {
   find?: () => void;
   /** Once its deletion is asked for: a page of it goes. */
   deleted?: () => void;
+  /** Copies the whole conversation as Markdown, from its own page. */
+  copy?: () => void;
+  /** Opens it in its agent's own program on this computer, where it was
+   *  begun here from Fastctx. */
+  attach?: { agent: string; run(): void };
 }
 
 const narrow = matchMedia("(max-width: 760px)");
@@ -169,6 +174,13 @@ export class TalkMenu {
           item("move", "move", words.move, away, `<span class="talk-menu-more">${glyph("chevron", 14)}</span>`),
           item("rename", "edit", words.rename, away),
           item("archive", "archive", words.archive, away),
+          ...(this.opened.how.copy || this.opened.how.attach
+            ? [
+                rule,
+                ...(this.opened.how.copy ? [item("copy", "copy", words.copyMarkdown, false)] : []),
+                ...(this.opened.how.attach ? [item("attach", "terminal", words.openOwn(this.opened.how.attach.agent), false)] : []),
+              ]
+            : []),
           rule,
           item("delete", "trash", words.delete, false),
         ];
@@ -235,6 +247,18 @@ export class TalkMenu {
         this.close();
         this.options.acts.archive(r);
         return;
+      case "copy": {
+        const copy = opened.how.copy;
+        this.close();
+        copy?.();
+        return;
+      }
+      case "attach": {
+        const attach = opened.how.attach;
+        this.close();
+        attach?.run();
+        return;
+      }
       case "restore":
         this.close();
         this.options.acts.restore(r);

@@ -2,6 +2,7 @@
 // conversation itself in a region that scrolls on its own, and the words
 // the user is about to send, always at the foot.
 
+import { keepChoice } from "../app/model-memory";
 import { layerOpened } from "../app/back";
 import { FocusPanel, focusSummary, type FocusPlace } from "../app/focus-panel";
 import type { ComposerWords, FocusWords } from "../app/words";
@@ -11,7 +12,6 @@ import type { Control, Controlled, Offers } from "../world/control";
 import type { Attachment } from "../world/attachments";
 import type { AttachmentSource } from "../world/files";
 import type { Decoding } from "../world/remote-lines";
-import type { ResidentDetail, ResidentNow } from "../world/world";
 import { AttachTray, type AttachSeam, type AttachWords, type Attached } from "./attach";
 import { SendQueue, type Queued } from "./queue";
 import { bindComposer, type ComposerSession, type ComposerSessionState } from "./composer";
@@ -22,7 +22,6 @@ import { Menu, commandFor, commandRow, commandsOf, usageOf, type MenuCommand } f
 import { ModelPanel, enModelPanel, zhModelPanel } from "./model-panel";
 import { effortLabel } from "./effort-slider";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
-import type { Details } from "./details";
 import { FileLinks } from "./file-links";
 import { JobsPanel, type Job, type OutputLines } from "./jobs-panel";
 import { AgentsPanel } from "./agents-panel";
@@ -117,14 +116,6 @@ export interface PageOptions {
     words: { more: string; archived: string; restore: string; deleted: string };
     open(anchor: HTMLElement): void;
     restore(): void;
-  };
-  /** What the World knows of the agent, shown in a card opened from the
-   *  head, and how to ask for it. */
-  details?: {
-    card: Details;
-    label: string;
-    look(): Promise<ResidentDetail | null>;
-    colleagues(): ResidentNow[];
   };
   /** What the conversation offers, and doing it: its commands, its
    *  model, its usage. */
@@ -227,7 +218,6 @@ export class ConversationPage {
   private action: HTMLButtonElement;
   private scroller: HTMLElement;
   private name: HTMLElement;
-  private looking = 0;
   /** Whether the view keeps the newest in sight as it comes. Only when the
    *  conversation opens, until the reader moves the view, and after they
    *  ask for the newest: nothing else moves what they look at. */
@@ -283,16 +273,12 @@ export class ConversationPage {
     this.element.innerHTML = `
       ${options.head(
         `<div class="who">
-        ${options.details ? `<button class="who-seal" type="button" aria-expanded="false">${glyph(markOf(someone.agent), 16)}</button>` : `<span class="who-seal">${glyph(markOf(someone.agent), 16)}</span>`}
+        <span class="who-seal" tabindex="0">${glyph(markOf(someone.agent), 16)}</span>
         <h1 class="who-name">${escape(someone.agent)}</h1>
         <span class="who-home">${glyph("machine", 14)}<span>${escape(someone.assistFrom ? words.assistFrom(someone.assistFrom) : someone.machine)}</span></span>
         <span class="who-state" hidden></span>
       </div>`,
         `<button class="icon-button find-toggle" type="button" aria-label="${escape(words.find.find)}" title="${escape(words.find.find)}">${glyph("search", 18)}</button>${
-          options.details
-            ? `<button class="icon-button details-toggle" type="button" aria-expanded="false" aria-label="${escape(options.details.label)}" title="${escape(options.details.label)}">${glyph("info", 18)}</button>`
-            : ""
-        }${
           options.manage
             ? `<button class="icon-button talk-menu-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(options.manage.words.more)}">${glyph("more", 20)}</button>`
             : ""
@@ -375,17 +361,6 @@ export class ConversationPage {
       toggle.addEventListener("click", () => manage.open(toggle));
       this.element.querySelector(".composer-gone")!.addEventListener("click", (event) => {
         if ((event.target as HTMLElement).closest(".composer-restore")) manage.restore();
-      });
-    }
-    if (options.details) {
-      const { card } = options.details;
-      this.element.append(card.element);
-      const toggle = this.element.querySelector<HTMLButtonElement>(".details-toggle")!;
-      toggle.addEventListener("click", () => this.toggleDetails(!card.open));
-      // The seal says who the agent is: pressed, everything known of it.
-      this.element.querySelector(".who-seal")!.addEventListener("click", () => this.toggleDetails(!card.open));
-      this.element.addEventListener("keydown", (event) => {
-        if (event.key === "Escape" && card.open) this.toggleDetails(false);
       });
     }
     const main = this.element.querySelector<HTMLElement>(".conversation")!;
@@ -868,14 +843,12 @@ export class ConversationPage {
 
   /** Stops what the page keeps asking for. */
   leave(): void {
-    clearTimeout(this.looking);
     clearTimeout(this.offersAgain);
     cancelAnimationFrame(this.frame);
     this.view.destroy();
     this.badge?.dispose();
     this.agents.destroy();
     this.finder.destroy();
-    this.looking = -1;
     this.left = true;
     document.removeEventListener("keydown", this.findKey);
     this.stopDrops?.();
@@ -1095,41 +1068,6 @@ export class ConversationPage {
     return this.options.conversation.busy() || !!composer?.awaiting_turn || !!composer?.queue.some((item) => item.sending);
   }
 
-  private toggleDetails(open: boolean): void {
-    const details = this.options.details;
-    if (!details) return;
-    const toggle = this.element.querySelector<HTMLElement>(".details-toggle");
-    const inside = details.card.element.contains(document.activeElement);
-    if (open && !details.card.open) layerOpened({ isOpen: () => details.card.open && this.element.isConnected, close: () => this.toggleDetails(false) });
-    details.card.open = open;
-    toggle?.setAttribute("aria-expanded", String(open));
-    const seal = this.element.querySelector<HTMLElement>("button.who-seal");
-    seal?.setAttribute("aria-expanded", String(open));
-    clearTimeout(this.looking);
-    if (open) {
-      details.card.element.focus({ preventScroll: true });
-      void this.lookAgain();
-    } else if (inside) {
-      // Back to what opened it: on a phone the seal, the head's only way in.
-      (toggle?.offsetParent ? toggle : seal)?.focus({ preventScroll: true });
-    }
-  }
-
-  /** Asks the World about the agent while the card is open, every few
-   *  seconds, as the front page asks about everyone. */
-  private async lookAgain(): Promise<void> {
-    const details = this.options.details;
-    if (!details || !details.card.open || this.looking === -1) return;
-    try {
-      const detail = await details.look();
-      if (detail) details.card.show(detail, details.colleagues(), new Date());
-      else details.card.unknown(null);
-    } catch (error) {
-      details.card.unknown(String(error));
-    }
-    if (details.card.open && this.looking !== -1) this.looking = window.setTimeout(() => void this.lookAgain(), 3000);
-  }
-
   private submit(): void {
     const text = this.input.value.trim();
     if (!this.session && this.tray?.sending) {
@@ -1241,6 +1179,12 @@ export class ConversationPage {
 
   /** A line beside the composer: what a command did, or that it did not,
    *  with the host's own words on hover. */
+  /** A short line under the input, such as what an act from the head's
+   *  "⋯" came to. */
+  notify(text: string, refused = false): void {
+    this.say(text, "", refused);
+  }
+
   private say(text: string, detail = "", refused = false): void {
     this.note.textContent = text;
     this.note.title = detail;
@@ -1698,12 +1642,14 @@ export class ConversationPage {
 
   /** A choice in the model panel is shown at once with what the next turn
    *  runs with; the host only keeps it for that turn, and a refusal takes
-   *  it back. */
+   *  it back. Taken, it is also what the next new conversation with this
+   *  agent begins with (`app/model-memory.ts`). */
   private async setModel(model: string | null, effort: string | null): Promise<void> {
     const before = this.offered;
     if (before) this.choose({ ...before, model: model ?? before.model, effort: effort ?? before.effort });
     const done = await this.run({ name: "model", description: "", args: null, arguments: "optional", control: "model", source: null }, "", { do: "model", model, effort }, true);
     if (!done && before) this.unchoose(before);
+    else if (done) keepChoice(this.options.someone.agent, model ?? before?.model ?? null, effort ?? before?.effort ?? null);
   }
 
   private async setTier(id: string): Promise<void> {
@@ -1934,7 +1880,8 @@ export class ConversationPage {
     document.addEventListener("pointerdown", (event) => {
       if (pop.hidden || !this.element.isConnected) return;
       const target = event.target as HTMLElement;
-      if (!pop.contains(target) && !chip.contains(target)) this.closeFocus(focus);
+      // The window of a machine's folders, opened from the panel, is part of it.
+      if (!pop.contains(target) && !chip.contains(target) && !target.closest("dialog")) this.closeFocus(focus);
     });
     strip.addEventListener("keydown", (event) => {
       if (event.key !== "Escape" || pop.hidden) return;
@@ -1944,16 +1891,11 @@ export class ConversationPage {
     });
   }
 
-  /** The machines and folders keep the size they opened at, growing only
-   *  as a folder is walked to (`../app/steady`). */
-  private focusSteady: Steady | null = null;
-
   private openFocus(focus: NonNullable<PageOptions["focus"]>): void {
     const current = this.options.someone.focus;
     if (!current || this.focusSaving) return;
     const strip = this.element.querySelector<HTMLElement>(".focus-strip")!;
     const pop = strip.querySelector<HTMLElement>(".focus-pop")!;
-    this.focusSteady ??= new Steady(pop, true);
     this.focusDraft = structuredClone(current);
     this.focusPanel ??= new FocusPanel(
       {
@@ -1970,8 +1912,6 @@ export class ConversationPage {
     this.focusPanel.set(current);
     pop.replaceChildren(this.focusPanel.element);
     pop.hidden = false;
-    this.focusSteady.hold();
-    this.focusSteady.watch();
     strip.querySelector(".focus-chip")!.setAttribute("aria-expanded", "true");
     layerOpened({ isOpen: () => !pop.hidden && this.element.isConnected, close: () => this.closeFocus(focus) });
   }
@@ -1981,7 +1921,6 @@ export class ConversationPage {
     const pop = strip.querySelector<HTMLElement>(".focus-pop")!;
     if (pop.hidden) return;
     pop.hidden = true;
-    this.focusSteady?.free();
     strip.querySelector(".focus-chip")!.setAttribute("aria-expanded", "false");
     const before = this.options.someone.focus;
     const next = this.focusDraft;
@@ -2122,7 +2061,10 @@ export class ConversationPage {
     const seal = this.element.querySelector<HTMLElement>(".who-seal")!;
     seal.classList.toggle("gone", this.gone !== null || this.away !== null);
     const model = this.options.conversation.answeredBy ? modelName(this.options.conversation.answeredBy) : someone.model;
-    const sealSaid = [someone.agent, now, model].filter(Boolean).join("　");
+    // Who it is, where it lives, how it is now and its model: on a phone,
+    // where the head has no room for its machine, a long press says it.
+    const lives = someone.assistFrom ? this.options.words.assistFrom(someone.assistFrom) : someone.machine;
+    const sealSaid = [someone.agent, lives, now, model].filter(Boolean).join("　");
     seal.title = sealSaid;
     seal.setAttribute("aria-label", sealSaid);
     const trouble = this.gone ?? (this.away !== null ? now : null);

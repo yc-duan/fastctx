@@ -318,10 +318,14 @@ export class HomePage {
     const { words, lastVisit } = this.options;
     const away = this.world?.away;
     if (!lastVisit || !away) return "";
+    // A machine away is not asked, and not said: machines come and go, and
+    // there is nothing in that for the user to do. Only one that is there
+    // and could not answer is.
+    const unanswered = away.unasked.filter((u) => !u.offline);
     const missing = away.trouble
       ? `<p class="front-missing wrong" title="${escape(away.trouble)}">${escape(words.awayTrouble(away.trouble))}</p>`
-      : away.unasked.length
-        ? `<p class="front-missing">${escape(words.unasked(away.unasked.map((u) => (u.offline ? words.unaskedOffline(u.machine) : words.unaskedWhy(u.machine, u.why ?? ""))).join(words.listSeparator)))}</p>`
+      : unanswered.length
+        ? `<p class="front-missing">${escape(words.unasked(unanswered.map((u) => words.unaskedWhy(u.machine, u.why ?? "")).join(words.listSeparator)))}</p>`
         : "";
     const span = words.lasted(Math.max(0, this.now.getTime() - lastVisit.getTime()));
     const list = came.length

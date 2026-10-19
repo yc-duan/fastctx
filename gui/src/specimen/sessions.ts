@@ -5,6 +5,7 @@
 import type { Attachment } from "../world/attachments";
 import { requestEvents } from "./requests";
 import { steps } from "./steps";
+import { trips } from "./trips";
 import type { Content, Does, Item, Notice, SessionEvent, Speaker, Tool, TurnFacts, UserImage } from "../world/events";
 import { cut, hunk, leftOut, noted, printed, put, ran, same, wrote } from "./run-facts";
 
@@ -976,7 +977,7 @@ function asking(): Specimen {
   };
 }
 
-export const specimens: Record<string, () => Specimen> = { claude, codex, asking, steps };
+export const specimens: Record<string, () => Specimen> = { claude, codex, asking, steps, trips };
 
 /** A file the user sent in a specimen, as the World would have kept it. */
 function sent(name: string, media_type: string, size: number): Attachment {

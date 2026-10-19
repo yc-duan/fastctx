@@ -2,6 +2,7 @@
 // to do what is done often. Typing narrows the list to what contains the
 // words typed, in order; the arrow keys choose and Enter goes.
 
+import { onShade, watchShade } from "./shade-press";
 import { escape } from "../conversation/prose";
 import type { PaletteWords } from "./words";
 import { composing } from "../typing";
@@ -51,8 +52,9 @@ export class Palette {
     document.body.append(this.dialog);
     this.input = this.dialog.querySelector<HTMLInputElement>(".palette-input")!;
     this.list = this.dialog.querySelector<HTMLElement>(".palette-list")!;
+    watchShade(this.dialog);
     this.dialog.addEventListener("click", (event) => {
-      if (event.target === this.dialog) this.dialog.close();
+      if (onShade(this.dialog, event)) this.dialog.close();
       const item = (event.target as HTMLElement).closest<HTMLElement>("[data-index]");
       if (item) this.run(Number(item.dataset.index));
     });

@@ -1,0 +1,181 @@
+/* Opening a project (`project-form.ts`), in the body's one size: its name
+   and short name side by side, what it is, then the machines it spans with
+   the places named on each, and every machine to choose among under them. */
+
+.project-sheet .sheet-body {
+  width: min(680px, 100vw - 32px);
+  font-size: var(--body-size);
+}
+
+.project-sheet .field-label,
+.project-sheet .field-hint {
+  font-size: var(--body-size);
+}
+
+.project-sheet .field input,
+.project-sheet .field textarea {
+  font-size: var(--body-size);
+}
+
+/* The field that narrows the machines is the search's own box, not a form
+   field's inside it. */
+.project-sheet .focus-search .pf-filter {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.pf-choose > .focus-search {
+  flex: none;
+}
+
+/* What a field still needs, said beside it in a sentence once the form is
+   sent without it. */
+.pf-need {
+  color: var(--wrong);
+}
+
+.pf-need[hidden] {
+  display: none;
+}
+
+.pf-names {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 12em;
+  column-gap: var(--space-3);
+}
+
+/* The short name's rule, said beside it once it is not kept. */
+.pf-slug-rule {
+  color: var(--wrong);
+}
+
+.pf-slug-rule[hidden] {
+  display: none;
+}
+
+/* The machines chosen, each with its places: a folder, a word on what is
+   there, its path quiet after it, and a cross. */
+.pf-chosen {
+  display: flex;
+  flex-direction: column;
+  margin: 0 calc(-1 * var(--space-2));
+}
+
+.pf-places {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 0 var(--space-2) 0 calc(var(--space-2) + 16px + var(--space-2));
+}
+
+.pf-place {
+  display: grid;
+  grid-template-columns: 16px minmax(8em, 14em) minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-2);
+  width: 100%;
+  min-height: 34px;
+}
+
+.pf-place > .glyph {
+  color: var(--text-3);
+}
+
+.project-sheet .pf-what {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-s);
+  outline: 0;
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+}
+
+.pf-what::placeholder {
+  color: var(--text-3);
+}
+
+/* A long path keeps its end, where its folder's name is. */
+.pf-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: plaintext;
+  color: var(--text-3);
+}
+
+.pf-places > .focus-add {
+  margin-top: 2px;
+}
+
+/* Every machine to choose among: the field over them, then the list in its
+   own room. */
+.pf-choose {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.pf-list {
+  max-height: min(40dvh, 320px);
+  margin: 0 calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.pf-list .focus-part + .focus-part {
+  margin-top: var(--space-3);
+}
+
+/* On a phone the names go one under the other, and a place's path under
+   its word. */
+@media (max-width: 760px) {
+  .project-sheet .sheet-body {
+    width: 100%;
+  }
+
+  .pf-names {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pf-place {
+    grid-template-columns: 16px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "mark what cross"
+      ". path path";
+    row-gap: 2px;
+    padding: var(--space-1) 0;
+  }
+
+  .pf-place > .glyph {
+    grid-area: mark;
+  }
+
+  .project-sheet .pf-what {
+    grid-area: what;
+    height: 40px;
+  }
+
+  .pf-path {
+    grid-area: path;
+  }
+
+  .pf-place > .focus-remove {
+    grid-area: cross;
+  }
+
+  .pf-list {
+    max-height: 44dvh;
+  }
+}

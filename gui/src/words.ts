@@ -22,6 +22,7 @@ export type Act =
   | "move"
   | "write"
   | "command"
+  | "copy"
   | "search"
   | "image"
   | "ask"
@@ -49,6 +50,8 @@ export interface Tally {
   read: number;
   edited: number;
   ran: number;
+  /** Files copied between machines. */
+  copied: number;
   searched: number;
   asked: number;
   /** The host's own agents it started. */
@@ -91,6 +94,27 @@ export interface AgentWords {
   now: string;
   /** A call that names agents the conversation does not hold. */
   unknownAgents(n: number): string;
+}
+
+/** The rows of what a run did through the World. */
+export interface TripWords {
+  /** One command sent to `n` machines. */
+  machines(n: number): string;
+  /** How many of them did not end as they should. */
+  troubled(n: number): string;
+  command: string;
+  lastLines: string;
+  stopped: string;
+  lost(why: string): string;
+  /** A command whose machine went away under it, as its row says it. */
+  unfinished: string;
+  /** Under the pointer on the hook of a command whose input flowed
+   *  straight from the row above. */
+  fed: string;
+  from: string;
+  to: string;
+  copied(files: number, size: string): string;
+  problems: string;
 }
 
 export interface Words {
@@ -192,6 +216,8 @@ export interface Words {
   /** What a command printed and what a write changed, opened under their
    *  rows: what was left out of what the model got, the whole output on
    *  its machine beside it, and what is said when either is gone. */
+  /** What a run did through the World, row by row (`conversation/trip.ts`). */
+  trip: TripWords;
   output: OutputWords & {
     /** What a call was given, and what it gave back, as their boxes are named. */
     input: string;
@@ -295,6 +321,7 @@ const zhActs: Record<Act, [string, string, string]> = {
   move: ["移动", "移动中", "移动失败"],
   write: ["写入", "写入中", "写入失败"],
   command: ["运行", "运行中", "命令失败"],
+  copy: ["复制", "复制中", "复制失败"],
   search: ["搜索", "搜索中", "搜索失败"],
   image: ["看图", "查看中", "查看失败"],
   ask: ["调用", "调用中", "调用失败"],
@@ -317,6 +344,7 @@ const enActs: Record<Act, [string, string, string]> = {
   move: ["Moved", "Moving", "Move Failed"],
   write: ["Wrote", "Writing", "Write Failed"],
   command: ["Ran", "Running command", "Command Failed"],
+  copy: ["Copied", "Copying", "Copy Failed"],
   search: ["Searched", "Searching", "Search Failed"],
   image: ["Viewed", "Viewing image", "Image Failed"],
   ask: ["Called", "Calling a model", "Call Failed"],
@@ -362,6 +390,7 @@ export const zh: Words = {
     const parts: TallyPart[] = [];
     if (t.edited) parts.push({ said: `修改 ${t.edited} 个文件`, kind: "edited" });
     if (t.ran) parts.push({ said: `运行 ${t.ran} 条命令`, kind: "done" });
+    if (t.copied) parts.push({ said: `复制 ${t.copied} 个文件`, kind: "done" });
     if (t.delegated) parts.push({ said: `委派 ${t.delegated} 个子代理`, kind: "done" });
     if (t.asked) parts.push({ said: `调用模型 ${t.asked} 次`, kind: "done" });
     if (t.searched) parts.push({ said: `搜索 ${t.searched} 次`, kind: "done" });
@@ -441,6 +470,20 @@ export const zh: Words = {
   moreLines: (n) => `+ ${n.toLocaleString("zh-CN")} 行`,
   unchangedLines: (n) => `${n} 行未改动`,
   fullScreen: "查看全部",
+  trip: {
+    machines: (n) => `${n} 台`,
+    troubled: (n) => `${n} 台出错`,
+    command: "命令",
+    lastLines: "最后几行",
+    stopped: "已停止",
+    lost: (why) => `没有跑完：${why}`,
+    unfinished: "没有跑完",
+    fed: "用上一行的输出",
+    from: "从",
+    to: "到",
+    copied: (files, size) => `${files} 个文件，${size}`,
+    problems: "没复制成的",
+  },
   output: {
     input: "输入",
     printed: "输出",
@@ -613,6 +656,7 @@ export const en: Words = {
     const parts: TallyPart[] = [];
     if (t.edited) parts.push({ said: `edited ${plural(t.edited, "file", "files")}`, kind: "edited" });
     if (t.ran) parts.push({ said: `ran ${plural(t.ran, "command", "commands")}`, kind: "done" });
+    if (t.copied) parts.push({ said: `copied ${plural(t.copied, "file", "files")}`, kind: "done" });
     if (t.delegated) parts.push({ said: `delegated ${plural(t.delegated, "agent", "agents")}`, kind: "done" });
     if (t.asked) parts.push({ said: `called ${plural(t.asked, "model", "models")}`, kind: "done" });
     if (t.searched) parts.push({ said: t.searched === 1 ? "searched once" : `searched ${t.searched} times`, kind: "done" });
@@ -693,6 +737,20 @@ export const en: Words = {
   moreLines: (n) => `+ ${n.toLocaleString("en")} more line${n === 1 ? "" : "s"}`,
   unchangedLines: (n) => `${n} unchanged lines`,
   fullScreen: "View all",
+  trip: {
+    machines: (n) => `${n} machines`,
+    troubled: (n) => `${n} failed`,
+    command: "Command",
+    lastLines: "Last lines",
+    stopped: "Stopped",
+    lost: (why) => `Did not finish: ${why}`,
+    unfinished: "Did not finish",
+    fed: "Takes the output of the row above",
+    from: "From",
+    to: "To",
+    copied: (files, size) => `${files} ${files === 1 ? "file" : "files"}, ${size}`,
+    problems: "Not copied",
+  },
   output: {
     input: "Input",
     printed: "Output",

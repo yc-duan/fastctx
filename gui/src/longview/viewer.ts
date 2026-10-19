@@ -1,4 +1,5 @@
 import { glyph } from "../conversation/glyphs";
+import { onShade, watchShade } from "../app/shade-press";
 import type { LineCursor, LineMatch, LineSource } from "./source";
 import { LineViewport, type LinePaint } from "./viewport";
 
@@ -129,7 +130,10 @@ export class TextViewer {
     this.element.append(card);
     this.element.addEventListener("close", () => this.dispose());
     // A press on the shade around the card puts it away.
-    this.element.addEventListener("click", (event) => { if (event.target === this.element) this.close(); });
+    watchShade(this.element);
+    this.element.addEventListener("click", (event) => {
+      if (onShade(this.element, event)) this.close();
+    });
     this.element.addEventListener("keydown", (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
         event.preventDefault(); this.search.focus();

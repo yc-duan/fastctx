@@ -1,6 +1,8 @@
-/* The model panel: a solid card risen over the input, the model's name,
-   its list when asked for, the hand-drawn effort slider, the speed switch
-   and the way back to the default. On a phone it rises from the bottom. */
+/* The model panel: a solid card risen over the input, in the body's one
+   size throughout. The model's name stands at its foot, nearest the chip
+   that opened it; above, past a ruled line, the hand-drawn effort slider
+   and the speed, or the models. What it holds sits at its foot, so as it
+   grows or shrinks to fit, only its top edge moves. */
 .model-panel {
   position: absolute;
   left: var(--space-3);
@@ -8,35 +10,41 @@
   z-index: 6;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  justify-content: flex-end;
   width: min(320px, calc(100% - var(--space-6)));
-  padding: var(--space-3) var(--space-4) var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  overflow: hidden;
   border-radius: var(--radius-l);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
+  font-size: var(--body-size);
   opacity: var(--shown);
   translate: var(--slide) var(--lift);
   animation: panel-rise var(--fold) var(--fold-easing) both;
 }
 
-.model-label {
-  font-size: var(--size-small);
-  color: var(--text-3);
+.model-panel:focus {
+  outline: 0;
 }
 
-.model-name {
+.model-panel > * {
+  flex: none;
+}
+
+/* The model's name: pressed, the models open above it. */
+.model-head {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 34px;
-  margin: 0 calc(-1 * var(--space-2));
+  min-height: 36px;
   padding: 0 var(--space-2);
-  border-radius: var(--radius-s);
+  border-radius: var(--radius-m);
   text-align: left;
+  transition: background-color var(--hover) ease;
 }
 
-.model-name:hover {
-  background: var(--hairline);
+.model-head:hover {
+  background: var(--fill);
 }
 
 .model-value {
@@ -48,95 +56,123 @@
   color: var(--text-strong);
 }
 
-.model-name .glyph {
+.model-head > .glyph {
+  flex: none;
   color: var(--text-3);
   --turn: -90deg;
   rotate: var(--turn);
   transition: --turn var(--fold) var(--fold-easing);
 }
 
-.model-name[aria-expanded="true"] .glyph {
-  --turn: 0deg;
+.model-head[aria-expanded="true"] > .glyph {
+  --turn: 180deg;
 }
 
-/* In the controls' place, filling the panel, which keeps the size of the
-   taller face (`model-panel.ts`). */
-.model-list {
-  flex: 1 1 auto;
-  min-height: 0;
-  list-style: none;
-  margin: calc(-1 * var(--space-2)) calc(-1 * var(--space-2)) 0;
-  padding: 0;
-  max-height: 260px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-}
-
-.model-list button {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  min-height: 34px;
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-s);
-  color: var(--text-2);
-  text-align: left;
-}
-
-.model-list button:hover,
-.model-list button[aria-selected="true"] {
-  color: var(--text);
-  background: var(--hairline);
-}
-
-.model-list .glyph {
-  color: var(--accent);
-}
-
-.model-none {
-  padding: var(--space-2);
-  font-size: var(--size-small);
+.model-label {
   color: var(--text-3);
+}
+
+.model-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
 }
 
 .model-effort {
   display: flex;
   flex-direction: column;
-  gap: 2px;
 }
 
-.model-row {
+.model-panel .effort-slider {
+  max-width: none;
+}
+
+.model-panel .effort-name {
+  font-size: var(--body-size);
+}
+
+/* A speed: its name or "Speed" at the left, the switch or the choice of
+   speeds at the right. */
+.model-line {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 34px;
 }
 
 .model-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 30px;
-  font-size: var(--size-small);
+  width: 100%;
   color: var(--text-2);
-}
-
-
-.model-speed {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+  text-align: left;
 }
 
 .model-speeds .segment {
   min-height: 28px;
-  padding: 3px 12px;
-  font-size: var(--size-small);
+  padding: 2px 12px;
+  font-size: var(--body-size);
 }
 
-.model-default {
-  align-self: flex-start;
-  margin-left: calc(-1 * var(--space-2));
+/* The pencil's line over the model's name. */
+.model-rule {
+  flex: none;
+  height: 8px;
+  margin: var(--space-2) var(--space-2) var(--space-1);
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-3) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-3) 0 50% / 100% 100% no-repeat;
+}
+
+/* The models, the chosen one washed; past seven they scroll in their own
+   room and hand the wheel on at its ends. */
+.model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: calc(7 * 36px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.model-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 36px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-m);
+  color: var(--text-2);
+  text-align: left;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.model-option-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-option:hover {
+  color: var(--text);
+  background: var(--fill);
+}
+
+.model-option[aria-selected="true"],
+.model-option[aria-selected="true"]:hover {
+  color: var(--text-strong);
+  background: var(--accent-wash);
+}
+
+.model-none {
+  padding: var(--space-2);
+  color: var(--text-3);
 }
 
 @keyframes panel-rise {
@@ -175,11 +211,15 @@
     animation: sheet-scrim var(--fold) ease both;
   }
 
-  .model-name,
-  .model-list button,
-  .model-switch,
+  .model-head,
+  .model-option,
+  .model-line,
   .model-speeds .segment {
     min-height: 44px;
+  }
+
+  .model-list {
+    max-height: calc(6 * 44px);
   }
 }
 
@@ -197,7 +237,7 @@
   padding: 0 var(--space-2);
   border-radius: var(--radius-full);
   color: var(--text-2);
-  font-size: var(--size-small);
+  font-size: var(--body-size);
   font-variant-numeric: tabular-nums;
   transition: color var(--hover) ease, background-color var(--hover) ease;
 }
@@ -502,7 +542,7 @@ button.job-what:hover .job-command {
 }
 
 /* A model this conversation has outgrown: quieter, with a small mark. */
-.model-list .model-too-long {
+.model-option.model-too-long {
   color: var(--text-3);
 }
 

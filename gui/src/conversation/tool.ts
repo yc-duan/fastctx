@@ -4,6 +4,7 @@
 // present, failed is its own word. Only what the tool says is shown; a
 // count that cannot be read from it is not guessed.
 
+import { tripItems } from "./trip";
 import type { Change, Tool } from "../world/events";
 import type { WriteFact } from "../world/run-facts";
 import type { Act, Tally, TallyPart, Tense, Words } from "../words";
@@ -225,7 +226,7 @@ export function groupHeading(
 ): TallyPart[] {
   const running = tools.find((entry) => entry.ended === null);
   if (running) return [{ said: headline(running.tool, null, words).action, kind: "done" }];
-  const tally: Tally = { read: 0, edited: 0, ran: 0, searched: 0, asked: 0, delegated: 0, coordinated: 0, other: 0, failed: 0, thinking };
+  const tally: Tally = { read: 0, edited: 0, ran: 0, copied: 0, searched: 0, asked: 0, delegated: 0, coordinated: 0, other: 0, failed: 0, thinking };
   for (const { tool, ended } of tools) {
     if (ended && (ended.use === "failed" || ended.use === "declined")) tally.failed += 1;
     switch (tool.does.as) {
@@ -233,6 +234,19 @@ export function groupHeading(
         // Each file a run wrote counts as a file changed; a run that did
         // nothing else is not also a command run.
         tally.edited += tool.run?.writes.length ?? 0;
+        // A run that did things through the World counts each as its row
+        // shows it: each command it sent, each machine one went to, each
+        // file copied or looked at, and what it did on its own machine.
+        const steps = tool.run?.steps ?? [];
+        if (steps.length) {
+          for (const item of tripItems(tool.does.command, steps, tool.run?.writes ?? [])) {
+            if (item.kind === "own" || item.kind === "on") tally.ran += 1;
+            else if (item.kind === "fan") tally.ran += item.steps.length;
+            else if (item.kind === "copy") tally.copied += item.step.files;
+            else if (item.kind === "view") tally.read += item.step.paths.length;
+          }
+          break;
+        }
         if (onlyWrites(tool)) break;
         const viewed = viewing(tool.does.command);
         if (viewed) tally.read += viewed.length;

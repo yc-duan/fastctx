@@ -4,6 +4,7 @@
 // `?s=home|claude|codex|project|journal|machines|settings|new`,
 // `?theme=…`, `?lang=en` and `?live` pick what to look at.
 
+import { focusPlace } from "./app/focus-places";
 import { followSwitches } from "./app/segment-slide";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { Attachment, UploadTarget } from "./world/attachments";
@@ -67,7 +68,7 @@ import { deviceFeatures } from "./app/device-features";
 import { readFeatures, setFeature, setLanguage, watchFeatures } from "./world/features";
 import { untilAnswered, whyOf } from "./world/again";
 import { enFeatures, zhFeatures } from "./app/features-words";
-import { accountOf, enHomes, homeChoice, homeLabel, homesOf, installed, loggedOut, zhHomes } from "./app/agent-homes";
+import { enHomes, zhHomes } from "./app/agent-homes";
 import { Tokens, type CodeAsked } from "./app/tokens";
 import { keepLanguage } from "./language";
 import { codeName, codesOf, enCodes, zhCodes } from "./app/code-rows";
@@ -80,7 +81,8 @@ import { enModelPanel, zhModelPanel } from "./conversation/model-panel";
 import "./app/new-talk.css";
 import "./app/talk-menu.css";
 import "./app/focus-panel.css";
-import "./app/folder-walk.css";
+import "./app/project-form.css";
+import "./app/folder-picker.css";
 import { Palette, type PaletteItem } from "./app/palette";
 import { ProjectForm } from "./app/project-form";
 import { link, placeOf, talkLink, type Place } from "./app/places";
@@ -133,7 +135,6 @@ import { LASTING, loginsOf, type AccountChange, type Login, type TokenSeen, type
 import { assistantOf, assistantsOf, fileHome, filePlaces, groupsOf, inNoNetwork, loginKey, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
 import type { FocusPlace } from "./app/focus-panel";
 import { folders as foldersOf, noFocus, type Focus, type Folders } from "./world/focus";
-import { Details } from "./conversation/details";
 import { ComposerSession } from "./conversation/composer";
 import { allowPrivacy, attachmentThumbnail, fetchAttachment, fetchFile, openLocal, reveal, saveAs, thumbnail, thumbnailUrl, type Saved, type Thumbnail } from "./world/files";
 import { specimenComposer } from "./specimen/composer";
@@ -184,7 +185,7 @@ import { enPages, zhPages } from "./pages/words";
 import { act as pageAct, consent as pageConsent, pageHistory, readPage, restore as restorePage, withdraw as withdrawPage } from "./world/pages";
 import { specimenPageTools, specimenPageWorld } from "./specimen/pages";
 import type { Address, SessionEvent } from "./world/events";
-import { ownerResident, type ResidentDetail, type ResidentNow } from "./world/world";
+import { ownerResident, type ResidentNow } from "./world/world";
 import { agentName, titleOf } from "./world/names";
 import { foldedOf, MachineMap, MAP_ORDER, type MachineMapScene } from "./app/machine-map";
 import { mapOf } from "./app/map-of";
@@ -227,7 +228,6 @@ import {
   remoteWithdraw,
   journal as readJournal,
   journalAdd,
-  look,
   projectEdit,
   projectNew,
   agents,
@@ -438,22 +438,6 @@ function agentsOn(machine: string | null) {
   return Promise.resolve({ machine: specimen.world.here, machines: names.flatMap((name) => specimenAgents(name, specimen.now).machines) });
 }
 
-/** The logins of `agent` on a machine, named or as written, as choices:
- *  each home's directory, "" for the default one, with who is logged in. */
-async function loginsOn(machine: string, agent: string) {
-  const named = machinesOf(store.world.peek() ?? (live ? null : specimen.world)).find((m) => m.name === machine || m.written === machine)?.name ?? machine;
-  const answer = (await agentsOn(named)).machines.find((m) => m.kind === "answered" && m.reply.machine === named);
-  const facts = answer?.kind === "answered" ? answer.reply.agents : [];
-  return homesOf(facts, agent)
-    .filter(installed)
-    .map((home) => ({
-      value: homeChoice(home) ?? "",
-      label: homeLabel(home, agentHomeWords),
-      note: loggedOut(home) ? (english ? enNewTalk : zhNewTalk).loggedOut : (accountOf(home).plan ?? undefined),
-      disabled: loggedOut(home),
-    }));
-}
-
 /** The new-conversation pages, one for each project and one outside any:
  *  each kept while the interface is open, so what was written there and
  *  the files attached wait for the user to come back. */
@@ -542,6 +526,8 @@ const seeds = new Map<string, Seed | null>();
 const projectForm = new ProjectForm({
   store,
   words: english ? enProjectForm : zhProjectForm,
+  focusWords: english ? enFocus : zhFocus,
+  folders: (machine, path) => (live ? foldersOf(machine, path) : specimenFolders(machine, path)),
   create(town, fields, login) {
     if (!live) return Promise.reject(new Error(specimenSaid));
     return projectNew(town, fields, login?.account ?? null, login?.hubName ?? null);
@@ -761,12 +747,44 @@ function askForget(r: ResidentNow, then?: () => void): void {
 /** A conversation page's "⋯": the conversation as the World lists it now,
  *  renamed in the page's own title; deleted, the page is left for the front
  *  page. */
-function talkManage(address: Address, page: () => ConversationPage) {
+function talkManage(address: Address, page: () => ConversationPage, markdown?: () => Promise<string>) {
   return {
     words: { more: talkMenuWords.more, archived: talkMenuWords.archivedNote, restore: talkMenuWords.restore, deleted: talkMenuWords.deletedNote },
     open: (anchor: HTMLElement) => {
       const r = listedAt(store.world.peek(), address);
-      if (r) talkMenu.open(r, { anchor, rename: () => page().startRename(), find: () => page().showFind(), deleted: () => replacePlace(link({ kind: "home" })) });
+      if (!r) return;
+      const here = store.world.peek()?.here ?? (live ? null : specimen.world.here);
+      // Begun here from Fastctx, it opens in its agent's own program too; a
+      // specimen only shows where that would be.
+      const own = r.about.world_started && r.about.machine === here && (desktopAvailable() || !live);
+      talkMenu.open(r, {
+        anchor,
+        rename: () => page().startRename(),
+        find: () => page().showFind(),
+        deleted: () => replacePlace(link({ kind: "home" })),
+        ...(markdown
+          ? {
+              copy: () =>
+                void markdown()
+                  .then((text) => navigator.clipboard.writeText(text))
+                  .then(
+                    () => page().notify(talkMenuWords.copied),
+                    (error: unknown) => page().notify(String(error), true),
+                  ),
+            }
+          : {}),
+        ...(own
+          ? {
+              attach: {
+                agent: agentName(r.about.host.agent),
+                run: () => {
+                  page().notify(talkMenuWords.openedOwn);
+                  (live ? attachHere(address.resident) : Promise.resolve()).catch((error: unknown) => page().notify(String(error), true));
+                },
+              },
+            }
+          : {}),
+      });
     },
     restore: () => {
       const r = listedAt(store.world.peek(), address);
@@ -1008,8 +1026,8 @@ async function withFirstLines(happenings: Happening[]): Promise<Happening[]> {
   );
 }
 
-const detailsWords = english ? enDetails : zhDetails;
 const focusWords = english ? enFocus : zhFocus;
+const detailsWords = english ? enDetails : zhDetails;
 const composerWords = english ? enComposer : zhComposer;
 
 /** Files dropped onto the window from the system, by path, as the shell
@@ -1057,49 +1075,6 @@ function someoneAt(address: Address): string {
 }
 
 /** The card about the agent in a conversation, and how to fill it. */
-function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>, markdown?: () => Promise<string>) {
-  return {
-    card: new Details({
-      words: detailsWords,
-      someone: someoneAt,
-      link: talkLink,
-      span: shellWords.span,
-      stop: () => (live ? stop(address) : Promise.resolve(false)),
-      here: () => store.world.peek()?.here ?? (live ? null : specimen.world.here),
-      // A specimen opens nothing; its button only shows where it would be.
-      attach: desktopAvailable()
-        ? () => attachHere(address.resident)
-        : live
-          ? undefined
-          : () => new Promise<void>((resolve) => setTimeout(resolve, 2400)),
-      markdown,
-      logins: loginsOn,
-      assistFrom: (r) => {
-        const assistant = assistantOf(store.world.peek(), r);
-        return assistant ? (assistant.owner ?? assistant.machine) : null;
-      },
-      actingFor: (r) => {
-        const acting = r.about.acting;
-        if (!acting || acting.kind === "here") return [];
-        const logins = loginsOf(store.world.peek()?.accounts);
-        return acting.accounts.map((one) => {
-          const known = logins.find((login) => sameLogin(login, one));
-          return known ? loginLabel(known) : one.account;
-        });
-      },
-    }),
-    label: detailsWords.open,
-    look,
-    colleagues: () =>
-      residentsOf(store.world.peek()).filter(
-        (r) =>
-          r.about.origin.kind === "colleague" &&
-          r.about.origin.asked_by.resident === address.resident &&
-          r.about.origin.asked_by.machine === address.machine,
-      ),
-  };
-}
-
 /** The machine the agent at `address` lives on, where an account it works
  *  for may work on it (not so for an agent assisting the user), and the login
  *  it works for among this computer's, as this computer reaches them. */
@@ -1122,7 +1097,7 @@ function focusPlacesFor(address: Address): FocusPlace[] {
   const assistant = known ? assistantOf(world, known) : null;
   const found = livesFor(address);
   const machines = assistant ? filePlaces(world, assistant.login) : found.lives ? workPlaces(world, found.lives, found.login) : [];
-  return machines.map((machine) => ({ written: machine.written, name: machine.name, here: machine.here, online: machine.here ? true : machine.online }));
+  return machines.map((machine) => focusPlace(world, machine));
 }
 
 /** The machines and folders a conversation is pointed at, where the user
@@ -1272,7 +1247,7 @@ function specimenTalk(address: Address): KeepablePage {
   const name = address.resident;
   const sample: Specimen & { later?: SessionEvent[]; rate?: number; timed?: boolean } = name.startsWith("stream")
     ? streamSpecimen(params)
-    : (specimens[name === "codex-a51c" ? "asking" : name === "claude-5teps" ? "steps" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
+    : (specimens[name === "codex-a51c" ? "asking" : name === "claude-5teps" ? "steps" : name === "trips-1" ? "trips" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
   const conversation = new Conversation();
   conversation.thoughtWords = sample.agent !== "codex";
   // A specimen keeps its whole history as a shell would, and its page holds
@@ -1314,7 +1289,7 @@ function specimenTalk(address: Address): KeepablePage {
     focus: {
       words: focusWords,
       places: () =>
-        machinesOf(specimen.world).map((machine) => ({ written: machine.written, name: machine.name, here: machine.here, online: machine.here ? true : machine.online })),
+        machinesOf(specimen.world).map((machine) => focusPlace(specimen.world, machine)),
       folders: specimenFolders,
       set: () => new Promise((resolve) => setTimeout(() => resolve([]), 600)),
     },
@@ -1358,21 +1333,7 @@ function specimenTalk(address: Address): KeepablePage {
         transport: specimenComposer(address, () => conversation.turning(), params.has("queued") ? (english ? ["Then run the overflow test on lab", "And write the result into the journal"] : ["然后在 lab 上跑溢出测试", "再把结果写进手记"]) : []),
       }),
     files: { words: composerWords.files, find: specimenFiles },
-    manage: talkManage(address, () => page),
-    details: detailsOf(address, async () =>
-      known
-        ? {
-            resident: known,
-            records: `/home/me/.fastctx/world/towns/${known.town ?? "outside"}/residents/${known.about.id}`,
-            actions: known.last_action ? [known.last_action] : [],
-            actions_total: known.last_action ? 41 : 0,
-            asked: known.about.origin.kind === "colleague" ? known.about.origin.label : null,
-            answers: [],
-            jobs: [],
-          }
-        : null,
-      exported(conversation, { agent: sample.agent === "claude" ? "Claude" : "Codex", machine: sample.machine, model: sample.model, project: sample.town }),
-    ),
+    manage: talkManage(address, () => page, exported(conversation, { agent: sample.agent === "claude" ? "Claude" : "Codex", machine: sample.machine, model: sample.model, project: sample.town })),
     send(text, attached) {
       conversation.sending(
         text,
@@ -1575,14 +1536,7 @@ function liveTalk(address: Address): KeepablePage {
         };
       })(),
     },
-    manage: talkManage(address, () => page),
-    details: detailsOf(address, async () => {
-      const [found] = await look([address.resident]);
-      const there = found?.found.find(
-        (looked) => looked.kind === "resident" && looked.resident.about.machine === address.machine,
-      );
-      return there && there.kind === "resident" ? there : null;
-    }, exported(conversation, someone)),
+    manage: talkManage(address, () => page, exported(conversation, someone)),
     send(text, attached) {
       const key = conversation.sending(
         text,
@@ -2353,6 +2307,8 @@ function specimenPlace(): Place | null {
       return { kind: "talk", address: { resident: "stream-1", machine: "laptop" } };
     case "steps":
       return { kind: "talk", address: { resident: "claude-5teps", machine: "laptop" } };
+    case "trips":
+      return { kind: "talk", address: { resident: "trips-1", machine: "desktop" } };
     case "decision":
       return { kind: "file", machine: "desktop", path: "D:/work/mark50/specs/控制环.md", tail: false };
     case "log":

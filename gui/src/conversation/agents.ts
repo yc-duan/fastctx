@@ -63,12 +63,6 @@ export class AgentRun {
 
   constructor(readonly id: string) {}
 
-  /** The step it takes now: the latest of its tools still running. */
-  doing(): AgentStep | null {
-    for (let index = this.steps.length - 1; index >= 0; index -= 1) if (this.steps[index]!.ended === null) return this.steps[index]!;
-    return null;
-  }
-
   /** Whether it still works: running, or waiting on something it owns. */
   get going(): boolean {
     return this.state === "running" || this.state === "waiting";

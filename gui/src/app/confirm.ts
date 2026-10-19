@@ -4,6 +4,7 @@
 // It says what will happen, waits for the one button, and stays open with
 // what went wrong if the World refuses.
 
+import { onShade, watchShade } from "./shade-press";
 import { Steady } from "./steady";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -17,15 +18,21 @@ export class Sheet {
    *  it moves under the reader (`steady.ts`). */
   private readonly steady: Steady;
 
-  constructor(className: string) {
+  /** `fixed`: its size is its own, as a folder picker's, and not the one
+   *  it opened at. */
+  constructor(
+    className: string,
+    private readonly fixed = false,
+  ) {
     this.dialog = document.createElement("dialog");
     this.dialog.className = `sheet ${className}`;
     this.dialog.innerHTML = `<form class="sheet-body" method="dialog"></form>`;
     document.body.append(this.dialog);
     this.body = this.dialog.querySelector("form")!;
     this.steady = new Steady(this.body, true);
+    watchShade(this.dialog);
     this.dialog.addEventListener("click", (event) => {
-      if (event.target === this.dialog || (event.target as HTMLElement).closest(".sheet-close")) this.close();
+      if (onShade(this.dialog, event) || (event.target as HTMLElement).closest(".sheet-close")) this.close();
     });
     this.dialog.addEventListener("cancel", (event) => {
       if (this.busy) event.preventDefault();
@@ -40,6 +47,7 @@ export class Sheet {
   show(): void {
     if (this.dialog.open) return;
     this.dialog.showModal();
+    if (this.fixed) return;
     this.steady.hold();
     this.steady.watch();
   }
@@ -51,7 +59,7 @@ export class Sheet {
   /** What it holds became another stage, as a sheet opened anew: it takes
    *  its size from what is drawn now. */
   anew(): void {
-    if (this.dialog.open) this.steady.hold();
+    if (this.dialog.open && !this.fixed) this.steady.hold();
   }
 }
 

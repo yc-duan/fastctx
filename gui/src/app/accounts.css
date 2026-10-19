@@ -420,22 +420,6 @@ a.text-button {
   padding-left: calc(var(--space-3) - 2px);
 }
 
-/* Whether the agent may ask for colleagues, in the details card. */
-.details-colleagues {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1) var(--space-2);
-  margin: 0 0 var(--space-2);
-  font-size: var(--size-small);
-  color: var(--text-2);
-}
-
-.details-colleagues .text-button {
-  height: 28px;
-  font-size: var(--size-small);
-}
-
 /* A sentence set off in the margin, as a reader pencils beside a passage:
    what the super administrator may do, what an assisting agent cannot touch, what
    using another's agent lets happen. A ruled line down its left edge, in

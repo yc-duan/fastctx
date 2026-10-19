@@ -11,7 +11,7 @@
 // prints what it returns, for measuring a layout rather than eyeing it.
 //
 // `drawer` is the front page with the sidebar pulled out as a drawer;
-// `about` is a conversation with the card about its agent open; a name
+// `about` is a conversation with its head's "⋯" open; a name
 // ending in `-2` is its page logged in to two accounts on two hubs.
 
 import { spawn } from "node:child_process";
@@ -334,7 +334,7 @@ for (const session of sessions) {
         });
       }
       if (session === "about") {
-        await send("Runtime.evaluate", { expression: "document.querySelector('.details-toggle')?.click()" });
+        await send("Runtime.evaluate", { expression: "document.querySelector('.talk-menu-toggle')?.click()" });
       }
       if (session === "queue") {
         // Words said while the agent works: two wait their turn.
@@ -360,7 +360,7 @@ for (const session of sessions) {
         // then putting it to sleep answered (a specimen says it is one).
         await send("Runtime.evaluate", {
           awaitPromise: true,
-          expression: "new Promise(r => setTimeout(r, 200)).then(() => { document.querySelector('.details-toggle')?.click(); return new Promise(r => setTimeout(r, 600)); }).then(() => { document.querySelector('[data-act=move]')?.click(); document.querySelector('[data-act=sleep]')?.click(); return new Promise(r => setTimeout(r, 1200)); })",
+          expression: "new Promise(r => setTimeout(r, 200)).then(() => { document.querySelector('.talk-menu-toggle')?.click(); return new Promise(r => setTimeout(r, 600)); }).then(() => { document.querySelector('[data-act=move]')?.click(); document.querySelector('[data-act=sleep]')?.click(); return new Promise(r => setTimeout(r, 1200)); })",
         });
       }
       // Fonts, then any diagram, then two frames for layout to settle.

@@ -4,7 +4,8 @@
 
 import type { Installed } from "../world/logins";
 import type { MachinePickWords } from "./agent-machines";
-import type { FolderWalkWords } from "./folder-walk";
+import type { FolderPickerWords } from "./folder-picker";
+import { enFolderPicker, zhFolderPicker } from "./words";
 
 export interface AgentLoginsWords extends MachinePickWords {
   title: string;
@@ -56,9 +57,7 @@ export interface AgentLoginsWords extends MachinePickWords {
   forget: string;
   moreFound(n: number): string;
   /** Choosing a folder on another machine, walked by its node. */
-  chooseOn(machine: string): string;
-  close: string;
-  walk: FolderWalkWords;
+  picker: FolderPickerWords;
   /** A slip. */
   defaultLogin: string;
   token: string;
@@ -162,18 +161,7 @@ export const zhAgentLogins: AgentLoginsWords = {
     [`看了 ${directories.toLocaleString("zh-CN")} 个文件夹`, unreadable ? `${unreadable.toLocaleString("zh-CN")} 个打不开` : "", when].filter(Boolean).join("，"),
   forget: "不再找这个文件夹",
   moreFound: (n) => `还有 ${n} 处`,
-  chooseOn: (machine) => `在 ${machine} 上选择文件夹`,
-  close: "关闭",
-  walk: {
-    up: "上一级",
-    reading: "读取中…",
-    noFolders: "没有子文件夹",
-    path: "路径",
-    choose: "选这个文件夹",
-    back: "返回",
-    privacy: "macOS 没让 Fastctx 进这个文件夹：在那台 mac 的「系统设置 › 隐私与安全性 › 完全磁盘访问权限」里打开 Fastctx",
-    privacyGo: "去授权",
-  },
+  picker: zhFolderPicker,
   defaultLogin: "默认",
   token: "长期令牌",
   tokenSaid: "用 setup-token 得到的长期令牌登录：认不出账号与套餐",
@@ -265,18 +253,7 @@ export const enAgentLogins: AgentLoginsWords = {
     [`${directories.toLocaleString("en")} folders seen`, unreadable ? `${unreadable.toLocaleString("en")} unreadable` : "", when].filter(Boolean).join(", "),
   forget: "Stop searching this folder",
   moreFound: (n) => `${n} more`,
-  chooseOn: (machine) => `Choose a folder on ${machine}`,
-  close: "Close",
-  walk: {
-    up: "Up",
-    reading: "Reading…",
-    noFolders: "No folders here",
-    path: "Path",
-    choose: "Choose this folder",
-    back: "Back",
-    privacy: "macOS keeps this folder from Fastctx: turn Fastctx on in System Settings › Privacy & Security › Full Disk Access on that Mac",
-    privacyGo: "Allow",
-  },
+  picker: enFolderPicker,
   defaultLogin: "Default",
   token: "Token",
   tokenSaid: "Logged in with a long-lived setup-token: no account or plan to show",

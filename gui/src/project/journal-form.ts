@@ -3,6 +3,7 @@
 // What the user writes is quoted as their own words; once written, an
 // entry is never changed, and the sheet says so.
 
+import { onShade, watchShade } from "../app/shade-press";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { ProjectWords } from "./words";
@@ -29,8 +30,9 @@ export class JournalForm {
     this.dialog.innerHTML = `<form class="sheet-body" method="dialog"></form>`;
     document.body.append(this.dialog);
     this.body = this.dialog.querySelector("form")!;
+    watchShade(this.dialog);
     this.dialog.addEventListener("click", (event) => {
-      if (event.target === this.dialog || (event.target as HTMLElement).closest(".sheet-close")) this.close();
+      if (onShade(this.dialog, event) || (event.target as HTMLElement).closest(".sheet-close")) this.close();
     });
     this.dialog.addEventListener("cancel", (event) => {
       if (this.busy) event.preventDefault();

@@ -65,14 +65,6 @@
   transition: color var(--hover) ease;
 }
 
-button.who-seal {
-  cursor: pointer;
-}
-
-button.who-seal:hover {
-  color: var(--text-strong);
-}
-
 .who-seal.gone {
   opacity: 0.55;
 }
@@ -175,7 +167,7 @@ button.who-seal:hover {
     font-variant-numeric: tabular-nums;
   }
 
-  .page-head-actions:has(.talk-menu-toggle) :is(.find-toggle, .details-toggle) {
+  .page-head-actions:has(.talk-menu-toggle) .find-toggle {
     display: none;
   }
 }
@@ -400,7 +392,7 @@ button.who-seal:hover {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: var(--size-small);
+  font-size: var(--body-size);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
@@ -444,7 +436,7 @@ button.who-seal:hover {
   padding: 0 var(--space-2);
   border-radius: var(--radius-full);
   color: var(--text-2);
-  font-size: var(--size-small);
+  font-size: var(--body-size);
   white-space: nowrap;
   transition: color var(--hover) ease, background-color var(--hover) ease;
 }
@@ -484,7 +476,7 @@ button.who-seal:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--size-small);
+  font-size: var(--body-size);
   color: var(--text-3);
 }
 
@@ -501,6 +493,15 @@ button.who-seal:hover {
 /* The composer's menus float just above it. */
 .composer {
   position: relative;
+}
+
+/* A panel risen over the input on its way to its new height
+   (`app/resize-upward.ts`): what it holds sits at its foot, so only its top
+   edge moves, and what does not fit yet is cut at the top. */
+.resizing-upward {
+  justify-content: flex-end;
+  overflow: hidden !important;
+  transition: height var(--fold) var(--fold-easing);
 }
 
 .composer-menu {
@@ -637,220 +638,6 @@ button.who-seal:hover {
 .composer-action .glyph {
   stroke-width: 2;
 }
-
-/* The card about the agent: a sheet resting under the head's right edge,
-   over the conversation, scrolling on its own; over the focus strip too,
-   which it covers on a narrow screen. */
-.details {
-  position: absolute;
-  z-index: 6;
-  top: calc(52px + var(--safe-top));
-  right: var(--space-4);
-  width: min(420px, 100% - 2 * var(--space-4));
-  max-height: calc(100% - 52px - var(--safe-top) - var(--space-6));
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  border-radius: var(--radius-l);
-  background: var(--bg-elevated);
-  box-shadow: var(--shadow-pop);
-  opacity: var(--shown);
-  translate: var(--slide) var(--lift);
-  scale: var(--grow);
-  animation: sheet-in var(--enter) var(--fold-easing) both;
-}
-
-.details[hidden] {
-  display: none;
-}
-
-.details-body {
-  padding: var(--space-4) var(--space-5) var(--space-5);
-}
-
-.details .facts {
-  grid-template-columns: 5.5em minmax(0, 1fr);
-  font-size: var(--size-ui);
-}
-
-.details-trouble {
-  margin: var(--space-3) 0 0;
-  font-size: var(--size-small);
-  color: var(--caution);
-}
-
-.details-acts {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  margin: var(--space-3) calc(-1 * var(--space-3)) 0;
-}
-
-.details-acts .text-button:disabled {
-  color: var(--text-3);
-  opacity: 0.6;
-}
-
-.details-acts .text-button .glyph {
-  color: currentColor;
-}
-
-.details-note {
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.details-section {
-  margin-top: var(--space-5);
-}
-
-.details-title {
-  margin: 0 0 var(--space-2);
-  font-family: var(--font-reading);
-  font-weight: 400;
-  font-size: var(--size-small);
-  letter-spacing: 0.04em;
-  color: var(--text-3);
-}
-
-.details-task {
-  margin: 0;
-  font-size: var(--size-ui);
-  line-height: var(--leading-prose);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.details-people,
-.details-jobs,
-.details-actions {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.details-people a {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 30px;
-  margin: 0 calc(-1 * var(--space-2));
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-s);
-  color: var(--text);
-  font-size: var(--size-ui);
-  text-decoration: none;
-  transition: background-color var(--hover) ease;
-}
-
-.details-people a:hover {
-  background: var(--hairline);
-}
-
-.details-people a > span:nth-child(2) {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.details-faint {
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.details-jobs li {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  column-gap: var(--space-2);
-  padding: var(--space-1) 0;
-  font-size: var(--size-ui);
-}
-
-.details-jobs code {
-  grid-column: 1 / -1;
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
-  font-size: var(--size-small);
-  color: var(--text-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.details-job {
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
-  font-size: var(--size-small);
-}
-
-.details-actions li {
-  display: grid;
-  grid-template-columns: 3em minmax(0, 1fr);
-  column-gap: var(--space-2);
-  padding: 3px 0;
-  font-size: var(--size-small);
-  line-height: var(--leading-ui);
-}
-
-.details-actions time {
-  color: var(--text-3);
-  font-variant-numeric: tabular-nums;
-}
-
-.details-hand {
-  margin-right: 0.6em;
-  color: var(--text-3);
-}
-
-.details-what {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
-  color: var(--text);
-}
-
-.details-result {
-  grid-column: 2;
-  color: var(--text-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.details-records {
-  display: flex;
-  gap: var(--space-2);
-  margin: var(--space-5) 0 0;
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.details-records > span {
-  flex: none;
-}
-
-.details-records code {
-  min-width: 0;
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
-  overflow-wrap: anywhere;
-  color: var(--text-2);
-}
-
-@media (max-width: 760px) {
-  .details {
-    left: var(--space-2);
-    right: var(--space-2);
-    width: auto;
-  }
-}
-
 
 /* What is attached to the words: a row of small cards above them, each
    with its picture or its kind, its name and how it is going. */
@@ -1246,7 +1033,6 @@ button.composer-context[hidden] {
   .composer-tools > button,
   .composer-action,
   .job-stop,
-  .model-default,
   .turn-icon {
     min-width: 44px;
     min-height: 44px;

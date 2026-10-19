@@ -47,30 +47,6 @@
   color: var(--wrong);
 }
 
-.row-agent > .agent-now {
-  grid-column: 2 / -1;
-  grid-row: 2;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  margin: -6px 0 4px;
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.agent-now-mark {
-  flex: none;
-  display: inline-grid;
-}
-
-.agent-now-said {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* What an agent did, opened under its row: its own conversation, drawn as
    the page draws one, a size down, sunk into the page in a box of its own
    that scrolls and follows its end while it works. A box inside a box
@@ -212,7 +188,7 @@
   padding: 0 var(--space-2);
   border-radius: var(--radius-full);
   color: var(--text-2);
-  font-size: var(--size-small);
+  font-size: var(--body-size);
   font-variant-numeric: tabular-nums;
   transition: color var(--hover) ease, background-color var(--hover) ease;
 }
