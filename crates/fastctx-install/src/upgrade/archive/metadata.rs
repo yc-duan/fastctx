@@ -181,27 +181,36 @@ pub(super) fn mount(path: &Path) -> io::Result<u64> {
     {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
-        let path = CString::new(path.as_os_str().as_bytes())?;
+        let name = CString::new(path.as_os_str().as_bytes())?;
+        // statx came with Linux 4.11 and names the mount from 5.8 on. Before
+        // that the filesystem's device stands for it: a different filesystem
+        // nested in the tree is still found, a bind mount of the same one
+        // is copied through.
+        let device = || -> io::Result<u64> {
+            use std::os::unix::fs::MetadataExt;
+            Ok(fs::symlink_metadata(path)?.dev())
+        };
         // SAFETY: initialized output and terminated path, queried without following links.
         let mut data: libc::statx = unsafe { std::mem::zeroed() };
         if unsafe {
             libc::syscall(
                 libc::SYS_statx,
                 libc::AT_FDCWD,
-                path.as_ptr(),
+                name.as_ptr(),
                 libc::AT_SYMLINK_NOFOLLOW,
                 libc::STATX_MNT_ID,
                 &mut data,
             )
         } != 0
         {
-            return Err(io::Error::last_os_error());
+            let error = io::Error::last_os_error();
+            return match error.raw_os_error() {
+                Some(libc::ENOSYS | libc::EPERM) => device(),
+                _ => Err(error),
+            };
         }
         if data.stx_mask & libc::STATX_MNT_ID == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "filesystem did not provide mount identity for cross-volume archival",
-            ));
+            return device();
         }
         Ok(data.stx_mnt_id)
     }

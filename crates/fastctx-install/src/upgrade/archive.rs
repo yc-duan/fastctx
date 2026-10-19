@@ -264,24 +264,11 @@ fn sync_directory(file: &File) -> io::Result<()> {
     if cfg!(windows) { Ok(()) } else { file.sync_all() }
 }
 
+/// The installer's no-replace rename, with its way for kernels and
+/// filesystems without one.
 #[cfg(target_os = "linux")]
 pub(super) fn rename_new(source: &Path, destination: &Path) -> io::Result<()> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-    let from = CString::new(source.as_os_str().as_bytes())?;
-    let to = CString::new(destination.as_os_str().as_bytes())?;
-    // SAFETY: both paths are terminated and RENAME_NOREPLACE prevents clobbering.
-    let result = unsafe {
-        libc::syscall(
-            libc::SYS_renameat2,
-            libc::AT_FDCWD,
-            from.as_ptr(),
-            libc::AT_FDCWD,
-            to.as_ptr(),
-            libc::RENAME_NOREPLACE,
-        )
-    };
-    if result == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+    disk::move_preserving(source, destination)
 }
 
 #[cfg(target_os = "macos")]

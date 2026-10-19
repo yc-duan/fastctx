@@ -8,6 +8,13 @@ use std::io;
 /// before the signal, tells a reused PID.
 #[cfg(target_os = "macos")]
 pub fn terminate(identity: &ProcessIdentity) -> io::Result<()> {
+    by_pid(identity)
+}
+
+/// Kills the process by its PID once its start time shows it is still this
+/// lifetime.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn by_pid(identity: &ProcessIdentity) -> io::Result<()> {
     if !crate::is_alive(identity)? {
         return Ok(());
     }
@@ -55,7 +62,14 @@ pub fn terminate(identity: &ProcessIdentity) -> io::Result<()> {
     let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, identity.pid, 0) } as libc::c_int;
     if fd == -1 {
         let error = io::Error::last_os_error();
-        return if error.raw_os_error() == Some(libc::ESRCH) { Ok(()) } else { Err(error) };
+        return match error.raw_os_error() {
+            Some(libc::ESRCH) => Ok(()),
+            // Linux names a process by a descriptor from 5.3 on. An older
+            // kernel, or a sandbox that refuses the call, has it killed as
+            // macOS does.
+            Some(libc::ENOSYS | libc::EPERM) => by_pid(identity),
+            _ => Err(error),
+        };
     }
     let result = (|| {
         if !crate::is_alive(identity)? {

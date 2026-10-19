@@ -331,26 +331,43 @@ mod imp {
         let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, process.pid, 0) } as libc::c_int;
         if pidfd == -1 {
             let error = io::Error::last_os_error();
-            return if error.raw_os_error() == Some(libc::ESRCH) { Ok(()) } else { Err(error) };
+            return match error.raw_os_error() {
+                Some(libc::ESRCH) => Ok(()),
+                // Linux names a process by a descriptor from 5.3 on. An
+                // older kernel, or a sandbox that refuses the call, has the
+                // PID signalled right after its start time is read, which
+                // leaves only that moment for the PID to be reused.
+                Some(libc::ENOSYS | libc::EPERM) => send_if_same(process, || {
+                    // SAFETY: a signal to the process just identified.
+                    unsafe { libc::kill(process.pid as libc::pid_t, signal) as libc::c_long }
+                }),
+                _ => Err(error),
+            };
         }
         // The descriptor names one process for good. If the PID shows
         // another start time by now, the process found had gone and the PID
         // was reused, and the descriptor names the newcomer.
-        let result = match procfs::stat(process.pid) {
+        let result = send_if_same(process, || {
+            // SAFETY: a signal through a descriptor this function owns.
+            unsafe { libc::syscall(libc::SYS_pidfd_send_signal, pidfd, signal, std::ptr::null::<libc::siginfo_t>(), 0) }
+        });
+        // SAFETY: the descriptor opened above.
+        unsafe { libc::close(pidfd) };
+        result
+    }
+
+    /// Sends with `send` while `process` still has the start time it was
+    /// found with; one gone by then is left be.
+    fn send_if_same(process: Stat, send: impl FnOnce() -> libc::c_long) -> io::Result<()> {
+        match procfs::stat(process.pid) {
             Ok(Some(now)) if now.start == process.start => {
-                // SAFETY: a signal through a descriptor this function owns.
-                let sent = unsafe {
-                    libc::syscall(libc::SYS_pidfd_send_signal, pidfd, signal, std::ptr::null::<libc::siginfo_t>(), 0)
-                };
+                let sent = send();
                 let error = io::Error::last_os_error();
                 if sent == -1 && error.raw_os_error() != Some(libc::ESRCH) { Err(error) } else { Ok(()) }
             }
             Ok(_) => Ok(()),
             Err(error) => Err(error),
-        };
-        // SAFETY: the descriptor opened above.
-        unsafe { libc::close(pidfd) };
-        result
+        }
     }
 }
 

@@ -128,7 +128,14 @@ fn wait_until_exit(identity: &ProcessIdentity, within: Option<Duration>) -> io::
     let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, identity.pid, 0) } as libc::c_int;
     if fd == -1 {
         let error = io::Error::last_os_error();
-        return if error.raw_os_error() == Some(libc::ESRCH) { Ok(true) } else { Err(error) };
+        return match error.raw_os_error() {
+            Some(libc::ESRCH) => Ok(true),
+            // Linux opens a process as a descriptor from 5.3 on. An older
+            // kernel, or a sandbox that refuses the call, is asked again
+            // and again.
+            Some(libc::ENOSYS | libc::EPERM) => poll_until_exit(identity, deadline),
+            _ => Err(error),
+        };
     }
     let result = (|| {
         if !crate::is_alive(identity)? {
@@ -156,6 +163,25 @@ fn wait_until_exit(identity: &ProcessIdentity, within: Option<Duration>) -> io::
         libc::close(fd);
     }
     result
+}
+
+/// Whether the process exited by `deadline`, asked every few milliseconds.
+#[cfg(target_os = "linux")]
+fn poll_until_exit(identity: &ProcessIdentity, deadline: Option<std::time::Instant>) -> io::Result<bool> {
+    const PAUSE: Duration = Duration::from_millis(20);
+    loop {
+        if !crate::is_alive(identity)? {
+            return Ok(true);
+        }
+        let pause = match deadline {
+            Some(deadline) => match deadline.checked_duration_since(std::time::Instant::now()) {
+                Some(left) if !left.is_zero() => left.min(PAUSE),
+                _ => return Ok(false),
+            },
+            None => PAUSE,
+        };
+        std::thread::sleep(pause);
+    }
 }
 
 /// On macOS a kqueue tells of the process's exit; the registration comes

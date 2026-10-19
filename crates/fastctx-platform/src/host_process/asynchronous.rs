@@ -80,7 +80,19 @@ pub async fn exited(identity: &ProcessIdentity) -> io::Result<()> {
     let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, identity.pid, 0) } as libc::c_int;
     if fd == -1 {
         let error = io::Error::last_os_error();
-        return if error.raw_os_error() == Some(libc::ESRCH) { Ok(()) } else { Err(error) };
+        return match error.raw_os_error() {
+            Some(libc::ESRCH) => Ok(()),
+            // Linux opens a process as a descriptor from 5.3 on. An older
+            // kernel, or a sandbox that refuses the call, is asked again
+            // and again.
+            Some(libc::ENOSYS | libc::EPERM) => {
+                while crate::is_alive(identity)? {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+                Ok(())
+            }
+            _ => Err(error),
+        };
     }
     // SAFETY: fd was just opened successfully and has no other owner.
     let fd = unsafe { OwnedFd::from_raw_fd(fd) };

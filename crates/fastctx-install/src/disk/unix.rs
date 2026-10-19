@@ -144,7 +144,20 @@ pub(crate) fn sync_directory(path: &Path) -> io::Result<()> {
 pub(crate) fn replace_preserving(source: &Path, target: &Path, displaced: &Path) -> io::Result<()> {
     // An interruption between these operations leaves the displaced object
     // at source. Both names are in the journal before the exchange occurs.
-    exchange(source, target)?;
+    match exchange(source, target) {
+        Ok(()) => {}
+        // Without the atomic exchange the old object moves aside first and
+        // the new one takes its name. An interruption between the two leaves
+        // the target missing and the old object displaced, as ReplaceFile
+        // can on Windows, and the journal completes it the same way.
+        Err(error) if unsupported(&error) => {
+            rename_exclusive(target, displaced)?;
+            sync_parent(displaced)?;
+            rename_exclusive(source, target)?;
+            return sync_parent(target);
+        }
+        Err(error) => return Err(error),
+    }
     sync_parent(source)?;
     rename_exclusive(source, displaced)?;
     sync_parent(displaced)
@@ -177,6 +190,30 @@ fn rename_with_flags(source: &Path, destination: &Path, flags: u32) -> io::Resul
     if result == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
 }
 
+/// Whether the kernel or the filesystem lacks the flagged rename: Linux has
+/// renameat2 from 3.15 on, and a filesystem may refuse its flags.
+#[cfg(target_os = "linux")]
+fn unsupported(error: &io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(libc::ENOSYS | libc::EINVAL))
+}
+
+/// A Mac's filesystem without the flagged rename fails: falling back to an
+/// overwriting rename would destroy the displaced version.
+#[cfg(not(target_os = "linux"))]
+fn unsupported(_: &io::Error) -> bool {
+    false
+}
+
+/// Renames `source` to `destination` unless that name is taken.
+#[cfg(target_os = "linux")]
+fn rename_if_free(source: &Path, destination: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(destination) {
+        Ok(_) => Err(io::Error::from_raw_os_error(libc::EEXIST)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => fs::rename(source, destination),
+        Err(error) => Err(error),
+    }
+}
+
 fn exchange(source: &Path, destination: &Path) -> io::Result<()> {
     #[cfg(target_os = "linux")]
     return rename_with_flags(source, destination, libc::RENAME_EXCHANGE);
@@ -190,8 +227,13 @@ fn exchange(source: &Path, destination: &Path) -> io::Result<()> {
 }
 
 fn rename_exclusive(source: &Path, destination: &Path) -> io::Result<()> {
+    // Without the flagged rename a name already taken is refused first: the
+    // names are the installer's own, and nothing else writes them.
     #[cfg(target_os = "linux")]
-    return rename_with_flags(source, destination, libc::RENAME_NOREPLACE);
+    return match rename_with_flags(source, destination, libc::RENAME_NOREPLACE) {
+        Err(error) if unsupported(&error) => rename_if_free(source, destination),
+        result => result,
+    };
     #[cfg(target_os = "macos")]
     return rename_with_flags(source, destination, libc::RENAME_EXCL);
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
