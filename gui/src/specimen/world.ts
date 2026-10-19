@@ -113,9 +113,9 @@ function manyOnes(): ManyOne[] {
   if (!new URLSearchParams(location.search).has("many")) return [];
   const ones: ManyOne[] = [];
   const floors: [string, string[]][] = [
-    ["国际部2楼", ["A1", "A2", "A3", "A4", "A5", "B1", "B2", "B3", "B4", "B5", "C1", "C2", "C3", "C4", "D1", "D2", "D3", "D4", "E1", "E2"]],
-    ["国际部3楼", ["AG4", "AG5", "AG6", "AG7", "AG8", "AG9", "AG10", "AG11", "AG12", "B2", "B3", "B4", "教师机"]],
-    ["科技馆3楼", Array.from({ length: 24 }, (_, n) => `AG${n + 1}`)],
+    ["教学楼2层", ["A1", "A2", "A3", "A4", "A5", "B1", "B2", "B3", "B4", "B5", "C1", "C2", "C3", "C4", "D1", "D2", "D3", "D4", "E1", "E2"]],
+    ["教学楼3层", ["AG4", "AG5", "AG6", "AG7", "AG8", "AG9", "AG10", "AG11", "AG12", "B2", "B3", "B4", "教师机"]],
+    ["实验楼3层", Array.from({ length: 24 }, (_, n) => `AG${n + 1}`)],
   ];
   let index = 0;
   for (const [floor, seats] of floors) {

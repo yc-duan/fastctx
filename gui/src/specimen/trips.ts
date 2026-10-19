@@ -29,10 +29,10 @@ export function trips(): Specimen {
     delivery: null,
     turn: null,
     from: user,
-    text: "把 laptop 上的阶跃数据拿到台式机上拟合，结果放回 laptop，再同步到 lab 跑一遍控制器测试；顺便看看科技馆 3 楼那批机器的 git 都装好没有。",
+    text: "把 laptop 上的阶跃数据拿到 desktop 上拟合，结果放回 laptop，再同步到 lab 跑一遍控制器测试；顺便看看实验楼 3 层那批机器的 git 都装好没有。",
   });
   events.push({ at: at(1), event: "turn_started", turn });
-  events.push({ at: at(2), event: "finished", turn, item: { id: id(), kind: "thinking", text: "**先跑数据，再测**\n\n拟合在台式机上做，数据经管道直接流过去。", duration_ms: 3400 } });
+  events.push({ at: at(2), event: "finished", turn, item: { id: id(), kind: "thinking", text: "**先跑数据，再测**\n\n拟合在 desktop 上做，数据经管道直接流过去。", duration_ms: 3400 } });
 
   /** A run of `command` on the desktop, its steps as the World told them. */
   const run = (command: string, steps: RunStep[], writes: WriteFact[], output: string, seconds: number) => {
@@ -88,9 +88,9 @@ export function trips(): Specimen {
     52,
   );
 
-  events.push({ at: at(3), event: "finished", turn, item: { id: id(), kind: "message", text: "拟合好了，结果已经放回 laptop 并同步到 lab，lab 上 42 个测试全过。接着看科技馆 3 楼的机器。" } });
+  events.push({ at: at(3), event: "finished", turn, item: { id: id(), kind: "message", text: "拟合好了，结果已经放回 laptop 并同步到 lab，lab 上 42 个测试全过。接着看实验楼 3 层的机器。" } });
 
-  const lab = Array.from({ length: 12 }, (_, n) => `科技馆3楼-AG${String(n + 1).padStart(2, "0")}`);
+  const lab = Array.from({ length: 12 }, (_, n) => `实验楼3层-AG${String(n + 1).padStart(2, "0")}`);
   run(
     `for m in ${lab.join(" ")}; do\n  on "$m" git --version &\ndone\nwait`,
     lab.map((machine, n): RunStep => ({
@@ -132,7 +132,7 @@ export function trips(): Specimen {
     5,
   );
 
-  events.push({ at: at(3), event: "finished", turn, item: { id: id(), kind: "message", text: "科技馆 3 楼 12 台里 10 台装好了；AG05 还没装 git，AG09 跑到一半离线了，要我给它们补装吗？" } });
+  events.push({ at: at(3), event: "finished", turn, item: { id: id(), kind: "message", text: "实验楼 3 层 12 台里 10 台装好了；AG05 还没装 git，AG09 跑到一半离线了，要我给它们补装吗？" } });
   events.push({ at: at(1), event: "turn_ended", turn, end: { how: "completed", reason: null, duration_ms: 95_000, last_message: null } });
 
   // A second turn still going: the install done on one machine, still
