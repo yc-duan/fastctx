@@ -29,7 +29,7 @@ import { foldersSection, foundOf, freshness, searching } from "./agent-folders";
 import { dirName, loginRow, planName, programLine } from "./agent-login-row";
 import type { AgentLoginsWords } from "./agent-logins-words";
 import { chosen, pickButton, pickMenu, pickables, type Pickable } from "./agent-machines";
-import { AssistSheet, assistChange, assistancesIn, namesOn, type Assistance } from "./assist-sheet";
+import { AssistSheet, assistChange, assistancesIn, fiveHourWindow, namesOn, type Assistance } from "./assist-sheet";
 import type { Confirm } from "./confirm";
 import { FolderPicker } from "./folder-picker";
 import { redrawKeepingFocus } from "./focus";
@@ -504,19 +504,21 @@ export class AgentLoginsPage implements Page {
     const home = found.login.default ? null : dir;
     const agent = this.agent;
     const label = this.target(machineName, dir, true)?.who ?? dirName(dir);
-    this.assistSheet.open(
-      options.access.assistTitle(label, machineName),
-      this.assistancesOf(found.machine, found.login, options.store.world.peek()),
-      async (to, until, weekly, assisting) => {
-        await options.change_(owner, assistChange(machineName, agent, home, to, until, weekly, assisting));
+    const limits = found.login.limits;
+    this.assistSheet.open({
+      title: options.access.assistTitle(label, machineName),
+      assistances: this.assistancesOf(found.machine, found.login, options.store.world.peek()),
+      assist: async (to, terms) => {
+        await options.change_(owner, assistChange(machineName, agent, home, to, terms));
         await options.store.refresh();
         const again = this.find(machineName, dir);
         return again?.login ? this.assistancesOf(again.machine, again.login, options.store.world.peek()) : [];
       },
       editing,
-      agent === "claude",
-      namesOn(this.hubOf(owner, options.store.world.peek()), owner),
-    );
+      costs: agent === "claude",
+      names: namesOn(this.hubOf(owner, options.store.world.peek()), owner),
+      window: limits.kind === "known" ? fiveHourWindow(limits.value.windows) : null,
+    });
   }
 
   private find(machineName: string, dir: string): { machine: Shown; login: Login | null; agent: AgentLogins } | null {
@@ -605,7 +607,7 @@ export class AgentLoginsPage implements Page {
         if (!owner || !found?.login) return;
         const home = found.login.default ? null : dir;
         await this.quietly(button, `s:${machine}:${dir}`, async () => {
-          await this.options.change_(owner, assistChange(machine, this.agent, home, button.dataset.to ?? "", null, null, false));
+          await this.options.change_(owner, assistChange(machine, this.agent, home, button.dataset.to ?? "", null));
           await this.options.store.refresh();
         });
         return;

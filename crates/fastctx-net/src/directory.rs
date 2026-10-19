@@ -162,6 +162,14 @@ pub struct Assist {
     /// seven-day window (a Claude Code login's); none is no limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weekly: Option<fastctx_types::usage::Usd>,
+    /// What it may spend in any 24 hours (a Claude Code login's); none is
+    /// no limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily: Option<fastctx_types::usage::Usd>,
+    /// The share of the login's own five-hour window, in percent, past
+    /// which the login assists no one; none is no limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub five_hour: Option<u8>,
 }
 
 impl Assist {

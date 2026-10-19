@@ -1167,18 +1167,18 @@ export class MachinePage implements Page {
     const { options } = this;
     const assistances = (): Assistance[] => assistancesIn(hubOf(options.store.world.peek(), login)?.assists ?? [], machine.name, agent, home);
     const name = home ? `${agentName(agent)} ${home.split(/[\\/]/).filter(Boolean).pop() ?? home}` : agentName(agent);
-    this.assistSheet.open(
-      options.access.assistTitle(name, machine.written),
-      assistances(),
-      async (to, until, weekly, assisting) => {
-        await options.change(login, assistChange(machine.name, agent, home, to, until, weekly, assisting));
+    this.assistSheet.open({
+      title: options.access.assistTitle(name, machine.written),
+      assistances: assistances(),
+      assist: async (to, terms) => {
+        await options.change(login, assistChange(machine.name, agent, home, to, terms));
         await options.store.refresh();
         return assistances();
       },
       editing,
-      agent === "claude",
-      namesOn(hubOf(options.store.world.peek(), login), login),
-    );
+      costs: agent === "claude",
+      names: namesOn(hubOf(options.store.world.peek(), login), login),
+    });
   }
 
   /** Takes `machine` off the network, one of three ways

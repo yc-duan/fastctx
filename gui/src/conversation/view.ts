@@ -2620,10 +2620,10 @@ function turnInfo(end: TurnEnd, words: Words, english: boolean): [string, string
 }
 
 /** A host's word on the session's health, in a plain line: a turn stopped
- *  at an assistance's weekly amount says so and until when. */
+ *  at an assistance's allowance says so and until when. */
 function healthSaid(health: Health, words: Words): string {
   const allowance = health.kind === "warning" ? allowanceOf(health.text) : null;
-  if (allowance) return words.allowanceUsed(allowance.amount, allowance.until);
+  if (allowance) return words.allowanceUsed(allowance);
   return words.health[health.kind] ?? health.text;
 }
 

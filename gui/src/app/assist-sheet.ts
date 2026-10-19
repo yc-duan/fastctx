@@ -1,14 +1,16 @@
 // One login of an agent assisting others (`world-gui.md`, 账号、机器、共享与
-// 协助): whom it assists now, each until when and, for Claude Code, up to
-// how much a week, changed or ended in place; then whom it assists next,
-// the network's accounts that match listed under the name as it is typed.
-// The hub ends an assistance by itself at its deadline; the login's
-// machine holds each account to its weekly amount (`world-agent-logins.md`,
-// 用量).
+// 协助): how much of its own five-hour window it lends at most, for the
+// whole login; whom it assists now, each until when and, for Claude Code,
+// up to how much a day and a week, changed or ended in place; then whom it
+// assists next, the network's accounts that match listed under the name as
+// it is typed. The hub ends an assistance by itself at its deadline; the
+// login's machine holds each account to its allowances
+// (`world-agent-logins.md`, 用量).
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { AccountChange, AssistSeen, HubAccounts, Login } from "../world/accounts";
+import type { LimitWindow } from "../world/agents";
 import { wholeDollars } from "../world/money";
 import type { AccessWords } from "./account-words";
 import { Sheet } from "./confirm";
@@ -18,24 +20,64 @@ import { WhenPicker } from "./when";
 
 const accountRule = "[a-z][a-z0-9\\-]{0,63}";
 
-/** One account the login assists, until when (none: no end), and what it
- *  may spend of the login a week, in dollars (none: no limit). */
+/** What an assistance allows: until when (none: no end), what may be spent
+ *  of the login a day and a week, in dollars (none: no limit), and the
+ *  share of the login's own five-hour window, in percent, past which it
+ *  assists no one (none: no limit). */
+export interface Terms {
+  until: Date | null;
+  daily: number | null;
+  weekly: number | null;
+  fiveHour: number | null;
+}
+
+/** One account the login assists, on its terms. */
 export interface Assistance {
   to: string;
   until: string | null;
+  daily: number | null;
   weekly: number | null;
+  fiveHour: number | null;
 }
 
-/** Lets the login assist `to` until `until` and up to `weekly` dollars a
- *  week, or no longer; answers the assistance as it is then. */
-export type Assist = (to: string, until: Date | null, weekly: number | null, assisting: boolean) => Promise<Assistance[]>;
+/** Lets the login assist `to` on `terms`, or no longer when there are
+ *  none; answers the assistances as they are then. */
+export type Assist = (to: string, terms: Terms | null) => Promise<Assistance[]>;
+
+/** What the sheet opens on. */
+export interface AssistOpening {
+  title: string;
+  assistances: Assistance[];
+  assist: Assist;
+  /** The assistance opened to be changed at once. */
+  editing?: string | null;
+  /** Whether amounts can be set: Claude Code keeps what it costs. */
+  costs: boolean;
+  /** The accounts listed as one is typed. */
+  names: string[];
+  /** The login's five-hour window as last read, none when it never was;
+   *  absent where the page that opens the sheet does not read it. */
+  window?: LimitWindow | null;
+}
+
+const dollars = (micro: number | undefined) => (micro ? micro / 1_000_000 : null);
 
 /** The accounts `agent`'s login `home` on `machine` assists, among a hub's
  *  assistances; `home` is none for the agent's default login there. */
 export function assistancesIn(assists: AssistSeen[], machine: string, agent: string, home: string | null): Assistance[] {
   return assists
     .filter((assist) => assist.machine === machine && assist.agent === agent && (assist.home ?? null) === home)
-    .map((assist) => ({ to: assist.account, until: assist.until ?? null, weekly: assist.weekly ? assist.weekly / 1_000_000 : null }));
+    .map((assist) => ({ to: assist.account, until: assist.until ?? null, daily: dollars(assist.daily), weekly: dollars(assist.weekly), fiveHour: assist.five_hour ?? null }));
+}
+
+/** The terms an assistance the hub keeps was given on. */
+export function termsOf(assist: AssistSeen): Terms {
+  return { until: assist.until ? new Date(assist.until) : null, daily: dollars(assist.daily), weekly: dollars(assist.weekly), fiveHour: assist.five_hour ?? null };
+}
+
+/** The five-hour window among a login's windows. */
+export function fiveHourWindow(windows: LimitWindow[]): LimitWindow | null {
+  return windows.find((window) => window.minutes === 300 || window.name.startsWith("five_hour")) ?? null;
 }
 
 /** The accounts a login may have assisted, as its hub tells them: every
@@ -44,174 +86,282 @@ export function namesOn(hub: HubAccounts | null | undefined, login: Login): stri
   return (hub?.accounts ?? []).map((account) => account.name).filter((name) => name !== login.account);
 }
 
-/** The change that has the login assist `to` as asked, or no longer. */
-export function assistChange(machine: string, agent: string, home: string | null, to: string, until: Date | null, weekly: number | null, assisting: boolean): AccountChange {
+/** The change that has the login assist `to` on `terms`, or no longer. */
+export function assistChange(machine: string, agent: string, home: string | null, to: string, terms: Terms | null): AccountChange {
   return {
     change: "assist",
     machine,
     to,
     agent,
     ...(home ? { home } : {}),
-    assisting,
-    ...(assisting && until ? { until: until.toISOString() } : {}),
-    ...(assisting && weekly ? { weekly: Math.round(weekly * 1_000_000) } : {}),
+    assisting: !!terms,
+    ...(terms?.until ? { until: terms.until.toISOString() } : {}),
+    ...(terms?.weekly ? { weekly: Math.round(terms.weekly * 1_000_000) } : {}),
+    ...(terms?.daily ? { daily: Math.round(terms.daily * 1_000_000) } : {}),
+    ...(terms?.fiveHour ? { five_hour: terms.fiveHour } : {}),
   };
 }
 
-/** Whose assistance is being changed, and the picker its deadline is
- *  changed in. */
-type Editing = { to: string; picker: WhenPicker; weekly: string } | null;
+/** What is being changed: one assistance, with the picker its deadline is
+ *  changed in and its amounts as they were, or the login's five-hour share. */
+type Editing = { kind: "one"; to: string; picker: WhenPicker; daily: string; weekly: string } | { kind: "window"; share: string } | null;
 
 export class AssistSheet {
   private readonly sheet = new Sheet("device-sheet assist-sheet");
-  private title = "";
+  private opening: AssistOpening = { title: "", assistances: [], assist: async () => [], costs: false, names: [] };
   private assistances: Assistance[] = [];
-  private assist: Assist = async () => [];
-  /** Whether a weekly amount can be set: Claude Code keeps what it costs. */
-  private weekly = false;
+  /** The share of its five-hour window the login lends at most, which every
+   *  assistance it gives carries; kept here for the next one while it
+   *  assists no one. */
+  private fiveHour: number | null = null;
   /** The deadline for the next one assisted. */
   private fresh: WhenPicker;
   private editing: Editing = null;
-  /** The accounts that may be assisted, to list as a name is typed. */
-  private names: string[] = [];
   private readonly suggest: NameSuggest;
 
   constructor(private readonly words: AccessWords) {
     this.fresh = new WhenPicker(words.when, null);
     this.suggest = new NameSuggest(words.assistNames);
+    this.sheet.body.tabIndex = -1;
     this.sheet.body.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
       if (!button || button.disabled) return;
-      if (button.dataset.takeBack) void this.change(button.dataset.takeBack, null, null, false);
+      if (button.dataset.takeBack) void this.change(button.dataset.takeBack, null);
       else if (button.dataset.change) this.edit(button.dataset.change);
-      else if (button.dataset.save && this.editing) this.save();
+      else if (button.hasAttribute("data-window")) this.editWindow();
+      else if (button.dataset.save) this.save();
       else if (button.hasAttribute("data-cancel")) this.edit(null);
     });
     this.sheet.body.addEventListener("submit", (event) => {
       event.preventDefault();
-      if (this.editing) return;
+      if (this.editing) return this.save();
       const to = this.sheet.body.querySelector<HTMLInputElement>("[name=to]")!.value.trim();
-      const weekly = amountOf(this.sheet.body.querySelector<HTMLInputElement>("[name=weekly]")?.value ?? "");
-      if (weekly === undefined) return this.say(this.words.weeklyBad);
-      if (to) void this.change(to, this.fresh.value, weekly, true);
+      const amounts = this.amounts(".assist-new");
+      if (amounts && to) void this.change(to, { until: this.fresh.value, ...amounts, fiveHour: this.fiveHour });
     });
   }
 
-  /** Opens the sheet titled `title` on whom the login assists now;
-   *  `editing` opens one assistance to be changed at once; `weekly` is
-   *  whether it can be held to an amount a week; `names` are the accounts
-   *  listed as one is typed. */
-  open(title: string, assistances: Assistance[], assist: Assist, editing: string | null = null, weekly = false, names: string[] = []): void {
-    this.title = title;
-    this.names = names;
-    this.assistances = assistances;
-    this.assist = assist;
-    this.weekly = weekly;
+  /** Opens the sheet on whom the login assists now. */
+  open(opening: AssistOpening): void {
+    this.opening = opening;
+    this.assistances = opening.assistances;
+    this.fiveHour = shareOf(opening.assistances);
     this.fresh = new WhenPicker(this.words.when, null);
     this.editing = null;
     this.sheet.body.innerHTML = "";
-    if (editing && assistances.some((one) => one.to === editing)) this.edit(editing);
+    const editing = opening.editing;
+    if (editing && opening.assistances.some((one) => one.to === editing)) this.edit(editing);
     else this.draw();
     this.sheet.show();
     const opened = this.editing as Editing;
-    if (opened) opened.picker.reveal();
-    else this.sheet.body.querySelector<HTMLInputElement>("[name=to]")?.focus();
+    if (opened?.kind === "one") {
+      opened.picker.reveal();
+      // Nothing is typed first: the sheet itself holds the focus, and no
+      // button wears a ring it was never pressed for.
+      this.sheet.body.focus({ preventScroll: true });
+    } else this.sheet.body.querySelector<HTMLInputElement>("[name=to]")?.focus();
   }
 
   private edit(to: string | null): void {
     const found = this.assistances.find((one) => one.to === to);
-    this.editing = found ? { to: found.to, picker: new WhenPicker(this.words.when, found.until ? new Date(found.until) : null), weekly: found.weekly ? String(found.weekly) : "" } : null;
+    this.editing = found
+      ? { kind: "one", to: found.to, picker: new WhenPicker(this.words.when, found.until ? new Date(found.until) : null), daily: found.daily ? String(found.daily) : "", weekly: found.weekly ? String(found.weekly) : "" }
+      : null;
     redrawKeepingFocus(this.sheet.body, () => this.draw());
-    this.editing?.picker.reveal();
+    if (this.editing?.kind === "one") this.editing.picker.reveal();
+  }
+
+  private editWindow(): void {
+    this.editing = { kind: "window", share: this.fiveHour ? String(this.fiveHour) : "" };
+    redrawKeepingFocus(this.sheet.body, () => this.draw());
+    const field = this.sheet.body.querySelector<HTMLInputElement>("[name=five-hour]");
+    field?.focus();
+    field?.select();
   }
 
   private save(): void {
-    const editing = this.editing!;
-    const typed = this.sheet.body.querySelector<HTMLInputElement>(".assist-edit [name=weekly]")?.value ?? editing.weekly;
-    const weekly = this.weekly ? amountOf(typed) : null;
-    if (weekly === undefined) return this.say(this.words.weeklyBad);
-    void this.change(editing.to, editing.picker.value, weekly, true);
+    const editing = this.editing;
+    if (editing?.kind === "window") {
+      const share = shareTyped(this.sheet.body.querySelector<HTMLInputElement>("[name=five-hour]")?.value ?? editing.share);
+      if (share === undefined) return this.say(this.words.fiveHourBad);
+      return void this.setShare(share);
+    }
+    if (editing?.kind !== "one") return;
+    const amounts = this.amounts(".assist-edit");
+    if (amounts) void this.change(editing.to, { until: editing.picker.value, ...amounts, fiveHour: this.fiveHour });
+  }
+
+  /** The amounts typed under `within`, or none when one is not an amount,
+   *  said beside the sheet's foot. */
+  private amounts(within: string): { daily: number | null; weekly: number | null } | null {
+    if (!this.opening.costs) return { daily: null, weekly: null };
+    const typed = (name: string) => this.sheet.body.querySelector<HTMLInputElement>(`${within} [name=${name}]`)?.value ?? "";
+    const daily = amountOf(typed("daily"));
+    const weekly = amountOf(typed("weekly"));
+    if (daily === undefined || weekly === undefined) {
+      this.say(daily === undefined ? this.words.dailyBad : this.words.weeklyBad);
+      return null;
+    }
+    return { daily, weekly };
   }
 
   private draw(): void {
-    const { words, sheet, editing } = this;
+    const { words, sheet, editing, opening } = this;
     const now = new Date();
     const typed = sheet.body.querySelector<HTMLInputElement>("[name=to]")?.value ?? "";
+    const typedDaily = sheet.body.querySelector<HTMLInputElement>(".assist-new [name=daily]")?.value ?? "";
     const typedWeekly = sheet.body.querySelector<HTMLInputElement>(".assist-new [name=weekly]")?.value ?? "";
     const rows = this.assistances
       .map((one) => {
         const until = one.until ? new Date(one.until) : null;
-        const open = editing?.to === one.to;
-        const weekly = this.weekly
-          ? `<button class="assist-until${one.weekly ? "" : " none"}" type="button" data-change="${escape(one.to)}" title="${escape(words.weeklyHint)}"><span>${escape(one.weekly ? words.weeklyOf(wholeDollars(one.weekly)) : words.weeklyUnlimited)}</span></button>`
-          : "";
-        return `<li class="assist-row${open ? " editing" : ""}${this.weekly ? " weekly" : ""}">
+        const open = editing?.kind === "one" && editing.to === one.to;
+        return `<li class="assist-row${open ? " editing" : ""}${opening.costs ? " costs" : ""}">
           <span class="give-who">${glyph("person", 14)}<span>${escape(one.to)}</span></span>
           <button class="assist-until${until ? "" : " none"}" type="button" data-change="${escape(one.to)}" title="${escape(words.changeUntil)}">${glyph("history", 14)}<span>${escape(until ? words.moment.until(until, now) : words.when.none)}</span></button>
-          ${weekly}
+          ${opening.costs ? this.amountsPill(one) : ""}
           <button class="text-button quiet-button" type="button" data-take-back="${escape(one.to)}">${escape(words.endAssist)}</button>
-          ${open ? `<div class="assist-edit"><div class="assist-edit-when"></div>${this.weekly ? this.weeklyField(editing.weekly) : ""}<div class="assist-edit-acts"><button class="text-button quiet-button" type="button" data-cancel>${escape(words.cancel)}</button><button class="sheet-go" type="button" data-save="1">${escape(words.save)}</button></div></div>` : ""}
+          ${
+            open
+              ? `<div class="assist-edit"><div class="assist-edit-when"></div>${opening.costs ? this.amountFields(editing.daily, editing.weekly) : ""}${this.acts()}</div>`
+              : ""
+          }
         </li>`;
       })
       .join("");
     sheet.body.innerHTML = `
-      ${sheet.head(this.title, words.close)}
+      ${sheet.head(opening.title, words.close)}
       <p class="confirm-what">${escape(words.assistWhat)}</p>
       <p class="field-hint give-sees">${glyph("shield", 14)}<span>${escape(words.assistSees)}</span></p>
+      ${this.windowLine(now)}
       <section class="give-list">
         <h3 class="field-label">${escape(words.assisting)}</h3>
         ${rows ? `<ul class="assist-rows">${rows}</ul>` : `<p class="field-hint">${escape(words.nobodyYet)}</p>`}
       </section>
       ${
-        // While one assistance is changed, the next one assisted waits.
+        // While anything is changed, the next one assisted waits.
         editing
           ? `<input type="hidden" name="to" value="${escape(typed)}">`
-          : `<div class="assist-new${this.weekly ? " weekly" : ""}">
+          : `<div class="assist-new">
         <label class="field"><span class="field-label">${escape(words.assistWho)}</span>
           <input name="to" autocomplete="off" spellcheck="false" autocapitalize="off" pattern="${accountRule}" placeholder="${escape(words.toHint)}" value="${escape(typed)}"></label>
         <div class="field assist-when"><span class="field-label">${escape(words.assistUntil)}</span></div>
-        ${this.weekly ? this.weeklyField(typedWeekly) : ""}
+        ${opening.costs ? this.amountFields(typedDaily, typedWeekly) : ""}
       </div>`
       }
       <p class="sheet-note" role="alert" hidden></p>
       ${editing ? "" : `<footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(words.assistGo)}</button></footer>`}`;
-    if (editing) sheet.body.querySelector(".assist-edit-when")?.append(editing.picker.element);
-    else {
+    if (editing?.kind === "one") sheet.body.querySelector(".assist-edit-when")?.append(editing.picker.element);
+    else if (!editing) {
       sheet.body.querySelector(".assist-when")!.append(this.fresh.element);
       this.fresh.reveal();
       // Those it assists already are not listed again.
       const field = sheet.body.querySelector<HTMLInputElement>(".assist-new [name=to]");
-      if (field) this.suggest.attach(field, this.names.filter((name) => !this.assistances.some((one) => one.to === name)));
+      if (field) this.suggest.attach(field, opening.names.filter((name) => !this.assistances.some((one) => one.to === name)));
     }
   }
 
-  /** The weekly amount: dollars, empty for no limit. */
-  private weeklyField(value: string): string {
-    const { words } = this;
-    return `<label class="field assist-weekly" title="${escape(words.weeklyHint)}"><span class="field-label">${escape(words.weekly)}</span>
-      <span class="assist-weekly-input"><span class="assist-dollar">$</span><input name="weekly" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="${escape(words.weeklyNone)}" value="${escape(value)}"></span></label>`;
+  /** The login's five-hour window as a bar, its share marked on it, and
+   *  the share to press and change. */
+  private windowLine(now: Date): string {
+    const { words, editing, fiveHour } = this;
+    const window = this.opening.window ?? null;
+    const drawn = this.opening.window !== undefined;
+    const used = window && !(window.resets_at && new Date(window.resets_at) <= now) ? window.used_tenths / 10 : null;
+    const read = !window
+      ? words.fiveHourUnread
+      : used === null
+        ? words.fiveHourReset
+        : words.fiveHourRead(Math.round(used), window.resets_at ? words.moment.short(new Date(window.resets_at), now) : null);
+    const over = used !== null && fiveHour !== null && used >= fiveHour;
+    const open = editing?.kind === "window";
+    return `<section class="assist-window-line${open ? " editing" : ""}">
+      <span class="field-label">${escape(words.fiveHour)}</span>
+      ${
+        drawn
+          ? `<span class="assist-window${window ? "" : " unread"}${over ? " over" : ""}" title="${escape(read)}">
+        <span class="assist-window-used" style="width:${Math.min(100, used ?? 0).toFixed(1)}%"></span>
+        ${fiveHour !== null ? `<span class="assist-window-share" style="left:${fiveHour}%"></span>` : ""}
+      </span>`
+          : "<span></span>"
+      }
+      <button class="assist-until${fiveHour === null ? " none" : ""}" type="button" data-window title="${escape(words.fiveHourHint)}"><span>${escape(fiveHour === null ? words.fiveHourNone : words.fiveHourOf(fiveHour))}</span></button>
+      ${
+        open
+          ? `<div class="assist-edit"><label class="field assist-amount" title="${escape(words.fiveHourHint)}">
+          <span class="assist-amount-input"><input name="five-hour" inputmode="numeric" autocomplete="off" spellcheck="false" aria-label="${escape(words.fiveHour)}" placeholder="${escape(words.fiveHourNone)}" value="${escape(editing.share)}"><span class="assist-unit">%</span></span></label>${this.acts()}</div>`
+          : ""
+      }
+    </section>`;
   }
 
-  private async change(to: string, until: Date | null, weekly: number | null, assisting: boolean): Promise<void> {
+  /** What one may spend a day and a week, pressed to change. */
+  private amountsPill(one: Assistance): string {
+    const { words } = this;
+    const said = [one.daily ? words.dailyOf(wholeDollars(one.daily)) : "", one.weekly ? words.weeklyOf(wholeDollars(one.weekly)) : ""].filter(Boolean);
+    const inside = said.length ? said.map((part) => `<span>${escape(part)}</span>`).join("") : `<span>${escape(words.noAllowance)}</span>`;
+    return `<button class="assist-until assist-amounts-pill${said.length ? "" : " none"}" type="button" data-change="${escape(one.to)}" title="${escape(`${words.dailyHint}\n${words.weeklyHint}`)}">${inside}</button>`;
+  }
+
+  /** The daily and weekly amounts side by side: dollars, empty for no
+   *  limit. */
+  private amountFields(daily: string, weekly: string): string {
+    const field = (name: string, label: string, hint: string, value: string) =>
+      `<label class="field assist-amount" title="${escape(hint)}"><span class="field-label">${escape(label)}</span>
+      <span class="assist-amount-input"><span class="assist-unit">$</span><input name="${name}" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="${escape(this.words.weeklyNone)}" value="${escape(value)}"></span></label>`;
+    const { words } = this;
+    return `<div class="assist-amounts">${field("daily", words.daily, words.dailyHint, daily)}${field("weekly", words.weekly, words.weeklyHint, weekly)}</div>`;
+  }
+
+  private acts(): string {
+    const { words } = this;
+    return `<div class="assist-edit-acts"><button class="text-button quiet-button" type="button" data-cancel>${escape(words.cancel)}</button><button class="sheet-go" type="button" data-save="1">${escape(words.save)}</button></div>`;
+  }
+
+  /** Has the login assist `to` on `terms`, or no longer. */
+  private async change(to: string, terms: Terms | null): Promise<void> {
+    if (terms?.until && terms.until <= new Date()) return this.say(this.words.untilPassed);
+    const wasNew = !!terms && !(this.editing?.kind === "one" && this.editing.to === to);
+    await this.run(() => this.opening.assist(to, terms), wasNew);
+  }
+
+  /** Sets the share of its five-hour window the login lends at most, on
+   *  every assistance it gives; while it gives none, for the next one. */
+  private async setShare(share: number | null): Promise<void> {
+    const given = this.assistances;
+    if (!given.length) {
+      this.fiveHour = share;
+      this.edit(null);
+      return;
+    }
+    await this.run(async () => {
+      let now = given;
+      for (const one of given) {
+        const terms = { until: one.until ? new Date(one.until) : null, daily: one.daily, weekly: one.weekly, fiveHour: share };
+        now = await this.opening.assist(one.to, terms);
+      }
+      return now;
+    }, false);
+  }
+
+  /** Does `work` with the sheet held still, and draws what it answers. */
+  private async run(work: () => Promise<Assistance[]>, wasNew: boolean): Promise<void> {
     const { sheet, words } = this;
     if (sheet.busy) return;
-    if (assisting && until && until <= new Date()) return this.say(words.untilPassed);
     const controls = [...sheet.body.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input, button:not(.sheet-close)")];
     sheet.busy = true;
     for (const control of controls) control.disabled = true;
     sheet.body.querySelector<HTMLElement>(".sheet-note")!.hidden = true;
     try {
-      this.assistances = await this.assist(to, until, weekly, assisting);
+      this.assistances = await work();
+      this.fiveHour = shareOf(this.assistances) ?? (this.assistances.length ? null : this.fiveHour);
       sheet.busy = false;
-      const wasNew = assisting && this.editing?.to !== to;
       this.editing = null;
       if (wasNew) this.fresh = new WhenPicker(words.when, null);
       redrawKeepingFocus(sheet.body, () => this.draw());
       if (wasNew) {
         const field = sheet.body.querySelector<HTMLInputElement>("[name=to]")!;
         field.value = "";
-        const amount = sheet.body.querySelector<HTMLInputElement>(".assist-new [name=weekly]");
-        if (amount) amount.value = "";
+        for (const amount of sheet.body.querySelectorAll<HTMLInputElement>(".assist-new .assist-amount input")) amount.value = "";
         field.focus();
       }
     } catch (error) {
@@ -229,12 +379,26 @@ export class AssistSheet {
   }
 }
 
-/** A weekly amount as typed: dollars to the cent, none when empty, and
- *  undefined when it is no amount above zero. */
+/** The share the login's assistances carry; they carry one alike. */
+function shareOf(assistances: Assistance[]): number | null {
+  return assistances.find((one) => one.fiveHour)?.fiveHour ?? null;
+}
+
+/** An amount as typed: dollars to the cent, none when empty, and undefined
+ *  when it is no amount above zero. */
 function amountOf(text: string): number | null | undefined {
   const plain = text.replace(/[$,，\s]/g, "").replace(/。/g, ".");
   if (!plain) return null;
   if (!/^\d+(\.\d+)?$/.test(plain)) return undefined;
   const amount = Math.round(Number(plain) * 100) / 100;
   return amount > 0 && Number.isFinite(amount) ? amount : undefined;
+}
+
+/** A share as typed: a whole percent from 1 to 100, none when empty, and
+ *  undefined otherwise. */
+function shareTyped(text: string): number | null | undefined {
+  const plain = text.replace(/[%％\s]/g, "");
+  if (!plain) return null;
+  const share = Number(plain);
+  return /^\d+$/.test(plain) && share >= 1 && share <= 100 ? share : undefined;
 }

@@ -27,7 +27,8 @@ use serde_json::Value;
 
 use crate::Node;
 
-pub(crate) use allowance::{after_cost, used_up};
+pub(crate) use allowance::{after_reading, used_up};
+use allowance::stop_at_allowance;
 pub(crate) use report::report;
 
 /// How long a day's file is kept: the calendar shows a year, and the week
@@ -276,17 +277,19 @@ pub(crate) fn last_limits(node: &Node, agent: &str, dir: &Path) -> Option<AgentL
 }
 
 /// Counts a Claude session's measurement, as its plugin hands it over: a
-/// rise of its cost, which can stop a turn at an allowance, and a change of
-/// the login's windows. Measured again, the same total adds nothing. A
-/// failure is logged and changes nothing else.
+/// rise of its cost and a change of the login's windows, either of which
+/// can stop a turn at an allowance, the latter any turn on the login.
+/// Measured again, the same total adds nothing. A failure is logged and
+/// changes nothing else.
 pub(crate) async fn measurement(node: &std::sync::Arc<Node>, id: &ResidentId, about: &About, event: &SessionEvent) {
     let Happened::Changed { change: SessionChange::Usage { usage }, .. } = &event.happened else { return };
     if about.host.agent.as_str() != "claude" {
         return;
     }
     match measured(node, id, about, usage, event.at) {
-        Ok(true) => after_cost(node, id, about).await,
-        Ok(false) => {}
+        Ok((_, Some(dir))) => after_reading(node, "claude", &dir).await,
+        Ok((true, None)) => stop_at_allowance(node, id, about).await,
+        Ok((false, None)) => {}
         Err(error) => node.log.line(format_args!("counting what {id} spent: {error}")),
     }
 }
@@ -301,19 +304,27 @@ pub(crate) fn turn_ended(node: &Node, id: &ResidentId, about: &About, end: &Turn
 }
 
 /// A Claude session's measurement: its cost total, and the account's
-/// windows. Whether its cost rose.
-fn measured(node: &Node, id: &ResidentId, about: &About, usage: &Value, at: Timestamp) -> io::Result<bool> {
-    let Some(dir) = login_of(node, id, about) else { return Ok(false) };
+/// windows. Whether its cost rose, and the login when its windows changed.
+fn measured(
+    node: &Node,
+    id: &ResidentId,
+    about: &About,
+    usage: &Value,
+    at: Timestamp,
+) -> io::Result<(bool, Option<PathBuf>)> {
+    let Some(dir) = login_of(node, id, about) else { return Ok((false, None)) };
     let ledger = ledger(node, "claude", &dir);
+    let mut read = false;
     if let Some(windows) = usage.get("rateLimits").and_then(Value::as_array).map(|limits| claude_windows(limits))
         && !windows.is_empty()
     {
-        reading(node, &ledger, windows, at)?;
+        read = reading(node, &ledger, windows, at)?;
     }
+    let read = read.then_some(dir);
     let (Some(session), Some(total)) =
         (about.session.as_ref(), usage.pointer("/cost/usd").and_then(Value::as_f64).and_then(Usd::from_dollars))
     else {
-        return Ok(false);
+        return Ok((false, read));
     };
     let rise = {
         let mut costs = node.usage.costs.lock().expect("never poisoned");
@@ -328,11 +339,11 @@ fn measured(node: &Node, id: &ResidentId, about: &About, usage: &Value, at: Time
         rise
     };
     if rise == Usd::ZERO {
-        return Ok(false);
+        return Ok((false, read));
     }
     let model = about.model.clone().unwrap_or_default();
     append(node, &ledger, &Entry::Cost { at, who: who(about), model, usd: rise })?;
-    Ok(true)
+    Ok((true, read))
 }
 
 /// The windows in a Claude measurement's `rateLimits`, as the login's
@@ -358,27 +369,30 @@ fn claude_windows(limits: &[Value]) -> Vec<LimitWindow> {
 }
 
 /// Keeps a reading of a login's windows when it differs from the last.
-fn reading(node: &Node, ledger: &Path, windows: Vec<LimitWindow>, at: Timestamp) -> io::Result<()> {
+/// Whether it did.
+fn reading(node: &Node, ledger: &Path, windows: Vec<LimitWindow>, at: Timestamp) -> io::Result<bool> {
     let key = ledger.to_string_lossy().into_owned();
     {
         let mut readings = node.usage.readings.lock().expect("never poisoned");
         if readings.get(&key).is_some_and(|last| last.as_ref().is_some_and(|(_, last)| *last == windows)) {
-            return Ok(());
+            return Ok(false);
         }
         readings.insert(key, Some((at, windows.clone())));
     }
-    append(node, ledger, &Entry::Reading { at, windows })
+    append(node, ledger, &Entry::Reading { at, windows })?;
+    Ok(true)
 }
 
 /// A reading of a Codex login's windows, as its app-server read or pushed
-/// them.
-pub(crate) fn codex_reading(node: &Node, dir: &Path, windows: Vec<LimitWindow>, at: Timestamp) {
+/// them. Whether they changed.
+pub(crate) fn codex_reading(node: &Node, dir: &Path, windows: Vec<LimitWindow>, at: Timestamp) -> bool {
     if windows.is_empty() {
-        return;
+        return false;
     }
-    if let Err(error) = reading(node, &ledger(node, "codex", dir), windows, at) {
+    reading(node, &ledger(node, "codex", dir), windows, at).unwrap_or_else(|error| {
         node.log.line(format_args!("keeping a reading of Codex's limits: {error}"));
-    }
+        false
+    })
 }
 
 /// A turn's tokens, by kind, under the model it ended on.

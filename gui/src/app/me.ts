@@ -18,7 +18,7 @@ import type { WorldNow } from "../world/bridge";
 import { wholeDollars } from "../world/money";
 import { agentName } from "../world/names";
 import type { MachinesWords } from "./account-words";
-import { assistChange } from "./assist-sheet";
+import { assistChange, termsOf } from "./assist-sheet";
 import { codeName, codeRow, codesOf } from "./code-rows";
 import { Confirm, Sheet } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
@@ -127,10 +127,8 @@ export class MePage implements Page {
       case "unassist": {
         const assist = this.hubOf(login)?.assists.find((one) => assistKey(one) === button.dataset.assist);
         if (!assist) return;
-        const until = assist.until ? new Date(assist.until) : null;
-        const weekly = assist.weekly ? assist.weekly / 1_000_000 : null;
-        const give = assistChange(assist.machine, assist.agent, assist.home, assist.account, until, weekly, true);
-        const take = assistChange(assist.machine, assist.agent, assist.home, assist.account, null, null, false);
+        const give = assistChange(assist.machine, assist.agent, assist.home, assist.account, termsOf(assist));
+        const take = assistChange(assist.machine, assist.agent, assist.home, assist.account, null);
         return void this.takeBack(login, `assist\n${assistKey(assist)}`, words.assistLabel(`${agentName(assist.agent)} ${assist.machine}`, assist.account), take, give);
       }
       case "leave":
@@ -426,8 +424,9 @@ export class MePage implements Page {
       const chips = same
         .map((assist) => {
           const until = assist.until ? `<span class="chip-more">${glyph("history", 12)}${escape(short(new Date(assist.until), now))}</span>` : "";
+          const daily = assist.daily ? `<span class="chip-more">${escape(words.dailyShort(wholeDollars(assist.daily / 1_000_000)))}</span>` : "";
           const weekly = assist.weekly ? `<span class="chip-more">${escape(words.weeklyShort(wholeDollars(assist.weekly / 1_000_000)))}</span>` : "";
-          return chip(assist.account, `data-act="unassist" data-assist="${escape(assistKey(assist))}"`, words.takeBack(words.assistLabel(`${agentName(assist.agent)} ${assist.machine}`, assist.account)), until + weekly);
+          return chip(assist.account, `data-act="unassist" data-assist="${escape(assistKey(assist))}"`, words.takeBack(words.assistLabel(`${agentName(assist.agent)} ${assist.machine}`, assist.account)), until + daily + weekly);
         })
         .join("");
       return row(glyph(first.agent === "claude" ? "claude" : "codex", 16), escape(agentName(first.agent)), escape([first.machine, home].filter(Boolean).join(" ")), words.assisting, chips);

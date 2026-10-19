@@ -33,8 +33,8 @@ export interface ProblemWords {
   /** Codex's output limit, shared by every tool, is below what the World's
    *  answers need; raising it is the user's to ask for. */
   outputLimit: string;
-  /** An assistance's weekly amount spent, until its week starts again. */
-  allowanceUsed(amount: string, until: Date): string;
+  /** An assistance's allowance reached, until it has room again. */
+  allowanceUsed(reached: Reached): string;
   somethingElse: string;
 }
 
@@ -59,7 +59,11 @@ export const zhProblems: ProblemWords = {
   serviceDown: "本机服务没有运行",
   serviceSwitching: "本机服务正在切换，请稍后再试",
   outputLimit: "Codex 的工具输出上限不够",
-  allowanceUsed: (amount, until) => `这周的协助额度（约 ${amount}）用完了，${until.getMonth() + 1}月${until.getDate()}日 ${clock(until)} 后继续`,
+  allowanceUsed: (reached) => {
+    const until = `${reached.until.getMonth() + 1}月${reached.until.getDate()}日 ${clock(reached.until)}`;
+    if (reached.kind === "fiveHour") return `这个登录的 5 小时额度已用到 ${reached.share}%，协助暂停，${until} 后继续`;
+    return `${reached.kind === "daily" ? "每天" : "这周"}的协助额度（约 ${reached.amount}）用完了，${until} 后继续`;
+  },
   somethingElse: "操作未完成",
 };
 
@@ -84,7 +88,11 @@ export const enProblems: ProblemWords = {
   serviceDown: "The local service isn't running",
   serviceSwitching: "The local service is switching over. Try again in a moment",
   outputLimit: "Codex's tool output limit is too low",
-  allowanceUsed: (amount, until) => `This week's assistance (≈ ${amount}) is used up; it goes on ${until.toLocaleString("en", { month: "short", day: "numeric" })} ${clock(until)}`,
+  allowanceUsed: (reached) => {
+    const until = `${reached.until.toLocaleString("en", { month: "short", day: "numeric" })} ${clock(reached.until)}`;
+    if (reached.kind === "fiveHour") return `This login's 5-hour limit is ${reached.share}% used, so assisting pauses; it goes on ${until}`;
+    return `${reached.kind === "daily" ? "A day's" : "This week's"} assistance (≈ ${reached.amount}) is used up; it goes on ${until}`;
+  },
   somethingElse: "Something went wrong",
 };
 
@@ -112,14 +120,21 @@ const KNOWN: [RegExp, keyof ProblemWords][] = [
   [/connect|timed out|unreachable|refused|no route|dns|resolve|no such host|no answer within|said nothing for/i, "unreachable"],
 ];
 
-/** An assistance's weekly amount spent, as the login's machine says it
- *  (`fastctx-node`, `usage::allowance`): the amount and when its week ends. */
-const ALLOWANCE = /the weekly allowance of \$([\d.,]+) this login gives \S+ is used up until (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) UTC/;
+/** An assistance's allowance reached, as the login's machine says it
+ *  (`fastctx-node`, `usage::allowance`): a weekly or daily amount spent, or
+ *  the login's five-hour window at the share it assists up to, and until
+ *  when. */
+export type Reached = { kind: "weekly" | "daily"; amount: string; until: Date } | { kind: "fiveHour"; share: number; until: Date };
 
-/** The weekly amount spent and until when, where `text` says so. */
-export function allowanceOf(text: string): { amount: string; until: Date } | null {
-  const found = ALLOWANCE.exec(text);
-  return found ? { amount: `$${found[1]!.replace(/\.00$/, "")}`, until: new Date(`${found[2]}T${found[3]}:00Z`) } : null;
+const ALLOWANCE = /the (weekly|daily) allowance of \$([\d.,]+) this login gives \S+ is used up until (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) UTC/;
+const FIVE_HOUR = /this login's five-hour window is past the (\d+)% it assists \S+ up to until (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) UTC/;
+
+/** The allowance reached and until when, where `text` says so. */
+export function allowanceOf(text: string): Reached | null {
+  const spent = ALLOWANCE.exec(text);
+  if (spent) return { kind: spent[1] as "weekly" | "daily", amount: `$${spent[2]!.replace(/\.00$/, "")}`, until: new Date(`${spent[3]}T${spent[4]}:00Z`) };
+  const window = FIVE_HOUR.exec(text);
+  return window ? { kind: "fiveHour", share: Number(window[1]), until: new Date(`${window[2]}T${window[3]}:00Z`) } : null;
 }
 
 function clock(at: Date): string {
@@ -130,7 +145,7 @@ function clock(at: Date): string {
 export function known(error: unknown, words: ProblemWords): string | null {
   const detail = error instanceof Error ? error.message : String(error);
   const allowance = allowanceOf(detail);
-  if (allowance) return words.allowanceUsed(allowance.amount, allowance.until);
+  if (allowance) return words.allowanceUsed(allowance);
   const found = KNOWN.find(([pattern]) => pattern.test(detail));
   const said = found ? words[found[1]] : null;
   return typeof said === "string" ? said : null;

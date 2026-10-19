@@ -18,6 +18,8 @@ pub fn fixtures() -> Vec<Page> {
             assisting: false,
             until: None,
             weekly: None,
+            daily: None,
+            five_hour: None,
         },
         Action::Assist {
             machine: machine(),
@@ -27,6 +29,8 @@ pub fn fixtures() -> Vec<Page> {
             assisting: true,
             until: Some(at),
             weekly: Some(fastctx_types::usage::Usd(25_000_000)),
+            daily: Some(fastctx_types::usage::Usd(5_000_000)),
+            five_hour: Some(75),
         },
         Action::AssistEnded { machine: machine(), to: to(), agent: "claude".parse().unwrap(), home: None },
         Action::Plan { machine: machine(), agent: "claude".parse().unwrap(), home: None, plan: Some(PlanLabel::Free) },

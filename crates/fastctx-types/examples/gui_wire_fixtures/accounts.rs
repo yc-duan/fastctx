@@ -176,6 +176,8 @@ fn hub() -> HubAccounts {
                 home: None,
                 until: None,
                 weekly: None,
+                daily: None,
+                five_hour: Some(80),
             },
             AssistSeen {
                 machine: "gpu".parse().unwrap(),
@@ -184,6 +186,8 @@ fn hub() -> HubAccounts {
                 home: Some("/home/bo/.claude-team".into()),
                 until: Some("2026-10-20T10:00:00Z".parse().unwrap()),
                 weekly: Some(fastctx_types::usage::Usd(42_500_000)),
+                daily: Some(fastctx_types::usage::Usd(8_000_000)),
+                five_hour: None,
             },
         ],
         plans: vec![PlanSeen {
@@ -277,6 +281,8 @@ pub fn fixtures() -> Fixtures {
                 assisting: true,
                 until: Some("2026-10-20T10:00:00Z".parse().unwrap()),
                 weekly: None,
+                daily: None,
+                five_hour: Some(90),
             },
             AccountChange::Assist {
                 machine: machine(),
@@ -286,6 +292,8 @@ pub fn fixtures() -> Fixtures {
                 assisting: true,
                 until: None,
                 weekly: Some(fastctx_types::usage::Usd(50_000_000)),
+                daily: Some(fastctx_types::usage::Usd(10_000_000)),
+                five_hour: None,
             },
             AccountChange::Plan {
                 machine: "gpu".parse().unwrap(),

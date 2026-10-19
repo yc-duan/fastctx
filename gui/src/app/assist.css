@@ -1,6 +1,8 @@
-/* A login assisting others (`assist-sheet.ts`): a roomier sheet, each one
-   assisted a row with its deadline as a pill that opens to be changed in
-   place; then whom it assists next and until when. */
+/* A login assisting others (`assist-sheet.ts`): a roomier sheet; first the
+   share of the login's five-hour window it lends at most, a bar with the
+   share marked on it; each one assisted a row with its deadline and amounts
+   as pills that open to be changed in place; then whom it assists next and
+   until when. */
 @media (min-width: 761px) {
   .assist-sheet {
     margin: auto;
@@ -11,6 +13,77 @@
   width: min(760px, 100vw - 32px);
   max-height: calc(100dvh - 48px);
   overflow-y: auto;
+}
+
+.assist-sheet .sheet-body:focus {
+  outline: 0;
+}
+
+/* The login's five-hour window: its name, the bar as last read with the
+   share marked across it, and the share. */
+.assist-window-line {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-3);
+  min-height: 44px;
+  margin-top: var(--space-4);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--bg-sunken);
+}
+
+.assist-window-line > .field-label {
+  color: var(--text-2);
+}
+
+.assist-window-line.editing {
+  padding-bottom: var(--space-3);
+}
+
+.assist-window {
+  position: relative;
+  justify-self: end;
+  width: clamp(72px, 24vw, 168px);
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--hairline);
+}
+
+.assist-window-used {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--pen-clay);
+}
+
+.assist-window.over .assist-window-used {
+  background: var(--wrong);
+}
+
+.assist-window.unread {
+  height: 0;
+  background: none;
+  border-top: 1px dashed color-mix(in srgb, var(--text-3) 60%, transparent);
+}
+
+.assist-window.unread .assist-window-used {
+  display: none;
+}
+
+.assist-window-share {
+  position: absolute;
+  top: -5px;
+  bottom: -5px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--text-2);
+}
+
+.assist-window.unread .assist-window-share {
+  top: -6px;
+  bottom: -5px;
 }
 
 .assist-rows {
@@ -32,9 +105,13 @@
   border-radius: var(--radius-m);
 }
 
-/* Claude Code's rows carry the weekly amount beside the deadline. */
-.assist-row.weekly {
+/* Claude Code's rows carry the amounts beside the deadline. */
+.assist-row.costs {
   grid-template-columns: minmax(0, 1fr) auto auto auto;
+}
+
+.assist-amounts-pill {
+  gap: 12px;
 }
 
 .assist-row.editing {
@@ -42,7 +119,8 @@
   background: var(--bg-sunken);
 }
 
-.assist-row.editing .when-pick {
+.assist-row.editing .when-pick,
+.assist-window-line.editing .assist-amount-input {
   background: var(--bg-elevated);
 }
 
@@ -69,7 +147,8 @@
   color: var(--text-3);
 }
 
-.assist-row.editing .assist-until {
+.assist-row.editing .assist-until,
+.assist-window-line.editing .assist-until {
   color: var(--text-strong);
   background: var(--accent-wash);
 }
@@ -89,8 +168,8 @@
   gap: var(--space-2);
 }
 
-/* Whom to and until when on the left, the month beside them; the weekly
-   amount under the deadline. */
+/* Whom to and until when on the left, the month beside them; the amounts
+   under the deadline. */
 .assist-new {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -100,7 +179,7 @@
     "label pick"
     "choice pick"
     "said pick"
-    "weekly pick";
+    "amounts pick";
   column-gap: var(--space-5);
   row-gap: var(--space-2);
   align-items: start;
@@ -122,28 +201,61 @@
   margin-top: var(--space-3);
 }
 
-.assist-new > .assist-weekly {
-  grid-area: weekly;
+.assist-new > .assist-amounts {
+  grid-area: amounts;
 }
 
-/* The amount: dollars written in the field, before what is typed. */
-.assist-weekly-input {
+/* A day's and a week's amounts side by side. */
+.assist-amounts {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.assist-amounts > .assist-amount {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 200px;
+}
+
+/* An amount: its unit written in the field, dollars before what is typed
+   and the percent after it. */
+.assist-amount-input {
   display: flex;
   align-items: center;
-  max-width: 220px;
-  padding-left: var(--space-3);
+  padding: 0 var(--space-3);
   border-radius: var(--radius-m);
   background: var(--field);
   color: var(--text-3);
 }
 
-.field .assist-weekly-input input {
+.field .assist-amount-input input {
+  min-width: 0;
+  padding-right: 0;
   padding-left: 4px;
   background: transparent;
 }
 
-.assist-edit .assist-weekly {
+.field .assist-amount-input input:first-child {
+  padding-left: 0;
+  padding-right: 4px;
+  text-align: right;
+}
+
+.assist-edit .assist-amount,
+.assist-edit .assist-amounts {
   margin-top: 0;
+}
+
+/* The share is changed in one line under it: the percent, then the acts. */
+.assist-window-line .assist-edit {
+  flex-direction: row;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.assist-window-line .assist-edit .assist-amount {
+  width: 112px;
 }
 
 @media (max-width: 760px) {
@@ -156,14 +268,14 @@
       "choice"
       "said"
       "pick"
-      "weekly";
+      "amounts";
   }
 
-  .assist-row.weekly {
+  .assist-row.costs {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .assist-row.weekly > .assist-until + .assist-until {
+  .assist-row.costs > .assist-until + .assist-until {
     grid-row: 3;
     grid-column: 1;
     justify-self: start;

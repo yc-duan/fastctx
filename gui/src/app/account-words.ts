@@ -979,7 +979,7 @@ export const zhMachines: MachinesWords = {
       // Assistance, under the names the hub first wrote it under.
       case "lend":
         if (!a.lent) return `结束 ${a.machine} 上的 ${agentName(a.agent)} 对 ${a.to} 的协助`;
-        return `让 ${a.machine} 上的 ${agentName(a.agent)} 协助 ${a.to}${a.until ? `，到 ${zhMoment.stamp(new Date(a.until))}` : ""}${a.weekly ? `，每周 约 ${wholeDollars(a.weekly / 1_000_000)}` : ""}`;
+        return `让 ${a.machine} 上的 ${agentName(a.agent)} 协助 ${a.to}${a.until ? `，到 ${zhMoment.stamp(new Date(a.until))}` : ""}${a.daily ? `，每天 约 ${wholeDollars(a.daily / 1_000_000)}` : ""}${a.weekly ? `，每周 约 ${wholeDollars(a.weekly / 1_000_000)}` : ""}${a.five_hour ? `，5 小时额度用到 ${a.five_hour}% 停` : ""}`;
       case "lend_ended":
         return `${agentName(a.agent)} 对 ${a.to} 的协助到期结束`;
       case "plan":
@@ -1287,7 +1287,7 @@ export const enMachines: MachinesWords = {
       // Assistance, under the names the hub first wrote it under.
       case "lend":
         if (!a.lent) return `Ended the assistance of ${agentName(a.agent)} on ${a.machine} to ${a.to}`;
-        return `Let ${agentName(a.agent)} on ${a.machine} assist ${a.to}${a.until ? ` until ${enMoment.stamp(new Date(a.until))}` : ""}${a.weekly ? `, ≈ ${wholeDollars(a.weekly / 1_000_000)} a week` : ""}`;
+        return `Let ${agentName(a.agent)} on ${a.machine} assist ${a.to}${a.until ? ` until ${enMoment.stamp(new Date(a.until))}` : ""}${a.daily ? `, ≈ ${wholeDollars(a.daily / 1_000_000)} a day` : ""}${a.weekly ? `, ≈ ${wholeDollars(a.weekly / 1_000_000)} a week` : ""}${a.five_hour ? `, stopping at ${a.five_hour}% of the 5-hour limit` : ""}`;
       case "lend_ended":
         return `The assistance of ${agentName(a.agent)} to ${a.to} reached its end`;
       case "plan":
@@ -1373,13 +1373,31 @@ export interface AccessWords {
   endAssist: string;
   changeUntil: string;
   untilPassed: string;
-  /** The weekly allowance, Claude Code's only: an amount in dollars. */
+  /** The weekly and daily allowances, Claude Code's only: amounts in
+   *  dollars. */
   weekly: string;
   weeklyHint: string;
   weeklyNone: string;
-  weeklyUnlimited: string;
   weeklyOf(amount: string): string;
   weeklyBad: string;
+  daily: string;
+  dailyHint: string;
+  dailyOf(amount: string): string;
+  dailyBad: string;
+  /** Neither allowance set. */
+  noAllowance: string;
+  /** The share of the login's own five-hour window past which it assists
+   *  no one, for the whole login. */
+  fiveHour: string;
+  fiveHourHint: string;
+  fiveHourNone: string;
+  fiveHourOf(percent: number): string;
+  fiveHourBad: string;
+  /** The window as last read, on hover over its bar: how much is used
+   *  and when it starts again, short. */
+  fiveHourRead(percent: number, resets: string | null): string;
+  fiveHourUnread: string;
+  fiveHourReset: string;
   change: string;
   save: string;
   cancel: string;
@@ -1419,9 +1437,21 @@ export const zhAccess: AccessWords = {
   weekly: "每周上限",
   weeklyHint: "约 $ 按 API 标价折算；到了就停，和这个登录的 7 天额度一起重置。空着是不限。",
   weeklyNone: "不限",
-  weeklyUnlimited: "每周不限",
   weeklyOf: (amount) => `每周 约 ${amount}`,
   weeklyBad: "每周上限要填一个大于 0 的金额",
+  daily: "每天上限",
+  dailyHint: "约 $ 按 API 标价折算；按最近 24 小时算，到了就停。空着是不限。",
+  dailyOf: (amount) => `每天 约 ${amount}`,
+  dailyBad: "每天上限要填一个大于 0 的金额",
+  noAllowance: "不限额",
+  fiveHour: "5 小时额度",
+  fiveHourHint: "这个登录自己的 5 小时额度用到这个比例，就暂停协助所有人，你自己的用量也算在内。",
+  fiveHourNone: "不限",
+  fiveHourOf: (percent) => `用到 ${percent}% 停`,
+  fiveHourBad: "填 1 到 100 之间的整数",
+  fiveHourRead: (percent, resets) => `已用 ${percent}%${resets ? `，${resets} 重置` : ""}`,
+  fiveHourUnread: "还没读到这个登录的 5 小时额度",
+  fiveHourReset: "已重置",
   change: "改",
   save: "保存",
   cancel: "取消",
@@ -1461,9 +1491,21 @@ export const enAccess: AccessWords = {
   weekly: "Weekly limit",
   weeklyHint: "Dollars at the API's list prices; reaching it stops them until this login's 7-day limit resets. Empty is no limit.",
   weeklyNone: "No limit",
-  weeklyUnlimited: "No weekly limit",
   weeklyOf: (amount) => `≈ ${amount} a week`,
   weeklyBad: "The weekly limit needs an amount above 0",
+  daily: "Daily limit",
+  dailyHint: "Dollars at the API's list prices over the last 24 hours; reaching it stops them. Empty is no limit.",
+  dailyOf: (amount) => `≈ ${amount} a day`,
+  dailyBad: "The daily limit needs an amount above 0",
+  noAllowance: "No limit",
+  fiveHour: "5-hour limit",
+  fiveHourHint: "Once this login's own 5-hour limit is used to this share, it stops assisting anyone. Your own use counts too.",
+  fiveHourNone: "No limit",
+  fiveHourOf: (percent) => `Stop at ${percent}%`,
+  fiveHourBad: "Enter a whole number from 1 to 100",
+  fiveHourRead: (percent, resets) => `${percent}% used${resets ? `, resets ${resets}` : ""}`,
+  fiveHourUnread: "This login's 5-hour limit hasn't been read yet",
+  fiveHourReset: "Reset",
   change: "Change",
   save: "Save",
   cancel: "Cancel",

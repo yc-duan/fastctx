@@ -6,7 +6,6 @@ use fastctx_types::accounts::{
     AccountChange, AccountSeen, ActingSeen, AssistSeen, HubAccounts, MemberSeen, PlanSeen, ProjectSeen, ShareSeen,
 };
 use fastctx_types::world::LinkState;
-use jiff::Timestamp;
 
 use super::{Link, Status};
 use crate::directory::Assist;
@@ -41,9 +40,9 @@ impl Link {
         }
         let wire = match change {
             AccountChange::Share { machine, to, shared } => Change::Share { machine, to, shared },
-            AccountChange::Assist { machine, to, agent, home, assisting, until, weekly } => {
+            AccountChange::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour } => {
                 return self
-                    .assist(account, Assist { machine, account: to, agent, home, until, weekly }, assisting)
+                    .assist(account, Assist { machine, account: to, agent, home, until, weekly, daily, five_hour }, assisting)
                     .await
                     .map(|()| None);
             }
@@ -161,22 +160,25 @@ impl Link {
     }
 
     /// Lets `assist`'s login assist as `account`, or no longer. A hub from
-    /// before assistance had deadlines or weekly allowances drops what it
-    /// does not know and keeps the assistance without it; one meant to end,
-    /// or to stop at an allowance, must not outlive that, so it is ended at
-    /// once and the owner told why.
+    /// before assistance had deadlines or allowances drops what it does not
+    /// know and keeps the assistance without it; one meant to end, or to
+    /// stop at an allowance, must not outlive that, so it is ended at once
+    /// and the owner told why.
     async fn assist(&self, account: &AccountName, assist: Assist, assisting: bool) -> Result<(), String> {
-        let change = |assisting: bool, until: Option<Timestamp>, weekly| Change::Assist {
+        let change = |assisting: bool, limited: bool| Change::Assist {
             machine: assist.machine.clone(),
             to: assist.account.clone(),
             agent: assist.agent.clone(),
             home: assist.home.clone(),
             assisting,
-            until,
-            weekly,
+            until: assist.until.filter(|_| limited),
+            weekly: assist.weekly.filter(|_| limited),
+            daily: assist.daily.filter(|_| limited),
+            five_hour: assist.five_hour.filter(|_| limited),
         };
-        self.manage(account, change(assisting, assist.until, assist.weekly)).await?;
-        if !assisting || (assist.until.is_none() && assist.weekly.is_none()) {
+        self.manage(account, change(assisting, true)).await?;
+        let limits = (assist.until, assist.weekly, assist.daily, assist.five_hour);
+        if !assisting || limits == (None, None, None, None) {
             return Ok(());
         }
         let hub = self.hub_name();
@@ -184,19 +186,26 @@ impl Link {
         // the assistance without what a hub of an older version does not
         // know, or not what was just asked (the view could not be read
         // again).
-        let kept =
-            self.view().assists.iter().find(|found| found.same(&assist)).map(|found| (found.until, found.weekly));
+        let kept = self
+            .view()
+            .assists
+            .iter()
+            .find(|found| found.same(&assist))
+            .map(|found| (found.until, found.weekly, found.daily, found.five_hour));
         let why = match kept {
-            Some((until, weekly)) if until == assist.until && weekly == assist.weekly => return Ok(()),
-            Some((None, _)) if assist.until.is_some() => {
+            Some(found) if found == limits => return Ok(()),
+            Some((None, ..)) if assist.until.is_some() => {
                 format!("the hub {hub} keeps no deadline on assistance; upgrade it to assist until a set time")
             }
-            Some(_) => {
+            Some((_, weekly, ..)) if weekly != assist.weekly => {
                 format!("the hub {hub} keeps no weekly allowance on assistance; upgrade it to assist up to an amount")
             }
+            Some(_) => format!(
+                "the hub {hub} keeps no daily allowance or five-hour share on assistance; upgrade it to assist within them"
+            ),
             None => format!("the hub {hub} could not be asked whether it kept the assistance as given; give it again"),
         };
-        match self.manage(account, change(false, None, None)).await {
+        match self.manage(account, change(false, false)).await {
             Ok(_) => Err(format!("{why}. The assistance was ended")),
             Err(error) => Err(format!("{why}. Ending the assistance failed too: {error}; end it by hand")),
         }
@@ -284,6 +293,8 @@ impl Link {
                     home: assist.home.clone(),
                     until: assist.until,
                     weekly: assist.weekly,
+                    daily: assist.daily,
+                    five_hour: assist.five_hour,
                 })
                 .collect(),
             plans: view

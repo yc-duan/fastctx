@@ -82,6 +82,7 @@ export interface AgentLoginsWords extends MachinePickWords {
   /** A login assisting the reader: from whom. */
   assistedFrom(owner: string): string;
   weeklyShort(amount: string): string;
+  dailyShort(amount: string): string;
   /** What a row says of this week, and its way to the login's page. */
   week: string;
   myWeek: string;
@@ -184,6 +185,7 @@ export const zhAgentLogins: AgentLoginsWords = {
   endAssist: (account) => `结束对 ${account} 的协助`,
   assistedFrom: (owner) => `来自 ${owner}`,
   weeklyShort: (amount) => `${amount}/周`,
+  dailyShort: (amount) => `${amount}/天`,
   week: "本周",
   myWeek: "我本周",
   openUsage: "看用量",
@@ -276,6 +278,7 @@ export const enAgentLogins: AgentLoginsWords = {
   endAssist: (account) => `Stop assisting ${account}`,
   assistedFrom: (owner) => `From ${owner}`,
   weeklyShort: (amount) => `${amount}/wk`,
+  dailyShort: (amount) => `${amount}/day`,
   week: "This week",
   myWeek: "My week",
   openUsage: "Usage",

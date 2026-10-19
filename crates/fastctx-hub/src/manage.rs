@@ -204,7 +204,7 @@ fn apply(
             }
             Ok(Told::Done)
         }
-        Change::Assist { machine, to, agent, home, assisting, until, weekly } => {
+        Change::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour } => {
             let directory = &mut store.book.directory;
             let owner = own_machine(directory, account, super_, &machine)?;
             other_account(directory, &owner, &to, &machine)?;
@@ -217,6 +217,12 @@ fn apply(
             if assisting && until.is_some_and(|until| until <= Timestamp::now()) {
                 return Err("the assistance's deadline has already passed".to_string());
             }
+            if assisting && five_hour.is_some_and(|share| share == 0 || share > 100) {
+                return Err("the share of the five-hour window is a percent from 1 to 100".to_string());
+            }
+            if assisting && daily.is_some_and(|daily| daily.0 == 0) {
+                return Err("the daily allowance is an amount above zero".to_string());
+            }
             let assist = Assist {
                 machine,
                 account: to,
@@ -224,6 +230,8 @@ fn apply(
                 home,
                 until: until.filter(|_| assisting),
                 weekly: weekly.filter(|_| assisting),
+                daily: daily.filter(|_| assisting),
+                five_hour: five_hour.filter(|_| assisting),
             };
             directory.assists.retain(|existing| !existing.same(&assist));
             if assisting {

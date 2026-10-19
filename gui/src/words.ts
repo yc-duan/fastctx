@@ -1,5 +1,5 @@
 import type { HealthKind } from "./world/events";
-import { enProblems, zhProblems } from "./app/problem";
+import { enProblems, zhProblems, type Reached } from "./app/problem";
 import type { FileLinkWords } from "./conversation/file-links";
 import type { PictureWords } from "./conversation/pictures";
 import type { QueueWords } from "./conversation/queue";
@@ -265,9 +265,9 @@ export interface Words {
   /** What the session's host said of its own health, in a plain line; the
    *  host's words go on hover. */
   health: Record<HealthKind, string>;
-  /** An assistance's weekly amount spent, and when its week ends: a turn
-   *  stopped for it says so. */
-  allowanceUsed(amount: string, until: Date): string;
+  /** An assistance's allowance reached, and until when: a turn stopped
+   *  for it says so. */
+  allowanceUsed(reached: Reached): string;
   /** Links an agent writes to files. */
   files: FileLinkWords;
   /** The conversation's pictures, small and over the whole window. */

@@ -50,6 +50,10 @@ pub enum Action {
         until: Option<Timestamp>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         weekly: Option<crate::usage::Usd>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        daily: Option<crate::usage::Usd>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        five_hour: Option<u8>,
     },
     /// An assistance reached its deadline and the hub ended it.
     #[serde(rename = "lend_ended")]

@@ -61,8 +61,9 @@ export interface MeWords {
   given: string;
   sharedTo: string;
   assisting: string;
-  /** What an account may spend of a login in a week, short. */
+  /** What an account may spend of a login in a week and a day, short. */
   weeklyShort(amount: string): string;
+  dailyShort(amount: string): string;
   takeBack(what: string): string;
   tookBack(what: string): string;
   sharedLabel(machine: string, account: string): string;
@@ -145,6 +146,7 @@ export const zhMe: MeWords = {
   sharedTo: "共享给",
   assisting: "协助",
   weeklyShort: (amount) => `${amount}/周`,
+  dailyShort: (amount) => `${amount}/天`,
   takeBack: (what) => `收回${what}`,
   tookBack: (what) => `已收回${what}`,
   sharedLabel: (machine, account) => ` ${account} 对 ${machine} 的使用`,
@@ -227,6 +229,7 @@ export const enMe: MeWords = {
   sharedTo: "shared with",
   assisting: "assisting",
   weeklyShort: (amount) => `${amount}/wk`,
+  dailyShort: (amount) => `${amount}/day`,
   takeBack: (what) => `Take back${what}`,
   tookBack: (what) => `Took back${what}`,
   sharedLabel: (machine, account) => ` ${machine} from ${account}`,

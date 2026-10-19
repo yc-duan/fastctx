@@ -36,6 +36,8 @@ export interface UsageWords {
   assistedBy(owner: string): string;
   assistUntil(until: Date | null, now: Date): string;
   weekly(amount: string): string;
+  daily(amount: string): string;
+  fiveHourCap(percent: number): string;
   weeklyUsed(spent: string, of: string): string;
   weeklyNone: string;
   onlyYours: string;
@@ -137,6 +139,8 @@ export const zhUsage: UsageWords = {
   assistedBy: (owner) => `来自 ${owner} 的协助`,
   assistUntil: (until, now) => (until ? `到 ${until.getMonth() + 1}月${until.getDate()}日 ${clock(until)}${until.getFullYear() !== now.getFullYear() ? ` ${until.getFullYear()}` : ""}` : "不限期"),
   weekly: (amount) => `每周 约 ${amount}`,
+  daily: (amount) => `每天 约 ${amount}`,
+  fiveHourCap: (percent) => `5 小时额度用到 ${percent}% 停`,
   weeklyUsed: (spent, of) => `这一周用了 约 ${spent} / ${of}`,
   weeklyNone: "每周不限",
   onlyYours: "你只看得到自己用了多少",
@@ -212,6 +216,8 @@ export const enUsage: UsageWords = {
   assistedBy: (owner) => `Assisting you, from ${owner}`,
   assistUntil: (until, now) => (until ? `Until ${enMonth[until.getMonth()]} ${until.getDate()} ${clock(until)}${until.getFullYear() !== now.getFullYear() ? ` ${until.getFullYear()}` : ""}` : "No end"),
   weekly: (amount) => `≈ ${amount} a week`,
+  daily: (amount) => `≈ ${amount} a day`,
+  fiveHourCap: (percent) => `Stops at ${percent}% of the 5-hour limit`,
   weeklyUsed: (spent, of) => `≈ ${spent} of ${of} used this week`,
   weeklyNone: "No weekly limit",
   onlyYours: "You see only your own use",

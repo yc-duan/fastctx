@@ -139,7 +139,8 @@ pub enum AccountChange {
     /// `machine` writes it, none for that agent's default login there.
     /// `until` is when the assistance ends by itself; `weekly` is what
     /// `to` may spend of a Claude Code login in a week of its own seven-day
-    /// window; assisting again sets both anew.
+    /// window, `daily` in any 24 hours; `five_hour` holds it to a share of
+    /// the login's own five-hour window; assisting again sets them all anew.
     Assist {
         machine: MachineName,
         to: AccountName,
@@ -151,6 +152,13 @@ pub enum AccountChange {
         until: Option<Timestamp>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         weekly: Option<crate::usage::Usd>,
+        /// What `to` may spend of a Claude Code login in any 24 hours.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        daily: Option<crate::usage::Usd>,
+        /// The share of the login's own five-hour window, in percent, past
+        /// which it assists no one: the owner's own use counts too.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        five_hour: Option<u8>,
     },
     /// The plan shown for one login of an agent on `machine`, set by the
     /// hub's super administrator on a login that names none (a Claude Code
@@ -613,6 +621,13 @@ pub struct AssistSeen {
     /// What the account may spend of the login in a week; none is no limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weekly: Option<crate::usage::Usd>,
+    /// What it may spend in any 24 hours; none is no limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily: Option<crate::usage::Usd>,
+    /// The share of the login's own five-hour window, in percent, past
+    /// which the login assists no one; none is no limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub five_hour: Option<u8>,
 }
 
 /// A plan a login names none of, as the hub's super administrator set it

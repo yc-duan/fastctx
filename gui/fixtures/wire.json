@@ -77,7 +77,9 @@
             "home": null,
             "lent": true,
             "until": "2026-10-10T12:00:00Z",
-            "weekly": 25000000
+            "weekly": 25000000,
+            "daily": 5000000,
+            "five_hour": 75
           },
           "outcome": {
             "kind": "done"
@@ -1960,7 +1962,8 @@
                 "account": "cy",
                 "agent": "codex",
                 "home": null,
-                "until": null
+                "until": null,
+                "five_hour": 80
               },
               {
                 "machine": "gpu",
@@ -1968,7 +1971,8 @@
                 "agent": "claude",
                 "home": "/home/bo/.claude-team",
                 "until": "2026-10-20T10:00:00Z",
-                "weekly": 42500000
+                "weekly": 42500000,
+                "daily": 8000000
               }
             ],
             "plans": [
@@ -2079,7 +2083,8 @@
         "agent": "codex",
         "home": "C:/Users/ada/.codex-work",
         "assisting": true,
-        "until": "2026-10-20T10:00:00Z"
+        "until": "2026-10-20T10:00:00Z",
+        "five_hour": 90
       },
       {
         "change": "assist",
@@ -2087,7 +2092,8 @@
         "to": "cy",
         "agent": "claude",
         "assisting": true,
-        "weekly": 50000000
+        "weekly": 50000000,
+        "daily": 10000000
       },
       {
         "change": "plan",

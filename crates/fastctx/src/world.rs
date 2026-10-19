@@ -149,6 +149,15 @@ pub struct AssistArgs {
     /// counts them, such as 50; no limit when not given.
     #[arg(long, conflicts_with = "off", value_parser = dollars)]
     weekly: Option<fastctx_types::usage::Usd>,
+    /// What the account may spend of a Claude Code login in any 24 hours,
+    /// in US dollars, such as 10; no limit when not given.
+    #[arg(long, conflicts_with = "off", value_parser = dollars)]
+    daily: Option<fastctx_types::usage::Usd>,
+    /// The share of the login's own five-hour window, in percent from 1 to
+    /// 100, past which the login assists no one, its owner's own use
+    /// counted too; no limit when not given.
+    #[arg(long = "five-hour", conflicts_with = "off", value_parser = clap::value_parser!(u8).range(1..=100))]
+    five_hour: Option<u8>,
     #[arg(long = "as")]
     owner: Option<AccountName>,
     #[arg(long)]
@@ -587,6 +596,8 @@ pub fn assist(args: AssistArgs) -> anyhow::Result<()> {
         assisting: !args.off,
         until: args.until,
         weekly: args.weekly,
+        daily: args.daily,
+        five_hour: args.five_hour,
     };
     self::change(args.hub, owner, change)?;
     if args.off {

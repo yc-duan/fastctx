@@ -279,7 +279,7 @@ export class LoginUsagePage implements Page {
     const rows = usage.people
       .map((person) => {
         const assisted = assists.find(({ hub, assist }) => person.key === `${hub}:${assist.account}`)?.assist;
-        const why = assisted ? [words.assistUntil(assisted.until ? new Date(assisted.until) : null, now), assisted.weekly ? words.weekly(wholeDollars(assisted.weekly / 1_000_000)) : ""].filter(Boolean).join("\n") : "";
+        const why = assisted ? [words.assistUntil(assisted.until ? new Date(assisted.until) : null, now), assisted.daily ? words.daily(wholeDollars(assisted.daily / 1_000_000)) : "", assisted.weekly ? words.weekly(wholeDollars(assisted.weekly / 1_000_000)) : "", assisted.five_hour ? words.fiveHourCap(assisted.five_hour) : ""].filter(Boolean).join("\n") : "";
         const value = valueOf(person.week, unit);
         const state = this.only === person.key ? " on" : this.only ? " faded" : "";
         return `<button class="ledger-person${state}" type="button" data-only="${escape(person.key)}">

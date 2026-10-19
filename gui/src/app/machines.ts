@@ -1028,19 +1028,19 @@ export class MachinesPage implements Page {
     const { options } = this;
     const assistances = (): Assistance[] => assistancesIn(this.hubOf(login)?.assists ?? [], machine, agent, home);
     const name = home ? `${agentName(agent)} ${home.split(/[\\/]/).filter(Boolean).pop() ?? home}` : agentName(agent);
-    this.assistSheet.open(
-      options.access.assistTitle(name, machine),
-      assistances(),
-      async (to, until, weekly, assisting) => {
-        await options.change(login, assistChange(machine, agent, home, to, until, weekly, assisting));
+    this.assistSheet.open({
+      title: options.access.assistTitle(name, machine),
+      assistances: assistances(),
+      assist: async (to, terms) => {
+        await options.change(login, assistChange(machine, agent, home, to, terms));
         await options.store.refresh();
         this.redraw();
         return assistances();
       },
       editing,
-      agent === "claude",
-      namesOn(this.hubOf(login), login),
-    );
+      costs: agent === "claude",
+      names: namesOn(this.hubOf(login), login),
+    });
   }
 
   /** Takes back a share or ends an assistance at once; for a moment it can be given

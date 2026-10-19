@@ -15,14 +15,16 @@ use tokio::sync::mpsc;
 use super::kept::{self, KeptLimits};
 use crate::Node;
 
-/// Keeps every report as it comes.
+/// Keeps every report as it comes; one that changed the login's windows
+/// can stop a turn on it at an assistance's allowance.
 pub(crate) fn listen(node: Arc<Node>, mut reports: mpsc::UnboundedReceiver<LimitsReport>) {
     tokio::spawn(async move {
         while let Some(report) = reports.recv().await {
-            let keeping = node.clone();
+            let (keeping, home) = (node.clone(), report.home.clone());
             let kept = tokio::task::spawn_blocking(move || keep(&keeping, report)).await;
             match kept {
-                Ok(Ok(())) => {}
+                Ok(Ok(true)) => crate::usage::after_reading(&node, "codex", &home).await,
+                Ok(Ok(false)) => {}
                 Ok(Err(error)) => node.log.line(format_args!("keeping Codex's limits: {error}")),
                 Err(error) => node.log.line(format_args!("keeping Codex's limits: {error}")),
             }
@@ -31,8 +33,9 @@ pub(crate) fn listen(node: Arc<Node>, mut reports: mpsc::UnboundedReceiver<Limit
 }
 
 /// Records one report of a Codex login's limits, and keeps it as a reading
-/// of the login's windows in its usage ledger.
-pub(super) fn keep(node: &Node, report: LimitsReport) -> std::io::Result<()> {
+/// of the login's windows in its usage ledger. Whether that reading changed
+/// them.
+pub(super) fn keep(node: &Node, report: LimitsReport) -> std::io::Result<bool> {
     let (home, at) = (report.home.clone(), report.at);
     kept::change(node, |kept| {
         let limits = &mut kept.codex.limits;
@@ -63,10 +66,10 @@ pub(super) fn keep(node: &Node, report: LimitsReport) -> std::io::Result<()> {
             }
         }
     })?;
-    if let Fact::Known { value } = kept_of(node, &home)? {
-        crate::usage::codex_reading(node, &home, value.windows, at);
-    }
-    Ok(())
+    Ok(match kept_of(node, &home)? {
+        Fact::Known { value } => crate::usage::codex_reading(node, &home, value.windows, at),
+        _ => false,
+    })
 }
 
 /// The limits of the Codex login in `dir` as they were last read or pushed.
@@ -105,10 +108,13 @@ pub(crate) async fn read(node: &Arc<Node>, agent: &AgentName, dir: &Path) -> Res
             Fact::Unavailable { reason } | Fact::Failed { reason } => reason,
         }));
     };
-    let node = node.clone();
-    let dir = dir.to_path_buf();
-    tokio::task::spawn_blocking(move || keep(&node, super::identify::limits_read(&dir, at, answer)))
+    let (keeping, home) = (node.clone(), dir.to_path_buf());
+    let changed = tokio::task::spawn_blocking(move || keep(&keeping, super::identify::limits_read(&home, at, answer)))
         .await
         .map_err(|error| Failure::new(error.to_string()))?
-        .map_err(|error| Failure::new(format!("keeping Codex's limits: {error}")))
+        .map_err(|error| Failure::new(format!("keeping Codex's limits: {error}")))?;
+    if changed {
+        crate::usage::after_reading(node, "codex", dir).await;
+    }
+    Ok(())
 }

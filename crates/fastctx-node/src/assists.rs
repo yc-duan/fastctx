@@ -1,12 +1,12 @@
 //! A session on a login assisting another account works for the accounts
 //! it assists (`world-network.md`, 共享机器与智能体协助), and takes a new
 //! turn only while one of them may still use that login here, within the
-//! weekly allowance the assistance gives it (`usage`). When the assistance
-//! is ended or reaches its deadline, the turn already running goes on,
-//! which the owner sees and may stop (收回立刻生效); nothing starts another:
+//! allowances the assistance gives it (`usage`). When the assistance is
+//! ended or reaches its deadline, the turn already running goes on, which
+//! the owner sees and may stop (收回立刻生效); nothing starts another:
 //! words, a colleague's answer or a queued message for it stay kept, and go
 //! in with whatever is next handed to it once the login assists them again,
-//! or their next week begins.
+//! or their allowance has room again.
 
 use fastctx_types::access::Acting;
 use fastctx_types::ipc::Failure;

@@ -239,7 +239,8 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       assists: [
         { machine: "desktop", account: "ada", agent: "codex", home: "C:\\Users\\me\\.codex-work", until: daysAhead(3) },
         { machine: "desktop", account: "bo", agent: "codex", home: "C:\\Users\\me\\.codex-work", until: null },
-        { machine: "desktop", account: "ada", agent: "claude", home: null, until: daysAhead(6), weekly: 20_000_000 },
+        { machine: "desktop", account: "ada", agent: "claude", home: null, until: daysAhead(6), weekly: 20_000_000, daily: 5_000_000, five_hour: 80 },
+        { machine: "desktop", account: "bo", agent: "claude", home: null, until: null, five_hour: 80 },
       ],
       plans: [],
       acting: [{ machine: "gpu", account: "me", since: at("03:42:00") }],
@@ -675,7 +676,7 @@ export function specimenChange(world: WorldNow | null, hub: string, made: Accoun
     const hubs = world.accounts.hubs.map((one) => {
       if (one.hub !== hub) return one;
       const kept = one.assists.filter((assist) => !(assist.machine === made.machine && assist.account === made.to && assist.agent === made.agent && assist.home === home));
-      const assists = made.assisting ? [...kept, { machine: made.machine, account: made.to, agent: made.agent, home, until: made.until ?? null, ...(made.weekly ? { weekly: made.weekly } : {}) }] : kept;
+      const assists = made.assisting ? [...kept, { machine: made.machine, account: made.to, agent: made.agent, home, until: made.until ?? null, ...(made.weekly ? { weekly: made.weekly } : {}), ...(made.daily ? { daily: made.daily } : {}), ...(made.five_hour ? { five_hour: made.five_hour } : {}) }] : kept;
       return { ...one, assists };
     });
     return { ...world, accounts: { ...world.accounts, hubs } };

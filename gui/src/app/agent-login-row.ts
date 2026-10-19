@@ -131,18 +131,33 @@ export function bars(agent: Agent, limits: Fact<AgentLimits>, now: Date, words: 
 function assistanceTag(machine: string, dir: string, assistance: Assistance, now: Date, words: AgentLoginsWords, access: AccessWords): string {
   const at = `data-machine="${escape(machine)}" data-dir="${escape(dir)}" data-to="${escape(assistance.to)}"`;
   const until = assistance.until ? new Date(assistance.until) : null;
-  const said = [until ? access.moment.until(until, now) : access.when.none, assistance.weekly ? access.weeklyOf(wholeDollars(assistance.weekly)) : ""].filter(Boolean).join("\n");
-  return `<span class="tag assist-tag"><button class="assist-tag-open" type="button" data-act="assist-edit" ${at} title="${escape(`${access.changeUntil}\n${said}`)}">${escape(assistance.to)}${until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : ""}${assistance.weekly ? `<span class="assist-tag-until">${escape(words.weeklyShort(wholeDollars(assistance.weekly)))}</span>` : ""}</button><button class="assist-tag-x" type="button" data-act="assist-end" ${at} aria-label="${escape(words.endAssist(assistance.to))}" title="${escape(words.endAssist(assistance.to))}">${glyph("cross", 12)}</button></span>`;
+  const said = [
+    until ? access.moment.until(until, now) : access.when.none,
+    assistance.daily ? access.dailyOf(wholeDollars(assistance.daily)) : "",
+    assistance.weekly ? access.weeklyOf(wholeDollars(assistance.weekly)) : "",
+    assistance.fiveHour ? `${access.fiveHour} ${access.fiveHourOf(assistance.fiveHour)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return `<span class="tag assist-tag"><button class="assist-tag-open" type="button" data-act="assist-edit" ${at} title="${escape(`${access.changeUntil}\n${said}`)}">${escape(assistance.to)}${until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : ""}${assistance.daily ? `<span class="assist-tag-until">${escape(words.dailyShort(wholeDollars(assistance.daily)))}</span>` : ""}${assistance.weekly ? `<span class="assist-tag-until">${escape(words.weeklyShort(wholeDollars(assistance.weekly)))}</span>` : ""}</button><button class="assist-tag-x" type="button" data-act="assist-end" ${at} aria-label="${escape(words.endAssist(assistance.to))}" title="${escape(words.endAssist(assistance.to))}">${glyph("cross", 12)}</button></span>`;
 }
 
 /** The assistance the reader has of it: from whom, until when, and what it
- *  may spend a week. */
+ *  may spend a day and a week. */
 function assistedTag(mine: { assist: AssistSeen; owner: string | null }, now: Date, words: AgentLoginsWords, access: AccessWords, usageWords: UsageWords): string {
   const { assist, owner } = mine;
   const until = assist.until ? new Date(assist.until) : null;
   const weekly = assist.weekly ? assist.weekly / 1_000_000 : null;
-  const said = [usageWords.assistUntil(until, now), weekly ? usageWords.weekly(wholeDollars(weekly)) : usageWords.weeklyNone].join("\n");
-  return `<span class="tag logins-assisted" title="${escape(said)}">${escape(words.assistedFrom(owner ?? "–"))}${until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : ""}${weekly ? `<span class="assist-tag-until">${escape(words.weeklyShort(wholeDollars(weekly)))}</span>` : ""}</span>`;
+  const daily = assist.daily ? assist.daily / 1_000_000 : null;
+  const said = [
+    usageWords.assistUntil(until, now),
+    daily ? usageWords.daily(wholeDollars(daily)) : "",
+    weekly ? usageWords.weekly(wholeDollars(weekly)) : daily ? "" : usageWords.weeklyNone,
+    assist.five_hour ? usageWords.fiveHourCap(assist.five_hour) : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return `<span class="tag logins-assisted" title="${escape(said)}">${escape(words.assistedFrom(owner ?? "–"))}${until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : ""}${daily ? `<span class="assist-tag-until">${escape(words.dailyShort(wholeDollars(daily)))}</span>` : ""}${weekly ? `<span class="assist-tag-until">${escape(words.weeklyShort(wholeDollars(weekly)))}</span>` : ""}</span>`;
 }
 
 /** The World's tools in it wait for the user: what for on hover, and
