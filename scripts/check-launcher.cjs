@@ -54,5 +54,6 @@ try {
   assert.match(mismatch.stderr, /requires 1\.0\.0/);
   console.log('Launcher contract passed: argv, environment, cwd, stdio, exit codes, version matching');
 } finally {
-  fs.rmSync(root, { recursive: true });
+  // Windows can still hold an executable for a moment after it exits.
+  fs.rmSync(root, { recursive: true, maxRetries: 10, retryDelay: 200 });
 }
