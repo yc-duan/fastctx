@@ -476,7 +476,7 @@ export function drawAsk(key: string, ask: Ask, state: AskState, machine: string,
   const reason = (why: string | null) => (why ? `<p class="ask-reason">${escape(words.reason(why))}</p>` : "");
   const buttons = (decisions: Decision[]) =>
     `<div class="ask-actions">${decisions
-      .map((d, index) => `<button type="button" class="ask-button ${index === 0 ? "ask-primary" : `ask-${d.tone}`}" data-ask="${key}" data-decision="${index}">${escape(d.label)}</button>`)
+      .map((d, index) => `<button type="button" class="ask-button ${index === 0 ? "ask-primary" : `ask-${d.tone}`}" data-ask="${escape(key)}" data-decision="${index}">${escape(d.label)}</button>`)
       .join("")}</div>`;
   let body: string;
   switch (ask.kind) {
@@ -523,26 +523,26 @@ export function drawAsk(key: string, ask: Ask, state: AskState, machine: string,
           return `<div class="ask-question" role="group" aria-label="${escape(q.header || q.question)}">${q.header || q.multi ? `<div class="ask-question-head">${escape([q.header, q.multi ? words.several : ""].filter(Boolean).join(" "))}</div>` : ""}<div class="ask-question-text">${plain(q.question)}</div>${options ? `<div class="ask-options">${options}</div>` : ""}${free}</div>`;
         })
         .join("");
-      body = `${head(ask.questions.length > 1 ? words.questions(ask.questions.length) : words.question)}${questions}<div class="ask-actions"><button type="button" class="ask-button ask-primary" data-ask="${key}" data-submit="answer">${escape(words.submit)}</button><button type="button" class="ask-button ask-no" data-ask="${key}" data-submit="skip">${escape(words.skip)}</button></div>`;
+      body = `${head(ask.questions.length > 1 ? words.questions(ask.questions.length) : words.question)}${questions}<div class="ask-actions"><button type="button" class="ask-button ask-primary" data-ask="${escape(key)}" data-submit="answer">${escape(words.submit)}</button><button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="skip">${escape(words.skip)}</button></div>`;
       break;
     }
     case "form": {
       const message = ask.message ? `<div class="ask-message">${plain(ask.message)}</div>` : "";
       const fields = ask.fields ? `<div class="ask-fields">${ask.fields.map((field, index) => drawField(field, index, words)).join("")}</div>` : `<p class="ask-reason">${escape(words.formUnreadable)}</p>`;
-      const submit = ask.fields ? `<button type="button" class="ask-button ask-primary" data-ask="${key}" data-submit="accept">${escape(words.fill)}</button>` : "";
-      body = `${head(words.form(ask.server))}${message}${fields}<div class="ask-actions">${submit}<button type="button" class="ask-button ask-no" data-ask="${key}" data-submit="decline">${escape(words.refuse)}</button><button type="button" class="ask-button ask-no" data-ask="${key}" data-submit="cancel">${escape(words.dismiss)}</button></div>`;
+      const submit = ask.fields ? `<button type="button" class="ask-button ask-primary" data-ask="${escape(key)}" data-submit="accept">${escape(words.fill)}</button>` : "";
+      body = `${head(words.form(ask.server))}${message}${fields}<div class="ask-actions">${submit}<button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="decline">${escape(words.refuse)}</button><button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="cancel">${escape(words.dismiss)}</button></div>`;
       break;
     }
     case "link": {
       const message = ask.message ? `<div class="ask-message">${plain(ask.message)}</div>` : "";
-      body = `${head(words.link(ask.server))}${message}<p class="ask-url">${escape(ask.url)}</p><div class="ask-actions"><button type="button" class="ask-button ask-primary" data-ask="${key}" data-submit="open">${escape(words.openLink)}</button><button type="button" class="ask-button ask-no" data-ask="${key}" data-submit="decline">${escape(words.refuse)}</button><button type="button" class="ask-button ask-no" data-ask="${key}" data-submit="cancel">${escape(words.dismiss)}</button></div>`;
+      body = `${head(words.link(ask.server))}${message}<p class="ask-url">${escape(ask.url)}</p><div class="ask-actions"><button type="button" class="ask-button ask-primary" data-ask="${escape(key)}" data-submit="open">${escape(words.openLink)}</button><button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="decline">${escape(words.refuse)}</button><button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="cancel">${escape(words.dismiss)}</button></div>`;
       break;
     }
     case "cannot":
       body = `${head(ask.what)}${ask.detail ? `<p class="ask-reason">${escape(ask.detail)}</p>` : ""}`;
       break;
   }
-  return `<div class="ask-card" role="group" aria-label="${escape(words.waiting)}" data-card="${key}">${body}<p class="ask-status" aria-live="polite"></p></div>`;
+  return `<div class="ask-card" role="group" aria-label="${escape(words.waiting)}" data-card="${escape(key)}">${body}<p class="ask-status" aria-live="polite"></p></div>`;
 }
 
 function drawField(field: Field, index: number, words: AskWords): string {

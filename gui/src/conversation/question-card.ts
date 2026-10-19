@@ -41,13 +41,13 @@ export const enQuestions: QuestionWords = {
 export function drawQuestions(key: string, questions: AsyncQuestion[], answers: (string | null)[], words: QuestionWords, editing: boolean): string {
   const done = answers.some((answer) => answer !== null);
   if (done && !editing) {
-    return `<div class="question-card answered" data-question-card="${key}"><div class="question-said">${questions
+    return `<div class="question-card answered" data-question-card="${escape(key)}"><div class="question-said">${questions
       .map((question, index) =>
         answers[index] === null
           ? ""
           : `<p class="question-pair"><span class="question-title">${plain(question.title)}</span><span class="question-answer">${escape(answers[index]!)}</span></p>`,
       )
-      .join("")}</div><div class="question-foot"><span class="question-state">${escape(words.answered)}</span><button class="text-button quiet-button" type="button" data-question-change="${key}">${escape(words.change)}</button></div></div>`;
+      .join("")}</div><div class="question-foot"><span class="question-state">${escape(words.answered)}</span><button class="text-button quiet-button" type="button" data-question-change="${escape(key)}">${escape(words.change)}</button></div></div>`;
   }
   const body = questions
     .map((question, index) => {
@@ -57,7 +57,7 @@ export function drawQuestions(key: string, questions: AsyncQuestion[], answers: 
       return `<fieldset class="question-one" data-index="${index}"><legend class="question-title">${plain(question.title)}</legend>${options ? `<div class="ask-options">${options}</div>` : ""}<input class="ask-input question-free" type="text" data-question-free="${index}" placeholder="${escape(question.options?.length ? words.other : "")}" autocomplete="off"></fieldset>`;
     })
     .join("");
-  return `<div class="question-card" data-question-card="${key}">${body}<div class="question-foot"><span class="question-state" aria-live="polite"></span><button class="ask-button" type="button" data-question-skip="${key}">${escape(words.skip)}</button><button class="ask-button ask-primary" type="button" data-question-send="${key}">${escape(words.answer)}</button></div></div>`;
+  return `<div class="question-card" data-question-card="${escape(key)}">${body}<div class="question-foot"><span class="question-state" aria-live="polite"></span><button class="ask-button" type="button" data-question-skip="${escape(key)}">${escape(words.skip)}</button><button class="ask-button ask-primary" type="button" data-question-send="${escape(key)}">${escape(words.answer)}</button></div></div>`;
 }
 
 /** What the card holds now: per question, the option chosen or the words

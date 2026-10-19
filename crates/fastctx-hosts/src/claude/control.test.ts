@@ -15,6 +15,8 @@ test('uses the public controls and request return types through the official eng
   let busy = false
   let skip = false
   let ownerAlive = true
+  // Where the session is drawn: a terminal, or nowhere, as a background one.
+  let surfaces: string[] = ['terminal']
   const commands: { command: string; args: string }[] = []
   const questions: any[] = []
   let requestAnswer: any = { kind: 'pass', reason: 'no watcher' }
@@ -27,7 +29,7 @@ test('uses the public controls and request return types through the official eng
   on('settings.read', () => ({ value: {} }))
   on('session.model', () => ({ value: model }))
   on('session.messages', () => ({ value: [] }))
-  on('session.surfaces', () => ({ value: ['terminal'] }))
+  on('session.surfaces', () => ({ value: surfaces }))
   on('session.version', () => ({ value: { version: '2.1.294' } }))
   on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: JSON.stringify(e.argv[1] === 'claude-session-directory' ? e.argv[2] + '/claude/' + e.argv[3] : e.argv[1] === 'claude-control-owner' && !ownerAlive ? null : { pid: 123, token: 'lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('fs.write', (_, e) => { const path = normalize(e.path); files.set(path, e.text); markers.get(path)?.(); return { value: undefined } })
@@ -151,6 +153,12 @@ test('uses the public controls and request return types through the official eng
   expect(answeredQuestion.native_wait).toBe(true)
   expect(answeredQuestion.params.questions).toEqual([question])
   requestAnswer = { kind: 'answer', answer: { decision: 'allow' } }
+  // Drawn in a terminal, the ask stays Claude Code's own: the World is not asked.
+  const inTerminal = await $.tool.check({ tool: 'permission-tool', tool_use_id: 'p0', input: { path: '/file' } })
+  expect(inTerminal.decision).toBe('ask')
+  expect(questions.some((request) => request.params.tool_use_id === 'p0')).toBe(false)
+  // Drawn nowhere, the World answers it.
+  surfaces = []
   const permission = await $.tool.check({ tool: 'permission-tool', tool_use_id: 'p1', input: { path: '/file' } })
   expect(permission).toEqual(requestAnswer.answer)
   const permissionQuestion = questions.find((request) => request.params.tool_use_id === 'p1')!

@@ -358,6 +358,15 @@ async function controlQuestion($, state, name, params, call, nativeWait = false)
   }
 }
 
+async function drawnSomewhere($) {
+  try {
+    return (await $.session.surfaces()).length > 0
+  } catch (error) {
+    worldFailure($, 'session.surfaces', error)
+    return false
+  }
+}
+
 async function controlCancelCall($, state, call) {
   // A native answer must release the helper even when cancellation files
   // cannot be written. Stream.return stops this call's own child directly.
@@ -457,6 +466,13 @@ async function controlPermission($, e, next) {
     if (state === null) return next(e)
     const verdict = await next(e)
     if (verdict.decision !== 'ask' || e.tool_use_id === undefined || e.ceiling === 'ask') return verdict
+    // A session drawn in a window of Claude Code's own, a terminal, its app,
+    // an editor or a phone, asks there. Its permission dialog is drawn by the
+    // engine alone, so the World cannot answer it alongside, and holding the
+    // ask for the World would leave that window waiting on nothing. Only a
+    // session drawn nowhere, as one the World runs in the background, is asked
+    // in the World.
+    if (await drawnSomewhere($)) return verdict
     const call = state.calls.get(e.tool_use_id) ?? { tool: e.tool, agentId: e.agentId, requests: [] }
     try {
       const reply = await controlQuestion($, state, 'tool.check', { ...e, verdict }, call)
