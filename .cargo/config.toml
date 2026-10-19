@@ -1,0 +1,4 @@
+# A download that fails for a moment, as a build machine's name lookup now and then does, is tried
+# again for a while instead of failing the build.
+[net]
+retry = 10
