@@ -9,7 +9,7 @@ import { layerOpened, leavePage, type Layer } from "./back";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Place } from "./places";
-import { Sidebar } from "./sidebar";
+import { Sidebar, type ProjectMenuOptions } from "./sidebar";
 import type { Store } from "./store";
 import type { TalkActs } from "./talk-acts";
 import type { TalkMenu } from "./talk-menu";
@@ -39,6 +39,8 @@ export interface ShellOptions {
   /** A new version of the application: offered in the sidebar, and marked
    *  on the way to the drawer on a phone. */
   updates?: { offered: Signal<Offered | null>; open(): void; words: UpdateWords } | undefined;
+  /** What a project's "⋯" in the sidebar does. */
+  projects?: ProjectMenuOptions | undefined;
 }
 
 const narrow = matchMedia("(max-width: 760px)");
@@ -99,6 +101,20 @@ export class Shell {
             },
           }
         : undefined,
+      projects: options.projects
+        ? {
+            ...options.projects,
+            // Where it goes elsewhere, the drawer gives way on a phone.
+            newTalk: (town) => {
+              this.closeDrawer();
+              options.projects!.newTalk(town);
+            },
+            overview: (town) => {
+              this.closeDrawer();
+              options.projects!.overview(town);
+            },
+          }
+        : undefined,
     });
     const updates = options.updates;
     if (updates) {
@@ -145,10 +161,22 @@ export class Shell {
   }
 
   show(place: Place, page: Page): void {
+    const before = this.page;
     this.page?.leave?.();
     this.page?.element.remove();
     this.page = page;
     this.place = place;
+    // Gone to another place, the page there comes in over a moment rather
+    // than at a blink; the first page, and a page shown again where it was,
+    // are simply there.
+    if (before && before !== page) {
+      page.element.classList.remove("page-arriving");
+      void page.element.offsetWidth;
+      page.element.classList.add("page-arriving");
+      page.element.addEventListener("animationend", (event) => {
+        if (event.target === page.element) page.element.classList.remove("page-arriving");
+      });
+    }
     this.main.append(page.element);
     document.title = page.title ? `${page.title} - ${this.options.words.app}` : this.options.words.app;
     this.sidebar.draw();

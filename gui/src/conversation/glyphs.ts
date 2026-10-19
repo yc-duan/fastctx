@@ -25,7 +25,7 @@ type Frame =
  *  agent asks the user. None is a maker's mark: the agents are told apart by
  *  shapes of our own. */
 type Marks =
-  | "claude" | "codex" | "desktop" | "laptop" | "server" | "group" | "features" | "agents" | "folder" | "fork" | "info" | "regenerate"
+  | "claude" | "codex" | "desktop" | "laptop" | "server" | "group" | "features" | "agents" | "folder" | "folder-open" | "fork" | "info" | "regenerate"
   | "terminal" | "cross" | "fit" | "ask";
 
 const paths: Record<Named, string> = {
@@ -42,6 +42,8 @@ const paths: Record<Named, string> = {
   features: '<rect x="4" y="4" width="5" height="5" rx="1.25"/><rect x="11" y="4" width="5" height="5" rx="1.25"/><rect x="4" y="11" width="5" height="5" rx="1.25"/><path d="M13.5 11v5M11 13.5h5"/>',
   agents: '<rect x="3.75" y="4.75" width="12.5" height="10.5" rx="2"/><path d="M6.75 8.5l2 1.5-2 1.5M10.5 11.75h3"/>',
   folder: '<path d="M3.75 6.25a1 1 0 0 1 1-1h3.2l1.5 1.5h5.8a1 1 0 0 1 1 1v6.75a1 1 0 0 1-1 1H4.75a1 1 0 0 1-1-1z"/>',
+  // The same folder open: its front leaf let down before it.
+  "folder-open": '<path d="M3.75 13.5V6.25a1 1 0 0 1 1-1h3.2l1.5 1.5h5.3a1 1 0 0 1 1 1v1"/><path d="M3.75 14.75l1.85-4.9a1 1 0 0 1 .94-.65h9.4a.7.7 0 0 1 .65.95l-1.6 4.25a1 1 0 0 1-.94.65H4.25a.5.5 0 0 1-.5-.3z"/>',
   fork: '<circle cx="6" cy="5" r="1.6"/><circle cx="14" cy="5" r="1.6"/><circle cx="10" cy="15.2" r="1.6"/><path d="M6 6.6v.9a2.5 2.5 0 0 0 2.5 2.5h3a2.5 2.5 0 0 0 2.5-2.5v-.9M10 10v3.6"/>',
   info: '<circle cx="10" cy="10" r="6.25"/><path d="M10 9.25v4"/><circle cx="10" cy="6.9" r="0.6" fill="currentColor"/>',
   // A speech balloon with a question in it: something asked of the user.

@@ -104,10 +104,13 @@ export class ProjectActs {
   }
 
   open(town: string, name: string, anchor: HTMLElement): void {
-    this.menu.open(anchor, name, this.acts(town), (act) => {
-      if (act === "share") this.share(town, name);
-      else if (act === "transfer") this.transfer(town, name);
-    });
+    this.menu.open(anchor, name, this.acts(town), (act) => this.run(act, town, name));
+  }
+
+  /** Does one of its acts, chosen from this "⋯" or the sidebar's. */
+  run(act: string, town: string, name: string): void {
+    if (act === "share") this.share(town, name);
+    else if (act === "transfer") this.transfer(town, name);
   }
 
   private share(town: string, name: string): void {

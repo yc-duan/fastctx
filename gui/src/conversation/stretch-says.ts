@@ -1,11 +1,13 @@
 // What a stretch's heading says, for the drawn stretch and for finding in
-// it alike: while it runs, the step it is on and its clock; once done, what
-// it did, the lines it changed and how long it took. A stretch that is only
-// thinking says how long it thought and the tokens it took, and opens only
-// where there are words. One of the host's own agents a call of it started
-// still works on after the call: the stretch runs while the agent does.
+// it alike: while it runs, the step it is on and for how long; once done,
+// the two weightiest kinds of thing it did (files changed first, with the
+// lines added and removed), how many failed, and how long it took. Its steps
+// are its rows, seen when it opens. A stretch that is only thinking says how
+// long it thought and the tokens it took, and opens only where there are
+// words. One of the host's own agents a call of it started still works on
+// after the call: the stretch runs while the agent does.
 
-import type { Words } from "../words";
+import type { TallyPart, Words } from "../words";
 import { counts } from "./diff";
 import { isThinking, runsOf, type Activity, type Entry } from "./model";
 import { groupHeading, headline } from "./tool";
@@ -17,7 +19,7 @@ export interface StretchSaid {
   title: string;
   /** The title in the parts a narrow line hides whole, set apart by the
    *  words' `tallyGap`. */
-  parts: string[];
+  parts: TallyPart[];
   added: number;
   removed: number;
   /** Its steps: a run of thinking is one. */
@@ -52,7 +54,7 @@ export function stretchSays(
   const only = thoughtOnly(group);
   const bare = only && !thinking.some((member) => member.text.trim());
   let title: string;
-  let parts: string[] | null = null;
+  let parts: TallyPart[] | null = null;
   let figures = "";
   let added = 0;
   let removed = 0;
@@ -69,8 +71,10 @@ export function stretchSays(
     const counted = tokens(thinking);
     if (counted !== null) figures = words.thinkingTokens(counted);
   } else {
-    parts = groupHeading(tools, thinking.length, words);
-    title = parts.join(words.tallyGap);
+    // Two kinds of thing at most, the weightiest; failures always.
+    const all = groupHeading(tools, thinking.length, words);
+    parts = [...all.filter((part) => part.kind !== "failed").slice(0, KINDS), ...all.filter((part) => part.kind === "failed")];
+    title = parts.map((part) => part.said).join(words.tallyGap);
     for (const tool of tools) {
       for (const write of tool.tool.run?.writes ?? []) {
         added += write.added ?? 0;
@@ -98,12 +102,8 @@ export function stretchSays(
     if (last === null || end > last) last = end;
   }
   const ended = !running && tools.length && tools.every((tool) => tool.ended) ? last : null;
-  const time = running
-    ? began === null ? "" : clockSays(steps, began, words)
-    : only
-      ? figures
-      : [steps < 2 ? "" : words.steps(steps), began !== null && ended !== null ? words.took(ended - began) : ""].filter(Boolean).join(words.figureGap);
-  return { title, parts: parts ?? [title], added, removed, steps, running, only, bare, figures, began, ended, time };
+  const time = running ? (began === null ? "" : clockSays(began, words)) : only ? figures : began !== null && ended !== null ? words.took(ended - began) : "";
+  return { title, parts: parts ?? [{ said: title, kind: "done" }], added, removed, steps, running, only, bare, figures, began, ended, time };
 }
 
 /** How an agent one of a stretch's calls started stands. */
@@ -119,10 +119,14 @@ export interface StretchAgents {
   named(tool: ToolEntry): string | null;
 }
 
-/** A running stretch's clock: its steps when more than one, and how long. */
-export function clockSays(steps: number, since: number, words: Words): string {
-  return [steps < 2 ? "" : words.steps(steps), words.took(Date.now() - since)].filter(Boolean).join(words.figureGap);
+/** A running clock: how long it has run, after its steps where they are
+ *  counted (an agent's row; a stretch's heading leaves them to its rows). */
+export function clockSays(since: number, words: Words, steps?: number): string {
+  return [steps === undefined || steps < 2 ? "" : words.steps(steps), words.took(Date.now() - since)].filter(Boolean).join(words.figureGap);
 }
+
+/** How many kinds of thing a heading names at most. */
+const KINDS = 2;
 
 /** Whether a stretch is nothing but thinking: one run of it, said by its
  *  heading alone. */

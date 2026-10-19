@@ -15,6 +15,7 @@ import type { AgentRun } from "./agents";
 import { Conversation } from "./conversation";
 import { ConversationView, type Context } from "./view";
 import { detailOf } from "../app/problem";
+import { handOnAtEdge } from "../scroll-handoff";
 
 export interface AgentBoxContext {
   words: Words;
@@ -63,6 +64,7 @@ export class AgentBox {
     this.element.className = "agent-box";
     this.element.innerHTML = `<div class="agent-scroll"><div class="agent-transcript conversation"></div></div><p class="agent-note" hidden></p><p class="agent-foot" hidden></p>`;
     this.scroller = this.element.querySelector<HTMLElement>(".agent-scroll")!;
+    handOnAtEdge(this.scroller);
     this.note = this.element.querySelector<HTMLElement>(".agent-note")!;
     this.foot = this.element.querySelector<HTMLElement>(".agent-foot")!;
     this.view = new ConversationView(this.element.querySelector<HTMLElement>(".agent-transcript")!, this.conversation, {

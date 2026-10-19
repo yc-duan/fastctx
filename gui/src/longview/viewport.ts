@@ -1,5 +1,6 @@
 import type { LineInterruption, LineMatch, LineSource } from "./source";
 import { chainTouch } from "./touch";
+import { handOnAtEdge } from "../scroll-handoff";
 
 /** Draws one row from its line, for lines that carry more than their text
  *  (a diff row's kind and numbers, an output line's place in the whole).
@@ -66,6 +67,7 @@ export class LineViewport {
     this.element.append(this.track, this.status);
     this.element.addEventListener("scroll", this.scroll, { passive: true });
     this.element.addEventListener("wheel", this.wheel, { passive: false });
+    handOnAtEdge(this.element);
     this.unchain = chainTouch(this);
     this.unsubscribe = source.subscribe(({ from }) => {
       if (this.match && this.match.line >= from) this.match = null;

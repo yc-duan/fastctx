@@ -1,40 +1,33 @@
 // How much of each request's prompt the provider's cache served, across a
-// conversation (`world-gui.md`, 对话): a line in clay ink, a request a point,
-// drawn on the stretch chosen; a few requests are ink dots, on a pencil
-// thread from four on, so two of them never make a slope that means nothing.
-// Its height is the stretch's own lowest to highest, the two figures at its
-// edge; once there are enough requests for a mean to say something, it is a
-// dotted pencil line, its figure where the pointer rests; the lowest request
-// is ringed and the latest dotted. The pointer reads any
-// request: when, how much the cache served, how large the context was.
-// Under it, always, the whole conversation small, the stretch shown held in
-// a wash between two handles: dragged, stretched by its handles, or set anew
-// with a press; a double press shows it all again. Many requests to a pixel
-// keep their lowest and highest, so a request that missed the cache is never
-// smoothed away.
+// conversation (`world-gui.md`, 对话), drawn as plainly as a chart can be:
+// one thin line, a request a point, on the stretch chosen, between two
+// hairlines at the stretch's own highest and lowest, their figures at its
+// edge and its times below; the latest request a dot. Resting on it, a
+// hairline stands at the request under the pointer, a dot on the line, and a
+// small label says how much the cache served and when. Under it, always,
+// the whole conversation as a fainter line, the stretch shown between two
+// short bars and the rest under a veil: dragged, stretched by its bars, or set
+// anew with a press; a double press shows it all again. Many requests to a
+// pixel keep their lowest and highest, so a request that missed the cache is
+// never smoothed away.
 
-import { blot, circle, dashed, outline, ruled, seeded, swatch, type Point } from "../pen/shapes";
 import { escape } from "./prose";
 import { contextOf, hitOf, type ModelRequest } from "./requests";
-import { percentFine, tokensShort } from "./usage-badge";
+import { percentFine } from "./usage-badge";
 
 export interface ChartWords {
   highest: string;
   lowest: string;
-  mean: string;
-  latest: string;
-  readout(time: string, hit: string, context: string): string;
+  readout(hit: string, time: string): string;
   stretch: string;
 }
 
-const HEIGHT = 124;
-const LEFT = 48;
-const RIGHT = 10;
-const TOP = 10;
+const HEIGHT = 120;
+const LEFT = 46;
+const RIGHT = 8;
+const TOP = 12;
 const BOTTOM = 24;
-const BRUSH = 30;
-/** Under this many points, a request is a dot and the line a thread. */
-const SPARSE = 8;
+const BRUSH = 26;
 
 /** Requests drawn as one point: the lowest and highest of them kept. */
 interface Point2 {
@@ -56,6 +49,8 @@ export class HitChart {
   /** The stretch shown, as shares of the whole; null shows all of it. */
   private range: [number, number] | null = null;
   private points: Point2[] = [];
+  /** Where each point is drawn, and the plot's height, for the pointer. */
+  private placed: { x: number[]; y: number[] } = { x: [], y: [] };
   private drawn = "";
   private dragging: { mode: "move" | "start" | "end" | "new"; from: number; range: [number, number] } | null = null;
 
@@ -134,6 +129,7 @@ export class HitChart {
     this.points = gather(rows, Math.max(1, Math.floor(plotW / 2)), start);
     if (!this.points.length) {
       this.main.innerHTML = "";
+      this.placed = { x: [], y: [] };
       return;
     }
     let lo = Math.min(...this.points.map((point) => point.lo));
@@ -148,72 +144,45 @@ export class HitChart {
     const count = this.points.length;
     const x = (index: number) => LEFT + (count > 1 ? (index / (count - 1)) * plotW : plotW / 2);
     const y = (share: number) => TOP + ((hi - share) / span) * plotH;
-    const random = seeded(`hits:${this.requests.length}:${start}:${end}`);
-    const sparse = count < SPARSE;
-    const at = (index: number): Point => [x(index), y(this.points[index]!.hit)];
-    const requests = rows.length;
-    const mean = rows.reduce((sum, request) => sum + hitOf(request), 0) / Math.max(1, requests);
-    const lowest = this.points.reduce((low, point, index) => (point.lo < this.points[low]!.lo ? index : low), 0);
-    const meanY = y(Math.min(hi, Math.max(lo, mean)));
+    this.placed = { x: this.points.map((_, index) => x(index)), y: this.points.map((point) => y(point.hit)) };
+    // A request that stands for several goes down to their lowest and up to
+    // their highest, so a miss among them shows.
+    const line: string[] = [];
+    const cell = count > 1 ? plotW / (count - 1) : 0;
+    this.points.forEach((point, index) => {
+      if (point.lo === point.hi) line.push(`${f(x(index))},${f(y(point.hit))}`);
+      else line.push(`${f(x(index) - cell * 0.3)},${f(y(point.lo))}`, `${f(x(index))},${f(y(point.hi))}`, `${f(x(index) + cell * 0.3)},${f(y(point.hit))}`);
+    });
     const axis = (share: number) => axisPercent(share, span);
-    // A single request is said by the figure above; its height needs no scale.
-    const labels =
-      count > 1
-        ? [
-            `<text class="talk-chart-axis" x="${LEFT - 8}" y="${f(TOP + 4)}" text-anchor="end"><title>${escape(words.highest)}</title>${axis(hi)}</text>`,
-            `<text class="talk-chart-axis" x="${LEFT - 8}" y="${f(TOP + plotH + 4)}" text-anchor="end"><title>${escape(words.lowest)}</title>${axis(lo)}</text>`,
-          ]
-        : [];
     const first = rows[0]!.at;
     const final = rows[rows.length - 1]!.at;
     const time = (when: number) => clock(when, first, final);
     const middle = rows[Math.floor((rows.length - 1) / 2)]!.at;
+    const bottom = TOP + plotH;
+    // A single request is said by the figure above; its height needs no scale.
+    const labels =
+      count > 1
+        ? `<text class="talk-chart-axis" x="${LEFT - 8}" y="${f(TOP + 4)}" text-anchor="end"><title>${escape(words.highest)}</title>${axis(hi)}</text>` +
+          `<text class="talk-chart-axis" x="${LEFT - 8}" y="${f(bottom + 4)}" text-anchor="end"><title>${escape(words.lowest)}</title>${axis(lo)}</text>`
+        : "";
     const times = [
-      `<text class="talk-chart-axis" x="${count > 1 ? LEFT : f(LEFT + plotW / 2)}" y="${HEIGHT - 6}"${count > 1 ? "" : ' text-anchor="middle"'}>${escape(time(first))}</text>`,
-      plotW > 300 && rows.length > 2 ? `<text class="talk-chart-axis" x="${f(LEFT + plotW / 2)}" y="${HEIGHT - 6}" text-anchor="middle">${escape(time(middle))}</text>` : "",
-      rows.length > 1 ? `<text class="talk-chart-axis" x="${width - RIGHT}" y="${HEIGHT - 6}" text-anchor="end">${escape(time(final))}</text>` : "",
-    ];
-    // Many points are one stroke of ink; a few are dots on a pencil thread.
-    let ink: string;
-    if (!sparse) {
-      const line: Point[] = [];
-      const cell = plotW / (count - 1);
-      this.points.forEach((point, index) => {
-        if (point.lo === point.hi) line.push([x(index), y(point.hit)]);
-        else line.push([x(index) - cell * 0.3, y(point.lo)], [x(index), y(point.hi)], [x(index) + cell * 0.3, y(point.hit)]);
-      });
-      ink = `<path filter="url(#pen-marker-lite)" class="talk-chart-ink" d="${outline(line, 1.7, random, { pressure: 0.12, taper: 0.02 })}"/>`;
-    } else {
-      // Two or three requests are left unjoined, so they never read as a slope.
-      const thread =
-        count >= 4
-          ? this.points
-              .slice(1)
-              .map((_, index) => dashed(at(index), at(index + 1), 0.8, random, 3, 3.5))
-              .join("")
-          : "";
-      const dots = this.points
-        .map((point, index) => `<path class="talk-chart-dot" d="${blot(at(index), 3.1, random)}"><title>${escape(`${clock(point.at, first, final)}\n${percentFine(point.hit)}`)}</title></path>`)
-        .join("");
-      ink = `${thread ? `<path class="talk-chart-thread" d="${thread}"/>` : ""}<g filter="url(#pen-marker-lite)">${dots}</g>`;
-    }
-    const low = this.points[lowest]!;
-    const latest = this.points[count - 1]!;
-    const lowAt: Point = [x(lowest), y(low.lo)];
-    const ringed = count > 1 && lowest !== count - 1 && span > 0.0002;
+      `<text class="talk-chart-axis" x="${count > 1 ? LEFT : f(LEFT + plotW / 2)}" y="${HEIGHT - 4}"${count > 1 ? "" : ' text-anchor="middle"'}>${escape(time(first))}</text>`,
+      plotW > 300 && rows.length > 2 ? `<text class="talk-chart-axis" x="${f(LEFT + plotW / 2)}" y="${HEIGHT - 4}" text-anchor="middle">${escape(time(middle))}</text>` : "",
+      rows.length > 1 ? `<text class="talk-chart-axis" x="${width - RIGHT}" y="${HEIGHT - 4}" text-anchor="end">${escape(time(final))}</text>` : "",
+    ].join("");
+    const latest = count - 1;
     this.main.innerHTML = `
-      <path class="talk-chart-rule" d="${ruled([LEFT, TOP], [LEFT + plotW, TOP], 0.7, random)}"/>
-      <path class="talk-chart-rule" d="${ruled([LEFT, TOP + plotH], [LEFT + plotW, TOP + plotH], 0.9, random)}"/>
-      ${sparse ? "" : `<path class="talk-chart-mean" d="${dashed([LEFT, meanY], [LEFT + plotW, meanY], 0.9, random, 1.4, 4)}"><title>${escape(`${words.mean} ${percentFine(mean)}`)}</title></path>`}
-      ${ink}
-      ${ringed ? `<path class="talk-chart-low" d="${circle(lowAt, sparse ? 6 : 4.2, 1.2, random)}"><title>${escape(`${words.lowest} ${percentFine(low.lo)}`)}</title></path>` : ""}
-      ${sparse ? "" : `<path class="talk-chart-latest" d="${blot(at(count - 1), 3, random)}"><title>${escape(`${words.latest} ${percentFine(latest.hit)}`)}</title></path>`}
-      ${labels.join("")}${times.join("")}
-      <line class="talk-chart-hair" x1="0" x2="0" y1="${TOP}" y2="${TOP + plotH}" visibility="hidden"/>`;
+      <line class="talk-chart-rule" x1="${LEFT}" x2="${LEFT + plotW}" y1="${TOP}" y2="${TOP}"/>
+      <line class="talk-chart-rule" x1="${LEFT}" x2="${LEFT + plotW}" y1="${bottom}" y2="${bottom}"/>
+      ${count > 1 ? `<polyline class="talk-chart-line" points="${line.join(" ")}"/>` : ""}
+      <circle class="talk-chart-latest" cx="${f(x(latest))}" cy="${f(y(this.points[latest]!.hit))}" r="2.5"/>
+      ${labels}${times}
+      <line class="talk-chart-hair" x1="0" x2="0" y1="${TOP}" y2="${bottom}" visibility="hidden"/>
+      <circle class="talk-chart-mark" cx="0" cy="0" r="3" visibility="hidden"/>`;
   }
 
   /** The whole conversation small, whatever its length: the stretch shown
-   *  in a wash of clay between two handles, the rest under a veil. */
+   *  between two short bars, the rest under a veil of the paper. */
   private drawBrush(width: number): void {
     const any = this.requests.length > 0;
     this.brush.style.display = any ? "" : "none";
@@ -226,41 +195,35 @@ export class HitChart {
     const lo = Math.min(...all.map((point) => point.lo));
     const hi = Math.max(...all.map((point) => point.hi), lo + 0.01);
     const x = (index: number) => LEFT + (all.length > 1 ? (index / (all.length - 1)) * plotW : plotW / 2);
-    const y = (share: number) => 6 + ((hi - share) / (hi - lo)) * (BRUSH - 12);
-    const random = seeded(`brush:${this.requests.length}`);
+    const y = (share: number) => 5 + ((hi - share) / (hi - lo)) * (BRUSH - 10);
     const overview =
       all.length > 1
-        ? `<path class="talk-chart-overview" d="${outline(
-            all.map((point, index): Point => [x(index), y(point.lo)]),
-            1.2,
-            random,
-            { pressure: 0.1, taper: 0.02 },
-          )}"/>`
-        : `<path class="talk-chart-overview" d="${blot([x(0), y(all[0]!.lo)], 2, random)}"/>`;
+        ? `<polyline class="talk-chart-overview" points="${all.map((point, index) => `${f(x(index))},${f(y(point.lo))}`).join(" ")}"/>`
+        : `<circle class="talk-chart-overview-dot" cx="${f(x(0))}" cy="${f(y(all[0]!.lo))}" r="1.5"/>`;
     const [from, to] = this.range ?? [0, 1];
     const left = LEFT + from * plotW;
     const right = LEFT + to * plotW;
     this.brush.setAttribute("aria-valuetext", `${Math.round(from * 100)}% – ${Math.round(to * 100)}%`);
-    // The wash and the handles keep one hand however the stretch moves.
-    const hand = seeded("brush-hand");
-    const handle = (at: number) => outline([[at, 8], [at, BRUSH - 8]], 2.4, hand, { pressure: 0.1, taper: 0.2 });
     const veil = this.range
       ? `<rect class="talk-chart-shade" x="${LEFT - 4}" y="0" width="${f(Math.max(0, left - LEFT + 4))}" height="${BRUSH}"/><rect class="talk-chart-shade" x="${f(right)}" y="0" width="${f(Math.max(0, LEFT + plotW + 4 - right))}" height="${BRUSH}"/>`
       : "";
+    const bar = (at: number) => `<rect class="talk-chart-handle" x="${f(at - 1.25)}" y="${(BRUSH - 14) / 2}" width="2.5" height="14" rx="1.25"/>`;
     this.brush.innerHTML = `
-      <path class="talk-chart-window${this.range ? "" : " whole"}" d="${swatch(left - 4, 2, Math.max(8, right - left + 8), BRUSH - 4, hand, 4)}"/>
+      <rect class="talk-chart-track" x="${LEFT - 4}" y="0" width="${plotW + 8}" height="${BRUSH}" rx="6"/>
       ${overview}
       ${veil}
-      <g class="talk-chart-handles${this.range ? "" : " whole"}" filter="url(#pen-marker-lite)"><path d="${handle(left - 2)}"/><path d="${handle(right + 2)}"/></g>
+      <g class="talk-chart-handles${this.range ? "" : " whole"}">${bar(left - 2)}${bar(right + 2)}</g>
       <rect x="0" y="0" width="${width}" height="${BRUSH}" fill="transparent"/>`;
   }
 
   /** Says the request under the pointer, or nothing as it leaves. */
   private read(event: PointerEvent | null): void {
     const hair = this.main.querySelector<SVGLineElement>(".talk-chart-hair");
-    if (!event || !this.points.length || !hair) {
+    const mark = this.main.querySelector<SVGCircleElement>(".talk-chart-mark");
+    if (!event || !this.points.length || !hair || !mark) {
       this.readout.hidden = true;
       hair?.setAttribute("visibility", "hidden");
+      mark?.setAttribute("visibility", "hidden");
       return;
     }
     const box = this.main.getBoundingClientRect();
@@ -270,15 +233,18 @@ export class HitChart {
     const count = this.points.length;
     const index = Math.max(0, Math.min(count - 1, Math.round(((px - LEFT) / plotW) * (count - 1))));
     const point = this.points[index]!;
-    const at = LEFT + (count > 1 ? (index / (count - 1)) * plotW : plotW / 2);
+    const at = this.placed.x[index]!;
     hair.setAttribute("x1", f(at));
     hair.setAttribute("x2", f(at));
     hair.setAttribute("visibility", "visible");
+    mark.setAttribute("cx", f(at));
+    mark.setAttribute("cy", f(this.placed.y[index]!));
+    mark.setAttribute("visibility", "visible");
     const rows = this.visible();
     const first = rows[0]?.at ?? point.at;
     const final = rows[rows.length - 1]?.at ?? point.at;
     const hit = point.lo === point.hi ? percentFine(point.hit) : `${percentFine(point.lo)} – ${percentFine(point.hi)}`;
-    this.readout.textContent = this.words.readout(clock(point.at, first, final), hit, tokensShort(point.context));
+    this.readout.textContent = this.words.readout(hit, clock(point.at, first, final));
     this.readout.hidden = false;
     const shown = (at / width) * box.width;
     const half = this.readout.offsetWidth / 2;

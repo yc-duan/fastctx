@@ -25,24 +25,28 @@
   padding-top: var(--space-1);
 }
 
-/* The stretch's heading: what it does, then, at the right, how many steps
-   and how long, in figures that do not move as they count. */
+/* The stretch's heading reads from the left as one phrase: what it did,
+   then, quieter, how long it took, in figures that do not move as they
+   count; the arrow right after the words. */
 .group-time {
   flex: none;
-  margin-left: auto;
-  padding-left: var(--space-4);
+  padding-left: var(--space-3);
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
 }
 
-.group-time:empty,
-.group-stats:empty {
+.group-time:empty {
   display: none;
 }
 
-.group-stats {
-  flex: none;
-  margin-left: 6px;
+/* The lines a stretch added and removed stand right after the files it
+   changed. */
+.group-part > .row-stats {
+  margin-left: 0.45em;
+}
+
+.group-part.failed {
+  color: var(--wrong);
 }
 
 /* Long text under a row: its first lines, the button for the rest, the
@@ -631,6 +635,13 @@
   /* The view keeps the reader's place itself, as blocks near them are
      drawn and let go (`view.ts`). */
   overflow-anchor: none;
+}
+
+/* Room under the newest while words just sent stand at the top of the view
+   (`page.ts`): the answer takes it up as it comes. */
+.talk-room {
+  height: 0;
+  pointer-events: none;
 }
 
 /* A stretch's line under way: the step in hand fades in where the last was. */

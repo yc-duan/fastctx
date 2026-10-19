@@ -147,6 +147,32 @@
   margin: 0;
 }
 
+/* A long message of the user's: its first ten lines, fading out under
+   them, and the way to the rest at its foot. */
+.bubble.long:not(.open) > .bubble-text {
+  max-height: calc(1em * var(--leading-prose) * 10);
+  overflow: hidden;
+  -webkit-mask: linear-gradient(to bottom, #000 calc(100% - 2.5em), transparent);
+  mask: linear-gradient(to bottom, #000 calc(100% - 2.5em), transparent);
+}
+
+.bubble.long > .bubble-text {
+  overflow: hidden;
+}
+
+.bubble-more {
+  display: block;
+  margin: var(--space-1) 0 -2px auto;
+  font-size: var(--size-small);
+  color: var(--on-bubble);
+  opacity: 0.7;
+  transition: opacity var(--hover) ease;
+}
+
+.bubble-more:hover {
+  opacity: 1;
+}
+
 .bubble p + p {
   margin-top: 0.7em;
 }
@@ -394,15 +420,17 @@
 /* An activity group: a heading that says what the stretch did, and the
    rail beneath it. */
 
-/* The heading runs across the column: what the stretch did on the left,
-   cut where it must; how many steps and how long at the right, before the
-   arrow, standing over the rows' own figures. */
+/* The heading is one line read from the left: what the stretch did, cut
+   where it must, how long it took, and the arrow right after; nothing
+   stands apart at the far edge. */
 .group-head {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: var(--space-1);
   width: 100%;
   max-width: 100%;
+  text-align: left;
   min-height: var(--row-line);
   line-height: var(--row-leading);
   color: var(--text-2);
@@ -410,11 +438,13 @@
   transition: color var(--hover) ease;
 }
 
-.group-head:not(:disabled):hover {
+.group-head:not([aria-disabled]):hover {
   color: var(--text);
 }
 
 .group-title {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -437,7 +467,7 @@
   --turn: 0deg;
 }
 
-.group-head:not(:disabled):hover > .glyph {
+.group-head:not([aria-disabled]):hover > .glyph {
   color: var(--text-2);
 }
 
@@ -589,8 +619,14 @@
   transition: color var(--hover) ease;
 }
 
-.row-line:not(:disabled):hover {
+.row-line:not([aria-disabled]):hover {
   color: var(--text);
+}
+
+/* A row with nothing to open is marked, not disabled: a disabled control
+   would swallow the middle button and the page's autoscroll with it. */
+.row-line[aria-disabled] {
+  cursor: default;
 }
 
 .row-action {
@@ -617,7 +653,7 @@
   transition: color var(--hover) ease;
 }
 
-.row-line:not(:disabled):hover .row-object {
+.row-line:not([aria-disabled]):hover .row-object {
   color: var(--text-2);
 }
 
@@ -1271,7 +1307,6 @@
   padding: var(--space-2) var(--space-3);
   max-height: min(60vh, 32rem);
   overflow-y: auto;
-  overscroll-behavior: contain;
   border-radius: var(--radius-s);
   background: var(--bg);
   background: var(--fill);

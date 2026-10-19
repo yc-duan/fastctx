@@ -1,8 +1,10 @@
 // Long text under an open tool row (`world-gui.md`, 对话): its first lines,
-// then "+ 28 行". Pressed, that button stays where it is and what is above
-// it grows upward, into a box of at most half the conversation's height
-// that draws only the lines in view and scrolls inside; the button then
-// reads "− 收起". The box's corner opens the whole of it in a popup, to
+// then "+ 28 行", nothing scrolling. Pressed, the lines read so far stay
+// where they are and the rest comes in below them, the whole of it where it
+// fits in most of the conversation's height; only longer text is a box of
+// that height that draws the lines in view and scrolls inside, handing the
+// wheel on to the conversation at its ends. The button then reads
+// "− 收起". The box's corner opens the whole of it in a popup, to
 // search and to go to a line, beside any other source of it (a command's
 // whole output on its machine). Short text is simply shown. In the
 // conversation the lines go unnumbered, unless their painter numbers them
@@ -63,6 +65,9 @@ const PREVIEW = 12;
 const SLACK = 2;
 /** Lines few enough to be shown outright. */
 export const FEW = PREVIEW + SLACK;
+/** How much of the conversation's height open text takes at most before
+ *  it scrolls in its box. */
+const TALLEST = 0.7;
 
 export class LongText {
   readonly element = document.createElement("div");
@@ -165,7 +170,7 @@ export class LongText {
   private height(): number {
     const row = this.viewport?.rowHeight ?? 0;
     const lines = this.full ? this.length : Math.min(this.length, PREVIEW);
-    return Math.round(this.full ? Math.min(this.layout.scroller.clientHeight / 2, lines * row) : lines * row);
+    return Math.round(this.full ? Math.min(this.layout.scroller.clientHeight * TALLEST, lines * row) : lines * row);
   }
 
   /** Sets the box to the preview's height; called again once it is on the page, where its rows have a height. */
@@ -195,7 +200,13 @@ export class LongText {
       this.viewport.setLimit(undefined);
       this.viewport.element.style.height = `${target}px`;
     }
-    const result = await this.motion.to(target, this.more);
+    // What the reader looks at stays put: opening, the lines read so far,
+    // the rest coming in below; closing, the lines left at the top, unless
+    // the box's top is already above the view, where the button under the
+    // pointer stays and what is above it closes up.
+    const view = this.layout.scroller.getBoundingClientRect();
+    const anchor = full || this.box.getBoundingClientRect().top >= view.top ? this.box : this.more;
+    const result = await this.motion.to(target, anchor);
     if (!full && !result.cancelled && this.viewport) {
       this.viewport.element.style.height = `${target}px`;
       this.viewport.setLimit(PREVIEW);

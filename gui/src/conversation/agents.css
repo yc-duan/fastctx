@@ -110,7 +110,6 @@
 .agent-scroll {
   max-height: min(56dvh, 520px);
   overflow-y: auto;
-  overscroll-behavior: contain;
   scrollbar-width: thin;
 }
 

@@ -70,6 +70,13 @@ export interface ShellWords {
   span(ms: number): string;
   /** A project's fold button: the agents in it. */
   agentsIn(project: string): string;
+  /** A project's "⋯" in the sidebar, and what is in it before its sharing. */
+  projectMore: string;
+  projectNewTalk: string;
+  projectOverview: string;
+  projectEdit: string;
+  /** A project opened with no conversation in it yet. */
+  noTalks: string;
   /** The window's caption buttons, where the shell draws them. */
   frame: { minimize: string; maximize: string; restore: string; close: string };
 }
@@ -1063,9 +1070,9 @@ export interface ComposerWords {
     kinds: { fresh: string; write: string; read: string; output: string };
     highest: string;
     lowest: string;
-    mean: string;
-    latest: string;
-    readout(time: string, hit: string, context: string): string;
+    /** Where the pointer rests on the chart: how much the cache served,
+     *  and when. */
+    readout(hit: string, time: string): string;
     stretch: string;
     /** Each step's context (`context-sheet.ts`): the way in, the page's
      *  title and figures, what grew it, a step as the pointer reads it,
@@ -1283,9 +1290,7 @@ export const zhComposer: ComposerWords = {
     kinds: { fresh: "新输入", write: "写缓存", read: "读缓存", output: "输出" },
     highest: "最高",
     lowest: "最低",
-    mean: "平均",
-    latest: "最近",
-    readout: (time, hit, context) => `${time}　命中 ${hit}　上下文 ${context}`,
+    readout: (hit, time) => `${hit}　${time}`,
     stretch: "选一段",
     steps: "每一步的上下文",
     close: "关闭",
@@ -1498,9 +1503,7 @@ export const enComposer: ComposerWords = {
     kinds: { fresh: "fresh input", write: "cache write", read: "cache read", output: "output" },
     highest: "highest",
     lowest: "lowest",
-    mean: "mean",
-    latest: "latest",
-    readout: (time, hit, context) => `${time}, ${hit} hit, ${context} context`,
+    readout: (hit, time) => `${hit}  ${time}`,
     stretch: "Choose a stretch",
     steps: "Context, step by step",
     close: "Close",
@@ -1601,6 +1604,11 @@ export const zhShell: ShellWords = {
   more: (n) => `另外 ${n} 个`,
   span: zhSpan,
   agentsIn: (project) => `${project} 中的对话`,
+  projectMore: "项目操作",
+  projectNewTalk: "新对话",
+  projectOverview: "概览",
+  projectEdit: "编辑项目…",
+  noTalks: "暂无对话",
   frame: { minimize: "最小化", maximize: "最大化", restore: "还原", close: "关闭" },
 };
 
@@ -1647,5 +1655,10 @@ export const enShell: ShellWords = {
   more: (n) => `${n} more`,
   span: enSpan,
   agentsIn: (project) => `Conversations in ${project}`,
+  projectMore: "Project actions",
+  projectNewTalk: "New conversation",
+  projectOverview: "Overview",
+  projectEdit: "Edit project…",
+  noTalks: "No conversations yet",
   frame: { minimize: "Minimize", maximize: "Maximize", restore: "Restore", close: "Close" },
 };

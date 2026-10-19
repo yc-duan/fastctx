@@ -87,6 +87,32 @@
   initial-value: 0px;
 }
 
+/* Where the wash of a switch's chosen side is on its way to the side now
+   chosen, and how large (`app/segment-slide.ts`). */
+@property --thumb-x {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --thumb-y {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --thumb-w {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --thumb-h {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
 /* How far a chevron is turned, from pointing down (`rotate`). */
 @property --turn {
   syntax: "<angle>";

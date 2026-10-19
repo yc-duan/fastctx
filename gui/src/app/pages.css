@@ -1021,6 +1021,30 @@ a.details-job {
   background: var(--accent-wash);
 }
 
+/* The wash on its way from the side chosen before to the side pressed
+   (`segment-slide.ts`): under the choices, which hold back their own wash
+   until it arrives. */
+.seg-thumb {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--thumb-w);
+  height: var(--thumb-h);
+  translate: var(--thumb-x) var(--thumb-y);
+  pointer-events: none;
+  transition:
+    --thumb-x var(--fold) var(--fold-easing),
+    --thumb-y var(--fold) var(--fold-easing),
+    --thumb-w var(--fold) var(--fold-easing),
+    --thumb-h var(--fold) var(--fold-easing);
+}
+
+.seg-sliding > :not(.seg-thumb) {
+  position: relative;
+  z-index: 1;
+  background-color: transparent !important;
+}
+
 /* A file chosen through the system's picker, by a button of the page's own;
    the name of the one chosen beside it. */
 .pick-file {

@@ -29,6 +29,7 @@
 // quiet line on the left; what was done to a turn (copy, ask again, fork)
 // appears only once the turn is over.
 
+import { handOnAtEdge } from "../scroll-handoff";
 import { ActsMenu } from "../app/acts-menu";
 import type { AgentActivity, Content, Health, MachineName, Notice, Speaker, Tool, TurnEnd } from "../world/events";
 import type { Attachment } from "../world/attachments";
@@ -88,6 +89,8 @@ export interface Context {
   near?: ((gap: Gap, side: "end" | "start") => void) | undefined;
   /** Where words being sent leave from (`flight.ts`). */
   departure?: (() => Departure | null) | undefined;
+  /** Words just sent are on the page, laid out: the newest of them. */
+  sent?: ((key: string) => void) | undefined;
   /** Where another resident's conversation opens, where it can. */
   link?: ((address: { resident: string; machine: MachineName }) => string) | undefined;
   /** Answering what the session waits on the user for, where the page
@@ -194,6 +197,8 @@ const heldMenu = new ActsMenu();
 
 export class ConversationView {
   private openRows = new Set<string>();
+  /** The user's long messages opened whole. */
+  private readonly unfolded = new Set<string>();
   private openStretches = new Set<string>();
   /** How many of their latest rows long stretches show, where more than
    *  `STRETCH_ROWS` were asked for. */
@@ -336,6 +341,12 @@ export class ConversationView {
    *  agent's box drawn inside it. */
   private own(event: Event): boolean {
     return (event.target as HTMLElement).closest(".transcript") === this.root;
+  }
+
+  /** The drawn element of a block, where it is on the page now. */
+  elementOf(key: string): HTMLElement | null {
+    const element = this.slots.get(key)?.element;
+    return element?.isConnected ? element : null;
   }
 
   /** Brings the page up to the conversation as it now stands; `read` when
@@ -952,6 +963,9 @@ export class ConversationView {
       }
       this.letGo(block.key);
       element.innerHTML = this.entry(block);
+      // A plan long enough to scroll in its card hands the wheel on to the
+      // conversation at its ends.
+      for (const plan of element.querySelectorAll<HTMLElement>(".ask-plan")) handOnAtEdge(plan);
       if (this.openRows.has(block.key)) this.fill(block.key, element);
     } finally {
       this.reading = reading;
@@ -1014,15 +1028,21 @@ export class ConversationView {
   }
 
   /** Words just sent rise from the input into their place, once the page
-   *  has laid them out; says whether any do. They are the last blocks. */
+   *  has laid them out; says whether any do. They are the last blocks. The
+   *  page is told of the newest first, so it can bring them into view. */
   private flights(blocks: readonly Block[]): boolean {
     const departure = this.context.departure;
-    if (!departure) return false;
     let flying = false;
+    let told = false;
     for (let index = blocks.length - 1; index >= 0 && index >= blocks.length - 8; index -= 1) {
       const block = blocks[index]!;
       if (block.kind !== "heard" || block.sending?.state !== "going" || this.flown.has(block.key)) continue;
       this.flown.add(block.key);
+      if (!told) {
+        told = true;
+        this.context.sent?.(block.key);
+      }
+      if (!departure) continue;
       const from = departure();
       if (!from) continue;
       // Flown once the page has laid this frame out, before it is painted.
@@ -1313,7 +1333,7 @@ export class ConversationView {
     // Words sent into the turn under way are said: the turn takes them in
     // where it next can, and only a failure is told.
     const sending = entry.intoTurn && entry.sending?.state !== "failed" ? null : (entry.sending ?? null);
-    return this.attached(entry.attached ?? []) + this.heard(entry.from, entry.text, sending) + acts;
+    return this.attached(entry.attached ?? []) + this.heard(entry.from, entry.text, sending, entry.key) + acts;
   }
 
   /** Under the user's own words once their turn is over: copy them, or
@@ -1381,7 +1401,7 @@ export class ConversationView {
     }
   }
 
-  private heard(from: Speaker | null, text: string, sending: SendState | null): string {
+  private heard(from: Speaker | null, text: string, sending: SendState | null, key?: string): string {
     const { words } = this.context;
     if (!from || from.kind === "user") {
       // The user's own words; which machine they came from is said only
@@ -1394,6 +1414,11 @@ export class ConversationView {
       if (sending?.state === "waiting") note = `<div class="bubble-note" title="${escape(sending.why)}">${escape(words.waitingToSend)}</div>`;
       if (sending?.state === "landed") {
         note = `<div class="bubble-note"${sending.why ? ` title="${escape(sending.why)}"` : ""}>${escape(words.landed(sending.how, sending.machine, sending.why ?? null))}</div>`;
+      }
+      // A long message shows its first lines, the rest a press away.
+      if (key && longWords(text)) {
+        const open = this.unfolded.has(key);
+        return `${who}<div class="bubble long${open ? " open" : ""}${state}"><div class="bubble-text">${plain(text)}</div><button class="bubble-more" type="button" data-unfold="${escape(key)}" aria-expanded="${open}">${escape(open ? words.bubbleLess : words.bubbleMore)}</button></div>${note}`;
       }
       return `${who}<div class="bubble${state}">${plain(text)}</div>${note}`;
     }
@@ -1450,7 +1475,7 @@ export class ConversationView {
     if (!stretch) {
       if (this.context.nested && !this.closedStretches.has(group.key)) this.openStretches.add(group.key);
       const open = this.openStretches.has(group.key);
-      slot.element.innerHTML = `<button class="group-head" type="button" data-fold="${escape(group.key)}" aria-expanded="${open}"><span class="group-mark">${glyph("thinking", 16)}</span><span class="group-title"></span><span class="row-stats group-stats"></span><span class="group-time"></span>${glyph("chevron", 16)}</button><div class="fold-box group-box"${open ? "" : ' style="height:0" inert'}><div class="rows"></div></div>`;
+      slot.element.innerHTML = `<button class="group-head" type="button" data-fold="${escape(group.key)}" aria-expanded="${open}"><span class="group-mark">${glyph("thinking", 16)}</span><span class="group-title"></span><span class="group-time"></span>${glyph("chevron", 16)}</button><div class="fold-box group-box"${open ? "" : ' style="height:0" inert'}><div class="rows"></div></div>`;
       stretch = {
         head: slot.element.querySelector<HTMLButtonElement>(".group-head")!,
         box: slot.element.querySelector<HTMLElement>(".group-box")!,
@@ -1531,11 +1556,12 @@ export class ConversationView {
     }
   }
 
-  /** A stretch's heading: while it runs, the step it is on, how many steps
-   *  and for how long; once done, what it did, the lines it changed, and
-   *  how long it took. A stretch that is only thinking says how long it
-   *  thought and the tokens it took, and opens only where there are words.
-   *  The words change in place; the line keeps its height. */
+  /** A stretch's heading, one line read from the left: while it runs, the
+   *  step it is on and for how long; once done, what it did (the files it
+   *  changed first, the lines added and removed right after them), what
+   *  failed, and how long it took. A stretch that is only thinking says how
+   *  long it thought and the tokens it took, and opens only where there are
+   *  words. The words change in place; the line keeps its height. */
   private heading(stretch: Stretch, group: Activity): void {
     const { words } = this.context;
     const said = stretchSays(
@@ -1548,39 +1574,35 @@ export class ConversationView {
         named: (tool) => this.agentsObject(tool, null),
       },
     );
-    const { title, parts, added, removed, steps, running, only, bare, began } = said;
-    const stats = added || removed ? `<span class="add">+${added}</span><span class="del">−${removed}</span>` : "";
+    const { parts, added, removed, running, only, bare, began } = said;
+    const stats = added || removed ? `<span class="row-stats"><span class="add">+${added}</span><span class="del">−${removed}</span></span>` : "";
     stretch.head.classList.toggle("bare", bare);
     stretch.head.classList.toggle("thought", only);
-    stretch.head.disabled = bare;
+    // Marked rather than disabled: a disabled control swallows the middle
+    // button, and with it the page's autoscroll.
+    if (bare) stretch.head.setAttribute("aria-disabled", "true");
+    else stretch.head.removeAttribute("aria-disabled");
     const titleElement = stretch.head.querySelector<HTMLElement>(".group-title")!;
-    if (titleElement.textContent !== title) {
+    // What it did is said in whole parts, so a narrow line ends on an
+    // ellipsis after the last that fits.
+    const drawn = parts
+      .map((part, index) => `${index ? escape(words.tallyGap) : ""}<span class="group-part${part.kind === "failed" ? " failed" : ""}">${escape(part.said)}${part.kind === "edited" ? stats : ""}</span>`)
+      .join("");
+    if (titleElement.dataset.drawn !== drawn) {
+      titleElement.dataset.drawn = drawn;
+      titleElement.innerHTML = drawn;
       // The step in hand changes in place: the new words fade in, the line
-      // keeps its height. What it did is said in whole parts, so a narrow
-      // line ends on an ellipsis after the last that fits.
-      if (parts.length > 1) {
-        titleElement.replaceChildren(
-          ...parts.flatMap((part, index) => {
-            const span = document.createElement("span");
-            span.className = "group-part";
-            span.textContent = part;
-            return index ? [words.tallyGap, span] : [span];
-          }),
-        );
-      } else titleElement.textContent = title;
+      // keeps its height.
       if (running) {
         titleElement.classList.remove("fresh");
         void titleElement.offsetWidth;
         titleElement.classList.add("fresh");
       }
     }
-    const statsElement = stretch.head.querySelector<HTMLElement>(".group-stats")!;
-    if (statsElement.innerHTML !== stats) statsElement.innerHTML = stats;
     stretch.head.classList.toggle("going", running);
     const time = stretch.head.querySelector<HTMLElement>(".group-time")!;
     if (running && began !== null) {
       time.dataset.since = String(began);
-      time.dataset.steps = String(steps);
       this.clocks.add(time);
     } else {
       delete time.dataset.since;
@@ -1598,7 +1620,7 @@ export class ConversationView {
         this.clocks.delete(clock);
         continue;
       }
-      const said = clockSays(Number(clock.dataset.steps), Number(clock.dataset.since), words);
+      const said = clockSays(Number(clock.dataset.since), words, clock.dataset.steps === undefined ? undefined : Number(clock.dataset.steps));
       if (clock.textContent !== said) {
         clock.textContent = said;
         // What finding reads of its heading changed with it.
@@ -1711,7 +1733,7 @@ export class ConversationView {
     const fold = expandable ? `<div class="fold-box"${open ? "" : " style=\"height:0\" inert"}><div class="fold-content"></div></div>` : "";
     // A change that could not be read line by line says why on hover.
     const why = write.unavailable ? ` title="${escape(write.unavailable)}"` : "";
-    return `<div class="row row-tool row-done${enter}" data-row="${escape(key)}"><span class="rail">${glyph(line.glyph)}</span><button class="row-line" type="button" ${expandable ? `data-open="${escape(key)}"` : "disabled"} aria-expanded="${open}"${why}><span class="row-action">${escape(line.action)}</span><span class="row-rest"><span class="row-object">${escape(line.object ?? "")}</span><span class="row-meta">${stats}${elsewhere}${chevron}</span></span></button>${fold}</div>`;
+    return `<div class="row row-tool row-done${enter}" data-row="${escape(key)}"><span class="rail">${glyph(line.glyph)}</span><button class="row-line" type="button" ${expandable ? `data-open="${escape(key)}"` : 'aria-disabled="true"'} aria-expanded="${open}"${why}><span class="row-action">${escape(line.action)}</span><span class="row-rest"><span class="row-object">${escape(line.object ?? "")}</span><span class="row-meta">${stats}${elsewhere}${chevron}</span></span></button>${fold}</div>`;
   }
 
   /** Whether a row comes in as it is first drawn: once, for a row new to a
@@ -1761,7 +1783,7 @@ export class ConversationView {
     // What it did and on what, its figures beside it, the machine where it
     // was not here; how a command ended is in what it holds.
     const meta = `<span class="row-meta">${stats}${this.outcome(entry, tense)}${elsewhere}${chevron}</span>`;
-    return `<div class="row row-tool row-${tense}${enter}" data-row="${escape(entry.key)}"><span class="rail">${mark}</span><button class="row-line" type="button" ${expandable ? `data-open="${escape(entry.key)}"` : "disabled"} aria-expanded="${open}"><span class="row-action">${escape(line.action)}</span><span class="row-rest">${object}${meta}</span></button>${colleague}${fold}</div>`;
+    return `<div class="row row-tool row-${tense}${enter}" data-row="${escape(entry.key)}"><span class="rail">${mark}</span><button class="row-line" type="button" ${expandable ? `data-open="${escape(entry.key)}"` : 'aria-disabled="true"'} aria-expanded="${open}"><span class="row-action">${escape(line.action)}</span><span class="row-rest">${object}${meta}</span></button>${colleague}${fold}</div>`;
   }
 
   /** A call that started one of the host's own agents: what it was asked,
@@ -1798,7 +1820,7 @@ export class ConversationView {
     if (run.state === "stopped") return words.agents.stopped;
     if (run.state === "waiting") return words.agents.waiting;
     const steps = run.tools ?? run.steps.length;
-    if (run.going) return run.began === null ? "" : clockSays(steps, run.began, words);
+    if (run.going) return run.began === null ? "" : clockSays(run.began, words, steps);
     const took = run.duration ?? (run.ended !== null && run.began !== null ? run.ended - run.began : null);
     return [steps ? words.steps(steps) : "", took !== null ? words.took(took) : ""].filter(Boolean).join(words.figureGap);
   }
@@ -1849,7 +1871,7 @@ export class ConversationView {
       meta.dataset.since = String(run.began);
       meta.dataset.steps = String(run.tools ?? run.steps.length);
       this.clocks.add(meta);
-      const said = clockSays(run.tools ?? run.steps.length, run.began, this.context.words);
+      const said = clockSays(run.began, this.context.words, run.tools ?? run.steps.length);
       if (meta.textContent !== said) meta.textContent = said;
     } else {
       delete meta.dataset.since;
@@ -1918,7 +1940,7 @@ export class ConversationView {
     const figures = tokens === null ? "" : `<span class="row-figures">${escape(words.thinkingTokens(tokens))}</span>`;
     const chevron = has ? `<span class="row-chevron">${glyph("chevron", 16)}</span>` : "";
     const fold = has ? `<div class="fold-box"${open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div>` : "";
-    return `<div class="row row-thinking${writing ? " row-running" : ""}${enter}" data-row="${escape(key)}"><span class="rail">${glyph("thinking")}</span><button class="row-line" type="button" ${has ? `data-open="${escape(key)}"` : "disabled"} aria-expanded="${open}"><span class="row-said">${escape(said)}</span>${title ? `<span class="row-object">${escape(title)}</span>` : ""}<span class="row-meta">${figures}${chevron}</span></button>${fold}</div>`;
+    return `<div class="row row-thinking${writing ? " row-running" : ""}${enter}" data-row="${escape(key)}"><span class="rail">${glyph("thinking")}</span><button class="row-line" type="button" ${has ? `data-open="${escape(key)}"` : 'aria-disabled="true"'} aria-expanded="${open}"><span class="row-said">${escape(said)}</span>${title ? `<span class="row-object">${escape(title)}</span>` : ""}<span class="row-meta">${figures}${chevron}</span></button>${fold}</div>`;
   }
 
   /** The run of thinking a row stands for, by the key of its first part. */
@@ -2309,7 +2331,43 @@ export class ConversationView {
     return found;
   }
 
+  /** A long message of the user's opened or closed: what the reader looks
+   *  at stays where it is, the rest coming in below or going. */
+  private unfold(button: HTMLElement): void {
+    const key = button.dataset.unfold!;
+    const bubble = button.closest<HTMLElement>(".bubble");
+    const text = bubble?.querySelector<HTMLElement>(".bubble-text");
+    if (!bubble || !text) return;
+    const open = !this.unfolded.has(key);
+    if (open) this.unfolded.add(key);
+    else this.unfolded.delete(key);
+    this.context.reading();
+    const { words } = this.context;
+    const from = text.offsetHeight;
+    bubble.classList.toggle("open", open);
+    button.setAttribute("aria-expanded", String(open));
+    button.textContent = open ? words.bubbleLess : words.bubbleMore;
+    const to = open ? text.scrollHeight : text.offsetHeight;
+    text.style.maxHeight = "none";
+    text.style.height = `${from}px`;
+    // Opening, its first lines stay; closing, the button stays under the
+    // pointer where the message's top is above the view.
+    const view = this.context.scroller.getBoundingClientRect();
+    const anchor = open || bubble.getBoundingClientRect().top >= view.top ? bubble : button;
+    void this.motionOf(text)
+      .to(to, anchor)
+      .then(() => {
+        text.style.height = "";
+        text.style.maxHeight = "";
+      });
+  }
+
   private click(event: Event): void {
+    const unfold = (event.target as HTMLElement).closest<HTMLElement>("[data-unfold]");
+    if (unfold) {
+      this.unfold(unfold);
+      return;
+    }
     const target = (event.target as HTMLElement).closest<HTMLElement>(
       "[data-open], [data-fold], [data-gap], [data-earlier], [data-asked], .code-copy, .ask-option, [data-ask], [data-copy], [data-copy-turn], [data-turn-act], [data-question-pick], [data-question-send], [data-question-skip], [data-question-change]",
     );
@@ -2402,7 +2460,7 @@ export class ConversationView {
       const key = target.dataset.fold;
       const slot = this.slots.get(key);
       const stretch = slot?.stretch;
-      if (!slot || !stretch || slot.block.kind !== "activity-group") return;
+      if (!slot || !stretch || slot.block.kind !== "activity-group" || target.hasAttribute("aria-disabled")) return;
       const group = slot.block;
       const open = !this.openStretches.has(key);
       if (open) this.openStretches.add(key);
@@ -2432,6 +2490,15 @@ export class ConversationView {
       if (done && !open) this.letGo(key);
     });
   }
+}
+
+/** Lines and characters past which the user's own words show their first
+ *  lines only, the rest a press away. */
+const LONG_LINES = 14;
+const LONG_CHARACTERS = 1200;
+
+function longWords(text: string): boolean {
+  return text.length > LONG_CHARACTERS || text.split("\n").length > LONG_LINES;
 }
 
 /** Whether a call asked one of the World's colleagues in, or spoke to one:

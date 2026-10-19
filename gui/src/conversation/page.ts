@@ -189,6 +189,14 @@ const OFFERS_TRIES = 5;
  *  view is theirs: nothing keeps it at the newest meanwhile. */
 const READING_MS = 150;
 
+/** How far below the top of the view words just sent are put, the answer
+ *  coming in beneath them. */
+const SENT_AT = 24;
+
+/** How long after a send the words sent are looked for to be put at the
+ *  top: words that wait in a queue instead are not, coming later. */
+const SENT_WITHIN_MS = 4000;
+
 /** Whether something between `target` and `region` scrolls up by itself
  *  before the region would. */
 function scrollsUpWithin(target: Element | null, region: HTMLElement): boolean {
@@ -220,7 +228,18 @@ export class ConversationPage {
   private scroller: HTMLElement;
   private name: HTMLElement;
   private looking = 0;
+  /** Whether the view keeps the newest in sight as it comes. Only when the
+   *  conversation opens, until the reader moves the view, and after they
+   *  ask for the newest: nothing else moves what they look at. */
   private following = true;
+  /** Room under the newest, so words just sent can stand at the top of the
+   *  view with the answer coming in beneath them; the answer takes it up
+   *  as it grows, and it goes once the reader has scrolled away from it. */
+  private room: HTMLElement;
+  /** The words sent the room is kept for. */
+  private roomFor: string | null = null;
+  /** Until when words the user just sent are to be put at the top. */
+  private placeUntil = 0;
   /** A stop was asked for and the turn has not ended yet. */
   private stopping = false;
   /** Words of the shared queue on their way into the turn, by queue item,
@@ -279,7 +298,7 @@ export class ConversationPage {
             : ""
         }`,
       )}
-      <div class="talk-scroller scroller"><div class="conversation"></div></div>
+      <div class="talk-scroller scroller"><div class="conversation"></div><div class="talk-room" aria-hidden="true"></div></div>
       <footer class="composer-dock">
         <button class="to-latest" type="button" hidden aria-label="${escape(words.toLatest)}" title="${escape(words.toLatest)}">${glyph("chevron", 18)}</button>
         <div class="steps-back" hidden><button class="steps-back-go" type="button">${glyph("chevron", 14)}<span></span></button><button class="steps-back-x" type="button">${glyph("close", 12)}</button></div>
@@ -299,6 +318,7 @@ export class ConversationPage {
         </form>
       </footer>`;
     this.scroller = this.element.querySelector<HTMLElement>(".talk-scroller")!;
+    this.room = this.element.querySelector<HTMLElement>(".talk-room")!;
     const transcript = this.element.querySelector<HTMLElement>(".conversation")!;
     this.finder = new Finder(
       transcript,
@@ -424,6 +444,8 @@ export class ConversationPage {
         this.following = false;
       },
       following: () => this.following,
+      // Words the user just sent stand at the top of the view.
+      sent: (key) => this.sent(key),
       // Turns not held are read as the reader comes near them.
       near: (gap, side) => void this.fillGap(gap, side),
       // Words being sent leave from where they were typed.
@@ -540,6 +562,7 @@ export class ConversationPage {
     // The region itself shrinks when the composer grows (an attachment, a
     // longer draft): the same holds.
     const keep = new ResizeObserver(() => {
+      this.fitRoom();
       if (this.following && !this.reading()) this.scroller.scrollTop = this.scroller.scrollHeight;
     });
     keep.observe(main);
@@ -557,22 +580,28 @@ export class ConversationPage {
       this.following = false;
       this.drawLatest();
     };
+    // Any move of the reader's own makes the view theirs, down as well as
+    // up: what comes after is shown where it lands, not brought to them.
+    const moved = () => {
+      if (this.following) up();
+      else reading();
+    };
     // A wheel over something in it that scrolls up by itself (a long code
     // block) moves that, not the view; keys in a field move its caret.
     this.scroller.addEventListener(
       "wheel",
-      (event) => (event.deltaY < 0 && !scrollsUpWithin(event.target as Element, this.scroller) ? up() : reading()),
+      (event) => (event.deltaY < 0 && !scrollsUpWithin(event.target as Element, this.scroller) ? up() : moved()),
       { passive: true },
     );
-    this.scroller.addEventListener("touchmove", reading, { passive: true });
+    this.scroller.addEventListener("touchmove", moved, { passive: true });
     // The scroll bar is the region itself, not anything in it.
     this.scroller.addEventListener("pointerdown", (event) => {
-      if (event.target === this.scroller) reading();
+      if (event.target === this.scroller) moved();
     });
     this.scroller.addEventListener("keydown", (event) => {
       if ((event.target as Element).closest("input, textarea, select, [contenteditable]")) return;
       if (event.key === "PageUp" || event.key === "ArrowUp" || event.key === "Home") up();
-      else if (event.key === "PageDown" || event.key === "ArrowDown" || event.key === "End" || event.key === " ") reading();
+      else if (event.key === "PageDown" || event.key === "ArrowDown" || event.key === "End" || event.key === " ") moved();
     });
     // Otherwise only a scroll the reader made says whether they still
     // follow: one that comes with the region or its content changing size
@@ -587,7 +616,8 @@ export class ConversationPage {
         if (this.following) this.scroller.scrollTop = scrollHeight;
         return;
       }
-      this.following = scrollTop + clientHeight >= scrollHeight - 48;
+      // The room goes once it is wholly below the view: nothing seen moves.
+      if (this.roomFor && this.room.offsetTop >= scrollTop + clientHeight) this.dropRoom();
       this.drawLatest();
     });
   }
@@ -606,18 +636,63 @@ export class ConversationPage {
   private latest: HTMLButtonElement;
 
   private drawLatest(): void {
-    const { scrollTop, clientHeight, scrollHeight } = this.scroller;
-    const far = !this.following && (scrollHeight - scrollTop - clientHeight > clientHeight || this.options.conversation.gaps().some((gap) => !gap.first));
+    const { scrollTop, clientHeight } = this.scroller;
+    // What is below the view, the room aside, is something to go to.
+    const below = this.room.offsetTop - scrollTop - clientHeight;
+    const far = !this.following && (below > 48 || this.options.conversation.gaps().some((gap) => !gap.first));
     if (this.latest.hidden === !far) return;
     this.latest.hidden = !far;
   }
 
-  /** Back to the newest: at once, however far. */
+  /** Back to the newest: at once, however far, and following it from
+   *  there, as the reader asked, until they move the view again. */
   private toLatest(): void {
     this.following = true;
+    this.dropRoom();
     this.render();
     this.scroller.scrollTop = this.scroller.scrollHeight;
     this.drawLatest();
+  }
+
+  /** The next words the user sends are put at the top of the view. */
+  private placeSent(): void {
+    this.following = false;
+    this.placeUntil = performance.now() + SENT_WITHIN_MS;
+  }
+
+  /** Words just sent are on the page: where the user sent them, they stand
+   *  near the top of the view, room made beneath them for the answer. */
+  private sent(key: string): void {
+    if (performance.now() > this.placeUntil) return;
+    this.placeUntil = 0;
+    this.roomFor = key;
+    this.following = false;
+    this.fitRoom();
+    const words = this.view.elementOf(key);
+    if (!words) return;
+    const top = words.getBoundingClientRect().top - this.scroller.getBoundingClientRect().top + this.scroller.scrollTop;
+    this.scroller.scrollTop = Math.max(0, top - SENT_AT);
+  }
+
+  /** Keeps the room just as tall as lets the words sent stand at the top of
+   *  the view: what comes beneath them takes it up, so nothing moves. */
+  private fitRoom(): void {
+    if (!this.roomFor) return;
+    const words = this.view.elementOf(this.roomFor);
+    if (!words) {
+      this.dropRoom();
+      return;
+    }
+    const top = words.getBoundingClientRect().top - this.scroller.getBoundingClientRect().top + this.scroller.scrollTop;
+    const end = this.room.offsetTop;
+    const room = Math.max(0, Math.round(this.scroller.clientHeight - SENT_AT - (end - top)));
+    const height = `${room}px`;
+    if (this.room.style.height !== height) this.room.style.height = height;
+  }
+
+  private dropRoom(): void {
+    this.roomFor = null;
+    if (this.room.style.height) this.room.style.height = "";
   }
 
   /** Reads the turns of a gap the reader came near, then draws them. */
@@ -641,7 +716,8 @@ export class ConversationPage {
     // A turn is never cut in two: where the latest turn alone is longer,
     // it is asked again only once that much more has come.
     if (latest.end < this.trimmedAt) this.trimmedAt = 0;
-    if (this.following && latest.end - latest.start > LATEST_MOST && !this.trimming && latest.end - this.trimmedAt > LATEST_KEPT) {
+    const nearNewest = this.room.offsetTop - this.scroller.scrollTop - this.scroller.clientHeight < this.scroller.clientHeight;
+    if ((this.following || nearNewest) && latest.end - latest.start > LATEST_MOST && !this.trimming && latest.end - this.trimmedAt > LATEST_KEPT) {
       this.trimming = true;
       this.trimmedAt = latest.end;
       void conversation.trim(LATEST_KEPT).finally(() => {
@@ -715,6 +791,7 @@ export class ConversationPage {
     this.drawState();
     this.drawAction();
     if (follow && !this.reading()) this.scroller.scrollTop = this.scroller.scrollHeight;
+    this.fitRoom();
     this.drawLatest();
     this.bound();
   }
@@ -1095,7 +1172,7 @@ export class ConversationPage {
     // What the last command did is behind the conversation now.
     this.say("");
     this.hideSaid();
-    this.following = true;
+    this.placeSent();
     if (session) {
       this.commandMenu?.hide();
       this.nodeTray?.settle();
@@ -1138,7 +1215,9 @@ export class ConversationPage {
     const conversation = this.options.conversation;
     if (!now) this.released = conversation.ended();
     this.failed = null;
-    this.following = true;
+    // Sent by the user's hand, the words come to the top of the view; let
+    // go of the queue by itself, they come in where the reader is not.
+    if (now) this.placeSent();
     const sent = this.options.send(item.text, item.attached);
     void Promise.resolve(sent).then((came) => {
       // No turn to wait for: the rest wait for the user, said above them.
@@ -1532,7 +1611,7 @@ export class ConversationPage {
             // Asking again sends the same words, with what came with them,
             // as soon as the conversation is back before that turn.
             if (act === "regenerate" && words !== null) {
-              this.following = true;
+              this.placeSent();
               void this.options.send(words, kept.length ? { refs: kept, shown: [] } : { refs: [], shown: [] });
               return;
             }

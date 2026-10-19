@@ -35,6 +35,8 @@
   --size-h2: calc(var(--body-size) * 1.154);
   --size-h3: calc(var(--body-size) * 1.077);
   --size-title: calc(var(--body-size) * 1.6);
+  /* A figure said on its own, large: a conversation's usage at its top. */
+  --size-figure: calc(var(--body-size) * 1.334);
   /* A conversation's title in its head's one line. */
   --size-head: 22px;
   /* A size under the body, as the conversation reads on a phone; reckoned

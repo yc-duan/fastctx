@@ -37,6 +37,14 @@ export type Act =
   | "resume"
   | "list";
 
+/** One kind of thing a stretch did, said: "修改 5 个文件". The files it
+ *  changed carry the lines added and removed after them; a failure is
+ *  coloured as one. */
+export interface TallyPart {
+  said: string;
+  kind: "edited" | "done" | "failed";
+}
+
 export interface Tally {
   read: number;
   edited: number;
@@ -94,7 +102,10 @@ export interface Words {
   failedTool(name: string): string;
   /** What a finished stretch did, by kind: its heading's parts in the order
    *  read, set apart by `tallyGap`. */
-  tally(tally: Tally): string[];
+  /** What a stretch did, kind by kind, the weightiest first: files changed,
+   *  commands run, agents and models called, searches, reads; then how
+   *  many failed. */
+  tally(tally: Tally): TallyPart[];
   tallyGap: string;
   /** Thinking under way, as both hosts say it, in every language. */
   thinking: string;
@@ -108,6 +119,10 @@ export interface Words {
   thinkingTokens(n: number): string;
   plan: string;
   copyMessage: string;
+  /** A long message of the user's, its first lines shown: the rest, and
+   *  back. */
+  bubbleMore: string;
+  bubbleLess: string;
   copyCode: string;
   rewind: string;
   fork: string;
@@ -342,17 +357,17 @@ export const zh: Words = {
   act: (act, tense) => zhActs[act][index(tense)],
   failedTool: (name) => `${name} 失败`,
   tally: (t) => {
-    const parts: string[] = [];
-    if (t.read) parts.push(`读取 ${t.read} 个文件`);
-    if (t.edited) parts.push(`修改 ${t.edited} 个文件`);
-    if (t.ran) parts.push(`运行 ${t.ran} 条命令`);
-    if (t.searched) parts.push(`搜索 ${t.searched} 次`);
-    if (t.asked) parts.push(`调用模型 ${t.asked} 次`);
-    if (t.delegated) parts.push(`委派 ${t.delegated} 个子代理`);
-    if (t.coordinated) parts.push(`调度子代理 ${t.coordinated} 次`);
-    if (t.other) parts.push(`调用 ${t.other} 个工具`);
-    if (!parts.length) parts.push(t.thinking ? "Thought" : "活动");
-    if (t.failed) parts.push(`${t.failed} 个失败`);
+    const parts: TallyPart[] = [];
+    if (t.edited) parts.push({ said: `修改 ${t.edited} 个文件`, kind: "edited" });
+    if (t.ran) parts.push({ said: `运行 ${t.ran} 条命令`, kind: "done" });
+    if (t.delegated) parts.push({ said: `委派 ${t.delegated} 个子代理`, kind: "done" });
+    if (t.asked) parts.push({ said: `调用模型 ${t.asked} 次`, kind: "done" });
+    if (t.searched) parts.push({ said: `搜索 ${t.searched} 次`, kind: "done" });
+    if (t.read) parts.push({ said: `读取 ${t.read} 个文件`, kind: "done" });
+    if (t.coordinated) parts.push({ said: `调度子代理 ${t.coordinated} 次`, kind: "done" });
+    if (t.other) parts.push({ said: `调用 ${t.other} 个工具`, kind: "done" });
+    if (!parts.length) parts.push({ said: t.thinking ? "Thought" : "活动", kind: "done" });
+    if (t.failed) parts.push({ said: `${t.failed} 个失败`, kind: "failed" });
     return parts;
   },
   tallyGap: "　",
@@ -363,6 +378,8 @@ export const zh: Words = {
   thinkingTokens: (n) => tokensSaid(n),
   plan: "计划",
   copyMessage: "复制",
+  bubbleMore: "展开全文",
+  bubbleLess: "收起",
   copyCode: "复制代码",
   rewind: "改了重发",
   fork: "从这里分叉",
@@ -590,18 +607,18 @@ export const en: Words = {
   failedTool: (name) => `${name} Failed`,
   tally: (t) => {
     const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
-    const parts: string[] = [];
-    if (t.read) parts.push(`read ${plural(t.read, "file", "files")}`);
-    if (t.edited) parts.push(`edited ${plural(t.edited, "file", "files")}`);
-    if (t.ran) parts.push(`ran ${plural(t.ran, "command", "commands")}`);
-    if (t.searched) parts.push(t.searched === 1 ? "searched once" : `searched ${t.searched} times`);
-    if (t.asked) parts.push(`called ${plural(t.asked, "model", "models")}`);
-    if (t.delegated) parts.push(`delegated ${plural(t.delegated, "agent", "agents")}`);
-    if (t.coordinated) parts.push(t.coordinated === 1 ? "coordinated agents once" : `coordinated agents ${t.coordinated} times`);
-    if (t.other) parts.push(plural(t.other, "tool call", "tool calls"));
-    if (!parts.length) parts.push(t.thinking ? "Thought" : "Activity");
-    parts[0] = parts[0]!.charAt(0).toUpperCase() + parts[0]!.slice(1);
-    if (t.failed) parts.push(`${t.failed} failed`);
+    const parts: TallyPart[] = [];
+    if (t.edited) parts.push({ said: `edited ${plural(t.edited, "file", "files")}`, kind: "edited" });
+    if (t.ran) parts.push({ said: `ran ${plural(t.ran, "command", "commands")}`, kind: "done" });
+    if (t.delegated) parts.push({ said: `delegated ${plural(t.delegated, "agent", "agents")}`, kind: "done" });
+    if (t.asked) parts.push({ said: `called ${plural(t.asked, "model", "models")}`, kind: "done" });
+    if (t.searched) parts.push({ said: t.searched === 1 ? "searched once" : `searched ${t.searched} times`, kind: "done" });
+    if (t.read) parts.push({ said: `read ${plural(t.read, "file", "files")}`, kind: "done" });
+    if (t.coordinated) parts.push({ said: t.coordinated === 1 ? "coordinated agents once" : `coordinated agents ${t.coordinated} times`, kind: "done" });
+    if (t.other) parts.push({ said: plural(t.other, "tool call", "tool calls"), kind: "done" });
+    if (!parts.length) parts.push({ said: t.thinking ? "Thought" : "Activity", kind: "done" });
+    parts[0] = { ...parts[0]!, said: parts[0]!.said.charAt(0).toUpperCase() + parts[0]!.said.slice(1) };
+    if (t.failed) parts.push({ said: `${t.failed} failed`, kind: "failed" });
     return parts;
   },
   tallyGap: ", ",
@@ -612,6 +629,8 @@ export const en: Words = {
   thinkingTokens: (n) => tokensSaid(n),
   plan: "Plan",
   copyMessage: "Copy",
+  bubbleMore: "Show all",
+  bubbleLess: "Show less",
   copyCode: "Copy code",
   rewind: "Edit and resend",
   fork: "Fork from here",

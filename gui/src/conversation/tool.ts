@@ -6,7 +6,7 @@
 
 import type { Change, Tool } from "../world/events";
 import type { WriteFact } from "../world/run-facts";
-import type { Act, Tally, Tense, Words } from "../words";
+import type { Act, Tally, TallyPart, Tense, Words } from "../words";
 import type { Use } from "./model";
 import { counts } from "./diff";
 import { writeNote } from "./run-output";
@@ -222,9 +222,9 @@ export function groupHeading(
   tools: { tool: Tool; ended: { use: Use } | null }[],
   thinking: number,
   words: Words,
-): string[] {
+): TallyPart[] {
   const running = tools.find((entry) => entry.ended === null);
-  if (running) return [headline(running.tool, null, words).action];
+  if (running) return [{ said: headline(running.tool, null, words).action, kind: "done" }];
   const tally: Tally = { read: 0, edited: 0, ran: 0, searched: 0, asked: 0, delegated: 0, coordinated: 0, other: 0, failed: 0, thinking };
   for (const { tool, ended } of tools) {
     if (ended && (ended.use === "failed" || ended.use === "declined")) tally.failed += 1;

@@ -5,8 +5,9 @@
 // one or join one, and each one's management. Then the agents, the
 // machines and the features, each a line with its mark. With the workbench on,
 // the front page and a new conversation come first, and below are each
-// project, open to its conversations, and the conversations in no project,
-// most recent first; a conversation is listed as long as it is not archived,
+// project, a folder that opens and closes on its conversations as it is
+// pressed (its overview and the rest from its "⋯"), and the conversations in
+// no project, most recent first; a conversation is listed as long as it is not archived,
 // whether its agent's process runs or not, and the archived ones are folded
 // away at the end. Each conversation's "⋯" (a long press on a touch screen)
 // moves, renames, archives or deletes it (`talk-menu.ts`). Logged in to more
@@ -15,6 +16,7 @@
 // the settings are at its foot.
 
 import { glyph } from "../conversation/glyphs";
+import { ActsMenu, type MenuAct, type MenuEntry } from "./acts-menu";
 import { Popover } from "../conversation/popover";
 import { escape } from "../conversation/prose";
 import { deviceFeatures } from "./device-features";
@@ -53,6 +55,19 @@ export interface SidebarOptions {
   menuWords: TalkMenuWords;
   /** A new version of the application, offered above the foot. */
   updates?: { offered: Signal<Offered | null>; open(): void; words: UpdateWords } | undefined;
+  /** What is done to a project from its "⋯": a new conversation in it, its
+   *  overview, its record; then sharing it and handing it on, where the
+   *  reader may. */
+  projects?: ProjectMenuOptions | undefined;
+}
+
+export interface ProjectMenuOptions {
+  newTalk(town: string): void;
+  overview(town: string): void;
+  edit(town: string): void;
+  /** Sharing and handing on, as the project's own page offers them. */
+  acts(town: string): MenuAct[];
+  run(act: string, town: string, name: string): void;
 }
 
 /** An answer usually comes within a second and is asked for every two;
@@ -63,6 +78,10 @@ const SLOW = 5;
  *  before the rest are behind "all": enough for a day's work, few enough
  *  that the projects below stay in sight. */
 const SHOWN = 6;
+
+/** How long a project's folder takes to open or close: no redraw cuts it
+ *  short meanwhile. A little over the motion's own `--fold`. */
+const FOLDING_MS = 260;
 
 /** Projects, and accounts' parts, folded shut by the reader, kept on this
  *  device. */
@@ -94,6 +113,11 @@ export class Sidebar {
   private drawn = "";
   /** The conversations' menus, presses and renaming. */
   private readonly talkList: TalkList;
+  /** A project's "⋯". */
+  private readonly projectMenu = new ActsMenu();
+  /** Until when a folder opens or closes: drawing waits for it. */
+  private folding = 0;
+  private foldingTimer = 0;
 
   constructor(private readonly options: SidebarOptions) {
     const { words } = options;
@@ -159,6 +183,11 @@ export class Sidebar {
         options.newProject(loginsOf(options.store.world.peek()?.accounts).find((login) => `${login.hub}/${login.account}` === group) ?? null);
         return;
       }
+      const more = (event.target as HTMLElement).closest<HTMLElement>("[data-project-more]");
+      if (more) {
+        this.openProjectMenu(more);
+        return;
+      }
       const toggle = (event.target as HTMLElement).closest<HTMLElement>("[data-fold]");
       if (!toggle) return;
       event.preventDefault();
@@ -166,8 +195,21 @@ export class Sidebar {
       if (folded.has(key)) folded.delete(key);
       else folded.add(key);
       keepFolded();
+      // A project's folder opens and closes where it is, its conversations
+      // sliding in and out under it; the rest of the list is drawn again.
+      const place = toggle.closest<HTMLElement>(".project-place");
+      if (place && this.foldInPlace(place, !folded.has(key))) return;
       this.drawn = "";
       this.draw();
+    });
+    // A project held on a touch screen, or pressed with the right button,
+    // opens its "⋯" too.
+    this.list.addEventListener("contextmenu", (event) => {
+      const row = (event.target as HTMLElement).closest<HTMLElement>(".project-place");
+      const more = row?.querySelector<HTMLElement>("[data-project-more]");
+      if (!more) return;
+      event.preventDefault();
+      this.openProjectMenu(more);
     });
     effect(() => {
       options.store.world.get();
@@ -182,9 +224,28 @@ export class Sidebar {
 
   /** Draws again, as when the place shown changed. */
   draw(): void {
-    const { store, words } = this.options;
     // A name being typed is kept until it is done.
     if (this.talkList.held) return;
+    // A folder opening or closing is not cut short; the list is drawn as
+    // it stands once it has.
+    const wait = this.folding - performance.now();
+    if (wait > 0) {
+      clearTimeout(this.foldingTimer);
+      this.foldingTimer = window.setTimeout(() => this.draw(), wait);
+      return;
+    }
+    const html = this.compose();
+    if (html === this.drawn) return;
+    this.drawn = html;
+    redrawKeepingFocus(this.list, () => {
+      this.list.innerHTML = html;
+    });
+  }
+
+  /** The list as things now stand, and everything around it brought up to
+   *  date: the switcher, the new conversation's line, the foot. */
+  private compose(): string {
+    const { store, words } = this.options;
     const world = store.world.peek();
     const place = this.options.place();
     const now = store.clock.peek();
@@ -246,12 +307,7 @@ export class Sidebar {
     if (talking) body += this.archived(archived, place, now, facts);
 
     this.drawFoot(world, place);
-    const html = places + body;
-    if (html === this.drawn) return;
-    this.drawn = html;
-    redrawKeepingFocus(this.list, () => {
-      this.list.innerHTML = html;
-    });
+    return places + body;
   }
 
   /** The network shown, by name: its server's, or this computer's own while
@@ -344,20 +400,69 @@ export class Sidebar {
         const working = inside.some((r) => r.now?.activity === "busy");
         const current = (place.kind === "project" || place.kind === "journal" || place.kind === "page") && place.town === town;
         const shutMark = asking ? "mark-ask" : working ? "mark-busy" : "";
-        return `<li class="project-place${shut ? " shut" : ""}">
-          <div class="place-row">
-            <a class="place${current ? " current" : ""}" href="${link({ kind: "project", town })}"><span class="place-name">${escape(name)}</span>
-              ${shut && shutMark ? `<span class="mark ${shutMark}" aria-hidden="true"></span>` : ""}
-              ${shut && inside.length ? `<span class="count">${inside.length}</span>` : ""}</a>
-            ${inside.length ? `<button class="place-fold" type="button" data-fold="${escape(town)}" aria-expanded="${!shut}" aria-label="${escape(words.agentsIn(name))}">${glyph("chevron", 16)}</button>` : ""}
+        // Pressed, the folder opens and closes; its overview and the rest
+        // are in its "⋯". Shut, it says whether something in it waits or
+        // works, and how many are in it.
+        return `<li class="project-place${shut ? " shut" : ""}" data-town="${escape(town)}" data-name="${escape(name)}">
+          <div class="place-row project-row">
+            <button class="place project-fold${current ? " current" : ""}" type="button" data-fold="${escape(town)}" aria-expanded="${!shut}" aria-label="${escape(words.agentsIn(name))}"${current ? ' aria-current="page"' : ""}>
+              <span class="place-mark">${glyph(shut ? "folder" : "folder-open", 18)}</span><span class="place-name">${escape(name)}</span>
+              <span class="project-shut-marks">${shutMark ? `<span class="mark ${shutMark}" aria-hidden="true"></span>` : ""}${inside.length ? `<span class="count">${inside.length}</span>` : ""}</span>
+            </button>
+            ${this.options.projects ? `<button class="side-project-more" type="button" data-project-more="${escape(town)}" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(words.projectMore)}" title="${escape(words.projectMore)}">${glyph("more", 18)}</button>` : ""}
           </div>
-          ${shut || !inside.length ? "" : this.talks(inside, place, now, facts, town, "talks in-project")}
+          <div class="project-talks${shut ? " shut" : ""}"${shut ? " inert" : ""}><div class="project-talks-inner">${
+            inside.length ? this.talks(inside, place, now, facts, town, "talks in-project") : `<p class="project-empty">${escape(words.noTalks)}</p>`
+          }</div></div>
         </li>`;
       })
       .join("");
     return `<section class="sidebar-group"><h2 class="side-group-title">${escape(words.projects)}<button class="side-add" type="button" data-new-project="${escape(group ?? "")}" aria-label="${escape(words.newProject)}" title="${escape(words.newProject)}">${glyph("plus", 14)}</button></h2>
       ${rows ? `<ul class="projects-places">${rows}</ul>` : ""}
     </section>`;
+  }
+
+  /** Opens or closes a project's folder where it is: its mark, its state,
+   *  and its conversations sliding in or out, the list's drawing brought to
+   *  match without drawing it again. Says whether it could. */
+  private foldInPlace(place: HTMLElement, open: boolean): boolean {
+    const row = place.querySelector<HTMLElement>(".project-fold");
+    const talks = place.querySelector<HTMLElement>(".project-talks");
+    if (!row || !talks) return false;
+    place.classList.toggle("shut", !open);
+    talks.classList.toggle("shut", !open);
+    talks.inert = !open;
+    row.setAttribute("aria-expanded", String(open));
+    const mark = row.querySelector<HTMLElement>(".place-mark");
+    if (mark) mark.innerHTML = glyph(open ? "folder-open" : "folder", 18);
+    // The next drawing is the one that matches what is now shown.
+    this.drawn = this.compose();
+    this.folding = performance.now() + FOLDING_MS;
+    return true;
+  }
+
+  /** A project's "⋯": a new conversation in it, its overview, its record;
+   *  then sharing and handing it on where the reader may. */
+  private openProjectMenu(button: HTMLElement): void {
+    const projects = this.options.projects;
+    const place = button.closest<HTMLElement>(".project-place");
+    if (!projects || !place) return;
+    const { words } = this.options;
+    const town = place.dataset.town!;
+    const name = place.dataset.name ?? town;
+    const more = projects.acts(town);
+    const entries: MenuEntry[] = [
+      { act: "new", icon: "plus", label: words.projectNewTalk },
+      { act: "overview", icon: "page", label: words.projectOverview },
+      { act: "edit", icon: "edit", label: words.projectEdit },
+      ...(more.length ? [{ rule: true as const }, ...more] : []),
+    ];
+    this.projectMenu.open(button, name, entries, (act) => {
+      if (act === "new") projects.newTalk(town);
+      else if (act === "overview") projects.overview(town);
+      else if (act === "edit") projects.edit(town);
+      else projects.run(act, town, name);
+    });
   }
 
   /** The conversations in no project. */

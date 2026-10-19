@@ -4,6 +4,7 @@
 // `?s=home|claude|codex|project|journal|machines|settings|new`,
 // `?theme=…`, `?lang=en` and `?live` pick what to look at.
 
+import { followSwitches } from "./app/segment-slide";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { Attachment, UploadTarget } from "./world/attachments";
 import "katex/dist/katex.min.css";
@@ -911,6 +912,9 @@ function versionsHere(look: boolean): void {
   );
 }
 
+// A switch's chosen side slides to the one pressed, wherever it is drawn.
+followSwitches();
+
 const shell = new Shell({
   store,
   words: shellWords,
@@ -920,6 +924,18 @@ const shell = new Shell({
   acts: talkActs,
   menu: talkMenu,
   menuWords: talkMenuWords,
+  projects: {
+    newTalk: (town) => beginTalk(town),
+    overview: (town) => {
+      location.hash = link({ kind: "project", town });
+    },
+    edit: (town) => {
+      const record = store.world.peek()?.towns.find((one) => one.town === town)?.record;
+      if (record) projectForm.open({ town, record });
+    },
+    acts: (town) => projectActs.acts(town),
+    run: (act, town, name) => projectActs.run(act, town, name),
+  },
 });
 document.getElementById("app")!.append(shell.element);
 

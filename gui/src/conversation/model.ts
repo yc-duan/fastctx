@@ -1333,8 +1333,17 @@ export class Fold {
       this.stretches.set(turn, known);
       return `group-${turn}-${known[at]}`;
     };
+    // Questions asked without waiting show their answers in their own card.
+    const asked = new Set<string>();
+    for (const entry of this.entries) if (entry.kind === "question") asked.add(entry.item);
     for (const entry of this.entries) {
       if (entry.kind === "prose" && entry.prose === "message" && entry.writing && !entry.text.trim()) continue;
+      // The words that carry an answer are said by its card, not again
+      // below it; they still end the stretch before them, as words do.
+      if (entry.kind === "heard" && entry.reply && asked.has(entry.reply.item)) {
+        group = null;
+        continue;
+      }
       // A job's end is the World's word to the model alone; the jobs still
       // running are in the composer's panel (`world-gui.md`, 对话).
       if (entry.kind === "heard" && entry.notice?.kind === "job_ended" && entry.from?.kind !== "user") continue;

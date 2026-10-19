@@ -46,12 +46,15 @@
   opacity: 0.55;
 }
 
-/* The pop-up: wider than the other menus, for the chart; a page of a
-   notebook, its parts parted by ruled pencil lines. */
+/* The pop-up: wider than the other menus, for the chart. One quiet page:
+   its three figures in one size, everything else in the small size, one
+   weight throughout; its parts parted by ruled pencil lines. */
 .usage-pop {
   width: min(480px, 100%);
   max-height: min(80dvh, 680px);
   padding: var(--space-4) var(--space-4) var(--space-3);
+  font-size: var(--size-small);
+  color: var(--text-3);
 }
 
 /* On a phone it is a sheet from the bottom, as the model's panel is, the
@@ -91,14 +94,13 @@
 .talk-usage-figure {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   min-width: 0;
 }
 
 .talk-usage-big {
-  font-family: var(--font-reading);
-  font-size: 24px;
-  line-height: 1.15;
+  font-size: var(--size-figure);
+  line-height: 1.2;
   color: var(--text-strong);
   font-variant-numeric: tabular-nums;
 }
@@ -110,16 +112,13 @@
 .talk-usage-label {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   min-width: 0;
-  font-size: var(--size-small);
-  color: var(--text-3);
   white-space: nowrap;
 }
 
 .talk-usage-label > .glyph {
   flex: none;
-  opacity: 0.8;
 }
 
 .talk-usage-label > span {
@@ -127,10 +126,10 @@
   text-overflow: ellipsis;
 }
 
-/* The chart of how the cache served each request. */
+/* How the cache served each request: one thin line between two hairlines,
+   nothing coloured; the pointer's request marked where it rests. */
 .talk-chart {
   position: relative;
-  margin: 0 calc(-1 * var(--space-1));
 }
 
 .talk-chart svg {
@@ -139,60 +138,54 @@
 }
 
 .talk-chart-rule {
-  fill: var(--pen-rule);
+  stroke: var(--hairline);
+  stroke-width: 1;
 }
 
-.talk-chart-ink,
-.talk-chart-latest,
-.talk-chart-dot {
-  fill: var(--pen-clay);
+.talk-chart-line {
+  fill: none;
+  stroke: var(--text-2);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
 }
 
-.talk-chart-thread {
-  fill: var(--pen-graphite);
-  opacity: 0.55;
-}
-
-.talk-chart-mean {
-  fill: var(--pen-graphite);
-  opacity: 0.85;
-}
-
-.talk-chart-low {
-  fill: var(--caution);
+.talk-chart-latest {
+  fill: var(--text-2);
 }
 
 .talk-chart-axis {
   fill: var(--text-3);
   font-family: var(--font-reading);
-  font-size: 11px;
+  font-size: var(--size-small);
   font-variant-numeric: tabular-nums;
 }
 
 .talk-chart-hair {
-  stroke: var(--text-3);
+  stroke: var(--rail-line);
   stroke-width: 1;
-  opacity: 0.6;
+}
+
+.talk-chart-mark {
+  fill: var(--text-strong);
 }
 
 .talk-chart-readout {
   position: absolute;
-  top: -6px;
-  padding: 2px var(--space-2);
+  top: -10px;
+  padding: 1px var(--space-2);
   border-radius: var(--radius-s);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-pop);
-  font-size: var(--size-small);
-  color: var(--text-2);
+  color: var(--text-strong);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   pointer-events: none;
 }
 
-/* The whole conversation small, always: the stretch shown in a wash of clay
-   between two handles, the rest under a veil of paper. */
+/* The whole conversation small, always: a fainter line on a sunken strip,
+   the stretch shown between two short bars, the rest under a veil. */
 .talk-chart-brush {
-  margin-top: var(--space-1);
+  margin-top: var(--space-2);
   cursor: ew-resize;
   touch-action: none;
 }
@@ -208,143 +201,157 @@
   border-radius: var(--radius-s);
 }
 
+.talk-chart-track {
+  fill: var(--hairline);
+}
+
 .talk-chart-overview {
-  fill: var(--pen-graphite);
-  opacity: 0.75;
+  fill: none;
+  stroke: var(--text-3);
+  stroke-width: 1;
+  stroke-linejoin: round;
 }
 
-.talk-chart-window {
-  fill: color-mix(in srgb, var(--pen-clay) 15%, transparent);
-}
-
-.talk-chart-window.whole {
-  fill: color-mix(in srgb, var(--pen-clay) 5%, transparent);
+.talk-chart-overview-dot {
+  fill: var(--text-3);
 }
 
 .talk-chart-shade {
-  fill: color-mix(in srgb, var(--bg-elevated) 60%, transparent);
+  fill: color-mix(in srgb, var(--bg-elevated) 65%, transparent);
 }
 
-.talk-chart-handles {
-  fill: var(--pen-clay);
+.talk-chart-handle {
+  fill: var(--text-2);
 }
 
 .talk-chart-handles.whole {
-  opacity: 0.6;
+  opacity: 0.5;
 }
 
 /* What the stretch's prompts and answers were made of: how many and how
-   long, a bar of marker, and its inks named with how much. */
+   long, one flat bar, and its parts named with how much. */
 .talk-usage-spend {
   display: grid;
-  row-gap: 6px;
+  row-gap: var(--space-2);
   padding-top: var(--space-3);
 }
 
 .talk-usage-stretch {
-  font-size: var(--size-small);
-  color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
 
-.talk-usage-spend .ledger-parts {
-  height: 20px;
+.talk-usage-bar {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.talk-usage-bar > i {
+  min-width: 2px;
 }
 
 .talk-usage-keys {
   display: flex;
   flex-wrap: wrap;
   gap: 2px var(--space-4);
-  font-size: var(--size-small);
-  color: var(--text-3);
 }
 
 .talk-usage-key {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
 }
 
-.talk-usage-key > b {
-  font-weight: 400;
+.talk-usage-ink {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+}
+
+.talk-usage-amount {
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
 
-.talk-usage-mark {
-  flex: none;
-  width: 16px;
-  height: 8px;
-}
-
-/* At the foot: the account's windows as rings, and what it has cost. */
+/* At the foot: a bar for each of the account's windows, its figures in
+   columns, and what the conversation has cost. */
 .talk-usage-foot {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2) var(--space-5);
-}
-
-.talk-usage-ring {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.talk-usage-ring-face {
-  position: relative;
-  flex: none;
-  width: 44px;
-  height: 44px;
-}
-
-.talk-usage-ring-face svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-
-.talk-usage-ring-num {
-  position: absolute;
-  inset: 0;
   display: grid;
-  place-items: center;
-  font-size: 12.5px;
-  color: var(--text-strong);
-  font-variant-numeric: tabular-nums;
+  grid-template-columns: max-content minmax(0, 1fr) max-content max-content;
+  row-gap: var(--space-2);
+  column-gap: var(--space-3);
 }
 
-.talk-usage-ring-num small {
-  font-size: 9px;
-  color: var(--text-3);
-  margin-left: 1px;
+/* Each window's line shares the foot's columns, so the bars of all of them
+   begin and end together. */
+.talk-usage-limit {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
 }
 
-.talk-usage-ring-text {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
+.talk-usage-limit-name {
+  color: var(--text-2);
   white-space: nowrap;
 }
 
-.talk-usage-ring-name {
-  font-size: var(--size-small);
-  color: var(--text-2);
+.talk-usage-limit-track {
+  position: relative;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  overflow: hidden;
 }
 
-.talk-usage-ring-when {
-  font-size: 11.5px;
-  color: var(--text-3);
+.talk-usage-limit-track > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--pen-graphite);
+}
+
+.talk-usage-limit-used {
+  min-width: 3em;
+  text-align: right;
+  color: var(--text-2);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.talk-usage-limit-when {
+  min-width: 7.5em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.talk-usage-limit.high .talk-usage-limit-track > i {
+  background: var(--accent);
+}
+
+.talk-usage-limit.high .talk-usage-limit-used {
+  color: var(--accent);
+}
+
+.talk-usage-limit.spent .talk-usage-limit-track > i {
+  background: var(--wrong);
+}
+
+.talk-usage-limit.spent .talk-usage-limit-used {
+  color: var(--wrong);
 }
 
 .talk-usage-cost {
-  margin-left: auto;
-  font-size: var(--size-small);
-  color: var(--text-2);
+  grid-column: 1 / -1;
   font-variant-numeric: tabular-nums;
+}
+
+.talk-usage-limit + .talk-usage-cost {
+  margin-top: var(--space-1);
 }
 
 /* The dial that stands for the figures where they have no room. */
@@ -376,18 +383,15 @@
     grid-auto-columns: max-content;
     justify-content: space-between;
   }
-
-  .talk-usage-cost {
-    margin-left: 0;
-  }
 }
 
-/* The way to each step's context, quiet under the stretch's bar. */
+/* The way to each step's context, quiet under the stretch's parts. */
 .talk-usage-steps {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin: var(--space-2) 0 0 calc(-1 * var(--space-2));
+  gap: 2px;
+  justify-self: start;
+  margin: var(--space-1) 0 0 calc(-1 * var(--space-2));
   font-size: var(--size-small);
   color: var(--text-2);
 }
@@ -396,6 +400,7 @@
   color: var(--text-strong);
 }
 
-.talk-usage-steps .glyph:last-child {
+.usage-pop .talk-usage-steps .glyph {
+  color: var(--text-3);
   transform: rotate(-90deg);
 }
