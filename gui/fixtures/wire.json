@@ -8321,6 +8321,17 @@
               "output_tokens": 0,
               "reasoning_output_tokens": 0,
               "total_tokens": 18446744073709551615
+            },
+            "limits": {
+              "observed_at": "2026-10-12T14:20:00Z",
+              "windows": [
+                {
+                  "name": "codex",
+                  "minutes": 10080,
+                  "used_tenths": 90,
+                  "resets_at": "2026-10-15T18:00:00Z"
+                }
+              ]
             }
           },
           "last_message": null
@@ -8356,7 +8367,8 @@
               "cache_read_input_tokens": 20,
               "cache_creation_input_tokens": 30,
               "output_tokens": 40
-            }
+            },
+            "cost": 421337
           },
           "last_message": "last message"
         }
@@ -20626,6 +20638,31 @@
             "week": {
               "tokens": 61200000,
               "usd": 96400000
+            },
+            "day": {
+              "tokens": 2800000,
+              "usd": 4390000
+            },
+            "went": {
+              "models": [
+                {
+                  "model": "claude-opus-5-5",
+                  "tokens": 57300000,
+                  "usd": 90610000
+                }
+              ],
+              "tokens": {
+                "input": 610000,
+                "cache_read": 55300000,
+                "cache_write": 3700000,
+                "output": 1590000
+              },
+              "kinds_usd": {
+                "input": 2870000,
+                "cache_read": 28760000,
+                "cache_write": 23960000,
+                "output": 40810000
+              }
             }
           },
           {
@@ -20636,6 +20673,25 @@
             "week": {
               "tokens": 3900000,
               "usd": 5790000
+            },
+            "day": {
+              "tokens": 220000,
+              "usd": 310000
+            },
+            "went": {
+              "models": [
+                {
+                  "model": "claude-haiku-5-5",
+                  "tokens": 3900000,
+                  "usd": 5790000
+                }
+              ],
+              "tokens": {
+                "input": 40000,
+                "cache_read": 3600000,
+                "cache_write": 200000,
+                "output": 60000
+              }
             }
           }
         ],
@@ -20706,6 +20762,40 @@
               }
             ]
           }
+        ],
+        "weeks": [
+          {
+            "start": "2026-10-01T18:00:00Z",
+            "end": "2026-10-08T18:00:00Z",
+            "used_tenths": 470,
+            "used": [
+              {
+                "person": 0,
+                "tokens": 48100000,
+                "usd": 71020000,
+                "quota_tenths": 470
+              }
+            ]
+          },
+          {
+            "start": "2026-10-08T18:00:00Z",
+            "end": "2026-10-15T18:00:00Z",
+            "used_tenths": 640,
+            "used": [
+              {
+                "person": 0,
+                "tokens": 61200000,
+                "usd": 96400000,
+                "quota_tenths": 604
+              },
+              {
+                "person": 1,
+                "tokens": 3900000,
+                "usd": 5790000,
+                "quota_tenths": 36
+              }
+            ]
+          }
         ]
       },
       {
@@ -20761,6 +20851,31 @@
             "week": {
               "tokens": 61200000,
               "usd": 96400000
+            },
+            "day": {
+              "tokens": 2800000,
+              "usd": 4390000
+            },
+            "went": {
+              "models": [
+                {
+                  "model": "claude-opus-5-5",
+                  "tokens": 57300000,
+                  "usd": 90610000
+                }
+              ],
+              "tokens": {
+                "input": 610000,
+                "cache_read": 55300000,
+                "cache_write": 3700000,
+                "output": 1590000
+              },
+              "kinds_usd": {
+                "input": 2870000,
+                "cache_read": 28760000,
+                "cache_write": 23960000,
+                "output": 40810000
+              }
             }
           },
           {
@@ -20771,6 +20886,25 @@
             "week": {
               "tokens": 3900000,
               "usd": 5790000
+            },
+            "day": {
+              "tokens": 220000,
+              "usd": 310000
+            },
+            "went": {
+              "models": [
+                {
+                  "model": "claude-haiku-5-5",
+                  "tokens": 3900000,
+                  "usd": 5790000
+                }
+              ],
+              "tokens": {
+                "input": 40000,
+                "cache_read": 3600000,
+                "cache_write": 200000,
+                "output": 60000
+              }
             }
           }
         ],
@@ -20838,6 +20972,40 @@
                 "minutes": 10080,
                 "used_tenths": 640,
                 "resets_at": "2026-10-15T18:00:00Z"
+              }
+            ]
+          }
+        ],
+        "weeks": [
+          {
+            "start": "2026-10-01T18:00:00Z",
+            "end": "2026-10-08T18:00:00Z",
+            "used_tenths": 470,
+            "used": [
+              {
+                "person": 0,
+                "tokens": 48100000,
+                "usd": 71020000,
+                "quota_tenths": 470
+              }
+            ]
+          },
+          {
+            "start": "2026-10-08T18:00:00Z",
+            "end": "2026-10-15T18:00:00Z",
+            "used_tenths": 640,
+            "used": [
+              {
+                "person": 0,
+                "tokens": 61200000,
+                "usd": 96400000,
+                "quota_tenths": 604
+              },
+              {
+                "person": 1,
+                "tokens": 3900000,
+                "usd": 5790000,
+                "quota_tenths": 36
               }
             ]
           }

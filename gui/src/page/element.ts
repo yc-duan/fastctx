@@ -47,7 +47,7 @@ const shared = sheet(`
   .faint { color: var(--text-3); }
   .wrong { color: var(--wrong); }
   .label {
-    font-size: var(--size-small);
+    font-size: var(--body-size);
     color: var(--text-3);
   }
   button {

@@ -752,6 +752,16 @@ async function startSession($, context) {
   context.thought = ({ uuid, turn, item }) => streamEvent($, context, { kind: 'thought', uuid, turn, item })
 }
 
+// The session's figures as Claude Code's status line has them, its cost
+// total among them; none where it cannot say.
+async function sessionUsage($) {
+  try {
+    return await $.session.usage()
+  } catch {
+    return null
+  }
+}
+
 async function startTurn($, context, e, next) {
   // A subagent's run is a turn of its own loop: the main loop's turn, its
   // state and what it takes are untouched (Claude Code reports one since
@@ -760,6 +770,10 @@ async function startTurn($, context, e, next) {
   await startControlTurn($, e)
   context.busy = true
   context.turn = e.turnId
+  // The session's cost total as the turn begins: what it has risen by at
+  // the turn's end is what the turn cost (`completeTurn`).
+  const usage = await sessionUsage($)
+  context.spentBefore = { turn: e.turnId, usd: usage?.cost?.usd }
   // The rows of this plugin's prompts kept since the last turn began are
   // what this turn takes (`submit`).
   const took = context.accepted.splice(0, context.entered)
@@ -794,9 +808,19 @@ async function completeTurn($, context, e, next) {
     return next(e)
   }
   await context.shown.end(reports($, context), e.turnId)
+  // The session's figures as the turn ends reach the node ahead of the end
+  // itself, so its ledger and the account's windows stand as the turn left
+  // them; what the cost total rose by since the turn began is the turn's.
+  const usage = await sessionUsage($)
+  if (usage) await reports($, context).event('session', { happened: { event: 'changed', turn: null, change: { kind: 'usage', usage } } })
+  const before = context.spentBefore?.turn === e.turnId ? context.spentBefore.usd : undefined
+  const total = usage?.cost?.usd
+  const spent = typeof total === 'number' && typeof before === 'number' ? (total >= before ? total - before : total) : null
+  if (context.spentBefore?.turn === e.turnId) context.spentBefore = null
   if (context.turn === e.turnId) { context.busy = false; context.turn = null }
   const completed = event($, context, 'turn_complete', {
     turn: e.turnId,
+    spent,
     aborted: e.isAborted,
     reason: e.reason,
     refusal: e.reason === 'refusal' ? e.refusal : null,

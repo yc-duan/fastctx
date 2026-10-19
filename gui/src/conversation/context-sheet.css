@@ -20,7 +20,7 @@
   display: inline-flex;
   align-items: baseline;
   gap: 6px;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -99,7 +99,7 @@
 .ctx-compact-said {
   fill: var(--pen-clay);
   font-family: var(--font-reading);
-  font-size: 11px;
+  font-size: var(--size-text);
 }
 
 /* What a step added, beside the pointer: a solid card over the drawing. */
@@ -122,7 +122,7 @@
 
 .ctx-tip-head {
   margin: 0 0 4px;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   font-family: var(--font-emphasis);
   font-weight: 400;
   color: var(--text-strong);
@@ -135,7 +135,7 @@
   align-items: center;
   gap: 8px;
   margin: 2px 0 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -164,7 +164,7 @@
   flex-wrap: wrap;
   gap: var(--space-1) var(--space-4);
   margin: var(--space-2) 0 0 46px;
-  font-size: var(--size-small);
+  font-size: var(--size-fine);
   color: var(--text-3);
 }
 
@@ -243,7 +243,7 @@
   background: var(--fill);
   color: var(--text);
   font: inherit;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   text-align: left;
 }
 
@@ -285,7 +285,7 @@ button.ctx-row:hover {
 }
 
 .ctx-row-step {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -308,7 +308,7 @@ button.ctx-row:hover {
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-m);
   background: var(--fill);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 

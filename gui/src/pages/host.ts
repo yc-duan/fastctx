@@ -94,7 +94,7 @@ const VARIABLES: Record<string, string> = {
   "--font-weight-semibold": "400",
   "--font-weight-bold": "400",
   "--font-text-xs-size": "12px",
-  "--font-text-sm-size": "var(--size-small)",
+  "--font-text-sm-size": "var(--size-fine)",
   "--font-text-md-size": "var(--body-size)",
   "--font-text-lg-size": "var(--size-h3)",
   "--font-heading-xs-size": "var(--body-size)",

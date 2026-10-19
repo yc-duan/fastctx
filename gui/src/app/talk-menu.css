@@ -112,7 +112,7 @@
 .talk-row.deleting .talk-state {
   grid-column: 3 / 5;
   justify-self: end;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   white-space: nowrap;
 }
@@ -157,7 +157,7 @@
   background: transparent;
   color: var(--text-3);
   font: inherit;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   text-align: left;
   cursor: pointer;
   transition: color var(--hover) ease;
@@ -239,7 +239,7 @@
   background: transparent;
   color: var(--text-2);
   font: inherit;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   text-align: left;
   cursor: pointer;
 }
@@ -317,13 +317,13 @@
   margin: 0;
   padding: 6px 10px 4px;
   color: var(--text-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
 }
 
 /* Moving: back to the acts, then each project, the one it is in ticked. */
 .talk-menu-back {
   color: var(--text-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
 }
 
 .talk-menu-check {
@@ -478,7 +478,7 @@
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
   color: var(--text-2);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
 }
 
 .talk-toast[hidden] {
@@ -515,7 +515,7 @@
   background: var(--fill);
   color: var(--text-strong);
   font: inherit;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   cursor: pointer;
 }
 
@@ -553,11 +553,11 @@
   border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--wrong) 12%, transparent);
   color: var(--text-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
 }
 
 .forget-also {
   margin: var(--space-3) 0 0;
   color: var(--text-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
 }

@@ -34,13 +34,13 @@
   column-gap: var(--space-4);
   row-gap: var(--space-2);
   margin: 0;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
 }
 
 .facts dt {
-  font-size: var(--size-small);
-  line-height: calc(var(--size-ui) * var(--leading-ui));
+  font-size: var(--size-text);
+  line-height: calc(var(--size-text) * var(--leading-ui));
   color: var(--text-3);
 }
 
@@ -76,7 +76,7 @@
 .machine-jobs {
   margin: var(--space-1) 0 0;
   padding-left: calc(8px + 2px + var(--space-2));
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -98,7 +98,7 @@
   border-radius: var(--radius-full);
   background: var(--fill);
   color: var(--text-2);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   text-decoration: none;
   transition: color var(--hover) ease, background-color var(--hover) ease;
 }
@@ -129,7 +129,7 @@
 .quiet-button {
   height: 28px;
   color: var(--text-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
 }
 
 /* Meeting the World: the mark, a line on what it is, this computer, and
@@ -226,7 +226,7 @@
   padding: var(--space-3);
   border-radius: var(--radius-s);
   background: var(--surface-code);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -283,7 +283,7 @@
 }
 
 .welcome-way-what {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -291,14 +291,14 @@
    what making a World asks of the machine the hub goes on. */
 .welcome-hub-is {
   margin: var(--space-4) 0 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
   color: var(--text-3);
 }
 
 .welcome-form-what {
   margin: var(--space-1) 0 var(--space-4);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -327,7 +327,7 @@
 }
 
 .reach-virtual {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -346,7 +346,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -389,7 +389,7 @@
   flex-wrap: wrap;
   align-items: baseline;
   column-gap: var(--space-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -437,7 +437,7 @@
   min-height: 0;
   height: auto;
   padding: 0 var(--space-1);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
 }
 
 /* An agent on a machine, then each of its logins under it, set in by a
@@ -467,7 +467,7 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -491,7 +491,7 @@
   padding: 0 6px;
   border-radius: var(--radius-full);
   background: var(--fill-strong);
-  font-size: calc(var(--size-small) - 1px);
+  font-size: var(--size-text);
   line-height: 1.55;
   color: var(--text-3);
 }
@@ -563,19 +563,19 @@
 .home-add-dir::placeholder {
   color: var(--text-3);
   font-family: var(--font-reading);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
 }
 
 .home-add .text-button {
   height: 28px;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
 }
 
 .machine-hosts-asking,
 .machine-note {
   margin: var(--space-2) 0 0;
   padding-left: calc(8px + 2px + var(--space-2));
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -589,7 +589,7 @@
   box-shadow: inset 0 -1px 0 var(--rule);
   font-family: var(--font-code);
   font-variation-settings: var(--code-axes);
-  font-size: var(--size-small);
+  font-size: var(--size-fine);
   text-align: center;
   color: var(--text-2);
 }
@@ -625,7 +625,7 @@
 .settings-said {
   flex: 1 1 100%;
   margin: var(--space-1) 0 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -651,7 +651,7 @@
 
 .path-row code {
   font-family: var(--font-code);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   overflow-wrap: anywhere;
 }
@@ -660,7 +660,7 @@
 .settings-notes {
   flex: 1 1 100%;
   margin: var(--space-1) 0 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
   line-height: var(--leading-prose);
   white-space: pre-wrap;
@@ -671,7 +671,7 @@
   flex: 1 1 100%;
   margin: var(--space-1) 0 var(--space-2);
   padding-left: 1.4em;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
   line-height: var(--leading-prose);
 }
@@ -681,13 +681,13 @@
 }
 
 .facts .settings-legacy {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
 .welcome-legacy {
   margin: var(--space-2) 0 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -703,7 +703,7 @@
 .reader-facts {
   width: var(--board);
   margin: var(--space-2) auto var(--space-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   overflow-wrap: anywhere;
 }
@@ -746,7 +746,7 @@
   background: var(--surface-code);
   font-family: var(--font-code);
   font-variation-settings: var(--code-axes);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -809,7 +809,7 @@ a.details-job {
   justify-content: space-between;
   gap: var(--space-3);
   padding: 0 0 var(--space-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
@@ -839,7 +839,7 @@ a.details-job {
   gap: var(--space-2);
   min-height: 18px;
   margin: calc(-1 * var(--space-1)) 0 var(--space-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -887,7 +887,7 @@ a.details-job {
   border-radius: var(--radius-l);
   background: var(--accent-wash);
   color: var(--text-strong);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   transition: background-color var(--hover) ease;
 }
 
@@ -948,7 +948,7 @@ a.details-job {
 
 .welcome-done-who {
   margin: 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -970,7 +970,7 @@ a.details-job {
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
   border-radius: var(--radius-m);
   background: var(--fill);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text);
 }
 
@@ -1007,7 +1007,7 @@ a.details-job {
   padding: 4px 16px;
   border-radius: var(--radius-full);
   color: var(--text-2);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
   transition: color var(--hover) ease, background-color var(--hover) ease;
 }
@@ -1057,7 +1057,7 @@ a.details-job {
   border-radius: var(--radius-s);
   background: var(--fill);
   color: var(--text-2);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   transition: color var(--hover) ease, background-color var(--hover) ease;
 }
 
@@ -1091,7 +1091,7 @@ a.details-job {
   border-radius: var(--radius-m);
   background: var(--fill);
   color: var(--text-strong);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   word-break: break-all;
 }
 
@@ -1103,7 +1103,7 @@ a.details-job {
 /* The server being added, above its steps. */
 .remote-host {
   margin: 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -1121,13 +1121,13 @@ a.details-job {
 
 .remote-found-title {
   margin: 0;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text-strong);
 }
 
 .remote-found-at {
   margin: var(--space-1) 0 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -1215,7 +1215,7 @@ a.details-job {
 
 .device-added {
   margin: var(--space-3) 0;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text);
 }
 

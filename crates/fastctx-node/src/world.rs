@@ -928,7 +928,7 @@ impl fastctx_net::link::Node for Handler {
                     .map(|activity| RemoteReply::AgentActivity { activity: Box::new(activity) }),
                 RemoteCall::Offers { resident } => crate::control::offers_here(&node, &resident)
                     .await
-                    .map(|offers| RemoteReply::Offers(Box::new(offers))),
+                    .map(|offers| RemoteReply::Offers(Box::new(crate::admission::seen::offers(&asker, offers)))),
                 RemoteCall::Look { id } => {
                     let (looked, mut jobs) = crate::look::look_here(&node, &id).await?;
                     jobs.retain(|job| crate::admission::seen::job(&node, &asker, job));

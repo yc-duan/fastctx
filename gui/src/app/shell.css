@@ -216,7 +216,7 @@ body {
 
 .count {
   flex: none;
-  font-size: var(--size-small);
+  font-size: var(--size-fine);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
@@ -228,7 +228,7 @@ body {
 .sidebar-trouble {
   margin: var(--space-1) 0 0;
   padding: 0 var(--space-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--caution);
 }
 
@@ -241,7 +241,7 @@ body {
   padding: 0 var(--space-3);
   font-family: var(--font-reading);
   font-weight: 400;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   letter-spacing: 0.04em;
   color: var(--text-3);
 }
@@ -399,7 +399,7 @@ body {
 .project-empty {
   margin: 1px 0 var(--space-1);
   padding: 6px var(--space-3) 6px calc(var(--space-3) + 28px);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -510,7 +510,7 @@ body {
 
 .talk-all {
   color: var(--text-3);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
 }
 
 .talk-all .count {
@@ -788,7 +788,7 @@ html.framed .page-head {
   border-radius: var(--radius-s);
   background: var(--text-strong);
   color: var(--bg);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: 1.45;
   white-space: pre-line;
   pointer-events: none;
@@ -842,7 +842,7 @@ html.framed .page-head {
   background: var(--field);
   color: var(--text);
   font: inherit;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
 }
 
 .talks-search:focus {
@@ -856,7 +856,7 @@ html.framed .page-head {
 .talks-none {
   margin-top: var(--space-6);
   color: var(--text-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
 }
 
 /* At the foot of every conversation, the way on to the archived ones. */
@@ -869,7 +869,7 @@ html.framed .page-head {
   padding: 4px var(--space-3);
   border-radius: var(--radius-s);
   color: var(--text-3);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   text-decoration: none;
   transition: color var(--hover) ease, background-color var(--hover) ease;
 }
@@ -1028,7 +1028,7 @@ html.framed .page-head {
 }
 
 .network-row-note {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 

@@ -75,7 +75,7 @@
   margin: 0 0 var(--space-3);
   font-family: var(--font-reading);
   font-weight: 400;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   letter-spacing: 0.04em;
 }
@@ -98,7 +98,7 @@
 .quiet,
 .idle {
   margin: 0;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -113,14 +113,14 @@
   border-radius: var(--radius-full);
   background: var(--hairline);
   color: var(--text-2);
-  font-size: var(--size-small);
+  font-size: var(--size-fine);
   line-height: 1.6;
   white-space: nowrap;
 }
 
 .detail {
   display: block;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -148,7 +148,7 @@
 }
 
 .someone .rail {
-  height: calc(var(--size-ui) * var(--leading-ui));
+  height: calc(var(--size-text) * var(--leading-ui));
   display: grid;
   place-items: center;
 }
@@ -202,7 +202,7 @@
   align-items: baseline;
   gap: var(--space-2);
   min-width: 0;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
 }
 
@@ -215,7 +215,7 @@
 .someone-since {
   margin-left: auto;
   padding-left: var(--space-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -224,7 +224,7 @@
 .someone-origin,
 .someone-doing,
 .someone-trouble {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
   color: var(--text-3);
   overflow: hidden;
@@ -276,7 +276,7 @@
   column-gap: var(--space-3);
   row-gap: 2px;
   padding: var(--space-2) 0;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
 }
 
 .job-id {
@@ -288,7 +288,7 @@
 
 .job-where {
   color: var(--text-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   align-self: center;
 }
 

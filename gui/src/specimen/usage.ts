@@ -4,11 +4,13 @@
 // a run of days now and then with nothing. The desktop's Codex work login
 // assists ada and bo; its Claude Code assists ada up to $20 a week; bo's gpu
 // is used by bo and, now and then, by the desktop's user; render's Claude
-// assists yc, who sees only their own. The week follows each login's
-// seven-day window, and its readings climb to what its limits say now.
+// assists yc, who sees only their own and nothing of its account's windows.
+// The week follows each login's seven-day window, and its readings climb to
+// what its limits say now; the reset weeks go back to when the login was
+// first read, a dozen weeks at most, each with its share of the window.
 
 import type { HubAccount } from "../world/accounts";
-import type { UsageHour, UsagePerson, UsageReading, UsageReport } from "../world/usage";
+import type { UsageHour, UsagePerson, UsageReading, UsageReport, UsageSpan, WeekUse } from "../world/usage";
 
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
@@ -36,6 +38,8 @@ interface Specimen {
   resetsIn: number;
   /** A plan with a weekly window and no five-hour one. */
   weekOnly?: boolean;
+  /** Read by an account the login only assists. */
+  assisted?: boolean;
 }
 
 const home = (account: string): HubAccount => ({ hub: "w-5be1fcee3751dc7a", account });
@@ -68,7 +72,7 @@ const SPECIMENS: Record<string, Specimen> = {
   "gpu|claude|/home/bo/.claude": { people: [{ account: null, daily: 22, weekday: 0.8, weekend: 0.6, since: 220, owl: true }, { account: home("me"), daily: 9, weekday: 0.3, weekend: 0.1, since: 90 }], claude: true, week: 0.38, five: 0.12, resetsIn: 5 * DAY },
   "lab|codex|/home/me/.codex": { people: [{ account: null, daily: 2, weekday: 0.4, weekend: 0.1, since: 120 }], claude: false, week: 0.05, five: 0, resetsIn: 6 * DAY },
   "build|codex|/home/ops/.codex": { people: [{ account: null, daily: 7, weekday: 0.8, weekend: 0.1, since: 300 }, { account: acme("yc"), daily: 4, weekday: 0.6, weekend: 0.1, since: 80 }], claude: false, week: 0.44, five: 0.2, resetsIn: 4 * DAY },
-  "render|claude|/home/ops/.claude": { people: [{ account: acme("yc"), daily: 11, weekday: 0.75, weekend: 0.2, since: 70 }], claude: true, week: 0.52, five: 0.33, resetsIn: DAY + 18 * HOUR },
+  "render|claude|/home/ops/.claude": { people: [{ account: acme("yc"), daily: 11, weekday: 0.75, weekend: 0.2, since: 70 }], claude: true, week: 0.52, five: 0.33, resetsIn: DAY + 18 * HOUR, assisted: true },
 };
 
 /** How a day's use falls over its hours: busy mornings and afternoons, a
@@ -133,44 +137,101 @@ export function specimenUsage(machine: string, agent: string, dir: string, at: D
     });
   }
   hours.sort((a, b) => a.at.localeCompare(b.at));
-  const people: UsagePerson[] = specimen.people.map((person, index) => ({ account: person.account, week: { tokens: weekly[index]!.tokens, ...(specimen.claude ? { usd: weekly[index]!.usd } : {}) } }));
+  const lastDay = specimen.people.map(() => ({ tokens: 0, usd: 0 }));
+  for (const hour of hours) {
+    if (Date.parse(hour.at) < now - DAY) continue;
+    lastDay[hour.person]!.tokens += hour.tokens;
+    lastDay[hour.person]!.usd += hour.usd ?? 0;
+  }
+  // Each person leans to a model and a cache of their own, so their weeks
+  // differ from everyone's.
+  const people: UsagePerson[] = specimen.people.map((person, index) => ({
+    account: person.account,
+    week: { tokens: weekly[index]!.tokens, ...(specimen.claude ? { usd: weekly[index]!.usd } : {}) },
+    day: { tokens: lastDay[index]!.tokens, ...(specimen.claude ? { usd: lastDay[index]!.usd } : {}) },
+    went: went(specimen.claude, weekly[index]!.tokens, weekly[index]!.usd, index),
+  }));
   const tokens = weekly.reduce((sum, one) => sum + one.tokens, 0);
   const spent = weekly.reduce((sum, one) => sum + one.usd, 0);
-  const split = specimen.claude ? { input: 0.01, cache_read: 0.905, cache_write: 0.06, output: 0.025, reasoning: 0 } : { input: 0.24, cache_read: 0.69, cache_write: 0, output: 0.05, reasoning: 0.02 };
-  const weekTokens = Object.fromEntries(Object.entries(split).map(([kind, share]) => [kind, Math.round(tokens * share)]));
-  const weights = { input: split.input, cache_read: split.cache_read * 0.1, cache_write: split.cache_write * 1.25, output: split.output * 5 };
-  const weightSum = Object.values(weights).reduce((a, b) => a + b, 0);
-  const models = specimen.claude
-    ? [
-        ["claude-opus-5-5", 0.78],
-        ["claude-sonnet-5-5", 0.16],
-        ["claude-haiku-5-5", 0.06],
-      ]
-    : [
-        ["gpt-6.1-sol", 0.81],
-        ["gpt-6-luna", 0.19],
-      ];
   return Promise.resolve({
     people,
     hours,
-    week: {
-      start: new Date(start).toISOString(),
-      end: new Date(end).toISOString(),
-      window: true,
-      models: models.map(([model, share]) => ({ model: model as string, tokens: Math.round(tokens * (share as number)), ...(specimen.claude ? { usd: Math.round(spent * (share as number)) } : {}) })),
-      tokens: weekTokens,
-      ...(specimen.claude
-        ? {
-            kinds_usd: {
-              input: Math.round((spent * weights.input) / weightSum),
-              cache_read: Math.round((spent * weights.cache_read) / weightSum),
-              cache_write: Math.round((spent * weights.cache_write) / weightSum),
-              output: Math.round((spent * weights.output) / weightSum),
-            },
-          }
-        : {}),
-    },
-    readings: readings(hours, start, now, specimen),
+    week: { start: new Date(start).toISOString(), end: new Date(end).toISOString(), window: true, ...went(specimen.claude, tokens, spent, 0) },
+    readings: specimen.assisted ? [] : readings(hours, start, now, specimen),
+    weeks: weeks(hours, start, specimen),
+  });
+}
+
+/** What a week went to: a person's models and kinds, the first person's
+ *  mix being everyone's. */
+function went(claude: boolean, tokens: number, spent: number, lean: number): WeekUse {
+  const split = claude
+    ? { input: 0.01, cache_read: 0.905 - lean * 0.06, cache_write: 0.06 + lean * 0.04, output: 0.025 + lean * 0.02, reasoning: 0 }
+    : { input: 0.24 + lean * 0.06, cache_read: 0.69 - lean * 0.08, cache_write: 0, output: 0.05 + lean * 0.015, reasoning: 0.02 + lean * 0.005 };
+  const weights = { input: split.input, cache_read: split.cache_read * 0.1, cache_write: split.cache_write * 1.25, output: split.output * 5 };
+  const weightSum = Object.values(weights).reduce((a, b) => a + b, 0);
+  const models = claude
+    ? [
+        ["claude-opus-5-5", Math.max(0.1, 0.78 - lean * 0.3)],
+        ["claude-sonnet-5-5", 0.16 + lean * 0.22],
+        ["claude-haiku-5-5", 0.06 + lean * 0.08],
+      ]
+    : [
+        ["gpt-6.1-sol", Math.max(0.2, 0.81 - lean * 0.25)],
+        ["gpt-6-luna", 0.19 + lean * 0.25],
+      ];
+  const shares = models.reduce((sum, [, share]) => sum + (share as number), 0);
+  return {
+    models: models
+      .map(([model, share]) => ({ model: model as string, tokens: Math.round((tokens * (share as number)) / shares), ...(claude ? { usd: Math.round((spent * (share as number)) / shares) } : {}) }))
+      .sort((a, b) => (b.usd ?? 0) - (a.usd ?? 0) || b.tokens - a.tokens),
+    tokens: Object.fromEntries(Object.entries(split).map(([kind, share]) => [kind, Math.round(tokens * share)])),
+    ...(claude
+      ? {
+          kinds_usd: {
+            input: Math.round((spent * weights.input) / weightSum),
+            cache_read: Math.round((spent * weights.cache_read) / weightSum),
+            cache_write: Math.round((spent * weights.cache_write) / weightSum),
+            output: Math.round((spent * weights.output) / weightSum),
+          },
+        }
+      : {}),
+  };
+}
+
+/** The login's reset weeks since it was first read, a dozen at most: what
+ *  each person used in each, and, but to an account it only assists, the
+ *  share of the window each week reached, the past ones in step with what
+ *  they used, shared out by what each used. */
+function weeks(hours: UsageHour[], start: number, specimen: Specimen): UsageSpan[] {
+  const first = Math.min(12, Math.max(1, Math.floor(Math.max(...specimen.people.map((person) => person.since)) / 7)));
+  const spans = Array.from({ length: first }, (_, index) => start - (first - 1 - index) * 7 * DAY);
+  const sums = spans.map(() => specimen.people.map(() => ({ tokens: 0, usd: 0 })));
+  for (const hour of hours) {
+    const at = Date.parse(hour.at);
+    const index = spans.findIndex((from) => at >= from && at < from + 7 * DAY);
+    if (index < 0) continue;
+    sums[index]![hour.person]!.tokens += hour.tokens;
+    sums[index]![hour.person]!.usd += hour.usd ?? 0;
+  }
+  const value = (sum: { tokens: number; usd: number }) => (specimen.claude ? sum.usd : sum.tokens);
+  const totals = sums.map((week) => week.reduce((all, sum) => all + value(sum), 0));
+  const now = totals[totals.length - 1] || 1;
+  return spans.map((from, index) => {
+    const reached = index === spans.length - 1 ? specimen.week : Math.min(1, (specimen.week * totals[index]!) / now);
+    return {
+      start: new Date(from).toISOString(),
+      end: new Date(from + 7 * DAY).toISOString(),
+      ...(specimen.assisted ? {} : { used_tenths: Math.round(reached * 1000) }),
+      used: sums[index]!
+        .map((sum, person) => ({
+          person,
+          tokens: sum.tokens,
+          ...(specimen.claude ? { usd: sum.usd } : {}),
+          ...(specimen.assisted ? {} : { quota_tenths: Math.round((reached * 1000 * value(sum)) / (totals[index] || 1)) }),
+        }))
+        .filter((share) => share.tokens > 0),
+    };
   });
 }
 

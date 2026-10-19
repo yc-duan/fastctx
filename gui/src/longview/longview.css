@@ -30,21 +30,21 @@
 .lv-viewer-head, .lv-viewer-tools { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .lv-viewer-head { min-height: 32px; }
 .lv-viewer-head strong { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-emphasis); font-weight: 400; color: var(--text-strong); }
-.lv-viewer-count { flex: none; font-size: var(--size-small); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.lv-viewer-count { flex: none; font-size: var(--size-fine); color: var(--text-3); font-variant-numeric: tabular-nums; }
 .lv-viewer-sources { flex: none; display: flex; gap: 2px; margin-left: auto; }
-.lv-viewer-sources button { height: 26px; padding: 0 var(--space-2); border-radius: var(--radius-full); font-size: var(--size-small); color: var(--text-2); white-space: nowrap; transition: background-color var(--hover) ease, color var(--hover) ease; }
+.lv-viewer-sources button { height: 26px; padding: 0 var(--space-2); border-radius: var(--radius-full); font-size: var(--size-text); color: var(--text-2); white-space: nowrap; transition: background-color var(--hover) ease, color var(--hover) ease; }
 .lv-viewer-sources button:hover { color: var(--text); }
 .lv-viewer-sources button[aria-pressed="true"] { background: var(--accent-wash); color: var(--text); }
 .lv-viewer-close { flex: none; margin-left: auto; margin-right: -6px; }
 .lv-viewer-sources + .lv-viewer-close { margin-left: var(--space-1); }
 .lv-search-form { flex: 0 1 380px; min-width: 0; display: flex; align-items: center; gap: 2px; height: 32px; padding: 0 3px 0 var(--space-2); border-radius: var(--radius-m); background: var(--field); color: var(--text-3); }
-.lv-search-form input { flex: 1; width: 0; min-width: 0; height: 100%; margin-left: 6px; padding: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: var(--size-small); color: var(--text); }
+.lv-search-form input { flex: 1; width: 0; min-width: 0; height: 100%; margin-left: 6px; padding: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: var(--size-text); color: var(--text); }
 .lv-search-form input::-webkit-search-cancel-button { display: none; }
 .lv-search-form .icon-button { flex: none; width: 26px; height: 26px; color: var(--text-3); }
 .lv-search-form .lv-previous .glyph { transform: rotate(180deg); }
 .lv-jump-form { flex: none; display: flex; }
-.lv-jump-form input { width: 6.5em; height: 32px; padding: 0 var(--space-2); border: 0; outline: 0; border-radius: var(--radius-m); background: var(--field); font: inherit; font-size: var(--size-small); color: var(--text); }
-.lv-viewer-message { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--size-small); color: var(--text-3); }
+.lv-jump-form input { width: 6.5em; height: 32px; padding: 0 var(--space-2); border: 0; outline: 0; border-radius: var(--radius-m); background: var(--field); font: inherit; font-size: var(--size-text); color: var(--text); }
+.lv-viewer-message { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--size-text); color: var(--text-3); }
 .lv-viewer-body { flex: 1; min-height: 0; min-width: 0; }
 .lv-viewer-body > .lv-viewport { height: 100%; }
 .lv-fold [hidden] { display: none !important; }

@@ -88,7 +88,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   white-space: nowrap;
 }
@@ -99,7 +99,7 @@
 
 .who-state {
   flex: none;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--caution);
   white-space: nowrap;
 }
@@ -259,7 +259,7 @@
   background: transparent;
   color: var(--text-2);
   font: inherit;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   cursor: pointer;
   transition: color var(--hover) ease, background-color var(--hover) ease;
 }
@@ -338,7 +338,7 @@
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
   border-radius: var(--radius-l);
   background: var(--fill);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
   color: var(--text-2);
 }
@@ -542,7 +542,7 @@
   padding: 5px var(--space-3);
   border-radius: var(--radius-s);
   cursor: pointer;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
 }
 
 .composer-menu.models .menu-row,
@@ -569,19 +569,19 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
 .menu-source {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   white-space: nowrap;
 }
 
 .menu-empty {
   padding: var(--space-2) var(--space-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -701,12 +701,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text);
 }
 
 .attach-fact {
-  font-size: 12px;
+  font-size: var(--size-text);
   color: var(--text-3);
   white-space: nowrap;
   overflow: hidden;
@@ -719,7 +719,7 @@
 
 .attach-act {
   flex: none;
-  font-size: 12px;
+  font-size: var(--size-text);
   color: var(--accent);
 }
 
@@ -799,7 +799,7 @@
   border-radius: var(--radius-m);
   background: var(--bg);
   background: color-mix(in srgb, var(--caution) 14%, transparent);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
   color: var(--text-2);
 }
@@ -841,7 +841,7 @@ button.composer-context[hidden] {
 
 .usage-title {
   margin-bottom: var(--space-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -884,13 +884,13 @@ button.composer-context[hidden] {
 }
 
 .said-name {
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text);
   overflow-wrap: anywhere;
 }
 
 .said-what {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -917,12 +917,12 @@ button.composer-context[hidden] {
 }
 
 .usage-name {
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text);
 }
 
 .usage-fact {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
@@ -972,7 +972,7 @@ button.composer-context[hidden] {
   padding: 2px 0;
   border-radius: var(--radius-m);
   background: var(--fill);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
 }
 
 .send-queue[hidden] {
@@ -981,7 +981,7 @@ button.composer-context[hidden] {
 
 .queue-head {
   padding: 6px var(--space-3) 4px;
-  font-size: 12px;
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -1018,7 +1018,7 @@ button.composer-context[hidden] {
 
 .queue-state {
   flex: none;
-  font-size: 12px;
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -1091,7 +1091,7 @@ button.composer-context[hidden] {
 
 .queue-files {
   flex: none;
-  font-size: 12px;
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -1111,7 +1111,7 @@ button.composer-context[hidden] {
 .queue-acts .text-button {
   min-height: 26px;
   padding: 0 var(--space-2);
-  font-size: 12px;
+  font-size: var(--size-text);
 }
 
 .queue-now .glyph {
@@ -1136,7 +1136,7 @@ button.composer-context[hidden] {
   background: var(--field);
   color: var(--text);
   font: inherit;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
 }
 

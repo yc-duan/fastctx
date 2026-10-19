@@ -176,8 +176,9 @@ function others(): WorldLogins["machines"] {
   const server = scanned("server", "codex", "/root/.codex", null, null, false);
   const render = scanned("render", "claude", "/home/ops/.claude", "ops@acme.example", "max", false);
   // What render shows an account it assists: its listed assisting login
-  // alone, without its scan.
+  // alone, without its scan or its account's windows.
   delete render.scan;
+  render.claude.listed = render.claude.listed.map((login) => ({ ...login, limits: { kind: "unavailable", reason: "the windows of the login's account are its owner's to see" } }));
   return [
     { kind: "answered", logins: { ...lab, codex: { ...lab.codex, listed: lab.codex.listed.map((login) => ({ ...login, limits: { kind: "unavailable", reason: "not read yet" } })) } } },
     { kind: "answered", logins: { ...server, codex: { programs: [], listed: [], candidates: [], elsewhere: [] } } },

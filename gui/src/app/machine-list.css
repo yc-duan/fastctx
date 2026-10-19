@@ -30,7 +30,7 @@
   background: none;
   color: var(--text-3);
   font: inherit;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   transition: color var(--hover) ease, background-color var(--hover) ease;
 }
 
@@ -95,7 +95,7 @@
   padding: 0 var(--space-3);
   font-family: var(--font-reading);
   font-weight: 400;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   letter-spacing: 0.02em;
   color: var(--text-2);
 }
@@ -184,7 +184,7 @@
   background: transparent;
   color: var(--text-2);
   font: inherit;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   text-align: left;
   text-decoration: none;
   cursor: pointer;
@@ -217,7 +217,7 @@
   align-items: center;
   min-width: 0;
   padding-left: calc(var(--depth, 0) * var(--ml-step));
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text-strong);
 }
 
@@ -394,7 +394,7 @@
 
 .ml-add .ml-name,
 .ml-add .ml-icon {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -556,7 +556,7 @@
     background: var(--fill);
     color: var(--text-2);
     font: inherit;
-    font-size: var(--size-small);
+    font-size: var(--size-text);
     white-space: nowrap;
     transition: color var(--hover) ease, background-color var(--hover) ease;
   }
@@ -589,7 +589,7 @@
     background: var(--fill);
     color: var(--text-2);
     font: inherit;
-    font-size: var(--size-small);
+    font-size: var(--size-text);
     text-align: left;
   }
 

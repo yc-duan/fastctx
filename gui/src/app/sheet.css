@@ -75,7 +75,7 @@
 }
 
 .choice-label {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -94,7 +94,7 @@
   border-radius: var(--radius-full);
   background: var(--fill);
   color: var(--text-2);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
   transition: color var(--hover) ease, background-color var(--hover) ease;
 }
@@ -116,18 +116,18 @@
 }
 
 .choice-note {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
 .choice-none {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--caution);
 }
 
 .sheet-note {
   margin: var(--space-2) 0 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--wrong);
 }
 
@@ -156,7 +156,7 @@
   margin: 0 0 var(--space-1);
   font-family: var(--font-reading);
   font-weight: 400;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   letter-spacing: 0.02em;
   color: var(--text-3);
 }
@@ -185,7 +185,7 @@
   border-radius: var(--radius-full);
   background: var(--accent);
   color: var(--bg);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   scale: var(--press);
   transition: background-color var(--hover) ease, --press var(--settle) var(--spring);
 }
@@ -270,7 +270,7 @@
 
 .palette-group {
   padding: var(--space-3) var(--space-3) var(--space-1);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   letter-spacing: 0.04em;
   color: var(--text-3);
 }
@@ -282,7 +282,7 @@
   min-height: 34px;
   padding: 6px var(--space-3);
   border-radius: var(--radius-s);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text-2);
   cursor: pointer;
 }
@@ -305,20 +305,20 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
 .palette-nothing {
   padding: var(--space-4) var(--space-3);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
 .palette-hint {
   margin: 0;
   padding: var(--space-2) var(--space-3) var(--space-1);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -371,7 +371,7 @@
 }
 
 .field-label {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -421,7 +421,7 @@
 }
 
 .field-hint {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   line-height: var(--leading-ui);
 }
@@ -438,7 +438,7 @@
   border-radius: 50%;
   background: var(--field);
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--size-text);
   line-height: 1;
   vertical-align: 1px;
   cursor: default;
@@ -458,7 +458,7 @@
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
   color: var(--text);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: var(--leading-prose);
   white-space: normal;
 }
@@ -483,7 +483,7 @@
   background: var(--field);
   color: var(--text);
   font: inherit;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
 }
 
@@ -589,7 +589,7 @@
   max-height: 9.5em;
   margin: var(--space-1) 0 var(--space-2);
   overflow-y: auto;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: 1.5;
   color: var(--text-2);
   word-break: break-all;
@@ -608,14 +608,14 @@
 .how-to ol {
   margin: 0;
   padding-left: 1.4em;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   line-height: var(--leading-prose);
   color: var(--text);
 }
 
 .confirm-what {
   margin: 0;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   line-height: var(--leading-prose);
   color: var(--text);  white-space: pre-line;
 }
@@ -723,7 +723,7 @@
   border-radius: var(--radius-full);
   background: var(--fill-strong);
   color: var(--text-2);
-  font-size: var(--size-small);
+  font-size: var(--size-fine);
   line-height: 18px;
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -736,7 +736,7 @@
 .codes-none {
   margin: var(--space-6) 0 0;
   color: var(--text-3);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
 }
 
 .device-made > .field-label {

@@ -85,7 +85,7 @@
   margin: 0;
   max-width: 34em;
   text-align: center;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -195,21 +195,21 @@
      not run through its letters. */
   background: color-mix(in srgb, var(--bg) 82%, transparent);
   font-family: var(--font-emphasis);
-  font-size: var(--size-ui);
+  font-size: var(--size-fine);
   line-height: 1.3;
   color: var(--text);
 }
 
 .machine-map .canvas-name[data-label^="hub:"] {
   font-family: var(--font-reading);
-  font-size: var(--size-small);
+  font-size: var(--size-fine);
   letter-spacing: 0.04em;
   color: var(--text-2);
 }
 
 .machine-map .canvas-name[data-label^="add:"] {
   font-family: var(--font-reading);
-  font-size: var(--size-small);
+  font-size: var(--size-fine);
   color: var(--text-3);
 }
 
@@ -393,7 +393,7 @@
   border-radius: var(--radius-m);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
   opacity: var(--shown);
   animation: paper-in var(--enter) ease both;
@@ -425,7 +425,7 @@
   background: transparent;
   color: var(--text-2);
   font: inherit;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   text-align: left;
   cursor: pointer;
 }
@@ -555,11 +555,11 @@
   align-items: baseline;
   gap: 6px var(--space-4);
   margin: 0;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
 }
 
 .map-card-facts dt {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -574,17 +574,17 @@
 .map-card-title {
   margin: 0;
   color: var(--text-strong);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
 }
 
 .map-card-wrong {
   margin: 0;
   color: var(--wrong);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
 }
 
 .map-card-more {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -707,7 +707,7 @@
 
 .panel-state {
   flex-basis: 100%;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -719,7 +719,7 @@
 .panel-what,
 .panel-home {
   margin: var(--space-2) 0 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -751,7 +751,7 @@
   display: flex;
   flex-wrap: wrap;
   column-gap: var(--space-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -776,7 +776,7 @@
 
 .given-label {
   margin-right: 2px;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -792,7 +792,7 @@
   align-items: center;
   gap: 6px;
   margin: var(--space-3) 0 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
   cursor: default;
 }
@@ -1001,7 +1001,7 @@
     padding: var(--space-2) 2px;
     border-radius: var(--radius-m);
     color: var(--text-2);
-    font-size: var(--size-small);
+    font-size: var(--size-text);
     line-height: 1.3;
     text-align: center;
     background: none;
@@ -1033,7 +1033,7 @@
     border-radius: var(--radius-m);
     background: var(--fill);
     color: var(--text);
-    font-size: var(--size-ui);
+    font-size: var(--size-text);
     text-align: left;
   }
 
@@ -1106,7 +1106,7 @@
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
   color: var(--text-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   font-variant-numeric: tabular-nums;
   pointer-events: auto;
   cursor: grab;
@@ -1132,7 +1132,7 @@
 .map-card-was {
   margin: 0;
   color: var(--text-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   text-decoration: line-through;
   text-decoration-color: color-mix(in srgb, var(--text-3) 60%, transparent);
 }
@@ -1207,7 +1207,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -1248,12 +1248,12 @@
 }
 
 .map-log-said {
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text);
 }
 
 .map-log-by {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -1264,7 +1264,7 @@
 
 .map-log-note {
   margin: var(--space-2) 0 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -1292,7 +1292,7 @@
 .map-card-field legend {
   margin-bottom: var(--space-1);
   padding: 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -1349,7 +1349,7 @@
   align-items: baseline;
   gap: 4px var(--space-2);
   margin: var(--space-3) 0 0;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
 }
 
 .panel-direct-list {
@@ -1369,7 +1369,7 @@
 .panel-direct-at {
   grid-column: 2;
   margin: 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -1553,7 +1553,7 @@
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
   color: var(--text-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   transform: translateX(-50%);
 }
 
@@ -1583,7 +1583,7 @@
   gap: var(--space-2);
   margin: 0;
   font: inherit;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -1594,7 +1594,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -1610,7 +1610,7 @@
 
 .move-error {
   margin: 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--caution);
 }
 
@@ -1625,7 +1625,7 @@
   padding: 4px 8px;
   border-radius: var(--radius-s);
   background: var(--field);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
 }
 
 .move-acts {
@@ -1646,7 +1646,7 @@
   align-items: center;
   gap: var(--space-2);
   margin: 0 0 var(--space-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -1658,7 +1658,7 @@
   margin-left: var(--space-2);
   padding: 0 4px;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 

@@ -25,8 +25,14 @@
   --font-code: "Rec Mono Linear", "Cascadia Mono", "Reading", "Noto Sans SC", monospace;
   --code-axes: "MONO" 1, "CASL" 0, "slnt" 0;
 
-  --size-small: calc(var(--body-size) - 2px);
-  --size-ui: calc(var(--body-size) - 1px);
+  /* The interface's text reads at the body's size: labels, buttons, rows,
+     menus and the lines under them alike, set apart by ink and weight, not
+     by a size or two less (用户 2026-10-19). A scope drawn a size down
+     declares it again. */
+  --size-text: var(--body-size);
+  /* Fine print, for what a drawing or a mark carries alone: a tag or chip,
+     a key, a chart's axis and legend, a badge's count. */
+  --size-fine: calc(var(--body-size) - 2px);
   --size-code: calc(var(--body-size) * 0.88);
   /* Headings inside what an agent writes stay close to the body: a message
      nests in the page, so it never raises a heading that competes with the

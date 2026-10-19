@@ -177,7 +177,7 @@
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
   color: var(--text);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: 1.45;
   text-align: left;
   white-space: normal;
@@ -193,6 +193,58 @@
 
 .turn-info-label {
   color: var(--text-3);
+}
+
+/* The login's windows as the turn left them: a short bar each, as the
+   conversation's usage draws them. */
+.turn-info-limits {
+  display: grid;
+  grid-template-columns: auto 64px auto;
+  justify-content: start;
+  align-items: center;
+  column-gap: var(--space-2);
+  row-gap: 3px;
+  padding-top: 3px;
+}
+
+.turn-info-limit {
+  display: contents;
+}
+
+.turn-info-limit-track {
+  position: relative;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  overflow: hidden;
+}
+
+.turn-info-limit-track > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--pen-graphite);
+}
+
+.turn-info-limit-used {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.turn-info-limit.high .turn-info-limit-track > i {
+  background: var(--accent);
+}
+
+.turn-info-limit.high .turn-info-limit-used {
+  color: var(--accent);
+}
+
+.turn-info-limit.spent .turn-info-limit-track > i {
+  background: var(--wrong);
+}
+
+.turn-info-limit.spent .turn-info-limit-used {
+  color: var(--wrong);
 }
 
 /* What the conversation does not take is not offered. */
@@ -267,7 +319,7 @@
   align-items: flex-start;
   font-family: var(--font-reading);
   font-style: italic;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -345,7 +397,7 @@
 .notice-box .long-text-box .lv-viewport {
   font-style: normal;
   /* The code face stands taller than the reading face at one size. */
-  font-size: calc(var(--size-small) * 0.92);
+  font-size: var(--size-text);
   line-height: 1.5;
   color: var(--text-3);
 }
@@ -377,7 +429,7 @@
   align-items: center;
   gap: 6px;
   margin: 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -406,7 +458,7 @@
 
 .question-title {
   padding: 0;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   line-height: var(--leading-prose);
   color: var(--text);
 }
@@ -435,7 +487,7 @@
 
 .question-state {
   flex: 1;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -455,7 +507,7 @@
 }
 
 .question-pair .question-title {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -464,7 +516,7 @@
 }
 
 .question-card.skipped .question-title {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -491,7 +543,7 @@
   min-height: 30px;
   margin-top: var(--space-4);
   font-family: var(--font-reading);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -564,7 +616,7 @@
   margin-top: calc(-1 * var(--space-1));
   padding-top: 12px;
   position: relative;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
 }
 

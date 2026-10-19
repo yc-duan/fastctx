@@ -276,6 +276,27 @@ pub(crate) fn last_limits(node: &Node, agent: &str, dir: &Path) -> Option<AgentL
     Some(AgentLimits { observed_at, windows, credits: None })
 }
 
+/// The login's windows as last read, for the end of a turn of `about`;
+/// none where the account it works for does not see them.
+pub(crate) fn turn_limits(node: &Node, id: &ResidentId, about: &About) -> Option<AgentLimits> {
+    if !sees_windows(node, about) {
+        return None;
+    }
+    last_limits(node, about.host.agent.as_str(), &login_of(node, id, about)?)
+}
+
+/// Whether the account a conversation works for sees the windows of the
+/// login it runs in: the user of this machine and an account that may work
+/// here do; one the login only assists sees its own use alone
+/// (`world-agent-logins.md`, 用量).
+fn sees_windows(node: &Node, about: &About) -> bool {
+    let Some(account) = who(about) else { return true };
+    let Some(link) = node.link_of(&account.hub) else { return false };
+    let view = link.view();
+    let Some(here) = view.me().map(|me| me.name.clone()) else { return false };
+    view.logged_in(&here, &account.account) || view.rights(&account.account, &here).hands
+}
+
 /// Counts a Claude session's measurement, as its plugin hands it over: a
 /// rise of its cost and a change of the login's windows, either of which
 /// can stop a turn at an allowance, the latter any turn on the login.

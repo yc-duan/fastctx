@@ -116,7 +116,7 @@
   background: var(--field);
   color: var(--text-strong);
   font: inherit;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
 }
 
 /* In the page's head the field stands where the name stood, in its type. */
@@ -131,7 +131,7 @@
 
 .rename-said {
   margin: 3px 0 0 var(--space-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
   color: var(--text-3);
   cursor: default;
@@ -178,7 +178,7 @@
 
 .mp-id-hardware {
   margin: 2px 0 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
   color: var(--text-3);
 }
@@ -203,7 +203,7 @@
 }
 
 .mp-uptime-label {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -225,7 +225,7 @@
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-m);
   background: var(--fill);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text-2);
   cursor: default;
 }
@@ -266,7 +266,7 @@
 .mp-vital-label {
   flex: none;
   margin: 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   font-weight: 400;
   color: var(--text-3);
 }
@@ -278,7 +278,7 @@
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -294,7 +294,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   font-variant-numeric: tabular-nums;
   color: var(--text-2);
 }
@@ -429,7 +429,7 @@
   padding: 0 var(--space-5);
   border-radius: var(--radius-m) var(--radius-m) 0 0;
   color: var(--text-3);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   transition: color var(--hover) ease;
 }
 
@@ -488,7 +488,7 @@
 
 .mp-sec-title {
   margin: 0 0 var(--space-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   font-weight: 400;
   color: var(--text-3);
 }
@@ -522,7 +522,7 @@
 }
 
 .mp-rows dt {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -534,7 +534,7 @@
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
   color: var(--text-2);
 }
@@ -572,7 +572,7 @@
 .mp-danger-note {
   flex-basis: 100%;
   margin: 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -589,7 +589,7 @@
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-m);
   background: color-mix(in srgb, var(--caution) 14%, transparent);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text);
 }
 
@@ -602,7 +602,7 @@
   margin: var(--space-3) 0 0;
   padding: 0;
   list-style: none;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--caution);
 }
 
@@ -653,7 +653,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text);
 }
 
@@ -664,7 +664,7 @@
   display: flex;
   gap: var(--space-4);
   margin-left: auto;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -674,7 +674,7 @@
 
 .mp-net-off {
   margin-left: auto;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -700,7 +700,7 @@
 
 .mp-net-moved {
   margin: 2px 0 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
 }
@@ -725,14 +725,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
 .mp-disk-free {
   flex: none;
   margin-left: auto;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   font-variant-numeric: tabular-nums;
   color: var(--text-2);
 }
@@ -781,7 +781,7 @@
   background: none;
   color: var(--text-3);
   font: inherit;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: 1.6;
   transition: color var(--hover) ease, background-color var(--hover) ease;
 }
@@ -808,7 +808,7 @@
 
 .mp-line-hub {
   flex: none;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text);
 }
 
@@ -817,7 +817,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -828,7 +828,7 @@
 .mp-line-trip {
   flex: none;
   margin-left: auto;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   font-variant-numeric: tabular-nums;
   color: var(--text-2);
   cursor: default;
@@ -910,7 +910,7 @@
 
 .mp-line-held {
   margin: 2px 0 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   font-variant-numeric: tabular-nums;
   color: var(--text-2);
 }
@@ -961,7 +961,7 @@
   border-radius: var(--radius-full);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   transform: translateX(-50%);
 }
 

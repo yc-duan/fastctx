@@ -33,7 +33,7 @@ export class Chart extends PageElement {
     .grid { stroke: var(--divider); stroke-width: 1; }
     .axis { stroke: var(--hairline); stroke-width: 1; }
     .rule { stroke: var(--rule); stroke-width: 1; }
-    .legend { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); margin-bottom: var(--space-2); font-size: var(--size-small); color: var(--text-2); }
+    .legend { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); margin-bottom: var(--space-2); font-size: var(--size-fine); color: var(--text-2); }
     .legend i { display: inline-block; width: 10px; height: 2px; margin-right: 6px; vertical-align: middle; border-radius: 1px; }
     .tip {
       position: absolute;
@@ -50,7 +50,7 @@ export class Chart extends PageElement {
     }
     .tip b { font-weight: 400; color: var(--text-3); }
     .tip i { display: inline-block; width: 8px; height: 2px; margin-right: 6px; vertical-align: middle; }
-    .empty { padding: var(--space-3) 0; font-size: var(--size-small); color: var(--text-3); }
+    .empty { padding: var(--space-3) 0; font-size: var(--body-size); color: var(--text-3); }
   `);
   private width = 0;
   private readonly sizes = new ResizeObserver(([entry]) => {

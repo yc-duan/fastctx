@@ -15,8 +15,9 @@ use std::path::{Path, PathBuf};
 
 use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
 use fastctx_types::session::{
-    Content, Happened, Health, HealthKind, Item, SessionEvent, ToolStatus, TurnEnd, TurnHow, What,
+    Content, Happened, Health, HealthKind, Item, SessionEvent, ToolStatus, TurnEnd, TurnFacts, TurnHow, What,
 };
+use fastctx_types::usage::Usd;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -237,6 +238,10 @@ enum ModEvent {
         answer: Option<String>,
         #[serde(default)]
         streamed: bool,
+        /// What the turn cost by Claude Code's own cost ledger, in dollars:
+        /// how much the session's total rose over it.
+        #[serde(default)]
+        spent: Option<f64>,
     },
     /// A tool use began: its arguments, as the tool receives them.
     ToolStart {
@@ -487,7 +492,7 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
         }
         ModEvent::Uncertain { deliveries, text } => vec![Reported::Uncertain { ids: deliveries, text }],
         ModEvent::TurnStart { turn, at } => vec![happened(at, Happened::TurnStarted { turn: turn_of(turn) })],
-        ModEvent::TurnComplete { turn, at, aborted, reason, refusal, ms, answer, streamed } => {
+        ModEvent::TurnComplete { turn, at, aborted, reason, refusal, ms, answer, streamed, spent } => {
             let turn = turn_of(turn);
             let mut reported = Vec::new();
             // Legacy mod reports had no completed blocks. Never manufacture
@@ -525,7 +530,9 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
                 None if matches!(reason.as_deref(), Some("answer" | "aborted")) => None,
                 None => reason,
             };
-            let end = TurnEnd { facts: None, error: None, how, reason, duration_ms: ms, last_message: answer };
+            // The rest of what the turn took the node has from each request.
+            let facts = spent.and_then(Usd::from_dollars).map(|cost| Box::new(TurnFacts { cost: Some(cost), ..TurnFacts::default() }));
+            let end = TurnEnd { facts, error: None, how, reason, duration_ms: ms, last_message: answer };
             reported.push(happened(at, Happened::TurnEnded { turn, end }));
             reported
         }

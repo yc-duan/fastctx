@@ -21,7 +21,7 @@
 .first-title {
   margin: 0 0 var(--space-2);
   font-family: var(--font-reading);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   font-weight: 400;
   color: var(--text-3);
   text-align: center;

@@ -1,8 +1,12 @@
 // A listed login on the agents page (`world-gui.md`, 智能体页): a row with
-// who it is and its plan, whom it assists or who lets it assist the reader,
-// and with the workbench on, a bar for each usage window, what it used this
-// week and its last seventeen weeks as a small calendar; the row opens the
-// login's own page of usage. Its 「⋯」 holds the rest.
+// who it is and its plan, and who lets it assist the reader, and with the
+// workbench on, a bar for each usage window, what it used this week and its
+// last seventeen weeks as a small calendar; the row opens the login's own
+// page of usage. Its 「⋯」 holds the rest, whom it assists among it: a cross
+// on a row is too easily pressed by one opening it.
+//
+// To an account the login assists, the bars are its own allowances, not
+// the login's account's windows, which are its owner's.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -13,7 +17,6 @@ import type { FoundProgram, Login } from "../world/logins";
 import { wholeDollars } from "../world/money";
 import type { AccessWords } from "./account-words";
 import type { AgentLoginsWords } from "./agent-logins-words";
-import type { Assistance } from "./assist-sheet";
 import { link } from "./places";
 import { miniCalendar } from "./usage/draw";
 import { byDay, dayOf, valueOf, type Usage } from "./usage/model";
@@ -28,8 +31,6 @@ export interface RowFacts {
   /** The programs that use it, a line each, for its mark's hover. */
   versions: string;
   plan: string | null;
-  /** Whom it assists, where the reader owns it. */
-  assisting: Assistance[];
   /** The assistance it gives the reader, where that is how they use it. */
   assistsMe: { assist: AssistSeen; owner: string | null } | null;
   /** Its usage as last read; none before the first read. */
@@ -60,10 +61,9 @@ export function loginRow(facts: RowFacts, { words, access, usage: usageWords, wh
     identity && !identity.logged_in ? `<span class="tag tag-warn">${escape(words.loggedOut)}</span>` : "",
     login.drift && !changing ? driftTag(machine, login, words) : "",
   ].join("");
-  const assisting = facts.assisting.map((one) => assistanceTag(machine, login.dir, one, now, words, access)).join("");
   const mine = facts.assistsMe ? assistedTag(facts.assistsMe, now, words, access, usageWords) : "";
   const stamp = changing ? `<span class="logins-stamp busy">${escape(login.change!.into ? words.applying : words.removing)}</span>` : "";
-  const sub = stamp || assisting || mine ? `<div class="logins-row-sub">${stamp}${assisting ? `<span class="logins-assisting">${escape(words.assisting)}${assisting}</span>` : ""}${mine}</div>` : "";
+  const sub = stamp || mine ? `<div class="logins-row-sub">${stamp}${mine}</div>` : "";
   const href = link({ kind: "usage", machine, agent, dir: login.dir });
   const name = workbench
     ? `<a class="logins-row-who-name" href="${href}" title="${escape(`${words.openUsage}\n${login.dir}`)}">${escape(who)}</a>`
@@ -74,7 +74,7 @@ export function loginRow(facts: RowFacts, { words, access, usage: usageWords, wh
   if (!workbench) return `<li class="logins-row plain${changing ? " changing" : ""}${facts.fresh}>${head}${more}${note}</li>`;
   return `<li class="logins-row${changing ? " changing" : ""}${facts.fresh} data-open="${href}">
     ${head}
-    ${bars(agent, login.limits, now, words, when)}
+    ${facts.assistsMe ? allowanceBars(facts, usageWords, words) : bars(agent, login.limits, now, words, when)}
     ${week(facts, usageWords, words)}
     <div class="logins-row-mini">${miniCalendar(facts.usage ? byDay(facts.usage, facts.usage.usd ? "usd" : "tokens") : new Map(), dayOf(now.getTime()), `${machine}:${login.dir}`)}</div>
     ${more}${note}
@@ -125,25 +125,37 @@ export function bars(agent: Agent, limits: Fact<AgentLimits>, now: Date, words: 
   return `<div class="logins-bars">${rows.join("")}</div>`;
 }
 
-/** One account assisted, on a row: whom, the day it ends and what it may
- *  spend a week, when set; pressed, it opens to be changed; its cross ends
- *  it. */
-function assistanceTag(machine: string, dir: string, assistance: Assistance, now: Date, words: AgentLoginsWords, access: AccessWords): string {
-  const at = `data-machine="${escape(machine)}" data-dir="${escape(dir)}" data-to="${escape(assistance.to)}"`;
-  const until = assistance.until ? new Date(assistance.until) : null;
-  const said = [
-    until ? access.moment.until(until, now) : access.when.none,
-    assistance.daily ? access.dailyOf(wholeDollars(assistance.daily)) : "",
-    assistance.weekly ? access.weeklyOf(wholeDollars(assistance.weekly)) : "",
-    assistance.fiveHour ? `${access.fiveHour} ${access.fiveHourOf(assistance.fiveHour)}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
-  return `<span class="tag assist-tag"><button class="assist-tag-open" type="button" data-act="assist-edit" ${at} title="${escape(`${access.changeUntil}\n${said}`)}">${escape(assistance.to)}${until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : ""}${assistance.daily ? `<span class="assist-tag-until">${escape(words.dailyShort(wholeDollars(assistance.daily)))}</span>` : ""}${assistance.weekly ? `<span class="assist-tag-until">${escape(words.weeklyShort(wholeDollars(assistance.weekly)))}</span>` : ""}</button><button class="assist-tag-x" type="button" data-act="assist-end" ${at} aria-label="${escape(words.endAssist(assistance.to))}" title="${escape(words.endAssist(assistance.to))}">${glyph("cross", 12)}</button></span>`;
+/** The allowances the reader has of a login that assists it, a bar each
+ *  as the windows have theirs: what it used of each, the week's with the
+ *  login's own reset. One without allowances has none to draw; one whose
+ *  use is not read yet, empty dashed bars. */
+function allowanceBars(facts: RowFacts, usageWords: UsageWords, words: AgentLoginsWords): string {
+  const { assist } = facts.assistsMe!;
+  const { usage, now } = facts;
+  const me = usage?.people.find((person) => person.me) ?? null;
+  const row = (name: string, spent: number | null, cap: number, left: string, said: string): string => {
+    if (spent === null) return `<span class="logins-bar unread" title="${escape(said)}"><span class="logins-bar-name">${escape(name)}</span><span class="logins-bar-track"></span><span class="logins-bar-used"></span><span class="logins-bar-reset"></span></span>`;
+    const share = spent / cap;
+    const level = share >= 1 ? " spent" : share >= 0.9 ? " high" : "";
+    return `<span class="logins-bar${level}" title="${escape(said)}"><span class="logins-bar-name">${escape(name)}</span><span class="logins-bar-track"><span style="width:${Math.min(100, share * 100).toFixed(1)}%"></span></span><span class="logins-bar-used">${Math.round(share * 100)}%</span><span class="logins-bar-reset">${left ? `${glyph("history", 12)}${escape(left)}` : ""}</span></span>`;
+  };
+  const rows: string[] = [];
+  if (assist.daily) {
+    const cap = assist.daily / 1_000_000;
+    const spent = usage ? (me?.day?.usd ?? 0) : null;
+    rows.push(row(usageWords.aDay, spent, cap, "", usageWords.dayCapSaid(wholeDollars(cap), usageWords.money(spent ?? 0))));
+  }
+  if (assist.weekly) {
+    const cap = assist.weekly / 1_000_000;
+    const spent = usage ? (me?.week.usd ?? 0) : null;
+    const left = usage?.week.window ? words.resetsIn(new Date(usage.week.end), now) : "";
+    rows.push(row(usageWords.aWeek, spent, cap, left, usageWords.weekCapSaid(wholeDollars(cap), usageWords.money(spent ?? 0))));
+  }
+  return `<div class="logins-bars">${rows.join("")}</div>`;
 }
 
-/** The assistance the reader has of it: from whom, until when, and what it
- *  may spend a day and a week. */
+/** The assistance the reader has of it: from whom and until when; what it
+ *  may spend, its bars say, and the rest a hover away. */
 function assistedTag(mine: { assist: AssistSeen; owner: string | null }, now: Date, words: AgentLoginsWords, access: AccessWords, usageWords: UsageWords): string {
   const { assist, owner } = mine;
   const until = assist.until ? new Date(assist.until) : null;
@@ -152,12 +164,13 @@ function assistedTag(mine: { assist: AssistSeen; owner: string | null }, now: Da
   const said = [
     usageWords.assistUntil(until, now),
     daily ? usageWords.daily(wholeDollars(daily)) : "",
-    weekly ? usageWords.weekly(wholeDollars(weekly)) : daily ? "" : usageWords.weeklyNone,
+    weekly ? usageWords.weekly(wholeDollars(weekly)) : "",
+    daily || weekly ? "" : usageWords.noCap,
     assist.five_hour ? usageWords.fiveHourCap(assist.five_hour) : "",
   ]
     .filter(Boolean)
     .join("\n");
-  return `<span class="tag logins-assisted" title="${escape(said)}">${escape(words.assistedFrom(owner ?? "–"))}${until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : ""}${daily ? `<span class="assist-tag-until">${escape(words.dailyShort(wholeDollars(daily)))}</span>` : ""}${weekly ? `<span class="assist-tag-until">${escape(words.weeklyShort(wholeDollars(weekly)))}</span>` : ""}</span>`;
+  return `<span class="tag logins-assisted" title="${escape(said)}">${escape(words.assistedFrom(owner ?? "–"))}${until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : ""}</span>`;
 }
 
 /** The World's tools in it wait for the user: what for on hover, and

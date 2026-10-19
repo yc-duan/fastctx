@@ -24,13 +24,13 @@ const acts = sheet(`
     background: var(--accent-wash);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
     color: var(--text-strong);
-    font-size: var(--size-ui);
+    font-size: var(--body-size);
     transition: background-color var(--hover) ease;
   }
   button.act:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 30%, transparent); }
   button.act:disabled { opacity: 0.6; cursor: default; }
   .what { margin-top: var(--space-1); font-size: 12px; color: var(--text-3); font-family: var(--font-code); }
-  .said { margin-top: var(--space-2); font-size: var(--size-small); color: var(--text-3); }
+  .said { margin-top: var(--space-2); font-size: var(--body-size); color: var(--text-3); }
   pre {
     margin: var(--space-2) 0 0;
     max-height: 280px;

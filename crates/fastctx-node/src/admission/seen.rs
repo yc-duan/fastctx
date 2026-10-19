@@ -17,6 +17,7 @@
 use fastctx_types::access::{Acting, HubAccount};
 use fastctx_types::agents::AgentsReply;
 use fastctx_types::run::JobOwner;
+use fastctx_types::session::control::Offers;
 use fastctx_types::since::{SinceKind, SinceReply, SinceTown};
 use fastctx_types::town::{Looked, WhoReply};
 use fastctx_types::{Address, ResidentId, TownName};
@@ -217,7 +218,8 @@ pub fn since(node: &Node, looker: Looker, mut reply: SinceReply) -> SinceReply {
 }
 
 /// Which agents are logged in here is the machine's: an account that may
-/// work here sees them all, one some of their logins assist sees those alone.
+/// work here sees them all, one some of their logins assist sees those alone,
+/// without their account's windows.
 pub fn agents(view: &fastctx_net::directory::View, asker: &Asker, mut reply: AgentsReply) -> AgentsReply {
     if asker.hands {
         return reply;
@@ -234,7 +236,25 @@ pub fn agents(view: &fastctx_net::directory::View, asker: &Asker, mut reply: Age
                 }
         })
     });
+    for facts in &mut reply.agents {
+        facts.limits = fastctx_types::agents::Fact::unavailable(crate::logins::remote::OWNERS_WINDOWS);
+    }
     reply
+}
+
+/// What a conversation offers, as the account it works for sees it: one
+/// the login only assists is not told the login's account's windows.
+pub fn offers(asker: &Asker, mut offers: Offers) -> Offers {
+    if !asker.hands
+        && let Some(usage) = offers.usage.as_mut()
+    {
+        usage.limits.clear();
+        usage.limits_at = None;
+        if let Some(raw) = usage.raw.as_object_mut() {
+            raw.remove("rateLimits");
+        }
+    }
+    offers
 }
 
 pub fn looked(node: &Node, asker: &Asker, looked: Option<Looked>) -> Option<Looked> {

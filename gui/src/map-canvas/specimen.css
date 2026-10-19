@@ -1,5 +1,5 @@
 .canvas-specimen { display: grid; grid-template-rows: auto 1fr auto; height: 100dvh; color: var(--text); background: var(--bg); }
-.canvas-specimen header, .canvas-specimen footer { display: flex; align-items: center; gap: 18px; padding: 10px 18px; font-size: 14px; }
+.canvas-specimen header, .canvas-specimen footer { display: flex; align-items: center; gap: 18px; padding: 10px 18px; font-size: var(--size-text); }
 .canvas-specimen header strong { margin-right: auto; }
 .canvas-specimen main { min-height: 0; }
 .canvas-specimen header button, .canvas-specimen footer button, .canvas-specimen select, .canvas-action button { font: inherit; color: inherit; background: var(--bg-elevated); padding: 8px 12px; border: 0; border-radius: 4px; min-height: 44px; }
@@ -14,6 +14,6 @@
 @media (max-width: 600px) {
   .canvas-specimen header, .canvas-specimen footer { gap: 8px; padding: 8px; flex-wrap: wrap; }
   .canvas-specimen header strong { display: none; }
-  .canvas-specimen footer { font-size: 12px; }
+  .canvas-specimen footer { font-size: var(--size-text); }
   .canvas-specimen footer #result { margin-left: 0; }
 }

@@ -331,7 +331,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -389,7 +389,7 @@
   border-radius: var(--radius-full);
   background: var(--hairline);
   color: var(--text-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
 }
 
 /* A conversation's strip under its head: what it is pointed at, opening the
@@ -426,7 +426,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 

@@ -349,6 +349,14 @@ let i = (self.ki.widen() * self.integral).narrow();
       models: ["claude-opus-5-5"],
       efforts: [{ kind: "requested", value: "high" }],
       tokens: { host: "claude", input_tokens: 2_318, cache_read_input_tokens: 41_872, cache_creation_input_tokens: 3_904, output_tokens: 1_266 },
+      cost: 421_337,
+      limits: {
+        observed_at: "2026-10-04T13:06:40Z",
+        windows: [
+          { name: "seven_day", minutes: 10080, used_tenths: 641, resets_at: "2026-10-08T18:00:00Z" },
+          { name: "five_hour", minutes: 300, used_tenths: 412, resets_at: "2026-10-04T17:00:00Z" },
+        ],
+      },
     },
   });
 
@@ -716,6 +724,7 @@ function asking(): Specimen {
     ms: 72_000,
     facts: {
       tokens: { host: "codex", input_tokens: 108_054, cached_input_tokens: 102_144, output_tokens: 1_175, reasoning_output_tokens: 640, total_tokens: 109_229 },
+      limits: { observed_at: "2026-10-04T15:02:10Z", windows: [{ name: "codex", minutes: 10080, used_tenths: 920, resets_at: "2026-10-08T18:00:00Z" }] },
     },
   });
 

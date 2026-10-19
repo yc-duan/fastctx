@@ -464,7 +464,6 @@ export class AgentLoginsPage implements Page {
           .map((program) => programLine(program, options.words))
           .join("\n"),
         plan: login.identity?.who.kind === "known" && login.identity.who.value.method === "oauth_token" ? this.planOf(machine, login, world) : login.identity?.who.kind === "known" ? (login.identity.who.value.plan ?? null) : null,
-        assisting: this.assistancesOf(machine, login, world),
         assistsMe: machine.hold === "assist" ? assistingMe(world, machine.name, this.agent, login.dir, login.default) : null,
         usage: report ? usageOf(report, namer(world, machine.name, options.usage)) : null,
         workbench: options.workbench.peek(),
@@ -598,20 +597,6 @@ export class AgentLoginsPage implements Page {
       case "menu":
         this.openMenu(button, machine, dir);
         return;
-      case "assist-edit":
-        this.openAssist(machine, dir, button.dataset.to ?? null);
-        return;
-      case "assist-end": {
-        const found = this.find(machine, dir);
-        const owner = found?.machine.ownerLogin;
-        if (!owner || !found?.login) return;
-        const home = found.login.default ? null : dir;
-        await this.quietly(button, `s:${machine}:${dir}`, async () => {
-          await this.options.change_(owner, assistChange(machine, this.agent, home, button.dataset.to ?? "", null));
-          await this.options.store.refresh();
-        });
-        return;
-      }
     }
   }
 
@@ -631,7 +616,8 @@ export class AgentLoginsPage implements Page {
     // A visitor lets none of its agents assist anyone (`world-network.md`,
     // 一个中枢，几个账号).
     if (owner && !isVisitor(world, owner)) entries.push({ act: "assist", icon: "person", label: words.assist });
-    if (this.options.workbench.peek()) entries.push({ act: "limits", icon: "reread", label: words.rereadLimits });
+    // The windows of a login that only assists the reader are its owner's.
+    if (this.options.workbench.peek() && found.machine.hold !== "assist") entries.push({ act: "limits", icon: "reread", label: words.rereadLimits });
     entries.push({ act: "copy", icon: "folder", label: words.copyDir });
     // Codex names its own conversations when the login's owner asks it to;
     // Claude Code does its own. Only a login the World's tools are in hosts

@@ -16,8 +16,9 @@ name: Release
 # compiled dependencies come from the caches `warm.yml` leaves on main after a release, since a tag's
 # run reads only its own caches and the default branch's; this workflow saves none.
 #
-# The jobs start together. One that needs what another uploads does what it can before
-# (`scripts/ci-await.py`): an application compiles while the kernel it carries is still being built.
+# A job that needs what another uploads starts once that job has passed (`needs`): an application is
+# compiled after the kernels it carries are built. GitHub orders them itself; nothing polls its API, whose
+# list of a run's jobs has answered nothing but 502 for long stretches.
 # The machines that compile fastest compile for their slower siblings: both Mac kernels and applications
 # are built on Apple silicon and both Windows ones on ARM64 Windows, Intel's and x64's as cross builds,
 # and an Intel Mac and an x64 Windows machine run those very kernels, tests and applications.
@@ -30,8 +31,6 @@ on:
 
 permissions:
   contents: read
-  # The jobs that wait read the run's own jobs, to see what has been uploaded.
-  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -157,6 +156,7 @@ jobs:
         run: tests/network_drill.exe --root "$(cygpath -m "$RUNNER_TEMP")"
 
   windows-x64:
+    needs: [kernel-windows, gui-windows]
     runs-on: windows-2025
     defaults:
       run:
@@ -166,14 +166,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Wait for what ARM64 Windows built for x64
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tests=()
-          if [[ "$DRILLS" == true ]]; then tests=("kernel x86_64-pc-windows-msvc=Upload the tests"); fi
-          python scripts/ci-await.py "kernel x86_64-pc-windows-msvc=Upload the kernel" \
-            "kernel x86_64-pc-windows-msvc=Upload the archive" "${tests[@]}" "gui x86_64-pc-windows-msvc=Upload the installer"
       - uses: actions/download-artifact@v4
         with:
           name: kernel-x86_64-pc-windows-msvc
@@ -418,6 +410,7 @@ jobs:
           if-no-files-found: error
 
   macos-intel:
+    needs: [kernel-macos, gui-macos]
     runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
@@ -430,14 +423,6 @@ jobs:
             if [ -e "$bash" ]; then sudo mv "$bash" "$bash.hidden"; fi
           done
           /bin/bash --version | head -1
-      - name: Wait for what Apple silicon built for Intel
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tests=()
-          if [[ "$DRILLS" == true ]]; then tests=("kernel x86_64-apple-darwin=Upload the tests"); fi
-          python scripts/ci-await.py "kernel x86_64-apple-darwin=Upload the kernel" \
-            "${tests[@]}" "gui x86_64-apple-darwin=Upload the application"
       - uses: actions/download-artifact@v4
         with:
           name: kernel-x86_64-apple-darwin
@@ -539,6 +524,7 @@ jobs:
           if-no-files-found: error
 
   gui-windows:
+    needs: [kernel-windows, kernel-linux]
     name: gui ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -580,15 +566,9 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           cargo fetch --locked --manifest-path src-tauri/Cargo.toml
-      - name: Compile the application while its kernel is built
+      - name: Compile the application
         working-directory: gui
         run: node scripts/release.mjs --prepare --kernel-signed --target '${{ matrix.target }}'
-      - name: Wait for the kernels it carries
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python scripts/ci-await.py "kernel ${{ matrix.target }}=Upload the kernel" \
-            "kernel x86_64-unknown-linux-gnu=Upload the archive" "kernel aarch64-unknown-linux-gnu=Upload the archive"
       - uses: actions/download-artifact@v4
         with:
           name: kernel-${{ matrix.target }}
@@ -651,6 +631,7 @@ jobs:
           if-no-files-found: error
 
   gui-macos:
+    needs: [kernel-macos, kernel-linux]
     name: gui ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -687,15 +668,9 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           cargo fetch --locked --manifest-path src-tauri/Cargo.toml
-      - name: Compile the application while its kernel is built
+      - name: Compile the application
         working-directory: gui
         run: node scripts/release.mjs --prepare --target '${{ matrix.target }}'
-      - name: Wait for the kernels it carries
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python scripts/ci-await.py "kernel ${{ matrix.target }}=Upload the kernel" \
-            "kernel x86_64-unknown-linux-gnu=Upload the archive" "kernel aarch64-unknown-linux-gnu=Upload the archive"
       - uses: actions/download-artifact@v4
         with:
           name: kernel-${{ matrix.target }}
@@ -801,6 +776,7 @@ jobs:
           if-no-files-found: error
 
   gui-linux:
+    needs: kernel-linux
     name: gui x86_64-unknown-linux-gnu
     runs-on: ubuntu-22.04
     env:
@@ -836,15 +812,9 @@ jobs:
       - name: Check the interface reads what the World writes
         working-directory: gui
         run: node scripts/check-wire.mjs --rust
-      - name: Compile the application while its kernel is built
+      - name: Compile the application
         working-directory: gui
         run: node scripts/release.mjs --prepare
-      - name: Wait for the kernels it carries
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python scripts/ci-await.py "kernel x86_64-unknown-linux-gnu=Upload the kernel" \
-            "kernel x86_64-unknown-linux-gnu=Upload the archive" "kernel aarch64-unknown-linux-gnu=Upload the archive"
       - uses: actions/download-artifact@v4
         with:
           name: kernel-x86_64-unknown-linux-gnu
@@ -980,6 +950,7 @@ jobs:
           if-no-files-found: error
 
   update-windows:
+    needs: gui-windows
     runs-on: windows-2025
     defaults:
       run:
@@ -992,10 +963,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Wait for the x64 installer
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python scripts/ci-await.py "gui x86_64-pc-windows-msvc=Upload the installer"
       - uses: actions/download-artifact@v4
         with:
           name: gui-windows-x64
@@ -1018,6 +985,7 @@ jobs:
   # kernel keeps a hub and a node as Windows services; the same source, built as a later release and
   # signed as one, goes to the renewal, and the protected guardians take it with no administrator.
   renewal-windows:
+    needs: kernel-windows
     if: github.ref_type == 'branch'
     runs-on: windows-2025
     defaults:
@@ -1054,10 +1022,6 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npx --yes "$TAURI_CLI" signer sign --app-version "$LATER" later/fastctx.exe
-      - name: Wait for this release's kernel
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python scripts/ci-await.py "kernel x86_64-pc-windows-msvc=Upload the kernel"
       - uses: actions/download-artifact@v4
         with:
           name: kernel-x86_64-pc-windows-msvc

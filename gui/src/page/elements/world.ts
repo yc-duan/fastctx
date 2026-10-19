@@ -26,7 +26,7 @@ const live = sheet(`
   .mark.working { animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: 0.35; } }
   @media (prefers-reduced-motion: reduce) { .mark.working { animation: none; } }
-  .sub { font-size: var(--size-small); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sub { font-size: var(--body-size); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .state.waiting { color: var(--accent); }
   ul { list-style: none; margin: var(--space-2) 0 0; padding: 0; }
   li + li { margin-top: var(--space-1); }
@@ -46,7 +46,7 @@ const live = sheet(`
   }
   .entry { padding: var(--space-2) 0; border-top: 1px solid var(--divider); }
   .entry:first-child { border-top: 0; }
-  .entry-text { margin-top: 2px; font-size: var(--size-ui); color: var(--text-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .entry-text { margin-top: 2px; font-size: var(--body-size); color: var(--text-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   button.agent { display: block; width: 100%; text-align: left; padding: 0; }
   button.agent:hover .name { text-decoration: underline; text-underline-offset: 3px; }
 `);

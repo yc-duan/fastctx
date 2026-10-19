@@ -53,7 +53,7 @@
   width: min(480px, 100%);
   max-height: min(80dvh, 680px);
   padding: var(--space-4) var(--space-4) var(--space-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -157,7 +157,7 @@
 .talk-chart-axis {
   fill: var(--text-3);
   font-family: var(--font-reading);
-  font-size: var(--size-small);
+  font-size: var(--size-fine);
   font-variant-numeric: tabular-nums;
 }
 
@@ -392,7 +392,7 @@
   gap: 2px;
   justify-self: start;
   margin: var(--space-1) 0 0 calc(-1 * var(--space-2));
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 

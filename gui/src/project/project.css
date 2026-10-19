@@ -32,7 +32,7 @@
   padding: 0 var(--space-3);
   border-radius: var(--radius-full);
   color: var(--text-2);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   white-space: nowrap;
   scale: var(--press);
   transition: color var(--hover) ease, background-color var(--hover) ease, --press var(--settle) var(--spring);
@@ -105,7 +105,7 @@
 }
 
 .project-facts {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -130,7 +130,7 @@
   padding: 0 var(--space-3);
   border-radius: var(--radius-full);
   color: var(--text-3);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   transition: color var(--hover) ease, background-color var(--hover) ease;
 }
 
@@ -224,7 +224,7 @@
 }
 
 .place-what {
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text);
 }
 
@@ -233,7 +233,7 @@
   align-items: baseline;
   gap: var(--space-2);
   min-width: 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -246,7 +246,7 @@
   min-width: 0;
   font-family: var(--font-code);
   font-variation-settings: var(--code-axes);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   overflow-wrap: anywhere;
 }
 
@@ -258,7 +258,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-2);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   text-decoration: none;
   transition: color var(--hover) ease;
 }
@@ -275,7 +275,7 @@
 .journal-name-title {
   font-family: var(--font-code);
   font-variation-settings: var(--code-axes);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
 }
 
 .journal-reading {
@@ -349,13 +349,13 @@
 }
 
 .journal-about {
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text-2);
   line-height: var(--leading-prose);
 }
 
 .journal-facts {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -373,7 +373,7 @@
 }
 
 .canon-scope {
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   line-height: var(--leading-prose);
   color: var(--text-2);
 }
@@ -382,7 +382,7 @@
   margin: var(--space-2) 0 0;
   font-family: var(--font-code);
   font-variation-settings: var(--code-axes);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   overflow-wrap: anywhere;
 }
@@ -416,7 +416,7 @@
 
 .entry-stamp {
   margin: 0 0 var(--space-3);
-  font-size: var(--size-small);
+  font-size: var(--size-fine);
   color: var(--text-3);
 }
 
@@ -427,7 +427,7 @@
 .entry-note,
 .entry-id {
   margin: var(--space-3) 0 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -444,7 +444,7 @@
 .earlier {
   display: block;
   margin-top: var(--space-6);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
   padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-full);
@@ -462,7 +462,7 @@
   margin: var(--space-5) 0 var(--space-2);
   font-family: var(--font-reading);
   font-weight: 400;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   letter-spacing: 0.04em;
   color: var(--text-3);
 }

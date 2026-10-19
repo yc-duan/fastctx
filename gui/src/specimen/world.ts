@@ -283,7 +283,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         member("render", "computer", ["ops"], "ops", "00:07:00", true, "4e11d3a9"),
       ],
       shares: [{ machine: "build", account: "yc" }],
-      assists: [{ machine: "render", account: "yc", agent: "claude", home: null, until: daysAhead(1), weekly: 40_000_000 }],
+      assists: [{ machine: "render", account: "yc", agent: "claude", home: null, until: daysAhead(1), weekly: 40_000_000, daily: 10_000_000, five_hour: 80 }],
       plans: [{ machine: "render", agent: "claude", home: null, plan: "max" }],
       acting: [{ machine: "build", account: "yc", since: at("09:15:00") }],
       projects: [{ name: "ingest", owner: "yc", granted: [] }],
@@ -648,7 +648,13 @@ export function specimenAgents(machine: string, at: Date = new Date()): WorldAge
   // A machine of another answers only with the logins assisting the asker.
   const asks: AgentFacts = { ...claude, unattended: { kind: "known", value: false } };
   const agents =
-    machine === "desktop" ? [codex, claude, work, trial, token, personal] : machine === "render" ? [claude] : machine === "server" ? [codex, asks] : [codex, claude];
+    machine === "desktop"
+      ? [codex, claude, work, trial, token, personal]
+      : machine === "render"
+        ? [{ ...claude, limits: { kind: "unavailable" as const, reason: "the windows of the login's account are its owner's to see" } }]
+        : machine === "server"
+          ? [codex, asks]
+          : [codex, claude];
   return {
     machine,
     machines: [{ kind: "answered", reply: { machine, checked_at: at.toISOString(), elapsed_ms: 180, agents } }],

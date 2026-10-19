@@ -69,7 +69,7 @@
   background: var(--fill);
   color: var(--text-2);
   font: inherit;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   text-align: left;
   transition: background-color var(--hover) ease;
 }
@@ -105,7 +105,7 @@
 
 .managed-code-name {
   margin: 0 0 var(--space-2);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   font-family: var(--font-emphasis);
   font-weight: 400;
   color: var(--text-strong);
@@ -144,7 +144,7 @@
 /* Chinese wraps only where its words mark a phrase ends, as English
    wraps between words; a phrase wider than the column still folds. */
 .managed-step span {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: 1.5;
   color: var(--text-2);
   text-wrap: balance;
@@ -179,7 +179,7 @@
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -270,7 +270,7 @@
   padding: 0;
   border: 0;
   list-style: none;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: 1.6;
   color: var(--text-2);
 }
@@ -352,7 +352,7 @@
 
 .managed-who {
   margin: 0;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -364,7 +364,7 @@
   padding: 6px 14px;
   border-radius: var(--radius-full);
   background: var(--fill);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
@@ -394,7 +394,7 @@
 }
 
 .managed-corner .text-button {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -447,14 +447,14 @@
 }
 
 .map-role b {
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   font-family: var(--font-emphasis);
   font-weight: 400;
   color: var(--text-strong);
 }
 
 .map-role span {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: 1.45;
 }
 
@@ -474,7 +474,7 @@
 .me-note {
   margin: calc(-1 * var(--space-3)) 0 0;
   padding: 0 var(--space-5);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -497,14 +497,14 @@
 }
 
 .me-promotion-text b {
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   font-family: var(--font-emphasis);
   font-weight: 400;
   color: var(--text-strong);
 }
 
 .me-promotion-text span {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -528,7 +528,7 @@
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-m);
   background: color-mix(in srgb, var(--caution) 14%, var(--fill));
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text);
 }
 

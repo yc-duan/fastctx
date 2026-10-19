@@ -27,6 +27,10 @@ use jiff::Timestamp;
 use crate::Node;
 use crate::speech::{self, Owed};
 
+/// A turn whose end is told this long after it is not given the login's
+/// windows: those read since are not the ones it ended with.
+const LIMITS_AT_END: jiff::SignedDuration = jiff::SignedDuration::from_mins(10);
+
 /// What a report of a resident no longer on record meets: its
 /// conversation was deleted while the report was on its way.
 fn deleted(id: &ResidentId) -> std::io::Error {
@@ -52,6 +56,15 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
         crate::claude::turn_facts::observe(&directory, &event.happened)?;
     }
     crate::usage::measurement(node, id, &about, &event).await;
+    // The account's windows went to the login's ledger; the conversation's
+    // record keeps none, so an account the login only assists does not read
+    // them there.
+    if about.host.agent.as_str() == "claude"
+        && let Happened::Changed { change: SessionChange::Usage { usage }, .. } = &mut event.happened
+        && let Some(usage) = usage.as_object_mut()
+    {
+        usage.remove("rateLimits");
+    }
     crate::run_facts::attach(&directory, &mut event)?;
     if let Happened::Changed { change: SessionChange::Status { waiting_for_user: Some(waiting), .. }, .. } =
         &event.happened
@@ -225,8 +238,19 @@ async fn finish_at(
 ) -> std::io::Result<()> {
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
     let directory = node.world.conversation(id);
-    if about.host.agent.as_str() == "claude" && end.facts.is_none() {
-        end.facts = crate::claude::turn_facts::finish(&directory, turn)?.map(Box::new);
+    // Claude's host says what the turn cost; its plugin's observations of
+    // each request say the rest.
+    if about.host.agent.as_str() == "claude" && end.facts.as_ref().is_none_or(|facts| facts.tokens.is_none()) {
+        let observed = crate::claude::turn_facts::finish(&directory, turn)?;
+        end.facts = match (end.facts.take(), observed) {
+            (Some(mut facts), Some(observed)) => {
+                facts.models = observed.models;
+                facts.efforts = observed.efforts;
+                facts.tokens = observed.tokens;
+                Some(facts)
+            }
+            (facts, observed) => facts.or(observed.map(Box::new)),
+        };
     }
     if about.host.agent.as_str() == "codex" && end.facts.is_none() && !matches!(end.how, TurnHow::Completed) {
         // Recovery is exceptional; normal host completions carry their facts
@@ -237,6 +261,14 @@ async fn finish_at(
                 .iter()
                 .any(|event| matches!(event.happened, Happened::Changed { change: SessionChange::Forked { .. }, .. }));
         end.facts = fastctx_hosts::codex::recorded_turn_facts(&events, turn, initially_empty).map(Box::new);
+    }
+    // The login's windows as they stood when the turn ended, for a turn
+    // ending now.
+    if ended_at.is_none_or(|at| Timestamp::now().duration_since(at) < LIMITS_AT_END)
+        && end.facts.as_ref().is_none_or(|facts| facts.limits.is_none())
+        && let Some(limits) = crate::usage::turn_limits(node, id, &about)
+    {
+        end.facts.get_or_insert_with(Default::default).limits = Some(limits);
     }
     let mut readers = node.residents.readers(id, turn);
     readers.extend_from_slice(additional);

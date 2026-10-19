@@ -133,7 +133,7 @@
   border-radius: var(--radius-full);
   background: var(--fill);
   color: var(--text-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   white-space: nowrap;
   transition: color var(--hover) ease, background-color var(--hover) ease;
 }

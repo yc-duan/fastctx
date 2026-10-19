@@ -25,6 +25,7 @@ export interface UsageWords {
   notRead: string;
   thisWeek: string;
   myWeek: string;
+  whoseWeek(name: string): string;
   /** The week's span, and what it follows. */
   weekSpan(start: Date, end: Date): string;
   weekWhy(window: boolean): string;
@@ -32,17 +33,29 @@ export interface UsageWords {
   noLastWeek: string;
   today(amount: string | null): string;
   who: string;
-  all: string;
-  assistedBy(owner: string): string;
   assistUntil(until: Date | null, now: Date): string;
+  untilShort(until: Date, now: Date): string;
   weekly(amount: string): string;
   daily(amount: string): string;
   fiveHourCap(percent: number): string;
-  weeklyUsed(spent: string, of: string): string;
-  weeklyNone: string;
-  onlyYours: string;
+  noCap: string;
+  /** The rings of an assistance's allowances, to the account it assists. */
+  aDay: string;
+  aWeek: string;
+  lastDay: string;
+  dayCapSaid(cap: string, spent: string): string;
+  weekCapSaid(cap: string, spent: string): string;
+  /** A person's own weekly allowance, beside the windows. */
+  capRing(name: string): string;
+  capOf(spent: string, cap: string): string;
+  /** Each person's part of the account's seven-day window. */
+  partOf(name: string, percent: number): string;
+  partSaid(name: string, percent: number): string;
+  partHead: string;
+  partsWhy: string;
+  weekReached(percent: number): string;
   /** The tabs and the unit. */
-  tabs: { calendar: string; quota: string; daily: string; punch: string };
+  tabs: { calendar: string; quota: string; weeks: string; punch: string };
   usd: string;
   tokenTab: string;
   /** The calendar. */
@@ -68,8 +81,13 @@ export interface UsageWords {
   reachBy(percent: number): string;
   quotaUnread: string;
   quotaAt(at: Date, week: number | null, five: number | null): string;
-  /** The days. */
-  ranges: { week: string; days30: string; days90: string };
+  /** A weekly allowance through the week, in place of the quota. */
+  capTitle(amount: string): string;
+  capAt(at: Date, percent: number, amount: string): string;
+  /** The reset weeks. */
+  weeksTitle(weeks: number): string;
+  weeksNone: string;
+  cap(amount: string): string;
   /** The hours. */
   punchTitle: string;
   punchSaid(night: number): string;
@@ -95,6 +113,7 @@ const zhWeekday = ["周一", "周二", "周三", "周四", "周五", "周六", "
 /** Dollars as short as a label can be: to the cent below a hundred, whole
  *  above it. */
 function money(usd: number): string {
+  if (usd === 0) return "$0";
   if (underCent(usd)) return "<$0.01";
   if (usd >= 100) return `$${Math.round(usd).toLocaleString("en-US")}`;
   return dollars(usd);
@@ -116,7 +135,7 @@ export const zhUsage: UsageWords = {
   me: "我",
   machineItself: "这台机器上",
   about: "约",
-  aboutWhy: "按 API 标价折算。订阅登录并没有花这笔钱；按 Esc 打断的那次请求 Claude Code 不记，所以只会偏少。",
+  aboutWhy: "由 Claude Code 自己计算：它按内置的 Anthropic API 官方价目表，把每个请求的 token 折成美元，累加成会话总额；Fastctx 经官方 mod 接口的 session.measure 事件读取这个总额，按增量记账。订阅登录不实际扣这笔钱。",
   money,
   tokens,
   tokenUnit: "token",
@@ -129,22 +148,32 @@ export const zhUsage: UsageWords = {
   notRead: "还没读到",
   thisWeek: "这一周",
   myWeek: "我这一周",
+  whoseWeek: (name) => `${name} 这一周`,
   weekSpan: (start, end) => `${start.getMonth() + 1}月${start.getDate()}日 ${clock(start)} – ${end.getMonth() + 1}月${end.getDate()}日 ${clock(end)}`,
   weekWhy: (window) => (window ? "和这个登录的 7 天额度同一周" : "最近 7 天：还没读到这个登录的 7 天额度"),
   vsLastWeek: (change) => `比上一周 ${change > 0 ? "+" : ""}${change}%`,
   noLastWeek: "上一周没有用",
   today: (amount) => (amount ? `今天 ${amount}` : "今天还没用"),
   who: "这一周谁在用",
-  all: "看全部",
-  assistedBy: (owner) => `来自 ${owner} 的协助`,
   assistUntil: (until, now) => (until ? `到 ${until.getMonth() + 1}月${until.getDate()}日 ${clock(until)}${until.getFullYear() !== now.getFullYear() ? ` ${until.getFullYear()}` : ""}` : "不限期"),
+  untilShort: (until, now) => `${until.getMonth() + 1}月${until.getDate()}日${until.getFullYear() !== now.getFullYear() ? ` ${until.getFullYear()}` : ""}`,
   weekly: (amount) => `每周 约 ${amount}`,
   daily: (amount) => `每天 约 ${amount}`,
   fiveHourCap: (percent) => `5 小时额度用到 ${percent}% 停`,
-  weeklyUsed: (spent, of) => `这一周用了 约 ${spent} / ${of}`,
-  weeklyNone: "每周不限",
-  onlyYours: "你只看得到自己用了多少",
-  tabs: { calendar: "日历", quota: "额度", daily: "每天", punch: "时段" },
+  noCap: "不限额",
+  aDay: "每天",
+  aWeek: "每周",
+  lastDay: "最近 24 小时",
+  dayCapSaid: (cap, spent) => `每天上限 约 ${cap}\n最近 24 小时用了 约 ${spent}`,
+  weekCapSaid: (cap, spent) => `每周上限 约 ${cap}\n这一周用了 约 ${spent}`,
+  capRing: (name) => `${name} 的上限`,
+  capOf: (spent, cap) => `${spent} / ${cap}`,
+  partOf: (name, percent) => `${name} 约 ${percent}%`,
+  partSaid: (name, percent) => `${name} 用掉整个号这一周额度的约 ${percent}%`,
+  partHead: "占周额度",
+  partsWhy: "按这一周各人在 Fastctx 里记下的用量分摊整个号的 7 天额度：Claude 按 Claude Code 账本里的美元，Codex 按 token，缓存读算十分之一、输出算八倍（OpenAI 标价的比例）",
+  weekReached: (percent) => `整个号 7 天额度用到 ${percent}%`,
+  tabs: { calendar: "日历", quota: "额度", weeks: "每周", punch: "时段" },
   usd: "约 $",
   tokenTab: "token",
   year: "过去一年",
@@ -168,7 +197,11 @@ export const zhUsage: UsageWords = {
   reachBy: (percent) => `照最近一天的速度，重置前用到 ${percent}%`,
   quotaUnread: "这一周还没读到额度：这个登录干过一轮之后才有",
   quotaAt: (at, week, five) => [`${zhWeekday[(at.getDay() + 6) % 7]} ${clock(at)}`, week !== null ? `7 天 ${week}%` : "", five !== null ? `5 小时 ${five}%` : ""].filter(Boolean).join("\n"),
-  ranges: { week: "这一周", days30: "30 天", days90: "90 天" },
+  capTitle: (amount) => `这一周的上限 ${amount}`,
+  capAt: (at, percent, amount) => `${zhWeekday[(at.getDay() + 6) % 7]} ${clock(at)}\n${amount}，上限的 ${percent}%`,
+  weeksTitle: (weeks) => (weeks === 1 ? "这一周" : `近 ${weeks} 个重置周`),
+  weeksNone: "还没有记下的重置周：这个登录读到 7 天额度之后才有",
+  cap: (amount) => `上限 ${amount}`,
   punchTitle: "一天里的什么时候",
   punchSaid: (night) => `近 90 天，夜里 0–6 点占 ${night}%`,
   punchAt: (weekday, hour, amount) => `${weekday} ${hour}:00–${hour + 1}:00\n近 90 天 ${amount ?? "没有用"}`,
@@ -193,7 +226,7 @@ export const enUsage: UsageWords = {
   me: "Me",
   machineItself: "On the machine",
   about: "≈",
-  aboutWhy: "Reckoned at the API's list prices. A subscription login is not charged this; a request stopped with Esc is not counted, so it can only read low.",
+  aboutWhy: "Calculated by Claude Code itself: it prices each request's tokens with its built-in Anthropic API price list and adds them into the session's total; Fastctx reads that total from the official mod API's session.measure event and records each increase. A subscription login is not charged this amount.",
   money,
   tokens,
   tokenUnit: "tokens",
@@ -206,22 +239,32 @@ export const enUsage: UsageWords = {
   notRead: "Not read yet",
   thisWeek: "This week",
   myWeek: "My week",
+  whoseWeek: (name) => `${name}'s week`,
   weekSpan: (start, end) => `${enMonth[start.getMonth()]} ${start.getDate()} ${clock(start)} – ${enMonth[end.getMonth()]} ${end.getDate()} ${clock(end)}`,
   weekWhy: (window) => (window ? "The same week as this login's 7-day limit" : "The last 7 days: this login's 7-day limit is not read yet"),
   vsLastWeek: (change) => `${change > 0 ? "+" : ""}${change}% on last week`,
   noLastWeek: "Unused last week",
   today: (amount) => (amount ? `Today ${amount}` : "Unused today"),
   who: "Who uses it this week",
-  all: "Show all",
-  assistedBy: (owner) => `Assisting you, from ${owner}`,
   assistUntil: (until, now) => (until ? `Until ${enMonth[until.getMonth()]} ${until.getDate()} ${clock(until)}${until.getFullYear() !== now.getFullYear() ? ` ${until.getFullYear()}` : ""}` : "No end"),
+  untilShort: (until, now) => `${enMonth[until.getMonth()]} ${until.getDate()}${until.getFullYear() !== now.getFullYear() ? ` ${until.getFullYear()}` : ""}`,
   weekly: (amount) => `≈ ${amount} a week`,
   daily: (amount) => `≈ ${amount} a day`,
   fiveHourCap: (percent) => `Stops at ${percent}% of the 5-hour limit`,
-  weeklyUsed: (spent, of) => `≈ ${spent} of ${of} used this week`,
-  weeklyNone: "No weekly limit",
-  onlyYours: "You see only your own use",
-  tabs: { calendar: "Calendar", quota: "Limit", daily: "Days", punch: "Hours" },
+  noCap: "No allowance",
+  aDay: "A day",
+  aWeek: "A week",
+  lastDay: "Last 24 hours",
+  dayCapSaid: (cap, spent) => `≈ ${cap} a day at most\n≈ ${spent} in the last 24 hours`,
+  weekCapSaid: (cap, spent) => `≈ ${cap} a week at most\n≈ ${spent} this week`,
+  capRing: (name) => `${name}'s allowance`,
+  capOf: (spent, cap) => `${spent} / ${cap}`,
+  partOf: (name, percent) => `${name} ≈ ${percent}%`,
+  partSaid: (name, percent) => `${name} used ≈ ${percent}% of the account's limit this week`,
+  partHead: "Of the limit",
+  partsWhy: "The account's 7-day limit shared out by what each person used this week as Fastctx recorded it: Claude by Claude Code's own dollars, Codex by tokens, a cache read a tenth and output eight times (OpenAI's list-price ratios)",
+  weekReached: (percent) => `The account's 7-day limit at ${percent}%`,
+  tabs: { calendar: "Calendar", quota: "Limit", weeks: "Weeks", punch: "Hours" },
   usd: "≈ $",
   tokenTab: "Tokens",
   year: "The past year",
@@ -245,7 +288,11 @@ export const enUsage: UsageWords = {
   reachBy: (percent) => `At the last day's pace, ${percent}% by the reset`,
   quotaUnread: "No limit read this week yet: it comes once this login has done a turn",
   quotaAt: (at, week, five) => [`${enWeekday[(at.getDay() + 6) % 7]} ${clock(at)}`, week !== null ? `7 days ${week}%` : "", five !== null ? `5 hours ${five}%` : ""].filter(Boolean).join("\n"),
-  ranges: { week: "This week", days30: "30 days", days90: "90 days" },
+  capTitle: (amount) => `This week's allowance ${amount}`,
+  capAt: (at, percent, amount) => `${enWeekday[(at.getDay() + 6) % 7]} ${clock(at)}\n${amount}, ${percent}% of the allowance`,
+  weeksTitle: (weeks) => (weeks === 1 ? "This week" : `The last ${weeks} reset weeks`),
+  weeksNone: "No reset week recorded yet: they come once this login's 7-day limit is read",
+  cap: (amount) => `Allowance ${amount}`,
   punchTitle: "When in the day",
   punchSaid: (night) => `Last 90 days, ${night}% between midnight and 6`,
   punchAt: (weekday, hour, amount) => `${weekday} ${hour}:00–${hour + 1}:00\nLast 90 days ${amount ?? "unused"}`,

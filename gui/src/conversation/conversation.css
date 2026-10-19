@@ -52,7 +52,7 @@
   height: var(--row-line);
   padding: 0;
   font: inherit;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   background: none;
   border: 0;
@@ -85,7 +85,7 @@
   height: calc(var(--gap-row) - var(--space-4));
   padding: 0;
   font: inherit;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   background: none;
   border: 0;
@@ -163,7 +163,7 @@
 .bubble-more {
   display: block;
   margin: var(--space-1) 0 -2px auto;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--on-bubble);
   opacity: 0.7;
   transition: opacity var(--hover) ease;
@@ -192,7 +192,7 @@
 .bubble-note {
   max-width: min(85%, calc(var(--body-size) * 36));
   margin: var(--space-1) var(--space-2) 0 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   text-align: right;
 }
@@ -202,7 +202,7 @@
 }
 
 .bubble-from {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   margin: 0 var(--space-2) var(--space-1) 0;
 }
@@ -232,7 +232,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
   margin-bottom: var(--space-1);
 }
@@ -273,7 +273,7 @@
   margin: var(--space-1) 0 0;
   font-family: var(--font-code);
   font-variation-settings: var(--code-axes);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   overflow-wrap: anywhere;
 }
@@ -295,7 +295,7 @@
 .told-more > summary {
   cursor: pointer;
   width: fit-content;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   list-style-position: inside;
 }
@@ -306,7 +306,7 @@
 
 .told-more[open] > .told-plain {
   margin-top: var(--space-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -319,7 +319,7 @@
 }
 
 .plan-label {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
   margin-bottom: var(--space-2);
 }
@@ -330,7 +330,7 @@
   list-style: none;
   margin: 0;
   padding: 0;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
 }
 
@@ -376,13 +376,13 @@
 .steps-note {
   margin: var(--space-2) 0 0;
   color: var(--text-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
 }
 
 /* Notes: what the World knows of the session, said in a line. */
 
 .note {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
   line-height: var(--leading-ui);
 }
@@ -403,7 +403,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -538,7 +538,7 @@
   gap: 2px;
   padding: 2px 4px 2px 8px;
   border-radius: var(--radius-full);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
   text-decoration: none;
   transition: color var(--hover) ease, background-color var(--hover) ease;
@@ -743,7 +743,7 @@
   border-radius: var(--radius-s);
   background: var(--surface-code);
   color: var(--text-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   text-align: left;
   transition: background-color var(--hover) ease, color var(--hover) ease;
 }
@@ -790,7 +790,7 @@
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-m);
   background: var(--surface-code);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -983,7 +983,7 @@
   height: var(--tool-header);
   padding: 0 var(--space-3);
   background: var(--surface-header);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -1029,7 +1029,7 @@
   min-height: 34px;
   padding: 0 var(--space-1) 0 var(--space-3);
   background: var(--surface-header);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -1198,7 +1198,7 @@
   padding-left: calc(var(--diff-number) * 2 + 2.4ch);
   color: var(--text-3);
   font-family: var(--font-reading);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   background: var(--surface-code-2);
 }
 
@@ -1241,7 +1241,7 @@
 .io-note {
   margin: 0;
   padding: var(--space-1) 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -1282,7 +1282,7 @@
   align-items: baseline;
   gap: var(--space-4);
   padding: 0 var(--io-pad) var(--space-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
 }
 
@@ -1338,7 +1338,7 @@
 }
 
 .io-more {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   transition: color var(--hover) ease;
 }
@@ -1442,7 +1442,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--accent);
 }
 
@@ -1491,7 +1491,7 @@
   margin: var(--space-2) 0 0;
   font-family: var(--font-code);
   font-variation-settings: var(--code-axes);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   overflow-wrap: anywhere;
 }
@@ -1503,7 +1503,7 @@
 .ask-reason,
 .ask-message {
   margin: var(--space-2) 0 0;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
   color: var(--text-2);
 }
@@ -1537,7 +1537,7 @@
   padding: 0;
   font-family: var(--font-code);
   font-variation-settings: var(--code-axes);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -1559,7 +1559,7 @@
   min-height: 32px;
   padding: 5px 14px;
   border-radius: var(--radius-full);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
   text-align: left;
   color: var(--text-2);
@@ -1597,7 +1597,7 @@
 
 .ask-status {
   margin: var(--space-2) 0 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -1617,7 +1617,7 @@
 }
 
 .ask-question-head {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -1646,7 +1646,7 @@
   border-radius: var(--radius-s);
   background: var(--fill);
   text-align: left;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
   color: var(--text-2);
   transition: color var(--hover) ease, background-color var(--hover) ease, box-shadow var(--hover) ease;
@@ -1664,7 +1664,7 @@
 }
 
 .ask-option-what {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -1691,7 +1691,7 @@
   background: var(--field);
   color: var(--text);
   font: inherit;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color-scheme: inherit;
 }
 
@@ -1719,7 +1719,7 @@
 }
 
 .ask-field-title {
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text);
 }
 
@@ -1729,7 +1729,7 @@
 }
 
 .ask-field-what {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -1756,7 +1756,7 @@
   grid-template-columns: var(--rail-glyph) minmax(0, 1fr);
   column-gap: var(--rail-gap);
   align-items: center;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -1860,7 +1860,7 @@
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
 }
 
 .find-input::-webkit-search-cancel-button {
@@ -1874,7 +1874,7 @@
 .find-count {
   flex: none;
   padding: 0 var(--space-1);
-  font-size: var(--size-small);
+  font-size: var(--size-fine);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
@@ -1964,7 +1964,7 @@
   border-radius: var(--radius-m);
   background: var(--bubble);
   color: var(--on-bubble);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   text-decoration: none;
 }
 
@@ -1994,7 +1994,7 @@ a.bubble-file:hover {
   border-radius: var(--radius-m);
   background: var(--fill);
   color: var(--text-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
 }
 
 .picture-missing .picture-why {
@@ -2112,7 +2112,7 @@ a.bubble-file:hover {
 .pv-counter {
   flex: none;
   color: var(--text-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2120,7 +2120,7 @@ a.bubble-file:hover {
 .pv-note {
   flex: none;
   color: var(--text-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2214,7 +2214,7 @@ a.bubble-file:hover {
   min-height: 24px;
   padding: 0 var(--space-2);
   border-radius: var(--radius-s);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   opacity: var(--shown);
   transition: color var(--hover) ease, background-color var(--hover) ease, --shown var(--hover) ease;
@@ -2301,7 +2301,7 @@ a.bubble-file:hover {
   padding: var(--space-1) var(--space-3) var(--space-2);
   overflow: hidden;
   color: var(--text-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2317,7 +2317,7 @@ a.bubble-file:hover {
   background: transparent;
   color: var(--text-2);
   font: inherit;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   text-align: left;
   cursor: pointer;
 }
@@ -2367,8 +2367,8 @@ a.bubble-file:hover {
 @media (max-width: 600px) {
   .transcript {
     --body-size: var(--size-under);
-    --size-small: calc(var(--body-size) - 2px);
-    --size-ui: calc(var(--body-size) - 1px);
+    --size-text: var(--body-size);
+    --size-fine: calc(var(--body-size) - 2px);
     --size-code: calc(var(--body-size) * 0.88);
     --size-h1: calc(var(--body-size) * 1.154);
     --size-h2: calc(var(--body-size) * 1.154);

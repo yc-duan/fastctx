@@ -1,8 +1,9 @@
 //! What an agent's login was used for (`world-agent-logins.md`, 用量): for
 //! each account its conversations worked for, the tokens of each kind by
 //! the hour and, for Claude Code, what its own cost ledger said they cost;
-//! what the current week went to, by model and by kind; and the login's
-//! usage windows as they were read through the week.
+//! what the current week went to, by model and by kind, in all and for each
+//! account; the login's reset weeks over the year, with who used how much in
+//! each; and the login's usage windows as they were read through the week.
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -86,8 +87,16 @@ pub struct UsageReport {
     /// The week the login's own seven-day window is in, and what went on in
     /// it.
     pub week: UsageWeek,
-    /// The login's usage windows as read through that week, oldest first.
+    /// The login's usage windows as read through that week, oldest first;
+    /// none to an account the login only assists, which does not see its
+    /// account's windows.
     pub readings: Vec<UsageReading>,
+    /// The weeks of the login's own seven-day window its readings recorded
+    /// over the year, oldest first, the current week last, with what each
+    /// person used in each; none where no reading had that window. Older
+    /// nodes do not say.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub weeks: Vec<UsageSpan>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +104,13 @@ pub struct UsagePerson {
     pub account: Option<HubAccount>,
     /// What it used in the week, as its weekly allowance counts it.
     pub week: UsageSum,
+    /// What it used over the last 24 hours, as its daily allowance counts
+    /// it. Older nodes do not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub day: Option<UsageSum>,
+    /// What its week went to. Older nodes do not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub went: Option<WeekUse>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,6 +141,37 @@ pub struct UsageHour {
     pub sum: UsageSum,
 }
 
+/// One week of the login's own seven-day window: a week back from a reset a
+/// reading had, ended sooner where the next week began sooner.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageSpan {
+    pub start: Timestamp,
+    pub end: Timestamp,
+    /// How much of the seven-day window the login's account had used by
+    /// the week's last reading, in tenths of a percent; none to an account
+    /// the login only assists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub used_tenths: Option<u32>,
+    /// What each person who used the login in it used, by their place in
+    /// `people`.
+    pub used: Vec<UsageShare>,
+}
+
+/// One person's use of a week.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageShare {
+    /// Its place in `people`.
+    pub person: u32,
+    #[serde(flatten)]
+    pub sum: UsageSum,
+    /// Their part of what the account used of the week's window, in tenths
+    /// of a percent: the window's use shared out by what each person used
+    /// as Fastctx counted it, Claude Code's dollars or Codex's tokens at
+    /// list-price weights. None where the week has no reading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_tenths: Option<u32>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UsageWeek {
     pub start: Option<Timestamp>,
@@ -132,6 +179,13 @@ pub struct UsageWeek {
     /// Whether the week is the login's own seven-day window as last read;
     /// otherwise it is the seven days up to now.
     pub window: bool,
+    #[serde(flatten)]
+    pub went: WeekUse,
+}
+
+/// What a week's use went to.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WeekUse {
     /// Each model it went to, the most first.
     pub models: Vec<ModelUse>,
     /// The tokens of each kind, and for Claude Code what each kind cost at

@@ -459,6 +459,17 @@ pub fn fixtures() -> Fixtures {
                             reasoning_output_tokens: 0,
                             total_tokens: u64::MAX,
                         }),
+                        cost: None,
+                        limits: Some(fastctx_types::agents::AgentLimits {
+                            observed_at: "2026-10-12T14:20:00Z".parse().unwrap(),
+                            windows: vec![fastctx_types::agents::LimitWindow {
+                                name: "codex".into(),
+                                minutes: Some(10_080),
+                                used_tenths: 90,
+                                resets_at: Some("2026-10-15T18:00:00Z".parse().unwrap()),
+                            }],
+                            credits: None,
+                        }),
                     })),
                     1 => Some(Box::new(TurnFacts {
                         models: vec!["response-model-a".into(), "response-model-b".into()],
@@ -472,6 +483,8 @@ pub fn fixtures() -> Fixtures {
                             cache_creation_input_tokens: 30,
                             output_tokens: 40,
                         }),
+                        cost: Some(fastctx_types::usage::Usd(421_337)),
+                        limits: None,
                     })),
                     _ => None,
                 },

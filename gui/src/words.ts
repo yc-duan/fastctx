@@ -1,4 +1,5 @@
 import type { HealthKind } from "./world/events";
+import { dollars, underCent } from "./world/money";
 import { enProblems, zhProblems, type Reached } from "./app/problem";
 import type { FileLinkWords } from "./conversation/file-links";
 import type { PictureWords } from "./conversation/pictures";
@@ -232,7 +233,8 @@ export interface Words {
   /** How long something took: "1 分 12 秒". */
   took(ms: number): string;
   /** What a turn took, under its info mark: the model and effort the host
-   *  reported, how long, and the tokens. */
+   *  reported, how long, the tokens, what it cost by the host's own ledger,
+   *  and the login's windows as the turn left them. */
   turnInfo: {
     model: string;
     effort: string;
@@ -240,6 +242,10 @@ export interface Words {
     took: string;
     tokens: string;
     spent(input: number, cached: number, output: number, reasoning: number): string;
+    cost: string;
+    costOf(usd: number): string;
+    limits: string;
+    window(name: string, minutes: number | null): string;
   };
   /** How many steps a stretch of work has taken. */
   steps(n: number): string;
@@ -507,6 +513,10 @@ export const zh: Words = {
       [`输入 ${input.toLocaleString("zh-CN")}`, cached ? `缓存命中 ${cached.toLocaleString("zh-CN")}` : "", `输出 ${output.toLocaleString("zh-CN")}`, reasoning ? `其中推理 ${reasoning.toLocaleString("zh-CN")}` : ""]
         .filter(Boolean)
         .join("，"),
+    cost: "花费",
+    costOf: (usd) => (underCent(usd) ? "不到 $0.01" : `约 ${dollars(usd)}`),
+    limits: "额度",
+    window: (name, minutes) => (minutes === 300 || name.startsWith("five_hour") ? "5 小时" : minutes === 10080 || name.startsWith("seven_day") ? "7 天" : name),
   },
   took: (ms) => {
     const seconds = Math.max(0, Math.round(ms / 1000));
@@ -774,6 +784,10 @@ export const en: Words = {
       [`${input.toLocaleString("en")} in`, cached ? `${cached.toLocaleString("en")} cached` : "", `${output.toLocaleString("en")} out`, reasoning ? `${reasoning.toLocaleString("en")} reasoning` : ""]
         .filter(Boolean)
         .join(", "),
+    cost: "Cost",
+    costOf: (usd) => (underCent(usd) ? "under $0.01" : `≈ ${dollars(usd)}`),
+    limits: "Limits",
+    window: (name, minutes) => (minutes === 300 || name.startsWith("five_hour") ? "5 hours" : minutes === 10080 || name.startsWith("seven_day") ? "7 days" : name),
   },
   took: (ms) => {
     const seconds = Math.max(0, Math.round(ms / 1000));

@@ -31,7 +31,7 @@
   grid-area: said;
   margin: 0;
   padding-left: 12px;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -56,7 +56,7 @@
   justify-content: space-between;
   height: 32px;
   margin-bottom: 4px;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text);
 }
 
@@ -83,7 +83,7 @@
 .when-weekday {
   display: grid;
   place-items: center;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -93,7 +93,7 @@
   place-items: center;
   border-radius: var(--radius-s);
   color: var(--text-2);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   font-variant-numeric: tabular-nums;
   transition: color var(--hover) ease, background-color var(--hover) ease;
 }

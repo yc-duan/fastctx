@@ -33,7 +33,7 @@
   display: flex;
   gap: 16px;
   color: var(--text-3, currentColor);
-  font-size: 12px;
+  font-size: var(--size-text);
   line-height: 18px;
   pointer-events: none;
 }

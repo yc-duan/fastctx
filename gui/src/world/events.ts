@@ -7,6 +7,7 @@ import type { PageSource } from "./pages";
 import type { Focus } from "./focus";
 import type { RunFacts } from "./run-facts";
 import type { EndedHow, ExitStatus } from "./since";
+import type { AgentLimits } from "./agents";
 import type { Address, JsonValue, MachineName, NoticeId, Timestamp } from "./wire";
 export type { Address, MachineName, ResidentId } from "./wire";
 
@@ -110,6 +111,12 @@ export interface TurnFacts {
         output_tokens: number; reasoning_output_tokens: number; total_tokens: number }
     | { host: "claude"; input_tokens: number; cache_read_input_tokens: number;
         cache_creation_input_tokens: number; output_tokens: number };
+  /** What the turn cost by the host's own ledger, in millionths of a
+   *  dollar (Claude Code's). */
+  cost?: number;
+  /** The login's windows as last read when the turn ended; absent for an
+   *  account the login only assists. */
+  limits?: AgentLimits;
 }
 
 export type StepStatus = "done" | "doing" | "pending";

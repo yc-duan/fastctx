@@ -58,8 +58,12 @@ pub(crate) async fn query(
     Ok(WorldLogins { machine: here, machines })
 }
 
+/// Why an account a login only assists is not told the login's windows.
+pub(crate) const OWNERS_WINDOWS: &str = "the windows of the login's account are its owner's to see";
+
 /// What this machine's record shows another account: everything to one
-/// that may work here; to one logins assist, those listed logins alone.
+/// that may work here; to one logins assist, those listed logins alone,
+/// without their account's windows, which are their owner's to see.
 pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut logins: MachineLogins) -> MachineLogins {
     if asker.hands {
         return logins;
@@ -84,6 +88,7 @@ pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut login
         for login in &mut side.listed {
             login.programs.clear();
             login.change = None;
+            login.limits = fastctx_types::agents::Fact::unavailable(OWNERS_WINDOWS);
         }
     }
     logins
@@ -315,11 +320,8 @@ pub(crate) async fn answer(
                 .iter()
                 .chain(&side.candidates)
                 .find(|login| crate::homes::same_dir(&login.dir, &dir))
-                // One a login assists sees it only while it is listed.
-                .filter(|login| {
-                    may_see(view, asker, &agent, &login.dir, login.default)
-                        && (asker.hands || login.integration == fastctx_types::agents::Integration::In)
-                })
+                // One a login only assists does not read its account's windows.
+                .filter(|login| asker.hands && may_see(view, asker, &agent, &login.dir, login.default))
                 .ok_or_else(|| {
                     Failure::not_run(format!("no {agent} login {} here is the account's to see", dir.display()))
                 })?;

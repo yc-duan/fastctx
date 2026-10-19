@@ -280,7 +280,7 @@
 
 .jobs-title {
   margin: 0 var(--space-1) var(--space-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -391,7 +391,7 @@ button.job-what[aria-expanded="true"] .job-command {
   display: flex;
   flex-direction: column;
   margin: 2px var(--space-1) var(--space-1);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -428,7 +428,7 @@ button.job-what:hover .job-command {
 
 .jobs-pop .job-where {
   align-self: flex-start;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -447,7 +447,7 @@ button.job-what:hover .job-command {
   justify-content: flex-end;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-1);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 

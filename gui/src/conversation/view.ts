@@ -1152,8 +1152,8 @@ export class ConversationView {
       " data-needs=\"rewind\"",
     )}${icon(`data-turn-act="fork" data-turn="${escape(entry.turn)}"`, "fork", words.fork, " data-needs=\"fork\"")}${
       info.length
-        ? `<span class="turn-icon turn-info" tabindex="0" aria-label="${escape(info.map(([label, value]) => `${label} ${value}`).join("; "))}">${glyph("info", 16)}<span class="turn-info-card" role="tooltip">${info
-            .map(([label, value]) => `<span class="turn-info-label">${escape(label)}</span><span>${escape(value)}</span>`)
+        ? `<span class="turn-icon turn-info" tabindex="0" aria-label="${escape(info.map(({ label, text }) => `${label} ${text}`).join("; "))}">${glyph("info", 16)}<span class="turn-info-card" role="tooltip">${info
+            .map(({ label, text, html }) => `<span class="turn-info-label">${escape(label)}</span><span>${html ?? escape(text)}</span>`)
             .join("")}</span></span>`
         : ""
     }</div>`;
@@ -2589,17 +2589,27 @@ function sizeOf(bytes: number): string {
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
 }
 
-/** What a turn took, as label and value: the model and effort its host
- *  reported, how long, and the tokens; what the host did not report is left
- *  out. */
-function turnInfo(end: TurnEnd, words: Words, english: boolean): [string, string][] {
+/** One line of what a turn took: its label and value, and the value drawn
+ *  where words alone would not do. */
+interface TurnInfoRow {
+  label: string;
+  text: string;
+  html?: string;
+}
+
+/** What a turn took: the model and effort its host reported, how long, the
+ *  tokens, what it cost by the host's own ledger, and the login's windows
+ *  as the turn left them, a short bar each; what the host did not report is
+ *  left out. */
+function turnInfo(end: TurnEnd, words: Words, english: boolean): TurnInfoRow[] {
   const { turnInfo: said } = words;
   const facts = end.facts;
-  const rows: [string, string][] = [];
-  if (facts?.models?.length) rows.push([said.model, facts.models.map(modelName).join(" → ")]);
+  const rows: TurnInfoRow[] = [];
+  const row = (label: string, text: string) => rows.push({ label, text });
+  if (facts?.models?.length) row(said.model, facts.models.map(modelName).join(" → "));
   const efforts = (facts?.efforts ?? []).filter((effort) => effort.value !== null && effort.value !== undefined);
   if (efforts.length) {
-    rows.push([
+    row(
       said.effort,
       efforts
         .map((effort) => {
@@ -2607,14 +2617,30 @@ function turnInfo(end: TurnEnd, words: Words, english: boolean): [string, string
           return effort.kind === "requested" ? said.requested(value) : value;
         })
         .join(" → "),
-    ]);
+    );
   }
-  if (end.duration_ms) rows.push([said.took, words.took(end.duration_ms)]);
+  if (end.duration_ms) row(said.took, words.took(end.duration_ms));
   const tokens = facts?.tokens;
-  if (tokens?.host === "codex") rows.push([said.tokens, said.spent(tokens.input_tokens, tokens.cached_input_tokens, tokens.output_tokens, tokens.reasoning_output_tokens)]);
+  if (tokens?.host === "codex") row(said.tokens, said.spent(tokens.input_tokens, tokens.cached_input_tokens, tokens.output_tokens, tokens.reasoning_output_tokens));
   else if (tokens?.host === "claude") {
     const input = tokens.input_tokens + tokens.cache_read_input_tokens + tokens.cache_creation_input_tokens;
-    rows.push([said.tokens, said.spent(input, tokens.cache_read_input_tokens, tokens.output_tokens, 0)]);
+    row(said.tokens, said.spent(input, tokens.cache_read_input_tokens, tokens.output_tokens, 0));
+  }
+  if (facts?.cost !== undefined) row(said.cost, said.costOf(facts.cost / 1_000_000));
+  // The shorter window first, as the windows are read everywhere else.
+  const windows = [...(facts?.limits?.windows ?? [])].sort((a, b) => (a.minutes ?? Infinity) - (b.minutes ?? Infinity));
+  if (windows.length) {
+    const named = windows.map((window) => ({ name: said.window(window.name, window.minutes ?? null), percent: `${Math.round(window.used_tenths / 10)}%`, window }));
+    rows.push({
+      label: said.limits,
+      text: named.map(({ name, percent }) => `${name} ${percent}`).join(", "),
+      html: `<span class="turn-info-limits">${named
+        .map(({ name, percent, window }) => {
+          const level = window.used_tenths >= 1000 ? " spent" : window.used_tenths >= 900 ? " high" : "";
+          return `<span class="turn-info-limit${level}"><span>${escape(name)}</span><span class="turn-info-limit-track"><i style="width:${Math.min(100, window.used_tenths / 10).toFixed(1)}%"></i></span><span class="turn-info-limit-used">${escape(percent)}</span></span>`;
+        })
+        .join("")}</span>`,
+    });
   }
   return rows;
 }

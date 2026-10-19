@@ -50,7 +50,7 @@ export class Card extends PageElement {
       font-size: var(--size-h3);
       color: var(--text-strong);
     }
-    .note { font-size: var(--size-small); color: var(--text-3); }
+    .note { font-size: var(--body-size); color: var(--text-3); }
   `);
 
   protected draw(): void {
@@ -96,11 +96,11 @@ export class Stat extends PageElement {
       color: var(--text-strong);
       font-variant-numeric: tabular-nums;
     }
-    .unit { font-size: var(--size-ui); color: var(--text-2); }
-    .delta { margin-left: var(--space-2); font-size: var(--size-small); font-family: var(--font-reading); }
+    .unit { font-size: var(--body-size); color: var(--text-2); }
+    .delta { margin-left: var(--space-2); font-size: var(--body-size); font-family: var(--font-reading); }
     .better { color: var(--alive); }
     .worse { color: var(--wrong); }
-    .note { margin-top: var(--space-1); font-size: var(--size-small); color: var(--text-3); }
+    .note { margin-top: var(--space-1); font-size: var(--body-size); color: var(--text-3); }
     .note.wrong { color: var(--wrong); }
   `);
 

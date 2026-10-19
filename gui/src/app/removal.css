@@ -51,12 +51,12 @@
 
 .removal-chosen-title {
   font-family: var(--font-emphasis);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text-strong);
 }
 
 .removal-chosen-what {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -83,7 +83,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -143,7 +143,7 @@
 
 .removal-head {
   margin: 0 0 var(--space-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   font-weight: 400;
   color: var(--text-3);
 }
@@ -161,7 +161,7 @@
   padding: 4px 10px;
   border-radius: var(--radius-full);
   background: var(--fill);
-  font-size: var(--size-small);
+  font-size: var(--size-fine);
   color: var(--text);
   cursor: default;
 }
@@ -179,7 +179,7 @@
   margin: 0;
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-m);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
 }
 
@@ -207,7 +207,7 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
 }
 
 .removal-list li,
@@ -263,7 +263,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-code);
-  font-size: 12px;
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -284,7 +284,7 @@
 
 .removal-admin {
   margin-right: auto;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -299,7 +299,7 @@
   background: var(--field);
   color: var(--text);
   font: inherit;
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   outline: none;
 }
 
@@ -310,7 +310,7 @@
   border-radius: var(--radius-full);
   background: var(--wrong);
   color: var(--bg);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   scale: var(--press);
   transition: background-color var(--hover) ease, --press var(--settle) var(--spring);
 }
@@ -343,7 +343,7 @@
 
 .removal-said {
   margin: 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 

@@ -44,7 +44,7 @@
   border-radius: 50%;
   background: var(--fill);
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--size-text);
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
@@ -64,7 +64,7 @@
 .progress-label {
   max-width: 100%;
   overflow: hidden;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
   color: var(--text-3);
   text-overflow: ellipsis;

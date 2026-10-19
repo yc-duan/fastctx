@@ -36,7 +36,7 @@
 .update-version {
   flex: none;
   color: var(--text-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   font-variant-numeric: tabular-nums;
 }
 
@@ -95,7 +95,7 @@
   border-radius: var(--radius-full);
   background: var(--accent-wash);
   color: var(--text-strong);
-  font-size: var(--size-small);
+  font-size: var(--size-fine);
 }
 
 .update-notes,
@@ -103,12 +103,12 @@
 .update-minimum {
   margin: 0;
   color: var(--text-2);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
 }
 
 .update-facts {
   color: var(--text-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   font-variant-numeric: tabular-nums;
 }
 
@@ -143,7 +143,7 @@
 
 .update-said {
   color: var(--text-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   font-variant-numeric: tabular-nums;
 }
 
@@ -168,7 +168,7 @@
 .mp-update-said {
   margin-left: var(--space-2);
   color: var(--text-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
 }
 
 .policy-rows {

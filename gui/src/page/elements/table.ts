@@ -15,15 +15,15 @@ export class Table extends PageElement {
   static observedAttributes = ["columns", ...BOUND];
   protected static override styles = sheet(`
     .wrap { overflow-x: auto; scrollbar-width: thin; }
-    table { width: 100%; border-collapse: collapse; font-size: var(--size-ui); }
+    table { width: 100%; border-collapse: collapse; font-size: var(--body-size); }
     th, td { padding: 6px var(--space-3); text-align: left; border-bottom: 1px solid var(--divider); white-space: nowrap; }
-    th { font-weight: 400; font-size: var(--size-small); color: var(--text-3); }
+    th { font-weight: 400; font-size: var(--body-size); color: var(--text-3); }
     th button { padding: 0; color: inherit; }
     th button[aria-sort]::after { content: " ↓"; }
     th button[aria-sort="ascending"]::after { content: " ↑"; }
     td.number, th.number { text-align: right; font-variant-numeric: tabular-nums; }
     tbody tr:hover td { background: var(--hairline); }
-    .empty { padding: var(--space-3); color: var(--text-3); font-size: var(--size-small); }
+    .empty { padding: var(--space-3); color: var(--text-3); font-size: var(--body-size); }
   `);
   private sortBy: { key: string; up: boolean } | null = null;
 

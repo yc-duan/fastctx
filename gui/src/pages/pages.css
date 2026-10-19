@@ -20,7 +20,7 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 2px 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -41,7 +41,7 @@
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-m);
   background: var(--fill);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -118,7 +118,7 @@
 
 .act-what {
   color: var(--text-strong);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
 }
 
 .act-command {
@@ -132,13 +132,13 @@
 }
 
 .act-detail {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
 .page-act-heading {
   margin: var(--space-4) 0 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   font-weight: 400;
   color: var(--text-3);
 }
@@ -167,12 +167,12 @@
   align-items: baseline;
   gap: var(--space-2);
   color: var(--text-strong);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
 }
 
 .page-version-by {
   grid-column: 1;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -231,18 +231,18 @@
   align-items: baseline;
   gap: var(--space-2);
   color: var(--text-strong);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   transition: color var(--hover) ease;
 }
 
 .page-link-about {
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text-2);
   line-height: var(--leading-prose);
 }
 
 .page-link-facts {
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 

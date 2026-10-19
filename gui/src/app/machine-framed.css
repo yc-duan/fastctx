@@ -26,7 +26,7 @@
   border-radius: var(--radius-m);
   background: var(--fill);
   color: var(--text);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   text-align: left;
 }
 
@@ -63,7 +63,7 @@
 .framed-sub {
   flex: none;
   color: var(--text-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
 }
 
 .framed-tail {
@@ -72,7 +72,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
 }
@@ -108,7 +108,7 @@
 
 .framed-said {
   padding: 0 var(--space-3);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -136,7 +136,7 @@
   border-radius: var(--radius-full);
   background: var(--fill-strong);
   color: var(--text-2);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: 17px;
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -147,7 +147,7 @@
   margin: var(--space-3) 0 0;
   padding: 0;
   list-style: none;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
   color: var(--text-3);
 }

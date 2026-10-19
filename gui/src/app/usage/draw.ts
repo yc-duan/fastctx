@@ -1,7 +1,7 @@
 // The drawings of a login's usage, in the interface's pen: rings for its
 // windows, a year of days, the week's limit as a line through time, the
-// days as stacked bars, the hours of the week as dots, and what the use
-// went to as one bar of parts. Each is drawn at the width it is shown at,
+// reset weeks as stacked bars, the hours of the week as dots, and what the
+// use went to as one bar of parts. Each is drawn at the width it is shown at,
 // so its labels keep their size on a phone; the hover over each mark says
 // what it stands for.
 
@@ -30,26 +30,51 @@ function split(values: Map<number, number> | undefined, people: Person[], amount
   return parts.length > 1 ? `\n${parts.join("\n")}` : "";
 }
 
+/** One person's part of a ring, in their ink; a faded part is someone's
+ *  other than the one looked at. */
+export interface RingPart {
+  share: number;
+  ink: string;
+  faded?: boolean;
+}
+
 /** A ring for a window: how much of it is used, clay turning to caution near
- *  the end and to wrong past it. */
-export function ring(share: number | null, seed: string, size = 76): string {
+ *  the end and to wrong past it. Given the parts of those who used it, each
+ *  is drawn in turn in its own ink, what no part covers in graphite. */
+export function ring(share: number | null, seed: string, size = 76, parts: RingPart[] = []): string {
   const r = size * 0.38;
   const c: Point = [size / 2, size / 2];
   const random = seeded(`ring:${seed}`);
   const track = circle(c, r, 1.3, random);
-  let arc = "";
-  if (share !== null && share >= 0.012) {
-    const sweep = Math.min(1, share) * Math.PI * 2;
-    const steps = Math.max(8, Math.round((sweep * r) / 2.5));
+  const arc = (from: number, to: number, last: boolean): string => {
+    const sweep = (Math.min(1, to) - from) * Math.PI * 2;
+    if (sweep <= 0) return "";
+    const steps = Math.max(4, Math.round((sweep * r) / 2.5));
     const points: Point[] = [];
     for (let index = 0; index <= steps; index += 1) {
-      const angle = -Math.PI / 2 + (sweep * index) / steps;
+      const angle = -Math.PI / 2 + from * Math.PI * 2 + (sweep * index) / steps;
       points.push([c[0] + Math.cos(angle) * r, c[1] + Math.sin(angle) * r]);
     }
-    arc = outline(points, size * 0.07, random, { pressure: 0.2, taperStart: 0.03, taperEnd: Math.min(0.2, 0.05 / Math.min(1, share)) });
-  }
+    return outline(points, size * 0.07, random, { pressure: 0.2, taperStart: from ? 0.01 : 0.03, taperEnd: last ? Math.min(0.2, 0.05 / Math.min(1, to - from)) : 0.01 });
+  };
   const level = share === null ? "" : share >= 1 ? " spent" : share >= 0.9 ? " high" : "";
-  return `<svg class="ledger-ring-ink${share === null ? " unread" : ""}" viewBox="0 0 ${size} ${size}" aria-hidden="true"><path class="ledger-trace" d="${track}"/><g filter="url(#pen-marker-lite)"><path class="ledger-arc${level}" d="${arc}"/></g></svg>`;
+  let ink = "";
+  if (share !== null && share >= 0.012) {
+    const shown = parts.filter((part) => part.share >= 0.004);
+    // Near the end, the warning says more than who used it.
+    if (!shown.length || level) ink = `<path class="ledger-arc${level}" d="${arc(0, share, true)}"/>`;
+    else {
+      let from = 0;
+      shown.forEach((part, index) => {
+        const to = Math.min(share, from + part.share);
+        const last = index === shown.length - 1 && to >= share - 0.004;
+        ink += `<path fill="${part.ink}"${part.faded ? ' fill-opacity="0.28"' : ""} d="${arc(from, to, last)}"/>`;
+        from = to;
+      });
+      if (share - from >= 0.004) ink += `<path fill="var(--pen-graphite)" fill-opacity="0.5" d="${arc(from, share, true)}"/>`;
+    }
+  }
+  return `<svg class="ledger-ring-ink${share === null ? " unread" : ""}" viewBox="0 0 ${size} ${size}" aria-hidden="true"><path class="ledger-trace" d="${track}"/><g filter="url(#pen-marker-lite)">${ink}</g></svg>`;
 }
 
 /** A short bar: a ruled line, inked along `share` of it. */
@@ -63,6 +88,8 @@ export function bar(share: number, seed: string, width: number, height: number, 
 
 export interface CalendarInput {
   width: number;
+  /** The height it may take: what the year leaves, the weeks' bars take. */
+  height?: number;
   days: Map<number, Map<number, number>>;
   /** The people shown, for each week's stacked total and the hovers. */
   people: Person[];
@@ -125,33 +152,43 @@ export function calendar(input: CalendarInput): { svg: string; height: number; w
   const labels = [0, 2, 4, 6].map((weekday) => `<text class="ledger-axis" x="0" y="${f(top + weekday * pitch + cell - 1)}">${escape(words.weekday[weekday]!.slice(-1))}</text>`).join("");
   // Each week's total, stacked by person.
   const barTop = top + 7 * pitch + 12;
-  const barHeight = 44;
+  const barHeight = Math.max(44, (input.height ?? 0) - barTop - 6);
   const sums = Array.from({ length: weeks }, (_, week) => {
     const byPerson = new Map<number, number>();
     for (let weekday = 0; weekday < 7; weekday += 1) for (const [person, value] of days.get(dayAt(week, weekday)) ?? []) byPerson.set(person, (byPerson.get(person) ?? 0) + value);
     return byPerson;
   });
-  const most = Math.max(1e-9, ...sums.map(total));
+  const scale = nice(Math.max(1e-9, ...sums.map(total)));
+  // The weeks' own head room: their scale's figure and the people's inks.
+  const bandTop = barTop + 16;
+  const bandHeight = barTop + barHeight - bandTop;
+  const yOf = (value: number) => bandTop + bandHeight - (value / scale) * bandHeight;
   let bars = "";
+  let columns = "";
   sums.forEach((byPerson, week) => {
     const x = left + week * pitch;
     let below = 0;
     for (const person of people) {
       const value = byPerson.get(person.index) ?? 0;
       if (!value) continue;
-      const y0 = barTop + barHeight - (below / most) * barHeight;
-      const y1 = barTop + barHeight - ((below + value) / most) * barHeight;
+      const y0 = yOf(below);
+      const y1 = yOf(below + value);
       below += value;
       bars += `<path fill="${person.ink}" fill-opacity="0.85" d="${swatch(x, y1, cell, Math.max(1.2, y0 - y1), random, 1.6)}"/>`;
     }
     const sum = total(byPerson);
     const said = `${words.weekFrom(new Date(dayAt(week, 0)))}\n${sum ? amounts.say(sum) : words.unused}${split(byPerson, people, amounts)}`;
-    hits += `<rect x="${f(x - 1)}" y="${barTop}" width="${f(pitch)}" height="${barHeight}" fill="transparent"${hint(said)}/>`;
+    columns += `<rect class="ledger-hit" x="${f(x - 1.5)}" y="${f(bandTop - 4)}" width="${f(pitch)}" height="${f(bandHeight + 6)}" rx="3"${hint(said)}/>`;
   });
-  const base = `<path class="ledger-rule" d="${ruled([left, barTop + barHeight + 1], [left + weeks * pitch - 3, barTop + barHeight + 1], 0.9, random)}"/><text class="ledger-axis" x="0" y="${barTop + barHeight - 2}">${escape(words.weekRow)}</text>`;
+  const keyed = people.length > 1 ? peopleKeys(people, left + weeks * pitch - 3, barTop + 8) : "";
+  const base =
+    `<path class="ledger-rule" d="${ruled([left, barTop + barHeight + 1], [left + weeks * pitch - 3, barTop + barHeight + 1], 0.9, random)}"/>` +
+    `<path class="ledger-rule faint" d="${ruled([left, bandTop], [left + weeks * pitch - 3, bandTop], 0.6, random)}"/>` +
+    `<text class="ledger-axis" x="0" y="${f(bandTop + 4)}">${escape(amounts.axis(scale))}</text>` +
+    `<text class="ledger-axis" x="0" y="${barTop + barHeight - 2}">${escape(words.weekRow)}</text>`;
   const height = barTop + barHeight + 6;
   return {
-    svg: `<svg class="ledger-chart" viewBox="0 0 ${f(width)} ${height}" width="${f(width)}" height="${height}"><path class="ledger-empty" d="${empty}"/><g filter="url(#pen-marker-lite)">${inked}${bars}</g>${base}${months}${labels}${hits}</svg>`,
+    svg: `<svg class="ledger-chart" viewBox="0 0 ${f(width)} ${height}" width="${f(width)}" height="${height}"><path class="ledger-empty" d="${empty}"/>${columns}<g class="ledger-ink" filter="url(#pen-marker-lite)">${inked}${bars}</g>${base}${keyed}${months}${labels}${hits}</svg>`,
     height,
     weeks,
   };
@@ -194,11 +231,16 @@ export interface QuotaInput {
   pace: number | null;
   words: UsageWords;
   seed: string;
+  /** What the hover over an hour says, where it is not the windows'. */
+  at?: (at: Date, week: number | null) => string;
+  /** The week's ink, where it is someone's own. */
+  ink?: string;
 }
 
 /** The week's limit through the week: the seven-day share as a line with
  *  the area under it, carried on at the last day's pace to the reset or
- *  to full; the five-hour windows as a lower band of their own. */
+ *  to full; the five-hour windows, where there are any, as a lower band of
+ *  their own. */
 export function quota(input: QuotaInput): { svg: string; said: string } {
   const { width, height, start, end, now, week, five, pace, words } = input;
   const left = 40;
@@ -206,8 +248,8 @@ export function quota(input: QuotaInput): { svg: string; said: string } {
   const top = 12;
   const bottom = 22;
   const w = width - left - right;
-  const band = 38;
-  const main = height - top - bottom - band - 16;
+  const band = five ? 38 : 0;
+  const main = height - top - bottom - band - (five ? 16 : 0);
   const x = (at: number) => left + ((Math.min(end, Math.max(start, at)) - start) / Math.max(1, end - start)) * w;
   const y = (share: number) => top + main - Math.min(1.04, share) * main;
   const bandTop = top + main + 16;
@@ -219,8 +261,10 @@ export function quota(input: QuotaInput): { svg: string; said: string } {
     grid += ruled([left, y(share)], [left + w, y(share)], share === 0 ? 1 : 0.6, random);
     labels += `<text class="ledger-axis" x="${left - 6}" y="${f(y(share) + 4)}" text-anchor="end">${share * 100}%</text>`;
   }
-  grid += ruled([left, yb(0)], [left + w, yb(0)], 0.9, random);
-  labels += `<text class="ledger-axis" x="${left - 6}" y="${f(yb(0) - 2)}" text-anchor="end">5h</text>`;
+  if (five) {
+    grid += ruled([left, yb(0)], [left + w, yb(0)], 0.9, random);
+    labels += `<text class="ledger-axis" x="${left - 6}" y="${f(yb(0) - 2)}" text-anchor="end">5h</text>`;
+  }
   // Each whole day named under its middle, each midnight ticked.
   for (let day = daysBefore(dayOf(start), -1); day < end; day = daysBefore(day, -1)) {
     if (day + DAY_MS / 2 < end) labels += `<text class="ledger-axis" x="${f(x(day + DAY_MS / 2))}" y="${height - 6}" text-anchor="middle">${escape(words.weekday[weekdayOf(day)]!)}</text>`;
@@ -248,8 +292,8 @@ export function quota(input: QuotaInput): { svg: string; said: string } {
   let areas = "";
   if (weekPoints.length) {
     const steps = stepped(weekPoints, lastAt);
-    areas += `<path class="ledger-area" d="M${f(x(steps[0]![0]))} ${f(y(0))}L${steps.map(([at, share]) => `${f(x(at))} ${f(y(share))}`).join("L")}L${f(x(lastAt))} ${f(y(0))}Z"/>`;
-    ink += `<path fill="var(--pen-clay)" d="${outline(steps.map(([at, share]) => [x(at), y(share)] as Point), 2.2, random, { pressure: 0.15, taper: 0.01 })}"/>`;
+    areas += `<path class="ledger-area"${input.ink ? ` style="fill:color-mix(in srgb, ${input.ink} 14%, transparent)"` : ""} d="M${f(x(steps[0]![0]))} ${f(y(0))}L${steps.map(([at, share]) => `${f(x(at))} ${f(y(share))}`).join("L")}L${f(x(lastAt))} ${f(y(0))}Z"/>`;
+    ink += `<path fill="${input.ink ?? "var(--pen-clay)"}" d="${outline(steps.map(([at, share]) => [x(at), y(share)] as Point), 2.2, random, { pressure: 0.15, taper: 0.01 })}"/>`;
   }
   if (fivePoints.length) {
     const steps = stepped(fivePoints, lastAt);
@@ -285,35 +329,45 @@ export function quota(input: QuotaInput): { svg: string; said: string } {
     const fiveShare = lastOf(fivePoints, at + HOUR_MS);
     if (weekShare === null && fiveShare === null) continue;
     const pct = (share: number | null) => (share === null ? null : Math.round(share * 100));
-    hits += `<rect x="${f(x(at))}" y="${top}" width="${f(slot)}" height="${f(yb(0) - top)}" fill="transparent"${hint(words.quotaAt(new Date(at + HOUR_MS), pct(weekShare), pct(fiveShare)))}/>`;
+    const said = input.at ? input.at(new Date(at + HOUR_MS), pct(weekShare)) : words.quotaAt(new Date(at + HOUR_MS), pct(weekShare), pct(fiveShare));
+    hits += `<rect x="${f(x(at))}" y="${top}" width="${f(slot)}" height="${f(yb(0) - top)}" fill="transparent"${hint(said)}/>`;
   }
   return {
-    svg: `<svg class="ledger-chart" viewBox="0 0 ${f(width)} ${height}" width="${f(width)}" height="${height}"><path class="ledger-rule" d="${grid}"/>${labels}${areas}<g filter="url(#pen-marker-lite)">${ink}</g><path fill="var(--pen-clay)" fill-opacity="0.8" d="${carried}"/>${nowLine}${resetMark}${hits}</svg>`,
+    svg: `<svg class="ledger-chart" viewBox="0 0 ${f(width)} ${height}" width="${f(width)}" height="${height}"><path class="ledger-rule" d="${grid}"/>${labels}${areas}<g filter="url(#pen-marker-lite)">${ink}</g><path fill="${input.ink ?? "var(--pen-clay)"}" fill-opacity="0.8" d="${carried}"/>${nowLine}${resetMark}${hits}</svg>`,
     said,
   };
 }
 
-export interface DailyInput {
+export interface WeeksInput {
   width: number;
   height: number;
-  /** The days shown, oldest first, each person's amount on it. */
-  columns: { day: number; values: Map<number, number> }[];
+  /** The reset weeks shown, oldest first, the current one last, each
+   *  person's amount in it; and of the seven-day window, how much the
+   *  account used and each person's part, where the reader sees them. */
+  columns: { start: number; end: number; values: Map<number, number>; reached: number | null; parts: Map<number, number> }[];
   people: Person[];
   amounts: Amounts;
   words: UsageWords;
   seed: string;
+  /** A weekly allowance to rule across, in the amounts' unit, and how it
+   *  is written. */
+  cap: { value: number; said: string } | null;
+  /** The one person the bars are narrowed to. */
+  only: { index: number; ink: string } | null;
 }
 
-/** A bar a day, stacked by person in each one's ink. */
-export function daily(input: DailyInput): string {
-  const { width, height, columns, people, amounts, words } = input;
-  const top = 10;
+/** A bar a reset week, stacked by person in each one's ink, over it how
+ *  much of its seven-day window the account used, and the part of the one
+ *  the bars are narrowed to; a weekly allowance as a dashed rule across. */
+export function weeks(input: WeeksInput): string {
+  const { width, height, columns, people, amounts, words, cap, only } = input;
+  const top = 26;
   const bottom = 22;
   const left = 46;
   const right = 6;
   const w = width - left - right;
   const h = height - top - bottom;
-  const most = Math.max(1e-9, ...columns.map((column) => total(column.values)));
+  const most = Math.max(1e-9, cap?.value ?? 0, ...columns.map((column) => total(column.values)));
   const scale = nice(most);
   const y = (value: number) => top + h - (value / scale) * h;
   const random = seeded(`daily:${input.seed}`);
@@ -325,10 +379,15 @@ export function daily(input: DailyInput): string {
   }
   const n = columns.length;
   const slot = w / Math.max(1, n);
-  const thick = Math.max(3, Math.min(30, slot * 0.62));
-  const every = n <= 8 ? 1 : n <= 31 ? (width < 520 ? 10 : 5) : width < 520 ? 30 : 15;
+  const thick = Math.max(3, Math.min(36, slot * 0.62));
+  // As many dates as fit under the bars, counted back from this week.
+  const every = Math.max(1, Math.ceil(44 / slot));
   let ink = "";
   let hits = "";
+  if (cap && cap.value > 0) {
+    grid += dashed([left, y(cap.value)], [left + w, y(cap.value)], 1.1, random, 7, 5);
+    labels += `<text class="ledger-axis strong" x="${f(left + w)}" y="${f(y(cap.value) - 5)}" text-anchor="end">${escape(words.cap(cap.said))}</text>`;
+  }
   columns.forEach((column, index) => {
     const cx = left + slot * index + slot / 2;
     let below = 0;
@@ -340,14 +399,39 @@ export function daily(input: DailyInput): string {
       below += value;
       ink += `<path fill="${person.ink}" d="${swatch(cx - thick / 2, y1, thick, Math.max(1.5, y0 - y1), random, 2)}"/>`;
     }
-    const at = new Date(column.day);
-    const label = n <= 8 ? words.weekday[weekdayOf(column.day)]! : (n - 1 - index) % every === 0 ? `${at.getMonth() + 1}/${at.getDate()}` : "";
-    if (label) labels += `<text class="ledger-axis" x="${f(cx)}" y="${height - 6}" text-anchor="middle">${escape(label)}</text>`;
+    const at = new Date(column.start);
+    const current = index === n - 1;
+    const label = current ? words.thisWeekShort : (n - 1 - index) % every === 0 ? `${at.getMonth() + 1}/${at.getDate()}` : "";
+    if (label) labels += `<text class="ledger-axis${current ? " strong" : ""}" x="${f(cx)}" y="${height - 6}" text-anchor="middle">${escape(label)}</text>`;
     const sum = total(column.values);
-    const said = `${words.day(at)}\n${sum ? amounts.say(sum) : words.unused}${split(column.values, people, amounts)}`;
-    hits += `<rect x="${f(cx - slot / 2)}" y="${top}" width="${f(slot)}" height="${h}" fill="transparent"${hint(said)}/>`;
+    const pct = (share: number) => Math.round(share * 100);
+    // Narrowed to one person, a week they did not use says nothing.
+    if (column.reached !== null && slot >= 30 && (!only || sum > 0)) {
+      const mine = only ? `<tspan fill="${only.ink}">${pct(column.parts.get(only.index) ?? 0)}%</tspan><tspan> / </tspan>` : "";
+      labels += `<text class="ledger-axis ledger-reached" x="${f(cx)}" y="${f(y(sum) - 6)}" text-anchor="middle">${mine}<tspan>${pct(column.reached)}%</tspan></text>`;
+    }
+    const reached =
+      column.reached === null
+        ? ""
+        : `\n${words.weekReached(pct(column.reached))}${people.filter((person) => column.parts.has(person.index)).map((person) => `\n${words.partOf(person.name, pct(column.parts.get(person.index)!))}`).join("")}`;
+    const said = `${words.weekSpan(at, new Date(column.end))}\n${sum ? amounts.say(sum) : words.unused}${split(column.values, people, amounts)}${reached}`;
+    hits += `<rect class="ledger-hit" x="${f(cx - Math.min(slot, thick + 18) / 2)}" y="${top}" width="${f(Math.min(slot, thick + 18))}" height="${h + 4}" rx="4"${hint(said)}/>`;
   });
-  return `<svg class="ledger-chart" viewBox="0 0 ${f(width)} ${height}" width="${f(width)}" height="${height}"><path class="ledger-rule" d="${grid}"/>${labels}<g filter="url(#pen-marker-lite)">${ink}</g>${hits}</svg>`;
+  return `<svg class="ledger-chart" viewBox="0 0 ${f(width)} ${height}" width="${f(width)}" height="${height}">${hits}<path class="ledger-rule" d="${grid}"/><g class="ledger-ink" filter="url(#pen-marker-lite)">${ink}</g>${labels}</svg>`;
+}
+
+/** The people of a stacked drawing, named once in their inks, ending at
+ *  `right` on the line `y`. */
+function peopleKeys(people: Person[], right: number, y: number): string {
+  let x = right;
+  let keys = "";
+  for (const person of [...people].reverse()) {
+    const width = person.name.length * 7.5 + 4;
+    x -= width;
+    keys += `<text class="ledger-axis" x="${f(x + 13)}" y="${f(y + 4)}">${escape(person.name)}</text><rect x="${f(x)}" y="${f(y - 4)}" width="9" height="9" rx="2.5" fill="${person.ink}"/>`;
+    x -= 16;
+  }
+  return keys;
 }
 
 /** A round top for an axis: 1, 2, 5 or 10 times a power of ten. */

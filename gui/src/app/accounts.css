@@ -11,7 +11,7 @@
   align-items: flex-start;
   gap: var(--space-3);
   margin-top: var(--space-4);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
   color: var(--text);
   cursor: pointer;
@@ -39,7 +39,7 @@
   align-items: center;
   gap: 6px;
   margin: 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-2);
 }
 
@@ -81,7 +81,7 @@ a.text-button {
 
 .login-ways .login-way {
   height: 30px;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -125,7 +125,7 @@ a.text-button {
 
 .machines-alone {
   margin: var(--space-3) 0 var(--space-8);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   line-height: var(--leading-prose);
   color: var(--text-3);
 }
@@ -231,7 +231,7 @@ a.text-button {
   min-width: 0;
   font-family: var(--font-code);
   font-variation-settings: var(--code-axes);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text);
 }
 
@@ -272,7 +272,7 @@ a.text-button {
   height: 22px;
   border-radius: var(--radius-full);
   background: var(--fill-strong);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
 }
@@ -287,7 +287,7 @@ a.text-button {
   align-items: center;
   gap: 6px;
   margin: 0;
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
 }
 
@@ -310,7 +310,7 @@ a.text-button {
    parts each under a small head. */
 .account-title {
   color: var(--text-2);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
 }
 
 .account-title .glyph {
@@ -330,7 +330,7 @@ a.text-button {
   background: var(--fill-strong);
   font-family: var(--font-code);
   font-variation-settings: var(--code-axes);
-  font-size: var(--size-small);
+  font-size: var(--size-fine);
   color: var(--text-2);
 }
 
@@ -372,7 +372,7 @@ a.text-button {
   min-height: 30px;
   padding: 2px var(--space-3) 2px calc(var(--space-3) - 4px);
   border-radius: var(--radius-s);
-  font-size: var(--size-ui);
+  font-size: var(--size-text);
   color: var(--text-2);
   text-align: left;
   transition: color var(--hover) ease, background-color var(--hover) ease;
@@ -432,7 +432,7 @@ a.text-button {
   gap: 8px;
   margin: var(--space-3) 0 var(--space-2);
   padding: 2px 0 2px var(--space-4);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   line-height: var(--leading-ui);
   color: var(--text-2);
 }

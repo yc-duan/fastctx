@@ -1,11 +1,12 @@
 // What a login's usage report says, in the shapes the page draws: each
 // person once, named and inked as this reader knows them, the days and
-// hours by this device's clock, and the week's windows as a line through
-// time. Dollars are Claude Code's own ledger; Codex keeps none, so its
-// usage is counted in tokens alone.
+// hours by this device's clock, the login's reset weeks each with what
+// everyone used in it, and the week's windows as a line through time.
+// Dollars are Claude Code's own ledger; Codex keeps none, so its usage is
+// counted in tokens alone.
 
 import type { LimitWindow } from "../../world/agents";
-import type { KindsUsd, ModelUse, Tokens, UsageReport, UsageSum } from "../../world/usage";
+import type { KindsUsd, ModelUse, Tokens, UsageReport, UsageSum, WeekUse } from "../../world/usage";
 import type { HubAccount } from "../../world/accounts";
 
 export type Unit = "usd" | "tokens";
@@ -24,6 +25,10 @@ export interface Person extends Named {
   /** The CSS colour it is drawn in. */
   ink: string;
   week: Sum;
+  /** What it used over the last 24 hours; null where the node does not say. */
+  day: Sum | null;
+  /** What its week went to; null where the node does not say. */
+  went: Went | null;
 }
 
 export interface Sum {
@@ -37,20 +42,38 @@ export interface Hour extends Sum {
   person: number;
 }
 
-export interface Week {
+/** What a week's use went to: its models, the most first, and its kinds. */
+export interface Went {
+  models: { model: string; sum: Sum }[];
+  tokens: Required<Tokens>;
+  kinds: { input: number; cache_read: number; cache_write: number; output: number } | null;
+}
+
+export interface Week extends Went {
   start: number;
   end: number;
   /** The login's own seven-day window, not the last seven days. */
   window: boolean;
-  models: { model: string; sum: Sum }[];
-  tokens: Required<Tokens>;
-  kinds: { input: number; cache_read: number; cache_write: number; output: number } | null;
+}
+
+/** One reset week of the login: what each person used in it, and of the
+ *  seven-day window, how much the account used and each person's part. */
+export interface Span {
+  start: number;
+  end: number;
+  values: Map<number, Sum>;
+  /** A share, 0 to 1 and past it; null where the week had no reading or
+   *  the reader may not see the account's window. */
+  reached: number | null;
+  parts: Map<number, number>;
 }
 
 export interface Usage {
   people: Person[];
   hours: Hour[];
   week: Week;
+  /** The login's reset weeks its readings recorded, oldest first. */
+  weeks: Span[];
   readings: { at: number; windows: LimitWindow[] }[];
   /** Whether it is counted in dollars too. */
   usd: boolean;
@@ -70,15 +93,20 @@ const add = (a: Sum, b: Sum): Sum => ({ tokens: a.tokens + b.tokens, usd: a.usd 
  *  named alike merged, the reader first and the rest by what they used
  *  this week. */
 export function usageOf(report: UsageReport, nameOf: (account: HubAccount | null) => Named): Usage {
-  const named: { named: Named; week: Sum }[] = [];
+  const named: { named: Named; week: Sum; day: Sum | null; went: Went | null }[] = [];
   const into: number[] = report.people.map((person) => {
     const one = nameOf(person.account);
+    const day = person.day ? sumOf(person.day) : null;
+    const went = person.went ? wentOf(person.went) : null;
     const found = named.findIndex((known) => known.named.key === one.key);
     if (found >= 0) {
-      named[found]!.week = add(named[found]!.week, sumOf(person.week));
+      const known = named[found]!;
+      known.week = add(known.week, sumOf(person.week));
+      known.day = known.day && day ? add(known.day, day) : null;
+      known.went = known.went && went ? both(known.went, went) : null;
       return found;
     }
-    named.push({ named: one, week: sumOf(person.week) });
+    named.push({ named: one, week: sumOf(person.week), day, went });
     return named.length - 1;
   });
   const order = named.map((_, index) => index).sort((a, b) => {
@@ -86,7 +114,10 @@ export function usageOf(report: UsageReport, nameOf: (account: HubAccount | null
     return Number(y.named.me) - Number(x.named.me) || (y.week.usd ?? 0) - (x.week.usd ?? 0) || y.week.tokens - x.week.tokens;
   });
   const place = new Map(order.map((was, now) => [was, now]));
-  const people = order.map((was, index): Person => ({ ...named[was]!.named, index, ink: INKS[index % INKS.length]!, week: named[was]!.week }));
+  const people = order.map((was, index): Person => {
+    const { named: one, week, day, went } = named[was]!;
+    return { ...one, index, ink: INKS[index % INKS.length]!, week, day, went };
+  });
   const hours = new Map<string, Hour>();
   for (const hour of report.hours) {
     const person = place.get(into[hour.person] ?? -1);
@@ -99,7 +130,19 @@ export function usageOf(report: UsageReport, nameOf: (account: HubAccount | null
   }
   const now = Date.now();
   const week = report.week;
-  const kinds = week.kinds_usd;
+  const weeks = (report.weeks ?? []).map((span): Span => {
+    const values = new Map<number, Sum>();
+    const parts = new Map<number, number>();
+    for (const share of span.used) {
+      const person = place.get(into[share.person] ?? -1);
+      if (person === undefined) continue;
+      const known = values.get(person);
+      values.set(person, known ? add(known, sumOf(share)) : sumOf(share));
+      if (share.quota_tenths !== undefined) parts.set(person, (parts.get(person) ?? 0) + share.quota_tenths / 1000);
+    }
+    const reached = span.used_tenths === undefined ? null : span.used_tenths / 1000;
+    return { start: Date.parse(span.start), end: Date.parse(span.end), values, reached, parts };
+  });
   return {
     people,
     hours: [...hours.values()].sort((a, b) => a.at - b.at),
@@ -107,16 +150,43 @@ export function usageOf(report: UsageReport, nameOf: (account: HubAccount | null
       start: week.start ? Date.parse(week.start) : now - 7 * DAY_MS,
       end: week.end ? Date.parse(week.end) : now,
       window: week.window,
-      models: week.models.map((one: ModelUse) => ({ model: one.model, sum: sumOf(one) })),
-      tokens: { input: 0, cache_read: 0, cache_write: 0, output: 0, reasoning: 0, ...week.tokens },
-      kinds: kinds ? kindsOf(kinds) : null,
+      ...wentOf(week),
     },
+    weeks,
     readings: report.readings.map((reading) => ({ at: Date.parse(reading.at), windows: reading.windows })),
     usd: report.hours.some((hour) => hour.usd !== undefined) || report.people.some((person) => person.week.usd !== undefined),
   };
 }
 
-function kindsOf(kinds: KindsUsd): Week["kinds"] {
+function wentOf(went: WeekUse): Went {
+  return {
+    models: went.models.map((one: ModelUse) => ({ model: one.model, sum: sumOf(one) })),
+    tokens: { input: 0, cache_read: 0, cache_write: 0, output: 0, reasoning: 0, ...went.tokens },
+    kinds: went.kinds_usd ? kindsOf(went.kinds_usd) : null,
+  };
+}
+
+/** Two people's weeks named alike, as one. */
+function both(a: Went, b: Went): Went {
+  const models = new Map<string, Sum>();
+  for (const one of [...a.models, ...b.models]) {
+    const known = models.get(one.model);
+    models.set(one.model, known ? add(known, one.sum) : one.sum);
+  }
+  const tokens = { ...a.tokens };
+  for (const kind of Object.keys(tokens) as (keyof Went["tokens"])[]) tokens[kind] += b.tokens[kind];
+  const kinds =
+    a.kinds && b.kinds
+      ? { input: a.kinds.input + b.kinds.input, cache_read: a.kinds.cache_read + b.kinds.cache_read, cache_write: a.kinds.cache_write + b.kinds.cache_write, output: a.kinds.output + b.kinds.output }
+      : (a.kinds ?? b.kinds);
+  return {
+    models: [...models.entries()].map(([model, sum]) => ({ model, sum })).sort((x, y) => (y.sum.usd ?? 0) - (x.sum.usd ?? 0) || y.sum.tokens - x.sum.tokens),
+    tokens,
+    kinds,
+  };
+}
+
+function kindsOf(kinds: KindsUsd): Went["kinds"] {
   return {
     input: kinds.input / 1_000_000,
     cache_read: kinds.cache_read / 1_000_000,
@@ -212,6 +282,20 @@ export function track(usage: Usage, minutes: number): Track | null {
   }
   if (!points.length) return null;
   return { points, last: points[points.length - 1]![1], resets };
+}
+
+/** How one person's spending went through the week against a weekly cap,
+ *  as a window's share: what they had spent by the end of each hour. */
+export function allowanceTrack(usage: Usage, person: number, cap: number, now: number): Track | null {
+  if (cap <= 0) return null;
+  const points: [number, number][] = [];
+  let spent = 0;
+  for (const hour of usage.hours) {
+    if (hour.person !== person || hour.at < usage.week.start || hour.at >= now || !hour.usd) continue;
+    spent += hour.usd;
+    points.push([Math.min(now, hour.at + HOUR_MS), spent / cap]);
+  }
+  return { points, last: spent / cap, resets: usage.week.end };
 }
 
 /** How fast the seven-day window filled over the last day of readings, as

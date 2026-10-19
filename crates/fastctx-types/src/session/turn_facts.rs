@@ -3,6 +3,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::agents::AgentLimits;
+use crate::usage::Usd;
+
 /// Distinct observed values, in their first observed order. An empty list
 /// means the host did not report that fact; it does not mean a default.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -13,6 +16,15 @@ pub struct TurnFacts {
     pub efforts: Vec<TurnEffort>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens: Option<TurnTokens>,
+    /// What the turn cost by the host's own cost ledger, where it keeps one
+    /// (Claude Code's): the rise of the session's total over the turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<Usd>,
+    /// The login's usage windows as last read when the turn ended; none for
+    /// a conversation of an account the login only assists, which does not
+    /// see its account's windows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<AgentLimits>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,7 +65,11 @@ pub enum TurnTokens {
 
 impl TurnFacts {
     pub fn is_empty(&self) -> bool {
-        self.models.is_empty() && self.efforts.is_empty() && self.tokens.is_none()
+        self.models.is_empty()
+            && self.efforts.is_empty()
+            && self.tokens.is_none()
+            && self.cost.is_none()
+            && self.limits.is_none()
     }
 
     pub fn model(&mut self, model: &str) {

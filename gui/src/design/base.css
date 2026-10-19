@@ -289,7 +289,7 @@ pre code {
   position: absolute;
   top: var(--space-2);
   left: var(--space-4);
-  font-size: var(--size-small);
+  font-size: var(--size-text);
   color: var(--text-3);
   line-height: 1;
   user-select: none;
