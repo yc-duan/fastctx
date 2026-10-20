@@ -101,7 +101,7 @@ export class HostPrefs {
   constructor(private readonly options: HostPrefsOptions) {
     const { words, agent } = options;
     const p = words.prefs;
-    this.context = hostContext(agent, options.english, p);
+    this.context = hostContext(agent, options.english, p, (table) => this.model(table));
     this.sections = [
       { title: p.modelSection, rows: [{ kind: "model", id: "model", label: p.model, key: MODEL_KEY[agent] }, this.effortRow()] },
       { title: p.contextSection, rows: [this.context.window, this.context.compact] },

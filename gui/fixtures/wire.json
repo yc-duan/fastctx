@@ -15924,7 +15924,9 @@
                             "effort": "medium",
                             "description": "Example effort"
                           }
-                        ]
+                        ],
+                        "context_window": 272000,
+                        "max_context_window": 872000
                       }
                     ]
                   },
@@ -16337,7 +16339,9 @@
                       "effort": "medium",
                       "description": "Example effort"
                     }
-                  ]
+                  ],
+                  "context_window": 272000,
+                  "max_context_window": 872000
                 }
               ]
             },

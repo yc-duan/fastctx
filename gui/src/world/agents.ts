@@ -108,6 +108,11 @@ export interface AgentModel {
   is_default: boolean;
   default_reasoning_effort: string;
   reasoning_efforts: { effort: string; description: string }[];
+  /** The context window it works in unless told otherwise, in tokens,
+   *  where its host says; older nodes do not. */
+  context_window?: number;
+  /** The most its context window may be set to. */
+  max_context_window?: number;
 }
 
 export type Integration = "absent" | "out" | "in" | "old";

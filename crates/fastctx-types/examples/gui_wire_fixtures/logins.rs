@@ -58,6 +58,8 @@ pub fn fixtures() -> Fixtures {
             is_default: true,
             default_reasoning_effort: "low".into(),
             reasoning_efforts: vec![ReasoningEffort { effort: "low".into(), description: String::new() }],
+            context_window: None,
+            max_context_window: None,
         }],
         change: Some(LoginChange {
             into: true,

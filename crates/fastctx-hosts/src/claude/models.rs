@@ -109,6 +109,8 @@ pub fn agent_models(aliases: Option<&[String]>) -> Vec<AgentModel> {
                 .iter()
                 .map(|effort| ReasoningEffort { effort: (*effort).to_string(), description: String::new() })
                 .collect(),
+            context_window: Some(model.context_window),
+            max_context_window: Some(model.context_window),
         })
         .collect()
 }

@@ -11,13 +11,17 @@
 // earlier, to a share of the window less the answer's part; past the last
 // step it does not compact by itself (`autoCompactEnabled`).
 //
-// Codex: the context is `model_context_window`, in tokens, held to what the
-// model can take; when it compacts is `model_auto_compact_token_limit`, in
-// tokens, never past nine tenths of the context, where it compacts when
-// none is set. Its models' windows are not listed, so the window every
-// listed model has stands for the default.
+// Codex: the context is `model_context_window`, in tokens, held to the most
+// the model may be set to; when it compacts is
+// `model_auto_compact_token_limit`, in tokens, never past nine tenths of the
+// context, where it compacts when none is set.
+//
+// Each model's window and its most come with the models a node lists
+// (`AgentModel`): the steps run to the most the model chosen, or the login's
+// default, may take, and the knob rests on its own window.
 
 import type { EffortStep } from "../conversation/effort-slider";
+import type { AgentModel } from "../world/agents";
 import type { ProfileWords } from "./profile-words";
 
 type Table = Record<string, unknown>;
@@ -39,40 +43,63 @@ export interface HostContext {
   compact: ContextRow;
 }
 
-/** Claude Code's window for the models of this generation. */
+/** What a model's window is taken to be where its node does not say: a
+ *  Claude model of this generation's, and what Codex's service listed. */
 const CLAUDE_WINDOW = 1_000_000;
-const CLAUDE_WINDOWS = [200_000, 400_000, 600_000, 800_000, 1_000_000];
+const CODEX_WINDOW = 272_000;
+const CODEX_MOST = 872_000;
+/** The rounder sizes a slider steps through, below a model's most. */
+const CLAUDE_SIZES = [200_000, 400_000, 600_000, 800_000];
+const CODEX_SIZES = [200_000, 400_000, 600_000, 800_000];
+/** Claude Code takes no window below this. */
+const CLAUDE_LEAST = 100_000;
 /** What Claude Code keeps of a window for the answer, and below that for
  *  the summary, where it compacts when nothing says. */
 const CLAUDE_ANSWER = 20_000;
 const CLAUDE_SUMMARY = 13_000;
 const CLAUDE_PCT = "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE";
-/** Codex's window for every model it lists, and where it compacts unless
- *  told: nine tenths of it. */
-const CODEX_WINDOW = 272_000;
-const CODEX_WINDOWS = [128_000, 200_000, 272_000];
+/** Where Codex compacts unless told: nine tenths of its window. */
 const CODEX_COMPACTS_AT = 0.9;
 const SHARES = [50, 60, 70, 80, 90];
 /** The step past the last share: no compacting by itself. */
 const NEVER = "never";
 
-export function hostContext(agent: "claude" | "codex", english: boolean, p: ProfileWords["prefs"]): HostContext {
+export function hostContext(agent: "claude" | "codex", english: boolean, p: ProfileWords["prefs"], model: (table: Table) => AgentModel | null): HostContext {
   const size = (tokens: number) => tokenSize(tokens, english);
   const share = (percent: number) => `${percent}%`;
+  /** The model's own window, and the most it may be set to. */
+  const own = (table: Table) => {
+    const chosen = model(table);
+    const window = chosen?.context_window ?? (agent === "claude" ? CLAUDE_WINDOW : CODEX_WINDOW);
+    const most = Math.max(window, chosen?.max_context_window ?? (agent === "claude" ? window : CODEX_MOST));
+    return { window, most };
+  };
+  /** The sizes to step through: the rounder ones below the most, the
+   *  model's own window and the most itself. */
+  const sizes = (table: Table) => {
+    const { window, most } = own(table);
+    const rounder = (agent === "claude" ? CLAUDE_SIZES : CODEX_SIZES).filter((tokens) => tokens < most);
+    const least = agent === "claude" && most <= CLAUDE_SIZES[0]! ? [CLAUDE_LEAST] : [];
+    return [...new Set([...least, ...rounder, window, most])].filter((tokens) => agent !== "claude" || tokens >= CLAUDE_LEAST).sort((a, b) => a - b);
+  };
+  const windowSteps = (table: Table) => sizes(table).map((tokens) => ({ value: String(tokens), label: size(tokens) }));
+  const windowResting = (table: Table) => {
+    const { window } = own(table);
+    return { at: Math.max(0, sizes(table).indexOf(window)), label: size(window) };
+  };
   if (agent === "claude") {
-    const windowOf = (table: Table) => (typeof table.autoCompactWindow === "number" ? table.autoCompactWindow : CLAUDE_WINDOW);
+    const windowOf = (table: Table) => (typeof table.autoCompactWindow === "number" ? Math.min(table.autoCompactWindow, own(table).most) : own(table).window);
     const env = (table: Table): Table => (isTable(table.env) ? table.env : {});
-    const windowSteps = CLAUDE_WINDOWS.map((tokens) => ({ value: String(tokens), label: size(tokens) }));
     const shareSteps = [...SHARES.map((percent) => ({ value: String(percent), label: share(percent) })), { value: NEVER, label: p.never }];
     return {
       window: {
         kind: "slider",
         id: "window",
         label: p.window,
-        steps: () => windowSteps,
+        steps: windowSteps,
         get: (table) => (typeof table.autoCompactWindow === "number" ? String(table.autoCompactWindow) : null),
         set: (table, value) => withKey(table, "autoCompactWindow", value === null ? undefined : Number(value)),
-        resting: () => ({ at: CLAUDE_WINDOWS.indexOf(CLAUDE_WINDOW), label: size(CLAUDE_WINDOW) }),
+        resting: windowResting,
         tip: (table) => p.windowTip(size(windowOf(table))),
       },
       compact: {
@@ -101,9 +128,8 @@ export function hostContext(agent: "claude" | "codex", english: boolean, p: Prof
       },
     };
   }
-  const windowOf = (table: Table) => (typeof table.model_context_window === "number" ? table.model_context_window : CODEX_WINDOW);
+  const windowOf = (table: Table) => (typeof table.model_context_window === "number" ? Math.min(table.model_context_window, own(table).most) : own(table).window);
   const limitOf = (table: Table) => (typeof table.model_auto_compact_token_limit === "number" ? table.model_auto_compact_token_limit : null);
-  const windowSteps = CODEX_WINDOWS.map((tokens) => ({ value: String(tokens), label: size(tokens) }));
   const shareSteps = SHARES.map((percent) => ({ value: String(percent), label: share(percent) }));
   /** The share of the window a limit stands at, as the nearest step. */
   const shareOf = (table: Table): number | null => {
@@ -117,7 +143,7 @@ export function hostContext(agent: "claude" | "codex", english: boolean, p: Prof
       kind: "slider",
       id: "window",
       label: p.window,
-      steps: () => windowSteps,
+      steps: windowSteps,
       get: (table) => (typeof table.model_context_window === "number" ? String(table.model_context_window) : null),
       set: (table, value) => {
         // The compaction point keeps its share of the new window.
@@ -125,7 +151,7 @@ export function hostContext(agent: "claude" | "codex", english: boolean, p: Prof
         const next = withKey(table, "model_context_window", value === null ? undefined : Number(value));
         return kept === null ? next : withKey(next, "model_auto_compact_token_limit", Math.round((windowOf(next) * kept) / 100));
       },
-      resting: () => ({ at: CODEX_WINDOWS.indexOf(CODEX_WINDOW), label: size(CODEX_WINDOW) }),
+      resting: windowResting,
       tip: (table) => p.windowTip(size(windowOf(table))),
     },
     compact: {

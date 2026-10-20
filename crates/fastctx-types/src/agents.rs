@@ -236,6 +236,13 @@ pub struct AgentModel {
     pub is_default: bool,
     pub default_reasoning_effort: String,
     pub reasoning_efforts: Vec<ReasoningEffort>,
+    /// The context window it works in unless told otherwise, in tokens,
+    /// where its host says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    /// The most its context window may be set to, where its host says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_window: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

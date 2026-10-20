@@ -1,5 +1,6 @@
 //! Discovery through the very app-server used for the World's sessions.
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -37,7 +38,10 @@ impl CodexHost {
                 };
                 let start = Instant::now();
                 facts.models = match models(&server).await {
-                    Ok(models) => Fact::known(models),
+                    Ok(mut models) => {
+                        windows(&self.codex_home, &mut models);
+                        Fact::known(models)
+                    }
                     Err(error) => Fact::failed(error),
                 };
                 facts.timings.push(ProbeTime { step: "model/list".into(), elapsed_ms: elapsed(start) });
@@ -134,6 +138,30 @@ struct Effort {
     description: String,
 }
 
+/// Each model's context window and the most it may be set to, as the catalog
+/// Codex keeps in its home from its service lists them: `model/list` does
+/// not say. A catalog it has not written yet leaves them unsaid.
+fn windows(home: &Path, models: &mut [AgentModel]) {
+    #[derive(Deserialize)]
+    struct Catalog {
+        models: Vec<Entry>,
+    }
+    #[derive(Deserialize)]
+    struct Entry {
+        slug: String,
+        context_window: Option<u64>,
+        max_context_window: Option<u64>,
+    }
+    let Ok(bytes) = std::fs::read(home.join("models_cache.json")) else { return };
+    let Ok(catalog) = serde_json::from_slice::<Catalog>(&bytes) else { return };
+    for model in models {
+        if let Some(entry) = catalog.models.iter().find(|entry| entry.slug == model.model) {
+            model.context_window = entry.context_window.or(entry.max_context_window);
+            model.max_context_window = entry.max_context_window.or(entry.context_window);
+        }
+    }
+}
+
 pub(super) async fn models(server: &AppServer) -> Result<Vec<AgentModel>, String> {
     let mut models = Vec::new();
     let mut cursor = None::<String>;
@@ -153,6 +181,8 @@ pub(super) async fn models(server: &AppServer) -> Result<Vec<AgentModel>, String
                     .into_iter()
                     .map(|effort| ReasoningEffort { effort: effort.reasoning_effort, description: effort.description })
                     .collect(),
+                context_window: None,
+                max_context_window: None,
             }
         }));
         cursor = page.next_cursor;

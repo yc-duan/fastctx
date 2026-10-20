@@ -58,6 +58,8 @@ pub fn fixtures() -> Fixtures {
             is_default: true,
             default_reasoning_effort: "medium".into(),
             reasoning_efforts: vec![ReasoningEffort { effort: "medium".into(), description: "Example effort".into() }],
+            context_window: Some(272_000),
+            max_context_window: Some(872_000),
         }]),
         integration: Fact::known(Integration::In),
         unattended: Fact::known(true),
