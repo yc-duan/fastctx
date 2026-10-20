@@ -161,7 +161,7 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         match event {
             Ok(event) if !crate::file_events::changes(&event) => {}
-            Ok(event) => {
+            Ok(event) if !event.need_rescan() => {
                 for path in event.paths {
                     // The session's directory: the first name under the root.
                     if let Ok(rest) = path.strip_prefix(&seen)
@@ -181,7 +181,7 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
             }
             // Something was missed, as when the system's queue overflowed:
             // every session is looked at again.
-            Err(_) => {
+            _ => {
                 let _ = changed.send(root.clone());
             }
         }

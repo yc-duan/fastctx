@@ -46,10 +46,13 @@ fn wake(parent: &ProcessIdentity, session: &Path, root: &Path) -> io::Result<()>
     let marker = crate::file_events::named(root)?.join("uninstalled.json");
     let (inbox_seen, controls_seen) = (watched.join("inbox"), watched.join("control").join("inbox"));
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        let Ok(event) = event else {
-            // The watch itself faltered: a look finds whatever is there.
-            let _ = changes.send(Woken::Look);
-            return;
+        let event = match event {
+            Ok(event) if !event.need_rescan() => event,
+            _ => {
+                // A lost notification has no reliable path to filter.
+                let _ = changes.send(Woken::Look);
+                return;
+            }
         };
         // The plugin reads these files when it looks: a read is no news.
         if !crate::file_events::changes(&event) {
@@ -98,6 +101,9 @@ fn wake(parent: &ProcessIdentity, session: &Path, root: &Path) -> io::Result<()>
                     Err(_) => break,
                 },
             }
+        }
+        if root.join("uninstalled.json").try_exists()? {
+            return say("removed");
         }
         writeln!(out, "look")?;
         out.flush()?;

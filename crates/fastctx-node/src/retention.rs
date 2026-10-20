@@ -65,13 +65,20 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
                 // Only a change of the settings counts: the maintenance pass
                 // reads them (`file_events`).
                 Ok(event)
-                    if crate::file_events::changes(&event)
-                        && event.paths.iter().any(|path| path.file_name().is_some_and(|name| name == "retention.json")) =>
+                    if event.need_rescan()
+                        || crate::file_events::changes(&event)
+                            && event
+                                .paths
+                                .iter()
+                                .any(|path| path.file_name().is_some_and(|name| name == "retention.json")) =>
                 {
                     changed.notify_one()
                 }
                 Ok(_) => {}
-                Err(error) => node.log.line(format_args!("watching retention settings: {error}")),
+                Err(error) => {
+                    node.log.line(format_args!("watching retention settings: {error}"));
+                    changed.notify_one();
+                }
             }
         }
     })

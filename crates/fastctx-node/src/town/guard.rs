@@ -40,7 +40,7 @@ pub fn start(node: &Arc<Node>) -> io::Result<()> {
     let root = crate::file_events::named(&towns)?;
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
         Ok(event) if !crate::file_events::changes(&event) => {}
-        Ok(event) => {
+        Ok(event) if !event.need_rescan() => {
             for path in event.paths {
                 // Only the ledger's own files: the node's own records of
                 // what it found are beside it.
@@ -55,7 +55,7 @@ pub fn start(node: &Arc<Node>) -> io::Result<()> {
             }
         }
         // Something was missed: every town is checked again.
-        Err(_) => {
+        _ => {
             let _ = changed.send(None);
         }
     })
