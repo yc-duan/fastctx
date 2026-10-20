@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use fastctx_net::link::Link;
@@ -64,16 +65,26 @@ pub(crate) async fn run(
     let started = Instant::now();
     let hub_pace = Mutex::new(Pace::new(started));
     let hub_total = Mutex::new(package.size);
+    // Once the hub holds the package, its handing waits its turn among the
+    // machines it hands packages to at once: that wait is no slowness, and
+    // the hub's pace counts from the first byte it hands.
+    let hub_queued = AtomicBool::new(false);
     let shown = Mutex::new(Shown { progress });
     let mut hub_heard = |received, total| {
-        hub_pace.lock().expect("never poisoned").heard(Instant::now(), received);
+        let mut pace = hub_pace.lock().expect("never poisoned");
+        if hub_queued.swap(false, Ordering::Relaxed) {
+            *pace = Pace::new(Instant::now());
+        }
+        pace.heard(Instant::now(), received);
+        drop(pace);
         *hub_total.lock().expect("never poisoned") = total;
         shown.lock().expect("never poisoned").tell(Via::Network, received, total);
     };
     let mut github_heard = |received, total| shown.lock().expect("never poisoned").tell(Via::Github, received, total);
     let hub = async {
         let link = request.link.as_ref().ok_or("no hub supplies packages")?;
-        from_hub(link, version, target, package.size, hub_file, &mut hub_heard).await?;
+        let ready = || hub_queued.store(true, Ordering::Relaxed);
+        from_hub(link, version, target, package.size, hub_file, &mut hub_heard, &ready).await?;
         verified(hub_file, &package.signature, version).await?;
         Ok::<_, String>(())
     };
@@ -85,7 +96,7 @@ pub(crate) async fn run(
             None
         } else {
             let url = package.url.as_deref().ok_or("the release publishes it nowhere else")?;
-            crate::download::patiently(url, local_file, &mut github_heard).await?
+            crate::download::patiently(url, local_file, &mut github_heard, None).await?
         };
         verified(local_file, &package.signature, version).await?;
         Ok::<_, String>(speed)
@@ -98,10 +109,11 @@ pub(crate) async fn run(
     let deadline = tokio::time::sleep(Duration::from_secs(45 * 60));
     tokio::pin!(deadline);
     loop {
-        let verdict = hub_pace
-            .lock()
-            .expect("never poisoned")
-            .verdict(Instant::now(), *hub_total.lock().expect("never poisoned"));
+        let verdict = if hub_queued.load(Ordering::Relaxed) {
+            Verdict::Promising
+        } else {
+            hub_pace.lock().expect("never poisoned").verdict(Instant::now(), *hub_total.lock().expect("never poisoned"))
+        };
         if !github_tried && (!hub_going || local.borrow().requested || verdict != Verdict::Promising) {
             github_tried = true;
             github_going = true;
@@ -150,6 +162,9 @@ async fn verified(path: &Path, signature: &str, version: &str) -> Result<(), Str
         .map_err(|error| format!("checking the package's signature: {error}"))?
 }
 
+/// The package from the hub: asked for, prepared there when it holds none
+/// yet, then handed. `ready` hears that the hub holds it and its handing
+/// is next, after a wait in the hub's queue.
 async fn from_hub(
     link: &Link,
     version: &str,
@@ -157,12 +172,13 @@ async fn from_hub(
     expected: Option<u64>,
     file: &Path,
     progress: &mut (dyn FnMut(u64, Option<u64>) + Send),
+    ready: &(dyn Fn() + Send + Sync),
 ) -> Result<(), String> {
     let (sender, mut preparation) = watch::channel(PackageProgress::default());
     let ask = link.ask_package_progress(version, target, Some(sender));
     tokio::pin!(ask);
     let mut reporting = true;
-    let ready = loop {
+    let ready_now = loop {
         tokio::select! {
             result = &mut ask => break result?,
             changed = preparation.changed(), if reporting => {
@@ -174,11 +190,12 @@ async fn from_hub(
             }
         }
     };
-    let size = ready.size;
+    let size = ready_now.size;
     let prepared = preparation.borrow().received;
+    ready();
     let mut heard = |received, _| progress(prepared + received, Some(prepared + size));
     let result = link.package(version, target, size, file, &mut heard).await;
-    drop(ready);
+    drop(ready_now);
     result
 }
 

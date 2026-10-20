@@ -89,7 +89,7 @@ fn made(
         let expired = crate::assists::end_due(&mut store, Timestamp::now())
             .map_err(|error| format!("the hub could not end an assistance past its deadline: {error}"))?;
         let before = store.book.clone();
-        let action = crate::machine_log::action(&change, &before);
+        let action = crate::machine_log::action(&change, &before, &store.hub.updates);
         let authenticated = may_change(&before.directory, &change, asker, account);
         let actor = Actor { account: Some(account.clone()), authenticated, member: Some(asker.clone()), peer: None };
         let before_hub = store.hub.clone();
@@ -496,7 +496,24 @@ fn apply(
             {
                 return Err(format!("{minimum} is not a version a release can have"));
             }
-            store.hub.updates = policy;
+            // The ceiling on intake is its own change: an interface that
+            // sets the rest knows nothing of it.
+            let intake = store.hub.updates.intake;
+            store.hub.updates = fastctx_types::update::Policy { intake, ..policy };
+            store.save_hub().map_err(|error| format!("the hub could not keep its settings: {error}"))?;
+            Ok(Told::Done)
+        }
+        Change::Intake { rate } => {
+            need_super()?;
+            let range = fastctx_types::update::INTAKE_RANGE;
+            if rate.is_some_and(|rate| !range.contains(&rate)) {
+                return Err(format!(
+                    "the hub takes packages in at {} to {} bytes a second",
+                    range.start(),
+                    range.end()
+                ));
+            }
+            store.hub.updates.intake = rate;
             store.save_hub().map_err(|error| format!("the hub could not keep its settings: {error}"))?;
             Ok(Told::Done)
         }

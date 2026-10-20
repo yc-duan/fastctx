@@ -510,6 +510,14 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("source/Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          # A Windows computer's boot service takes a newer program by the
+          # program's own signature; a package's signs the archive. The
+          # program's goes into the archive, which is signed after it.
+          (cd kernels \
+            && unzip -q -o fastctx-x86_64-pc-windows-msvc.zip fastctx.exe \
+            && npx --yes "$TAURI_CLI" signer sign --app-version "$version" fastctx.exe \
+            && zip -q fastctx-x86_64-pc-windows-msvc.zip fastctx.exe.sig \
+            && rm fastctx.exe fastctx.exe.sig)
           for archive in kernels/fastctx-*-unknown-linux-gnu.tar.gz kernels/fastctx-x86_64-pc-windows-msvc.zip \
               kernels/fastctx-*-apple-darwin.tar.gz; do
             npx --yes "$TAURI_CLI" signer sign --app-version "$version" "$archive"
@@ -1021,7 +1029,12 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx --yes "$TAURI_CLI" signer sign --app-version "$LATER" later/fastctx.exe
+        # And a signature of something else for the same release, as a node of
+        # an earlier release kept beside the program it unpacked.
+        run: |
+          npx --yes "$TAURI_CLI" signer sign --app-version "$LATER" later/fastctx.exe
+          printf 'not the program' > later/decoy
+          npx --yes "$TAURI_CLI" signer sign --app-version "$LATER" later/decoy
       - uses: actions/download-artifact@v4
         with:
           name: kernel-x86_64-pc-windows-msvc

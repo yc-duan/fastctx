@@ -5,8 +5,11 @@
 //! first. Every source is judged the same way (`fastctx_update::pace`):
 //! while none going looks like finishing soon, the next is asked beside
 //! them, a few at once, and the first to have the whole package, checked,
-//! puts it in place.
+//! puts it in place. Packages come in one at a time, and every byte under
+//! one ceiling (`fastctx_update::throttle`): a source is added only while
+//! those going leave the ceiling unused.
 
+use std::collections::VecDeque;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -29,6 +32,13 @@ const BUDGET: Duration = Duration::from_secs(43 * 60);
 
 /// How long a try given up has to end its transfer before it is revoked.
 const SETTLE: Duration = Duration::from_secs(30);
+
+/// Over how long the bytes coming in are measured against the ceiling.
+const MEASURED: Duration = Duration::from_secs(5);
+
+/// The share of the ceiling past which no source is added: those going
+/// fill it, and another would only split it with them.
+const FILLED: f64 = 0.7;
 
 /// `asker` asks, as its question `id`, for the package `target` of
 /// `version`: answered once the hub holds it, or with why it cannot.
@@ -145,6 +155,9 @@ pub(super) async fn obtain(
 
 /// The deadline answers waiters; it never drops the actual package owner.
 async fn own(hub: Arc<Hub>, held: Held, id: u64) {
+    // One package comes in at a time; its time counts from its turn.
+    let coming = hub.updates.lock().expect("never poisoned").coming.clone();
+    let _turn = coming.lock_owned().await;
     // The timer remains runnable even while the owner enters synchronous
     // publication I/O. Its identity cannot expire a subsequent owner.
     let timer = tokio::spawn(expire(hub.clone(), held.clone(), id));
@@ -182,9 +195,9 @@ fn size_of(cache: &fastctx_update::Cache, held: &Held) -> Result<Option<u64>, St
 }
 
 async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
-    let (manifest, cache) = {
+    let (manifest, cache, intake) = {
         let updates = hub.updates.lock().expect("never poisoned");
-        (updates.manifest(&held.version), updates.cache.clone())
+        (updates.manifest(&held.version), updates.cache.clone(), updates.intake.clone())
     };
     if let Some(size) = size_of(&cache, held)? {
         return Ok(size);
@@ -199,7 +212,9 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
         .package(&held.target)
         .cloned()
         .ok_or_else(|| format!("the release {} has no package for {}", held.version, held.target))?;
+    intake.set(hub.store().hub.updates.intake());
     let deadline = Instant::now() + BUDGET;
+    let mut measured: VecDeque<(Instant, u64)> = VecDeque::new();
     let race = Arc::new(Race::default());
     let (ended, mut endings) = mpsc::unbounded_channel();
     let mut going: Vec<Going> = Vec::new();
@@ -255,12 +270,22 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
                 settling.spawn(settle_owned(hub.clone(), cache.clone(), held.clone(), stopped, deadline));
             }
         }
+        measured.push_back((now, intake.taken()));
+        while measured.front().is_some_and(|(at, _)| now.duration_since(*at) > MEASURED) {
+            measured.pop_front();
+        }
+        let filled = match (measured.front(), measured.back()) {
+            (Some((from, before)), Some((to, after))) if to.duration_since(*from) >= MEASURED / 2 => {
+                (after - before) as f64 / to.duration_since(*from).as_secs_f64() >= FILLED * intake.rate() as f64
+            }
+            _ => false,
+        };
         let promising = verdicts.contains(&Verdict::Promising);
-        if !promising && going.len() < AT_ONCE {
+        if !promising && !filled && going.len() < AT_ONCE {
             match next(hub, held, &tried) {
                 Some(Source::Hub) => {
                     tried.hub = true;
-                    going.push(by_the_hub(hub, &cache, &manifest, held, &package, &race, &ended));
+                    going.push(by_the_hub(hub, &cache, &manifest, held, &package, &race, &ended, &intake));
                 }
                 Some(Source::Machine(helper, generation)) => {
                     tried.machines.push(helper.clone());
@@ -358,6 +383,7 @@ struct Going {
 /// they come, stopped when the try is given up, and put in place only if
 /// no other try put the package there first. How fast it went is kept, to
 /// weigh the hub against its machines next time.
+#[allow(clippy::too_many_arguments)]
 fn by_the_hub(
     hub: &Arc<Hub>,
     cache: &fastctx_update::Cache,
@@ -366,13 +392,14 @@ fn by_the_hub(
     package: &Package,
     race: &Arc<Race>,
     ended: &mpsc::UnboundedSender<(u64, Result<(), String>)>,
+    intake: &Arc<fastctx_update::throttle::Throttle>,
 ) -> Going {
     let id = hub.next();
     let attempt = Arc::new(Attempt::new(id, race.clone()));
     attempt.begin();
     let url = package.url.clone().expect("the hub downloads only a package published somewhere");
-    let (hub, cache, manifest, held, ended) =
-        (hub.clone(), cache.clone(), manifest.clone(), held.clone(), ended.clone());
+    let (hub, cache, manifest, held, ended, intake) =
+        (hub.clone(), cache.clone(), manifest.clone(), held.clone(), ended.clone(), intake.clone());
     let trying = attempt.clone();
     tokio::spawn(async move {
         let outcome = async {
@@ -383,7 +410,7 @@ fn by_the_hub(
                 counting.downloaded.lock().expect("never poisoned").total = total;
             };
             let speed = tokio::select! {
-                downloaded = fastctx_update::download::patiently(&url, &incoming, &mut heard) => downloaded?,
+                downloaded = fastctx_update::download::patiently(&url, &incoming, &mut heard, Some(&intake)) => downloaded?,
                 () = trying.stopping() => return Err("given up for another".to_string()),
             };
             if let Some(speed) = speed {

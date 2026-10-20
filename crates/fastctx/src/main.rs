@@ -25,6 +25,7 @@ mod page;
 mod paths;
 mod program;
 mod project;
+mod hub_intake;
 mod proxy;
 mod renew;
 mod secret;

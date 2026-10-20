@@ -1,9 +1,13 @@
 """The boot service taking a newer release by itself, on Windows (`world-upgrade.md`, 换版不要人确认).
 
 A computer keeps its hub and its node as system services of this release. The same source, built as
-a later release and signed as one with the official key, is handed to the renewal: the node takes
-it, each protected guardian takes it into its own directory with no administrator asked, the hub
-follows its machine, and both services run it. Nothing outside a fresh temporary directory is used,
+a later release and signed as one with the official key, is handed to the renewal by the path a
+node's own update takes, as a node of an earlier release left it: its release's package, the
+program and its own signature side by side, kept in the World's updates, and the program staged
+with another signature of that release beside it, which no guardian takes it by. The renewal mends
+the signature from the package; the node takes the program, each protected guardian takes it into
+its own directory by that signature with no administrator asked, the hub follows its machine, and
+both services run it. Nothing outside a fresh temporary directory is used,
 except the services the drill installs and removes again. When a check fails, the renewal's state,
 what each guardian said and the logs are shown.
 
@@ -12,7 +16,7 @@ what each guardian said and the logs are shown.
 
 `bump` prints a version later than VERSION and sets it as the workspace's, for building the later
 release; `run` drills with this release's PROGRAM and the LATER one of VERSION, its signature beside
-it.
+it, and beside that `decoy.sig`, the same release's signature of something else.
 """
 import hashlib
 import json
@@ -24,6 +28,7 @@ import subprocess
 import sys
 import tempfile
 import uuid
+import zipfile
 from pathlib import Path
 
 from smoke import RESULTS, Lab, check, diagnose, free_port, until
@@ -137,12 +142,20 @@ def run(program, later, version):
         before = {kind: sha256(protected(name) / "guardian.exe") for kind, name in names.items()}
         check("both guardians run this release", all(digest == sha256(installed) for digest in before.values()), before)
 
-        source = root / "later" / "fastctx.exe"
-        source.parent.mkdir()
-        shutil.copy2(later, source)
-        shutil.copy2(f"{later}.sig", f"{source}.sig")
-        code, out = lab.run("alpha", "renew", "stage", "--dir", str(home), "--source", str(source), timeout=300)
-        check("the later release is handed to the renewal", code == 0, out)
+        # The release's package, kept where a node keeps what it brought; the program staged with
+        # the wrong signature beside it, as a node of an earlier release unpacked it.
+        kept = home / "updates" / "packages" / f"v{version}" / "fastctx-x86_64-pc-windows-msvc"
+        kept.parent.mkdir(parents=True)
+        with zipfile.ZipFile(kept, "w", zipfile.ZIP_DEFLATED) as zipped:
+            zipped.write(later, "fastctx.exe")
+            zipped.write(f"{later}.sig", "fastctx.exe.sig")
+        staged = root / "later" / "fastctx-x86_64-pc-windows-msvc.zip"
+        staged.parent.mkdir()
+        with zipfile.ZipFile(staged, "w", zipfile.ZIP_DEFLATED) as zipped:
+            zipped.write(later, "fastctx.exe")
+            zipped.write(Path(later).with_name("decoy.sig"), "fastctx.exe.sig")
+        code, out = lab.run("alpha", "renew", "stage", "--dir", str(home), "--package", str(staged), timeout=300)
+        check("the later release is handed to the renewal, with another signature beside it", code == 0, out)
 
         def ended():
             phase = renewal().get("phase")
@@ -155,7 +168,7 @@ def run(program, later, version):
         check("no administrator was asked", "awaiting_administrator" not in phases, phases)
         printed = subprocess.run([str(installed), "--version"], capture_output=True, text=True).stdout.strip()
         check("the stable World program is the later release", printed == f"fastctx {version}", printed)
-        digest = sha256(source)
+        digest = sha256(Path(later))
         until("the node's guardian took it into its own directory",
               lambda: sha256(protected(names["node"]) / "guardian.exe") == digest, 60)
         until("the hub's guardian and its program took it too",

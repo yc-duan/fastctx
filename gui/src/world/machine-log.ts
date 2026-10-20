@@ -43,7 +43,7 @@ export type MachineLogAction =
   | { change: "set_account"; name: AccountName; locked: boolean }
   | { change: "transfer"; to: AccountName }
   | { change: "settings"; self_registration: boolean }
-  | { change: "updates"; channel: "stable" | "beta"; minimum?: string; managed_auto?: boolean }
+  | { change: "updates"; channel: "stable" | "beta"; minimum?: string; managed_auto?: boolean; intake?: number }
   | { change: "dissolve"; name: string }
   | { change: "open_project"; town: string; name: string }
   | { change: "share_project"; town: string; name: string | null; with: AccountName; shared: boolean }

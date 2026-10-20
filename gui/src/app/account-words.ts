@@ -1052,6 +1052,7 @@ export const zhMachines: MachinesWords = {
       case "dissolve":
         return `解散网络 ${a.name}`;
       case "updates":
+        if (a.intake !== undefined) return `中枢取新版本每秒至多 ${megabytes(a.intake)} MB`;
         return a.managed_auto === undefined
           ? `网络的更新改为${a.channel === "beta" ? "测试版" : "正式版"}${a.minimum ? `，至少 ${a.minimum}` : ""}`
           : `网络的更新改为${a.minimum ? `至少 ${a.minimum}` : "不要求最低版本"}，受管机器${a.managed_auto ? "自动更新" : "不自动更新"}`;
@@ -1366,6 +1367,7 @@ export const enMachines: MachinesWords = {
       case "dissolve":
         return `Dissolved the network ${a.name}`;
       case "updates":
+        if (a.intake !== undefined) return `The hub takes new releases in at ${megabytes(a.intake)} MB a second at most`;
         return a.managed_auto === undefined
           ? `Network updates set to ${a.channel === "beta" ? "beta" : "stable"}${a.minimum ? `, at least ${a.minimum}` : ""}`
           : `Network updates set to ${a.minimum ? `at least ${a.minimum}` : "no minimum"}; managed machines ${a.managed_auto ? "update by themselves" : "do not update by themselves"}`;
@@ -1612,6 +1614,12 @@ export interface TokenWords {
 }
 
 /** How many devices a code lets in, as its line under it says. */
+/** A ceiling in bytes a second, as megabytes a second. */
+const megabytes = (rate: number) => {
+  const value = rate / 1_000_000;
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+};
+
 const zhUses = (uses: number) => (uses === 0 ? "不限台数" : uses === 1 ? "只能进 1 台" : `能进 ${uses} 台`);
 const enUses = (uses: number) => (uses === 0 ? "any number of devices" : uses === 1 ? "one device" : `${uses} devices`);
 

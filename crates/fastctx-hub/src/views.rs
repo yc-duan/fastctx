@@ -140,6 +140,7 @@ pub(crate) fn view_for(
         dissolves: true,
         deletes_projects: true,
         lan_relays: true,
+        paced_intake: true,
         versions: true,
         package_progress: true,
         due: true,

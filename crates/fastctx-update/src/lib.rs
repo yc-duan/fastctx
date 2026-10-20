@@ -11,6 +11,7 @@ pub mod kernel;
 pub mod obtain;
 pub mod pace;
 pub mod pool;
+pub mod throttle;
 pub mod verify;
 
 pub use cache::Cache;

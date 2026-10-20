@@ -24,6 +24,13 @@ pub struct UpdateArgs {
     /// Fetch packages for the network's machines that cannot reach GitHub.
     #[arg(long, value_enum, conflicts_with = "version")]
     relay: Option<Switch>,
+    /// How fast the hub takes a new release in at most, in MB a second, or
+    /// `default` (5): its super administrator's to set.
+    #[arg(long, value_name = "MB", value_parser = crate::hub_intake::parser, conflicts_with = "version")]
+    hub_intake: Option<crate::hub_intake::Ceiling>,
+    /// The hub `--hub-intake` sets, when this computer administers more than one.
+    #[arg(long, requires = "hub_intake")]
+    hub: Option<fastctx_types::HubName>,
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -33,6 +40,9 @@ enum Switch {
 }
 
 pub fn run(args: UpdateArgs) -> anyhow::Result<()> {
+    if let Some(crate::hub_intake::Ceiling(rate)) = args.hub_intake {
+        return crate::hub_intake::set(args.hub, rate);
+    }
     let mut state = call(UpdateCall::State)?;
     if args.auto.is_some() || args.relay.is_some() {
         let mut settings: Settings = state.settings.clone();
@@ -139,6 +149,10 @@ fn print_state(state: &State) {
             Some(minimum) => println!("the network: newest {newest}; it asks for at least {minimum}"),
             None => println!("the network: newest {newest}"),
         }
+        println!(
+            "its hub takes a new release in at {} MB a second at most",
+            crate::hub_intake::megabytes_of(network.policy.intake())
+        );
     }
 }
 

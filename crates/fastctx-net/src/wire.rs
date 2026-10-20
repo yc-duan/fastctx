@@ -783,6 +783,12 @@ pub enum Change {
     Updates {
         policy: fastctx_types::update::Policy,
     },
+    /// How fast the hub takes packages in at most, in bytes a second; none,
+    /// its default (`fastctx_types::update::INTAKE`). The super
+    /// administrator's; sent only to a hub whose view says it paces intake.
+    Intake {
+        rate: Option<u64>,
+    },
     /// `machine`, one the account may update and away now, updates to
     /// `version` once it is back; none takes back what was kept. Sent only
     /// to a hub whose view says it keeps updates due.

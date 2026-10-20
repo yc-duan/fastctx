@@ -277,6 +277,11 @@ pub enum AccountChange {
     Updates {
         policy: crate::update::Policy,
     },
+    /// How fast the hub takes packages in at most, in bytes a second; none,
+    /// its default (`world-network.md`, 中枢替网络存的东西).
+    Intake {
+        rate: Option<u64>,
+    },
     /// `machine`, away from the network, updates to `version` once it is
     /// back; none takes back what was kept (`world-upgrade.md`, 别的机器的更新).
     UpdateDue {

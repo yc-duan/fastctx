@@ -34,8 +34,12 @@ enum RenewalAction {
     Stage {
         #[arg(long, value_parser = crate::paths::parser())]
         dir: PathBuf,
-        #[arg(long, value_parser = crate::paths::parser())]
-        source: PathBuf,
+        #[arg(long, value_parser = crate::paths::parser(), required_unless_present = "package")]
+        source: Option<PathBuf>,
+        /// A release's command-line package instead, as a node's own update
+        /// takes it: the program and its own signature come out of it.
+        #[arg(long, value_parser = crate::paths::parser(), conflicts_with = "source")]
+        package: Option<PathBuf>,
     },
     /// Inspect local versions and renewal progress, even across IPC versions.
     Status {
@@ -86,8 +90,15 @@ pub fn run(args: RenewalArgs) -> anyhow::Result<()> {
         RenewalAction::Prepare { dir, digest } => {
             runtime.block_on(fastctx_node::replacement::prepare(&dir, &digest))?
         }
-        RenewalAction::Stage { dir, source } => {
-            let plan = store::stage(&dir, &source, None)?;
+        RenewalAction::Stage { dir, source, package } => {
+            let plan = match (source, package) {
+                (_, Some(package)) => {
+                    let unpacking = std::env::temp_dir().join(format!("fastctx-package-{}", std::process::id()));
+                    store::stage_package(&dir, &package, &unpacking)?
+                }
+                (Some(source), None) => store::stage(&dir, &source, None)?,
+                (None, None) => bail!("give --source or --package"),
+            };
             if plan.phase != Phase::Complete {
                 store::request(&dir, true)?;
             }
@@ -156,6 +167,12 @@ async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
         }
         if !needs_guardian && (!kept || node.supervised || cfg!(target_os = "linux")) {
             return phase(root, plan, Phase::Complete);
+        }
+        // The guardian runs the candidate as its node already, as after a
+        // handover whose guardian refused the program: a bridge would wait
+        // for that node to leave, which its guardian never lets it.
+        if needs_guardian && node.supervised && cfg!(windows) {
+            return guard_supervised(root, plan).await;
         }
     }
     phase(root, plan, Phase::Preparing)?;
@@ -248,6 +265,7 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
         // and so does one that says why it will not, its reason kept.
         let mut refused = None;
         let staged = !needs_guardian || service.guardian_staged(&plan.candidate.build.digest)? || {
+            mend_signature(root, plan);
             let (asked, digest) = (service.clone(), plan.candidate.build.digest.clone());
             match tokio::task::spawn_blocking(move || asked.adopt_guardian(&digest)).await? {
                 Ok(taken) => taken,
@@ -302,6 +320,69 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
             return Ok(());
         }
         tick().await;
+    }
+}
+
+/// The guardian takes the program its node runs already, by the program's
+/// own signature, and starts again on it; the node it starts is the
+/// candidate, so the renewal is complete once it serves. A guardian that
+/// will not leaves the renewal to an administrator, no bridge waiting.
+async fn guard_supervised(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
+    let service =
+        fastctx_install::service::Service::new(fastctx_install::service::Kind::Node, store::installed(root), root);
+    let digest = plan.candidate.build.digest.clone();
+    let mut refused = None;
+    let staged = service.guardian_staged(&digest)? || {
+        mend_signature(root, plan);
+        let (asked, digest) = (service.clone(), digest.clone());
+        match tokio::task::spawn_blocking(move || asked.adopt_guardian(&digest)).await? {
+            Ok(taken) => taken,
+            Err(error) => {
+                refused = Some(format!("{error:#}"));
+                false
+            }
+        }
+    };
+    if !staged {
+        phase(root, plan, Phase::AwaitingAdministrator)?;
+        if refused.is_some() {
+            plan.error = refused;
+            store::save(root, plan)?;
+        }
+        return Ok(());
+    }
+    phase(root, plan, Phase::UpdatingGuardian)?;
+    let (restarting, digest) = (service.clone(), digest.clone());
+    tokio::task::spawn_blocking(move || restarting.restart_guardian(&digest)).await??;
+    plan.keeper_restarted = true;
+    store::save(root, plan)?;
+    let world = WorldDir::under(root);
+    loop {
+        if let Probe::Running(node) = observing(&world).await?
+            && !node.bridge
+            && node.build.digest == plan.candidate.build.digest
+        {
+            phase(root, plan, Phase::Complete)?;
+            let (folder, digest) = (root.to_path_buf(), plan.candidate.build.digest.clone());
+            let followed = tokio::task::spawn_blocking(move || follow_hubs(&folder, &digest)).await?;
+            if let Err(error) = followed {
+                plan.error = Some(format!("the node runs the new program; {error:#}"));
+                store::save(root, plan)?;
+            }
+            return Ok(());
+        }
+        tick().await;
+    }
+}
+
+/// Mends the signature beside the installed program before its guardian is
+/// asked to take it (`store::mend_signature`); a failure is the guardian's
+/// to say.
+fn mend_signature(root: &Path, plan: &Plan) {
+    if cfg!(windows)
+        && let Err(error) = store::mend_signature(root, &plan.candidate)
+    {
+        eprintln!("mending the program's signature: {error:#}");
     }
 }
 
@@ -405,7 +486,12 @@ async fn guardian(root: &Path, graphical: bool) -> anyhow::Result<()> {
     let Probe::Running(node) = renewal::probe(&WorldDir::under(root)).await? else {
         bail!("the replacement bridge is not serving yet")
     };
-    ensure!(node.bridge && node.build == plan.candidate.build, "the replacement bridge is not serving yet");
+    // A guardian that runs the candidate as its node already takes its own
+    // image as well, as one behind a bridge does.
+    ensure!(
+        (node.bridge || node.supervised) && node.build == plan.candidate.build,
+        "the replacement bridge is not serving yet"
+    );
     let service =
         fastctx_install::service::Service::new(fastctx_install::service::Kind::Node, store::installed(root), root);
     if cfg!(windows) && service.guardian_staged(&plan.candidate.build.digest)? {

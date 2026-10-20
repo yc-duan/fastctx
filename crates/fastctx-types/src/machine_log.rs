@@ -174,6 +174,10 @@ pub enum Action {
         /// 1.0.1 beta 3, which always did.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         managed_auto: Option<bool>,
+        /// How fast the hub takes packages in at most, in bytes a second,
+        /// when that is what was set; the rest is the policy as it stood.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        intake: Option<u64>,
     },
     /// `machine`, away, is to update to `version` once it is back; none,
     /// what was kept for it was taken back.

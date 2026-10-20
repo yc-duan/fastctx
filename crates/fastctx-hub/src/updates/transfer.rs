@@ -243,9 +243,9 @@ pub(crate) async fn deliver(
 }
 
 async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Arc<Attempt>) -> Result<(), String> {
-    let (manifest, cache) = {
+    let (manifest, cache, intake) = {
         let updates = hub.updates.lock().expect("never poisoned");
-        (updates.manifest(&held.version), updates.cache.clone())
+        (updates.manifest(&held.version), updates.cache.clone(), updates.intake.clone())
     };
     let manifest = manifest.ok_or_else(|| format!("the hub no longer knows the release {}", held.version))?;
     let incoming = cache.attempt(&held.version, &held.target, attempt.id)?;
@@ -272,6 +272,9 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Arc<Att
                     }
                 }
                 Some(WsMessage::Binary(bytes)) if size.is_some() => {
+                    // Read no further until the ceiling lets these in: the
+                    // member's sending waits on the hub's reading.
+                    intake.take(bytes.len() as u64).await;
                     let _writing = work.begin();
                     file.write_all(&bytes).await.map_err(|error| error.to_string())?;
                     have += bytes.len() as u64;

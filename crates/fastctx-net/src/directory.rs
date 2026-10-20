@@ -681,6 +681,11 @@ pub struct View {
     /// hubs omit it, and would end the session of a member that sent one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub lan_relays: bool,
+    /// Whether this hub takes packages in one at a time under a ceiling its
+    /// super administrator sets (`Change::Intake`). Earlier hubs omit it,
+    /// and would end the session of a member that sent one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub paced_intake: bool,
     /// Whether this hub keeps the network's versions: it takes
     /// `Up::Versions`, answers `Question::Package`, takes `Change::Updates`
     /// and the data connections of packages. Earlier hubs omit it, and would
@@ -750,6 +755,7 @@ impl View {
             dissolves: false,
             deletes_projects: false,
             lan_relays: false,
+            paced_intake: false,
             versions: false,
             package_progress: false,
             due: false,

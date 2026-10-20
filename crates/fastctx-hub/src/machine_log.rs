@@ -315,7 +315,7 @@ impl History {
     }
 }
 
-pub(crate) fn action(change: &Change, book: &Book) -> Action {
+pub(crate) fn action(change: &Change, book: &Book, policy: &fastctx_types::update::Policy) -> Action {
     let project_name = |town| {
         book.directory
             .projects
@@ -385,6 +385,13 @@ pub(crate) fn action(change: &Change, book: &Book) -> Action {
             channel: policy.channel,
             minimum: policy.minimum.clone(),
             managed_auto: Some(policy.managed_auto),
+            intake: None,
+        },
+        Change::Intake { rate } => Action::Updates {
+            channel: policy.channel,
+            minimum: policy.minimum.clone(),
+            managed_auto: Some(policy.managed_auto),
+            intake: Some(rate.unwrap_or(fastctx_types::update::INTAKE)),
         },
         Change::UpdateDue { machine, version, .. } => {
             Action::UpdateDue { machine: machine.clone(), version: version.clone() }

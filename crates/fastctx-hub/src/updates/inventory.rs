@@ -1,7 +1,7 @@
 //! Inventory, preparation and retention refer to the same packages. Queued
 //! updates survive restart and retain their version until completed or withdrawn.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -44,17 +44,21 @@ fn for_targets(manifest: &Manifest, targets: &PackageTargets) -> Vec<Held> {
 }
 
 fn required(hub: &Hub, manifest: &Manifest) -> BTreeSet<Held> {
+    demand(hub, manifest).into_keys().collect()
+}
+
+/// The packages of `manifest` the network's machines need, and how many
+/// machines need each.
+fn demand(hub: &Hub, manifest: &Manifest) -> BTreeMap<Held, usize> {
     let store = hub.store();
-    store
-        .book
-        .directory
-        .members
-        .iter()
-        .flat_map(|member| {
-            let targets = store.hub.package_targets.get(&member.key).cloned().unwrap_or_default();
-            for_targets(manifest, &targets)
-        })
-        .collect()
+    let mut demand = BTreeMap::new();
+    for member in &store.book.directory.members {
+        let targets = store.hub.package_targets.get(&member.key).cloned().unwrap_or_default();
+        for held in for_targets(manifest, &targets) {
+            *demand.entry(held).or_insert(0) += 1;
+        }
+    }
+    demand
 }
 
 /// Every verified package the hub can serve, including checked hand-placed files.
@@ -194,40 +198,49 @@ pub(crate) fn prefetch(hub: &Arc<Hub>) {
             });
         }
     }
-    let mut wanted = BTreeSet::new();
+    let mut wanted: BTreeMap<Held, usize> = BTreeMap::new();
     for manifest in [network.stable, network.beta]
         .into_iter()
         .flatten()
         .chain(manifests.into_iter().filter(|m| due.contains(&m.version)))
     {
-        wanted.extend(required(hub, &manifest));
+        for (held, machines) in demand(hub, &manifest) {
+            *wanted.entry(held).or_insert(0) += machines;
+        }
     }
     let held = held(hub, &cache);
     let wanted = {
         let mut updates = hub.updates.lock().expect("never poisoned");
         let now = Instant::now();
         updates.prefetched.retain(|_, at| now.duration_since(*at) < Duration::from_secs(60));
-        let wanted: Vec<_> = wanted
+        let mut wanted: Vec<_> = wanted
             .into_iter()
-            .filter(|package| {
+            .filter(|(package, _)| {
                 !held.contains(package)
                     && !updates.obtaining.contains_key(package)
                     && !updates.prefetched.contains_key(package)
             })
             .collect();
-        for package in &wanted {
+        // The package the most machines need comes first.
+        wanted.sort_by(|(one, many), (other, more)| more.cmp(many).then_with(|| one.cmp(other)));
+        for (package, _) in &wanted {
             updates.prefetched.insert(package.clone(), now);
         }
         wanted
     };
-    for package in wanted {
-        let hub = hub.clone();
-        tokio::spawn(async move {
+    if wanted.is_empty() {
+        return;
+    }
+    // One after another, each with the whole of the ceiling in its turn
+    // (`super::obtain`); machines are told as each comes.
+    let hub = hub.clone();
+    tokio::spawn(async move {
+        for (package, _) in wanted {
             hub.log.line(format_args!("preparing {} of {} before announcing it", package.target, package.version));
             let _ = super::obtain::obtain(&hub, package, None).await;
             super::tell(&hub, None);
-        });
-    }
+        }
+    });
 }
 
 /// The batch waits here before issuing its first remote update. Its durable

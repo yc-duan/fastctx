@@ -117,6 +117,10 @@ impl Link {
                 return Err(format!("the hub {} runs an older fastctx that keeps no versions", self.hub_name()));
             }
             AccountChange::Updates { policy } => Change::Updates { policy },
+            AccountChange::Intake { .. } if !self.view().paced_intake => {
+                return Err(format!("the hub {} runs an older fastctx that sets no ceiling on its intake", self.hub_name()));
+            }
+            AccountChange::Intake { rate } => Change::Intake { rate },
             AccountChange::UpdateDue { .. } if !self.view().due => {
                 return Err(format!(
                     "the hub {} runs an older fastctx that keeps no updates for machines away",

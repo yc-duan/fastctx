@@ -6,6 +6,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crate::pace::{Pace, TRIES};
+use crate::throttle::Throttle;
 
 /// Downloads `url` into `file` as `from_url` does, connecting again when a
 /// connection fails or breaks and going on from what came, and giving up
@@ -15,6 +16,7 @@ pub async fn patiently(
     url: &str,
     file: &Path,
     progress: &mut (dyn FnMut(u64, Option<u64>) + Send),
+    throttle: Option<&Throttle>,
 ) -> Result<Option<u64>, String> {
     let mut pace = Pace::new(Instant::now());
     let mut failed = 0;
@@ -26,7 +28,7 @@ pub async fn patiently(
                 pace.heard(Instant::now(), brought);
                 progress(brought, total);
             };
-            from_url(url, file, &mut heard).await
+            from_url(url, file, &mut heard, throttle).await
         };
         match result {
             Ok(()) => return Ok(pace.speed()),
@@ -49,11 +51,13 @@ fn length(file: &Path) -> u64 {
 
 /// Downloads `url` into `file`, appending to what is there when the server
 /// sends the rest, starting again when it sends the whole. `progress` hears
-/// the bytes in the file and the whole size as they grow.
+/// the bytes in the file and the whole size as they grow; `throttle`, when
+/// given, holds the reading back to its pace, and the server's with it.
 pub async fn from_url(
     url: &str,
     file: &Path,
     progress: &mut (dyn FnMut(u64, Option<u64>) + Send),
+    throttle: Option<&Throttle>,
 ) -> Result<(), String> {
     // Written at the end it reaches, and cut back when the whole comes again:
     // a file opened only to append cannot be cut on Windows.
@@ -81,6 +85,9 @@ pub async fn from_url(
     };
     progress(written, total);
     while let Some(chunk) = response.chunk().await? {
+        if let Some(throttle) = throttle {
+            throttle.take(chunk.len() as u64).await;
+        }
         out.write_all(&chunk).map_err(|error| format!("{}: {error}", file.display()))?;
         written += chunk.len() as u64;
         progress(written, total);

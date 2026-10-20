@@ -579,22 +579,17 @@ async fn take(node: &Arc<Node>, offer: &Manifest, target: &str, asker: Option<As
     }
     let root = node.root.clone();
     let unpacking = dir(node).join("unpacked");
-    // The release's signature goes beside the program, as an interface's
-    // carried one has it: the Windows guardian takes a program in by it,
-    // with no administrator (`world-upgrade.md`).
-    let signature = offer.package(target).map(|package| package.signature.clone());
     tokio::task::spawn_blocking(move || -> Result<(), String> {
-        let _ = std::fs::remove_dir_all(&unpacking);
-        std::fs::create_dir_all(&unpacking).map_err(|error| error.to_string())?;
-        let program = fastctx_update::kernel::unpack(&archive, &unpacking)?;
-        if let Some(signature) = signature {
-            let mut beside = program.clone().into_os_string();
-            beside.push(".sig");
-            std::fs::write(&beside, signature).map_err(|error| format!("keeping the program's signature: {error}"))?;
+        // The program's own signature comes out beside it, as an interface's
+        // carried one has it: the Windows guardian takes a program in by it,
+        // with no administrator (`world-upgrade.md`). The package's signature
+        // is over the archive and never goes beside the program.
+        let plan = fastctx_install::renewal::stage_package(&root, &archive, &unpacking)
+            .map_err(|error| format!("{error:#}"))?;
+        if plan.phase != fastctx_types::renewal::Phase::Complete {
+            fastctx_install::renewal::request(&root, true).map_err(|error| error.to_string())?;
         }
-        let staged = stage(&root, &program);
-        let _ = std::fs::remove_dir_all(&unpacking);
-        staged
+        Ok(())
     })
     .await
     .map_err(|error| error.to_string())??;

@@ -229,13 +229,35 @@ pub struct Policy {
     /// Whether managed machines take new releases by themselves.
     #[serde(default = "yes")]
     pub managed_auto: bool,
+    /// How fast the hub takes packages in at most, in bytes a second, where
+    /// its super administrator raised or lowered it from `INTAKE`. Set by
+    /// its own change; a change of the rest leaves it as it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intake: Option<u64>,
 }
 
 impl Default for Policy {
     fn default() -> Self {
-        Self { channel: Channel::Stable, minimum: None, managed_auto: true }
+        Self { channel: Channel::Stable, minimum: None, managed_auto: true, intake: None }
     }
 }
+
+impl Policy {
+    /// How fast the hub takes packages in at most, in bytes a second.
+    pub fn intake(&self) -> u64 {
+        self.intake.unwrap_or(INTAKE)
+    }
+}
+
+/// How fast a hub takes packages in by default, in bytes a second: some 40
+/// Mbit/s, about half the lowest a cloud's guard against floods lets a small
+/// server be set to (`world-network.md`, 中枢替网络存的东西).
+pub const INTAKE: u64 = 5_000_000;
+
+/// How slow and how fast a hub may be set to take packages in: slower than
+/// the first, one message of a transfer would wait past what the other side
+/// waits for; past the second it is no ceiling.
+pub const INTAKE_RANGE: std::ops::RangeInclusive<u64> = 500_000..=1_000_000_000;
 
 /// An update a machine away from the network is to make once it is back,
 /// kept by the hub until the machine runs that release or a newer one

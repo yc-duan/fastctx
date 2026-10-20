@@ -98,6 +98,12 @@ pub(crate) struct Updates {
     /// Places for the packages handed to machines at once, so updates leave
     /// the hub's line to everything else that passes on it.
     handing: Arc<tokio::sync::Semaphore>,
+    /// The one package coming in at a time: a release's packages come one
+    /// after another, each at the whole of the ceiling (`obtain::bring`).
+    coming: Arc<tokio::sync::Mutex<()>>,
+    /// The ceiling every byte the hub takes in shares, from GitHub or from
+    /// its machines (`fastctx_update::throttle`).
+    intake: Arc<fastctx_update::throttle::Throttle>,
     /// How fast the hub's own last download from GitHub went, in bytes a
     /// second, beside its machines' (`obtain::next`).
     own_speed: Option<u64>,
@@ -139,6 +145,8 @@ impl Updates {
             fetches: HashMap::new(),
             cache,
             handing: Arc::new(tokio::sync::Semaphore::new(HANDED_AT_ONCE)),
+            coming: Arc::new(tokio::sync::Mutex::new(())),
+            intake: Arc::new(fastctx_update::throttle::Throttle::new(fastctx_types::update::INTAKE)),
             own_speed: None,
             placed: HashMap::new(),
             prefetched: HashMap::new(),

@@ -208,6 +208,19 @@ fn handed_over(root: &Path, entry: &Path) -> anyhow::Result<Option<FileLock>> {
     Ok(None)
 }
 
+/// Takes the program out of a release's checked package, its own signature
+/// beside it (`fastctx_update::kernel::unpack`), and stages it, unpacking in
+/// `unpacking`, a directory of the caller's emptied first and after.
+pub fn stage_package(root: &Path, package: &Path, unpacking: &Path) -> anyhow::Result<Plan> {
+    let _ = fs::remove_dir_all(unpacking);
+    fs::create_dir_all(unpacking)?;
+    let staged = fastctx_update::kernel::unpack(package, unpacking)
+        .map_err(anyhow::Error::msg)
+        .and_then(|program| stage(root, &program, None));
+    let _ = fs::remove_dir_all(unpacking);
+    staged
+}
+
 /// Stores and checks the new program before publishing either the intent or
 /// the installed name. Repeating an unfinished placement retains its state.
 pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Result<Plan> {
@@ -450,6 +463,37 @@ fn copy_image(root: &Path, source: &Path) -> io::Result<PathBuf> {
         fs::copy(&signature, signature_of(&path))?;
     }
     Ok(path)
+}
+
+/// Makes the official signature beside the installed program, `program`,
+/// the program's own: a node of an earlier release kept its package's,
+/// which is over the archive, and the Windows guardian refuses the program
+/// by it. The program's own comes from that package, kept in the World's
+/// updates, when it carries one. Whether the signature beside the program
+/// checks out now.
+pub fn mend_signature(root: &Path, program: &Program) -> io::Result<bool> {
+    let installed = installed(root);
+    if digest(&installed)? != program.build.digest {
+        return Ok(false);
+    }
+    let bytes = fs::read(&installed)?;
+    let version = &program.build.version;
+    let checks = |signature: &str| fastctx_update::verify::bytes(&bytes, signature, version).is_ok();
+    if fs::read_to_string(signature_of(&installed)).is_ok_and(|signature| checks(&signature)) {
+        return Ok(true);
+    }
+    let cache = fastctx_update::Cache::new(root.join("updates").join("packages"));
+    let Some(archive) = cache.get(version, &fastctx_update::kernel::target()) else { return Ok(false) };
+    let Some(signature) = fastctx_update::kernel::signature(&archive).map_err(io::Error::other)? else {
+        return Ok(false);
+    };
+    if !checks(&signature) {
+        return Ok(false);
+    }
+    for beside in [signature_of(&installed), signature_of(&program.path)] {
+        publish(&beside, signature.as_bytes(), Permissions::Private)?;
+    }
+    Ok(true)
 }
 
 /// Where the official signature of the program at `program` is kept.
