@@ -1234,7 +1234,19 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 }
             }
         }
-        Call::ProfileRead { .. } | Call::ProfileWrite { .. } | Call::Mcp { .. } => {
+        Call::ProfileRead { hub, account } => {
+            let (link, account) = crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
+            link.profile_read(&account).map(|view| Reply::Profile(Box::new(view))).map_err(Failure::new)
+        }
+        Call::ProfileWrite { hub, account, profile } => {
+            let (link, account) = crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
+            let current = link.profile_read(&account).map_err(Failure::new)?;
+            if profile.servers != current.profile.servers {
+                return Err(Failure::not_run("change MCP servers through fastctx mcp"));
+            }
+            link.profile_write(&account, profile).await.map(|version| Reply::ProfileWritten { version }).map_err(Failure::new)
+        }
+        Call::Mcp { .. } => {
             users_voice(node, peer)?;
             Err(Failure::new("this release keeps no user-level configuration yet"))
         }

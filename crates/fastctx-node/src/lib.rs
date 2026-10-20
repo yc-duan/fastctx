@@ -28,6 +28,7 @@ pub mod claude_request;
 mod codex;
 mod codex_title;
 mod collab;
+mod profile;
 mod colleagues;
 mod composer;
 mod consent;

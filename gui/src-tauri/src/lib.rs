@@ -8,6 +8,7 @@ mod accounts;
 #[cfg(target_os = "android")]
 mod android;
 mod collab;
+mod profile;
 mod composer;
 mod connection;
 #[cfg(desktop)]
@@ -1193,6 +1194,9 @@ pub fn run() {
             accounts::accounts,
             accounts::seen_dissolved,
             accounts::machine_log,
+            profile::profile_read,
+            profile::profile_write,
+            profile::mcp,
             collab::collab_read,
             collab::collab_write,
             features::features_read,
