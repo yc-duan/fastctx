@@ -335,8 +335,10 @@ async fn dead_line(world: &World, report: &mut Report, one_way: bool) -> anyhow:
 /// A line so slow that one message takes longer than a silence to cross
 /// it: it is not taken for a dead one, and what crosses it comes whole.
 pub async fn slow(world: &World, report: &mut Report) -> anyhow::Result<()> {
-    // Slow enough that what crosses takes well past a silence.
-    const RATE: u64 = 1500;
+    // Slow enough that what crosses takes well past a silence (40 seconds
+    // to the silence's 30), and clear of a call's minute on the slowest
+    // runners.
+    const RATE: u64 = 2000;
     const STREAMED: usize = 80_000;
     let (alpha, beta) = (world.machine("alpha"), world.machine("beta"));
     let link = alpha.link();
