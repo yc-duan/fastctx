@@ -4,6 +4,13 @@ use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::MetadataExt as _;
 use std::path::Path;
 
+/// Checks against the effective identity. The libc crate leaves Bionic's
+/// out; its value is Linux's own.
+#[cfg(target_os = "android")]
+const AT_EACCESS: libc::c_int = 0x200;
+#[cfg(not(target_os = "android"))]
+const AT_EACCESS: libc::c_int = libc::AT_EACCESS;
+
 /// Uses the kernel's ACL-aware check first. Only ENOSYS or EPERM permits a
 /// mode-bit approximation; it cannot reproduce ACL or noexec mount policy.
 pub fn is_executable(path: &Path) -> bool {
@@ -13,7 +20,7 @@ pub fn is_executable(path: &Path) -> bool {
     }
     let Ok(name) = std::ffi::CString::new(path.as_os_str().as_bytes()) else { return false };
     // SAFETY: a terminated path; faccessat does not retain the pointer.
-    if unsafe { libc::faccessat(libc::AT_FDCWD, name.as_ptr(), libc::X_OK, libc::AT_EACCESS) } == 0 {
+    if unsafe { libc::faccessat(libc::AT_FDCWD, name.as_ptr(), libc::X_OK, AT_EACCESS) } == 0 {
         return true;
     }
     if !matches!(std::io::Error::last_os_error().raw_os_error(), Some(libc::ENOSYS | libc::EPERM)) {
