@@ -44,6 +44,17 @@ struct Manifest {
 
 type Parents = HashMap<Vec<OsString>, Object>;
 
+fn nested_mount(path: &Path) -> io::Error {
+    io::Error::new(io::ErrorKind::Unsupported, format!("{} is a nested mount; original tree retained", path.display()))
+}
+
+fn require_same_mount(root: &Path, path: &Path) -> io::Result<()> {
+    if metadata::mount(path)? != metadata::mount(root)? {
+        return Err(nested_mount(path));
+    }
+    Ok(())
+}
+
 impl Entry {
     fn path(&self, root: &Path) -> PathBuf {
         let mut result = root.to_path_buf();
@@ -107,6 +118,7 @@ impl Entry {
         parents: &Parents,
     ) -> io::Result<Identity> {
         let path = self.path(root);
+        require_same_mount(root, &path)?;
         let parent = self.names.split_last().and_then(|(_, names)| parents.get(names));
         let current = Self::read_at(&path, self.names.clone(), locks, parent)?;
         let matches = match (&self.data, &current.data) {
@@ -130,10 +142,7 @@ impl Manifest {
             let mut path = object.path.clone();
             path.extend(&names);
             if metadata::mount(&path)? != mount {
-                return Err(io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    format!("{} is a nested mount; original tree retained", path.display()),
-                ));
+                return Err(nested_mount(&path));
             }
             let entry = Entry::read_at(&path, names.clone(), locks, parent.as_ref())?;
             if matches!(entry.data, Data::Directory { .. }) {
@@ -223,6 +232,22 @@ impl Manifest {
         Ok(parents)
     }
 
+    fn check_source_mounts(&self) -> io::Result<()> {
+        let mount = metadata::mount(&self.source.path)?;
+        // 2026-10-20: a saved manifest may predate this process or a mount change. Check
+        // every remaining entry before retiring any part of the source tree.
+        for entry in &self.entries {
+            let path = entry.path(&self.source.path);
+            match metadata::mount(&path) {
+                Ok(current) if current != mount => return Err(nested_mount(&path)),
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+
     fn source_parents(&self) -> Parents {
         self.entries
             .iter()
@@ -279,6 +304,7 @@ pub(super) fn transfer(object: &Object, destination: &Path, locks: &[&File], pre
         Err(error) => return Err(error),
     }
     let archived_parents = manifest.verify(destination, false, false, &super::LockedFiles::new())?;
+    manifest.check_source_mounts()?;
     let source_parents = manifest.source_parents();
     // Publication is the durable checkpoint. From here on, existing archive
     // objects are only read, never repaired or overwritten from the source.
@@ -297,6 +323,7 @@ pub(super) fn transfer(object: &Object, destination: &Path, locks: &[&File], pre
         // Directory identities accelerate reads, but an ancestor could have
         // been moved outside the tree and replaced with a link to that same
         // object. Recheck both complete paths at the irreversible boundary.
+        require_same_mount(&object.path, &source)?;
         files::check_path(source.parent().expect("archive source parent"))?;
         files::check_path(entry.path(destination).parent().expect("archive target parent"))?;
         match &entry.data {

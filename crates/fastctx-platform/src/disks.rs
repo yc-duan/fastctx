@@ -111,49 +111,7 @@ mod imp {
         "ntfs3", "fuseblk", "hfsplus", "apfs",
     ];
 
-    /// One line of `/proc/self/mountinfo`.
-    struct Mount {
-        /// The filesystem's device, `major:minor`.
-        device: String,
-        /// Which of the filesystem's directories shows at the mount point;
-        /// `/` for the whole of it.
-        root: String,
-        point: PathBuf,
-        kind: String,
-    }
-
-    /// The mounts this process sees, as `proc(5)` lays out `mountinfo`: the
-    /// mount's id, its parent's, the device, the root, the mount point and
-    /// its options, optional fields up to a lone `-`, then the type.
-    fn mounts() -> io::Result<Vec<Mount>> {
-        let text = std::fs::read_to_string("/proc/self/mountinfo")?;
-        let mut mounts = Vec::new();
-        for line in text.lines() {
-            let fields: Vec<&str> = line.split(' ').collect();
-            let separator = fields.iter().position(|field| *field == "-");
-            let (Some(separator), Some(device), Some(root), Some(point)) =
-                (separator, fields.get(2), fields.get(3), fields.get(4))
-            else {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("a mountinfo line not understood: {line}"),
-                ));
-            };
-            let Some(kind) = fields.get(separator + 1) else {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("a mountinfo line not understood: {line}"),
-                ));
-            };
-            mounts.push(Mount {
-                device: (*device).to_string(),
-                root: unescape(root),
-                point: PathBuf::from(unescape(point)),
-                kind: (*kind).to_string(),
-            });
-        }
-        Ok(mounts)
-    }
+    use crate::mountinfo::{Mount, read as mounts};
 
     pub fn fixed_disks() -> io::Result<Vec<PathBuf>> {
         let mut by_device: BTreeMap<String, Vec<Mount>> = BTreeMap::new();
@@ -167,10 +125,10 @@ mod imp {
         // their shortest paths, and no part inside one already taken.
         let mut disks = Vec::new();
         for mut mounts in by_device.into_values() {
-            mounts.sort_by_key(|mount| (std::path::Path::new(&mount.root).components().count(), mount.point.clone()));
+            mounts.sort_by_key(|mount| (mount.root.components().count(), mount.point.clone()));
             let mut taken: Vec<PathBuf> = Vec::new();
             for mount in mounts {
-                let root = PathBuf::from(&mount.root);
+                let root = mount.root;
                 if !taken.iter().any(|part| root.starts_with(part)) {
                     taken.push(root);
                     disks.push(mount.point);
@@ -183,27 +141,6 @@ mod imp {
 
     pub fn mount_points() -> io::Result<Vec<PathBuf>> {
         Ok(mounts()?.into_iter().map(|mount| mount.point).collect())
-    }
-
-    /// `/proc/self/mountinfo` writes a space, tab, newline and backslash in a
-    /// path as three octal digits after a backslash.
-    fn unescape(field: &str) -> String {
-        let bytes = field.as_bytes();
-        let mut out = Vec::with_capacity(bytes.len());
-        let mut at = 0;
-        while at < bytes.len() {
-            if bytes[at] == b'\\'
-                && at + 3 < bytes.len()
-                && bytes[at + 1..at + 4].iter().all(|digit| (b'0'..=b'7').contains(digit))
-            {
-                out.push((bytes[at + 1] - b'0') * 64 + (bytes[at + 2] - b'0') * 8 + (bytes[at + 3] - b'0'));
-                at += 4;
-            } else {
-                out.push(bytes[at]);
-                at += 1;
-            }
-        }
-        String::from_utf8_lossy(&out).into_owned()
     }
 
     pub fn lower_this_thread() -> io::Result<()> {

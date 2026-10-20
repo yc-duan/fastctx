@@ -182,14 +182,8 @@ pub(super) fn mount(path: &Path) -> io::Result<u64> {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
         let name = CString::new(path.as_os_str().as_bytes())?;
-        // statx came with Linux 4.11 and names the mount from 5.8 on. Before
-        // that the filesystem's device stands for it: a different filesystem
-        // nested in the tree is still found, a bind mount of the same one
-        // is copied through.
-        let device = || -> io::Result<u64> {
-            use std::os::unix::fs::MetadataExt;
-            Ok(fs::symlink_metadata(path)?.dev())
-        };
+        // 2026-10-20: device IDs cannot distinguish a bind mount from its source.
+        let fallback = || fastctx_platform::mountinfo::id(path);
         // SAFETY: initialized output and terminated path, queried without following links.
         let mut data: libc::statx = unsafe { std::mem::zeroed() };
         if unsafe {
@@ -205,12 +199,12 @@ pub(super) fn mount(path: &Path) -> io::Result<u64> {
         {
             let error = io::Error::last_os_error();
             return match error.raw_os_error() {
-                Some(libc::ENOSYS | libc::EPERM) => device(),
+                Some(libc::ENOSYS | libc::EINVAL | libc::EPERM) => fallback(),
                 _ => Err(error),
             };
         }
         if data.stx_mask & libc::STATX_MNT_ID == 0 {
-            return device();
+            return fallback();
         }
         Ok(data.stx_mnt_id)
     }

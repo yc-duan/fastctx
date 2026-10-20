@@ -34,6 +34,8 @@ pub mod legacy_text;
 pub mod local_path;
 pub mod lock;
 pub mod memory;
+#[cfg(target_os = "linux")]
+pub mod mountinfo;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod output_pipe;
 pub mod owned_directory;
