@@ -309,7 +309,7 @@ jobs:
         name: Smoke test as an old kernel
         run: |
           gcc -O2 -o "$RUNNER_TEMP/oldkernel" scripts/oldkernel.c
-          sudo "$RUNNER_TEMP/oldkernel" 314 python3 scripts/smoke.py kernel/fastctx
+          sudo python3 scripts/oldkernel-smoke.py "$RUNNER_TEMP/oldkernel" kernel/fastctx --root "$RUNNER_TEMP/oldkernel-smoke"
       # A real Codex app-server whose model is a mock on this machine: no
       # request goes to any vendor (`scripts/concurrency.py`). The node finds
       # Codex on the login PATH.
@@ -341,6 +341,42 @@ jobs:
             earlier=(--earlier "$RUNNER_TEMP/earlier/usr/bin/fastctx")
           fi
           tests/network_drill --root "$RUNNER_TEMP" "${earlier[@]}"
+
+  old-linux:
+    if: github.ref_type == 'branch'
+    needs: kernel-linux
+    name: CentOS 7 lifecycle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-x86_64-unknown-linux-gnu
+          path: kernel
+      - name: Install the virtual machine tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils genisoimage
+          if [[ -e /dev/kvm ]]; then sudo chown "$USER" /dev/kvm; fi
+      - uses: actions/cache@v4
+        with:
+          path: .old-linux-cache
+          key: centos7-2009-7ba4513d-python31117-v1
+      - name: Exercise the published kernel on the old system
+        if: env.DRILLS == 'true'
+        run: python scripts/old-linux.py kernel/fastctx --cache .old-linux-cache --work "$RUNNER_TEMP/centos7"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: centos7-lifecycle-logs
+          path: |
+            ${{ runner.temp }}/centos7/*.log
+            ${{ runner.temp }}/centos7/result.json
+          if-no-files-found: warn
 
   kernel-macos:
     if: github.ref_type == 'branch'
