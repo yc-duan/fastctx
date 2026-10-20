@@ -1,0 +1,368 @@
+// What the agents' sections and the account's own pages say
+// (`world-user-config.md`; `world-gui.md`, 智能体页): the sections under
+// 「智能体」 in the sidebar, the prompt, the MCP servers and the
+// preferences, and the servers' switches in a conversation's
+// 「机器与文件夹」.
+
+export type AgentSection = "claude" | "codex" | "prompt" | "mcp" | "prefs";
+
+export interface ProfileWords {
+  sections: Record<AgentSection, string>;
+  /** The account a page is of, where the device is logged in to more than
+   *  one. */
+  account: string;
+  /** The hub keeps no profiles: it runs an older Fastctx. */
+  olderHub: string;
+  reading: string;
+  readFailed: string;
+  saving: string;
+  saved: string;
+  saveFailed: string;
+  /** Another device wrote it since it was read here. */
+  changedElsewhere: string;
+  /** Takes what was written elsewhere in place of what is here. */
+  loadTheirs: string;
+  /** When what is saved reaches the sessions, said on hover. */
+  takesEffect: string;
+  prompt: {
+    placeholder: string;
+    save: string;
+    /** Said on hover over saving it. */
+    reaches: string;
+    /** How much of the most it holds, near the end. */
+    size(used: string, most: string): string;
+    tooLong: string;
+  };
+  mcp: {
+    add: string;
+    import: string;
+    /** The group of servers by address. */
+    remote: string;
+    here: string;
+    command: string;
+    missing: string;
+    older: string;
+    failed: string;
+    /** Said on hover over a command server on a Windows machine. */
+    sessionZero: string;
+    /** Said on hover over a server by address, and where one is added. */
+    remoteReaches: string;
+    test: string;
+    edit: string;
+    remove: string;
+    more: string;
+    testing: string;
+    tools(count: number): string;
+    noTools: string;
+    didNotStart: string;
+    log: string;
+    removeTitle(name: string): string;
+    removeCommand(machine: string): string;
+    removeRemote: string;
+    removeGo: string;
+    removing: string;
+    removeFailed: string;
+  };
+  add: {
+    title: string;
+    editTitle(name: string): string;
+    paste: string;
+    form: string;
+    pastePlaceholder: string;
+    notJson: string;
+    noServers: string;
+    shape: string;
+    name: string;
+    nameRule: string;
+    reserved: string;
+    taken: string;
+    kind: string;
+    kindCommand: string;
+    kindRemote: string;
+    command: string;
+    args: string;
+    env: string;
+    envPlaceholder: string;
+    cwd: string;
+    url: string;
+    urlRule: string;
+    headers: string;
+    headersPlaceholder: string;
+    sse: string;
+    on: string;
+    noMachine: string;
+    go(count: number): string;
+    save: string;
+    adding: string;
+    failed: string;
+  };
+  import: {
+    title: string;
+    from: string;
+    reading: string;
+    none: string;
+    had: string;
+    claudeDesktop: string;
+    claudeCode: string;
+    cursor: string;
+    go(count: number): string;
+    importing: string;
+    failed: string;
+  };
+  prefs: {
+    standard: string;
+    on: string;
+    off: string;
+    language: string;
+    languagePlaceholder: string;
+    outputStyle: string;
+    styles: { explanatory: string; learning: string };
+    thinking: string;
+    summaries: string;
+    git: string;
+    attribution: string;
+    unsigned: string;
+    reasoningSummary: string;
+    summaryKinds: { auto: string; concise: string; detailed: string; none: string };
+    verbosity: string;
+    verbosityKinds: { low: string; medium: string; high: string };
+    hideReasoning: string;
+    rawReasoning: string;
+  };
+  focus: {
+    /** The group of the account's servers in 「机器与文件夹」. */
+    title: string;
+    /** Said on hover over it. */
+    when: string;
+  };
+}
+
+export const zhProfile: ProfileWords = {
+  sections: { claude: "Claude Code", codex: "Codex", prompt: "提示词", mcp: "MCP", prefs: "偏好" },
+  account: "账号",
+  olderHub: "这个网络的中枢服务器要先升级",
+  reading: "正在读取",
+  readFailed: "没读到",
+  saving: "正在保存",
+  saved: "已保存",
+  saveFailed: "保存失败",
+  changedElsewhere: "别处刚改过",
+  loadTheirs: "载入那一版",
+  takesEffect: "新开的对话马上带上；开着的对话下次被唤醒时换上",
+  prompt: {
+    placeholder: "写给替你干活的每一个智能体",
+    save: "保存",
+    reaches: "替你干活的每个智能体都会读到；正在干活的，下一次调用世界的工具时换上",
+    size: (used, most) => `${used} / ${most}`,
+    tooLong: "太长了",
+  },
+  mcp: {
+    add: "添加",
+    import: "导入",
+    remote: "网址",
+    here: "本机",
+    command: "命令",
+    missing: "那台机器上没有",
+    older: "那台机器要先升级",
+    failed: "没问到",
+    sessionZero: "这台 Windows 上它在系统的会话 0 里起：连本机端口的可用，要操作桌面窗口的不行",
+    remoteReaches: "地址与请求头会交给替你干活的机器",
+    test: "试一下",
+    edit: "编辑",
+    remove: "移除",
+    more: "更多",
+    testing: "正在试",
+    tools: (count) => `${count} 个工具`,
+    noTools: "没有工具",
+    didNotStart: "没起来",
+    log: "日志",
+    removeTitle: (name) => `移除 ${name}？`,
+    removeCommand: (machine) => `它的命令与环境变量从 ${machine} 上删掉；对话下次被唤醒时不再带它。`,
+    removeRemote: "对话下次被唤醒时不再带它。",
+    removeGo: "移除",
+    removing: "正在移除",
+    removeFailed: "没能移除",
+  },
+  add: {
+    title: "添加 MCP",
+    editTitle: (name) => `编辑 ${name}`,
+    paste: "粘贴",
+    form: "填写",
+    pastePlaceholder: '{ "mcpServers": { … } }',
+    notJson: "不是 JSON",
+    noServers: "里面没有 MCP",
+    shape: "认不出这段 JSON",
+    name: "名称",
+    nameRule: "只用英文字母、数字、_ 和 -，至多 32 个",
+    reserved: "fastctx 留给世界自己的工具",
+    taken: "已经有这个名字",
+    kind: "类型",
+    kindCommand: "命令",
+    kindRemote: "网址",
+    command: "命令",
+    args: "参数（可选）",
+    env: "环境变量（可选）",
+    envPlaceholder: "KEY=value，一行一个",
+    cwd: "工作目录（可选）",
+    url: "地址",
+    urlRule: "以 https:// 或 http:// 开头",
+    headers: "请求头（可选）",
+    headersPlaceholder: "Name: value，一行一个",
+    sse: "旧式 SSE",
+    on: "放在",
+    noMachine: "没有能放命令的机器在线",
+    go: (count) => (count > 1 ? `添加 ${count} 个` : "添加"),
+    save: "保存",
+    adding: "正在添加",
+    failed: "没能添加",
+  },
+  import: {
+    title: "导入",
+    from: "从",
+    reading: "正在读",
+    none: "这台上没找到",
+    had: "已有",
+    claudeDesktop: "Claude Desktop",
+    claudeCode: "Claude Code",
+    cursor: "Cursor",
+    go: (count) => (count ? `导入 ${count} 个` : "导入"),
+    importing: "正在导入",
+    failed: "没能导入",
+  },
+  prefs: {
+    standard: "默认",
+    on: "开",
+    off: "关",
+    language: "回答的语言",
+    languagePlaceholder: "默认",
+    outputStyle: "输出风格",
+    styles: { explanatory: "解释型", learning: "学习型" },
+    thinking: "总是深入思考",
+    summaries: "思考摘要",
+    git: "Git 内置指引",
+    attribution: "提交与 PR 署名",
+    unsigned: "不署名",
+    reasoningSummary: "推理摘要",
+    summaryKinds: { auto: "自动", concise: "简短", detailed: "详细", none: "不要" },
+    verbosity: "回答详略",
+    verbosityKinds: { low: "简", medium: "中", high: "详" },
+    hideReasoning: "隐藏推理过程",
+    rawReasoning: "原始推理内容",
+  },
+  focus: { title: "MCP", when: "开关在这段对话下次被唤醒时生效" },
+};
+
+export const enProfile: ProfileWords = {
+  sections: { claude: "Claude Code", codex: "Codex", prompt: "Prompt", mcp: "MCP", prefs: "Preferences" },
+  account: "Account",
+  olderHub: "This network's server needs updating first",
+  reading: "Reading",
+  readFailed: "Couldn't read",
+  saving: "Saving",
+  saved: "Saved",
+  saveFailed: "Couldn't save",
+  changedElsewhere: "Changed elsewhere",
+  loadTheirs: "Load that version",
+  takesEffect: "New conversations take it at once; open ones at their next wake",
+  prompt: {
+    placeholder: "To every agent that works for you",
+    save: "Save",
+    reaches: "Every agent working for you reads it; one at work takes it at its next call to the World's tools",
+    size: (used, most) => `${used} / ${most}`,
+    tooLong: "Too long",
+  },
+  mcp: {
+    add: "Add",
+    import: "Import",
+    remote: "By address",
+    here: "This computer",
+    command: "Command",
+    missing: "Not on that machine",
+    older: "That machine needs updating",
+    failed: "No answer",
+    sessionZero: "On this Windows machine it starts in the system's session 0: servers that reach a local port work, those that drive desktop windows do not",
+    remoteReaches: "The address and headers go to the machines that work for you",
+    test: "Try it",
+    edit: "Edit",
+    remove: "Remove",
+    more: "More",
+    testing: "Trying",
+    tools: (count) => (count === 1 ? "1 tool" : `${count} tools`),
+    noTools: "No tools",
+    didNotStart: "Didn't start",
+    log: "Log",
+    removeTitle: (name) => `Remove ${name}?`,
+    removeCommand: (machine) => `Its command and environment are deleted from ${machine}; conversations go without it from their next wake.`,
+    removeRemote: "Conversations go without it from their next wake.",
+    removeGo: "Remove",
+    removing: "Removing",
+    removeFailed: "Couldn't remove",
+  },
+  add: {
+    title: "Add an MCP server",
+    editTitle: (name) => `Edit ${name}`,
+    paste: "Paste",
+    form: "Fill in",
+    pastePlaceholder: '{ "mcpServers": { … } }',
+    notJson: "Not JSON",
+    noServers: "No servers in it",
+    shape: "Not an mcpServers object",
+    name: "Name",
+    nameRule: "Letters, digits, _ and -, at most 32",
+    reserved: "fastctx is the World's own tools",
+    taken: "That name is taken",
+    kind: "Kind",
+    kindCommand: "Command",
+    kindRemote: "Address",
+    command: "Command",
+    args: "Arguments (optional)",
+    env: "Environment (optional)",
+    envPlaceholder: "KEY=value, one per line",
+    cwd: "Working folder (optional)",
+    url: "Address",
+    urlRule: "Starts with https:// or http://",
+    headers: "Headers (optional)",
+    headersPlaceholder: "Name: value, one per line",
+    sse: "Older SSE",
+    on: "Runs on",
+    noMachine: "No machine to run it on is online",
+    go: (count) => (count > 1 ? `Add ${count}` : "Add"),
+    save: "Save",
+    adding: "Adding",
+    failed: "Couldn't add",
+  },
+  import: {
+    title: "Import",
+    from: "From",
+    reading: "Reading",
+    none: "None found here",
+    had: "Added",
+    claudeDesktop: "Claude Desktop",
+    claudeCode: "Claude Code",
+    cursor: "Cursor",
+    go: (count) => (count ? `Import ${count}` : "Import"),
+    importing: "Importing",
+    failed: "Couldn't import",
+  },
+  prefs: {
+    standard: "Default",
+    on: "On",
+    off: "Off",
+    language: "Language",
+    languagePlaceholder: "Default",
+    outputStyle: "Output style",
+    styles: { explanatory: "Explanatory", learning: "Learning" },
+    thinking: "Always think",
+    summaries: "Thinking summaries",
+    git: "Git instructions",
+    attribution: "Attribution",
+    unsigned: "None",
+    reasoningSummary: "Reasoning summary",
+    summaryKinds: { auto: "Auto", concise: "Concise", detailed: "Detailed", none: "None" },
+    verbosity: "Verbosity",
+    verbosityKinds: { low: "Low", medium: "Medium", high: "High" },
+    hideReasoning: "Hide reasoning",
+    rawReasoning: "Raw reasoning",
+  },
+  focus: { title: "MCP", when: "Switches take effect at this conversation's next wake" },
+};

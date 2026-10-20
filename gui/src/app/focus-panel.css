@@ -524,3 +524,53 @@
 :root[data-reduced] .focus-pop {
   animation: none;
 }
+
+/* The account's MCP servers: a line each, as a machine's, its switch at
+   the end; one whose machine is away in a quieter ink. */
+.focus-mcps {
+  display: grid;
+  gap: 1px;
+}
+
+.focus-mcp {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 36px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-m);
+  text-align: left;
+  color: var(--text-2);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.focus-mcp:hover {
+  color: var(--text);
+  background: var(--fill);
+}
+
+.focus-mcp[aria-checked="false"] .focus-name {
+  color: var(--text-3);
+}
+
+.focus-mcp.offline .focus-name,
+.focus-mcp.offline .focus-mark {
+  color: var(--text-3);
+}
+
+.focus-mcp .switch-track {
+  margin-left: auto;
+}
+
+@media (pointer: coarse) {
+  .focus-mcp {
+    min-height: 44px;
+  }
+}
+
+/* All on is how a conversation begins, so on is said in ink: the clay is
+   kept for what the user changed elsewhere in the panel. */
+.focus-mcp[aria-checked="true"] .switch-track {
+  background: var(--text-2);
+}

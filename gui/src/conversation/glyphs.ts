@@ -18,6 +18,7 @@ type Frame =
   | "archive" | "unarchive" | "trash" | "reread" | "scan" | "grip" | "page" | "versions" | "history" | "person" | "key" | "phone"
   | "logout" | "shield" | "lock" | "unlock" | "signup" | "relay" | "save" | "link"
   | "context" | "cache" | "clock" | "tree" | "rows" | "update"
+  | "note" | "plug" | "tune"
   | Marks;
 
 /** Which agent and which kind of device, drawn small beside a conversation's
@@ -105,6 +106,12 @@ const paths: Record<Named, string> = {
   signup: '<circle cx="8.5" cy="7.25" r="2.75"/><path d="M3.25 16c.7-3 2.6-4.5 5.25-4.5 1.25 0 2.3.33 3.2 1"/><path d="M15 11.25v5M12.5 13.75h5"/>',
   // Three lines shortening down: how much the conversation holds.
   context: '<path d="M4 6h12M4 10h9M4 14h5"/>',
+  /* A sheet written to someone: the account's own prompt. */
+  note: '<path d="M5.25 3.75h6.25l3.25 3.25v9.25h-9.5z"/><path d="M11.5 3.75V7h3.25"/><path d="M7.75 10.25h4.5M7.75 13h3"/>',
+  /* A plug on its cord: an MCP server. */
+  plug: '<path d="M7.75 3.75V6.5M12.25 3.75V6.5"/><path d="M5.75 6.5h8.5v2.25a4.25 4.25 0 0 1-8.5 0z"/><path d="M10 13v3.25"/>',
+  /* Two sliders: preferences. */
+  tune: '<path d="M3.75 6.75h6.5M14.75 6.75h1.5M3.75 13.25h1.5M9.75 13.25h6.5"/><circle cx="12.5" cy="6.75" r="2"/><circle cx="7.5" cy="13.25" r="2"/>',
   // A cylinder: what the provider keeps of the prompt.
   cache: '<ellipse cx="10" cy="5.6" rx="5.4" ry="2.1"/><path d="M4.6 5.6v8.8c0 1.16 2.42 2.1 5.4 2.1s5.4-.94 5.4-2.1V5.6"/><path d="M4.6 10c0 1.16 2.42 2.1 5.4 2.1s5.4-.94 5.4-2.1"/>',
   tree: '<circle cx="10" cy="4.3" r="1.6"/><path d="M10 5.9v2.6M4.5 8.5h11M4.5 8.5v2.6M10 8.5v2.6M15.5 8.5v2.6"/><circle cx="4.5" cy="13.4" r="2.1"/><circle cx="10" cy="13.4" r="2.1"/><circle cx="15.5" cy="13.4" r="2.1"/>',

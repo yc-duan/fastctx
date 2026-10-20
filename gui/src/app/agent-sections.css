@@ -1,0 +1,51 @@
+/* The agents' sections under 「智能体」 in the sidebar: a step in, as a
+   project's conversations stand under it. They slide in once as they come;
+   the height is carried by the grid, so nothing is measured. */
+
+.asec-fold {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+
+.asec-fold.opening {
+  animation: asec-open var(--fold) var(--fold-easing) both;
+}
+
+@keyframes asec-open {
+  from {
+    grid-template-rows: 0fr;
+  }
+}
+
+.asec-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.asec-list {
+  display: grid;
+  gap: 1px;
+  margin: 1px 0 var(--space-1);
+  padding: 0;
+  list-style: none;
+}
+
+.place.asec-row {
+  padding-left: calc(var(--space-3) + 18px);
+}
+
+/* 「智能体」 while one of its sections is open: the section is current, the
+   place it belongs to a shade darker than the rest. */
+.place.open {
+  color: var(--text);
+}
+
+.place.open .place-mark {
+  color: var(--text-2);
+}
+
+@media (pointer: coarse) {
+  .place.asec-row {
+    min-height: 44px;
+  }
+}

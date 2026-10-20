@@ -129,40 +129,18 @@
   background: var(--accent-wash);
 }
 
-/* Under the head: the agent's tabs; across from them, its programs on the
-   machine, how the scan goes, and scanning again. */
-.logins-tools {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2) var(--space-4);
-  padding: 0 var(--gutter) var(--space-3);
-}
-
-.logins-tabs {
-  display: flex;
-  gap: var(--space-1);
-}
-
-.logins-tabs [role="tab"] {
+/* The head names the agent, its mark before its name; across from it, the
+   agent's programs on the machine, how the scan goes, and scanning again. */
+.logins-title {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 36px;
-  padding: 0 var(--space-3);
-  border-radius: var(--radius-full);
-  color: var(--text-2);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
 }
 
-.logins-tabs [role="tab"]:hover {
-  color: var(--text);
-  background: var(--hairline);
-}
-
-.logins-tabs [role="tab"].current {
-  color: var(--text-strong);
-  background: var(--fill-strong);
+.logins-title-mark {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
 }
 
 .logins-machine-state {
@@ -180,7 +158,7 @@
 }
 
 .logins-body {
-  padding: 0 var(--gutter) var(--space-8);
+  padding: var(--space-2) var(--gutter) var(--space-8);
 }
 
 .logins-programs {
@@ -964,7 +942,7 @@
   color: var(--text-3);
 }
 
-/* On a phone the tabs keep their row: the programs stay a hover on a
+/* On a phone the head keeps its row: the programs stay a hover on a
    wider screen, and scanning again is its mark alone. */
 @media (max-width: 560px) {
   .logins-machine-state .logins-programs {

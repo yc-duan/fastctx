@@ -4,7 +4,7 @@
 
 import { keepChoice } from "../app/model-memory";
 import { layerOpened } from "../app/back";
-import { FocusPanel, focusSummary, type FocusPlace } from "../app/focus-panel";
+import { FocusPanel, type FocusServers, focusSummary, type FocusPlace } from "../app/focus-panel";
 import type { ComposerWords, FocusWords } from "../app/words";
 import { sameFocus, type Focus, type Folders } from "../world/focus";
 import type { Words } from "../words";
@@ -108,6 +108,8 @@ export interface PageOptions {
     folders(machine: string, path: string | null): Promise<Folders>;
     /** Resolves with what was not done of it, in the user's words. */
     set(focus: Focus): Promise<string[]>;
+    /** The account's MCP servers and their switches, where it keeps any. */
+    servers?: FocusServers | undefined;
   };
   /** What the user does to the conversation, from the "⋯" in its head
    *  (`app/talk-menu.ts`): opening that menu, and bringing it back when it
@@ -1908,6 +1910,7 @@ export class ConversationPage {
           this.focusDraft = next;
         },
         done: () => this.closeFocus(focus),
+        servers: focus.servers,
       },
       current,
     );

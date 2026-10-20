@@ -253,6 +253,8 @@ export interface Choices {
   /** Where the files attached to its first words go, other than images,
    *  for an agent assisting the user. */
   files_on?: string;
+  /** The account's MCP servers it starts without. */
+  mcp_off?: string[];
 }
 
 /** Opens a conversation with an agent; the model and reasoning effort are

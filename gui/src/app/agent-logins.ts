@@ -1,6 +1,7 @@
-// The agents (`world-gui.md`, 智能体页; `world-agent-logins.md`): one
-// machine at a time, chosen from the head's menu of every machine the user
-// may look at, with Codex and Claude Code each in their own tab. Opening the
+// One agent's logins (`world-gui.md`, 智能体页; `world-agent-logins.md`):
+// Codex or Claude Code, each a section of its own under 「智能体」 in the
+// sidebar; one machine at a time, chosen from the head's menu of every
+// machine the user may look at. Opening the
 // page starts no program: it reads what that machine's node recorded of its
 // agents, and a machine never scanned shows only the agent's mark and
 // 「扫描这台电脑」. A scan finds candidates in the usual places; the folders
@@ -52,10 +53,13 @@ export interface AgentLoginsOptions {
   access: AccessWords;
   usage: UsageWords;
   head(title: string, actions?: string): string;
+  /** The agent whose logins it shows. */
+  agent: Agent;
   /** The machine to show, when one was named. */
   machine: string | null;
-  /** The machine shown changed: the address follows it. */
-  showing(machine: string): void;
+  /** The machine shown changed, or the agent, as when a folder chosen is the
+   *  other agent's login: the address and the sidebar follow. */
+  showing(machine: string, agent: Agent): void;
   when(at: Date, now: Date): string;
   /** Whether this device's workbench is on: the limits and the usage
    *  belong to it, and without it they are neither read nor shown. */
@@ -87,7 +91,6 @@ interface Shown extends Pickable {
   mine: boolean;
 }
 
-const TAB = "agents.tab";
 const MACHINE = "agents.machine";
 /** While a scan, a search or a change runs, its record is read again this
  *  often: reading is a file the node keeps, and a search's count moves on
@@ -108,14 +111,14 @@ function rowsMenu(): ActsMenu {
 
 export class AgentLoginsPage implements Page {
   readonly element: HTMLElement;
-  readonly title: string;
+  title: string;
   private readonly body: HTMLElement;
   private readonly pick: HTMLElement;
   private readonly stop: () => void;
   private readonly sheet: AgentChangeSheet;
   private readonly assistSheet: AssistSheet;
   private readonly choosing: FolderPicker;
-  private agent: Agent = keptTab();
+  private agent: Agent;
   /** The machine shown, as the menu writes it. */
   private machine: string | null;
   private record: MachineLogins | null = null;
@@ -141,19 +144,13 @@ export class AgentLoginsPage implements Page {
 
   constructor(private readonly options: AgentLoginsOptions) {
     const { words } = options;
-    this.title = words.title;
+    this.agent = options.agent;
+    this.title = options.agent === "claude" ? words.claude : words.codex;
     this.machine = options.machine ?? keptMachine();
     if (options.machine) keepMachine(options.machine);
     this.element = document.createElement("div");
     this.element.className = "agents-page logins-page";
-    this.element.innerHTML = `${options.head(`<h1 class="page-title">${escape(words.title)}</h1><span class="agents-pick-place"></span>`)}
-      <div class="logins-tools">
-        <div class="logins-tabs" role="tablist">
-          <button type="button" role="tab" data-tab="codex">${glyph("codex", 18)}<span>${escape(words.codex)}</span></button>
-          <button type="button" role="tab" data-tab="claude">${glyph("claude", 18)}<span>${escape(words.claude)}</span></button>
-        </div>
-        <div class="logins-machine-state"></div>
-      </div>
+    this.element.innerHTML = `${options.head(`<h1 class="page-title logins-title">${titleHtml(this.agent, this.title)}</h1><span class="agents-pick-place"></span>`, `<div class="logins-machine-state"></div>`)}
       <div class="logins-body scroller"></div>`;
     this.body = this.element.querySelector<HTMLElement>(".logins-body")!;
     this.pick = this.element.querySelector<HTMLElement>(".agents-pick-place")!;
@@ -169,14 +166,6 @@ export class AgentLoginsPage implements Page {
         return [...agent.listed, ...agent.candidates].find((login) => login.dir === target.dir)?.change ?? null;
       },
       ended: () => void this.read(),
-    });
-    this.element.querySelector(".logins-tabs")!.addEventListener("click", (event) => {
-      const tab = (event.target as HTMLElement).closest<HTMLElement>("[data-tab]")?.dataset.tab as Agent | undefined;
-      if (!tab || tab === this.agent) return;
-      this.agent = tab;
-      keepTab(tab);
-      this.draw();
-      void this.readUsage();
     });
     this.pick.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
@@ -226,7 +215,7 @@ export class AgentLoginsPage implements Page {
     this.machine = machine;
     keepMachine(machine);
     const shown = this.current(this.options.store.world.peek()).machine;
-    if (shown) this.options.showing(shown.written);
+    if (shown) this.options.showing(shown.written, this.agent);
     this.record = shown ? keptRecord(shown.name) : null;
     this.problem = null;
     this.fetched = null;
@@ -306,11 +295,6 @@ export class AgentLoginsPage implements Page {
 
   private draw(): void {
     const { words, store } = this.options;
-    for (const tab of this.element.querySelectorAll<HTMLElement>("[data-tab]")) {
-      const on = tab.dataset.tab === this.agent;
-      tab.setAttribute("aria-selected", String(on));
-      tab.classList.toggle("current", on);
-    }
     const world = store.world.peek();
     const now = store.clock.peek();
     const machine = this.shown(world);
@@ -723,7 +707,10 @@ export class AgentLoginsPage implements Page {
       const marked = this.became(before, after, dir);
       if (marked.agent && marked.agent !== this.agent) {
         this.agent = marked.agent;
-        keepTab(marked.agent);
+        this.title = marked.agent === "claude" ? this.options.words.claude : this.options.words.codex;
+        const heading = this.element.querySelector<HTMLElement>(".logins-title");
+        if (heading) heading.innerHTML = titleHtml(this.agent, this.title);
+        this.options.showing(machine, marked.agent);
       }
       this.mark(marked.keys);
     } catch (error) {
@@ -794,20 +781,9 @@ export class AgentLoginsPage implements Page {
   }
 }
 
-function keptTab(): Agent {
-  try {
-    return localStorage.getItem(TAB) === "claude" ? "claude" : "codex";
-  } catch {
-    return "codex";
-  }
-}
-
-function keepTab(tab: Agent): void {
-  try {
-    localStorage.setItem(TAB, tab);
-  } catch {
-    // Not kept: Codex shows first next time.
-  }
+/** The head's name of the agent shown: its mark, then its name. */
+function titleHtml(agent: Agent, title: string): string {
+  return `<span class="logins-title-mark">${glyph(agent, 20)}</span>${escape(title)}`;
 }
 
 function keptMachine(): string | null {

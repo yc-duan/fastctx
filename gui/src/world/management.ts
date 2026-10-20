@@ -17,7 +17,9 @@ export type Management =
   | { do: "sleep" }
   | { do: "wake" }
   | { do: "move"; town: TownName | null }
-  | { do: "focus"; focus: Focus };
+  | { do: "focus"; focus: Focus }
+  /** The account's MCP servers it goes without (`world-user-config.md`). */
+  | { do: "mcp"; off: string[] };
 
 export type ManagementOutcome = "done" | "pending" | "unsupported" | "failed";
 

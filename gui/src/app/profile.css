@@ -1,0 +1,584 @@
+/* The account's own pages: its prompt, its preferences, its MCP servers.
+   One column, read as the settings are, under the head; what is long
+   scrolls in its own place. */
+
+.prof-page {
+  --board: min(100% - 2 * var(--gutter), var(--column));
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.prof-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.prof-board {
+  width: var(--board);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.prof-body > .home-section:first-child,
+.prof-body > .mcp-group:first-child,
+.prof-body > .prof-quiet:first-child {
+  margin-top: var(--space-6);
+}
+
+.prof-body > :last-child {
+  padding-bottom: var(--space-12);
+}
+
+.prof-quiet {
+  margin: 0;
+  font-size: var(--size-text);
+  color: var(--text-3);
+}
+
+/* Nothing yet, or nothing here: a mark and the one or two things to do. */
+.prof-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  padding-top: 18vh;
+  color: var(--text-3);
+}
+
+.prof-empty-acts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.prof-said {
+  font-size: var(--size-text);
+  color: var(--text-3);
+}
+
+.prof-warn {
+  font-size: var(--size-text);
+  color: var(--caution);
+}
+
+/* The prompt: a sheet of writing paper filling the page, its margin a line
+   the pen drew down it in clay, and under it how much it holds near the
+   end, what became of saving, and saving. */
+.prompt-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  height: 100%;
+  width: var(--board);
+  margin: 0 auto;
+  padding: var(--space-6) 0 var(--space-6);
+}
+
+.prompt-paper {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.prompt-paper::before {
+  content: "";
+  position: absolute;
+  top: var(--space-4);
+  bottom: var(--space-4);
+  left: calc(var(--space-6) + 6px);
+  width: 6px;
+  background: var(--pen-clay);
+  opacity: 0.5;
+  mix-blend-mode: var(--pen-blend);
+  pointer-events: none;
+  -webkit-mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
+  mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
+}
+
+.prompt-text {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: var(--space-5) var(--space-6) var(--space-5) calc(var(--space-6) + var(--space-6));
+  border: 0;
+  border-radius: var(--radius-l);
+  outline: 0;
+  background: var(--field);
+  color: var(--text);
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+  line-height: var(--leading-prose);
+  resize: none;
+  scrollbar-width: thin;
+}
+
+.prompt-text::placeholder {
+  color: var(--text-3);
+}
+
+.prompt-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 34px;
+}
+
+.prompt-size {
+  font-size: var(--size-fine);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.prompt-size.over {
+  color: var(--caution);
+}
+
+.prompt-note {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+/* The preferences: as the device's settings, each agent a section under
+   its mark. */
+.prefs-host {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.prefs-host .glyph {
+  color: var(--text-3);
+}
+
+.prefs-page .choice-row {
+  grid-template-columns: 9em minmax(0, 1fr);
+}
+
+.prefs-word {
+  width: min(16em, 100%);
+  min-height: 30px;
+  padding: 4px 12px;
+  border: 0;
+  border-radius: var(--radius-full);
+  outline: 0;
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+}
+
+.prefs-word::placeholder {
+  color: var(--text-3);
+}
+
+.prof-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* MCP: a group for each place servers run, its name over a ruled line,
+   away ones in a quieter ink; a solid line for each server, its kind, its
+   name, what it is, and what its machine says. */
+.mcp-head-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mcp-head-act[hidden] {
+  display: none;
+}
+
+.mcp-group + .mcp-group {
+  margin-top: var(--space-6);
+}
+
+.mcp-group-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-2);
+}
+
+.mcp-group-name .glyph {
+  color: var(--text-3);
+}
+
+.mcp-group-note {
+  color: var(--text-3);
+}
+
+.mcp-group-title.away .mcp-group-name {
+  color: var(--text-3);
+}
+
+.mcp-rows {
+  display: grid;
+  gap: 6px;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mcp-row {
+  display: grid;
+  grid-template-columns: 18px auto minmax(0, 1fr) auto 30px;
+  align-items: center;
+  column-gap: var(--space-3);
+  min-height: 46px;
+  padding: 4px var(--space-2) 4px var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+}
+
+.mcp-kind {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.mcp-name {
+  font-family: var(--font-emphasis);
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+
+.mcp-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-text);
+  color: var(--text-3);
+}
+
+.mcp-row.away .mcp-name,
+.mcp-row.away .mcp-detail {
+  color: var(--text-3);
+}
+
+.mcp-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  color: var(--text-2);
+  font-size: var(--size-fine);
+  white-space: nowrap;
+}
+
+.mcp-tag.caution {
+  color: var(--caution);
+}
+
+.mcp-tag.wrong {
+  color: var(--wrong);
+}
+
+/* Without a tag, the "⋯" still keeps the last column. */
+.mcp-row > .mcp-detail + .mcp-more {
+  grid-column: 5;
+}
+
+.mcp-more {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.mcp-more:hover,
+.mcp-more[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--fill-strong);
+}
+
+/* Under a server tried: its tools as small solid chips, or why it did not
+   start, and the end of what it wrote, opened. */
+.mcp-trial {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+  margin: -2px 0 var(--space-1);
+  padding: 0 var(--space-4) 0 calc(var(--space-4) + 18px + var(--space-3));
+}
+
+.mcp-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mcp-tool {
+  padding: 1px 8px;
+  border-radius: var(--radius-s);
+  background: var(--fill);
+  color: var(--text-2);
+  font-size: var(--size-fine);
+}
+
+.mcp-tool.more {
+  color: var(--text-3);
+}
+
+.mcp-trial-problem {
+  font-size: var(--size-text);
+  color: var(--wrong);
+  overflow-wrap: anywhere;
+}
+
+.mcp-log-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mcp-log-toggle[aria-expanded="true"] .glyph {
+  rotate: 180deg;
+}
+
+.mcp-log {
+  flex-basis: 100%;
+  max-height: 14em;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  overflow: auto;
+  border-radius: var(--radius-m);
+  background: var(--surface-code);
+  color: var(--text-2);
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  line-height: var(--leading-code);
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+/* The sheets: pasting, filling in, importing. */
+.mcp-sheet .sheet-body {
+  width: min(640px, 100vw - 32px);
+}
+
+.mcp-ways {
+  margin-bottom: var(--space-2);
+}
+
+.mcp-sheet .choice .glyph {
+  align-self: center;
+  color: var(--text-3);
+}
+
+.mcp-sheet .choice.chosen .glyph {
+  color: var(--text-2);
+}
+
+.mcp-paste {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-m);
+  outline: 0;
+  background: var(--field);
+  color: var(--text);
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  line-height: var(--leading-code);
+  resize: none;
+}
+
+.mcp-found {
+  display: grid;
+  gap: 4px;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mcp-found:empty {
+  display: none;
+}
+
+.mcp-found-row {
+  display: grid;
+  grid-template-columns: 18px minmax(7em, 12em) minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-3);
+  row-gap: 2px;
+}
+
+.mcp-found-name {
+  min-width: 0;
+  min-height: 30px;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: var(--radius-s);
+  outline: 0;
+  background: var(--field);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--size-text);
+}
+
+.mcp-found-note {
+  grid-column: 2 / -1;
+  font-size: var(--size-text);
+}
+
+.mcp-found-note:empty {
+  display: none;
+}
+
+.mcp-found-note.caution {
+  color: var(--caution);
+}
+
+.mcp-found-problem {
+  font-size: var(--size-text);
+  color: var(--caution);
+}
+
+.mcp-sse {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  font-size: var(--size-text);
+  color: var(--text-2);
+}
+
+.mcp-on[hidden] {
+  display: none;
+}
+
+.mcp-import-list {
+  margin-top: var(--space-4);
+}
+
+.mcp-source + .mcp-source {
+  margin-top: var(--space-4);
+}
+
+.mcp-picks {
+  display: grid;
+  gap: 4px;
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mcp-pick {
+  display: grid;
+  grid-template-columns: 20px 18px auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-3);
+  width: 100%;
+  min-height: 40px;
+  padding: 4px var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  text-align: left;
+  transition: background-color var(--hover) ease;
+}
+
+.mcp-pick:hover {
+  background: var(--fill-strong);
+}
+
+.mcp-pick.ticked {
+  background: var(--accent-wash);
+}
+
+.mcp-check {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: var(--field);
+  color: var(--text-strong);
+}
+
+.mcp-pick.ticked .mcp-check {
+  background: transparent;
+}
+
+/* On a phone a server's line folds: its name and what its machine says
+   above, what it is below, the "⋯" a finger's width. */
+@media (max-width: 560px) {
+  .mcp-row {
+    grid-template-columns: 18px minmax(0, 1fr) auto 44px;
+    grid-template-areas: "kind name tag more" ". detail detail more";
+    row-gap: 2px;
+    padding: var(--space-2) 0 var(--space-2) var(--space-3);
+  }
+
+  .mcp-kind {
+    grid-area: kind;
+  }
+
+  .mcp-name {
+    grid-area: name;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .mcp-detail {
+    grid-area: detail;
+  }
+
+  .mcp-detail:empty {
+    display: none;
+  }
+
+  .mcp-tag {
+    grid-area: tag;
+  }
+
+  .mcp-more,
+  .mcp-row > .mcp-detail + .mcp-more {
+    grid-area: more;
+    width: 44px;
+    height: 44px;
+  }
+
+  .mcp-head-act span {
+    display: none;
+  }
+
+  .mcp-found-row {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .mcp-found-row .mcp-detail {
+    grid-column: 2;
+  }
+
+  .mcp-pick {
+    grid-template-columns: 20px 18px minmax(0, 1fr) auto;
+  }
+
+  .mcp-pick .mcp-detail {
+    display: none;
+  }
+
+  .prefs-page .choice-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

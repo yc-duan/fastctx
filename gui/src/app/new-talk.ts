@@ -33,7 +33,7 @@ import { AttachTray, type AttachSource, type AttachWords } from "../conversation
 import { layerOpened } from "./back";
 import { glyph } from "../conversation/glyphs";
 import { ModelPanel, type ModelPanelWords } from "../conversation/model-panel";
-import { FocusPanel, focusSummary, type FocusPlace } from "./focus-panel";
+import { FocusPanel, focusSummary, type FocusPlace, type FocusServers } from "./focus-panel";
 import { noFocus, type Focus, type Folders } from "../world/focus";
 import { escape } from "../conversation/prose";
 import { Starting, type Seed } from "../conversation/starting";
@@ -94,9 +94,14 @@ export interface Begun {
   home: string | null;
   /** Where its files other than images go, for an agent assisting the user. */
   filesOn: string | null;
+  /** The account's MCP servers it starts without. */
+  mcpOff: string[];
 }
 
 export interface NewTalkOptions {
+  /** The MCP servers of the account a conversation would work for, as its
+   *  switches list them. */
+  servers?: ((login: () => Login | null) => Omit<FocusServers, "off" | "changed">) | undefined;
   store: Store;
   words: NewTalkWords;
   focusWords: FocusWords;
@@ -237,6 +242,8 @@ export class NewTalk {
   private account: string | null = remembered("account");
   /** The machines and folders it is pointed at. */
   private focus: Focus = noFocus();
+  /** The account's MCP servers switched off for the conversation begun. */
+  private mcpOff: string[] = [];
   /** The project the machines and folders were last set from; changed by
    *  the user since, they are theirs. */
   private focusFrom: { town: string | null } | null = null;
@@ -322,6 +329,15 @@ export class NewTalk {
         },
         marks: (machine) => this.projectMarks(machine),
         resize: (change) => resizeUpward(this.pop, this.popSteady, change),
+        servers: options.servers
+          ? {
+              ...options.servers(() => this.loginFor(this.options.store.world.peek(), this.chosenOption())),
+              off: () => this.mcpOff,
+              changed: (off) => {
+                this.mcpOff = off;
+              },
+            }
+          : undefined,
       },
       this.focus,
     );
@@ -1232,6 +1248,7 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
         focus: this.focus,
         home: option.home,
         filesOn: option.assistant && (this.tray?.files ?? 0) > 0 ? this.filesOn : null,
+        mcpOff: this.mcpOff,
       });
       // Begun: the page is empty again for the next conversation here.
       this.input.value = "";
@@ -1243,6 +1260,7 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
       this.focusTouched = false;
       this.focusFrom = null;
       this.focus = noFocus();
+      this.mcpOff = [];
       this.focusPanel.set(this.focus);
       this.busy = false;
       this.note.textContent = "";

@@ -10,6 +10,10 @@
 // chosen, for the agent is only told. A field narrows them to the machines
 // whose name, or whose group's, holds what is typed.
 //
+// Between the two, where the account keeps MCP servers, a switch for each
+// (`world-user-config.md`): all on as a conversation begins, each turned
+// off for this one alone, taking effect at its next start.
+//
 // The same panel serves a conversation about to begin, risen over its input,
 // and one under way, from the strip at the top of its page; the field stands
 // where the panel is reached from (`focus-panel.css`).
@@ -38,6 +42,31 @@ export interface FocusPlace {
   form?: "desktop" | "laptop" | "server";
 }
 
+/** One of the account's MCP servers, as its switch shows it. */
+export interface FocusServer {
+  name: string;
+  kind: "command" | "remote" | "unknown";
+  /** The machine it runs on, for one a command starts. */
+  machine: string | null;
+  /** Its machine is away. */
+  away: boolean;
+}
+
+/** The account's MCP servers and those the conversation goes without. */
+export interface FocusServers {
+  title: string;
+  /** When a switch takes effect, said on hover. */
+  when: string;
+  /** The servers; none while they are read, or where the account keeps
+   *  none. */
+  list(): FocusServer[] | null;
+  off(): string[];
+  /** A switch was turned: every server it goes without now. */
+  changed(off: string[]): void;
+  /** Draws the panel again once the list has come. */
+  watch(redraw: () => void): void;
+}
+
 export interface FocusPanelOptions {
   words: FocusWords;
   places(): FocusPlace[];
@@ -52,6 +81,8 @@ export interface FocusPanelOptions {
   /** Makes a change that alters the panel's height, where its holder
    *  carries the height over (`resize-upward.ts`). */
   resize?(change: () => void): void;
+  /** The account's MCP servers, where it keeps any. */
+  servers?: FocusServers | undefined;
 }
 
 export class FocusPanel {
@@ -88,6 +119,7 @@ export class FocusPanel {
       if (event.key === "Enter") event.preventDefault();
     });
     this.element.addEventListener("click", (event) => this.click(event));
+    options.servers?.watch(() => this.draw());
     this.draw();
   }
 
@@ -155,6 +187,17 @@ export class FocusPanel {
       case "done":
         this.options.done?.();
         break;
+      case "mcp": {
+        const servers = this.options.servers;
+        const name = target.dataset.name;
+        if (!servers || !name) break;
+        const off = new Set(servers.off());
+        if (off.has(name)) off.delete(name);
+        else off.add(name);
+        servers.changed([...off].sort());
+        this.draw();
+        break;
+      }
     }
   }
 
@@ -207,7 +250,25 @@ export class FocusPanel {
     const { words } = this.options;
     const places = this.placesShown();
     if (!places.length) return `<p class="focus-none">${escape(words.noMachine)}</p>`;
-    return this.chosenPart(places) + (this.machinesPart(places) || `<p class="focus-none">${escape(words.noMatch)}</p>`);
+    return this.chosenPart(places) + this.serversPart() + (this.machinesPart(places) || `<p class="focus-none">${escape(words.noMatch)}</p>`);
+  }
+
+  /** A switch for each of the account's MCP servers; out of the way while
+   *  machines are being looked for. */
+  private serversPart(): string {
+    const servers = this.options.servers;
+    const list = servers?.list();
+    if (!servers || !list?.length || this.query) return "";
+    const off = new Set(servers.off());
+    const rows = list
+      .map((server) => {
+        const on = !off.has(server.name);
+        const mark = glyph(server.kind === "remote" ? "link" : "terminal", 16);
+        return `<button type="button" class="focus-mcp${server.away ? " offline" : ""}" role="switch" aria-checked="${on}" data-act="mcp" data-name="${escape(server.name)}">
+          <span class="focus-mark">${mark}</span><span class="focus-name">${escape(server.name)}</span>${server.machine ? `<span class="focus-note">${escape(server.machine)}</span>` : ""}<span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span></button>`;
+      })
+      .join("");
+    return `<section class="focus-part"><h3 class="picker-title" title="${escape(servers.when)}">${escape(servers.title)}</h3><div class="focus-mcps">${rows}</div></section>`;
   }
 
   /** The machines chosen, each with its folders and a way to add one. */

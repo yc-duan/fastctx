@@ -29,6 +29,9 @@ export interface About {
   acting: Acting;
   /** The machines and folders the user points it at. */
   focus?: Focus;
+  /** The MCP servers of the account it works for that it starts without
+   *  (`world-user-config.md`). */
+  mcp_off?: string[];
   /** The agent's home it works in, as its machine writes it, when not the
    *  default one there: which of that machine's logins it uses. */
   home?: string;

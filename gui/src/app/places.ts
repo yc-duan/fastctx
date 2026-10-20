@@ -2,10 +2,12 @@
 // in the window's address says, and what the sidebar marks as current.
 
 import type { Address } from "../world/events";
+import type { AgentSection } from "./profile-words";
 
 /** The features a World can turn on (`world-gui.md`, 功能). */
 export type Feature = "conversations" | "collaboration" | "memory";
 const features: Feature[] = ["conversations", "collaboration", "memory"];
+const sections: AgentSection[] = ["claude", "codex", "prompt", "mcp", "prefs"];
 
 export type Place =
   | { kind: "home" }
@@ -20,8 +22,9 @@ export type Place =
   | { kind: "machines"; focus?: string }
   /** A machine's own page: how it is doing, and what is done to it. */
   | { kind: "machine"; name: string }
-  /** The agents on every machine, or on one. */
-  | { kind: "agents"; machine: string | null }
+  /** The agents: a section of them, the one last shown when none is
+   *  named; a host's section on one machine, or the last one shown. */
+  | { kind: "agents"; machine: string | null; section?: AgentSection }
   /** What an agent's login on a machine was used for. */
   | { kind: "usage"; machine: string; agent: "codex" | "claude"; dir: string }
   /** The features, one card each, and a feature's own page. */
@@ -64,6 +67,7 @@ export function link(place: Place): string {
     case "machine":
       return `#/machine/${part(place.name)}`;
     case "agents":
+      if (place.section) return `#/agents/${place.section}${place.machine === null ? "" : `/${part(place.machine)}`}`;
       return place.machine === null ? "#/agents" : `#/agents/${part(place.machine)}`;
     case "usage":
       return `#/agents/${part(place.machine)}/${place.agent}/${part(place.dir)}`;
@@ -119,6 +123,7 @@ export function placeOf(hash: string): Place {
       break;
     case "agents":
       if (parts[1] && (parts[2] === "codex" || parts[2] === "claude") && parts[3]) return { kind: "usage", machine: parts[1], agent: parts[2], dir: parts[3] };
+      if (sections.includes(parts[1] as AgentSection)) return { kind: "agents", section: parts[1] as AgentSection, machine: parts[2] || null };
       return { kind: "agents", machine: parts[1] || null };
     case "features":
       return { kind: "features" };
