@@ -279,6 +279,9 @@ async fn fork(
     node.residents.create(&node.world, about, town, now).map_err(|error| {
         Failure::new(format!("Codex created thread {fork}, but recording its resident {id} failed: {error}"))
     })?;
+    let inherited =
+        codex.history(&fork, &Address { machine: node.machine(), resident: id.clone() }).await.map_err(Failure::new)?;
+    crate::attachments::inherit(node, parent, &id, &inherited)?;
     node.residents.set_instructed(&id, heard);
     let event = SessionEvent {
         at,

@@ -148,7 +148,7 @@ import {
 import { enRemoval, zhRemoval } from "./app/removal-words";
 import { enAccess, enLogin, enMachines, enToken, zhAccess, zhLogin, zhMachines, zhToken } from "./app/account-words";
 import { LASTING, loginsOf, type AccountChange, type Login, type TokenSeen, type TokenWay } from "./world/accounts";
-import { assistantOf, assistantsOf, fileHome, filePlaces, groupsOf, inNoNetwork, loginKey, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
+import { assistantOf, assistantsOf, filePlaces, groupsOf, inNoNetwork, loginKey, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
 import type { FocusPlace } from "./app/focus-panel";
 import { folders as foldersOf, noFocus, type Focus, type Folders } from "./world/focus";
 import { ComposerSession } from "./conversation/composer";
@@ -1619,20 +1619,6 @@ function liveTalk(address: Address): KeepablePage {
         },
       },
       drops: windowDrops,
-      filesOn: (() => {
-        const assistantNow = () => {
-          const known = residentAt(store.world.peek(), address);
-          return known ? assistantOf(store.world.peek(), known) : null;
-        };
-        return {
-          assisting: () => assistantNow() !== null,
-          place: () => {
-            const assistant = assistantNow();
-            return assistant ? fileHome(store.world.peek(), assistant.login) : null;
-          },
-          nowhere: (english ? enNewTalk : zhNewTalk).noFilePlace,
-        };
-      })(),
     },
     manage: talkManage(address, () => page, exported(conversation, someone)),
     send(text, attached) {

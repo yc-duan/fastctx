@@ -49,13 +49,14 @@ fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
         | RemoteCall::Manage { resident: who, .. }
         | RemoteCall::Offers { resident: who }
         | RemoteCall::ItemDetail { resident: who, .. }
-        | RemoteCall::AgentActivity { resident: who, .. }
-        | RemoteCall::Upload {
-            target:
-                fastctx_types::attachments::UploadTarget::Resident { resident: who }
-                | fastctx_types::attachments::UploadTarget::Draft { resident: who, .. },
-            ..
-        } => Some(who),
+        | RemoteCall::AgentActivity { resident: who, .. } => Some(who),
+        RemoteCall::CommitAttachment { attachment, .. } => Some(&attachment.conversation().resident),
+        RemoteCall::Upload { target, .. } | RemoteCall::ReserveAttachment { target, .. } => {
+            match target.conversation_target() {
+                fastctx_types::attachments::UploadTarget::Resident { resident } => Some(resident),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -75,7 +76,13 @@ fn town_of(call: &RemoteCall) -> Option<&TownName> {
         | RemoteCall::PipeOut { origin, .. } => origin.town.as_ref(),
         RemoteCall::PageAction { source, .. } => Some(&source.town),
         RemoteCall::Place { attachment, .. } => attachment.town.as_ref(),
-        RemoteCall::Upload { target: fastctx_types::attachments::UploadTarget::New { town, .. }, .. } => town.as_ref(),
+        RemoteCall::Upload { target, .. } | RemoteCall::ReserveAttachment { target, .. } => {
+            match target.conversation_target() {
+                fastctx_types::attachments::UploadTarget::New { town, .. }
+                | fastctx_types::attachments::UploadTarget::Draft { town, .. } => town.as_ref(),
+                _ => None,
+            }
+        }
         RemoteCall::Manage { action: Management::Move { town: Some(town) }, .. } => Some(town),
         _ => None,
     }
@@ -86,9 +93,12 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
     let here = node.machine();
     // Nothing of a call turned away here ran.
     let refuse = |why: String| Failure::refused(format!("{here} refused {}: {why}", caller.machine));
-    if let RemoteCall::AttachmentThumbnail { attachment, .. } | RemoteCall::ReadAttachment { attachment, .. } = call
-        && !node.is_me(&attachment.owner().machine)
-    {
+    let reached = match call {
+        RemoteCall::AttachmentThumbnail { attachment, .. } => Some(attachment.thumbnail_owner()),
+        RemoteCall::ReadAttachment { attachment, .. } => Some(attachment.owner()),
+        _ => None,
+    };
+    if reached.is_some_and(|owner| !node.is_me(&owner.machine)) {
         return Err(refuse("the attachment names a different holding machine".into()));
     }
     let view = link.view();
@@ -143,15 +153,13 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
     // A conversation's attachments are seen by the accounts it works for
     // alone (`seen`); a draft's, which no conversation holds yet, by whoever
     // may work here.
-    let resident = resident_of(call).or(match call {
-        RemoteCall::AttachmentThumbnail { attachment, .. } | RemoteCall::ReadAttachment { attachment, .. }
-            if !hands || node.residents.knows(&attachment.owner().resident) =>
-        {
-            Some(&attachment.owner().resident)
-        }
-        _ => None,
+    let resident = resident_of(call).or_else(|| {
+        reached.filter(|owner| !hands || node.residents.knows(&owner.resident)).map(|owner| &owner.resident)
     });
     if let Some(resident) = resident {
+        if !node.residents.knows(resident) && matches!(call, RemoteCall::CommitAttachment { .. }) {
+            return Ok(Asker { machine: caller.machine.clone(), hub, account: caller.account.clone(), hands });
+        }
         if !node.residents.knows(resident) {
             return Err(crate::forget::gone(node, resident));
         }

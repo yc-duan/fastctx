@@ -55,7 +55,6 @@ import { focusPlace } from "./focus-places";
 import type { ConsentHome } from "./claude-consent";
 import {
   assistantsOf,
-  fileHome,
   filePlaces,
   groupsOf,
   loginKey,
@@ -474,8 +473,7 @@ export class NewTalk {
         },
       },
       () => {
-        // A file other than an image goes, for an assisting agent, to a machine
-        // of the user's.
+        // The sending device fixes the location before the conversation starts.
         this.placeFiles();
         this.drawStart();
       },
@@ -1172,13 +1170,11 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
     this.models.update(offers);
   }
 
-  /** For an assisting agent given files other than images: the user's machine
-   *  they go to. */
+  /** A computer keeps its originals; a phone uses the conversation's machine. */
   private placeFiles(): void {
     const world = this.options.store.world.peek();
     const option = this.chosenOption();
-    const login = this.loginFor(world, option);
-    this.filesOn = option?.assistant && login && (this.tray?.files ?? 0) > 0 ? fileHome(world, login) : null;
+    this.filesOn = option ? (machinesOf(world).find((machine) => machine.here)?.written ?? option.machine) : null;
   }
 
   private drawStart(): void {

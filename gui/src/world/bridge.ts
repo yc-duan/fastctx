@@ -12,7 +12,7 @@ import type { Control, Controlled, Offers } from "./control";
 import type { WorldSince } from "./since";
 import type { FileRange } from "./file-read";
 import type { HeldRead } from "./reads";
-import type { Attachment, UploadTarget } from "./attachments";
+import type { Attachment, SentUploadTarget, UploadTarget } from "./attachments";
 import type { ConnectionState } from "./device";
 import type { Focus } from "./focus";
 import type { BytesRead, TextRead } from "../app/reader";
@@ -189,9 +189,6 @@ export function keptForget(address: Address): Promise<void> {
   return invoke("kept_forget", { address });
 }
 
-/** The user's words to a resident, with the files uploaded for them;
- *  those other than images go to `filesOn` when the user chose a machine
- *  (an agent assisting them works on none of its own). */
 /** Why words were not said: `again` when no answer came, so saying them
  *  again under the same id is how they go on. */
 export interface NotSaid {
@@ -220,21 +217,21 @@ export function retryNow(): Promise<void> {
   return invoke("reconnect");
 }
 
-/** Carries a file on this computer to a machine, for an agent there or
- *  one about to be asked in; `sent` hears how many bytes have gone. */
+/** Stores a file on this computer and registers its location with the conversation. */
 export function uploadPath(machine: MachineName, target: UploadTarget, path: string, sent: (bytes: number) => void): Promise<Attachment> {
   const pieces = new Channel<number>();
   pieces.onmessage = sent;
-  return invoke("upload_path", { target, machineName: machine, path, sent: pieces });
+  const upload: SentUploadTarget = { kind: "sent", machine, target, operation: crypto.randomUUID() };
+  return invoke("upload_path", { target: upload, machineName: machine, path, sent: pieces });
 }
 
-/** Carries bytes the page holds (a pasted picture) to a machine. They go
- *  as the call's body; where and what as headers. */
+/** Keeps pasted bytes on this computer, or at the conversation's home on a phone. */
 export async function uploadBytes(machine: MachineName, target: UploadTarget, file: File): Promise<Attachment> {
   const bytes = new Uint8Array(await file.arrayBuffer());
+  const upload: SentUploadTarget = { kind: "sent", machine, target, operation: crypto.randomUUID() };
   return invoke("upload_bytes", bytes, {
     headers: {
-      target: encodeURIComponent(JSON.stringify(target)),
+      target: encodeURIComponent(JSON.stringify(upload)),
       machine: encodeURIComponent(machine),
       name: encodeURIComponent(file.name),
       type: encodeURIComponent(file.type),

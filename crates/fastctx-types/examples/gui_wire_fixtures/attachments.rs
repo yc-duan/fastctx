@@ -33,6 +33,7 @@ pub fn fixtures() -> Fixtures {
     let attachment = Attachment {
         id: "attachment-ab12".parse().unwrap(),
         owner: owner.clone(),
+        conversation: Some(Box::new(Address { machine: "desktop".parse().unwrap(), resident: owner.resident.clone() })),
         town: town.clone(),
         path: "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png".into(),
         file: file.clone(),
@@ -66,6 +67,16 @@ pub fn fixtures() -> Fixtures {
                     host_image: HostImage::Claude { message: "message-uuid".into(), image: 0 },
                 },
                 max: 96,
+            },
+            Call::Upload {
+                target: UploadTarget::Sent {
+                    machine: "desktop".parse().unwrap(),
+                    target: Box::new(target.clone()),
+                    operation: "upload-1".into(),
+                },
+                node: Some("desktop".parse().unwrap()),
+                file: file.clone(),
+                composer: None,
             },
             Call::Upload {
                 target: target.clone(),
@@ -154,6 +165,13 @@ pub fn fixtures() -> Fixtures {
                 },
                 max: 96,
             },
+            RemoteCall::ReserveAttachment {
+                target: target.clone(),
+                file: file.clone(),
+                operation: "upload-1".into(),
+                composer: None,
+            },
+            RemoteCall::CommitAttachment { attachment: attachment.clone(), preview: None },
             RemoteCall::Upload { target, file, composer: None, resumes: false },
             RemoteCall::Talk {
                 to: owner.resident.clone(),

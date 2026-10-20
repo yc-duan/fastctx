@@ -1374,6 +1374,18 @@ async fn run(
     call_id: Option<&str>,
 ) -> Result<RunReply, Failure> {
     request.call_id = call_id.map(str::to_owned);
+    if crate::here::assisting(node, &resident)
+        && target.as_ref().is_none_or(|target| node.is_me(target))
+        && let Some(result) = crate::attachments::reading::run(node, &resident, &request).await
+    {
+        if let Err(error) = &result
+            && let Some(id) = call_id
+        {
+            crate::run_facts::record_failure(node, &resident, id, &error.message)
+                .map_err(|error| Failure::new(format!("recording attachment read: {error}")))?;
+        }
+        return result;
+    }
     let dispatched = if crate::here::assisting(node, &resident) {
         crate::here::transition(node, request)
     } else {

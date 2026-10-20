@@ -210,7 +210,7 @@ fn starting_directory(launch: &Launch<'_>) -> Result<PathBuf, Failure> {
 
 /// Picks an unused job id. The output file, created exclusively, is what
 /// reserves it.
-fn reserve(resident: &ConversationDir) -> io::Result<(JobId, PathBuf)> {
+pub fn reserve(resident: &ConversationDir) -> io::Result<(JobId, PathBuf)> {
     ensure_private_dir(resident.path())?;
     std::fs::create_dir_all(resident.jobs())?;
     std::fs::create_dir_all(resident.out())?;

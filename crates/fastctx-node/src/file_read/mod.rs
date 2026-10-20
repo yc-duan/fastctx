@@ -72,6 +72,10 @@ fn start_attachment(
                     let speakers = node.speakers(&Acting::Here, &(&machine).into(), Purpose::Agents).map_err(|error| Failure::new(error.to_string()))?;
                     let mut refused = None;
                     for (link,account) in speakers {
+                        if link.view().member(&machine).is_some_and(|member| !member.online) {
+                            refused = Some(Failure::not_run(format!("the original is on {machine}; {machine} is currently offline")));
+                            continue;
+                        }
                         match fastctx_net::file_read::read_attachment(&link,machine.clone(),account,attachment.clone(),range.clone(),&sender).await {
                             Err(error) if error.not_run => refused = Some(error),
                             result => return result,

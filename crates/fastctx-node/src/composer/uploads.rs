@@ -100,6 +100,22 @@ pub async fn begin(
     let mut cell = cell.lock().await;
     load(node, id, &mut cell)?;
     let mut next = cell.as_ref().expect("loaded").clone();
+    if let Some(mut kept) = receipts::upload(node, id, &next, &scope.operation)? {
+        let mut expected = attachment.clone();
+        expected.path = kept.attachment.path.clone();
+        if kept.from != *from || kept.scope != *scope || kept.attachment != expected {
+            return Err(failure("that upload operation belongs to another file or device"));
+        }
+        if let Outcome::Failed { why } = &kept.outcome {
+            if !mark(&mut next, scope, &kept.attachment.id, None, why) {
+                return Err(failure("this attachment was removed while its upload was interrupted"));
+            }
+            kept.outcome = Outcome::Uploading;
+            next.uploads.insert(scope.operation.clone(), kept);
+            publish(node, id, &mut cell, next)?;
+        }
+        return Ok(Guard { node: node.clone(), id: id.clone(), scope: scope.clone(), armed: false });
+    }
     if scope.operation.is_empty()
         || receipts::receipt(node, id, &next, &scope.operation)?.is_some()
         || receipts::upload(node, id, &next, &scope.operation)?.is_some()
@@ -135,10 +151,22 @@ pub async fn complete(
     let mut cell = cell.lock().await;
     load(node, id, &mut cell)?;
     let mut next = cell.as_ref().expect("loaded").clone();
-    let record = next.uploads.get(&scope.operation).ok_or_else(|| failure("the upload has no shared-input record"))?;
-    if record.attachment != *attachment || record.scope != *scope {
+    let record = receipts::upload(node, id, &next, &scope.operation)?
+        .ok_or_else(|| failure("the upload has no shared-input record"))?;
+    if matches!(record.outcome, Outcome::Attached) && record.attachment == *attachment && record.scope == *scope {
+        return Ok(Updated { composer: next.view(), landed: None });
+    }
+    let mut expected = record.attachment.clone();
+    if expected.path.is_empty() {
+        expected.path = attachment.path.clone();
+    }
+    if expected != *attachment || record.scope != *scope {
         return Err(failure("the upload receipt changed"));
     }
+    if let Outcome::Detached { why } = &record.outcome {
+        return Err(Failure::new(why.clone()));
+    }
+    next.uploads.insert(scope.operation.clone(), UploadRecord { attachment: attachment.clone(), ..record });
     let applied = match next.document(&scope.target, scope.epoch) {
         Ok(document) if document.uploads.iter().any(|upload| upload.id == attachment.id) => {
             document.uploads.retain(|upload| upload.id != attachment.id);
@@ -274,6 +302,11 @@ pub struct Guard {
 }
 
 impl Guard {
+    /// A resumable upload now lives on another node; its receipt completes it.
+    pub(crate) fn release(&mut self) {
+        self.armed = false;
+    }
+
     pub async fn finish(&mut self, attachment: &Attachment) -> Result<Updated, Failure> {
         let result = complete(&self.node, &self.id, &self.scope, attachment).await;
         if let Err(error) = &result

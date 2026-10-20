@@ -12,7 +12,7 @@ impl super::Device {
         attachment: AttachmentSource,
         max: u32,
     ) -> Result<Thumbnail, Error> {
-        let machine = attachment.owner().machine.clone();
+        let machine = attachment.thumbnail_owner().machine.clone();
         let session = self.reaching(&machine)?;
         session.account_for(&machine, Purpose::Agents)?;
         let accounts = {

@@ -93,6 +93,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     let mut now = crate::residents::idle(at);
     now.activity = fastctx_types::residents::Activity::Busy;
     node.residents.create(&node.world, about, town, now).map_err(failure)?;
+
     let completion = async {
         node.residents.set_instructed(&id, heard);
         crate::session_options::keep(
@@ -122,6 +123,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
             }
             None => session.clone(),
         };
+        let expected_attachments = super::fork_attachments::expected(node, &session, snapshot.as_deref()).await?;
         let selected_model = model.clone();
         let selected_effort = effort.clone();
         let _birth = node.claude.births.read().await;
@@ -179,6 +181,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
                         .await;
                 imported?;
             }
+            super::fork_attachments::inherit(node, resident, &id, &expected_attachments).await?;
             if let Some(snapshot) = snapshot {
                 std::fs::remove_file(&snapshot).map_err(failure)?;
                 std::fs::remove_dir(snapshot.parent().expect("fork source directory")).map_err(failure)?;

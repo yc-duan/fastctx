@@ -1024,6 +1024,16 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(RemoteReply::Copied)
                 }
+                RemoteCall::ReserveAttachment { target, file, operation, composer } => {
+                    crate::attachments::sent::reserve(&node, &from, &from, target, file, operation, composer)
+                        .await
+                        .map(RemoteReply::Uploaded)
+                }
+                RemoteCall::CommitAttachment { attachment, preview } => {
+                    crate::attachments::sent::commit(&node, &from, attachment, preview)
+                        .await
+                        .map(crate::attachments::remote_reply)
+                }
                 RemoteCall::Place { resident, attachment } => {
                     let stream = stream
                         .ok_or_else(|| Failure::new("a file comes with a data connection, and this one had none"))?;

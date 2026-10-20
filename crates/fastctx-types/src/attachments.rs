@@ -1,4 +1,4 @@
-//! Files the user gives a resident, stored on the machine running its host.
+//! User attachments retain their original location on the sending computer.
 
 use serde::{Deserialize, Serialize};
 
@@ -9,9 +9,24 @@ use crate::{Address, AgentName, NoticeId, ResidentId, TownName};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum UploadTarget {
-    Resident { resident: ResidentId },
-    New { agent: AgentName, town: Option<TownName> },
-    Draft { resident: ResidentId, town: Option<TownName> },
+    /// Keep bytes on the sending computer, or on `machine` for a node-less device.
+    /// The operation is stable across retries; the inner target names the conversation.
+    Sent {
+        machine: crate::MachineName,
+        target: Box<UploadTarget>,
+        operation: String,
+    },
+    Resident {
+        resident: ResidentId,
+    },
+    New {
+        agent: AgentName,
+        town: Option<TownName>,
+    },
+    Draft {
+        resident: ResidentId,
+        town: Option<TownName>,
+    },
 }
 
 /// Description supplied by the uploader. Size and SHA-256 describe the
@@ -31,6 +46,10 @@ pub struct UploadFile {
 pub struct Attachment {
     pub id: NoticeId,
     pub owner: Address,
+    /// The original conversation's home. Absent in historical receipts, where
+    /// the holding machine was also the conversation's home.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<Box<Address>>,
     pub town: Option<TownName>,
     pub path: String,
     #[serde(flatten)]
@@ -44,7 +63,21 @@ pub struct Uploaded {
     pub composer: Option<Result<crate::composer::Updated, crate::ipc::Failure>>,
 }
 
+impl UploadTarget {
+    /// The conversation target without the transport's storage policy.
+    pub fn conversation_target(&self) -> &Self {
+        match self {
+            Self::Sent { target, .. } => target,
+            target => target,
+        }
+    }
+}
+
 impl Attachment {
+    pub fn conversation(&self) -> &Address {
+        self.conversation.as_deref().unwrap_or(&self.owner)
+    }
+
     pub fn is_image(&self) -> bool {
         self.file.media_type.starts_with("image/")
     }
@@ -85,6 +118,14 @@ pub struct ToolImage {
 }
 
 impl AttachmentSource {
+    /// Remote originals have one small history image at their conversation's home.
+    pub fn thumbnail_owner(&self) -> &Address {
+        match self {
+            Self::Upload(attachment) => attachment.conversation(),
+            _ => self.owner(),
+        }
+    }
+
     pub fn owner(&self) -> &Address {
         match self {
             Self::Upload(attachment) => &attachment.owner,

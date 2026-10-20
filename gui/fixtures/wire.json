@@ -18880,6 +18880,10 @@
             "machine": "laptop",
             "resident": "codex-ab12"
           },
+          "conversation": {
+            "machine": "desktop",
+            "resident": "codex-ab12"
+          },
           "town": "world",
           "path": "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png",
           "name": "截图.png",
@@ -18894,6 +18898,10 @@
           "id": "attachment-ab12",
           "owner": {
             "machine": "laptop",
+            "resident": "codex-ab12"
+          },
+          "conversation": {
+            "machine": "desktop",
             "resident": "codex-ab12"
           },
           "town": "world",
@@ -18915,6 +18923,10 @@
           "id": "attachment-ab12",
           "owner": {
             "machine": "laptop",
+            "resident": "codex-ab12"
+          },
+          "conversation": {
+            "machine": "desktop",
             "resident": "codex-ab12"
           },
           "town": "world",
@@ -18955,6 +18967,25 @@
           }
         },
         "max": 96
+      },
+      {
+        "call": "upload",
+        "target": {
+          "kind": "sent",
+          "machine": "desktop",
+          "target": {
+            "kind": "resident",
+            "resident": "codex-ab12"
+          },
+          "operation": "upload-1"
+        },
+        "node": "desktop",
+        "file": {
+          "name": "截图.png",
+          "media_type": "image/png",
+          "size": 3145728,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
       },
       {
         "call": "upload",
@@ -19012,6 +19043,10 @@
               "machine": "laptop",
               "resident": "codex-ab12"
             },
+            "conversation": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
             "town": "world",
             "path": "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png",
             "name": "截图.png",
@@ -19038,6 +19073,10 @@
               "machine": "laptop",
               "resident": "codex-ab12"
             },
+            "conversation": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
             "town": "world",
             "path": "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png",
             "name": "截图.png",
@@ -19054,6 +19093,10 @@
         "id": "attachment-ab12",
         "owner": {
           "machine": "laptop",
+          "resident": "codex-ab12"
+        },
+        "conversation": {
+          "machine": "desktop",
           "resident": "codex-ab12"
         },
         "town": "world",
@@ -19079,6 +19122,10 @@
                     "id": "attachment-ab12",
                     "owner": {
                       "machine": "laptop",
+                      "resident": "codex-ab12"
+                    },
+                    "conversation": {
+                      "machine": "desktop",
                       "resident": "codex-ab12"
                     },
                     "town": "world",
@@ -19138,6 +19185,10 @@
             "machine": "laptop",
             "resident": "codex-ab12"
           },
+          "conversation": {
+            "machine": "desktop",
+            "resident": "codex-ab12"
+          },
           "town": "world",
           "path": "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png",
           "name": "截图.png",
@@ -19153,6 +19204,10 @@
           "id": "attachment-ab12",
           "owner": {
             "machine": "laptop",
+            "resident": "codex-ab12"
+          },
+          "conversation": {
+            "machine": "desktop",
             "resident": "codex-ab12"
           },
           "town": "world",
@@ -19186,6 +19241,42 @@
         "max": 96
       },
       {
+        "call": "reserve_attachment",
+        "target": {
+          "kind": "resident",
+          "resident": "codex-ab12"
+        },
+        "file": {
+          "name": "截图.png",
+          "media_type": "image/png",
+          "size": 3145728,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "operation": "upload-1",
+        "composer": null
+      },
+      {
+        "call": "commit_attachment",
+        "attachment": {
+          "id": "attachment-ab12",
+          "owner": {
+            "machine": "laptop",
+            "resident": "codex-ab12"
+          },
+          "conversation": {
+            "machine": "desktop",
+            "resident": "codex-ab12"
+          },
+          "town": "world",
+          "path": "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png",
+          "name": "截图.png",
+          "media_type": "image/png",
+          "size": 3145728,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "preview": null
+      },
+      {
         "call": "upload",
         "target": {
           "kind": "resident",
@@ -19207,6 +19298,10 @@
             "id": "attachment-ab12",
             "owner": {
               "machine": "laptop",
+              "resident": "codex-ab12"
+            },
+            "conversation": {
+              "machine": "desktop",
               "resident": "codex-ab12"
             },
             "town": "world",
@@ -19233,6 +19328,10 @@
               "machine": "laptop",
               "resident": "codex-ab12"
             },
+            "conversation": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
             "town": "world",
             "path": "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png",
             "name": "截图.png",
@@ -19249,6 +19348,10 @@
         "id": "attachment-ab12",
         "owner": {
           "machine": "laptop",
+          "resident": "codex-ab12"
+        },
+        "conversation": {
+          "machine": "desktop",
           "resident": "codex-ab12"
         },
         "town": "world",
@@ -19278,6 +19381,10 @@
                 "machine": "laptop",
                 "resident": "codex-ab12"
               },
+              "conversation": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
               "town": "world",
               "path": "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png",
               "name": "截图.png",
@@ -19300,7 +19407,7 @@
         }
       }
     ],
-    "host_text": "=== from fastctx (user attachments, v2) ===\nThe user attached these files. Each path is on the machine named with it; sizes are in bytes. Look at them with `fastctx view` on that machine (`on MACHINE fastctx view PATH`); images come back as images.\n{\"delivery\":\"talk-ab12\",\"from\":\"phone\",\"attachments\":[{\"id\":\"attachment-ab12\",\"owner\":{\"machine\":\"laptop\",\"resident\":\"codex-ab12\"},\"town\":\"world\",\"path\":\"C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png\",\"name\":\"截图.png\",\"media_type\":\"image/png\",\"size\":3145728,\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]}\n=== user's words (verbatim) ===\n看这张图。\nKeep my words verbatim."
+    "host_text": "=== from fastctx (user attachments, v2) ===\nThe user attached these files. Each original stays on owner.machine at path; sizes are in bytes. Use fastctx view directly for files on your shell's machine, and use on with the named machine for files elsewhere. Images come back as images. If you have no shell on the agent's machine, run accepts a literal fastctx view of this conversation's attached files there and reads them without starting a shell.\n{\"delivery\":\"talk-ab12\",\"from\":\"phone\",\"attachments\":[{\"id\":\"attachment-ab12\",\"owner\":{\"machine\":\"laptop\",\"resident\":\"codex-ab12\"},\"conversation\":{\"machine\":\"desktop\",\"resident\":\"codex-ab12\"},\"town\":\"world\",\"path\":\"C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png\",\"name\":\"截图.png\",\"media_type\":\"image/png\",\"size\":3145728,\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]}\n=== user's words (verbatim) ===\n看这张图。\nKeep my words verbatim."
   },
   "composer": {
     "snapshots": [

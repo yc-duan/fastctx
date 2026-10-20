@@ -28,12 +28,14 @@ impl Device {
         mut source: impl AsyncRead + Unpin,
     ) -> Result<Uploaded, Error> {
         let machine = match &target {
+            UploadTarget::Sent { machine, .. } => machine.clone(),
             UploadTarget::Resident { resident } => self.find(resident, machine).await?,
             _ => machine.ok_or_else(|| failed("choose a machine for the attachment; a device has no local node"))?,
         };
         let session = self.reaching(&machine)?;
         let account = session.account_for(&machine, fastctx_types::access::Purpose::Agents)?;
-        let resumes = composer.is_some() && resumes_there(&session, &machine).await?;
+        let resumes = (composer.is_some() || matches!(target, UploadTarget::Sent { .. }))
+            && resumes_there(&session, &machine).await?;
         let size = file.size;
         let (sender, mut receiver) = mpsc::channel::<Option<Vec<u8>>>(1);
         let stream_error = Arc::new(Mutex::new(None));
@@ -129,10 +131,13 @@ impl Device {
             _ => return Err(failed(format!("{machine} answered something other than an upload"))),
         };
         let attachment = &uploaded.attachment;
-        let owner_matches = match target {
-            UploadTarget::Resident { resident } => attachment.owner.resident == resident,
-            UploadTarget::Draft { resident, town } => attachment.owner.resident == resident && attachment.town == town,
-            UploadTarget::New { town, .. } => attachment.town == town,
+        let owner_matches = match target.conversation_target() {
+            UploadTarget::Sent { .. } => false,
+            UploadTarget::Resident { resident } => attachment.owner.resident == *resident,
+            UploadTarget::Draft { resident, town } => {
+                attachment.owner.resident == *resident && attachment.town == *town
+            }
+            UploadTarget::New { town, .. } => attachment.town == *town,
         };
         if attachment.owner.machine != machine || attachment.file != file || !owner_matches {
             return Err(failed("the upload receipt differs from the requested file or destination"));

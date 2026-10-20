@@ -27,9 +27,22 @@ pub async fn from_path(
     let name =
         path.file_name().map(|name| name.to_string_lossy().into_owned()).ok_or("an attachment has no file name")?;
     let (size, sha256) = digest(path).await.map_err(|error| format!("{}: {error}", path.display()))?;
-    let file = tokio::fs::File::open(path).await.map_err(|error| format!("{}: {error}", path.display()))?;
     let upload = UploadFile { media_type: media_type_of(&name).to_string(), name, size, sha256 };
-    world.upload(target, node, upload, Counted { inner: file, sent, total: 0 }).await.map_err(|error| error.to_string())
+    let mut again = fastctx_client::Again::default();
+    loop {
+        let file = tokio::fs::File::open(path).await.map_err(|error| format!("{}: {error}", path.display()))?;
+        match world
+            .upload(target.clone(), node.clone(), upload.clone(), Counted { inner: file, sent: sent.clone(), total: 0 })
+            .await
+        {
+            Ok(attachment) => return Ok(attachment),
+            Err(error) if matches!(target, UploadTarget::Sent { .. }) && World::unanswered(&error) => {
+                again.broke(error.to_string());
+                again.pause(world, node.as_ref()).await;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
 }
 
 /// Uploads bytes the page holds, under the name and type it gives.
@@ -47,7 +60,17 @@ pub async fn from_bytes(
         size: bytes.len() as u64,
         sha256: hex(&Sha256::digest(&bytes)),
     };
-    world.upload(target, node, upload, bytes.as_slice()).await.map_err(|error| error.to_string())
+    let mut again = fastctx_client::Again::default();
+    loop {
+        match world.upload(target.clone(), node.clone(), upload.clone(), bytes.as_slice()).await {
+            Ok(attachment) => return Ok(attachment),
+            Err(error) if matches!(target, UploadTarget::Sent { .. }) && World::unanswered(&error) => {
+                again.broke(error.to_string());
+                again.pause(world, node.as_ref()).await;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
 }
 
 async fn digest(path: &Path) -> std::io::Result<(u64, String)> {

@@ -27,7 +27,7 @@ pub struct Draft {
     pub characters: Vec<Character>,
     pub attachments: Vec<Attachment>,
     pub uploads: Vec<Uploading>,
-    /// The user's chosen destination for non-images; None uses the resident's working machine.
+    /// Legacy destination hint; new uploads keep their original locations.
     #[serde(default)]
     pub files_on: Option<crate::access::Written>,
 }
@@ -115,7 +115,7 @@ pub enum Change {
         epoch: u64,
         attachment: NoticeId,
     },
-    /// Changes the destination of every non-image attachment in this document.
+    /// Retains an older client's destination hint without moving originals.
     FilesOn {
         target: Target,
         epoch: u64,

@@ -71,9 +71,8 @@ pub async fn talk(
     }
 }
 
-/// The user's words, typed on `typed_on`, to a resident of this machine;
-/// its attached files other than images go to `files_on` when the user
-/// chose.
+/// The user's words, typed on `typed_on`, to a resident of this machine.
+/// Attachments retain their original locations; `files_on` is a legacy hint.
 pub async fn talk_here(
     node: &Arc<Node>,
     typed_on: &MachineName,

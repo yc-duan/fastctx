@@ -1,7 +1,6 @@
 // Files the user attaches to their words, as the core describes them
-// (`fastctx-types/src/attachments.rs`): uploaded to the agent's machine,
-// kept in its own place, and handed to the agent as a path (or, for a
-// Codex image, shown to it).
+// (`fastctx-types/src/attachments.rs`): kept on the sending computer, with
+// a small history image at the conversation's home. Phones upload there.
 
 import type { Address, NoticeId, ResidentId } from "./wire";
 
@@ -11,6 +10,14 @@ export type UploadTarget =
   | { kind: "resident"; resident: ResidentId }
   | { kind: "new"; agent: string; town: string | null }
   | { kind: "draft"; resident: ResidentId; town: string | null };
+
+/** Storage policy sent across the native bridge, separate from the conversation target. */
+export interface SentUploadTarget {
+  kind: "sent";
+  machine: string;
+  target: UploadTarget;
+  operation: string;
+}
 
 export interface UploadFile {
   name: string;
@@ -24,6 +31,7 @@ export interface UploadFile {
 export interface Attachment extends UploadFile {
   id: NoticeId;
   owner: Address;
+  conversation?: Address;
   town: string | null;
   path: string;
 }

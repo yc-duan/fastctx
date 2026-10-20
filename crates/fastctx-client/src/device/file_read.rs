@@ -24,6 +24,12 @@ impl Device {
         let machine = attachment.owner().machine.clone();
         let session = self.reaching(&machine)?;
         session.account_for(&machine, fastctx_types::access::Purpose::Agents)?;
+        if session.link.view().member(&machine).is_some_and(|member| !member.online) {
+            return Err(CallError::Failed(Failure::not_run(format!(
+                "the original is on {machine}; {machine} is currently offline"
+            )))
+            .into());
+        }
         let accounts = {
             let view = session.link.view();
             let me = session.link.membership().name.clone();

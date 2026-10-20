@@ -147,6 +147,14 @@ impl World {
         source: impl AsyncRead + Unpin,
     ) -> Result<fastctx_types::composer::UploadResult, Error> {
         let target = UploadTarget::Resident { resident };
+        let target = match &node {
+            Some(machine) => UploadTarget::Sent {
+                machine: machine.clone(),
+                target: Box::new(target),
+                operation: scope.operation.clone(),
+            },
+            None => target,
+        };
         let uploaded = match self.device() {
             Some(device) => device.upload_scoped(target, node, file, Some(scope), source).await?,
             None => self.connect().await?.upload_scoped(target, node, file, Some(scope), source).await?,

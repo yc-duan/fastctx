@@ -461,7 +461,7 @@ async fn submit_thread(
                             Notice::Attached { message, .. } => message
                                 .attachments
                                 .iter()
-                                .filter(|attachment| attachment.is_image())
+                                .filter(|attachment| attachment.is_image() && node.is_me(&attachment.owner.machine))
                                 .map(|attachment| attachment.path.clone())
                                 .collect(),
                             _ => Vec::new(),

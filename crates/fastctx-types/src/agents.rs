@@ -281,9 +281,8 @@ pub struct Choices {
     /// default one there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<PathBuf>,
-    /// Where the files attached to its first words go, other than images,
-    /// when the user chose: an agent assisting the account has no machine of
-    /// its own (`world-run.md`, 这里).
+    /// Legacy destination hint, retained for older clients. Originals now
+    /// stay on the sending computer, or at the conversation's home for a phone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub files_on: Option<crate::access::Written>,
     /// The account's MCP servers it starts without (`world-user-config.md`).

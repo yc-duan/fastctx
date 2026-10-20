@@ -20,6 +20,7 @@
 pub(crate) mod calls;
 pub(crate) mod control;
 mod fork;
+mod fork_attachments;
 mod fork_history;
 mod fork_ready;
 mod fork_source;
@@ -30,9 +31,9 @@ pub(crate) use image_records::paths as image_records;
 mod image_flush;
 pub(crate) use image_flush::wait_for_image;
 pub mod management;
+mod oldest;
 pub(crate) mod pairing;
 mod plugin_check;
-mod oldest;
 mod process;
 mod rewind;
 mod startup;

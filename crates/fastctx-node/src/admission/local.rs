@@ -125,8 +125,18 @@ fn reached<'a>(node: &Node, call: &'a Call) -> Option<&'a ResidentId> {
         }
         Call::Forget { resident, machine } if node.is_me(machine) => Some(resident),
         Call::Attach { resident } => Some(resident),
-        Call::Upload { target: UploadTarget::Resident { resident }, node: machine, .. } if here(machine.as_ref()) => {
-            Some(resident)
+        Call::Upload { target, node: machine, .. } => {
+            let machine = match target {
+                UploadTarget::Sent { machine, .. } => Some(machine),
+                _ => machine.as_ref(),
+            };
+            match target.conversation_target() {
+                UploadTarget::Resident { resident } if here(machine) => Some(resident),
+                _ => None,
+            }
+        }
+        Call::AttachmentThumbnail { attachment, .. } if node.is_me(&attachment.thumbnail_owner().machine) => {
+            Some(&attachment.thumbnail_owner().resident)
         }
         Call::AttachmentThumbnail { attachment, .. } | Call::ReadAttachment { attachment, .. }
             if node.is_me(&attachment.owner().machine) =>

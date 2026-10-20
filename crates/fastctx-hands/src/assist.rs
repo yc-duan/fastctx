@@ -9,14 +9,14 @@
 /// The opening for an assisting agent, with the machines it may work on.
 pub fn opening(machines: &str) -> String {
     let reach = if machines.is_empty() {
-        "You have access to no machine yet: the user has none you may work on, so no command of yours can run anywhere; tell the user.".to_string()
+        "You have access to no machine yet: the user has none you may work on, so no shell command of yours can run anywhere; tell the user.".to_string()
     } else {
         format!(
             "You have access to these machines: {machines}. Every outer command must start with `on MACHINE`. Several literal `on` commands can follow one another; the first named machine orchestrates them. Put variables, loops, conditions and expansions inside a quoted `on` here-document."
         )
     };
     format!(
-        "You have no access to the computer this program runs on: the user may use this agent, not that computer. The working directory, platform and paths your host reports are that computer's, and your shell never runs there. Guidance that calls that computer one of your machines, or says `run` starts on it, was written for its owner's own sessions and does not apply to you.\n{reach}"
+        "You have no access to the computer this program runs on: the user may use this agent, not that computer. The working directory, platform and paths your host reports are that computer's, and your shell never runs there. Guidance that calls that computer one of your machines, or says `run` starts on it, was written for its owner's own sessions and does not apply to you.\n{reach}\nFiles the user attached on this agent's machine can be read by a literal `fastctx view` command in `run`. The node reads only those attached files, without starting a shell."
     )
 }
 

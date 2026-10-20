@@ -302,6 +302,18 @@ pub enum RemoteCall {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Reserve metadata at the conversation's home; bytes stay with the caller.
+    ReserveAttachment {
+        target: crate::attachments::UploadTarget,
+        file: crate::attachments::UploadFile,
+        operation: String,
+        composer: Option<crate::composer::UploadScope>,
+    },
+    /// Complete a reserved upload with its verified location and small history image.
+    CommitAttachment {
+        attachment: crate::attachments::Attachment,
+        preview: Option<crate::thumbnail::Thumbnail>,
+    },
     /// Keep here a file the user attached to their words for `resident`, of
     /// the calling machine, which works here (`world-gui.md`): its receipt
     /// where it lives comes with the call, and over the call's data
@@ -500,7 +512,9 @@ impl RemoteCall {
             | RemoteCall::UpdateWorld
             | RemoteCall::Updates { .. }
             | RemoteCall::Stats { .. } => Purpose::Hands,
-            RemoteCall::Composer { .. }
+            RemoteCall::ReserveAttachment { .. }
+            | RemoteCall::CommitAttachment { .. }
+            | RemoteCall::Composer { .. }
             | RemoteCall::AttachmentThumbnail { .. }
             | RemoteCall::ReadAttachment { .. }
             | RemoteCall::Ask { .. }

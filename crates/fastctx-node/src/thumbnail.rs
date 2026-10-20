@@ -60,7 +60,7 @@ pub(crate) async fn attachment(
     attachment: fastctx_types::attachments::AttachmentSource,
     max: u32,
 ) -> Result<Thumbnail, Failure> {
-    let machine = attachment.owner().machine.clone();
+    let machine = attachment.thumbnail_owner().machine.clone();
     if !node.is_me(&machine) {
         return match node
             .call_with_stream(
@@ -77,7 +77,32 @@ pub(crate) async fn attachment(
             _ => Err(Failure::new("the machine answered something other than an attachment thumbnail")),
         };
     }
+    if let fastctx_types::attachments::AttachmentSource::Upload(receipt) = &attachment
+        && !node.is_me(&receipt.owner.machine)
+    {
+        return crate::attachments::preview(node, receipt);
+    }
     here(node, ThumbnailRequest { path: String::new(), max }, Some(attachment)).await
+}
+
+pub(crate) async fn history(
+    node: &Arc<crate::Node>,
+    attachment: fastctx_types::attachments::Attachment,
+) -> Result<Thumbnail, Failure> {
+    use base64::Engine as _;
+    for max in [320, 224, 160, 112, 80] {
+        let thumbnail =
+            here(node, ThumbnailRequest { path: String::new(), max }, Some(attachment.clone().into())).await?;
+        if base64::engine::general_purpose::STANDARD
+            .decode(&thumbnail.base64)
+            .map_err(|e| Failure::new(e.to_string()))?
+            .len()
+            <= 64 * 1024
+        {
+            return Ok(thumbnail);
+        }
+    }
+    Err(Failure::new("the history image could not fit in 64 KiB"))
 }
 
 async fn here(

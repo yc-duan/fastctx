@@ -19,6 +19,11 @@ pub fn on_only(script: &str) -> Result<(String, Option<String>), Failure> {
     super::heredoc::on_only(script)
 }
 
+/// A literal attachment view, without executing or expanding any source.
+pub fn attachment_view(source: &str) -> Option<Vec<String>> {
+    super::heredoc::attachment_view(source)
+}
+
 /// Checks source with the machine's own bash and checks here-document hazards.
 /// No startup files or source commands are executed. This checks literal source,
 /// not programs generated at runtime by `eval`, `source`, or another interpreter.

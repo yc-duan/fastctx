@@ -1,14 +1,9 @@
-//! Verified user uploads, kept in the conversation's home on its host's
-//! machine. Where the user chose another machine for its files other than
-//! images (`world-gui.md`), each is placed on that machine, in the
-//! conversation's guest room there, while the upload kept where it lives
-//! stays the conversation's record; an agent assisting the account cannot
-//! reach the machine it runs on, so for it the user must choose one.
-//!
-//! A receipt keeps the path its file had when it arrived. Where a file is
-//! now always comes from the layout: from the receipt, only the names of its
-//! directory and of the file itself are taken, and only as hints that the
-//! receipt found there must then match.
+//! User originals remain on the computer that attached them.
+
+pub(crate) mod reading;
+mod references;
+pub(crate) mod sent;
+pub(crate) use references::{inherit, inherit_texts, preview};
 
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -26,7 +21,6 @@ use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use tokio::io::AsyncReadExt as _;
 
 use crate::Node;
 
@@ -53,10 +47,12 @@ pub fn delivery(
     Delivery { id, at: jiff::Timestamp::now(), notice }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 struct Draft {
     agent: AgentName,
     town: Option<TownName>,
+    #[serde(default)]
+    from: Option<MachineName>,
 }
 
 fn failure(error: impl std::fmt::Display) -> Failure {
@@ -81,6 +77,9 @@ pub async fn upload(
     composer: Option<fastctx_types::composer::UploadScope>,
     mut source: FrameReader,
 ) -> Result<Uploaded, Failure> {
+    if let UploadTarget::Sent { machine, target, operation } = target {
+        return sent::upload(node, machine, *target, operation, file, composer, source).await;
+    }
     validate_file(&file)?;
     let machine = match machine {
         Some(machine) => machine.into(),
@@ -319,6 +318,9 @@ pub async fn receive(
     resumes: bool,
     mut stream: Stream,
 ) -> Result<Uploaded, Failure> {
+    if let UploadTarget::Sent { machine, target, operation } = target {
+        return sent::receive(node, from, machine, *target, operation, file, composer, resumes, stream).await;
+    }
     let _place = using_target(node, &target).await;
     validate_file(&file)?;
     let size = file.size;
@@ -378,12 +380,13 @@ async fn using_target(node: &Arc<Node>, target: &UploadTarget) -> Option<crate::
         UploadTarget::Resident { resident } | UploadTarget::Draft { resident, .. } => {
             Some(node.places.using(resident.as_str()).await)
         }
-        UploadTarget::New { .. } => None,
+        UploadTarget::New { .. } | UploadTarget::Sent { .. } => None,
     }
 }
 
 async fn prepare(node: &Arc<Node>, target: UploadTarget, file: UploadFile) -> Result<Arriving, Failure> {
     let (resident, town) = match target {
+        UploadTarget::Sent { .. } => return Err(failure("nested upload policy")),
         UploadTarget::Resident { resident } => {
             let (_, town) = node
                 .residents
@@ -407,7 +410,7 @@ async fn prepare(node: &Arc<Node>, target: UploadTarget, file: UploadFile) -> Re
                 format!("{agent}-{:032x}", u128::from_be_bytes(identity)).parse().map_err(failure)?;
             let directory = node.world.conversation(&resident);
             std::fs::create_dir_all(directory.path()).map_err(failure)?;
-            write_new(&directory.draft(), &Draft { agent, town: town.clone() })?;
+            write_new(&directory.draft(), &Draft { agent, town: town.clone(), from: None })?;
             (resident, town)
         }
         UploadTarget::Draft { resident, town } => {
@@ -426,7 +429,7 @@ async fn prepare(node: &Arc<Node>, target: UploadTarget, file: UploadFile) -> Re
     let directory = directory.join(id.as_str());
     std::fs::create_dir(&directory).map_err(failure)?;
     let owner = Address { machine: node.machine(), resident };
-    arriving_in(&directory, Attachment { id, owner, town, path: String::new(), file }, false)
+    arriving_in(&directory, Attachment { id, owner, conversation: None, town, path: String::new(), file }, false)
 }
 
 /// An upload arriving into `directory`, its own, for `attachment`, whose
@@ -457,6 +460,21 @@ fn arriving_in(directory: &Path, mut attachment: Attachment, resume: bool) -> Re
         "image/webp" => "content.webp",
         "image/gif" => "content.gif",
         _ => "content",
+    };
+    let name = if name == "content" {
+        match Path::new(&attachment.file.name).extension().and_then(|ext| ext.to_str()).map(str::to_ascii_lowercase) {
+            Some(ext)
+                if matches!(
+                    ext.as_str(),
+                    "pdf" | "docx" | "pptx" | "xlsx" | "xls" | "xlsm" | "csv" | "tsv" | "md" | "txt" | "json" | "html"
+                ) =>
+            {
+                format!("content.{ext}")
+            }
+            _ => name.to_owned(),
+        }
+    } else {
+        name.to_owned()
     };
     let path = directory.join(name);
     attachment.path = crate::world::native(&path);
@@ -525,8 +543,17 @@ impl Arriving {
             return Err(failure("the file's SHA-256 does not match the uploaded bytes"));
         }
         self.output.take().expect("upload is open").sync_all().map_err(failure)?;
-        std::fs::rename(&self.temporary, &self.path).map_err(failure)?;
-        self.unpublished = true;
+        if self.path.exists() {
+            // 2026-10-20: a crash can publish the bytes before their receipt.
+            // Recover only those exact bytes; never replace a changed original.
+            if !holds(&self.attachment, &mut vec![0; UPLOAD_CHUNK])? {
+                return Err(failure("the original at this upload's location has changed"));
+            }
+            std::fs::remove_file(&self.temporary).map_err(failure)?;
+        } else {
+            std::fs::rename(&self.temporary, &self.path).map_err(failure)?;
+            self.unpublished = true;
+        }
         write_new(&self.path.parent().expect("attachment directory").join("receipt.json"), &self.attachment)?;
         self.unpublished = false;
         Ok(self.attachment.clone())
@@ -593,6 +620,9 @@ pub async fn resolve(node: &Arc<Node>, resident: &ResidentId, attachments: &[Att
     tokio::task::spawn_blocking(move || {
         let mut buffer = vec![0u8; UPLOAD_CHUNK];
         for attachment in attachments {
+            if references::reference(&node, &resident, &attachment)?.is_some() {
+                continue;
+            }
             let kept = kept_here(&node, &resident, &attachment)?;
             if !holds(&kept, &mut buffer)? {
                 return Err(failure(format!("{} on {} changed after upload", kept.path, kept.owner.machine)));
@@ -634,7 +664,10 @@ fn kept_here(node: &Node, resident: &ResidentId, attachment: &Attachment) -> Res
         if placed {
             kept.id == attachment.id && kept.file == attachment.file
         } else {
-            kept.id == attachment.id && kept.owner == attachment.owner && kept.file == attachment.file
+            kept.id == attachment.id
+                && kept.owner == attachment.owner
+                && kept.conversation == attachment.conversation
+                && kept.file == attachment.file
         }
     };
     // A copy placed here sits in the guest room its path names; an upload
@@ -751,112 +784,21 @@ struct Need {
     bytes: bool,
 }
 
-/// The user's files for `resident`, of this machine, as its session is
-/// given them, each already resolved: images where it lives, whose host
-/// shows them to the model from here; other files where it lives too, or
-/// on the machine the user chose for them. A copy placed there before is
-/// placed again from the upload kept here.
+/// Keeps original locations when submitting or resubmitting words.
 pub async fn place(
     node: &Arc<Node>,
     resident: &ResidentId,
     attachments: Vec<Attachment>,
-    files_on: Option<&Written>,
+    _files_on: Option<&Written>,
 ) -> Result<Vec<Attachment>, Failure> {
-    if attachments.is_empty() {
-        return Ok(attachments);
-    }
-    let assisting = crate::here::assisting(node, resident);
-    // Where they go: where the user chose, else here; an assisting agent
-    // cannot reach here.
-    let goes_to = match files_on {
-        Some(files_on) if node.is_here(files_on) && assisting => {
-            return Err(Failure::not_run(format!(
-                "{files_on} is the computer this agent runs on, which it cannot reach; choose one of your machines for the files"
-            )));
-        }
-        Some(files_on) if node.is_here(files_on) => None,
-        Some(files_on) => Some(files_on.clone()),
-        None => None,
-    };
-    let acting = node.residents.about(resident).map(|(about, _)| about.acting).unwrap_or_default();
     let mut given = Vec::with_capacity(attachments.len());
-    for attachment in &attachments {
-        let kept = kept_here(node, resident, attachment)?;
-        given.push(match &goes_to {
-            _ if kept.is_image() => kept,
-            Some(goes_to) => send_placed(node, &acting, goes_to, resident, kept).await?,
-            None if assisting && files_on.is_none() => {
-                return Err(Failure::not_run(format!(
-                    "{} cannot stay where this agent runs, a computer it cannot reach; choose one of your machines for the files",
-                    kept.file.name
-                )));
-            }
-            None => kept,
+    for attachment in attachments {
+        given.push(match references::reference(node, resident, &attachment)? {
+            Some(kept) => kept,
+            None => kept_here(node, resident, &attachment)?,
         });
     }
     Ok(given)
-}
-
-/// Places `kept`, an upload of `resident` kept here, on `goes_to`, where
-/// the user chose, for whom it works; answers the copy there.
-async fn send_placed(
-    node: &Arc<Node>,
-    acting: &Acting,
-    goes_to: &Written,
-    resident: &ResidentId,
-    kept: Attachment,
-) -> Result<Attachment, Failure> {
-    let town = match node.speaking(acting, goes_to, Purpose::Hands) {
-        Ok((link, _)) => node.town_across(&link, kept.town.as_ref()),
-        Err(_) => kept.town.clone(),
-    };
-    let call = RemoteCall::Place { resident: resident.clone(), attachment: Attachment { town, ..kept.clone() } };
-    let (path, size) = (PathBuf::from(&kept.path), kept.file.size);
-    let feed = || -> Feed {
-        let path = path.clone();
-        Box::new(move |mut stream: Stream| {
-            Box::pin(async move {
-                let need: Need = stream.hear().await?;
-                if need.bytes {
-                    send_bytes(&mut stream, &path, size).await?;
-                    stream.say(&"placed").await?;
-                }
-                stream.finish().await
-            })
-        })
-    };
-    let refused =
-        |why: String| Failure::new(format!("{} goes to {goes_to} and did not get there: {why}", kept.file.name));
-    let mine = Address { machine: goes_to.name.clone(), resident: resident.clone() };
-    match node.call_with_stream(acting, goes_to, Purpose::Hands, call, feed).await {
-        Ok(Ok(RemoteReply::Uploaded(placed)))
-            if placed.id == kept.id && placed.file == kept.file && placed.owner == mine =>
-        {
-            Ok(placed)
-        }
-        Ok(Ok(_)) => Err(refused(format!("{goes_to} answered something other than the file kept there"))),
-        Ok(Err(failure)) => Err(refused(failure.message)),
-        Err(failure) => Err(refused(failure.to_string())),
-    }
-}
-
-/// Sends the `size` bytes of the file at `path`, and only those: a file
-/// shorter than when it was checked is not sent short.
-async fn send_bytes(stream: &mut Stream, path: &Path, size: u64) -> Result<(), String> {
-    let mut file = tokio::fs::File::open(path).await.map_err(|error| format!("opening {}: {error}", path.display()))?;
-    let mut buffer = vec![0u8; UPLOAD_CHUNK];
-    let mut left = size;
-    while left > 0 {
-        let want = (buffer.len() as u64).min(left) as usize;
-        let read =
-            file.read(&mut buffer[..want]).await.map_err(|error| format!("reading {}: {error}", path.display()))?;
-        if read == 0 {
-            return Err(format!("{} is shorter than when it was attached", path.display()));
-        }
-        stream.send(&buffer[..read]).await?;
-        left -= read as u64;
-    }
-    Ok(())
 }
 
 /// Keeps on this machine a file the user attached for `resident`, of
@@ -973,8 +915,8 @@ pub async fn opening(
     let Some(first) = attachments.first() else {
         return Ok((node.residents.new_id(agent)?, Opening { lock: None, directory: None }));
     };
-    let id = first.owner.resident.clone();
-    if !node.is_me(&first.owner.machine) || first.town.as_ref() != town {
+    let id = first.conversation().resident.clone();
+    if !node.is_me(&first.conversation().machine) || first.town.as_ref() != town {
         return Err(failure("the upload draft belongs to another machine or town"));
     }
     let directory = node.world.conversation(&id);
