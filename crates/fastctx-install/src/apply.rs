@@ -475,6 +475,8 @@ pub fn apply_reporting(
     if hosts.claude {
         let plugin_record = homes::plugin_record(places)?;
         let claude = places.claude.clone().ok_or(Error::NoClaude)?;
+        // Nothing goes into a Claude Code the World does not work with.
+        claude_supported(&claude, places)?;
         let initial_settings = Snapshot::read(places.claude_home.join("settings.json"))?;
         let claude_md = Snapshot::read(places.claude_home.join("CLAUDE.md"))?;
         let path = text(claude_md.path());
@@ -981,6 +983,18 @@ fn same_path(a: &Path, b: &Path) -> bool {
 /// A path as the engines compare it with their receipts.
 fn text(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+/// Refuses the `claude` command `claude` when it is older than the World
+/// works with, as it says of itself (`fastctx_hosts::claude::OLDEST`).
+fn claude_supported(claude: &Path, places: &Places) -> Result<(), Error> {
+    let program = std::path::absolute(claude).map_err(io("finding the claude command"))?;
+    let said = crate::claude::process::output(&program, &["--version".to_string()], &places.root, &places.claude_home)
+        .map_err(|error| Error::Claude(format!("running claude --version: {error}")))?;
+    if !said.status.success() {
+        return Err(Error::Claude(format!("claude --version exited {}", said.status)));
+    }
+    fastctx_hosts::claude::supported(String::from_utf8_lossy(&said.stdout).trim()).map_err(Error::Claude)
 }
 
 fn io(what: &'static str) -> impl Fn(io::Error) -> Error {

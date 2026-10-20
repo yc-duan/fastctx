@@ -32,6 +32,7 @@ pub(crate) use image_flush::wait_for_image;
 pub mod management;
 pub(crate) mod pairing;
 mod plugin_check;
+mod oldest;
 mod process;
 mod rewind;
 mod startup;
@@ -72,6 +73,8 @@ pub struct Claude {
     /// The user's words handed to each resident's session as the user's,
     /// until Claude Code reports keeping them (`said_by_world`).
     handed: Mutex<HashMap<ResidentId, Vec<String>>>,
+    /// The Claude Code last found new enough to start sessions in.
+    checked: oldest::Checked,
 }
 
 struct State {
@@ -110,6 +113,7 @@ impl Claude {
             startup_listings: Default::default(),
             changed: Default::default(),
             handed: Default::default(),
+            checked: Default::default(),
         })
     }
 
@@ -1296,6 +1300,7 @@ async fn wake(
     id: fastctx_types::NoticeId,
 ) -> Result<Landed, Failure> {
     let launching = command(node, home)?;
+    oldest::check(node, &launching).await?;
     let Command { program, cwd, env } = launching.clone();
     crate::profile::session::claude(node, resident, false)?;
     let previous = exchange::registration(&exchange::sessions(node.world.path()).join(session))
@@ -1323,8 +1328,10 @@ async fn wake(
             "Claude started {started} instead of resuming {session}; no queued words were submitted"
         )));
     }
-    startup::observe(node, resident, id, launching);
-    Ok(Landed::Waiting { why: None, answered: true })
+    startup::observe(node, resident, id.clone(), launching);
+    // The node hands the kept words over once the new activation has
+    // registered: callers follow them by id, as words handed at once.
+    Ok(Landed::Handed { id })
 }
 
 /// The `claude` command, where to run it, and the environment it gets: the
@@ -1386,10 +1393,13 @@ pub async fn open_here(
     if let Some(town) = &town {
         crate::town::project::spans_here(node, town).await?;
     }
+    // Nothing of the conversation is made for a Claude Code that cannot
+    // run it.
+    let launching = command(node, opened.home.as_deref())?;
+    oldest::check(node, &launching).await?;
     let agent = AgentName::try_from("claude").expect("a valid agent name");
     let (id, _opening) = crate::attachments::opening(node, &agent, town.as_ref(), &attachments).await?;
     let _birth = crate::here::born(node, &id, opened.acting.clone());
-    let launching = command(node, opened.home.as_deref())?;
     let Command { program, env, .. } = launching.clone();
     // A login assisting another account starts without the browser of this
     // machine (`background::Start::assisting`).
@@ -1527,7 +1537,7 @@ pub async fn open_here(
     drop(_birth);
     replay(node).await;
     startup::observe(node, &id, first.delivery.id.clone(), launching);
-    Ok((id, Landed::Waiting { why: None, answered: true }))
+    Ok((id, Landed::Handed { id: first.delivery.id }))
 }
 
 /// The World's directories where its sessions stand are trusted in Claude

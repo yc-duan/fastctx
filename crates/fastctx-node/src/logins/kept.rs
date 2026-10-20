@@ -108,7 +108,7 @@ impl KeptLogin {
 
 /// A file as it stood: its length and when it was last written.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct FileStamp {
+pub(crate) struct FileStamp {
     pub len: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modified: Option<Timestamp>,

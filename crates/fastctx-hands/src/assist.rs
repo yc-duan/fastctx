@@ -20,9 +20,9 @@ pub fn opening(machines: &str) -> String {
     )
 }
 
-/// The answer to an assisting script that needs a local shell before a
-/// guardian has been installed.
-pub const SCRIPT_REFUSED: &str = "nothing ran: this installation has no local shell for your account yet. Start every outer command with `on MACHINE`; several literal `on` commands may follow one another. Put variables, conditions and loops inside a quoted `on` here-document.";
+/// The answer to an assisting script that would run on the computer the
+/// agent runs on, where it has no shell.
+pub const SCRIPT_REFUSED: &str = "nothing ran: you have no shell on the computer this program runs on. Start every outer command with `on MACHINE`; several literal `on` commands may follow one another. Put variables, conditions and loops inside a quoted `on` here-document.";
 
 /// The answer to an `on` of an assisting agent that names the computer it
 /// runs on.

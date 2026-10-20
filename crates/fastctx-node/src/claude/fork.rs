@@ -63,7 +63,9 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     };
     let inherited = super::fork_history::retained(node, resident, &session, through.as_deref())?;
     let id = node.residents.new_id(&source.host.agent)?;
-    let super::Command { program, env, .. } = super::command(node, source.home.as_deref())?;
+    let launching = super::command(node, source.home.as_deref())?;
+    super::oldest::check(node, &launching).await?;
+    let super::Command { program, env, .. } = launching;
     let (words, heard) =
         crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &source.acting, false).await?;
     let directory = node.world.conversation(&id);

@@ -1449,7 +1449,7 @@ async fn run_started(
 
 /// Why a script of an agent assisting another account did not run: it
 /// named the computer the agent runs on, which it may not work on, or it
-/// was not a single `on` (`world-run.md`, 这里).
+/// was not literal `on`s alone (`world-guest-accounts.md`, 还没装上看护的机器).
 fn assisting_refusal(node: &Node, script: &str) -> String {
     match crate::here::single_on(script) {
         Some((machine, _)) if node.is_here(&machine) => fastctx_hands::assist::here_refused(&machine.to_string()),

@@ -41,7 +41,9 @@ fn claude_2_1_287_public_lists() {
 
 #[test]
 fn claude_2_1_287_effective_output_limit() {
-    let plan = plan();
+    // The fixtures pin Claude's parsing, not the World's own limit, so the
+    // limit they are judged against is fixed here.
+    let plan = ClaudePlan { max_mcp_output_tokens: 200_000, ..plan() };
     // Values are accepted/coerced by Claude's settings schema, then its
     // integer parser. The booleans here say whether 200,000 is already met.
     for (raw, sufficient) in [

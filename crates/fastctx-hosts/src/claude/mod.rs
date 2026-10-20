@@ -20,6 +20,7 @@ mod context;
 pub mod control;
 pub mod exchange;
 pub mod models;
+mod oldest;
 pub mod projects;
 pub mod startup;
 pub mod startup_hook;
@@ -31,6 +32,8 @@ pub mod titles;
 mod tools;
 pub mod transcript;
 pub mod trust;
+
+pub use oldest::{OLDEST, supported};
 
 use std::io;
 use std::path::{Path, PathBuf};
