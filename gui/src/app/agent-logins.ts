@@ -32,7 +32,7 @@ import type { AccessWords } from "./account-words";
 import { ActsMenu, type MenuEntry } from "./acts-menu";
 import { AgentChangeSheet, type AgentChangeTarget, type AgentChangeWords } from "./agent-change";
 import { foldersSection, foundOf, freshness, searching } from "./agent-folders";
-import { dirName, loginRow, planName, programLine } from "./agent-login-row";
+import { CLAUDE_OLDEST, claudeTooOld, dirName, loginRow, planName, programLine } from "./agent-login-row";
 import type { AgentLoginsWords } from "./agent-logins-words";
 import { chosen, pickButton, pickMenu, pickables, type Pickable } from "./agent-machines";
 import { keepTab } from "./agent-sections";
@@ -486,7 +486,8 @@ export class AgentLoginsPage implements Page {
             const who = login.identity?.who.kind === "known" ? (login.identity.who.value.email ?? null) : null;
             const changing = login.change && !login.change.end;
             const fresh = freshness(this.fresh, `d:${machine.name}:${login.dir}`);
-            return `<li class="logins-candidate${fresh}>${glyph(this.agent, 16)}<span class="logins-candidate-name" title="${escape(login.dir)}">${escape(who ?? dirName(login.dir))}</span>${login.default ? `<span class="tag">${escape(words.defaultLogin)}</span>` : ""}${who ? `<span class="logins-dir">${escape(dirName(login.dir))}</span>` : ""}
+            const old = claudeTooOld(this.agent, agent.programs, login);
+            return `<li class="logins-candidate${fresh}>${glyph(this.agent, 16)}<span class="logins-candidate-name" title="${escape(login.dir)}">${escape(who ?? dirName(login.dir))}</span>${login.default ? `<span class="tag">${escape(words.defaultLogin)}</span>` : ""}${who ? `<span class="logins-dir">${escape(dirName(login.dir))}</span>` : ""}${old ? `<span class="tag tag-warn" title="${escape(words.tooOldSaid(old, CLAUDE_OLDEST))}">${escape(words.tooOld)}</span>` : ""}
           <button class="text-button logins-apply" type="button" data-act="apply" data-machine="${escape(machine.name)}" data-dir="${escape(login.dir)}"${changing ? " disabled" : ""}>${escape(changing ? words.applying : words.apply)}</button></li>`;
           })
           .join("")
@@ -537,6 +538,7 @@ export class AgentLoginsPage implements Page {
           .filter((_, index) => login.programs.includes(index))
           .map((program) => programLine(program, options.words))
           .join("\n"),
+        old: claudeTooOld(this.agent, agent.programs, login),
         plan: login.identity?.who.kind === "known" && login.identity.who.value.method === "oauth_token" ? this.planOf(machine, login, world) : login.identity?.who.kind === "known" ? (login.identity.who.value.plan ?? null) : null,
         assistsMe: machine.hold === "assist" ? assistingMe(world, machine.name, this.agent, login.dir, login.default) : null,
         usage: report ? usageOf(report, namer(world, machine.name, options.usage)) : null,

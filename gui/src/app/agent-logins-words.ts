@@ -63,6 +63,10 @@ export interface AgentLoginsWords extends MachinePickWords {
   token: string;
   tokenSaid: string;
   loggedOut: string;
+  /** Claude Code older than the World starts conversations in, said
+   *  before it is connected or used. */
+  tooOld: string;
+  tooOldSaid(version: string, oldest: string): string;
   applied: string;
   applying: string;
   removing: string;
@@ -167,6 +171,8 @@ export const zhAgentLogins: AgentLoginsWords = {
   token: "长期令牌",
   tokenSaid: "用 setup-token 得到的长期令牌登录：认不出账号与套餐",
   loggedOut: "未登录",
+  tooOld: "版本太旧",
+  tooOldSaid: (version, oldest) => `这里的 Claude Code 是 ${version}，要升级到 ${oldest} 或更新`,
   applied: "已接入",
   applying: "正在接入",
   removing: "正在移除",
@@ -260,6 +266,8 @@ export const enAgentLogins: AgentLoginsWords = {
   token: "Token",
   tokenSaid: "Logged in with a long-lived setup-token: no account or plan to show",
   loggedOut: "Logged out",
+  tooOld: "Too old",
+  tooOldSaid: (version, oldest) => `Claude Code here is ${version}; update it to ${oldest} or later`,
   applied: "Hooked up",
   applying: "Hooking up",
   removing: "Removing",

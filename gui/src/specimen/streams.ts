@@ -261,14 +261,23 @@ export function answering(text: string, turn: string): SessionEvent[] {
   const ran = `${turn}-run`;
   const said = `${turn}-say`;
   const thinking = "**看一眼限幅**\n\n先读 joints/limits.rs，看限幅在哪里收窄。";
-  const answer = "看过了：`joints/limits.rs` 里的限幅只做比较、不累加，Q16 的舍入不会积起来，不用改。";
+  // "hold" is answered as the World's hold answers once an allowance is used up.
+  const held = text.trim() === "hold";
+  const until = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 16).replace("T", " ");
+  const answer = held
+    ? `the weekly allowance of $20.00 this login gives me is used up until ${until} UTC; what is for it waits until then`
+    : "看过了：`joints/limits.rs` 里的限幅只做比较、不累加，Q16 的舍入不会积起来，不用改。";
   const events: SessionEvent[] = [
     { at: clock.next(0), event: "heard", delivery: null, turn, from: user, text },
     { at: clock.next(200), event: "turn_started", turn },
-    { at: clock.next(500), event: "began", turn, item: { id: thought, kind: "thinking", text: "" } as Item },
-    ...pieces(thinking).map((piece): SessionEvent => ({ at: clock.next(30), event: "grew", turn, item: thought, part: "text", text: piece })),
-    { at: clock.next(100), event: "finished", turn, item: { id: thought, kind: "thinking", text: thinking } as Item },
-    ...tool(clock, turn, ran, 3),
+    ...(held
+      ? []
+      : [
+          { at: clock.next(500), event: "began", turn, item: { id: thought, kind: "thinking", text: "" } as Item } as SessionEvent,
+          ...pieces(thinking).map((piece): SessionEvent => ({ at: clock.next(30), event: "grew", turn, item: thought, part: "text", text: piece })),
+          { at: clock.next(100), event: "finished", turn, item: { id: thought, kind: "thinking", text: thinking } as Item } as SessionEvent,
+          ...tool(clock, turn, ran, 3),
+        ]),
     { at: clock.next(100), event: "began", turn, item: { id: said, kind: "message", text: "" } as Item },
     ...pieces(answer).map((piece): SessionEvent => ({ at: clock.next(30), event: "grew", turn, item: said, part: "text", text: piece })),
     { at: clock.next(100), event: "finished", turn, item: { id: said, kind: "message", text: answer } as Item },

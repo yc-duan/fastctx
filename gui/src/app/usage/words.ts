@@ -1,6 +1,6 @@
-// What the usage of an agent's login says (`world-agent-logins.md`, 用量):
-// amounts as short as a chart's labels, Claude Code's dollars always marked
-// as an estimate, and the hovers that carry the rest.
+// What the usage of an agent's login says (`world-usage.md`, 用量): amounts
+// as short as a chart's labels, and the hovers that carry the rest, how
+// Claude Code reckons its dollars among them.
 
 import { dollars, underCent } from "../../world/money";
 
@@ -8,8 +8,6 @@ export interface UsageWords {
   me: string;
   /** Whoever uses the machine itself, where no owner is known. */
   machineItself: string;
-  /** "约": an amount Claude Code reckoned at list prices. */
-  about: string;
   aboutWhy: string;
   money(usd: number): string;
   tokens(count: number): string;
@@ -145,7 +143,6 @@ function clock(at: Date): string {
 export const zhUsage: UsageWords = {
   me: "我",
   machineItself: "这台机器上",
-  about: "约",
   aboutWhy: "由 Claude Code 自己计算：它按内置的 Anthropic API 官方价目表，把每个请求的 token 折成美元，累加成会话总额；Fastctx 经官方 mod 接口的 session.measure 事件读取这个总额，按增量记账。订阅登录不实际扣这笔钱。",
   money,
   tokens,
@@ -243,7 +240,6 @@ const enMonth = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", 
 export const enUsage: UsageWords = {
   me: "Me",
   machineItself: "On the machine",
-  about: "≈",
   aboutWhy: "Calculated by Claude Code itself: it prices each request's tokens with its built-in Anthropic API price list and adds them into the session's total; Fastctx reads that total from the official mod API's session.measure event and records each increase. A subscription login is not charged this amount.",
   money,
   tokens,

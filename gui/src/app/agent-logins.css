@@ -321,12 +321,6 @@
   color: var(--text-3);
 }
 
-.logins-row-about {
-  margin-right: 3px;
-  font-size: var(--size-text);
-  color: var(--text-3);
-}
-
 .logins-row-small {
   font-size: var(--size-text);
   color: var(--text-3);

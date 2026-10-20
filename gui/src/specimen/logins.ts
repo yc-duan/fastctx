@@ -121,7 +121,7 @@ function desktop(now: number): MachineLogins {
       elsewhere: [],
     },
     claude: {
-      programs: [{ path: "C:\\Users\\me\\.local\\bin\\claude.exe", how: "official", version: "2.1.296", on_path: true }],
+      programs: [{ path: "C:\\Users\\me\\.local\\bin\\claude.exe", how: "official", version: "2.1.303", on_path: true }],
       listed: [
         { dir: "C:\\Users\\me\\.claude", default: true, found: "default", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "oauth_token" } } }, limits: limitsOf("desktop", "claude", "C:\\Users\\me\\.claude", 410, 640, -25), programs: [0], integration: "in", unattended: true },
       ],
@@ -155,7 +155,8 @@ export function specimenLogins(machine: string | null, at: Date): Promise<WorldL
  *  and the program that uses it where `programs`. */
 function scanned(machine: string, agent: "codex" | "claude", dir: string, who: string | null, plan: string | null, programs: boolean): MachineLogins {
   const empty = { programs: [], listed: [], candidates: [], elsewhere: [] };
-  const program = { path: `/usr/local/bin/${agent}`, how: "npm" as const, version: agent === "codex" ? "0.160.0" : "2.1.296", on_path: true };
+  // bo's gpu keeps a Claude Code older than the World starts conversations in.
+  const program = { path: `/usr/local/bin/${agent}`, how: "npm" as const, version: agent === "codex" ? "0.160.0" : machine === "gpu" ? "2.1.296" : "2.1.303", on_path: true };
   const login: Login = {
     dir,
     default: true,

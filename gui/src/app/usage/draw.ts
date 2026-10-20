@@ -63,13 +63,15 @@ export function meter(share: number | null, seed: string, parts: RingPart[] = []
     // Near the end, the warning says more than who used it.
     if (!shown.length || level) ink = `<path class="ledger-arc${level}" d="${span(0, share)}"/>`;
     else {
+      // Faded inks are solid mixes with the page, not transparent ones:
+      // the marker's grain turns a half-transparent ink to speckle.
       let from = 0;
       for (const part of shown) {
         const to = Math.min(share, from + part.share);
-        ink += `<path fill="${part.ink}"${part.faded ? ' fill-opacity="0.28"' : ""} d="${span(from, to)}"/>`;
+        ink += `<path style="fill:${part.faded ? `color-mix(in srgb, ${part.ink} 34%, var(--bg))` : part.ink}" d="${span(from, to)}"/>`;
         from = to;
       }
-      if (share - from >= 0.003) ink += `<path fill="var(--pen-graphite)" fill-opacity="0.5" d="${span(from, share)}"/>`;
+      if (share - from >= 0.003) ink += `<path style="fill:color-mix(in srgb, var(--pen-graphite) 55%, var(--bg))" d="${span(from, share)}"/>`;
     }
   }
   return `<svg class="ledger-meter-ink${share === null ? " unread" : ""}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true"><path class="ledger-trace" d="${whole}"/><g filter="url(#pen-marker-lite)">${ink}</g></svg>`;

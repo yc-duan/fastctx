@@ -289,7 +289,8 @@ export function track(usage: Usage, minutes: number): Track | null {
 }
 
 /** How one person's spending went through the week against a weekly cap,
- *  as a window's share: what they had spent by the end of each hour. */
+ *  as a window's share: what they had spent by the end of each hour. An
+ *  hour the week's start cut in two ends at the next whole hour. */
 export function allowanceTrack(usage: Usage, person: number, cap: number, now: number): Track | null {
   if (cap <= 0) return null;
   const points: [number, number][] = [];
@@ -297,7 +298,7 @@ export function allowanceTrack(usage: Usage, person: number, cap: number, now: n
   for (const hour of usage.hours) {
     if (hour.person !== person || hour.at < usage.week.start || hour.at >= now || !hour.usd) continue;
     spent += hour.usd;
-    points.push([Math.min(now, hour.at + HOUR_MS), spent / cap]);
+    points.push([Math.min(now, (Math.floor(hour.at / HOUR_MS) + 1) * HOUR_MS), spent / cap]);
   }
   return { points, last: spent / cap, resets: usage.week.end };
 }

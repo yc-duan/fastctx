@@ -55,7 +55,7 @@ import { DiffLines, RemoteDiff, diffPaint, keptDiff, memoryDiff } from "./diff-l
 import { headline, onlyWrites, tenseOf, writeHeadline } from "./tool";
 import { drawDiagrams } from "./diagrams";
 import { readTold, worldSaid, type WorldSaid } from "./told";
-import { allowanceOf, detailOf } from "../app/problem";
+import { allowanceOf, detailOf, heldOf } from "../app/problem";
 import { AnchorLayout, AnchoredHeight } from "../longview";
 import { FEW, LongText, type LongLines, type LongTextWords, type OtherSource } from "./long-text";
 import { Said, WholeOutput, outputPaint, type OpenedLines } from "./run-output";
@@ -188,6 +188,9 @@ interface Slot {
   prose?: StreamedProse;
   /** What is done to a message's turn, under its words. */
   acts?: HTMLElement;
+  /** The interface's own line, where the World's hold answered in the
+   *  model's place. */
+  held?: HTMLElement;
   stretch?: Stretch;
   findRevision?: number;
 }
@@ -993,7 +996,19 @@ export class ConversationView {
       slot.acts.className = "message-acts";
       slot.element.replaceChildren(slot.prose.element, slot.acts);
     }
-    slot.prose.update(entry.text, entry.writing);
+    // The hold's sentence is the World's, not the model's: said as the
+    // interface says an allowance reached, its words a hover away.
+    const held = entry.writing ? null : heldOf(entry.text);
+    slot.prose.element.hidden = !!held;
+    if (held) {
+      slot.held ??= slot.element.insertBefore(document.createElement("div"), slot.acts!);
+      const note = `<div class="note caution" title="${escape(entry.text)}">${escape(this.context.words.allowanceUsed(held))}</div>`;
+      if (slot.held.innerHTML !== note) slot.held.innerHTML = note;
+    } else {
+      slot.held?.remove();
+      delete slot.held;
+      slot.prose.update(entry.text, entry.writing);
+    }
     const acts = this.answerActs(entry);
     if (slot.acts!.innerHTML !== acts) slot.acts!.innerHTML = acts;
   }

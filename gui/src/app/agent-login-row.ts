@@ -24,12 +24,40 @@ import type { UsageWords } from "./usage/words";
 
 type Agent = "codex" | "claude";
 
+/** The oldest Claude Code the World starts conversations in
+ *  (`fastctx_hosts::claude::OLDEST`). */
+export const CLAUDE_OLDEST = "2.1.300";
+
+/** The newest version among the Claude Code programs a login uses, where
+ *  every one whose version is known is older than the World works with. */
+export function claudeTooOld(agent: Agent, programs: FoundProgram[], login: Login): string | null {
+  if (agent !== "claude") return null;
+  const versions = login.programs.map((index) => programs[index]?.version).filter((version): version is string => !!version);
+  if (!versions.length) return null;
+  const newest = versions.reduce((best, version) => (newer(version, best) ? version : best));
+  return newer(CLAUDE_OLDEST, newest) ? newest : null;
+}
+
+/** Whether version `a` is later than `b`, by their dotted numbers. */
+function newer(a: string, b: string): boolean {
+  const parts = (version: string) => (/^\D*(\d+(?:\.\d+)*)/.exec(version)?.[1] ?? "0").split(".").map(Number);
+  const [x, y] = [parts(a), parts(b)];
+  for (let index = 0; index < Math.max(x.length, y.length); index += 1) {
+    const difference = (x[index] ?? 0) - (y[index] ?? 0);
+    if (difference) return difference > 0;
+  }
+  return false;
+}
+
 export interface RowFacts {
   machine: string;
   agent: Agent;
   login: Login;
   /** The programs that use it, a line each, for its mark's hover. */
   versions: string;
+  /** The newest Claude Code it uses, where that is older than the World
+   *  starts conversations in. */
+  old: string | null;
   plan: string | null;
   /** The assistance it gives the reader, where that is how they use it. */
   assistsMe: { assist: AssistSeen; owner: string | null } | null;
@@ -59,6 +87,7 @@ export function loginRow(facts: RowFacts, { words, access, usage: usageWords, wh
     facts.plan ? `<span class="tag">${escape(planName(facts.plan))}</span>` : "",
     token ? `<span class="tag tag-token" title="${escape(words.tokenSaid)}">${escape(words.token)}</span>` : "",
     identity && !identity.logged_in ? `<span class="tag tag-warn">${escape(words.loggedOut)}</span>` : "",
+    facts.old ? `<span class="tag tag-warn" title="${escape(words.tooOldSaid(facts.old, CLAUDE_OLDEST))}">${escape(words.tooOld)}</span>` : "",
     login.drift && !changing ? driftTag(machine, login, words) : "",
   ].join("");
   const mine = facts.assistsMe ? assistedTag(facts.assistsMe, now, words, access, usageWords) : "";
@@ -89,7 +118,7 @@ function week(facts: RowFacts, usageWords: UsageWords, words: AgentLoginsWords):
   const tokens = usage.people.reduce((sum, person) => sum + person.week.tokens, 0);
   if (usage.usd) {
     const usd = usage.people.reduce((sum, person) => sum + valueOf(person.week, "usd"), 0);
-    return `<div class="logins-row-week"><span class="logins-row-key">${escape(key)}</span><span class="logins-row-big"><span class="logins-row-about" title="${escape(usageWords.aboutWhy)}">${escape(usageWords.about)}</span>${escape(usageWords.money(usd))}</span><span class="logins-row-small">${escape(usageWords.tokens(tokens))} ${escape(usageWords.tokenUnit)}</span></div>`;
+    return `<div class="logins-row-week"><span class="logins-row-key">${escape(key)}</span><span class="logins-row-big" title="${escape(usageWords.aboutWhy)}">${escape(usageWords.money(usd))}</span><span class="logins-row-small">${escape(usageWords.tokens(tokens))} ${escape(usageWords.tokenUnit)}</span></div>`;
   }
   return `<div class="logins-row-week"><span class="logins-row-key">${escape(key)}</span><span class="logins-row-big">${escape(usageWords.tokens(tokens))}</span><span class="logins-row-small">${escape(usageWords.tokenUnit)}</span></div>`;
 }

@@ -157,6 +157,13 @@ const ALLOWANCE = /the (weekly|daily) allowance of \$([\d.,]+) this login gives 
 const FABLE = /the Fable allowance of \$([\d.,]+) this login gives \S+ is used up until (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) UTC/;
 const FIVE_HOUR = /this login's five-hour window is past the (\d+)% it assists \S+ up to until (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) UTC/;
 
+/** The allowance reached, where `text` is all the World's hold answered
+ *  in the model's place as it stopped a request (`world-usage.md`, 协助的上限). */
+export function heldOf(text: string): Reached | null {
+  const said = text.trim();
+  return /^(the (weekly|daily|Fable) allowance|this login's five-hour window) .* UTC; (what is for it waits until then|its other models go on)$/.test(said) ? allowanceOf(said) : null;
+}
+
 /** The allowance reached and until when, where `text` says so. */
 export function allowanceOf(text: string): Reached | null {
   const spent = ALLOWANCE.exec(text);
