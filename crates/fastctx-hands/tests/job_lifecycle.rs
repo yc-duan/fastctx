@@ -229,6 +229,7 @@ async fn node(mut listener: Listener, world: WorldDir, machine: MachineName, not
         connection
             .send(
                 &serde_json::to_vec(&Welcome::Accepted {
+                    profiles: false,
                     machine: machine.clone(),
                     version: "test".into(),
                     node_lifetime: None,
@@ -238,7 +239,10 @@ async fn node(mut listener: Listener, world: WorldDir, machine: MachineName, not
             .await
             .unwrap();
         let ClientFrame::Call { id, call } =
-            serde_json::from_slice(&connection.recv().await.unwrap().unwrap()).unwrap();
+            serde_json::from_slice(&connection.recv().await.unwrap().unwrap()).unwrap()
+        else {
+            panic!("expected call")
+        };
         let Call::JobChanged { job, owner, town: _ } = call else { panic!("unexpected supervisor call") };
         let record = record::read(&world.job_owner(&machine, &owner).job_record(&job)).unwrap();
         notified.lock().unwrap().push(record);

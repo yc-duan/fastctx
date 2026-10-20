@@ -27,7 +27,7 @@ fn message(value: &Value) -> bool {
         return false;
     }
     let id = object.get("id");
-    if id.is_some_and(|id| !id.is_string() && !id.is_number() && !id.is_null()) {
+    if id.is_some_and(|id| !id.is_string() && !id.is_i64() && !id.is_u64() && !id.is_null()) {
         return false;
     }
     if let Some(method) = object.get("method") {

@@ -46,6 +46,10 @@ pub enum Call {
     /// The account's own layer (`world-user-config.md`) as `account` has it
     /// at `hub`; the one account the asking session works for, or this
     /// computer is logged in to, when none is named.
+    /// A dedicated JSON-RPC stream for the calling account conversation.
+    McpRelay {
+        name: String,
+    },
     ProfileRead {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         hub: Option<crate::HubName>,
@@ -686,7 +690,9 @@ pub enum Reply {
     ProfileWritten {
         version: u64,
     },
-    Mcp(crate::mcp::McpReply),
+    Mcp {
+        result: crate::mcp::McpReply,
+    },
     Features(crate::features::Features),
     ComposerUploaded(Box<crate::composer::UploadResult>),
     Composer(Box<crate::composer::Updated>),

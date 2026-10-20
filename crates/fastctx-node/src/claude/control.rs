@@ -316,6 +316,7 @@ pub(super) async fn selection(
             .flatten()
     };
     Ok(fastctx_types::agents::SessionOptions {
+        mcp_off: initial.mcp_off,
         model: selected.as_ref().and_then(|value| value["model"].as_str()).map(str::to_owned).or(initial.model),
         reasoning_effort: selected
             .as_ref()

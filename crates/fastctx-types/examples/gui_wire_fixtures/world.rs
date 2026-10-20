@@ -295,6 +295,7 @@ fn nodes() -> Vec<NodesReply> {
         path_separator: if os == "windows" { '\\' } else { '/' },
         case_sensitive: os != "windows",
         version: "fixture-version".into(),
+        mcp: true,
         completion_receipts: false,
         upload_resumes: false,
         stats: lifetime,

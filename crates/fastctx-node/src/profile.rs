@@ -5,6 +5,8 @@ use fastctx_net::link::Link;
 use fastctx_types::access::Acting;
 use fastctx_types::ipc::Failure;
 use fastctx_types::{AccountName, HubName};
+pub(crate) mod session;
+
 use std::sync::Arc;
 
 pub(crate) fn scope(

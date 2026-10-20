@@ -69,7 +69,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     let assisting = node.works_here(&source.acting).is_err();
     let at = Timestamp::now();
     let about = About {
-        mcp_off: Default::default(),
+        mcp_off: source.mcp_off.clone(),
         id: id.clone(),
         host: Host { agent: source.host.agent, client: "claude-code".into(), version: source.host.version },
         machine: node.machine(),
@@ -91,7 +91,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         crate::session_options::keep(
             node,
             &id,
-            &fastctx_types::agents::SessionOptions { model: model.clone(), reasoning_effort: effort.clone() },
+            &fastctx_types::agents::SessionOptions { model: model.clone(), reasoning_effort: effort.clone(), mcp_off: source.mcp_off.clone() },
         )?;
         let settings = directory.claude_settings();
         let instructions = directory.claude_instructions();

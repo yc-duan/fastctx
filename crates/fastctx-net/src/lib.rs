@@ -31,6 +31,7 @@ pub mod lines_read;
 pub mod link;
 pub mod listen;
 pub mod login;
+pub mod mcp_test;
 pub mod message;
 pub mod moving;
 pub mod peer;

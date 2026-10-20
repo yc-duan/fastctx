@@ -194,6 +194,7 @@ pub async fn ask_here(
         node,
         &id,
         &fastctx_types::agents::SessionOptions {
+            mcp_off: Default::default(),
             model: started.callee.model.clone(),
             reasoning_effort: started.callee.effort.clone(),
         },

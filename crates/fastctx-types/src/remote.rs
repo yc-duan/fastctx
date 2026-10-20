@@ -23,6 +23,13 @@ use crate::{AgentName, ResidentId, TownName};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum RemoteCall {
+    Mcp {
+        mcp: crate::mcp::MachineCall,
+    },
+    /// A dedicated bidirectional JSON-RPC connection, owned by this call.
+    McpServe {
+        name: String,
+    },
     /// The user's shared composer, addressed directly to its resident machine.
     Composer {
         resident: ResidentId,
@@ -332,6 +339,8 @@ pub enum RemoteCall {
     },
     /// Open a session there for the user, as `Call::Open`.
     Open {
+        #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+        mcp_off: std::collections::BTreeSet<String>,
         agent: AgentName,
         town: Option<TownName>,
         text: String,
@@ -447,7 +456,9 @@ impl RemoteCall {
     /// check it.
     pub fn purpose(&self) -> Purpose {
         match self {
-            RemoteCall::Run { .. }
+            RemoteCall::Mcp { .. }
+            | RemoteCall::McpServe { .. }
+            | RemoteCall::Run { .. }
             | RemoteCall::WordsCame { .. }
             | RemoteCall::TurnInterrupted { .. }
             | RemoteCall::Forget { .. }
@@ -515,6 +526,9 @@ impl RemoteCall {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum RemoteReply {
+    Mcp {
+        result: crate::mcp::MachineReply,
+    },
     ComposerUploaded(Box<crate::composer::UploadResult>),
     Composer(Box<crate::composer::Updated>),
     PageAction {

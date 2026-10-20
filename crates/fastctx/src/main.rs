@@ -16,16 +16,20 @@ mod copy;
 mod data;
 mod first_program;
 mod host_change;
+mod hub_intake;
 mod hub_retire;
 mod journal;
 mod keep;
+mod mcp;
+mod mcp_child;
+mod mcp_relay;
 mod on;
 mod output;
 mod page;
 mod paths;
+mod profile;
 mod program;
 mod project;
-mod hub_intake;
 mod proxy;
 mod renew;
 mod secret;
@@ -65,6 +69,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// The account's MCP servers: list, add, import, test and remove.
+    Mcp(mcp::McpArgs),
+    /// Read or change the account's instructions and host settings.
+    Profile(profile::ProfileArgs),
+    #[command(hide = true)]
+    McpRelay { name: String },
+    #[command(hide = true)]
+    McpChild {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<std::ffi::OsString>,
+    },
     /// Open the World in this terminal: projects, agents, machines, and a
     /// conversation with any agent on any machine.
     Ui,
@@ -340,6 +355,10 @@ fn main() -> ExitCode {
     }
     // An old fastctx's upgrader may have started this version: it waits to
     // hear that it is healthy before anything else happens.
+    if std::env::args_os().nth(1).is_some_and(|arg| arg == "mcp-child") {
+        let args = std::env::args_os().skip(2).skip_while(|arg| arg == "--").collect();
+        return finish(mcp_child::run(args).map(|()| ExitCode::SUCCESS));
+    }
     let readonly_uninstall = std::env::args_os().skip(1).take(2).eq(["uninstall", "plan"]);
     if !readonly_uninstall && let Err(error) = update::finalize() {
         eprintln!("fastctx: {error:#}");
@@ -371,6 +390,10 @@ fn main() -> ExitCode {
             | Command::Service(_)
             | Command::Server(_)
             | Command::Hub(world::HubCommand::Serve { .. })
+            | Command::Mcp(_)
+            | Command::Profile(_)
+            | Command::McpRelay { .. }
+            | Command::McpChild { .. }
             | Command::Serve { .. }
             | Command::Apply(_)
             | Command::Unapply(_)
@@ -452,6 +475,10 @@ fn main() -> ExitCode {
         Command::ServiceHost { name } => fastctx_install::service::run_host(&name),
         #[cfg(windows)]
         Command::ServiceCheck { name } => fastctx_install::service::check_guardian(&name),
+        Command::Mcp(args) => mcp::run(args),
+        Command::Profile(args) => profile::run(args),
+        Command::McpRelay { name } => mcp_relay::run(name),
+        Command::McpChild { args } => mcp_child::run(args),
         Command::Serve { writer: _, writes } => serve(writes == "off"),
         Command::View(args) => return told(finish(view::run(args))),
         Command::Edit(args) => return told(finish(writers::edit(args))),

@@ -30,7 +30,7 @@ impl World {
         mcp: McpCall,
     ) -> Result<McpReply, Error> {
         match self.ask(Call::Mcp { hub, account, mcp }).await? {
-            Reply::Mcp(reply) => Ok(reply),
+            Reply::Mcp { result: reply } => Ok(reply),
             other => Err(Error::Unexpected(format!("{other:?}"))),
         }
     }

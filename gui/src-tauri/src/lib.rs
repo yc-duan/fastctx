@@ -8,7 +8,6 @@ mod accounts;
 #[cfg(target_os = "android")]
 mod android;
 mod collab;
-mod profile;
 mod composer;
 mod connection;
 #[cfg(desktop)]
@@ -17,6 +16,7 @@ mod features;
 mod hub_moving;
 mod item_details;
 mod kept;
+mod profile;
 mod transcript;
 mod updates;
 mod world_watch;
@@ -564,7 +564,7 @@ async fn open(
 ) -> Result<Spoken, String> {
     let agent = AgentName::try_from(agent.as_str()).map_err(|error| error.to_string())?;
     let town = town.map(|town| TownName::try_from(town).map_err(|error| error.to_string())).transpose()?;
-    let options = fastctx_types::agents::SessionOptions { model, reasoning_effort: effort };
+    let options = fastctx_types::agents::SessionOptions { model, reasoning_effort: effort, ..Default::default() };
     let (attachments, choices) = (attachments.unwrap_or_default(), choices.unwrap_or_default());
     let said = shell
         .world()

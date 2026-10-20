@@ -525,6 +525,7 @@ async fn put_aside(node: &Arc<Node>, link: &Arc<Link>) -> Result<std::path::Path
         crate::own_collab::take_back(node, link);
     }
     link.stop();
+    crate::mcp::store::leave(node, &hub).map_err(Failure::new)?;
     node.links.write().expect("never poisoned").remove(&hub);
     node.ways_changed();
     // Its view is gone, and every interface shows the World without it.
@@ -580,6 +581,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         completion_receipts: true,
         upload_resumes: true,
         stats: true,
+        mcp: true,
         shell: shell(),
         form: Some(form()),
         node_lifetime: Some(Box::new(node.lifetime.clone())),
@@ -734,6 +736,13 @@ impl fastctx_net::link::Node for Handler {
                 return tokio::select! { result = reading => result, () = stream.closed() => Err(Failure::new("the read's caller disconnected")) };
             }
             match call {
+                RemoteCall::Mcp { mcp } => crate::mcp::answer(&node, &hub, &caller.account, mcp)
+                    .await
+                    .map(|result| RemoteReply::Mcp { result }),
+                RemoteCall::McpServe { name } => {
+                    let stream = stream.ok_or_else(|| Failure::new("MCP requires a data connection"))?;
+                    crate::mcp::serve(&node, &hub, &caller.account, &name, stream).await.map(|()| RemoteReply::Set)
+                }
                 RemoteCall::PageAction { source, action } => crate::pages::actions::answer(&node, source, action)
                     .await
                     .map(|result| RemoteReply::PageAction { result }),
@@ -900,9 +909,21 @@ impl fastctx_net::link::Node for Handler {
                     let stream = stream.ok_or_else(|| Failure::new("logical rows require a data connection"))?;
                     crate::lines::reading::remote(&node, &link, from, request, true, read, stream).await
                 }
-                RemoteCall::Open { agent, town, text, model, reasoning_effort, attachments, focus, home, files_on } => {
-                    let options = fastctx_types::agents::SessionOptions { model, reasoning_effort };
-                    let choices = fastctx_types::agents::Choices { account: None, focus, home, files_on, mcp_off: Default::default() };
+                RemoteCall::Open {
+                    agent,
+                    town,
+                    text,
+                    model,
+                    reasoning_effort,
+                    attachments,
+                    focus,
+                    home,
+                    files_on,
+                    mcp_off,
+                } => {
+                    let options =
+                        fastctx_types::agents::SessionOptions { model, reasoning_effort, ..Default::default() };
+                    let choices = fastctx_types::agents::Choices { account: None, focus, home, files_on, mcp_off };
                     let (resident, landed) =
                         crate::talk::open_here(&node, &from, acting, agent, town, text, options, attachments, choices)
                             .await?;
@@ -1177,6 +1198,10 @@ impl fastctx_net::link::Node for Handler {
     fn place_ended(&self, dissolved: bool, then: Option<fastctx_types::uninstall::Then>) {
         let Some(node) = self.node.upgrade() else { return };
         let hub = self.hub.clone();
+        if let Err(error) = crate::mcp::store::leave(&node, &hub) {
+            node.log.line(format_args!("removing MCP commands after leaving the network: {error}"));
+        }
+        node.views_changed();
         if dissolved {
             tokio::spawn(async move {
                 if let Err(failure) = left_dissolved(&node, &hub).await {
@@ -1202,6 +1227,9 @@ impl fastctx_net::link::Node for Handler {
     /// to: its user is told who, from the views before and after.
     fn directory_changed(&self) {
         let Some(node) = self.node.upgrade() else { return };
+        if let Err(error) = crate::mcp::store::sweep(&node, &self.hub) {
+            node.log.line(format_args!("collecting removed MCP commands: {error}"));
+        }
         crate::admitted::notice(&node, &self.hub);
         crate::hub_arrival::check(&node, &self.hub);
         // The machines each session may use are in its tools' descriptions.

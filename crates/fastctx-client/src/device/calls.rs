@@ -55,6 +55,11 @@ impl Device {
                 let token = session.link.account_change(&account, change).await.map_err(failed)?;
                 return Ok((Reply::Changed { token }, here()));
             }
+            Call::Mcp { hub, account, mcp } => {
+                let session = self.on_hub(hub.as_ref())?;
+                let account = profile_account(&session, account)?;
+                return Ok((Reply::Mcp { result: super::mcp::call(&session.link, &account, mcp).await? }, here()));
+            }
             Call::ProfileRead { hub, account } => {
                 let session = self.on_hub(hub.as_ref())?;
                 let account = profile_account(&session, account)?;
@@ -178,6 +183,7 @@ impl Device {
                     node.ok_or_else(|| failed("choose a machine to open a conversation; no agents live on a device"))?;
                 chosen = choices.account;
                 let open = RemoteCall::Open {
+                    mcp_off: choices.mcp_off.clone(),
                     agent,
                     town,
                     text,
@@ -253,6 +259,21 @@ impl Device {
             }
             None => session.account_for(&machine, purpose)?,
         };
+        let needs_profile = match &remote {
+            RemoteCall::Manage { action: fastctx_types::management::Management::Mcp { .. }, .. } => true,
+            RemoteCall::Open { mcp_off, .. } => {
+                let profile = session.link.profile_read(&account).map_err(failed)?.profile;
+                !mcp_off.is_empty()
+                    || !profile.prompt.is_empty()
+                    || !profile.claude.is_empty()
+                    || !profile.codex.is_empty()
+                    || !profile.servers.is_empty()
+            }
+            _ => false,
+        };
+        if needs_profile {
+            super::mcp::supports(&session.link, &account, &machine).await?;
+        }
         let answer = if matches!(
             &remote,
             RemoteCall::Thumbnail { .. } | RemoteCall::AttachmentThumbnail { .. } | RemoteCall::Lines { .. }
@@ -441,7 +462,10 @@ fn actors(session: &Session) -> Vec<(MachineName, fastctx_types::AccountName)> {
         .collect()
 }
 
-fn profile_account(session: &Session, account: Option<fastctx_types::AccountName>) -> Result<fastctx_types::AccountName, Error> {
+fn profile_account(
+    session: &Session,
+    account: Option<fastctx_types::AccountName>,
+) -> Result<fastctx_types::AccountName, Error> {
     let view = session.link.view();
     let logins = view.me().map(|me| &me.logins).ok_or_else(|| failed("this device has no account"))?;
     match account {
