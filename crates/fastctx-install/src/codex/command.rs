@@ -136,13 +136,5 @@ fn default_unix_path() -> Result<OsString, String> {
 
 #[cfg(unix)]
 fn executable_unix(path: &Path) -> bool {
-    use std::os::unix::ffi::OsStrExt;
-
-    if !path.is_file() {
-        return false;
-    }
-    let Ok(path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else { return false };
-    // The kernel checks the effective identity and ACLs, not merely whether
-    // any of the three mode-bit classes has an execute bit set.
-    unsafe { libc::faccessat(libc::AT_FDCWD, path.as_ptr(), libc::X_OK, libc::AT_EACCESS) == 0 }
+    fastctx_platform::unix_executable::is_executable(path)
 }
