@@ -161,7 +161,7 @@ pub struct Held {
 /// whether its World's node runs as a service.
 const LOOK: &str = r#"hostname
 printf '\036'
-ss -ltnH 2>/dev/null | awk '{print $4}'
+ss -ltn 2>/dev/null | awk '{print $4}'
 printf '\036'
 h="$HOME/.fastctx/hub"; f="$HOME/.fastctx/bin/fastctx"
 if [ -e "$h" ]; then echo held; [ -x "$f" ] && "$f" hub show --dir "$h" 2>/dev/null; fi

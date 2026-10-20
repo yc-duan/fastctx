@@ -151,6 +151,7 @@ def main():
     parser.add_argument("--expect-bash", metavar="VERSION", help="the version `run` must find bash at, such as 3.2")
     parser.add_argument("--managed", type=Path, metavar="ARCHIVE",
                         help="on Windows, the release archive a managed computer's line installs, run as SYSTEM")
+    parser.add_argument("--expect-seccomp", action="store_true", help="verify the old-kernel filter in services and run/on")
     args = parser.parse_args()
     root = Path(tempfile.mkdtemp(prefix="fastctx-smoke-", dir=os.environ.get("RUNNER_TEMP")))
     lab = Lab(args.program.resolve(), root)
@@ -186,7 +187,16 @@ def main():
         code, out = lab.run("alpha", "copy", f"beta:{target}", str(back))
         check("alpha copies it back from beta", code == 0 and back.is_file() and back.read_bytes() == source.read_bytes(), out)
 
-        hands(lab, args.expect_bash)
+        hands(lab, args.expect_bash, args.expect_seccomp)
+        if args.expect_seccomp:
+            for who, kind, directory in [("alpha", "hub", root / "alpha/hub"), ("alpha", "node", root / "alpha"), ("beta", "node", root / "beta")]:
+                code, out = lab.run(who, "service", kind, "status", "--dir", str(directory), "--executable", str(root / who / "bin/fastctx"))
+                status = json.loads(out) if code == 0 else {}
+                pid = service_process(status) if status.get("installed") else None
+                process = Path(f"/proc/{pid}/status").read_text() if pid else ""
+                start = subprocess.run(["systemctl", "show", "-p", "ExecStart", status.get("name", "")], capture_output=True, text=True)
+                check(f"{who}'s {kind} service inherits the verified old-kernel filter",
+                      pid and re.search(r"^Seccomp:\s+2$", process, re.M) and "oldkernel" in start.stdout, process + start.stdout + start.stderr)
 
         if args.service:
             service(lab, root)
@@ -221,7 +231,7 @@ def main():
     return 0 if passed == len(RESULTS) else 1
 
 
-def hands(lab, expect_bash):
+def hands(lab, expect_bash, expect_seccomp=False):
     """An agent's `run` on alpha, and the part of its script `on` sends to beta with the script's state."""
     marker = uuid.uuid4().hex[:8]
     try:
@@ -244,6 +254,10 @@ def hands(lab, expect_bash):
             versions = re.findall(r"^(?:here alpha|there beta \w+) (\S+)", text, re.M)
             check(f"both run in bash {expect_bash}", len(versions) == 2
                   and all(version.startswith(expect_bash) for version in versions), versions)
+        if expect_seccomp:
+            text, failed = agent.run("awk '/^Seccomp:/ {print \"local-filter \" $2}' /proc/$$/status\n"
+                                     "on beta <<'EOF'\nawk '/^Seccomp:/ {print \"remote-filter \" $2}' /proc/$$/status\nEOF\n")
+            check("run and on inherit the old-kernel filter", not failed and "local-filter 2" in text and "remote-filter 2" in text, text)
     except Exception as error:  # noqa: BLE001 - reported as the check's failure
         check("an agent's run answers", False, error)
     finally:
@@ -406,7 +420,7 @@ def managed_mac(lab, root, line):
 
 def node_processes(root, who):
     """The process ids of the nodes serving `who`'s World, by their command lines."""
-    listing = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True).stdout
+    listing = subprocess.run(["ps", "-e", "-o", "pid=", "-o", "args="], capture_output=True, text=True).stdout
     serving = re.compile(rf"\snode\s.*--dir {re.escape(str(root / who))}(\s|$)")
     return {int(line.split(None, 1)[0]) for line in listing.splitlines() if serving.search(line)}
 
@@ -418,8 +432,8 @@ def service_process(status):
         printed = subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{name}"], capture_output=True, text=True).stdout
         found = re.search(r"^\s*pid = (\d+)", printed, re.M)
     else:
-        printed = subprocess.run(["systemctl", "show", "-p", "MainPID", "--value", name], capture_output=True, text=True).stdout
-        found = re.match(r"\s*(\d+)", printed)
+        printed = subprocess.run(["systemctl", "show", "-p", "MainPID", name], capture_output=True, text=True).stdout
+        found = re.match(r"MainPID=(\d+)", printed)
     return int(found.group(1)) if found and int(found.group(1)) > 0 else None
 
 
@@ -482,7 +496,7 @@ def diagnose(lab, root):
                 print("\n".join(tail(helper / name, 40)))
     if os.name != "nt":
         print("== fastctx processes")
-        listing = subprocess.run(["ps", "-eo", "pid=,ppid=,args="], capture_output=True, text=True).stdout
+        listing = subprocess.run(["ps", "-e", "-o", "pid=", "-o", "ppid=", "-o", "args="], capture_output=True, text=True).stdout
         print("\n".join(line.replace(str(root), "<root>") for line in listing.splitlines()
                         if str(root) in line or "fastctx" in line))
 

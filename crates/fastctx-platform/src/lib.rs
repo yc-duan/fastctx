@@ -34,6 +34,8 @@ pub mod legacy_text;
 pub mod local_path;
 pub mod lock;
 pub mod memory;
+#[cfg(target_os = "linux")]
+pub mod mountinfo;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod output_pipe;
 pub mod owned_directory;
@@ -52,6 +54,7 @@ pub mod rolling_log;
 pub mod service_channel;
 #[cfg(windows)]
 pub mod shell_process;
+pub mod shell_quote;
 pub mod system;
 pub mod system_home;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
@@ -60,6 +63,10 @@ pub mod terminate;
 pub mod tree;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod uninstall_gate;
+#[cfg(unix)]
+pub mod unix_account;
+#[cfg(unix)]
+pub mod unix_executable;
 #[cfg(unix)]
 mod unix_fds;
 pub mod unix_socket;

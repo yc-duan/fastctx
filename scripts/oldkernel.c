@@ -1,7 +1,7 @@
 // Runs a program as an older Linux would: every x86_64 system call numbered FIRST_MISSING or above
-// answers ENOSYS, for the program and everything it starts. 314 leaves what Linux 3.13 had, the
-// calls of a CentOS 7 kernel. What such a kernel has but refuses as invalid is refused too: a
-// timer descriptor on the boot-time or alarm clocks, which came in Linux 3.15.
+// answers ENOSYS, for the program and everything it starts. 314 leaves the calls upstream Linux
+// 3.13 had; distribution backports can differ. Arguments missing on 3.10 are refused too: a
+// timer descriptor on the boot-time clock (3.15) or alarm clocks (3.11).
 //   oldkernel FIRST_MISSING PROGRAM [ARGS...]
 #define _GNU_SOURCE
 #include <errno.h>
@@ -44,6 +44,21 @@ int main(int argc, char **argv) {
         perror("seccomp");
         return 1;
     }
+#if defined(__x86_64__)
+    if (first == 314) {
+        char byte;
+        errno = 0;
+        if (syscall(__NR_getrandom, &byte, 1, 0) != -1 || errno != ENOSYS) {
+            fprintf(stderr, "oldkernel: getrandom was not refused with ENOSYS\n");
+            return 1;
+        }
+        errno = 0;
+        if (syscall(__NR_timerfd_create, CLOCK_BOOTTIME, 0) != -1 || errno != EINVAL) {
+            fprintf(stderr, "oldkernel: BOOTTIME timerfd was not refused with EINVAL\n");
+            return 1;
+        }
+    }
+#endif
     execvp(argv[2], argv + 2);
     perror("exec");
     return 127;

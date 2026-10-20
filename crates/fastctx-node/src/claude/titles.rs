@@ -26,10 +26,9 @@ pub(super) async fn start(node: &Arc<Node>, resident: &ResidentId, directory: &P
         None => path.clone(),
     };
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        if event
-            .as_ref()
-            .map_or(true, |event| crate::file_events::changes(event) && event.paths.iter().any(|path| path == &watched))
-        {
+        if event.as_ref().map_or(true, |event| {
+            event.need_rescan() || crate::file_events::changes(event) && event.paths.iter().any(|path| path == &watched)
+        }) {
             let _ = changed.try_send(());
         }
     })

@@ -115,9 +115,9 @@ fn elevated(action: &str, root: &Path, executable: &Path) -> anyhow::Result<Kept
     let uid = std::fs::metadata(root)?.uid();
     Ok(Kept::Command(format!(
         "sudo {} service node {action} --dir {} --executable {} --uid {uid}",
-        executable.display(),
-        root.display(),
-        executable.display()
+        fastctx_platform::shell_quote::path(executable),
+        fastctx_platform::shell_quote::path(root),
+        fastctx_platform::shell_quote::path(executable)
     )))
 }
 

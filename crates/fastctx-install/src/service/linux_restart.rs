@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use anyhow::Context as _;
+use anyhow::{Context as _, ensure};
 use fastctx_platform::atomic::{Permissions, publish};
 
 const RULES: &str = "/etc/sudoers.d";
@@ -31,10 +31,15 @@ fn command(systemctl: &Path, unit: &str) -> String {
 /// As root: lets the account with `uid` restart `unit` from now on. Nothing
 /// is written for root itself, nor where the rule cannot be checked first.
 pub(super) fn allow(unit: &str, uid: u32) -> anyhow::Result<()> {
-    if uid == 0 || !Path::new(RULES).is_dir() {
+    if uid == 0 {
         return Ok(());
     }
-    let (Some(systemctl), Some(user)) = (systemctl(), user_name(uid)) else { return Ok(()) };
+    ensure!(
+        Path::new(RULES).is_dir(),
+        "{RULES} is absent; automatic service restart needs a sudoers include directory"
+    );
+    let systemctl = systemctl().context("systemctl is not found; cannot authorize service restart")?;
+    let user = user_name(uid)?;
     let text = format!(
         "# Written by Fastctx: {user} restarts its own boot service, and nothing else, so a new release takes over.\n{user} ALL=(root) NOPASSWD: {}\n",
         command(&systemctl, unit)
@@ -44,10 +49,9 @@ pub(super) fn allow(unit: &str, uid: u32) -> anyhow::Result<()> {
     let candidate = Path::new(RULES).join(format!(".{unit}.check"));
     publish(&candidate, text.as_bytes(), Permissions::Private)
         .with_context(|| format!("writing {}", candidate.display()))?;
-    let checked = Command::new("visudo").args(["-c", "-q", "-f"]).arg(&candidate).stdout(Stdio::null()).status();
-    if !checked.is_ok_and(|status| status.success()) {
+    if let Err(error) = super::checked(Command::new("visudo").args(["-c", "-f"]).arg(&candidate)) {
         let _ = std::fs::remove_file(&candidate);
-        return Ok(());
+        return Err(error).context("validating the automatic restart sudo rule");
     }
     use std::os::unix::fs::PermissionsExt as _;
     std::fs::set_permissions(&candidate, std::fs::Permissions::from_mode(0o440))?;
@@ -63,20 +67,17 @@ pub(super) fn forbid(unit: &str) -> anyhow::Result<()> {
     }
 }
 
-/// Whether this process may restart `unit`: as root, or by its rule.
-pub(super) fn may(unit: &str) -> anyhow::Result<bool> {
+/// Checks permission to restart and retains the policy or execution failure.
+pub(super) fn may(unit: &str) -> anyhow::Result<()> {
     if fastctx_platform::elevation::is_elevated()? {
-        return Ok(true);
+        return Ok(());
     }
-    let Some(systemctl) = systemctl() else { return Ok(false) };
-    let listed = Command::new("sudo")
-        .args(["-n", "-l"])
-        .args(command(&systemctl, unit).split(' '))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    Ok(listed.is_ok_and(|status| status.success()))
+    let systemctl = systemctl().context("systemctl is not found; cannot restart the boot service")?;
+    super::checked(
+        Command::new("sudo").args(["-n", "-l"]).args(command(&systemctl, unit).split(' ')).stdin(Stdio::null()),
+    )
+    .context("sudo does not authorize automatic service restart; run `fastctx renew guardian` to authorize it")?;
+    Ok(())
 }
 
 /// Restarts `unit`, as root or by its rule.
@@ -92,19 +93,14 @@ pub(super) fn restart(unit: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The account name of `uid`, when it is one a sudo rule can name plainly.
-fn user_name(uid: u32) -> Option<String> {
-    let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
-    let mut buffer = vec![0 as libc::c_char; 16 * 1024];
-    let mut found: *mut libc::passwd = std::ptr::null_mut();
-    // SAFETY: the entry and its buffer outlive the call, which writes the
-    // name into the buffer and points `found` at the entry, or leaves it null.
-    let code = unsafe { libc::getpwuid_r(uid, &mut entry, buffer.as_mut_ptr(), buffer.len(), &mut found) };
-    if code != 0 || found.is_null() || entry.pw_name.is_null() {
-        return None;
-    }
-    // SAFETY: getpwuid_r succeeded, so pw_name points at a NUL-terminated
-    // string in the buffer.
-    let name = unsafe { std::ffi::CStr::from_ptr(entry.pw_name) }.to_str().ok()?.to_string();
-    (!name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))).then_some(name)
+/// The account must be representable by one literal sudoers user name.
+fn user_name(uid: u32) -> anyhow::Result<String> {
+    let account = fastctx_platform::unix_account::lookup(uid)?
+        .with_context(|| format!("user {uid} has no readable account record; cannot write its sudo rule"))?;
+    let name = account.name.into_string().map_err(|_| anyhow::anyhow!("user {uid} has a non-UTF-8 account name"))?;
+    ensure!(
+        !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)),
+        "user {uid} has an account name that cannot be used literally in a sudo rule"
+    );
+    Ok(name)
 }

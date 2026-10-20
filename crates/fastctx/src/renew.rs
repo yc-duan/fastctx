@@ -279,8 +279,12 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
         // a LaunchDaemon, needs an administrator to start the new program.
         // A Linux node's unit restarts as root or by the rule its install
         // left (`fastctx_install::service::Service::may_restart`).
+        let restart_refusal = if cfg!(target_os = "linux") { service.may_restart().err() } else { None };
+        if let Some(error) = &restart_refusal {
+            refused = Some(format!("{error:#}"));
+        }
         if !staged
-            || (cfg!(target_os = "linux") && !service.may_restart()?)
+            || restart_refusal.is_some()
             || (cfg!(target_os = "macos")
                 && !fastctx_platform::elevation::is_elevated()?
                 && !fastctx_install::service::registered_hubs(root)?.is_empty())
@@ -406,12 +410,18 @@ fn follow_hubs(root: &Path, digest: &str) -> anyhow::Result<()> {
         if !hub.status()?.installed || (cfg!(windows) && hub.guardian_current(digest)?) {
             continue;
         }
-        let ready = if cfg!(windows) { hub.adopt_guardian(digest)? } else { hub.may_restart()? };
+        let ready = if cfg!(windows) {
+            hub.adopt_guardian(digest)?
+        } else {
+            hub.may_restart()
+                .with_context(|| format!("authorizing restart of the hub kept at {}", directory.display()))?;
+            true
+        };
         anyhow::ensure!(
             ready,
             "the hub kept at {} takes the new program once an administrator runs `fastctx renew guardian --dir {}`",
             directory.display(),
-            root.display()
+            if cfg!(windows) { root.display().to_string() } else { fastctx_platform::shell_quote::path(root) }
         );
         hub.restart_guardian(digest).with_context(|| format!("restarting the hub kept at {}", directory.display()))?;
     }

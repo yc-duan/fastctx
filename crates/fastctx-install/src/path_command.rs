@@ -94,11 +94,7 @@ fn executable(path: &Path) -> bool {
         return false;
     }
     #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt as _;
-        let Ok(path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else { return false };
-        unsafe { libc::faccessat(libc::AT_FDCWD, path.as_ptr(), libc::X_OK, libc::AT_EACCESS) == 0 }
-    }
+    return fastctx_platform::unix_executable::is_executable(path);
     #[cfg(not(unix))]
     true
 }

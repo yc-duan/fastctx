@@ -378,41 +378,43 @@ mod imp {
 
     pub fn memory() -> io::Result<MemoryUse> {
         let text = std::fs::read_to_string("/proc/meminfo")?;
-        let field = |name: &str| -> u64 {
+        let field = |name: &str| -> io::Result<Option<u64>> {
             text.lines()
                 .find_map(|line| line.strip_prefix(name)?.strip_prefix(':'))
-                .and_then(|rest| rest.split_whitespace().next()?.parse::<u64>().ok())
-                .unwrap_or(0)
-                * 1024
+                .map(|rest| {
+                    rest.split_whitespace()
+                        .next()
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .and_then(|value| value.checked_mul(1024))
+                        .ok_or_else(|| invalid("/proc/meminfo"))
+                })
+                .transpose()
         };
-        let total = field("MemTotal");
-        // A kernel before 3.14 says nothing of what is available: what is
-        // free and what its caches would give back stand for it.
-        let available = match field("MemAvailable") {
-            0 => field("MemFree") + field("Buffers") + field("Cached") + field("SReclaimable"),
-            available => available,
+        let total = field("MemTotal")?.unwrap_or(0);
+        // Only older kernels omit this estimate. Zero is a valid reading.
+        let available = match field("MemAvailable")? {
+            Some(available) => available,
+            None => {
+                field("MemFree")?.unwrap_or(0)
+                    + field("Buffers")?.unwrap_or(0)
+                    + field("Cached")?.unwrap_or(0)
+                    + field("SReclaimable")?.unwrap_or(0)
+            }
         };
-        let swap_total = field("SwapTotal");
+        let swap_total = field("SwapTotal")?.unwrap_or(0);
         Ok(MemoryUse {
             total,
             used: total.saturating_sub(available),
             swap_total,
-            swap_used: swap_total.saturating_sub(field("SwapFree")),
+            swap_used: swap_total.saturating_sub(field("SwapFree")?.unwrap_or(0)),
         })
     }
 
     /// The type of the filesystem mounted last at `point`.
     fn kind_at(point: &Path) -> String {
-        let Ok(text) = std::fs::read_to_string("/proc/self/mountinfo") else { return String::new() };
-        let wanted = point.to_string_lossy();
-        text.lines()
-            .filter_map(|line| {
-                let fields: Vec<&str> = line.split(' ').collect();
-                let separator = fields.iter().position(|field| *field == "-")?;
-                (fields.get(4)? == &wanted.as_ref())
-                    .then(|| fields.get(separator + 1).map(|kind| (*kind).to_string()))?
-            })
-            .next_back()
+        crate::mountinfo::read()
+            .ok()
+            .and_then(|mounts| mounts.into_iter().rev().find(|mount| mount.point == point).map(|mount| mount.kind))
             .unwrap_or_default()
     }
 
@@ -446,13 +448,16 @@ mod imp {
             let path = entry.path();
             let read = |file: &str| std::fs::read_to_string(path.join(file)).map(|text| text.trim().to_string());
             let number = |file: &str| read(file).ok().and_then(|text| text.parse::<u64>().ok());
-            // The speed is in megabits; a card that is down or virtual has
-            // none to say, or -1.
-            let speed = read("speed").ok().and_then(|text| text.parse::<i64>().ok()).filter(|mbits| *mbits > 0);
+            // sysfs reports Mbit/s. Reject signed/unsigned unknown sentinels
+            // and values above 1 Pbit/s rather than displaying driver garbage.
+            let speed = read("speed")
+                .ok()
+                .and_then(|text| text.parse::<u64>().ok())
+                .filter(|mbits| (1..=1_000_000_000).contains(mbits));
             cards.push(Traffic {
                 index: number("ifindex").unwrap_or(0) as u32,
-                up: read("operstate").is_ok_and(|state| state == "up"),
-                speed: speed.map(|mbits| mbits as u64 * 1_000_000),
+                up: read("operstate").is_ok_and(|state| state == "up" || state == "unknown"),
+                speed: speed.map(|mbits| mbits * 1_000_000),
                 received: number("statistics/rx_bytes").unwrap_or(0),
                 sent: number("statistics/tx_bytes").unwrap_or(0),
                 hardware: path.join("device").exists(),

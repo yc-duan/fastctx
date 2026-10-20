@@ -60,7 +60,7 @@ pub(super) async fn run(inner: Arc<Inner>, mut changes: Option<super::changes::C
                             inner.check.notify_one();
                             continue;
                         }
-                        reconnect(&inner, changed.expect("watching network and resume notifications"));
+                        reconnect(&inner, changed);
                         failures = 0;
                         continue 'sessions;
                     }
@@ -117,7 +117,7 @@ pub(super) async fn run(inner: Arc<Inner>, mut changes: Option<super::changes::C
                 tokio::select! {
                     _ = tokio::time::sleep(wait) => {},
                     changed = changed(&inner, &mut changes) => {
-                        reconnect(&inner, changed.expect("watching network and resume notifications"));
+                        reconnect(&inner, changed);
                         failures = 0;
                     }
                 }
@@ -126,16 +126,27 @@ pub(super) async fn run(inner: Arc<Inner>, mut changes: Option<super::changes::C
     }
 }
 
-async fn changed(inner: &Inner, changes: &mut Option<super::changes::Changes>) -> std::io::Result<&'static str> {
-    let platform = async {
-        match changes {
-            Some(changes) => changes.changed().await,
-            None => std::future::pending().await,
+async fn changed(inner: &Inner, changes: &mut Option<super::changes::Changes>) -> &'static str {
+    loop {
+        let result = {
+            let platform = async {
+                match changes {
+                    Some(changes) => changes.changed().await,
+                    None => std::future::pending().await,
+                }
+            };
+            tokio::select! {
+                result = platform => result,
+                () = inner.reconnect.notified() => Ok("the application reported a network change or resume"),
+            }
+        };
+        match result {
+            Ok(reason) => return reason,
+            Err(error) => {
+                *changes = None;
+                inner.node.log(format!("not watching network and resume notifications: {error}"));
+            }
         }
-    };
-    tokio::select! {
-        result = platform => result,
-        () = inner.reconnect.notified() => Ok("the application reported a network change or resume"),
     }
 }
 
