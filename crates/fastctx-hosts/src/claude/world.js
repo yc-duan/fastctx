@@ -762,6 +762,23 @@ async function sessionUsage($) {
   }
 }
 
+// The session's figures once a step has ended, when its cost total moved.
+// Claude Code adds each request's cost to that total, priced its own way, as
+// the request ends; read after every step, a long turn is counted, and held
+// to the account's allowances, as it goes rather than only once it ends. A
+// failure here never fails the step.
+async function stepMeasured($, context) {
+  try {
+    const usage = await sessionUsage($)
+    const total = usage?.cost?.usd
+    if (typeof total !== 'number' || total === context.measuredUsd) return
+    context.measuredUsd = total
+    await reports($, context).event('session', { happened: { event: 'changed', turn: null, change: { kind: 'usage', usage } } })
+  } catch (error) {
+    $.ui.log('World step usage: ' + String(error), { to: 'debug' })
+  }
+}
+
 async function startTurn($, context, e, next) {
   // A subagent's run is a turn of its own loop: the main loop's turn, its
   // state and what it takes are untouched (Claude Code reports one since
@@ -813,6 +830,7 @@ async function completeTurn($, context, e, next) {
   // them; what the cost total rose by since the turn began is the turn's.
   const usage = await sessionUsage($)
   if (usage) await reports($, context).event('session', { happened: { event: 'changed', turn: null, change: { kind: 'usage', usage } } })
+  if (typeof usage?.cost?.usd === 'number') context.measuredUsd = usage.cost.usd
   const before = context.spentBefore?.turn === e.turnId ? context.spentBefore.usd : undefined
   const total = usage?.cost?.usd
   const spent = typeof total === 'number' && typeof before === 'number' ? (total >= before ? total - before : total) : null
@@ -1020,7 +1038,9 @@ export function register(on) {
     const base = reports($, context)
     const shown = e.agentId === undefined ? context.shown : agentPresentation(context, e.agentId)
     const reported = e.agentId === undefined ? base : agentReports(base, e.agentId)
-    return yield* shown.step(reported, input, next)
+    const result = yield* shown.step(reported, input, next)
+    await stepMeasured($, context)
+    return result
   }).catch(async function* ($, e, next) { return yield* streamWithoutWorld($, 'turn.step', e, next) })
   on('tool.call', async ($, e, next) => {
     if (await removed($)) return next(e)
