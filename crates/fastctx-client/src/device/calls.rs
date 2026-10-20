@@ -23,7 +23,49 @@ impl Device {
         Box::pin(self.call_inner(call)).await
     }
 
-    async fn call_inner(self: &Arc<Self>, call: Call) -> Result<(Reply, MachineName), Error> {
+    async fn call_inner(self: &Arc<Self>, mut call: Call) -> Result<(Reply, MachineName), Error> {
+        if let Call::MachineUpdates { machine, update } = &call
+            && matches!(
+                update,
+                fastctx_types::update::UpdateCall::App { .. }
+                    | fastctx_types::update::UpdateCall::Fetch { .. }
+                    | fastctx_types::update::UpdateCall::Progress { .. }
+            )
+        {
+            return Err(failed(format!("only an interface on {machine} says what it is or brings packages there")));
+        }
+        let preferences = match &call {
+            Call::MachineUpdates {
+                machine,
+                update: fastctx_types::update::UpdateCall::Preferences { auto, relays },
+            } => Some((machine.clone(), *auto, *relays)),
+            _ => None,
+        };
+        if let Some((machine, auto, relays)) = preferences {
+            let running = self.sessions().iter().find_map(|session| {
+                session.link.versions().and_then(|n| n.machines.get(&machine).map(|m| m.kernel.clone()))
+            });
+            if running.as_deref().and_then(fastctx_types::update::release)
+                < fastctx_types::update::release(fastctx_types::update::ASKED_SINCE)
+            {
+                return Err(failed("this machine has not reported support for remote update settings"));
+            }
+            let (reply, _) = self
+                .call(Call::MachineUpdates {
+                    machine: machine.clone(),
+                    update: fastctx_types::update::UpdateCall::State,
+                })
+                .await?;
+            let Reply::Update(current) = reply else {
+                return Err(failed("the machine did not report its update settings"));
+            };
+            let update = if current.preferences {
+                fastctx_types::update::UpdateCall::Preferences { auto, relays }
+            } else {
+                fastctx_types::update::UpdateCall::Set { settings: current.settings.with_preferences(auto, relays) }
+            };
+            call = Call::MachineUpdates { machine, update };
+        }
         let here = || self.state().name.unwrap_or_else(|| MachineName::try_from("device").expect("a valid name"));
         match call {
             Call::AttachmentThumbnail { attachment, max } => {

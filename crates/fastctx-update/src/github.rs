@@ -328,5 +328,8 @@ pub async fn manifest_of(releases: &[Listed], version: &str) -> Result<Manifest,
         .iter()
         .find(|r| r.version == version)
         .ok_or_else(|| format!("GitHub lists no release {version} with a manifest"))?;
-    of(release).await.map_err(|failure| failure.why)
+    tokio::time::timeout(Duration::from_secs(50), of(release))
+        .await
+        .map_err(|_| format!("the manifest of {version} did not arrive within 50 seconds"))?
+        .map_err(|failure| failure.why)
 }

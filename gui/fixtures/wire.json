@@ -45,6 +45,14 @@
           },
           "updates_view": true
         },
+        "available": {
+          "version": "1.0.2",
+          "notes": "An update.",
+          "pub_date": "2026-10-20T12:00:00Z",
+          "platforms": {}
+        },
+        "automatic": "1.0.2",
+        "above_hub": true,
         "failed": {
           "version": "1.0.2",
           "target": "linux-x86_64-appimage",
@@ -57,7 +65,8 @@
         "stage": {
           "kind": "idle"
         },
-        "progress": false
+        "progress": true,
+        "preferences": true
       },
       {
         "settings": {
@@ -103,6 +112,14 @@
           },
           "updates_view": true
         },
+        "available": {
+          "version": "1.0.2",
+          "notes": "An update.",
+          "pub_date": "2026-10-20T12:00:00Z",
+          "platforms": {}
+        },
+        "automatic": "1.0.2",
+        "above_hub": true,
         "failed": {
           "version": "1.0.2",
           "target": "linux-x86_64-appimage",
@@ -115,7 +132,8 @@
         "stage": {
           "kind": "unknown"
         },
-        "progress": false
+        "progress": true,
+        "preferences": true
       },
       {
         "settings": {
@@ -161,6 +179,14 @@
           },
           "updates_view": true
         },
+        "available": {
+          "version": "1.0.2",
+          "notes": "An update.",
+          "pub_date": "2026-10-20T12:00:00Z",
+          "platforms": {}
+        },
+        "automatic": "1.0.2",
+        "above_hub": true,
         "failed": {
           "version": "1.0.2",
           "target": "linux-x86_64-appimage",
@@ -177,7 +203,8 @@
           "received": 0,
           "total": null
         },
-        "progress": false
+        "progress": true,
+        "preferences": true
       },
       {
         "settings": {
@@ -223,6 +250,14 @@
           },
           "updates_view": true
         },
+        "available": {
+          "version": "1.0.2",
+          "notes": "An update.",
+          "pub_date": "2026-10-20T12:00:00Z",
+          "platforms": {}
+        },
+        "automatic": "1.0.2",
+        "above_hub": true,
         "failed": {
           "version": "1.0.2",
           "target": "linux-x86_64-appimage",
@@ -239,7 +274,8 @@
           "received": 1,
           "total": 1024
         },
-        "progress": false
+        "progress": true,
+        "preferences": true
       },
       {
         "settings": {
@@ -285,6 +321,14 @@
           },
           "updates_view": true
         },
+        "available": {
+          "version": "1.0.2",
+          "notes": "An update.",
+          "pub_date": "2026-10-20T12:00:00Z",
+          "platforms": {}
+        },
+        "automatic": "1.0.2",
+        "above_hub": true,
         "failed": {
           "version": "1.0.2",
           "target": "linux-x86_64-appimage",
@@ -298,7 +342,8 @@
           "kind": "ready",
           "version": "1.0.2"
         },
-        "progress": false
+        "progress": true,
+        "preferences": true
       },
       {
         "settings": {
@@ -344,6 +389,14 @@
           },
           "updates_view": true
         },
+        "available": {
+          "version": "1.0.2",
+          "notes": "An update.",
+          "pub_date": "2026-10-20T12:00:00Z",
+          "platforms": {}
+        },
+        "automatic": "1.0.2",
+        "above_hub": true,
         "failed": {
           "version": "1.0.2",
           "target": "linux-x86_64-appimage",
@@ -357,7 +410,8 @@
           "kind": "waiting_idle",
           "version": "1.0.2"
         },
-        "progress": false
+        "progress": true,
+        "preferences": true
       },
       {
         "settings": {
@@ -403,6 +457,14 @@
           },
           "updates_view": true
         },
+        "available": {
+          "version": "1.0.2",
+          "notes": "An update.",
+          "pub_date": "2026-10-20T12:00:00Z",
+          "platforms": {}
+        },
+        "automatic": "1.0.2",
+        "above_hub": true,
         "failed": {
           "version": "1.0.2",
           "target": "linux-x86_64-appimage",
@@ -416,7 +478,8 @@
           "kind": "waiting_app",
           "version": "1.0.2"
         },
-        "progress": false
+        "progress": true,
+        "preferences": true
       },
       {
         "settings": {
@@ -462,6 +525,14 @@
           },
           "updates_view": true
         },
+        "available": {
+          "version": "1.0.2",
+          "notes": "An update.",
+          "pub_date": "2026-10-20T12:00:00Z",
+          "platforms": {}
+        },
+        "automatic": "1.0.2",
+        "above_hub": true,
         "failed": {
           "version": "1.0.2",
           "target": "linux-x86_64-appimage",
@@ -475,7 +546,8 @@
           "kind": "installing",
           "version": "1.0.2"
         },
-        "progress": false
+        "progress": true,
+        "preferences": true
       },
       {
         "settings": {
@@ -521,6 +593,14 @@
           },
           "updates_view": true
         },
+        "available": {
+          "version": "1.0.2",
+          "notes": "An update.",
+          "pub_date": "2026-10-20T12:00:00Z",
+          "platforms": {}
+        },
+        "automatic": "1.0.2",
+        "above_hub": true,
         "failed": {
           "version": "1.0.2",
           "target": "linux-x86_64-appimage",
@@ -534,7 +614,8 @@
           "kind": "administrator",
           "version": "1.0.2"
         },
-        "progress": false
+        "progress": true,
+        "preferences": true
       },
       {
         "settings": {
@@ -580,6 +661,14 @@
           },
           "updates_view": true
         },
+        "available": {
+          "version": "1.0.2",
+          "notes": "An update.",
+          "pub_date": "2026-10-20T12:00:00Z",
+          "platforms": {}
+        },
+        "automatic": "1.0.2",
+        "above_hub": true,
         "failed": {
           "version": "1.0.2",
           "target": "linux-x86_64-appimage",
@@ -594,7 +683,8 @@
           "version": "1.0.2",
           "phase": "returning_to_service"
         },
-        "progress": false
+        "progress": true,
+        "preferences": true
       },
       {
         "settings": {
@@ -640,6 +730,14 @@
           },
           "updates_view": true
         },
+        "available": {
+          "version": "1.0.2",
+          "notes": "An update.",
+          "pub_date": "2026-10-20T12:00:00Z",
+          "platforms": {}
+        },
+        "automatic": "1.0.2",
+        "above_hub": true,
         "failed": {
           "version": "1.0.2",
           "target": "linux-x86_64-appimage",
@@ -659,7 +757,8 @@
             "why": "the package does not match its signature"
           }
         },
-        "progress": false
+        "progress": true,
+        "preferences": true
       }
     ],
     "checks": [
@@ -741,6 +840,10 @@
         "do": "view"
       },
       {
+        "do": "release",
+        "version": "1.0.2"
+      },
+      {
         "do": "schedule",
         "machines": [
           "server"
@@ -758,6 +861,26 @@
         "do": "policy",
         "minimum": null,
         "managed_auto": true
+      }
+    ],
+    "device_calls": [
+      {
+        "do": "preferences",
+        "auto": true,
+        "relays": null
+      },
+      {
+        "do": "progress",
+        "stage": {
+          "kind": "waiting_idle",
+          "version": "1.0.2"
+        }
+      },
+      {
+        "do": "progress",
+        "stage": {
+          "kind": "idle"
+        }
       }
     ],
     "replies": [
@@ -895,6 +1018,21 @@
             "why": "update this machine first"
           }
         ]
+      },
+      {
+        "kind": "release",
+        "choice": {
+          "version": "1.0.3",
+          "published": null,
+          "summary": null,
+          "manifest": null,
+          "problem": {
+            "reason": {
+              "kind": "other"
+            },
+            "why": "manifest unavailable"
+          }
+        }
       },
       {
         "kind": "done"

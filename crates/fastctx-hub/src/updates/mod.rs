@@ -233,7 +233,14 @@ fn kept(hub: &Hub) -> (Policy, BTreeMap<MachineName, Due>) {
         .hub
         .due
         .iter()
-        .filter_map(|kept| store.book.directory.by_key(&kept.key).map(|member| (member.name.clone(), kept.due.clone())))
+        .filter_map(|kept| {
+            store.book.directory.by_key(&kept.key).map(|member| {
+                let mut due = kept.due.clone();
+                due.manifest = None;
+                due.problem = None;
+                (member.name.clone(), due)
+            })
+        })
         .collect();
     (store.hub.updates.clone(), due)
 }
@@ -266,17 +273,29 @@ pub(crate) fn heard(hub: &Arc<Hub>, name: &MachineName, generation: u64, report:
         (report.kernel.clone(), report.app.as_ref().map(|a| a.version.clone()), report.asked.clone());
     let directory = hub.store().book.directory.clone();
     let Some(key) = directory.member(name).map(|m| m.key) else { return };
-    {
+    let planning_changed = {
         let mut updates = hub.updates.lock().expect("never poisoned");
-        for manifest in &report.found {
-            updates.catalog.insert(manifest.version.clone(), manifest.clone());
+        let changed = updates.reports.get(name).is_none_or(|(_, previous)| {
+            let mut previous = previous.clone();
+            previous.stage = report.stage.clone();
+            previous.checking = report.checking;
+            previous != report
+        });
+        if changed {
+            for manifest in &report.found {
+                updates.catalog.insert(manifest.version.clone(), manifest.clone());
+            }
         }
         updates.last.insert(key, history::LastReport { at: jiff::Timestamp::now(), report: report.clone() });
         updates.last.retain(|key, _| directory.by_key(key).is_some());
         updates.history_writer.send_replace(updates.last.clone());
         updates.reports.insert(name.clone(), (generation, report));
+        changed
+    };
+    if planning_changed {
+        settle(hub, name, &kernel, app.as_deref(), asked);
     }
-    settle(hub, name, &kernel, app.as_deref(), asked);
+    let mut due_changed = false;
     let stage = hub.updates.lock().expect("never poisoned").last.get(&key).map(|last| last.report.stage.clone());
     if let Some(fastctx_types::update::Stage::Failed { version, problem }) = stage {
         let mut store = hub.store();
@@ -284,13 +303,20 @@ pub(crate) fn heard(hub: &Arc<Hub>, name: &MachineName, generation: u64, report:
             && due.due.problem.as_ref() != Some(&problem)
         {
             due.due.problem = Some(problem);
+            due_changed = true;
             if let Err(error) = store.save_hub() {
                 hub.log.line(format_args!("keeping the failed arrangement for {name}: {error}"));
             }
         }
     }
-    prefetch(hub);
-    tell(hub, None);
+    // Progress updates the durable account view without repeating discovery
+    // or rebuilding every member's version notice on each byte sample.
+    if planning_changed {
+        prefetch(hub);
+    }
+    if planning_changed || due_changed {
+        tell(hub, None);
+    }
 }
 
 /// `name` runs `kernel` now: an update kept for it that this release is or
@@ -377,6 +403,17 @@ pub(crate) fn tell(hub: &Hub, only: Option<&MachineName>) {
         };
         cut.machines.retain(|machine, _| visible(machine));
         cut.due.retain(|machine, _| visible(machine));
+        // Only the executor needs the full manifest. Repeating it for every
+        // managed machine exceeds the control-frame limit (2026-10-20).
+        if let Some(due) = cut.due.get_mut(directory.canonical(name)) {
+            let store = hub.store();
+            if let Some(details) = directory.member(name).and_then(|member| {
+                store.hub.due.iter().find(|kept| kept.key == member.key && kept.due.version == due.version)
+            }) {
+                due.manifest = details.due.manifest.clone();
+                due.problem = details.due.problem.clone();
+            }
+        }
         inventory::offer_to(hub, name, &mut cut);
         let mut updates = hub.updates.lock().expect("never poisoned");
         if only.is_none() && updates.told.get(name) == Some(&cut) {

@@ -709,6 +709,13 @@ fn handle(
         Up::Ask { id, question: Question::Package { version, target, progress } } => {
             crate::updates::ask(hub, name, generation, id, version, target, progress, out.clone());
         }
+        Up::Ask { id, question: Question::NetworkUpdates { account, request } } => {
+            let (hub, name, out) = (hub.clone(), name.clone(), out.clone());
+            tokio::spawn(async move {
+                let answer = crate::updates::view_request(&hub, &name, &account, request).await;
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
+        }
         Up::Ask { id, question: Question::PrepareUpdate { machine, version } } => {
             let (hub, out) = (hub.clone(), out.clone());
             tokio::spawn(async move {
@@ -1216,7 +1223,7 @@ fn answer(hub: &Hub, name: &MachineName, generation: u64, call: u64, message: En
 
 fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, String> {
     match question {
-        Question::NetworkUpdates { account, request } => crate::updates::view_request(hub, name, &account, request),
+        Question::NetworkUpdates { .. } => Err("update management is dispatched asynchronously".into()),
         Question::MachineLog { account, before } => {
             let store = hub.store();
             let reads =

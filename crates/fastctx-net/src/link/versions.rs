@@ -7,7 +7,7 @@ use std::io::{Read as _, Seek as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use fastctx_types::update::{Fetch, Network, PackageProgress, Report};
+use fastctx_types::update::{FailureReason, Fetch, Network, PackageProgress, Problem, Report};
 use serde::{Deserialize, Serialize};
 
 use super::{Inner, Link};
@@ -19,7 +19,7 @@ pub(crate) struct Versions {
     /// The latest report, and the session it was told on.
     report: Mutex<(Option<Report>, Option<u64>)>,
     /// What the hub last told.
-    network: Mutex<Option<Network>>,
+    network: Mutex<Option<(u64, Network)>>,
     synced: std::sync::atomic::AtomicU64,
     fetching: Mutex<std::collections::HashMap<(u64, u64), tokio::sync::watch::Sender<bool>>>,
 }
@@ -86,8 +86,8 @@ impl Inner {
         }
     }
 
-    pub(super) fn heard_versions(&self, network: Network) {
-        *self.versions.network.lock().expect("never poisoned") = Some(network);
+    pub(super) fn heard_versions(&self, generation: u64, network: Network) {
+        *self.versions.network.lock().expect("never poisoned") = Some((generation, network));
         self.node.versions_changed();
     }
 
@@ -201,7 +201,20 @@ impl Link {
     /// What the hub last told of the network's versions; none from a hub
     /// that does not keep them, or before it told.
     pub fn versions(&self) -> Option<Network> {
-        self.inner.versions.network.lock().expect("never poisoned").clone()
+        self.inner.versions.network.lock().expect("never poisoned").as_ref().map(|(_, network)| network.clone())
+    }
+
+    /// Versions received on the connection that is still open now.
+    pub fn current_versions(&self) -> Option<Network> {
+        let connection = self.inner.connection()?;
+        self.inner
+            .versions
+            .network
+            .lock()
+            .expect("never poisoned")
+            .as_ref()
+            .filter(|(generation, _)| *generation == connection.generation)
+            .map(|(_, network)| network.clone())
     }
 
     /// Whether the hub keeps the network's versions and hands out packages.
@@ -265,6 +278,19 @@ impl Link {
         file: &Path,
         progress: &mut (dyn FnMut(u64, Option<u64>) + Send),
     ) -> Result<(), String> {
+        self.package_with_reason(version, target, size, file, progress).await.map_err(|problem| problem.why)
+    }
+
+    /// Receives package bytes while keeping local disk failures distinct from
+    /// transport failures. The caller still verifies the package signature.
+    pub async fn package_with_reason(
+        &self,
+        version: &str,
+        target: &str,
+        size: u64,
+        file: &Path,
+        progress: &mut (dyn FnMut(u64, Option<u64>) + Send),
+    ) -> Result<(), Problem> {
         // Written at the end it reaches, and cut back when it is longer than
         // the package: a file opened only to append cannot be cut on Windows.
         let mut out = std::fs::OpenOptions::new()
@@ -272,17 +298,20 @@ impl Link {
             .truncate(false)
             .write(true)
             .open(file)
-            .map_err(|error| format!("{}: {error}", file.display()))?;
-        let mut have = out.seek(std::io::SeekFrom::End(0)).map_err(|error| error.to_string())?;
+            .map_err(|error| Problem::new(FailureReason::Disk, format!("{}: {error}", file.display())))?;
+        let mut have = out
+            .seek(std::io::SeekFrom::End(0))
+            .map_err(|error| Problem::new(FailureReason::Disk, error.to_string()))?;
         if have > size {
-            out.set_len(0).map_err(|error| error.to_string())?;
-            out.seek(std::io::SeekFrom::Start(0)).map_err(|error| error.to_string())?;
+            out.set_len(0).map_err(|error| Problem::new(FailureReason::Disk, error.to_string()))?;
+            out.seek(std::io::SeekFrom::Start(0))
+                .map_err(|error| Problem::new(FailureReason::Disk, error.to_string()))?;
             have = 0;
         }
         progress(have, Some(size));
         if have < size {
             let Endpoint::Hub { upstreams, hub, cert } = self.inner.data_endpoint() else {
-                return Err("packages come from the hub itself".to_string());
+                return Err("packages come from the hub itself".into());
             };
             let (version, target) = (version.to_string(), target.to_string());
             let mut stream = Stream::to_hub(&upstreams, &hub, cert, &self.inner.key, |key, proof| Intent::Package {
@@ -295,18 +324,24 @@ impl Link {
             .await?;
             let said: Sized = stream.hear().await?;
             if said.size != size {
-                return Err(format!("the hub holds {} bytes of the package now, not {size}", said.size));
+                return Err(format!("the hub holds {} bytes of the package now, not {size}", said.size).into());
             }
             let mut written = have;
-            stream
+            let mut disk_error = None;
+            let received = stream
                 .take(size - have, |piece| {
-                    out.write_all(piece).map_err(|error| format!("{}: {error}", file.display()))?;
+                    if let Err(error) = out.write_all(piece) {
+                        let why = format!("{}: {error}", file.display());
+                        disk_error = Some(Problem::new(FailureReason::Disk, why.clone()));
+                        return Err(why);
+                    }
                     written += piece.len() as u64;
                     progress(written, Some(size));
                     Ok(())
                 })
-                .await?;
-            out.sync_all().map_err(|error| error.to_string())?;
+                .await;
+            received.map_err(|why| disk_error.unwrap_or_else(|| Problem::from(why)))?;
+            out.sync_all().map_err(|error| Problem::new(FailureReason::Disk, error.to_string()))?;
             stream.done().await?;
         }
         Ok(())

@@ -8,6 +8,7 @@
 
 mod application;
 mod packages;
+mod schedule;
 
 pub(crate) use application::Open;
 
@@ -48,6 +49,7 @@ struct Held {
     program: Option<PathBuf>,
     /// The release someone asked from elsewhere that the application take.
     take: Option<String>,
+    origin: Option<schedule::Origin>,
     fetching: Option<Fetching>,
     failed: Option<Failed>,
     activity: Option<Stage>,
@@ -75,6 +77,7 @@ struct AskedFile {
 pub(crate) struct Asker {
     pub by: AccountName,
     pub hub: fastctx_net::ids::HubId,
+    pub scheduled_at: Option<jiff::Timestamp>,
 }
 
 /// What the interface here keeps of itself for the node.
@@ -127,6 +130,7 @@ pub(crate) fn start(node: &Arc<Node>) {
         if let Ok(Some(take)) = read_json::<application::Take>(&dir.join("take.json")) {
             held.take = Some(take.version);
             held.chosen = take.manifest;
+            held.origin = take.origin;
         }
     }
     if let Some(version) = application(node) {
@@ -335,21 +339,23 @@ pub(crate) fn report(node: &Node) {
 
 /// An interface here asks.
 pub(crate) async fn call(node: &Arc<Node>, call: UpdateCall) -> Result<State, String> {
+    if !fastctx_platform::follows_releases()
+        && matches!(
+            call,
+            UpdateCall::Look | UpdateCall::Fetch { .. } | UpdateCall::Kernel { .. } | UpdateCall::Choose { .. }
+        )
+    {
+        return Err("development builds do not follow releases".into());
+    }
     match call {
         UpdateCall::Progress { stage } => {
-            node.updates.held.lock().expect("never poisoned").activity = Some(stage);
+            node.updates.held.lock().expect("never poisoned").activity =
+                (!matches!(stage, Stage::Idle)).then_some(stage);
             report(node);
         }
         UpdateCall::Preferences { auto, relays } => {
             let mut held = node.updates.held.lock().expect("never poisoned");
-            let mut settings = held.settings.clone();
-            if let Some(auto) = auto {
-                settings.auto = auto;
-                settings.chosen = true;
-            }
-            if let Some(relays) = relays {
-                settings.relays = relays;
-            }
+            let settings = held.settings.clone().with_preferences(auto, relays);
             keep(node, "settings.json", &settings).map_err(|e| e.to_string())?;
             held.settings = settings;
             drop(held);
@@ -376,6 +382,7 @@ pub(crate) async fn call(node: &Arc<Node>, call: UpdateCall) -> Result<State, St
             if held.app.as_ref() != Some(&app) || held.carried != file.carried || held.program != file.program {
                 keep(node, "app.json", &file).map_err(|error| error.to_string())?;
                 held.app = Some(file.app);
+                held.activity = None;
                 held.carried = file.carried;
                 held.program = file.program;
                 drop(held);
@@ -398,43 +405,21 @@ pub(crate) async fn call(node: &Arc<Node>, call: UpdateCall) -> Result<State, St
 /// The manifest of the release `version`: as this machine or its hubs know
 /// it, or as GitHub has it.
 async fn manifest_of(node: &Arc<Node>, version: &str) -> Result<Manifest, String> {
-    let state = state(node);
-    let known = [state.offer.as_ref(), state.chosen.as_ref(), state.looked.stable.as_ref(), state.looked.beta.as_ref()]
-        .into_iter()
-        .flatten()
-        .chain(state.looked.newer.iter())
-        .chain(state.network.as_ref().into_iter().flat_map(|n| n.due.values().filter_map(|d| d.manifest.as_ref())))
-        .chain(state.network.as_ref().into_iter().flat_map(|network| network.stable.iter().chain(network.beta.iter())))
-        .find(|manifest| manifest.version == version)
-        .cloned()
-        .or_else(|| cache(node).manifests().into_iter().find(|manifest| manifest.version == version));
-    match known {
-        Some(manifest) => Ok(manifest),
-        None => fastctx_update::github::manifest_of(&state.looked.releases, version).await,
-    }
+    fastctx_update::catalog::manifest(&state(node), cache(node).manifests(), &node.links(), version).await
 }
 
 /// Brings the package `target` of `version` here, in the background.
 fn fetch(node: &Arc<Node>, version: String, target: String) -> Result<(), String> {
-    let state = state(node);
-    let manifest =
-        [state.offer.as_ref(), state.chosen.as_ref(), state.looked.stable.as_ref(), state.looked.beta.as_ref()]
-            .into_iter()
-            .flatten()
-            .chain(state.looked.newer.iter())
-            .chain(state.network.as_ref().into_iter().flat_map(|n| n.due.values().filter_map(|d| d.manifest.as_ref())))
-            .chain(
-                state.network.as_ref().into_iter().flat_map(|network| network.stable.iter().chain(network.beta.iter())),
-            )
-            .find(|manifest| manifest.version == version)
-            .cloned()
-            .ok_or_else(|| format!("no release {version} is known here"))?;
     {
         let mut held = node.updates.held.lock().expect("never poisoned");
         if held.fetching.as_ref().is_some_and(|fetching| fetching.version == version && fetching.target == target) {
             return Ok(());
         }
+        if held.fetching.is_some() || matches!(held.activity, Some(Stage::Installing { .. })) {
+            return Err("an update is already being downloaded or installed".into());
+        }
         held.failed = None;
+        held.activity = None;
         held.fetching = Some(Fetching {
             version: version.clone(),
             target: target.clone(),
@@ -445,7 +430,10 @@ fn fetch(node: &Arc<Node>, version: String, target: String) -> Result<(), String
     }
     let node = node.clone();
     tokio::spawn(async move {
-        let outcome = bring(&node, &manifest, &target).await;
+        let outcome = match manifest_of(&node, &version).await {
+            Ok(manifest) => bring(&node, &manifest, &target).await,
+            Err(why) => Err(why.into()),
+        };
         let mut held = node.updates.held.lock().expect("never poisoned");
         held.fetching = None;
         if let Err(why) = outcome {
@@ -509,6 +497,7 @@ fn prune(node: &Arc<Node>, ready: Option<&str>) {
     keep.extend(held.take.iter().cloned());
     keep.extend(held.fetching.as_ref().map(|f| f.version.clone()));
     keep.extend(held.chosen.as_ref().map(|m| m.version.clone()));
+    keep.extend(held.activity.as_ref().and_then(Stage::version).map(str::to_owned));
     drop(held);
     keep.extend(renewing(node).map(|r| r.version));
     if let Some(ready) = ready {
@@ -614,6 +603,7 @@ async fn kernel(node: &Arc<Node>, version: Option<&str>, asker: Option<Asker>) -
             None => {}
         }
         held.failed = None;
+        held.activity = None;
         held.fetching = Some(Fetching {
             version: offer.version.clone(),
             target: target.clone(),
@@ -646,9 +636,13 @@ async fn take(
     asker: Option<Asker>,
 ) -> Result<(), fastctx_types::update::Problem> {
     let archive = bring(node, offer, target).await?;
+    let origin = asker.as_ref().and_then(schedule::Origin::from_asker);
+    if schedule::withdrawn(node, &offer.version, origin.as_ref()) {
+        return Ok(());
+    }
     let asked = dir(node).join("asked.json");
     match asker {
-        Some(Asker { by, hub }) => {
+        Some(Asker { by, hub, .. }) => {
             let file = AskedFile { by, from: env!("CARGO_PKG_VERSION").to_string(), hub };
             keep(node, "asked.json", &file).map_err(|error| format!("keeping who asked for the update: {error}"))?;
         }
@@ -691,12 +685,23 @@ pub(crate) async fn machine(
     node: &Arc<Node>,
     acting: &fastctx_types::access::Acting,
     machine: fastctx_types::MachineName,
-    update: UpdateCall,
+    mut update: UpdateCall,
 ) -> Result<State, fastctx_types::ipc::Failure> {
     use fastctx_types::ipc::Failure;
     use fastctx_types::remote::{RemoteCall, RemoteReply};
     if node.is_me(&machine) {
         return call(node, update).await.map_err(Failure::new);
+    }
+    if matches!(update, UpdateCall::App { .. } | UpdateCall::Fetch { .. } | UpdateCall::Progress { .. }) {
+        return Err(Failure::new("only an interface on that machine says what it is or brings packages there"));
+    }
+    if let UpdateCall::Preferences { auto, relays } = update {
+        let current = Box::pin(self::machine(node, acting, machine.clone(), UpdateCall::State)).await?;
+        update = if current.preferences {
+            UpdateCall::Preferences { auto, relays }
+        } else {
+            UpdateCall::Set { settings: current.settings.with_preferences(auto, relays) }
+        };
     }
     // What it runs, as its hub last heard; else as it says itself. A machine
     // whose release is not known is not taken for one that knows the newer
@@ -750,6 +755,16 @@ pub(crate) async fn remote(node: &Arc<Node>, asker: Asker, update: Option<Update
         Some(UpdateCall::Kernel { version }) => Some(version.clone()),
         Some(_) => None,
     };
+    if version.is_some() && !fastctx_platform::follows_releases() {
+        return Err("development builds do not follow releases".into());
+    }
+    if let Some(requested) = &version {
+        let wanted = requested.clone().or_else(|| state(node).offer.map(|manifest| manifest.version));
+        let running = app.as_ref().map_or(env!("CARGO_PKG_VERSION"), |app| app.version.as_str());
+        if wanted.as_deref() == Some(running) {
+            return Ok(state(node));
+        }
+    }
     if let (Some(app), Some(version)) = (app, version.clone()) {
         let manifest = match version {
             Some(version) => manifest_of(node, &version).await?,
@@ -799,6 +814,10 @@ pub(crate) async fn remote(node: &Arc<Node>, asker: Asker, update: Option<Update
 /// passes the hubs' major version (`hub_major`); one the network keeps for
 /// it was asked for by someone, as one the owner picks is.
 fn auto(node: &Arc<Node>) {
+    if !fastctx_platform::follows_releases() {
+        return;
+    }
+    schedule::reconcile(node);
     let state = state(node);
     if state.fetching.is_some()
         || state.renewing.is_some()
@@ -815,7 +834,7 @@ fn auto(node: &Arc<Node>) {
         .iter()
         .find_map(|link| {
             let due = link.versions()?.due.remove(&me)?;
-            let asker = Asker { by: due.by, hub: link.membership().id };
+            let asker = Asker { by: due.by, hub: link.membership().id, scheduled_at: Some(due.at) };
             (fastctx_types::update::release(&due.version) > running).then_some((due.version, asker))
         })
         .or_else(|| {
@@ -824,7 +843,7 @@ fn auto(node: &Arc<Node>) {
                 return None;
             }
             let asked = read_json::<AskedFile>(&dir(node).join("asked.json")).ok().flatten()?;
-            Some((version, Asker { by: asked.by, hub: asked.hub }))
+            Some((version, Asker { by: asked.by, hub: asked.hub, scheduled_at: None }))
         });
     let (version, asker) = match due {
         Some((version, asker)) => (version, Some(asker)),

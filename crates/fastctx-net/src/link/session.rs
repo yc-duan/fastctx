@@ -598,7 +598,7 @@ async fn connected(
                     let _ = up.send(Up::Forgot { id, outcome });
                 });
             }
-            Down::Versions { network } => inner.heard_versions(*network),
+            Down::Versions { network } => inner.heard_versions(generation, *network),
             Down::Fetch { fetch } => inner.fetch_for_hub(generation, *fetch),
             Down::FetchCancelled { id } => inner.cancel_fetch(generation, id),
             Down::PackageProgress { id, progress } => inner.asks.progress(generation, id, progress),

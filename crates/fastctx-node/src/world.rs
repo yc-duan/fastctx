@@ -993,7 +993,8 @@ impl fastctx_net::link::Node for Handler {
                         RemoteCall::Updates { update } => Some(update),
                         _ => None,
                     };
-                    let asker = crate::updates::Asker { by: caller.account.clone(), hub: hub.clone() };
+                    let asker =
+                        crate::updates::Asker { by: caller.account.clone(), hub: hub.clone(), scheduled_at: None };
                     crate::updates::remote(&node, asker, update)
                         .await
                         .map(|state| RemoteReply::Update(Box::new(state)))

@@ -206,19 +206,24 @@ impl Device {
     /// An interface on this device asks about updates.
     pub(super) async fn update(self: &Arc<Self>, call: UpdateCall) -> Result<State, Error> {
         self.start_updates();
+        if !fastctx_platform::follows_releases()
+            && matches!(
+                call,
+                UpdateCall::Look | UpdateCall::Fetch { .. } | UpdateCall::Kernel { .. } | UpdateCall::Choose { .. }
+            )
+        {
+            return Err(failed("development builds do not follow releases"));
+        }
+
         match call {
             UpdateCall::Progress { stage } => {
-                self.updates.held.lock().expect("never poisoned").activity = Some(stage);
+                self.updates.held.lock().expect("never poisoned").activity =
+                    (!matches!(stage, fastctx_types::update::Stage::Idle)).then_some(stage);
                 self.report_versions();
             }
             UpdateCall::Preferences { auto, .. } => {
                 let mut held = self.updates.held.lock().expect("never poisoned");
-                let mut settings = held.settings.clone();
-                if let Some(auto) = auto {
-                    settings.auto = auto;
-                    settings.chosen = true;
-                }
-                settings.relays = false;
+                let settings = held.settings.clone().with_preferences(auto, Some(false));
                 self.keep_update("settings.json", &settings)?;
                 held.settings = settings;
                 drop(held);
@@ -241,7 +246,11 @@ impl Device {
                 let changed = self.updates.held.lock().expect("never poisoned").app.as_ref() != Some(&app);
                 if changed {
                     self.keep_update("app.json", &Some(app.clone()))?;
-                    self.updates.held.lock().expect("never poisoned").app = Some(app);
+                    {
+                        let mut held = self.updates.held.lock().expect("never poisoned");
+                        held.app = Some(app);
+                        held.activity = None;
+                    }
                     self.report_versions();
                 }
             }
@@ -261,57 +270,24 @@ impl Device {
     /// The manifest of the release `version`: as this device or its hubs
     /// know it, or as GitHub has it.
     async fn manifest_of(&self, version: &str) -> Result<Manifest, Error> {
-        let state = self.update_state();
-        let known =
-            [state.offer.as_ref(), state.chosen.as_ref(), state.looked.stable.as_ref(), state.looked.beta.as_ref()]
-                .into_iter()
-                .flatten()
-                .chain(state.looked.newer.iter())
-                .chain(
-                    state.network.as_ref().into_iter().flat_map(|n| n.due.values().filter_map(|d| d.manifest.as_ref())),
-                )
-                .chain(
-                    state
-                        .network
-                        .as_ref()
-                        .into_iter()
-                        .flat_map(|network| network.stable.iter().chain(network.beta.iter())),
-                )
-                .find(|manifest| manifest.version == version)
-                .cloned()
-                .or_else(|| self.update_cache().manifests().into_iter().find(|manifest| manifest.version == version));
-        match known {
-            Some(manifest) => Ok(manifest),
-            None => fastctx_update::github::manifest_of(&state.looked.releases, version).await.map_err(failed),
-        }
+        let links: Vec<_> = self.sessions().iter().map(|session| session.link.clone()).collect();
+        fastctx_update::catalog::manifest(&self.update_state(), self.update_cache().manifests(), &links, version)
+            .await
+            .map_err(failed)
     }
 
     fn fetch_update(self: &Arc<Self>, version: String, target: String) -> Result<(), Error> {
-        let state = self.update_state();
-        let manifest =
-            [state.offer.as_ref(), state.chosen.as_ref(), state.looked.stable.as_ref(), state.looked.beta.as_ref()]
-                .into_iter()
-                .flatten()
-                .chain(state.looked.newer.iter())
-                .chain(
-                    state.network.as_ref().into_iter().flat_map(|n| n.due.values().filter_map(|d| d.manifest.as_ref())),
-                )
-                .chain(
-                    state
-                        .network
-                        .as_ref()
-                        .into_iter()
-                        .flat_map(|network| network.stable.iter().chain(network.beta.iter())),
-                )
-                .find(|manifest| manifest.version == version)
-                .cloned()
-                .ok_or_else(|| failed(format!("no release {version} is known here")))?;
         {
             let mut held = self.updates.held.lock().expect("never poisoned");
             if held.fetching.as_ref().is_some_and(|fetching| fetching.version == version && fetching.target == target) {
                 return Ok(());
             }
+            if held.fetching.is_some() || matches!(held.activity, Some(fastctx_types::update::Stage::Installing { .. }))
+            {
+                return Err(failed("an update is already being downloaded or installed"));
+            }
             held.failed = None;
+            held.activity = None;
             held.fetching = Some(Fetching {
                 version: version.clone(),
                 target: target.clone(),
@@ -335,7 +311,12 @@ impl Device {
             };
             let looked = device.updates.held.lock().expect("never poisoned").looked.clone();
             let network_now = looked.github == Some(false) && looked.github_at <= looked.at;
-            let outcome = fastctx_update::obtain(&cache, &manifest, &target, link, network_now, &mut progress).await;
+            let outcome = match device.manifest_of(&version).await {
+                Ok(manifest) => {
+                    fastctx_update::obtain(&cache, &manifest, &target, link, network_now, &mut progress).await
+                }
+                Err(why) => Err(why.to_string().into()),
+            };
             if outcome.as_ref().is_ok_and(|b| b.github_at.is_some()) {
                 let mut held = device.updates.held.lock().expect("never poisoned");
                 held.looked.github_at = Some(jiff::Timestamp::now());
@@ -344,7 +325,12 @@ impl Device {
                 }
             }
             if outcome.is_ok() {
-                cache.prune(&[manifest.version.as_str()]);
+                let held = device.updates.held.lock().expect("never poisoned");
+                let mut keep = vec![version.as_str()];
+                keep.extend(held.app.as_ref().map(|app| app.version.as_str()));
+                keep.extend(held.chosen.as_ref().map(|m| m.version.as_str()));
+                keep.extend(held.activity.as_ref().and_then(fastctx_types::update::Stage::version));
+                cache.prune(&keep);
             }
             let mut held = device.updates.held.lock().expect("never poisoned");
             held.fetching = None;

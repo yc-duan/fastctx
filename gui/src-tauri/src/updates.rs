@@ -97,6 +97,19 @@ pub(crate) async fn update_set(shell: tauri::State<'_, Shell>, settings: Setting
     ask(&shell, UpdateCall::Set { settings }).await
 }
 
+/// Reports the local interface's waiting or installation activity. Idle clears it.
+#[fastctx_gui_command::command]
+pub(crate) async fn update_progress(
+    shell: tauri::State<'_, Shell>,
+    stage: fastctx_types::update::Stage,
+) -> Result<State, String> {
+    let current = ask(&shell, UpdateCall::State).await?;
+    if !current.progress {
+        return Err("this World program does not accept update activity reports".into());
+    }
+    once(&shell, UpdateCall::Progress { stage }).await
+}
+
 /// Brings this application's package of `version` here.
 #[fastctx_gui_command::command]
 pub(crate) async fn update_fetch(shell: tauri::State<'_, Shell>, version: String) -> Result<State, String> {
@@ -142,11 +155,32 @@ pub(crate) async fn update_machine(shell: tauri::State<'_, Shell>, machine_name:
 pub(crate) async fn machine_updates(
     shell: tauri::State<'_, Shell>,
     machine_name: String,
-    update: UpdateCall,
+    mut update: UpdateCall,
 ) -> Result<State, String> {
     let machine = fastctx_types::MachineName::try_from(machine_name).map_err(|error| error.to_string())?;
-    if matches!(update, UpdateCall::App { .. } | UpdateCall::Fetch { .. }) {
+    if matches!(update, UpdateCall::App { .. } | UpdateCall::Fetch { .. } | UpdateCall::Progress { .. }) {
         return Err("only an interface on that machine says what it is or brings packages there".to_string());
+    }
+    if let UpdateCall::Preferences { auto, relays } = update {
+        let local = once(&shell, UpdateCall::State).await?;
+        update = if local.preferences {
+            UpdateCall::Preferences { auto, relays }
+        } else {
+            if local.running.as_deref().and_then(fastctx_types::update::release)
+                < fastctx_types::update::release(fastctx_types::update::ASKED_SINCE)
+            {
+                return Err("update the World program on this device before changing remote update settings".into());
+            }
+            let (reply, _) = shell
+                .world()
+                .call(Call::MachineUpdates { machine: machine.clone(), update: UpdateCall::State })
+                .await
+                .map_err(|e| e.to_string())?;
+            let Reply::Update(current) = reply else {
+                return Err("the machine did not report its update settings".into());
+            };
+            UpdateCall::Set { settings: current.settings.with_preferences(auto, relays) }
+        };
     }
     match shell.world().call(Call::MachineUpdates { machine, update }).await.map_err(|error| error.to_string())?.0 {
         Reply::Update(state) => Ok(*state),
@@ -164,7 +198,17 @@ pub(crate) async fn update_install(
     shell: tauri::State<'_, Shell>,
     version: String,
 ) -> Result<bool, String> {
-    let state = ask(&shell, UpdateCall::State).await?;
+    let mut state = ask(&shell, UpdateCall::State).await?;
+    if state.preferences
+        && !state
+            .offer
+            .iter()
+            .chain(state.chosen.iter())
+            .chain(state.looked.newer.iter())
+            .any(|manifest| manifest.version == version)
+    {
+        state = ask(&shell, UpdateCall::Choose { version: Some(version.clone()) }).await?;
+    }
     let target = target();
     let kept = state
         .kept

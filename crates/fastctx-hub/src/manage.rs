@@ -574,7 +574,10 @@ fn apply(
                     "an update batch needs an identifier of at most 64 letters, digits, hyphens or underscores".into(),
                 );
             }
-            store.hub.due.retain(|kept| kept.key != key && directory.by_key(&kept.key).is_some());
+            store.hub.due.retain(|kept| {
+                let replaces = kept.key == key && (version.is_some() || batch.is_none() || kept.batch == batch);
+                !replaces && directory.by_key(&kept.key).is_some()
+            });
             if let Some(version) = version {
                 let manifest = hub.updates.lock().expect("never poisoned").manifest(&version);
                 let problem = manifest.is_none().then(|| fastctx_types::update::Problem {

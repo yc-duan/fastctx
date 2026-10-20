@@ -416,6 +416,18 @@ pub enum Kind {
 }
 
 impl Settings {
+    /// Changes only the choices explicitly supplied by the owner.
+    pub fn with_preferences(mut self, auto: Option<bool>, relays: Option<bool>) -> Self {
+        if let Some(auto) = auto {
+            self.auto = auto;
+            self.chosen = true;
+        }
+        if let Some(relays) = relays {
+            self.relays = relays;
+        }
+        self
+    }
+
     /// Whether a device of `kind` takes new releases by itself, under the
     /// network's `policy`: a managed machine as its network says; another as
     /// its owner chose, or by default, a computer with the application not,
@@ -543,9 +555,8 @@ pub struct State {
     /// The release its owner chose to update to, when it is not the newest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chosen: Option<Manifest>,
-    /// The newest major version the hubs it is on run: a release past it is
-    /// not taken by itself, lest it no longer reach them. None outside any
-    /// network, or where a hub does not say, or on the hub's own machine.
+    /// The oldest major version among its hubs; an unknown hub uses the
+    /// current kernel's major. None outside a network or on a hub's own machine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hub_major: Option<u64>,
     pub looked: Looked,
@@ -556,6 +567,16 @@ pub struct State {
     /// The newest release on its channel, from GitHub or the network.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offer: Option<Manifest>,
+    /// The selected or newest newer release carrying this device's package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub available: Option<Manifest>,
+    /// The newest compatible candidate within the hubs' major version,
+    /// independent of whether automatic updates are enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automatic: Option<String>,
+    /// The offered compatible release exceeds the automatic major-version limit.
+    #[serde(default)]
+    pub above_hub: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fetching: Option<Fetching>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -585,6 +606,9 @@ pub struct State {
     /// This node accepts local installation-stage reports.
     #[serde(default)]
     pub progress: bool,
+    /// Accepts atomic partial preference changes.
+    #[serde(default)]
+    pub preferences: bool,
 }
 
 /// A change of this machine's World program, as it goes.

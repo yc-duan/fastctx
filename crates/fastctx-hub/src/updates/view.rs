@@ -5,7 +5,7 @@ use fastctx_net::directory::{Directory, Member};
 use fastctx_net::wire::{Change, Told};
 use fastctx_types::update::{
     ASKED_SINCE, ActionReason, Actions, Channel, FailureReason, Kind, MachineUpdate, Permission, Problem, Scheduled,
-    Stage, View, ViewCall, ViewReply, newest, release,
+    Stage, View, ViewCall, ViewReply, release,
 };
 use fastctx_types::{AccountName, MachineName};
 use std::sync::Arc;
@@ -66,10 +66,7 @@ pub(super) fn snapshot(hub: &Hub, asker: &MachineName, account: &AccountName) ->
                 published: listed.published.map(|at| at.to_string()),
                 summary: None,
                 manifest: None,
-                problem: Some(Problem::new(
-                    FailureReason::Other,
-                    format!("the manifest of {} is not available", listed.version),
-                )),
+                problem: None,
             },
         );
     }
@@ -99,15 +96,10 @@ pub(super) fn snapshot(hub: &Hub, asker: &MachineName, account: &AccountName) ->
         let app = report.and_then(|r| r.app.clone());
         let running = app.as_ref().map(|a| a.version.as_str()).or(kernel.as_deref());
         let channel = Channel::of(running.unwrap_or_default());
-        let latest = match channel {
-            Channel::Stable => network.stable.as_ref(),
-            Channel::Beta => newest(network.stable.as_ref(), network.beta.as_ref()),
-        };
         let target = app.as_ref().map(|a| a.target.clone()).or_else(|| report.and_then(|r| r.target.clone()));
-        let offer = latest
-            .filter(|m| {
-                running.is_some_and(|v| m.newer_than(v)) && target.as_deref().is_some_and(|t| m.package(t).is_some())
-            })
+        let offer = running
+            .zip(target.as_deref())
+            .and_then(|(running, target)| fastctx_update::state::latest_for(releases.iter(), running, target, None))
             .cloned();
         let kind = if phone {
             Kind::Phone
@@ -132,7 +124,7 @@ pub(super) fn snapshot(hub: &Hub, asker: &MachineName, account: &AccountName) ->
             app,
             target,
             channel,
-            auto: if member.managed { Some(store.hub.updates.managed_auto) } else { report.and_then(|r| r.auto) },
+            auto: report.and_then(|r| r.auto),
             auto_chosen: !member.managed && report.is_some_and(|r| r.auto_chosen),
             relays: report.map(|r| r.relays),
             github: report.and_then(|r| r.github),
@@ -159,14 +151,42 @@ pub(super) fn snapshot(hub: &Hub, asker: &MachineName, account: &AccountName) ->
     })
 }
 
-pub(crate) fn request(
+pub(crate) async fn request(
     hub: &Arc<Hub>,
     asker: &MachineName,
     account: &AccountName,
     request: ViewCall,
 ) -> Result<Told, String> {
-    let view = snapshot(hub, asker, account)?;
+    let mut view = snapshot(hub, asker, account)?;
+    let needed = match &request {
+        ViewCall::Release { version } | ViewCall::Schedule { version: Some(version), .. } => Some(version),
+        _ => None,
+    };
+    let mut manifest_problem = None;
+    if let Some(version) = needed
+        && !view.releases.iter().any(|manifest| &manifest.version == version)
+    {
+        manifest_problem = read_manifest(hub, version).await.err();
+        // Authority can change during IO; the refreshed snapshot and each
+        // committed arrangement both check it again.
+        view = snapshot(hub, asker, account)?;
+    }
     let reply = match request {
+        ViewCall::Release { version } => {
+            let mut choice = view.versions.into_iter().find(|choice| choice.version == version).unwrap_or(
+                fastctx_types::update::VersionChoice {
+                    version,
+                    published: None,
+                    summary: None,
+                    manifest: None,
+                    problem: None,
+                },
+            );
+            if choice.manifest.is_none() {
+                choice.problem = manifest_problem.map(|why| Problem::new(FailureReason::Other, why));
+            }
+            return Ok(Told::NetworkUpdates { reply: ViewReply::Release { choice: Box::new(choice) } });
+        }
         ViewCall::View => return Ok(Told::NetworkUpdates { reply: ViewReply::View { view: Box::new(view) } }),
         ViewCall::Policy { minimum, managed_auto } => {
             let mut policy = hub.store().hub.updates.clone();
@@ -227,7 +247,11 @@ pub(crate) fn request(
                     results.push(Scheduled {
                         machine,
                         done: false,
-                        why: Some(format!("cannot arrange this update: {reason:?}")),
+                        why: Some(if reason == ActionReason::Unavailable {
+                            manifest_problem.clone().unwrap_or_else(|| "this version's manifest is not known".into())
+                        } else {
+                            format!("cannot arrange this update: {reason:?}")
+                        }),
                         reason: Some(reason),
                     });
                     continue;
@@ -287,4 +311,28 @@ pub(super) fn problem(hub: &Hub, version: &str, target: Option<&str>, why: Optio
     if changed && let Err(error) = store.save_hub() {
         hub.log.line(format_args!("keeping update preparation outcome: {error}"));
     }
+}
+
+/// Retrieves only the version explicitly selected, outside the hub's shared locks.
+async fn read_manifest(hub: &Hub, version: &str) -> Result<(), String> {
+    if release(version).is_none() {
+        return Err(format!("{version} is not a release version"));
+    }
+    let (known, releases, cache) = {
+        let updates = hub.updates.lock().expect("never poisoned");
+        (updates.manifest(version).is_some(), updates.looked.releases.clone(), updates.cache.clone())
+    };
+    if known {
+        return Ok(());
+    }
+    let manifest = tokio::time::timeout(
+        std::time::Duration::from_secs(50),
+        fastctx_update::github::manifest_of(&releases, version),
+    )
+    .await
+    .map_err(|_| format!("reading the manifest of {version} took longer than 50 seconds"))??;
+    let saving = manifest.clone();
+    tokio::task::spawn_blocking(move || cache.keep_manifest(&saving)).await.map_err(|error| error.to_string())??;
+    hub.updates.lock().expect("never poisoned").catalog.insert(manifest.version.clone(), manifest);
+    Ok(())
 }

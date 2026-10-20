@@ -8,6 +8,7 @@ pub struct Fixtures {
     checks: Vec<CheckFailure>,
     reasons: Vec<FailureReason>,
     calls: Vec<ViewCall>,
+    device_calls: Vec<UpdateCall>,
     replies: Vec<ViewReply>,
 }
 
@@ -68,6 +69,11 @@ pub fn fixtures() -> Fixtures {
         .into_iter()
         .map(|stage| State {
             stage,
+            available: Some(manifest.clone()),
+            automatic: Some(version.clone()),
+            above_hub: true,
+            progress: true,
+            preferences: true,
             looked: Looked {
                 at: Some(at),
                 checking: true,
@@ -121,11 +127,17 @@ pub fn fixtures() -> Fixtures {
         },
     };
     Fixtures {
+        device_calls: vec![
+            UpdateCall::Preferences { auto: Some(true), relays: None },
+            UpdateCall::Progress { stage: Stage::WaitingIdle { version: "1.0.2".into() } },
+            UpdateCall::Progress { stage: Stage::Idle },
+        ],
         states,
         checks,
         reasons,
         calls: vec![
             ViewCall::View,
+            ViewCall::Release { version: "1.0.2".into() },
             ViewCall::Schedule { machines: vec!["server".parse().unwrap()], version: Some(version) },
             ViewCall::Schedule { machines: vec!["server".parse().unwrap()], version: None },
             ViewCall::Policy { minimum: None, managed_auto: true },
@@ -165,6 +177,15 @@ pub fn fixtures() -> Fixtures {
                     reason: Some(ActionReason::TooOld),
                     why: Some("update this machine first".into()),
                 }],
+            },
+            ViewReply::Release {
+                choice: Box::new(VersionChoice {
+                    version: "1.0.3".into(),
+                    published: None,
+                    summary: None,
+                    manifest: None,
+                    problem: Some(Problem::new(FailureReason::Other, "manifest unavailable")),
+                }),
             },
             ViewReply::Done,
         ],

@@ -12,12 +12,18 @@ use crate::Cache;
 use crate::pace::{Pace, Verdict};
 use crate::pool::{Local, Log, Request};
 
-/// How far a package has come, including preparation at its hub.
+/// Bytes delivered here by a source; subscribers see the leading active source.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Progress {
     pub via: Via,
     pub received: u64,
     pub total: Option<u64>,
+}
+
+/// Source progress and terminal failure are distinct owner events.
+pub(crate) enum SourceEvent {
+    Progress(Progress),
+    Failed(Via, Problem),
 }
 
 /// A verified package and the speed of its local GitHub download, if any.
@@ -57,7 +63,7 @@ pub(crate) async fn run(
     hub_file: &Path,
     local_file: &Path,
     local: watch::Receiver<Local>,
-    progress: &mut (dyn FnMut(Progress) + Send),
+    progress: &mut (dyn FnMut(SourceEvent) + Send),
     log: &Log,
 ) -> Result<Brought, Problem> {
     let package = &request.package;
@@ -70,7 +76,8 @@ pub(crate) async fn run(
     let mut hub_heard = |received, total| {
         shown.lock().expect("never poisoned").tell(Via::Network, received, total);
     };
-    let mut github_heard = |received, total| {
+    let mut github_heard = |received, total: Option<u64>| {
+        let total = total.or(package.size);
         github_pace.lock().expect("never poisoned").heard(Instant::now(), received);
         *github_total.lock().expect("never poisoned") = total;
         shown.lock().expect("never poisoned").tell(Via::Github, received, total);
@@ -87,7 +94,9 @@ pub(crate) async fn run(
         let source = local_source.borrow().clone();
         let downloaded = source.carried.is_none();
         let speed = if let Some(carried) = source.carried {
-            tokio::fs::copy(&carried, local_file).await.map_err(|error| format!("{}: {error}", carried.display()))?;
+            tokio::fs::copy(&carried, local_file)
+                .await
+                .map_err(|error| Problem::new(FailureReason::Disk, format!("{}: {error}", carried.display())))?;
             None
         } else {
             let url = package.url.as_deref().ok_or("the release publishes it nowhere else")?;
@@ -125,6 +134,7 @@ pub(crate) async fn run(
                     Ok(path) => return Ok(Brought { path, github_speed: None, github_at: None }),
                     Err(why) => {
                         log(format!("bringing {target} of {version} from the network: {why}"));
+                        shown.lock().expect("never poisoned").failed(Via::Network, why.clone());
                         failures.push((Via::Network, why));
                     }
                 }
@@ -135,6 +145,7 @@ pub(crate) async fn run(
                     Ok(brought) => return Ok(brought),
                     Err(why) => {
                         log(format!("bringing {target} of {version} from the local source: {why}"));
+                        shown.lock().expect("never poisoned").failed(Via::Github, why.clone());
                         failures.push((Via::Github, why));
                     }
                 }
@@ -179,7 +190,7 @@ async fn from_hub(
     file: &Path,
     progress: &mut (dyn FnMut(u64, Option<u64>) + Send),
     ready: &(dyn Fn() + Send + Sync),
-) -> Result<(), String> {
+) -> Result<(), Problem> {
     let (sender, mut preparation) = watch::channel(PackageProgress::default());
     let ask = link.ask_package_progress(version, target, Some(sender));
     tokio::pin!(ask);
@@ -199,17 +210,21 @@ async fn from_hub(
     let size = ready_now.size;
     ready();
     let mut heard = |received, _| progress(received, Some(size));
-    let result = link.package(version, target, size, file, &mut heard).await;
+    let result = link.package_with_reason(version, target, size, file, &mut heard).await;
     drop(ready_now);
     result
 }
 
 struct Shown<'a> {
-    progress: &'a mut (dyn FnMut(Progress) + Send),
+    progress: &'a mut (dyn FnMut(SourceEvent) + Send),
 }
 
 impl Shown<'_> {
+    fn failed(&mut self, via: Via, problem: Problem) {
+        (self.progress)(SourceEvent::Failed(via, problem));
+    }
+
     fn tell(&mut self, via: Via, received: u64, total: Option<u64>) {
-        (self.progress)(Progress { via, received, total });
+        (self.progress)(SourceEvent::Progress(Progress { via, received, total }));
     }
 }

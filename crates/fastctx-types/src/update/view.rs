@@ -100,6 +100,10 @@ pub struct View {
 #[serde(tag = "do", rename_all = "snake_case")]
 pub enum ViewCall {
     View,
+    /// Reads one listed manifest on demand; ordinary view polling never does IO.
+    Release {
+        version: String,
+    },
     /// None withdraws the current arrangement for each named machine.
     Schedule {
         machines: Vec<MachineName>,
@@ -122,6 +126,7 @@ pub struct Scheduled {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ViewReply {
+    Release { choice: Box<VersionChoice> },
     View { view: Box<View> },
     Scheduled { results: Vec<Scheduled> },
     Done,

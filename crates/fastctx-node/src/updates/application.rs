@@ -59,29 +59,46 @@ pub(super) struct Take {
     pub version: String,
     #[serde(default)]
     pub manifest: Option<Manifest>,
+    #[serde(default)]
+    pub origin: Option<super::schedule::Origin>,
 }
 
 /// `asker` asks that the application here update to `manifest`, which is
 /// newer than it: kept for it to take, and installed now on Windows when it
 /// is closed.
 pub(super) fn ask(node: &Arc<Node>, manifest: Manifest, asker: Asker, app: &str) -> Result<(), String> {
+    let origin = super::schedule::Origin::from_asker(&asker);
+    if super::schedule::withdrawn(node, &manifest.version, origin.as_ref()) {
+        return Ok(());
+    }
     let installing = if !open() && cfg!(windows) {
-        INSTALLING_NOW
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| "the application is already being installed".to_string())?;
+        if INSTALLING_NOW.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
+            if node.updates.held.lock().expect("never poisoned").take.as_deref() == Some(&manifest.version) {
+                return Ok(());
+            }
+            return Err("the application is already being installed".to_string());
+        }
         Some(Installing)
     } else {
         None
     };
-    let asked = AskedFile { by: asker.by, from: env!("CARGO_PKG_VERSION").to_string(), hub: asker.hub };
-    keep(node, "asked.json", &asked).map_err(|error| format!("keeping who asked for the update: {error}"))?;
-    keep(node, "take.json", &Take { version: manifest.version.clone(), manifest: Some(manifest.clone()) })
-        .map_err(|error| format!("keeping the release asked for: {error}"))?;
     {
         let mut held = node.updates.held.lock().expect("never poisoned");
+        let origin =
+            origin.or_else(|| (held.take.as_deref() == Some(&manifest.version)).then(|| held.origin.clone()).flatten());
+        let asked = AskedFile { by: asker.by, from: env!("CARGO_PKG_VERSION").to_string(), hub: asker.hub };
+        keep(node, "asked.json", &asked).map_err(|error| format!("keeping who asked for the update: {error}"))?;
+        keep(
+            node,
+            "take.json",
+            &Take { version: manifest.version.clone(), manifest: Some(manifest.clone()), origin: origin.clone() },
+        )
+        .map_err(|error| format!("keeping the release asked for: {error}"))?;
         held.take = Some(manifest.version.clone());
+        held.origin = origin;
         held.chosen = Some(manifest.clone());
         held.failed = None;
+        held.activity = None;
     }
     super::report(node);
     let Some(installing) = installing else { return Ok(()) };
@@ -109,6 +126,7 @@ pub(super) fn took(node: &Node, version: &str) {
         .is_some_and(|take| fastctx_types::update::release(version) >= fastctx_types::update::release(take));
     if taken {
         held.take = None;
+        held.origin = None;
         drop(held);
         let _ = std::fs::remove_file(dir(node).join("take.json"));
     }
@@ -126,6 +144,7 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
             return Err("a package is on its way here already".into());
         }
         held.failed = None;
+        held.activity = None;
         held.fetching = Some(Fetching {
             version: manifest.version.clone(),
             target: target.to_string(),
@@ -137,7 +156,8 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
     let brought = super::bring(node, manifest, target).await;
     node.updates.held.lock().expect("never poisoned").fetching = None;
     let installer = brought?;
-    if open() {
+    let origin = node.updates.held.lock().expect("never poisoned").origin.clone();
+    if open() || super::schedule::withdrawn(node, &manifest.version, origin.as_ref()) {
         return Ok(());
     }
     node.updates.held.lock().expect("never poisoned").activity =
@@ -181,7 +201,8 @@ async fn run_installer(installer: &Path) -> Result<(), Problem> {
     // executable only under one.
     let runnable: PathBuf = installer.with_extension("exe");
     if runnable != installer {
-        std::fs::copy(installer, &runnable).map_err(|error| format!("{}: {error}", runnable.display()))?;
+        std::fs::copy(installer, &runnable)
+            .map_err(|error| Problem::new(FailureReason::Disk, format!("{}: {error}", runnable.display())))?;
     }
     let mut command = tokio::process::Command::new(&runnable);
     command.arg("/S").stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).kill_on_drop(true);

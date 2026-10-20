@@ -112,6 +112,7 @@ export interface Fetching {
 
 export interface UpdateState {
   progress?: boolean;
+  preferences?: boolean;
   stage?: UpdateStage;
   /** The World program the node that answers runs; none from a node
    *  before 1.0.1 beta 3. */
@@ -123,12 +124,15 @@ export interface UpdateState {
   auto?: boolean;
   /** The release its owner chose to update to, when not the newest. */
   chosen?: Manifest;
-  /** The newest major version the hubs it is on run, which automatic
-   *  updates do not pass. */
+  /** The oldest major version among its hubs; an unknown hub uses the
+   *  current kernel's major. Automatic updates do not pass this limit. */
   hub_major?: number;
   looked: Looked;
   network?: UpdateNetwork;
   offer?: Manifest;
+  available?: Manifest;
+  automatic?: string;
+  above_hub?: boolean;
   fetching?: Fetching;
   failed?: { version: string; target: string; why: string; reason?: FailureReason };
   kept?: { version: string; target: string; path: string }[];
@@ -221,9 +225,11 @@ export interface UpdatesView {
 }
 export type UpdatesViewCall =
   | { do: "view" }
+  | { do: "release"; version: string }
   | { do: "schedule"; machines: string[]; version: string | null }
   | { do: "policy"; minimum: string | null; managed_auto: boolean };
 export type UpdatesViewReply =
+  | { kind: "release"; choice: UpdateVersionChoice }
   | { kind: "view"; view: UpdatesView }
   | { kind: "scheduled"; results: { machine: string; done: boolean; reason: ActionReason | null; why: string | null }[] }
   | { kind: "done" };

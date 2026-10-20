@@ -12,7 +12,7 @@ use fastctx_types::update::{FailureReason, Fetch, Manifest, Package, Problem};
 use tokio::sync::watch;
 
 use crate::Cache;
-use crate::obtain::{Brought, Progress};
+use crate::obtain::{Brought, Progress, SourceEvent};
 
 pub type Log = Arc<dyn Fn(String) + Send + Sync>;
 
@@ -52,6 +52,7 @@ pub(crate) struct Local {
 struct State {
     progress: Option<Progress>,
     local_progress: Option<Progress>,
+    local_failure: Option<Problem>,
     outcome: Option<Result<Brought, Problem>>,
 }
 
@@ -173,6 +174,14 @@ impl Pool {
                     }
                     return outcome;
                 }
+                // A helper must not wait for the hub it is supplying after its
+                // own source failed (2026-10-20).
+                if request.local.requested
+                    && !stopping
+                    && let Some(problem) = current.local_failure
+                {
+                    return Err(problem);
+                }
                 if state.changed().await.is_err() {
                     return Err("the package owner ended without a result".into());
                 }
@@ -196,14 +205,32 @@ impl Pool {
         );
         let outcome = match &files {
             (Ok(hub_file), Ok(local_file)) => {
-                let mut heard = |progress: Progress| {
+                let mut sources: [Option<Progress>; 2] = [None, None];
+                let mut heard = |event: SourceEvent| {
                     state.send_modify(|state| {
-                        if progress.via == fastctx_types::update::Via::Github {
-                            state.local_progress = Some(progress);
+                        match event {
+                            SourceEvent::Progress(progress) => {
+                                let index = usize::from(progress.via == fastctx_types::update::Via::Network);
+                                sources[index] = Some(progress);
+                                if progress.via == fastctx_types::update::Via::Github {
+                                    state.local_progress = Some(progress);
+                                }
+                            }
+                            SourceEvent::Failed(via, problem) => {
+                                sources[usize::from(via == fastctx_types::update::Via::Network)] = None;
+                                if via == fastctx_types::update::Via::Github {
+                                    state.local_failure = Some(problem);
+                                }
+                            }
                         }
-                        if state.progress.is_none_or(|previous| progress.received >= previous.received) {
-                            state.progress = Some(progress);
-                        }
+                        // Only active sources can lead. An invalid complete file
+                        // must not keep the display at 100% while another starts.
+                        state.progress =
+                            sources.iter().flatten().max_by_key(|p| p.received).copied().or(Some(Progress {
+                                via: fastctx_types::update::Via::Github,
+                                received: 0,
+                                total: request.package.size,
+                            }));
                     });
                 };
                 let work = crate::obtain::run(&cache, &request, hub_file, local_file, local, &mut heard, &log);

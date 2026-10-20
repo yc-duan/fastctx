@@ -103,6 +103,23 @@ pub enum Stage {
     Unknown,
 }
 
+impl Stage {
+    /// The release whose work this stage describes, when there is one.
+    pub fn version(&self) -> Option<&str> {
+        match self {
+            Self::Idle | Self::Unknown => None,
+            Self::Fetching { version, .. }
+            | Self::Ready { version }
+            | Self::WaitingIdle { version }
+            | Self::WaitingApp { version }
+            | Self::Installing { version }
+            | Self::Renewing { version, .. }
+            | Self::Administrator { version }
+            | Self::Failed { version, .. } => Some(version),
+        }
+    }
+}
+
 impl Problem {
     pub fn new(reason: FailureReason, why: impl Into<String>) -> Self {
         Self { reason, why: why.into() }
