@@ -292,18 +292,20 @@ export class RemoteWorld {
             ${field("host", words.server, 'class="mono" required spellcheck="false" autocapitalize="off"', this.typed.host)}
             ${field("sshPort", words.sshPort, 'class="mono" inputmode="numeric" pattern="[0-9]{1,5}" required', this.typed.sshPort)}
           </div>
-          ${field("user", words.sshUser, 'class="mono" required spellcheck="false" autocapitalize="off"', this.typed.user)}
-          <div class="field remote-by-field"><span class="field-label">${escape(words.signInBy)}</span>
-            <div class="segmented remote-by" role="radiogroup" aria-label="${escape(words.signInBy)}">
-              <button class="segment${password ? " chosen" : ""}" type="button" role="radio" aria-checked="${password}" data-by="password">${escape(words.password)}</button>
-              <button class="segment${password ? "" : " chosen"}" type="button" role="radio" aria-checked="${!password}" data-by="key">${escape(words.keyFile)}</button>
+          <div class="field-pair">
+            ${field("user", words.sshUser, 'class="mono" required spellcheck="false" autocapitalize="off"', this.typed.user)}
+            <div class="field remote-by-field"><span class="field-label">${escape(words.signInBy)}</span>
+              <div class="segmented remote-by" role="radiogroup" aria-label="${escape(words.signInBy)}">
+                <button class="segment${password ? " chosen" : ""}" type="button" role="radio" aria-checked="${password}" data-by="password">${escape(words.password)}</button>
+                <button class="segment${password ? "" : " chosen"}" type="button" role="radio" aria-checked="${!password}" data-by="key">${escape(words.keyFile)}</button>
+              </div>
             </div>
           </div>
           ${
             password
               ? `<label class="field"><span class="field-label">${escape(words.password)}</span><input name="login" type="password" required autocomplete="off" value="${escape(this.secret.login)}"></label>`
-              : `<div class="field remote-key"><span class="field-label">${escape(words.keyFile)}</span><span class="remote-key-pick"><input name="keyfile" type="file" hidden><button class="pick-file" type="button" data-remote="choose-key">${glyph("file", 16)}<span>${escape(words.chooseKey)}</span></button><span class="remote-key-name mono">${escape(this.key?.name ?? "")}</span></span></div>
-                 <label class="field"><span class="field-label">${escape(words.keyPassword)}<span class="field-optional">${escape(words.optional)}</span></span><input name="passphrase" type="password" autocomplete="off" value="${escape(this.secret.passphrase)}"></label>`
+              : `<div class="field-pair"><div class="field remote-key"><span class="field-label">${escape(words.keyFile)}</span><span class="remote-key-pick"><input name="keyfile" type="file" hidden><button class="pick-file" type="button" data-remote="choose-key">${glyph("file", 16)}<span>${escape(words.chooseKey)}</span></button><span class="remote-key-name mono">${escape(this.key?.name ?? "")}</span></span></div>
+                 <label class="field"><span class="field-label">${escape(words.keyPassword)}<span class="field-optional">${escape(words.optional)}</span></span><input name="passphrase" type="password" autocomplete="off" value="${escape(this.secret.passphrase)}"></label></div>`
           }
           ${
             this.options.adding
