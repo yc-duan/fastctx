@@ -161,10 +161,12 @@ pub(crate) fn claude(node: &Node, id: &ResidentId, creating: bool) -> Result<std
     Ok(mcp)
 }
 
+/// Writes the account's prompt into the session's directory, reserved
+/// already: once its records are gathered into the conversation, that path
+/// is the room's alias, which is made private as the room is.
 pub(crate) fn hand_to_session(node: &Node, id: &ResidentId, session: &std::path::Path) -> std::io::Result<()> {
     let prompt = node.residents.about(id).map(|(about, _)| prompt(node, &about.acting)).unwrap_or_default();
     // An empty block also replaces an earlier prompt after account access is lost.
-    fastctx_platform::ensure_private_dir(session)?;
     fastctx_platform::publish(
         &session.join("user.md"),
         text(&prompt).as_bytes(),
