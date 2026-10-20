@@ -4,9 +4,14 @@
    the way a hand-drawn slider with 「默认」 before it. */
 
 .host-tabs-place {
+  flex: none;
   display: inline-flex;
   align-self: center;
   margin-left: var(--space-3);
+}
+
+.host-tabs .segment {
+  white-space: nowrap;
 }
 
 .host-tabs-place:empty {
@@ -108,12 +113,22 @@
    and the pill beside it; each preference's label stands over its
    choices, the slider across the width. */
 @media (max-width: 560px) {
-  .logins-page.host-tabbed .logins-title-name {
+  .logins-page.host-tabbed .page-head-title {
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  .logins-page.host-tabbed .logins-title-name,
+  .logins-page.host-tabbed .agents-pick-icon {
     display: none;
   }
 
   .host-tabs-place {
     margin-left: var(--space-1);
+  }
+
+  .host-tabs .segment {
+    padding: 4px 12px;
   }
 
   .host-prefs .choice-row {
