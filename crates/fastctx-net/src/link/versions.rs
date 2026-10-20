@@ -109,6 +109,7 @@ impl Inner {
             let reports = fetch.progress;
             let (progress, mut changes) = tokio::sync::watch::channel(PackageProgress::default());
             let work = async {
+                let _lease = inner.node.retain_package(&fetch.version);
                 let path = inner.node.relay(fetch, progress).await?;
                 inner.deliver(id, &path).await
             };
@@ -177,6 +178,21 @@ impl Inner {
 }
 
 impl Link {
+    /// Queries or changes updates on a hub advertising the account view.
+    pub async fn network_updates(
+        &self,
+        account: &fastctx_types::AccountName,
+        request: fastctx_types::update::ViewCall,
+    ) -> Result<fastctx_types::update::ViewReply, String> {
+        if !self.versions().is_some_and(|network| network.updates_view) {
+            return Err("this hub does not support the updates view; update the hub first".into());
+        }
+        match self.inner.ask(Question::NetworkUpdates { account: account.clone(), request }).await? {
+            Told::NetworkUpdates { reply } => Ok(reply),
+            _ => Err("the hub answered something other than the updates view".into()),
+        }
+    }
+
     /// Tells the hub this machine's versions, now and at every session.
     pub fn report_versions(&self, report: Report) {
         self.inner.tell_versions(report);

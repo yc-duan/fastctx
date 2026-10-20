@@ -1278,6 +1278,13 @@ impl fastctx_net::link::Node for Handler {
         }
     }
 
+    fn retain_package(&self, version: &str) -> Box<dyn Send + Sync> {
+        match self.node.upgrade() {
+            Some(node) => Box::new(crate::updates::retain_package(&node, version)),
+            None => Box::new(()),
+        }
+    }
+
     fn relay(
         &self,
         fetch: fastctx_types::update::Fetch,

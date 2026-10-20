@@ -29,7 +29,7 @@ pub(super) fn targets(hub: &Hub, name: &MachineName, report: &Report) {
     }
 }
 
-fn for_targets(manifest: &Manifest, targets: &PackageTargets) -> Vec<Held> {
+pub(super) fn for_targets(manifest: &Manifest, targets: &PackageTargets) -> Vec<Held> {
     let mut names: Vec<String> = targets.app.iter().chain(targets.kernel.iter()).cloned().collect();
     // Earlier headless machines report no target. Prepare the release's
     // command-line packages before announcing it to these machines too.
@@ -43,16 +43,42 @@ fn for_targets(manifest: &Manifest, targets: &PackageTargets) -> Vec<Held> {
         .collect()
 }
 
-fn required(hub: &Hub, manifest: &Manifest) -> BTreeSet<Held> {
-    demand(hub, manifest).into_keys().collect()
+fn needs_network(hub: &Hub, name: &MachineName) -> bool {
+    let Some(key) = hub.store().book.directory.member(name).map(|m| m.key) else { return false };
+    hub.updates.lock().expect("never poisoned").last.get(&key).is_some_and(|last| last.report.needs_network())
+}
+
+pub(super) fn offer_to(hub: &Hub, name: &MachineName, network: &mut Network) {
+    if !needs_network(hub, name) {
+        return;
+    }
+    let targets = {
+        let store = hub.store();
+        store
+            .book
+            .directory
+            .member(name)
+            .and_then(|m| store.hub.package_targets.get(&m.key))
+            .cloned()
+            .unwrap_or_default()
+    };
+    let cache = hub.updates.lock().expect("never poisoned").cache.clone();
+    let held = held(hub, &cache);
+    let ready = |m: &Manifest| for_targets(m, &targets).iter().all(|p| held.contains(p));
+    network.stable = network.stable.take().filter(ready);
+    network.beta = network.beta.take().filter(ready);
 }
 
 /// The packages of `manifest` the network's machines need, and how many
 /// machines need each.
 fn demand(hub: &Hub, manifest: &Manifest) -> BTreeMap<Held, usize> {
     let store = hub.store();
+    let updates = hub.updates.lock().expect("never poisoned");
     let mut demand = BTreeMap::new();
     for member in &store.book.directory.members {
+        if updates.last.get(&member.key).is_none_or(|last| !last.report.needs_network()) {
+            continue;
+        }
         let targets = store.hub.package_targets.get(&member.key).cloned().unwrap_or_default();
         for held in for_targets(manifest, &targets) {
             *demand.entry(held).or_insert(0) += 1;
@@ -84,11 +110,12 @@ pub(super) fn held(hub: &Hub, cache: &Cache) -> BTreeSet<Held> {
 pub(super) fn ready_network(hub: &Hub, mut network: Network) -> Network {
     let cache = hub.updates.lock().expect("never poisoned").cache.clone();
     let held = held(hub, &cache);
-    let ready = |manifest: &Manifest| required(hub, manifest).is_subset(&held);
-    network.stable = network.stable.filter(ready);
-    network.beta = network.beta.filter(ready);
     network.due.retain(|name, due| {
-        let manifest = hub.updates.lock().expect("never poisoned").manifest(&due.version);
+        if !needs_network(hub, name) {
+            return true;
+        }
+        let manifest =
+            due.manifest.clone().or_else(|| hub.updates.lock().expect("never poisoned").manifest(&due.version));
         let targets = {
             let store = hub.store();
             store.book.directory.member(name).and_then(|member| store.hub.package_targets.get(&member.key)).cloned()
@@ -193,6 +220,7 @@ pub(crate) fn prefetch(hub: &Arc<Hub>) {
             tokio::spawn(async move {
                 if let Err(why) = prepare_update(&hub, &machine, &version).await {
                     hub.log.line(format_args!("preparing {version} for {machine}: {why}"));
+                    super::view::problem(&hub, &version, None, Some(why));
                 }
                 super::tell(&hub, None);
             });
@@ -237,7 +265,10 @@ pub(crate) fn prefetch(hub: &Arc<Hub>) {
     tokio::spawn(async move {
         for (package, _) in wanted {
             hub.log.line(format_args!("preparing {} of {} before announcing it", package.target, package.version));
-            let _ = super::obtain::obtain(&hub, package, None).await;
+            let version = package.version.clone();
+            let target = package.target.clone();
+            let outcome = super::obtain::obtain(&hub, package, None).await;
+            super::view::problem(&hub, &version, Some(&target), outcome.err());
             super::tell(&hub, None);
         }
     });
@@ -276,6 +307,19 @@ pub(crate) async fn prepare_update(hub: &Arc<Hub>, name: &MachineName, version: 
         }
     };
     cache.keep_manifest(&manifest)?;
+    hub.updates.lock().expect("never poisoned").catalog.insert(manifest.version.clone(), manifest.clone());
+    {
+        let mut store = hub.store();
+        for due in &mut store.hub.due {
+            if due.due.version == version {
+                due.due.manifest = Some(manifest.clone());
+            }
+        }
+        store.save_hub().map_err(|e| e.to_string())?;
+    }
+    if !needs_network(hub, name) {
+        return Ok(());
+    }
     for package in for_targets(&manifest, &targets) {
         super::obtain::obtain(hub, package, None).await?;
     }

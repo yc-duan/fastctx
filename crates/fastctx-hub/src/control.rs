@@ -1216,6 +1216,7 @@ fn answer(hub: &Hub, name: &MachineName, generation: u64, call: u64, message: En
 
 fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, String> {
     match question {
+        Question::NetworkUpdates { account, request } => crate::updates::view_request(hub, name, &account, request),
         Question::MachineLog { account, before } => {
             let store = hub.store();
             let reads =

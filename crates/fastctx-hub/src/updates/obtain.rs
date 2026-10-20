@@ -593,9 +593,14 @@ fn next(hub: &Hub, held: &Held, tried: &Tried) -> Option<Source> {
         consider(by_speed(updates.own_speed), Source::Hub);
     }
     for (name, (generation, report)) in candidates {
+        if !report.relays {
+            continue;
+        }
         let rank = if report.holds.contains(held) {
             (0, 0)
-        } else if report.relays && report.github == Some(true) {
+        } else if report.github_at.is_some_and(|at| jiff::Timestamp::now().duration_since(at).as_secs() < 24 * 3600)
+            || (report.github_at.is_none() && report.github == Some(true))
+        {
             by_speed(report.github_speed)
         } else {
             continue;

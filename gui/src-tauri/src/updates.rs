@@ -110,6 +110,22 @@ pub(crate) async fn update_choose(shell: tauri::State<'_, Shell>, version: Optio
     ask(&shell, UpdateCall::Choose { version }).await
 }
 
+/// Reads or changes the account's update view on its hub.
+#[fastctx_gui_command::command]
+pub(crate) async fn network_updates(
+    shell: tauri::State<'_, Shell>,
+    hub: String,
+    account: String,
+    request: fastctx_types::update::ViewCall,
+) -> Result<fastctx_types::update::ViewReply, String> {
+    let hub = hub.parse::<fastctx_types::HubName>().map_err(|e| e.to_string())?;
+    let account = account.parse::<fastctx_types::AccountName>().map_err(|e| e.to_string())?;
+    match shell.world().call(Call::NetworkUpdates { hub, account, request }).await.map_err(|e| e.to_string())?.0 {
+        Reply::NetworkUpdates(reply) => Ok(reply),
+        other => Err(format!("the World answered {other:?}")),
+    }
+}
+
 /// Has `machine_name` update its World program itself.
 #[fastctx_gui_command::command]
 pub(crate) async fn update_machine(shell: tauri::State<'_, Shell>, machine_name: String) -> Result<State, String> {
@@ -155,10 +171,18 @@ pub(crate) async fn update_install(
         .iter()
         .find(|kept| kept.version == version && kept.target == target)
         .ok_or("the new version is not here yet")?;
+    if state.progress {
+        once(
+            &shell,
+            UpdateCall::Progress { stage: fastctx_types::update::Stage::Installing { version: version.clone() } },
+        )
+        .await?;
+    }
     #[cfg(target_os = "android")]
     {
-        let _ = state;
-        crate::android::install_package(&app, kept.path.clone()).await
+        let installed = crate::android::install_package(&app, kept.path.clone()).await;
+        installation_outcome(&shell, &state, &version, &installed).await;
+        installed
     }
     #[cfg(desktop)]
     {
@@ -173,9 +197,24 @@ pub(crate) async fn update_install(
             .find(|manifest| manifest.version == version)
             .ok_or("the new version's manifest is not known here")?;
         let package = manifest.package(&target).ok_or("the new version has no package for this computer")?;
-        desktop::install(&app, &version, &target, package, std::path::Path::new(&kept.path)).await?;
-        Ok(true)
+        let installed =
+            desktop::install(&app, &version, &target, package, std::path::Path::new(&kept.path)).await.map(|()| true);
+        installation_outcome(&shell, &state, &version, &installed).await;
+        installed
     }
+}
+
+async fn installation_outcome(shell: &Shell, state: &State, version: &str, outcome: &Result<bool, String>) {
+    if !state.progress {
+        return;
+    }
+    use fastctx_types::update::{FailureReason, Problem, Stage};
+    let stage = match outcome {
+        Err(why) => Stage::Failed { version: version.into(), problem: Problem::new(FailureReason::Other, why.clone()) },
+        Ok(false) => Stage::Ready { version: version.into() },
+        Ok(true) => return,
+    };
+    let _ = once(shell, UpdateCall::Progress { stage }).await;
 }
 
 /// After a computer's update, the World program the new application carries

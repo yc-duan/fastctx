@@ -10,16 +10,11 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use fastctx_types::update::{
-    App, Channel, Failed, Fetching, Kind, Looked, Manifest, Network, Report, Settings, State, UpdateCall, Via,
-};
+use fastctx_types::update::{App, Failed, Fetching, Kind, Looked, Manifest, Report, Settings, State, UpdateCall, Via};
 use fastctx_update::Cache;
 
 use super::{Device, failed};
 use crate::Error;
-
-/// How often GitHub is looked at.
-const LOOK_EVERY: Duration = Duration::from_secs(6 * 3600);
 
 #[derive(Default)]
 pub(super) struct Updates {
@@ -36,6 +31,7 @@ struct Held {
     app: Option<App>,
     fetching: Option<Fetching>,
     failed: Option<Failed>,
+    activity: Option<fastctx_types::update::Stage>,
 }
 
 impl Device {
@@ -51,9 +47,7 @@ impl Device {
         let dir = self.updates_dir();
         std::fs::create_dir_all(&dir).map_err(failed)?;
         let bytes = serde_json::to_vec(value).map_err(failed)?;
-        let temporary = dir.join(format!("{name}.part"));
-        std::fs::write(&temporary, bytes).map_err(failed)?;
-        std::fs::rename(&temporary, dir.join(name)).map_err(failed)
+        fastctx_platform::publish(&dir.join(name), &bytes, fastctx_platform::Permissions::Private).map_err(failed)
     }
 
     fn kept_update<T: serde::de::DeserializeOwned + Default>(&self, name: &str) -> T {
@@ -69,7 +63,11 @@ impl Device {
             {
                 let mut held = self.updates.held.lock().expect("never poisoned");
                 held.settings = self.kept_update("settings.json");
+                if held.settings.auto {
+                    held.settings.chosen = true;
+                }
                 held.looked = self.kept_update("looked.json");
+                held.looked.checking = false;
                 held.app = self.kept_update::<Option<App>>("app.json");
             }
             if !fastctx_platform::follows_releases() {
@@ -77,40 +75,52 @@ impl Device {
             }
             let device = Arc::downgrade(self);
             tokio::spawn(async move {
-                let since =
-                    device.upgrade().and_then(|device| device.updates.held.lock().expect("never poisoned").looked.at);
-                let gone = since.map(|at| jiff::Timestamp::now().duration_since(at).unsigned_abs());
-                let mut wait =
-                    gone.map_or(Duration::ZERO, |gone| LOOK_EVERY.saturating_sub(gone)).max(Duration::from_secs(60));
+                let settled = tokio::time::Instant::now() + Duration::from_secs(60);
                 loop {
-                    tokio::time::sleep(wait).await;
                     let Some(device) = device.upgrade() else { return };
-                    device.look_for_versions().await;
-                    wait = LOOK_EVERY;
+                    let due = fastctx_update::github::wait(&device.updates.held.lock().expect("never poisoned").looked)
+                        .is_zero();
+                    if due && tokio::time::Instant::now() >= settled {
+                        device.look_for_versions();
+                    }
+                    device.report_versions();
+                    drop(device);
+                    tokio::time::sleep(Duration::from_secs(2)).await;
                 }
             });
         });
     }
 
-    async fn look_for_versions(self: &Arc<Self>) {
-        let running = self.updates.held.lock().expect("never poisoned").app.as_ref().map(|app| app.version.clone());
-        let looked = fastctx_update::github::look(Some(running.as_deref().unwrap_or(env!("CARGO_PKG_VERSION")))).await;
-        {
+    fn look_for_versions(self: &Arc<Self>) {
+        let (running, previous) = {
             let mut held = self.updates.held.lock().expect("never poisoned");
-            if looked.why.is_none() {
-                held.looked = looked;
-            } else {
-                held.looked.at = looked.at;
-                held.looked.github = looked.github;
-                held.looked.why = looked.why;
+            if held.looked.checking {
+                return;
             }
-            let looked = held.looked.clone();
-            drop(held);
-            if let Err(error) = self.keep_update("looked.json", &looked) {
-                eprintln!("World device: keeping what was found of new versions: {error}");
-            }
-        }
+            let previous = held.looked.clone();
+            held.looked.checking = true;
+            (Self::running(&held), previous)
+        };
         self.report_versions();
+        let device = self.clone();
+        tokio::spawn(async move {
+            let looked = fastctx_update::github::look_after(
+                Some(&running),
+                &previous,
+                Some(&device.updates_dir().join("github-list.json")),
+            )
+            .await;
+            {
+                let mut held = device.updates.held.lock().expect("never poisoned");
+                let mut looked = looked;
+                looked.github_at = looked.github_at.max(held.looked.github_at);
+                held.looked = looked;
+                if let Err(error) = device.keep_update("looked.json", &held.looked) {
+                    eprintln!("World device: keeping what was found of new versions: {error}");
+                }
+            }
+            device.report_versions();
+        });
     }
 
     /// What this device tells the hubs it is on of versions now.
@@ -119,9 +129,11 @@ impl Device {
         if !fastctx_platform::follows_releases() {
             return;
         }
+        let state = self.update_state();
         let held = self.updates.held.lock().expect("never poisoned");
         let mut found: Vec<Manifest> =
             [held.looked.stable.clone(), held.looked.beta.clone()].into_iter().flatten().collect();
+        found.extend(held.looked.newer.iter().cloned());
         found.extend(self.update_cache().manifests().into_iter().take(1));
         found.sort_by_key(|manifest| std::cmp::Reverse(manifest.semver()));
         found.dedup_by(|a, b| a.version == b.version);
@@ -137,38 +149,20 @@ impl Device {
             github_speed: None,
             target: None,
             package_progress: false,
+            stage: state.stage,
+            auto: Some(state.auto),
+            auto_chosen: held.settings.chosen,
+            kind: Some(Kind::Phone),
+            github_at: held.looked.github_at,
+            check_failure: held.looked.failure.clone(),
+            checked_at: held.looked.at,
+            checking: held.looked.checking,
+            updates_view: true,
         };
         drop(held);
         for session in self.sessions() {
             session.link.report_versions(report.clone());
         }
-    }
-
-    fn network(&self) -> Option<Network> {
-        let mut merged: Option<Network> = None;
-        for network in self.sessions().iter().filter_map(|session| session.link.versions()) {
-            let Some(kept) = &mut merged else {
-                merged = Some(network);
-                continue;
-            };
-            kept.stable = fastctx_types::update::newest(kept.stable.as_ref(), network.stable.as_ref()).cloned();
-            kept.beta = fastctx_types::update::newest(kept.beta.as_ref(), network.beta.as_ref()).cloned();
-            kept.policy.minimum = match (kept.policy.minimum.take(), network.policy.minimum) {
-                (Some(a), Some(b)) => {
-                    Some(if fastctx_types::update::release(&b) > fastctx_types::update::release(&a) { b } else { a })
-                }
-                (a, b) => a.or(b),
-            };
-            kept.hub = match (kept.hub.take(), network.hub) {
-                (Some(a), Some(b)) => {
-                    Some(if fastctx_types::update::release(&b) < fastctx_types::update::release(&a) { b } else { a })
-                }
-                _ => None,
-            };
-            kept.machines.extend(network.machines);
-            kept.due.extend(network.due);
-        }
-        merged
     }
 
     /// The version of the application this device runs.
@@ -182,52 +176,61 @@ impl Device {
     /// releases by itself only when its owner chose so, and never past the
     /// major version of the hubs it is on.
     fn update_state(&self) -> State {
-        let network = self.network();
+        let sessions = self.sessions();
         let held = self.updates.held.lock().expect("never poisoned");
-        let running = Self::running(&held);
-        let channel = Channel::of(&running);
         let cache = self.update_cache();
-        let kept = cache.manifests();
-        let newest = [held.looked.on(channel), network.as_ref().and_then(|network| network.on(channel))]
-            .into_iter()
-            .chain(kept.iter().filter(|manifest| channel.takes(&manifest.version)).map(Some))
-            .fold(None, fastctx_types::update::newest)
-            .cloned();
-        let chosen = held.chosen.clone().filter(|chosen| chosen.newer_than(&running));
-        let offer = chosen.clone().or(newest);
-        let auto = held.settings.auto_for(Kind::App, network.as_ref().map(|network| &network.policy));
-        let hub_major = network
-            .as_ref()
-            .and_then(|network| network.hub.as_deref())
-            .and_then(fastctx_types::update::release)
-            .map(|version| version.major);
-        State {
-            running: Some(running.clone()),
-            settings: held.settings.clone(),
-            channel,
-            auto,
-            chosen,
-            hub_major,
-            looked: held.looked.clone(),
-            network,
-            offer,
-            fetching: held.fetching.clone(),
-            failed: held.failed.clone(),
-            kept: cache.kept(),
-            app: held.app.clone(),
-            kernel_target: String::new(),
-            renewing: None,
-            take: None,
-            open: true,
-        }
+        fastctx_update::state::calculate(
+            State {
+                running: Some(Self::running(&held)),
+                settings: held.settings.clone(),
+                chosen: held.chosen.clone(),
+                looked: held.looked.clone(),
+                fetching: held.fetching.clone(),
+                failed: held.failed.clone(),
+                kept: cache.kept(),
+                app: held.app.clone(),
+                open: true,
+                ..State::default()
+            },
+            fastctx_update::state::Context {
+                kind: Kind::Phone,
+                connected: !sessions.is_empty(),
+                hub_here: false,
+                networks: sessions.iter().filter_map(|s| s.link.versions()).collect(),
+                cached: cache.manifests(),
+                activity: held.activity.clone(),
+            },
+        )
     }
 
     /// An interface on this device asks about updates.
     pub(super) async fn update(self: &Arc<Self>, call: UpdateCall) -> Result<State, Error> {
         self.start_updates();
         match call {
+            UpdateCall::Progress { stage } => {
+                self.updates.held.lock().expect("never poisoned").activity = Some(stage);
+                self.report_versions();
+            }
+            UpdateCall::Preferences { auto, .. } => {
+                let mut held = self.updates.held.lock().expect("never poisoned");
+                let mut settings = held.settings.clone();
+                if let Some(auto) = auto {
+                    settings.auto = auto;
+                    settings.chosen = true;
+                }
+                settings.relays = false;
+                self.keep_update("settings.json", &settings)?;
+                held.settings = settings;
+                drop(held);
+                self.report_versions();
+            }
             UpdateCall::State => {}
-            UpdateCall::Look => self.look_for_versions().await,
+            UpdateCall::Look => {
+                self.look_for_versions();
+                while self.updates.held.lock().expect("never poisoned").looked.checking {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
             UpdateCall::Set { mut settings } => {
                 settings.relays = false;
                 self.keep_update("settings.json", &settings)?;
@@ -265,6 +268,9 @@ impl Device {
                 .flatten()
                 .chain(state.looked.newer.iter())
                 .chain(
+                    state.network.as_ref().into_iter().flat_map(|n| n.due.values().filter_map(|d| d.manifest.as_ref())),
+                )
+                .chain(
                     state
                         .network
                         .as_ref()
@@ -287,6 +293,9 @@ impl Device {
                 .into_iter()
                 .flatten()
                 .chain(state.looked.newer.iter())
+                .chain(
+                    state.network.as_ref().into_iter().flat_map(|n| n.due.values().filter_map(|d| d.manifest.as_ref())),
+                )
                 .chain(
                     state
                         .network
@@ -324,14 +333,23 @@ impl Device {
                     fetching.total = progress.total;
                 }
             };
-            let outcome = fastctx_update::obtain(&cache, &manifest, &target, link, &mut progress).await;
+            let looked = device.updates.held.lock().expect("never poisoned").looked.clone();
+            let network_now = looked.github == Some(false) && looked.github_at <= looked.at;
+            let outcome = fastctx_update::obtain(&cache, &manifest, &target, link, network_now, &mut progress).await;
+            if outcome.as_ref().is_ok_and(|b| b.github_at.is_some()) {
+                let mut held = device.updates.held.lock().expect("never poisoned");
+                held.looked.github_at = Some(jiff::Timestamp::now());
+                if let Err(error) = device.keep_update("looked.json", &held.looked) {
+                    eprintln!("keeping when GitHub was reached: {error}");
+                }
+            }
             if outcome.is_ok() {
                 cache.prune(&[manifest.version.as_str()]);
             }
             let mut held = device.updates.held.lock().expect("never poisoned");
             held.fetching = None;
             if let Err(why) = outcome {
-                held.failed = Some(Failed { version, target, why });
+                held.failed = Some(Failed { version, target, why: why.why, reason: Some(why.reason) });
             }
             drop(held);
             device.report_versions();

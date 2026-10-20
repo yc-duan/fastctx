@@ -80,6 +80,11 @@ impl Device {
                 let session = self.on_hub(hub.as_ref())?;
                 return Ok((Reply::CollabRead(session.link.collab_read(&account).map_err(failed)?), here()));
             }
+            Call::NetworkUpdates { hub, account, request } => {
+                let session = self.on_hub(Some(&hub))?;
+                let reply = session.link.network_updates(&account, request).await.map_err(failed)?;
+                return Ok((Reply::NetworkUpdates(reply), here()));
+            }
             Call::MachineLog { hub, account, before } => {
                 let session = self.on_hub(Some(&hub))?;
                 let page = session.link.machine_log(&account, before).await.map_err(failed)?;

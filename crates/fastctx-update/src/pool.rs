@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use fastctx_net::link::Link;
-use fastctx_types::update::{Fetch, Manifest, Package};
+use fastctx_types::update::{FailureReason, Fetch, Manifest, Package, Problem};
 use tokio::sync::watch;
 
 use crate::Cache;
@@ -17,7 +17,24 @@ use crate::obtain::{Brought, Progress};
 pub type Log = Arc<dyn Fn(String) + Send + Sync>;
 
 #[derive(Clone, Default)]
-pub struct Pool(Arc<Mutex<HashMap<PathBuf, Owner>>>);
+pub struct Pool(Arc<Mutex<HashMap<PathBuf, Owner>>>, Arc<Mutex<HashMap<String, usize>>>);
+
+/// Retains a version while an external transfer uses its verified file.
+pub struct Lease {
+    pool: Pool,
+    version: String,
+}
+impl Drop for Lease {
+    fn drop(&mut self) {
+        let mut pins = self.pool.1.lock().expect("never poisoned");
+        if let Some(count) = pins.get_mut(&self.version) {
+            *count -= 1;
+            if *count == 0 {
+                pins.remove(&self.version);
+            }
+        }
+    }
+}
 
 struct Owner {
     local: watch::Sender<Local>,
@@ -35,7 +52,7 @@ pub(crate) struct Local {
 struct State {
     progress: Option<Progress>,
     local_progress: Option<Progress>,
-    outcome: Option<Result<Brought, String>>,
+    outcome: Option<Result<Brought, Problem>>,
 }
 
 pub(crate) struct Request {
@@ -44,33 +61,45 @@ pub(crate) struct Request {
     pub package: Package,
     pub link: Option<Link>,
     pub local: Local,
+    pub network_now: bool,
 }
 
 static NEXT: AtomicU64 = AtomicU64::new(1);
 
 impl Pool {
-    /// Obtains a package once for this device, first asking its hub when one
-    /// is available. A helper joining this request starts its local source.
+    pub fn retain(&self, version: &str) -> Lease {
+        *self.1.lock().expect("never poisoned").entry(version.to_string()).or_default() += 1;
+        Lease { pool: self.clone(), version: version.to_string() }
+    }
+
+    /// Obtains a package once for this device, trying GitHub first.
+    /// `network_now` also starts the hub when a recent check could not reach GitHub.
+    #[allow(clippy::too_many_arguments)]
     pub async fn obtain(
         &self,
         cache: &Cache,
         manifest: &Manifest,
         target: &str,
         link: Option<&Link>,
+        network_now: bool,
+        carried: Option<PathBuf>,
         progress: &mut (dyn FnMut(Progress) + Send),
         log: Log,
-    ) -> Result<Brought, String> {
-        let package =
-            manifest.package(target).ok_or_else(|| format!("{} has no package for {target}", manifest.version))?;
+    ) -> Result<Brought, Problem> {
+        let _lease = self.retain(&manifest.version);
+        let package = manifest.package(target).ok_or_else(|| {
+            Problem::new(FailureReason::NoPackage, format!("{} has no package for {target}", manifest.version))
+        })?;
         let request = Request {
             version: manifest.version.clone(),
             target: target.to_string(),
             package: package.clone(),
             link: link.filter(|link| link.keeps_versions()).cloned(),
-            local: Local::default(),
+            local: Local { requested: false, carried },
+            network_now,
         };
         let brought = self.join(cache, request, progress, log).await?;
-        cache.keep_manifest(manifest)?;
+        cache.keep_manifest(manifest).map_err(|why| Problem::new(FailureReason::Disk, why))?;
         Ok(brought)
     }
 
@@ -83,13 +112,14 @@ impl Pool {
         carried: Option<PathBuf>,
         progress: &mut (dyn FnMut(Progress) + Send),
         log: Log,
-    ) -> Result<Brought, String> {
+    ) -> Result<Brought, Problem> {
         let request = Request {
             version: fetch.version.clone(),
             target: fetch.target.clone(),
             package: fetch.package.clone(),
             link: None,
             local: Local { requested: true, carried },
+            network_now: false,
         };
         self.join(cache, request, progress, log).await
     }
@@ -100,13 +130,13 @@ impl Pool {
         request: Request,
         progress: &mut (dyn FnMut(Progress) + Send),
         log: Log,
-    ) -> Result<Brought, String> {
+    ) -> Result<Brought, Problem> {
         let key = cache.path(&request.version, &request.target)?;
         loop {
             let (mut state, stopping) = {
                 let mut owners = self.0.lock().expect("never poisoned");
                 if let Some(path) = cache.get(&request.version, &request.target) {
-                    return Ok(Brought { path, github_speed: None });
+                    return Ok(Brought { path, github_speed: None, github_at: None });
                 }
                 if let Some(owner) = owners.get_mut(&key) {
                     if request.local.requested && !owner.stopping {
@@ -124,6 +154,7 @@ impl Pool {
                         package: request.package.clone(),
                         link: request.link.clone(),
                         local: request.local.clone(),
+                        network_now: request.network_now,
                     };
                     tokio::spawn(async move {
                         pool.own(cache, key, request, source, state, log).await;
@@ -190,7 +221,7 @@ impl Pool {
                     }
                 }
             }
-            (Err(why), _) | (_, Err(why)) => Err(why.clone()),
+            (Err(why), _) | (_, Err(why)) => Err(Problem::new(FailureReason::Disk, why.clone())),
         };
         // The futures and their open files have gone before cleanup starts.
         for file in [files.0, files.1].into_iter().flatten() {
@@ -202,6 +233,37 @@ impl Pool {
         let mut owners = self.0.lock().expect("never poisoned");
         state.send_modify(|state| state.outcome = Some(outcome));
         owners.remove(&key);
+    }
+
+    /// Retires unused versions without racing a newly admitted acquisition.
+    pub fn prune(&self, cache: &Cache, keep: &[String], log: Log) {
+        let owners = self.0.lock().expect("never poisoned");
+        let mut keep = keep.to_vec();
+        let pins = self.1.lock().expect("never poisoned");
+        keep.extend(pins.keys().cloned());
+        keep.extend(
+            owners.keys().filter_map(|path| path.parent()?.file_name()?.to_str()?.strip_prefix('v').map(str::to_owned)),
+        );
+        let mut retired = Vec::new();
+        for (version, _) in cache.versions() {
+            if keep.contains(&version) {
+                continue;
+            }
+            match cache.retire(&version) {
+                Ok(Some(path)) => retired.push(path),
+                Ok(None) => {}
+                Err(why) => log(why),
+            }
+        }
+        drop(pins);
+        drop(owners);
+        tokio::task::spawn_blocking(move || {
+            for path in retired {
+                if let Err(error) = std::fs::remove_dir_all(&path) {
+                    log(format!("deleting {}: {error}", path.display()));
+                }
+            }
+        });
     }
 
     /// Versions with a live owner, including one still cleaning up.

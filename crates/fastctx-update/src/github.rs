@@ -1,21 +1,19 @@
-//! What GitHub publishes: every release that carries a manifest, and the
-//! newest of each line with its manifest. The stable line takes only
-//! releases not marked as test releases; the beta line takes all.
+//! Patient release checks, conditional listings and independently readable manifests.
 
-use fastctx_types::update::{Looked, MANIFEST, Manifest, REPOSITORY, Release as Listed};
+use std::collections::BTreeMap;
+use std::path::Path;
+use std::time::{Duration, Instant};
+
+use fastctx_types::update::{CheckFailure, Looked, MANIFEST, Manifest, REPOSITORY, ReachFailure, Release as Listed};
 use jiff::Timestamp;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-/// How many releases one page of the list holds.
 const PAGE: usize = 100;
-/// The most manifests of newer releases read in one look.
 const NEWER: usize = 8;
-/// The most pages read: the newest thousand releases.
 const PAGES: usize = 10;
+const LIMIT: usize = 4 << 20;
+const CHECK_TIME: Duration = Duration::from_secs(120);
 
-/// The list of releases is read from here unless `FASTCTX_UPDATE_RELEASES`
-/// names another list of the same shape, as a drill's own server does; that
-/// one is read whole, as one page.
 fn releases_url(page: usize) -> Option<String> {
     match std::env::var("FASTCTX_UPDATE_RELEASES") {
         Ok(url) => (page == 1).then_some(url),
@@ -23,10 +21,7 @@ fn releases_url(page: usize) -> Option<String> {
     }
 }
 
-/// The most a list of releases or a manifest may be.
-const LIMIT: usize = 4 << 20;
-
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct Release {
     tag_name: String,
     #[serde(default)]
@@ -39,83 +34,254 @@ struct Release {
     assets: Vec<Asset>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct Asset {
     name: String,
     browser_download_url: String,
 }
 
-/// Looks on GitHub now; with `running`, reads the manifests of the
-/// releases newer than it too, a few at most.
-pub async fn look(running: Option<&str>) -> Looked {
-    let at = Some(Timestamp::now());
-    match found().await {
-        Ok((stable, beta, releases)) => {
-            let newer = match running {
-                Some(running) => newer(&releases, running).await,
-                None => Vec::new(),
-            };
-            Looked { at, github: Some(true), why: None, stable, beta, releases, newer }
-        }
-        Err(Failure { reached, why }) => Looked {
-            at,
-            github: Some(reached),
-            why: Some(why),
-            stable: None,
-            beta: None,
-            releases: Vec::new(),
-            newer: Vec::new(),
-        },
-    }
+#[derive(Clone, Deserialize, Serialize)]
+struct Page {
+    etag: Option<String>,
+    releases: Vec<Release>,
 }
 
-/// The manifests of the releases newer than `running`, the newest first: a
-/// release whose manifest cannot be read now is left out, and read again at
-/// the next look.
-async fn newer(releases: &[Listed], running: &str) -> Vec<Manifest> {
-    let floor = fastctx_types::update::release(running);
-    let mut found = Vec::new();
-    for release in
-        releases.iter().filter(|release| fastctx_types::update::release(&release.version) > floor).take(NEWER)
-    {
-        if let Ok(manifest) = of(release).await {
-            found.push(manifest);
-        }
-    }
-    found
-}
+type Pages = BTreeMap<String, Page>;
 
+#[derive(Clone)]
 struct Failure {
-    /// Whether GitHub answered at all.
     reached: bool,
+    kind: CheckFailure,
     why: String,
 }
 
-/// Every release not a draft that carries a manifest, the newest first.
-async fn listed() -> Result<Vec<Listed>, Failure> {
-    let unreached = |why: String| Failure { reached: false, why };
+impl From<fastctx_net::web::Failure> for Failure {
+    fn from(error: fastctx_net::web::Failure) -> Self {
+        Self { reached: false, kind: CheckFailure::Unreachable { reason: error.reason }, why: error.why }
+    }
+}
+
+/// Looks without a durable listing cache, for callers that do not own one.
+pub async fn look(running: Option<&str>) -> Looked {
+    look_after(running, &Looked::default(), None).await
+}
+
+/// Performs one bounded check, preserving earlier discoveries on failure.
+/// `cache` keeps ETags and their corresponding pages together across restarts.
+pub async fn look_after(running: Option<&str>, previous: &Looked, cache: Option<&Path>) -> Looked {
+    let started = Instant::now();
+    let mut pages: Pages = cache
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default();
+    let mut last = None;
+    let mut reached_at = previous.github_at;
+    let work = async {
+        for delay in [0, 3, 12, 45] {
+            if delay > 0 {
+                tokio::time::sleep(Duration::from_secs(delay)).await;
+            }
+            match listed(&mut pages).await {
+                Ok(releases) => {
+                    reached_at = Some(Timestamp::now());
+                    return Ok(releases);
+                }
+                Err(failure) => {
+                    if failure.reached {
+                        reached_at = Some(Timestamp::now());
+                    }
+                    let retry = matches!(
+                        failure.kind,
+                        CheckFailure::Unreachable { .. } | CheckFailure::Http { status: 500..=599 }
+                    );
+                    last = Some(failure.clone());
+                    if !retry {
+                        return Err(failure);
+                    }
+                }
+            }
+        }
+        Err(last.clone().expect("each attempt failed"))
+    };
+    let result = match tokio::time::timeout(CHECK_TIME, work).await {
+        Ok(result) => result,
+        Err(_) => Err(last.unwrap_or(Failure {
+            reached: false,
+            kind: CheckFailure::Unreachable { reason: ReachFailure::Timeout },
+            why: "checking GitHub took more than two minutes".into(),
+        })),
+    };
+    if let Some(path) = cache {
+        let saved = (|| -> Result<(), String> {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            let bytes = serde_json::to_vec(&pages).map_err(|e| e.to_string())?;
+            fastctx_platform::publish(path, &bytes, fastctx_platform::Permissions::Private).map_err(|e| e.to_string())
+        })();
+        if let Err(why) = saved {
+            eprintln!("keeping GitHub's conditional listing: {why}");
+        }
+    }
+    let mut looked = previous.clone();
+    looked.checking = false;
+    looked.at = Some(Timestamp::now());
+    looked.github_at = reached_at;
+    match result {
+        Ok(releases) => {
+            looked.github = Some(true);
+            looked.why = None;
+            looked.failure = None;
+            looked.failures = 0;
+            // Each manifest stands alone. Failure of one never discards the list
+            // or the other line. A later check tries missing manifests again.
+            let mut wanted: Vec<&Listed> = releases
+                .iter()
+                .filter(|r| {
+                    running
+                        .is_some_and(|v| fastctx_types::update::release(&r.version) > fastctx_types::update::release(v))
+                })
+                .take(NEWER)
+                .collect();
+            wanted.extend(releases.first());
+            wanted.extend(releases.iter().find(|r| !r.prerelease));
+            wanted.sort_by(|a, b| a.version.cmp(&b.version));
+            wanted.dedup_by(|a, b| a.version == b.version);
+            let mut manifests = Vec::new();
+            // Bound manifest work separately: missing assets must not turn an
+            // otherwise successful check into minutes per listed release.
+            let read = async {
+                for release in wanted {
+                    if let Ok(manifest) = of(release).await {
+                        manifests.push(manifest);
+                    }
+                }
+            };
+            let _ =
+                tokio::time::timeout(CHECK_TIME.saturating_sub(started.elapsed()).min(Duration::from_secs(60)), read)
+                    .await;
+            looked.stable = releases
+                .iter()
+                .find(|r| !r.prerelease)
+                .and_then(|r| manifests.iter().find(|m| m.version == r.version))
+                .cloned();
+            looked.beta = releases
+                .first()
+                .filter(|r| r.prerelease)
+                .and_then(|r| manifests.iter().find(|m| m.version == r.version))
+                .cloned();
+            manifests.sort_by_key(|m| std::cmp::Reverse(m.semver()));
+            looked.newer = manifests;
+            looked.releases = releases;
+        }
+        Err(failure) => {
+            looked.github = Some(failure.reached);
+            looked.why = Some(failure.why);
+            looked.failure = Some(failure.kind);
+            looked.failures = previous.failures.saturating_add(1);
+        }
+    }
+    let seconds = if looked.failure.is_some() {
+        (900u64.saturating_mul(1 << looked.failures.saturating_sub(1).min(5))).min(21600)
+    } else {
+        21600
+    };
+    let now = Timestamp::now();
+    let jitter = (now.as_nanosecond().unsigned_abs() as u64 ^ u64::from(std::process::id())) % (seconds / 10 + 1);
+    let mut next = now.checked_add(Duration::from_secs(seconds + jitter)).ok();
+    if let Some(CheckFailure::RateLimited { until: Some(until) }) = &looked.failure {
+        next = Some(next.map_or(*until, |next| next.max(*until)));
+    }
+    looked.next = next;
+    looked
+}
+
+/// Time until the next check; old records use the six-hour cadence.
+pub fn wait(looked: &Looked) -> Duration {
+    let next = looked.next.or_else(|| {
+        looked
+            .at
+            .and_then(|at| at.checked_add(Duration::from_secs(if looked.why.is_some() { 900 } else { 21600 })).ok())
+    });
+    next.filter(|next| *next > Timestamp::now())
+        .map_or(Duration::ZERO, |next| next.duration_since(Timestamp::now()).unsigned_abs())
+}
+
+fn answered(response: &fastctx_net::web::Response) -> Failure {
+    let header = |name: &str| response.headers.get(name).and_then(|v| v.to_str().ok());
+    let now = Timestamp::now();
+    let retry = header("retry-after").and_then(|s| {
+        s.parse::<u64>().ok().and_then(|s| now.checked_add(Duration::from_secs(s)).ok()).or_else(|| {
+            jiff::civil::DateTime::strptime("%a, %d %b %Y %H:%M:%S GMT", s)
+                .ok()
+                .and_then(|date| date.to_zoned(jiff::tz::TimeZone::UTC).ok())
+                .map(|z| z.timestamp())
+        })
+    });
+    let reset =
+        header("x-ratelimit-reset").and_then(|s| s.parse::<i64>().ok()).and_then(|s| Timestamp::from_second(s).ok());
+    let limited = response.status == 429
+        || (response.status == 403
+            && (retry.is_some() || reset.is_some() || header("x-ratelimit-remaining") == Some("0")));
+    Failure {
+        reached: true,
+        kind: if limited {
+            CheckFailure::RateLimited { until: retry.into_iter().chain(reset).max() }
+        } else {
+            CheckFailure::Http { status: response.status }
+        },
+        why: format!("GitHub answered {} for {}", response.status, response.url),
+    }
+}
+
+async fn listed(pages: &mut Pages) -> Result<Vec<Listed>, Failure> {
     let mut all = Vec::new();
     for page in 1..=PAGES {
         let Some(url) = releases_url(page) else { break };
-        let response = fastctx_net::web::get(&url, "application/vnd.github+json", 0).await.map_err(unreached)?;
-        if response.status != 200 {
-            return Err(Failure {
+        let previous = pages.get(&url);
+        let response = fastctx_net::web::get_conditional(
+            &url,
+            "application/vnd.github+json",
+            0,
+            previous.and_then(|p| p.etag.as_deref()),
+        )
+        .await?;
+        let releases = if response.status == 304 {
+            previous
+                .ok_or_else(|| Failure {
+                    reached: true,
+                    kind: CheckFailure::Unreadable,
+                    why: "GitHub returned 304 without a cached listing".into(),
+                })?
+                .releases
+                .clone()
+        } else {
+            if response.status != 200 {
+                return Err(answered(&response));
+            }
+            let etag = response.headers.get("etag").and_then(|v| v.to_str().ok()).map(str::to_owned);
+            let body = response.bytes_checked(LIMIT).await.map_err(|e| {
+                let mut failure = Failure::from(e);
+                failure.reached = true;
+                failure
+            })?;
+            let releases: Vec<Release> = serde_json::from_slice(&body).map_err(|e| Failure {
                 reached: true,
-                why: format!("GitHub answered {} for the releases", response.status),
-            });
-        }
-        let body = response.bytes(LIMIT).await.map_err(unreached)?;
-        let releases: Vec<Release> = serde_json::from_slice(&body)
-            .map_err(|error| Failure { reached: true, why: format!("reading GitHub's releases: {error}") })?;
+                kind: CheckFailure::Unreadable,
+                why: format!("reading GitHub's releases: {e}"),
+            })?;
+            pages.insert(url, Page { etag, releases: releases.clone() });
+            releases
+        };
         let full = releases.len() == PAGE;
-        all.extend(releases.into_iter().filter(|release| !release.draft).filter_map(|release| {
-            let version = release.tag_name.strip_prefix('v')?;
+        all.extend(releases.into_iter().filter(|r| !r.draft).filter_map(|r| {
+            let version = r.tag_name.strip_prefix('v')?;
             fastctx_types::update::release(version)?;
-            let manifest = release.assets.iter().find(|asset| asset.name == MANIFEST)?;
+            let manifest = r.assets.iter().find(|a| a.name == MANIFEST)?;
             Some(Listed {
-                version: version.to_string(),
-                published: release.published_at,
-                prerelease: release.prerelease,
+                version: version.into(),
+                published: r.published_at,
+                prerelease: r.prerelease,
                 manifest: Some(manifest.browser_download_url.clone()),
             })
         }));
@@ -123,58 +289,44 @@ async fn listed() -> Result<Vec<Listed>, Failure> {
             break;
         }
     }
-    all.sort_by(|a, b| fastctx_types::update::release(&b.version).cmp(&fastctx_types::update::release(&a.version)));
+    all.sort_by_key(|r| std::cmp::Reverse(fastctx_types::update::release(&r.version)));
     Ok(all)
 }
 
-async fn found() -> Result<(Option<Manifest>, Option<Manifest>, Vec<Listed>), Failure> {
-    let releases = listed().await?;
-    let newest = |stable: bool| releases.iter().find(|release| !(stable && release.prerelease));
-    let (stable, any) = (newest(true), newest(false));
-    let stable_manifest = match stable {
-        Some(release) => Some(of(release).await?),
-        None => None,
-    };
-    let beta_manifest = match any {
-        Some(release) if stable.is_some_and(|stable| stable.version == release.version) => None,
-        Some(release) => Some(of(release).await?),
-        None => None,
-    };
-    Ok((stable_manifest, beta_manifest, releases))
-}
-
-/// The manifest of `release`, as listed.
 async fn of(release: &Listed) -> Result<Manifest, Failure> {
-    let url = release
-        .manifest
-        .as_deref()
-        .ok_or_else(|| Failure { reached: true, why: format!("the release {} lists no manifest", release.version) })?;
-    manifest(url, &release.version).await
-}
-
-/// The manifest of the release `version` in a listing that has it.
-pub async fn manifest_of(releases: &[Listed], version: &str) -> Result<Manifest, String> {
-    let release = releases
-        .iter()
-        .find(|release| release.version == version)
-        .ok_or_else(|| format!("GitHub lists no release {version} with a manifest"))?;
-    of(release).await.map_err(|failure| failure.why)
-}
-
-async fn manifest(url: &str, version: &str) -> Result<Manifest, Failure> {
-    let response =
-        fastctx_net::web::get(url, "application/json", 0).await.map_err(|why| Failure { reached: false, why })?;
+    let url = release.manifest.as_deref().ok_or_else(|| Failure {
+        reached: true,
+        kind: CheckFailure::Unreadable,
+        why: format!("the release {} lists no manifest", release.version),
+    })?;
+    let response = fastctx_net::web::get_conditional(url, "application/json", 0, None).await?;
     if response.status != 200 {
-        return Err(Failure { reached: true, why: format!("GitHub answered {} for {url}", response.status) });
+        return Err(answered(&response));
     }
-    let body = response.bytes(LIMIT).await.map_err(|why| Failure { reached: false, why })?;
-    let manifest: Manifest = serde_json::from_slice(&body)
-        .map_err(|error| Failure { reached: true, why: format!("reading the manifest of {version}: {error}") })?;
-    if manifest.version != version {
+    let body = response.bytes_checked(LIMIT).await.map_err(|e| {
+        let mut failure = Failure::from(e);
+        failure.reached = true;
+        failure
+    })?;
+    let manifest: Manifest = serde_json::from_slice(&body).map_err(|e| Failure {
+        reached: true,
+        kind: CheckFailure::Unreadable,
+        why: format!("reading the manifest of {}: {e}", release.version),
+    })?;
+    if manifest.version != release.version {
         return Err(Failure {
             reached: true,
-            why: format!("the release {version} published a manifest for {}", manifest.version),
+            kind: CheckFailure::Unreadable,
+            why: format!("the release {} published a manifest for {}", release.version, manifest.version),
         });
     }
     Ok(manifest)
+}
+
+pub async fn manifest_of(releases: &[Listed], version: &str) -> Result<Manifest, String> {
+    let release = releases
+        .iter()
+        .find(|r| r.version == version)
+        .ok_or_else(|| format!("GitHub lists no release {version} with a manifest"))?;
+    of(release).await.map_err(|failure| failure.why)
 }

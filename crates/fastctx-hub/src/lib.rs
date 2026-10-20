@@ -546,7 +546,7 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         log.line(format_args!("on opening, {line}"));
     }
     let mut left = Vec::new();
-    let updates = updates::Updates::new(dir, &mut left);
+    let updates = updates::Updates::new(dir, &store.hub.due, &mut left).map_err(anyhow::Error::msg)?;
     for line in left {
         log.line(format_args!("on opening, {line}"));
     }

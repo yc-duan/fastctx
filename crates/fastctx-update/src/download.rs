@@ -5,6 +5,8 @@ use std::io::{Seek as _, Write as _};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use fastctx_types::update::{FailureReason, Problem};
+
 use crate::pace::{Pace, TRIES};
 use crate::throttle::Throttle;
 
@@ -18,6 +20,15 @@ pub async fn patiently(
     progress: &mut (dyn FnMut(u64, Option<u64>) + Send),
     throttle: Option<&Throttle>,
 ) -> Result<Option<u64>, String> {
+    patiently_checked(url, file, progress, throttle).await.map_err(|p| p.why)
+}
+
+pub async fn patiently_checked(
+    url: &str,
+    file: &Path,
+    progress: &mut (dyn FnMut(u64, Option<u64>) + Send),
+    throttle: Option<&Throttle>,
+) -> Result<Option<u64>, Problem> {
     let mut pace = Pace::new(Instant::now());
     let mut failed = 0;
     let mut wait = Duration::from_secs(1);
@@ -28,15 +39,19 @@ pub async fn patiently(
                 pace.heard(Instant::now(), brought);
                 progress(brought, total);
             };
-            from_url(url, file, &mut heard, throttle).await
+            from_url_checked(url, file, &mut heard, throttle).await
         };
         match result {
             Ok(()) => return Ok(pace.speed()),
-            Err(why) => {
+            Err(mut problem) => {
+                if matches!(problem.reason, FailureReason::Disk) {
+                    return Err(problem);
+                }
                 // One that brought bytes did connect: only a run of none counts.
                 failed = if length(file) > before { 0 } else { failed + 1 };
                 if failed >= TRIES {
-                    return Err(format!("{why}; {TRIES} connections running brought nothing"));
+                    problem.why = format!("{}; {TRIES} connections running brought nothing", problem.why);
+                    return Err(problem);
                 }
             }
         }
@@ -59,6 +74,15 @@ pub async fn from_url(
     progress: &mut (dyn FnMut(u64, Option<u64>) + Send),
     throttle: Option<&Throttle>,
 ) -> Result<(), String> {
+    from_url_checked(url, file, progress, throttle).await.map_err(|p| p.why)
+}
+
+async fn from_url_checked(
+    url: &str,
+    file: &Path,
+    progress: &mut (dyn FnMut(u64, Option<u64>) + Send),
+    throttle: Option<&Throttle>,
+) -> Result<(), Problem> {
     // Written at the end it reaches, and cut back when the whole comes again:
     // a file opened only to append cannot be cut on Windows.
     let mut out = std::fs::OpenOptions::new()
@@ -66,14 +90,16 @@ pub async fn from_url(
         .truncate(false)
         .write(true)
         .open(file)
-        .map_err(|error| format!("{}: {error}", file.display()))?;
-    let have = out.seek(std::io::SeekFrom::End(0)).map_err(|error| error.to_string())?;
+        .map_err(|error| Problem::new(FailureReason::Disk, format!("{}: {error}", file.display())))?;
+    let have =
+        out.seek(std::io::SeekFrom::End(0)).map_err(|error| Problem::new(FailureReason::Disk, error.to_string()))?;
     let mut response = fastctx_net::web::get(url, "application/octet-stream", have).await?;
     let (mut written, total) = match response.status {
         206 => (have, response.length.map(|rest| rest + have)),
         200 => {
-            out.set_len(0).map_err(|error| error.to_string())?;
-            out.seek(std::io::SeekFrom::Start(0)).map_err(|error| error.to_string())?;
+            out.set_len(0).map_err(|error| Problem::new(FailureReason::Disk, error.to_string()))?;
+            out.seek(std::io::SeekFrom::Start(0))
+                .map_err(|error| Problem::new(FailureReason::Disk, error.to_string()))?;
             (0, response.length)
         }
         // Everything was there already.
@@ -81,21 +107,22 @@ pub async fn from_url(
             progress(have, Some(have));
             return Ok(());
         }
-        status => return Err(format!("{} answered {status}", response.url)),
+        status => return Err(format!("{} answered {status}", response.url).into()),
     };
     progress(written, total);
     while let Some(chunk) = response.chunk().await? {
         if let Some(throttle) = throttle {
             throttle.take(chunk.len() as u64).await;
         }
-        out.write_all(&chunk).map_err(|error| format!("{}: {error}", file.display()))?;
+        out.write_all(&chunk)
+            .map_err(|error| Problem::new(FailureReason::Disk, format!("{}: {error}", file.display())))?;
         written += chunk.len() as u64;
         progress(written, total);
     }
     if let Some(total) = total
         && written != total
     {
-        return Err(format!("{} ended after {written} of {total} bytes", response.url));
+        return Err(format!("{} ended after {written} of {total} bytes", response.url).into());
     }
-    out.sync_all().map_err(|error| error.to_string())
+    out.sync_all().map_err(|error| Problem::new(FailureReason::Disk, error.to_string()))
 }

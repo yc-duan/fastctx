@@ -162,6 +162,8 @@ impl RemoteCall {
                     UpdateCall::State
                     | UpdateCall::Look
                     | UpdateCall::Set { .. }
+                    | UpdateCall::Preferences { .. }
+                    | UpdateCall::Progress { .. }
                     | UpdateCall::App { .. }
                     | UpdateCall::Fetch { .. }
                     | UpdateCall::Choose { .. },
@@ -333,6 +335,7 @@ impl Call {
             | Self::LoginWithToken { .. }
             | Self::OpenAccount { .. }
             | Self::Account { .. }
+            | Self::NetworkUpdates { .. }
             | Self::Accounts { .. }
             | Self::RenameHere { .. }
             | Self::HubProxy { .. }

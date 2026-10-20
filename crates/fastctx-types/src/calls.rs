@@ -473,6 +473,12 @@ pub enum Call {
     Data(crate::data::DataCall),
     /// New versions of Fastctx for this machine (`crate::update`).
     Update(crate::update::UpdateCall),
+    /// Account-scoped update management on a capable hub.
+    NetworkUpdates {
+        hub: crate::HubName,
+        account: crate::AccountName,
+        request: crate::update::ViewCall,
+    },
     /// Update `machine`'s World program from the newest release on its
     /// line; answered with how updates stand there. What interfaces before
     /// 1.0.1 beta 3 ask; later ones ask `MachineUpdates`.
@@ -776,6 +782,7 @@ pub enum Reply {
     },
     Data(crate::data::DataReply),
     Update(Box<crate::update::State>),
+    NetworkUpdates(crate::update::ViewReply),
     ClaudeSessionDirectory {
         path: String,
     },

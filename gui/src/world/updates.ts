@@ -202,11 +202,19 @@ export interface MachineUpdate {
   offer: Manifest | null;
   actions: UpdateActions;
 }
+export interface UpdateVersionChoice {
+  version: string;
+  published: string | null;
+  summary: string | null;
+  manifest: Manifest | null;
+  problem: UpdateProblem | null;
+}
 export interface UpdatesView {
   hub: string;
   stable: Manifest | null;
   beta: Manifest | null;
   releases: Manifest[];
+  versions: UpdateVersionChoice[];
   policy: Policy | null;
   machines: MachineUpdate[];
   available: number;

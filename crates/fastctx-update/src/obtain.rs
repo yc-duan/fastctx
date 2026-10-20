@@ -2,11 +2,10 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use fastctx_net::link::Link;
-use fastctx_types::update::{Manifest, PackageProgress, Via};
+use fastctx_types::update::{FailureReason, Manifest, PackageProgress, Problem, SourceFailure, Via};
 use tokio::sync::watch;
 
 use crate::Cache;
@@ -26,6 +25,7 @@ pub struct Progress {
 pub struct Brought {
     pub path: PathBuf,
     pub github_speed: Option<u64>,
+    pub github_at: Option<jiff::Timestamp>,
 }
 
 /// Obtains a package with a process-wide owner for each destination path.
@@ -35,8 +35,9 @@ pub async fn obtain(
     manifest: &Manifest,
     target: &str,
     link: Option<&Link>,
+    network_now: bool,
     progress: &mut (dyn FnMut(Progress) + Send),
-) -> Result<Brought, String> {
+) -> Result<Brought, Problem> {
     static POOL: std::sync::OnceLock<crate::pool::Pool> = std::sync::OnceLock::new();
     let logger = link.cloned();
     let log: Log = std::sync::Arc::new(move |message| {
@@ -46,7 +47,7 @@ pub async fn obtain(
             eprintln!("{message}");
         }
     });
-    POOL.get_or_init(Default::default).obtain(cache, manifest, target, link, progress, log).await
+    POOL.get_or_init(Default::default).obtain(cache, manifest, target, link, network_now, None, progress, log).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -55,111 +56,116 @@ pub(crate) async fn run(
     request: &Request,
     hub_file: &Path,
     local_file: &Path,
-    mut local: watch::Receiver<Local>,
+    local: watch::Receiver<Local>,
     progress: &mut (dyn FnMut(Progress) + Send),
     log: &Log,
-) -> Result<Brought, String> {
+) -> Result<Brought, Problem> {
     let package = &request.package;
     let version = &request.version;
     let target = &request.target;
     let started = Instant::now();
-    let hub_pace = Mutex::new(Pace::new(started));
-    let hub_total = Mutex::new(package.size);
-    // Once the hub holds the package, its handing waits its turn among the
-    // machines it hands packages to at once: that wait is no slowness, and
-    // the hub's pace counts from the first byte it hands.
-    let hub_queued = AtomicBool::new(false);
+    let github_pace = Mutex::new(Pace::new(started));
+    let github_total = Mutex::new(package.size);
     let shown = Mutex::new(Shown { progress });
     let mut hub_heard = |received, total| {
-        let mut pace = hub_pace.lock().expect("never poisoned");
-        if hub_queued.swap(false, Ordering::Relaxed) {
-            *pace = Pace::new(Instant::now());
-        }
-        pace.heard(Instant::now(), received);
-        drop(pace);
-        *hub_total.lock().expect("never poisoned") = total;
         shown.lock().expect("never poisoned").tell(Via::Network, received, total);
     };
-    let mut github_heard = |received, total| shown.lock().expect("never poisoned").tell(Via::Github, received, total);
+    let mut github_heard = |received, total| {
+        github_pace.lock().expect("never poisoned").heard(Instant::now(), received);
+        *github_total.lock().expect("never poisoned") = total;
+        shown.lock().expect("never poisoned").tell(Via::Github, received, total);
+    };
     let hub = async {
         let link = request.link.as_ref().ok_or("no hub supplies packages")?;
-        let ready = || hub_queued.store(true, Ordering::Relaxed);
+        let ready = || {};
         from_hub(link, version, target, package.size, hub_file, &mut hub_heard, &ready).await?;
         verified(hub_file, &package.signature, version).await?;
-        Ok::<_, String>(())
+        Ok::<_, Problem>(())
     };
     let local_source = local.clone();
     let github = async {
         let source = local_source.borrow().clone();
+        let downloaded = source.carried.is_none();
         let speed = if let Some(carried) = source.carried {
             tokio::fs::copy(&carried, local_file).await.map_err(|error| format!("{}: {error}", carried.display()))?;
             None
         } else {
             let url = package.url.as_deref().ok_or("the release publishes it nowhere else")?;
-            crate::download::patiently(url, local_file, &mut github_heard, None).await?
+            crate::download::patiently_checked(url, local_file, &mut github_heard, None).await?
         };
         verified(local_file, &package.signature, version).await?;
-        Ok::<_, String>(speed)
+        Ok::<_, Problem>((speed, downloaded.then(jiff::Timestamp::now)))
     };
     tokio::pin!(hub, github);
-    let (mut hub_going, mut github_going) = (request.link.is_some(), false);
-    let mut github_tried = false;
+    let (mut hub_going, mut github_going) = (false, true);
+    let mut hub_tried = false;
     let mut failures = Vec::new();
     let mut tick = tokio::time::interval(Duration::from_millis(200));
     let deadline = tokio::time::sleep(Duration::from_secs(45 * 60));
     tokio::pin!(deadline);
     loop {
-        let verdict = if hub_queued.load(Ordering::Relaxed) {
-            Verdict::Promising
-        } else {
-            hub_pace.lock().expect("never poisoned").verdict(Instant::now(), *hub_total.lock().expect("never poisoned"))
-        };
-        if !github_tried && (!hub_going || local.borrow().requested || verdict != Verdict::Promising) {
-            github_tried = true;
-            github_going = true;
+        let verdict = github_pace
+            .lock()
+            .expect("never poisoned")
+            .verdict(Instant::now(), *github_total.lock().expect("never poisoned"));
+        if !hub_tried
+            && request.link.is_some()
+            && (request.network_now || !github_going || verdict != Verdict::Promising)
+        {
+            hub_tried = true;
+            hub_going = true;
             log(format!(
-                "bringing {target} of {version}: starting the local source; hub active={hub_going}, pace={verdict:?}, requested as helper={}",
-                local.borrow().requested
+                "bringing {target} of {version}: starting the network source; GitHub active={github_going}, pace={verdict:?}"
             ));
         }
         tokio::select! {
             result = &mut hub, if hub_going => {
                 hub_going = false;
-                match result.and_then(|()| cache.keep(version, target, hub_file)) {
-                    Ok(path) => return Ok(Brought { path, github_speed: None }),
+                match result.and_then(|()| cache.keep(version, target, hub_file).map_err(|e| Problem::new(FailureReason::Disk, e))) {
+                    Ok(path) => return Ok(Brought { path, github_speed: None, github_at: None }),
                     Err(why) => {
                         log(format!("bringing {target} of {version} from the network: {why}"));
-                        failures.push(format!("from the network: {why}"));
+                        failures.push((Via::Network, why));
                     }
                 }
             }
             result = &mut github, if github_going => {
                 github_going = false;
-                match result.and_then(|speed| cache.keep(version, target, local_file).map(|path| Brought { path, github_speed: speed })) {
+                match result.and_then(|(speed, github_at)| cache.keep(version, target, local_file).map_err(|e| Problem::new(FailureReason::Disk, e)).map(|path| Brought { path, github_speed: speed, github_at })) {
                     Ok(brought) => return Ok(brought),
                     Err(why) => {
                         log(format!("bringing {target} of {version} from the local source: {why}"));
-                        failures.push(format!("from the local source: {why}"));
+                        failures.push((Via::Github, why));
                     }
                 }
             }
-            _ = local.changed(), if !github_tried => {}
             _ = tick.tick() => {}
-            () = &mut deadline => return Err(format!("bringing {target} of {version} took more than 45 minutes; {}", failures.join("; "))),
+            () = &mut deadline => return Err(Problem::new(FailureReason::Sources { sources: failures.iter().map(|(via,p)| SourceFailure { via: *via, why: p.why.clone() }).collect() }, format!("bringing {target} of {version} took more than 45 minutes"))),
         }
-        if !hub_going && github_tried && !github_going {
-            return Err(failures.join("; "));
+        if !hub_going && !github_going && (hub_tried || request.link.is_none()) {
+            let reason = if failures.iter().any(|(_, p)| p.reason == FailureReason::Signature) {
+                FailureReason::Signature
+            } else if failures.iter().any(|(_, p)| p.reason == FailureReason::Disk) {
+                FailureReason::Disk
+            } else {
+                FailureReason::Sources {
+                    sources: failures.iter().map(|(via, p)| SourceFailure { via: *via, why: p.why.clone() }).collect(),
+                }
+            };
+            let why = failures.iter().map(|(via, p)| format!("{via:?}: {}", p.why)).collect::<Vec<_>>().join("; ");
+            return Err(Problem::new(reason, why));
         }
     }
 }
 
 /// `verify::file` on a blocking thread: reading a whole package to check
 /// its signature holds no async worker meanwhile.
-async fn verified(path: &Path, signature: &str, version: &str) -> Result<(), String> {
+async fn verified(path: &Path, signature: &str, version: &str) -> Result<(), Problem> {
     let (path, signature, version) = (path.to_path_buf(), signature.to_string(), version.to_string());
     tokio::task::spawn_blocking(move || crate::verify::file(&path, &signature, &version))
         .await
-        .map_err(|error| format!("checking the package's signature: {error}"))?
+        .map_err(|error| Problem::new(FailureReason::Signature, format!("checking the package's signature: {error}")))?
+        .map_err(|why| Problem::new(FailureReason::Signature, why))
 }
 
 /// The package from the hub: asked for, prepared there when it holds none
@@ -185,15 +191,14 @@ async fn from_hub(
                 if changed.is_ok() {
                     let heard = *preparation.borrow_and_update();
                     // Preparation and the final transfer are consecutive work.
-                    progress(heard.received, heard.total.map(|total| total.saturating_add(expected.unwrap_or(total))));
+                    progress(0, expected.or(heard.total));
                 } else { reporting = false; }
             }
         }
     };
     let size = ready_now.size;
-    let prepared = preparation.borrow().received;
     ready();
-    let mut heard = |received, _| progress(prepared + received, Some(prepared + size));
+    let mut heard = |received, _| progress(received, Some(size));
     let result = link.package(version, target, size, file, &mut heard).await;
     drop(ready_now);
     result

@@ -533,7 +533,8 @@ fn apply(
             // The ceiling on intake is its own change: an interface that
             // sets the rest knows nothing of it.
             let intake = store.hub.updates.intake;
-            store.hub.updates = fastctx_types::update::Policy { intake, ..policy };
+            let channel = store.hub.updates.channel;
+            store.hub.updates = fastctx_types::update::Policy { intake, channel, ..policy };
             store.save_hub().map_err(|error| format!("the hub could not keep its settings: {error}"))?;
             Ok(Told::Done)
         }
@@ -573,12 +574,20 @@ fn apply(
                     "an update batch needs an identifier of at most 64 letters, digits, hyphens or underscores".into(),
                 );
             }
-            store
-                .hub
-                .due
-                .retain(|kept| (kept.key != key || kept.batch != batch) && directory.by_key(&kept.key).is_some());
+            store.hub.due.retain(|kept| kept.key != key && directory.by_key(&kept.key).is_some());
             if let Some(version) = version {
-                let due = fastctx_types::update::Due { version, by: account.clone(), at: Timestamp::now() };
+                let manifest = hub.updates.lock().expect("never poisoned").manifest(&version);
+                let problem = manifest.is_none().then(|| fastctx_types::update::Problem {
+                    reason: fastctx_types::update::FailureReason::Other,
+                    why: format!("the manifest of {version} is not available yet"),
+                });
+                let due = fastctx_types::update::Due {
+                    version,
+                    by: account.clone(),
+                    at: Timestamp::now(),
+                    manifest,
+                    problem,
+                };
                 store.hub.due.push(crate::store::DueFor { key, due, batch });
             }
             store.save_hub().map_err(|error| format!("the hub could not keep the update: {error}"))?;
@@ -691,7 +700,10 @@ fn apply(
             let position = projects.iter().position(|project| project.town == town);
             let position = position.ok_or_else(|| format!("there is no project {town}"))?;
             if projects[position].owner != *account {
-                return Err(format!("the project {} is the account {}'s", projects[position].name, projects[position].owner));
+                return Err(format!(
+                    "the project {} is the account {}'s",
+                    projects[position].name, projects[position].owner
+                ));
             }
             // Its ledger goes once the directory without it is kept
             // (`change`).
@@ -781,7 +793,7 @@ fn set_role(store: &mut Store, name: &AccountName, visitor: bool) -> Result<(), 
 fn own_machine(
     directory: &fastctx_net::directory::Directory,
     account: &AccountName,
-    super_: bool,
+    _super: bool,
     machine: &MachineName,
 ) -> Result<AccountName, String> {
     let member = directory.member(machine).ok_or_else(|| format!("there is no machine {machine}"))?;
@@ -789,7 +801,7 @@ fn own_machine(
         return Err(format!("{machine} is not registered as a machine"));
     };
     // The super administrator's reach stops at a visitor's machines.
-    if owner != *account && (!super_ || directory.is_visitor(&owner)) {
+    if !directory.may_update(account, machine) {
         return Err(format!("{machine} is not one of the account {account}'s machines"));
     }
     Ok(owner)
@@ -872,8 +884,12 @@ fn log_out(
         member.relay.clear();
     }
     let left = member.logins.is_empty();
+    let key = member.key;
     if unregistered {
         forget_machine(directory, name);
+        store.hub.due.retain(|due| due.key != key);
+        store.hub.package_targets.remove(&key);
+        store.save_hub().map_err(|e| format!("removing update arrangements: {e}"))?;
     }
     if left {
         remove_member(store, name, by, reason, false, None, ended)?;
@@ -907,6 +923,9 @@ fn remove_member(
     let position = directory.members.iter().position(|member| member.name == *name);
     let member = directory.members.remove(position.ok_or_else(|| format!("there is no member {name}"))?);
     forget_machine(directory, name);
+    store.hub.due.retain(|due| due.key != member.key);
+    store.hub.package_targets.remove(&member.key);
+    store.save_hub().map_err(|e| format!("removing update arrangements: {e}"))?;
     let at = Timestamp::now();
     store.book.removed.retain(|removed| removed.key != member.key);
     store.book.removed.push(Removed {
@@ -944,7 +963,7 @@ fn may_uninstall(
             "only {name}'s owner uninstalls Fastctx on it; a member's machine is the member's to uninstall"
         ));
     }
-    let running = crate::updates::running_of(hub, name);
+    let running = crate::updates::running_of(hub, &member.key);
     if running.as_ref().is_some_and(|running| running.hub_here) {
         return Err(format!("{name} runs this network's hub: move the hub elsewhere or dissolve the network first"));
     }

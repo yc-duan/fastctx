@@ -1,4 +1,906 @@
 {
+  "updates": {
+    "states": [
+      {
+        "settings": {
+          "auto": false,
+          "relays": true
+        },
+        "channel": "stable",
+        "auto": false,
+        "looked": {
+          "at": "2026-10-20T12:00:00Z",
+          "checking": true,
+          "failure": {
+            "kind": "unreachable",
+            "reason": "dns"
+          },
+          "github_at": "2026-10-20T12:00:00Z",
+          "next": "2026-10-20T12:00:00Z",
+          "failures": 2
+        },
+        "network": {
+          "policy": {
+            "channel": "stable",
+            "managed_auto": true
+          },
+          "due": {
+            "server": {
+              "version": "1.0.2",
+              "by": "owner",
+              "at": "2026-10-20T12:00:00Z",
+              "manifest": {
+                "version": "1.0.2",
+                "notes": "An update.",
+                "pub_date": "2026-10-20T12:00:00Z",
+                "platforms": {}
+              },
+              "problem": {
+                "reason": {
+                  "kind": "signature"
+                },
+                "why": "the package does not match its signature"
+              }
+            }
+          },
+          "updates_view": true
+        },
+        "failed": {
+          "version": "1.0.2",
+          "target": "linux-x86_64-appimage",
+          "why": "disk full",
+          "reason": {
+            "kind": "disk"
+          }
+        },
+        "kernel_target": "",
+        "stage": {
+          "kind": "idle"
+        },
+        "progress": false
+      },
+      {
+        "settings": {
+          "auto": false,
+          "relays": true
+        },
+        "channel": "stable",
+        "auto": false,
+        "looked": {
+          "at": "2026-10-20T12:00:00Z",
+          "checking": true,
+          "failure": {
+            "kind": "unreachable",
+            "reason": "dns"
+          },
+          "github_at": "2026-10-20T12:00:00Z",
+          "next": "2026-10-20T12:00:00Z",
+          "failures": 2
+        },
+        "network": {
+          "policy": {
+            "channel": "stable",
+            "managed_auto": true
+          },
+          "due": {
+            "server": {
+              "version": "1.0.2",
+              "by": "owner",
+              "at": "2026-10-20T12:00:00Z",
+              "manifest": {
+                "version": "1.0.2",
+                "notes": "An update.",
+                "pub_date": "2026-10-20T12:00:00Z",
+                "platforms": {}
+              },
+              "problem": {
+                "reason": {
+                  "kind": "signature"
+                },
+                "why": "the package does not match its signature"
+              }
+            }
+          },
+          "updates_view": true
+        },
+        "failed": {
+          "version": "1.0.2",
+          "target": "linux-x86_64-appimage",
+          "why": "disk full",
+          "reason": {
+            "kind": "disk"
+          }
+        },
+        "kernel_target": "",
+        "stage": {
+          "kind": "unknown"
+        },
+        "progress": false
+      },
+      {
+        "settings": {
+          "auto": false,
+          "relays": true
+        },
+        "channel": "stable",
+        "auto": false,
+        "looked": {
+          "at": "2026-10-20T12:00:00Z",
+          "checking": true,
+          "failure": {
+            "kind": "unreachable",
+            "reason": "dns"
+          },
+          "github_at": "2026-10-20T12:00:00Z",
+          "next": "2026-10-20T12:00:00Z",
+          "failures": 2
+        },
+        "network": {
+          "policy": {
+            "channel": "stable",
+            "managed_auto": true
+          },
+          "due": {
+            "server": {
+              "version": "1.0.2",
+              "by": "owner",
+              "at": "2026-10-20T12:00:00Z",
+              "manifest": {
+                "version": "1.0.2",
+                "notes": "An update.",
+                "pub_date": "2026-10-20T12:00:00Z",
+                "platforms": {}
+              },
+              "problem": {
+                "reason": {
+                  "kind": "signature"
+                },
+                "why": "the package does not match its signature"
+              }
+            }
+          },
+          "updates_view": true
+        },
+        "failed": {
+          "version": "1.0.2",
+          "target": "linux-x86_64-appimage",
+          "why": "disk full",
+          "reason": {
+            "kind": "disk"
+          }
+        },
+        "kernel_target": "",
+        "stage": {
+          "kind": "fetching",
+          "version": "1.0.2",
+          "via": null,
+          "received": 0,
+          "total": null
+        },
+        "progress": false
+      },
+      {
+        "settings": {
+          "auto": false,
+          "relays": true
+        },
+        "channel": "stable",
+        "auto": false,
+        "looked": {
+          "at": "2026-10-20T12:00:00Z",
+          "checking": true,
+          "failure": {
+            "kind": "unreachable",
+            "reason": "dns"
+          },
+          "github_at": "2026-10-20T12:00:00Z",
+          "next": "2026-10-20T12:00:00Z",
+          "failures": 2
+        },
+        "network": {
+          "policy": {
+            "channel": "stable",
+            "managed_auto": true
+          },
+          "due": {
+            "server": {
+              "version": "1.0.2",
+              "by": "owner",
+              "at": "2026-10-20T12:00:00Z",
+              "manifest": {
+                "version": "1.0.2",
+                "notes": "An update.",
+                "pub_date": "2026-10-20T12:00:00Z",
+                "platforms": {}
+              },
+              "problem": {
+                "reason": {
+                  "kind": "signature"
+                },
+                "why": "the package does not match its signature"
+              }
+            }
+          },
+          "updates_view": true
+        },
+        "failed": {
+          "version": "1.0.2",
+          "target": "linux-x86_64-appimage",
+          "why": "disk full",
+          "reason": {
+            "kind": "disk"
+          }
+        },
+        "kernel_target": "",
+        "stage": {
+          "kind": "fetching",
+          "version": "1.0.2",
+          "via": "github",
+          "received": 1,
+          "total": 1024
+        },
+        "progress": false
+      },
+      {
+        "settings": {
+          "auto": false,
+          "relays": true
+        },
+        "channel": "stable",
+        "auto": false,
+        "looked": {
+          "at": "2026-10-20T12:00:00Z",
+          "checking": true,
+          "failure": {
+            "kind": "unreachable",
+            "reason": "dns"
+          },
+          "github_at": "2026-10-20T12:00:00Z",
+          "next": "2026-10-20T12:00:00Z",
+          "failures": 2
+        },
+        "network": {
+          "policy": {
+            "channel": "stable",
+            "managed_auto": true
+          },
+          "due": {
+            "server": {
+              "version": "1.0.2",
+              "by": "owner",
+              "at": "2026-10-20T12:00:00Z",
+              "manifest": {
+                "version": "1.0.2",
+                "notes": "An update.",
+                "pub_date": "2026-10-20T12:00:00Z",
+                "platforms": {}
+              },
+              "problem": {
+                "reason": {
+                  "kind": "signature"
+                },
+                "why": "the package does not match its signature"
+              }
+            }
+          },
+          "updates_view": true
+        },
+        "failed": {
+          "version": "1.0.2",
+          "target": "linux-x86_64-appimage",
+          "why": "disk full",
+          "reason": {
+            "kind": "disk"
+          }
+        },
+        "kernel_target": "",
+        "stage": {
+          "kind": "ready",
+          "version": "1.0.2"
+        },
+        "progress": false
+      },
+      {
+        "settings": {
+          "auto": false,
+          "relays": true
+        },
+        "channel": "stable",
+        "auto": false,
+        "looked": {
+          "at": "2026-10-20T12:00:00Z",
+          "checking": true,
+          "failure": {
+            "kind": "unreachable",
+            "reason": "dns"
+          },
+          "github_at": "2026-10-20T12:00:00Z",
+          "next": "2026-10-20T12:00:00Z",
+          "failures": 2
+        },
+        "network": {
+          "policy": {
+            "channel": "stable",
+            "managed_auto": true
+          },
+          "due": {
+            "server": {
+              "version": "1.0.2",
+              "by": "owner",
+              "at": "2026-10-20T12:00:00Z",
+              "manifest": {
+                "version": "1.0.2",
+                "notes": "An update.",
+                "pub_date": "2026-10-20T12:00:00Z",
+                "platforms": {}
+              },
+              "problem": {
+                "reason": {
+                  "kind": "signature"
+                },
+                "why": "the package does not match its signature"
+              }
+            }
+          },
+          "updates_view": true
+        },
+        "failed": {
+          "version": "1.0.2",
+          "target": "linux-x86_64-appimage",
+          "why": "disk full",
+          "reason": {
+            "kind": "disk"
+          }
+        },
+        "kernel_target": "",
+        "stage": {
+          "kind": "waiting_idle",
+          "version": "1.0.2"
+        },
+        "progress": false
+      },
+      {
+        "settings": {
+          "auto": false,
+          "relays": true
+        },
+        "channel": "stable",
+        "auto": false,
+        "looked": {
+          "at": "2026-10-20T12:00:00Z",
+          "checking": true,
+          "failure": {
+            "kind": "unreachable",
+            "reason": "dns"
+          },
+          "github_at": "2026-10-20T12:00:00Z",
+          "next": "2026-10-20T12:00:00Z",
+          "failures": 2
+        },
+        "network": {
+          "policy": {
+            "channel": "stable",
+            "managed_auto": true
+          },
+          "due": {
+            "server": {
+              "version": "1.0.2",
+              "by": "owner",
+              "at": "2026-10-20T12:00:00Z",
+              "manifest": {
+                "version": "1.0.2",
+                "notes": "An update.",
+                "pub_date": "2026-10-20T12:00:00Z",
+                "platforms": {}
+              },
+              "problem": {
+                "reason": {
+                  "kind": "signature"
+                },
+                "why": "the package does not match its signature"
+              }
+            }
+          },
+          "updates_view": true
+        },
+        "failed": {
+          "version": "1.0.2",
+          "target": "linux-x86_64-appimage",
+          "why": "disk full",
+          "reason": {
+            "kind": "disk"
+          }
+        },
+        "kernel_target": "",
+        "stage": {
+          "kind": "waiting_app",
+          "version": "1.0.2"
+        },
+        "progress": false
+      },
+      {
+        "settings": {
+          "auto": false,
+          "relays": true
+        },
+        "channel": "stable",
+        "auto": false,
+        "looked": {
+          "at": "2026-10-20T12:00:00Z",
+          "checking": true,
+          "failure": {
+            "kind": "unreachable",
+            "reason": "dns"
+          },
+          "github_at": "2026-10-20T12:00:00Z",
+          "next": "2026-10-20T12:00:00Z",
+          "failures": 2
+        },
+        "network": {
+          "policy": {
+            "channel": "stable",
+            "managed_auto": true
+          },
+          "due": {
+            "server": {
+              "version": "1.0.2",
+              "by": "owner",
+              "at": "2026-10-20T12:00:00Z",
+              "manifest": {
+                "version": "1.0.2",
+                "notes": "An update.",
+                "pub_date": "2026-10-20T12:00:00Z",
+                "platforms": {}
+              },
+              "problem": {
+                "reason": {
+                  "kind": "signature"
+                },
+                "why": "the package does not match its signature"
+              }
+            }
+          },
+          "updates_view": true
+        },
+        "failed": {
+          "version": "1.0.2",
+          "target": "linux-x86_64-appimage",
+          "why": "disk full",
+          "reason": {
+            "kind": "disk"
+          }
+        },
+        "kernel_target": "",
+        "stage": {
+          "kind": "installing",
+          "version": "1.0.2"
+        },
+        "progress": false
+      },
+      {
+        "settings": {
+          "auto": false,
+          "relays": true
+        },
+        "channel": "stable",
+        "auto": false,
+        "looked": {
+          "at": "2026-10-20T12:00:00Z",
+          "checking": true,
+          "failure": {
+            "kind": "unreachable",
+            "reason": "dns"
+          },
+          "github_at": "2026-10-20T12:00:00Z",
+          "next": "2026-10-20T12:00:00Z",
+          "failures": 2
+        },
+        "network": {
+          "policy": {
+            "channel": "stable",
+            "managed_auto": true
+          },
+          "due": {
+            "server": {
+              "version": "1.0.2",
+              "by": "owner",
+              "at": "2026-10-20T12:00:00Z",
+              "manifest": {
+                "version": "1.0.2",
+                "notes": "An update.",
+                "pub_date": "2026-10-20T12:00:00Z",
+                "platforms": {}
+              },
+              "problem": {
+                "reason": {
+                  "kind": "signature"
+                },
+                "why": "the package does not match its signature"
+              }
+            }
+          },
+          "updates_view": true
+        },
+        "failed": {
+          "version": "1.0.2",
+          "target": "linux-x86_64-appimage",
+          "why": "disk full",
+          "reason": {
+            "kind": "disk"
+          }
+        },
+        "kernel_target": "",
+        "stage": {
+          "kind": "administrator",
+          "version": "1.0.2"
+        },
+        "progress": false
+      },
+      {
+        "settings": {
+          "auto": false,
+          "relays": true
+        },
+        "channel": "stable",
+        "auto": false,
+        "looked": {
+          "at": "2026-10-20T12:00:00Z",
+          "checking": true,
+          "failure": {
+            "kind": "unreachable",
+            "reason": "dns"
+          },
+          "github_at": "2026-10-20T12:00:00Z",
+          "next": "2026-10-20T12:00:00Z",
+          "failures": 2
+        },
+        "network": {
+          "policy": {
+            "channel": "stable",
+            "managed_auto": true
+          },
+          "due": {
+            "server": {
+              "version": "1.0.2",
+              "by": "owner",
+              "at": "2026-10-20T12:00:00Z",
+              "manifest": {
+                "version": "1.0.2",
+                "notes": "An update.",
+                "pub_date": "2026-10-20T12:00:00Z",
+                "platforms": {}
+              },
+              "problem": {
+                "reason": {
+                  "kind": "signature"
+                },
+                "why": "the package does not match its signature"
+              }
+            }
+          },
+          "updates_view": true
+        },
+        "failed": {
+          "version": "1.0.2",
+          "target": "linux-x86_64-appimage",
+          "why": "disk full",
+          "reason": {
+            "kind": "disk"
+          }
+        },
+        "kernel_target": "",
+        "stage": {
+          "kind": "renewing",
+          "version": "1.0.2",
+          "phase": "returning_to_service"
+        },
+        "progress": false
+      },
+      {
+        "settings": {
+          "auto": false,
+          "relays": true
+        },
+        "channel": "stable",
+        "auto": false,
+        "looked": {
+          "at": "2026-10-20T12:00:00Z",
+          "checking": true,
+          "failure": {
+            "kind": "unreachable",
+            "reason": "dns"
+          },
+          "github_at": "2026-10-20T12:00:00Z",
+          "next": "2026-10-20T12:00:00Z",
+          "failures": 2
+        },
+        "network": {
+          "policy": {
+            "channel": "stable",
+            "managed_auto": true
+          },
+          "due": {
+            "server": {
+              "version": "1.0.2",
+              "by": "owner",
+              "at": "2026-10-20T12:00:00Z",
+              "manifest": {
+                "version": "1.0.2",
+                "notes": "An update.",
+                "pub_date": "2026-10-20T12:00:00Z",
+                "platforms": {}
+              },
+              "problem": {
+                "reason": {
+                  "kind": "signature"
+                },
+                "why": "the package does not match its signature"
+              }
+            }
+          },
+          "updates_view": true
+        },
+        "failed": {
+          "version": "1.0.2",
+          "target": "linux-x86_64-appimage",
+          "why": "disk full",
+          "reason": {
+            "kind": "disk"
+          }
+        },
+        "kernel_target": "",
+        "stage": {
+          "kind": "failed",
+          "version": "1.0.2",
+          "problem": {
+            "reason": {
+              "kind": "signature"
+            },
+            "why": "the package does not match its signature"
+          }
+        },
+        "progress": false
+      }
+    ],
+    "checks": [
+      {
+        "kind": "unreachable",
+        "reason": "dns"
+      },
+      {
+        "kind": "unreachable",
+        "reason": "connect"
+      },
+      {
+        "kind": "unreachable",
+        "reason": "tls"
+      },
+      {
+        "kind": "unreachable",
+        "reason": "timeout"
+      },
+      {
+        "kind": "unreachable",
+        "reason": "interrupted"
+      },
+      {
+        "kind": "unreachable",
+        "reason": "proxy"
+      },
+      {
+        "kind": "unreachable",
+        "reason": "other"
+      },
+      {
+        "kind": "rate_limited",
+        "until": "2026-10-20T12:00:00Z"
+      },
+      {
+        "kind": "http",
+        "status": 503
+      },
+      {
+        "kind": "unreadable"
+      },
+      {
+        "kind": "other"
+      }
+    ],
+    "reasons": [
+      {
+        "kind": "no_package"
+      },
+      {
+        "kind": "signature"
+      },
+      {
+        "kind": "disk"
+      },
+      {
+        "kind": "not_newer"
+      },
+      {
+        "kind": "other"
+      },
+      {
+        "kind": "installer",
+        "code": 23
+      },
+      {
+        "kind": "sources",
+        "sources": [
+          {
+            "via": "github",
+            "why": "connection refused"
+          }
+        ]
+      }
+    ],
+    "calls": [
+      {
+        "do": "view"
+      },
+      {
+        "do": "schedule",
+        "machines": [
+          "server"
+        ],
+        "version": "1.0.2"
+      },
+      {
+        "do": "schedule",
+        "machines": [
+          "server"
+        ],
+        "version": null
+      },
+      {
+        "do": "policy",
+        "minimum": null,
+        "managed_auto": true
+      }
+    ],
+    "replies": [
+      {
+        "kind": "view",
+        "view": {
+          "hub": "1.0.1",
+          "stable": {
+            "version": "1.0.2",
+            "notes": "An update.",
+            "pub_date": "2026-10-20T12:00:00Z",
+            "platforms": {}
+          },
+          "beta": null,
+          "releases": [
+            {
+              "version": "1.0.2",
+              "notes": "An update.",
+              "pub_date": "2026-10-20T12:00:00Z",
+              "platforms": {}
+            }
+          ],
+          "versions": [
+            {
+              "version": "1.0.2",
+              "published": "2026-10-20T12:00:00Z",
+              "summary": "An update.",
+              "manifest": {
+                "version": "1.0.2",
+                "notes": "An update.",
+                "pub_date": "2026-10-20T12:00:00Z",
+                "platforms": {}
+              },
+              "problem": null
+            },
+            {
+              "version": "1.0.3",
+              "published": null,
+              "summary": null,
+              "manifest": null,
+              "problem": {
+                "reason": {
+                  "kind": "other"
+                },
+                "why": "manifest unavailable"
+              }
+            }
+          ],
+          "policy": {
+            "channel": "stable",
+            "managed_auto": true
+          },
+          "machines": [
+            {
+              "machine": "server",
+              "owner": "owner",
+              "group": null,
+              "kind": "headless",
+              "online": false,
+              "reported": "2026-10-20T12:00:00Z",
+              "kernel": "1.0.1",
+              "app": null,
+              "target": "fastctx-x86_64-unknown-linux-gnu",
+              "channel": "stable",
+              "auto": true,
+              "auto_chosen": false,
+              "relays": true,
+              "github": false,
+              "github_at": "2026-10-20T12:00:00Z",
+              "check_failure": {
+                "kind": "unreachable",
+                "reason": "dns"
+              },
+              "checking": false,
+              "stage": {
+                "kind": "idle"
+              },
+              "due": {
+                "version": "1.0.2",
+                "by": "owner",
+                "at": "2026-10-20T12:00:00Z",
+                "manifest": {
+                  "version": "1.0.2",
+                  "notes": "An update.",
+                  "pub_date": "2026-10-20T12:00:00Z",
+                  "platforms": {}
+                },
+                "problem": {
+                  "reason": {
+                    "kind": "signature"
+                  },
+                  "why": "the package does not match its signature"
+                }
+              },
+              "offer": {
+                "version": "1.0.2",
+                "notes": "An update.",
+                "pub_date": "2026-10-20T12:00:00Z",
+                "platforms": {}
+              },
+              "actions": {
+                "update": {
+                  "allowed": true,
+                  "reason": null
+                },
+                "choose": {
+                  "allowed": true,
+                  "reason": null
+                },
+                "settings": {
+                  "allowed": false,
+                  "reason": "offline"
+                },
+                "schedule": {
+                  "allowed": true,
+                  "reason": null
+                },
+                "cancel": {
+                  "allowed": true,
+                  "reason": null
+                }
+              }
+            }
+          ],
+          "available": 1
+        }
+      },
+      {
+        "kind": "scheduled",
+        "results": [
+          {
+            "machine": "server",
+            "done": false,
+            "reason": "too_old",
+            "why": "update this machine first"
+          }
+        ]
+      },
+      {
+        "kind": "done"
+      }
+    ]
+  },
   "profile": {
     "calls": [
       {

@@ -528,9 +528,16 @@ pub enum CallStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Question {
+    NetworkUpdates {
+        account: AccountName,
+        request: fastctx_types::update::ViewCall,
+    },
     /// Machine-layer history visible to this member in `account`, newest
     /// first and strictly before the cursor when supplied.
-    MachineLog { account: AccountName, before: Option<u64> },
+    MachineLog {
+        account: AccountName,
+        before: Option<u64>,
+    },
     /// Linux archives and the hub's actual TLS certificate. Without opt-in,
     /// both architecture digests must be present, as older callers require.
     KernelRelease {
@@ -548,9 +555,15 @@ pub enum Question {
     /// A change made as `account`, which must be logged in on the asking
     /// member; changes to other accounts and to the hub need it to be the
     /// super administrator's.
-    Manage { account: AccountName, change: Change },
+    Manage {
+        account: AccountName,
+        change: Change,
+    },
     /// Keep this entry in the ledger of `town`.
-    LedgerWrite { town: TownId, entry: Signed },
+    LedgerWrite {
+        town: TownId,
+        entry: Signed,
+    },
     /// The projects this member spans, each with the number of its latest
     /// entry.
     LedgerTowns,
@@ -559,12 +572,20 @@ pub enum Question {
     LedgerCatalog,
     /// A project's entries after the one numbered `after`, as many as fit
     /// in one frame.
-    LedgerRead { town: TownId, after: u64 },
+    LedgerRead {
+        town: TownId,
+        after: u64,
+    },
     /// Moving the hub, asked as `account`, which must be the super
     /// administrator's and logged in on the asking member.
-    HubMove { account: AccountName, request: fastctx_types::hub_move::HubMoveRequest },
+    HubMove {
+        account: AccountName,
+        request: fastctx_types::hub_move::HubMoveRequest,
+    },
     /// What the machine the hub moves to asks of it.
-    HubArrival { request: crate::moving::ArrivalRequest },
+    HubArrival {
+        request: crate::moving::ArrivalRequest,
+    },
     /// This member called `to` directly, for `account`, to work for the
     /// resident `resident`: what the hub notes of a call it passes on, for
     /// the letters that tell of that work later (`world-network.md`, 寄信).
@@ -577,20 +598,29 @@ pub enum Question {
     /// This member, being checked for direct connections, listens at the
     /// ports of `at` now, or could not; with what it knows of its own
     /// firewall.
-    Listening { at: Vec<std::net::SocketAddr>, outcome: Result<Firewall, String> },
+    Listening {
+        at: Vec<std::net::SocketAddr>,
+        outcome: Result<Firewall, String>,
+    },
     /// Delete the conversation at `conversation`, which works for
     /// `account`, logged in on the asking member, from every member keeping
     /// something of it: the machine it lives on first, unless that is the
     /// asking member, which deleted what it kept before it asked. Answered
     /// `Told::Done` once the hub holds it. Asked only of a hub whose view
     /// says it forgets.
-    Forget { account: AccountName, conversation: fastctx_types::Address },
+    Forget {
+        account: AccountName,
+        conversation: fastctx_types::Address,
+    },
     /// The package `target` of the release `version`, for this member to
     /// download (`Intent::Package`): answered `Told::Package` once the hub
     /// holds it, having fetched it first, or asked a machine that can, when
     /// it did not. Asked only of a hub whose view says it keeps versions.
     /// Prepares the packages for an explicitly queued update before it starts.
-    PrepareUpdate { machine: MachineName, version: String },
+    PrepareUpdate {
+        machine: MachineName,
+        version: String,
+    },
     Package {
         version: String,
         target: String,
@@ -851,6 +881,9 @@ pub enum Change {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Told {
+    NetworkUpdates {
+        reply: fastctx_types::update::ViewReply,
+    },
     MachineLog {
         page: fastctx_types::machine_log::Page,
     },

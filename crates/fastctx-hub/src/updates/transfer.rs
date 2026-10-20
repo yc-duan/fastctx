@@ -356,6 +356,7 @@ pub(super) async fn take_in(
     })
     .await
     .map_err(|error| error.to_string())??;
+    hub.updates.lock().expect("never poisoned").catalog.insert(manifest.version.clone(), manifest.clone());
     attempt.race.finished.notify_waiters();
     super::obtain::cancel_helpers(hub, &attempt.race, attempt.id);
     hub.log.line(format_args!("holds {target} of {} now, {size} bytes", manifest.version));

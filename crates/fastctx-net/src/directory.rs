@@ -355,6 +355,14 @@ impl Directory {
         self.account(account).is_some_and(Account::is_super)
     }
 
+    /// Whether an account may manage a machine's updates: its owner or the
+    /// super administrator, except for another account's visitor machines.
+    pub fn may_update(&self, account: &AccountName, machine: &MachineName) -> bool {
+        self.member(machine)
+            .and_then(|m| m.home.as_ref())
+            .is_some_and(|owner| owner == account || (self.is_super(account) && !self.is_visitor(owner)))
+    }
+
     /// Whether `account` is a visitor: its machines are its alone, and it
     /// gives nothing of them to anyone (`world-network.md`, 一个中枢，几个账号).
     pub fn is_visitor(&self, account: &AccountName) -> bool {

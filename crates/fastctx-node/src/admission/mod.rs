@@ -129,13 +129,9 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
     // Which version a machine runs is its owner's to choose, and the
     // network's super administrator's but for a visitor's machine
     // (`world-upgrade.md`, 谁来更新).
-    if matches!(call, RemoteCall::UpdateWorld | RemoteCall::Updates { .. }) {
-        let owner = view.member(&here).and_then(|member| member.home.as_ref());
-        let own = owner == Some(&caller.account);
-        let administers = view.is_super(&caller.account) && owner.is_some_and(|owner| !view.is_visitor(owner));
-        if !own && !administers {
-            return Err(refuse(format!("only {here}'s owner updates it, not the account {}", caller.account)));
-        }
+    if matches!(call, RemoteCall::UpdateWorld | RemoteCall::Updates { .. }) && !view.may_update(&caller.account, &here)
+    {
+        return Err(refuse(format!("only {here}'s owner updates it, not the account {}", caller.account)));
     }
     crate::devices::admit(&view, &caller.machine, call)?;
     let hub = link.membership().id.clone();

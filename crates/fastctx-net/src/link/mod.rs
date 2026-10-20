@@ -23,7 +23,6 @@ mod calls;
 mod changes;
 mod clock;
 mod collab;
-mod profile;
 mod direct;
 mod kernel;
 mod ledger;
@@ -33,6 +32,7 @@ mod machine_log;
 mod moving;
 mod outgoing;
 mod presence;
+mod profile;
 mod questions;
 mod session;
 pub mod state;
@@ -156,6 +156,11 @@ pub trait Node: Send + Sync + 'static {
     /// What the hub tells of the network's versions changed
     /// (`Link::versions`).
     fn versions_changed(&self) {}
+    /// Retains a local package throughout preparation and delivery to a hub.
+    fn retain_package(&self, version: &str) -> Box<dyn Send + Sync> {
+        let _ = version;
+        Box::new(())
+    }
     /// Brings here the package the hub asks for, for machines that cannot
     /// reach GitHub, checked against its signature, and says where it is
     /// (`crate::wire::Down::Fetch`).

@@ -1175,6 +1175,14 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                     .map_err(|error| Failure::new(format!("reading the proxy kept: {error}")))
             }
         }
+        Call::NetworkUpdates { hub, account, request } => {
+            users_voice(node, peer)?;
+            crate::world::hub_link(node, Some(&hub))?
+                .network_updates(&account, request)
+                .await
+                .map(Reply::NetworkUpdates)
+                .map_err(Failure::new)
+        }
         Call::MachineLog { hub, account, before } => {
             users_voice(node, peer)?;
             crate::world::hub_link(node, Some(&hub))?
