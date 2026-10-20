@@ -43,17 +43,24 @@ async function controlCheckpoint($, state, turn, before) {
   if (state.checkpoints.full !== true) return null
   const hashes = state.checkpoints.messages
   if (before && hashes.length > 0 && state.lastUuid === undefined) {
-    const argv = [FASTCTX, 'claude-session-policy', WORLD, state.host.session, '--messages', String(hashes.length)]
-    if (state.checkpoints.compacted_parent != null) argv.push('--after-compact', state.checkpoints.compacted_parent)
-    const child = $.process.spawn({ argv, input: JSON.stringify({ tail: (await $.session.messages()).map(messageProjection) }) })
-    let stdout = '', stderr = ''
-    for await (const piece of child) { if (piece.stream === 'stdout') stdout += piece.text; else stderr += piece.text }
-    if ((await child.result).code !== 0) throw new Error('reading the retained context identity: ' + stderr)
-    const policy = JSON.parse(stdout)
-    state.lastUuid = policy.last_uuid ?? undefined
-    state.lastRawUuid = policy.context_tail ?? undefined
-    state.checkpoints.uuids = policy.context_uuids
-    delete state.checkpoints.compacted_parent
+    // Where Claude Code's file cannot say which of its rows the session's
+    // messages are, as when a failed request left a message only in memory,
+    // the turn goes on without a boundary to rewind to rather than waiting.
+    try {
+      const argv = [FASTCTX, 'claude-session-policy', WORLD, state.host.session, '--messages', String(hashes.length)]
+      if (state.checkpoints.compacted_parent != null) argv.push('--after-compact', state.checkpoints.compacted_parent)
+      const child = $.process.spawn({ argv, input: JSON.stringify({ tail: (await $.session.messages()).map(messageProjection) }) })
+      let stdout = '', stderr = ''
+      for await (const piece of child) { if (piece.stream === 'stdout') stdout += piece.text; else stderr += piece.text }
+      if ((await child.result).code !== 0) throw new Error('reading the retained context identity: ' + stderr)
+      const policy = JSON.parse(stdout)
+      state.lastUuid = policy.last_uuid ?? undefined
+      state.lastRawUuid = policy.context_tail ?? undefined
+      state.checkpoints.uuids = policy.context_uuids
+      delete state.checkpoints.compacted_parent
+    } catch (error) {
+      $.ui.log('World checkpoint: ' + String(error), { to: 'debug' })
+    }
   }
   state.checkpoints.last_uuid = state.lastUuid ?? null
   state.checkpoints.last_raw_uuid = state.lastRawUuid ?? null

@@ -66,7 +66,14 @@ pub(crate) async fn directory(
     let reserve = || -> io::Result<String> {
         validate_session(&session)?;
         let source = exchange::sessions(node.world.path()).join(&session);
-        fastctx_platform::ensure_private_dir(&source)?;
+        // A session resumed once its records were gathered into its
+        // conversation's room finds this path an alias of the room
+        // (`gather::claude_room`), which is private already.
+        let aliased = std::fs::symlink_metadata(&source)
+            .is_ok_and(|metadata| fastctx_platform::owned_directory::is_link(&metadata));
+        if !aliased {
+            fastctx_platform::ensure_private_dir(&source)?;
+        }
         let registration = Registration {
             session,
             previous,
