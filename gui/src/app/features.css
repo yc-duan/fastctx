@@ -507,6 +507,21 @@
   white-space: nowrap;
 }
 
+/* With none chosen, the knob rests in a quieter ink where the default
+   stands. */
+.effort-slider.unset .effort-marker {
+  fill: var(--text-3);
+  opacity: 0.3;
+}
+
+.effort-slider.unset .effort-knob {
+  fill: var(--text-3);
+}
+
+.effort-slider.unset .effort-name {
+  color: var(--text-3);
+}
+
 .effort-slider:focus-visible .effort-name {
   text-decoration: underline;
   text-underline-offset: 3px;

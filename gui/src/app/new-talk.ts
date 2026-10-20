@@ -50,6 +50,7 @@ import { accountOf, homeChoice, homeLabel, homesOf, installed, listed, loggedOut
 import { agentKinds, agentPicker, foldInPicker, narrowPicker, type PickerKind, type PickerMachine, type PickerRow } from "./agent-picker";
 import { resizeUpward } from "./resize-upward";
 import { keepChoice, keptEffort, keptModel } from "./model-memory";
+import type { ProfileDefaults } from "./profile-defaults";
 import { focusPlace } from "./focus-places";
 import type { ConsentHome } from "./claude-consent";
 import {
@@ -102,6 +103,9 @@ export interface NewTalkOptions {
   /** The MCP servers of the account a conversation would work for, as its
    *  switches list them. */
   servers?: ((login: () => Login | null) => Omit<FocusServers, "off" | "changed">) | undefined;
+  /** The model and effort the preferences of the account a conversation
+   *  would work for name, before the device's own memory. */
+  defaults?: ProfileDefaults | undefined;
   store: Store;
   words: NewTalkWords;
   focusWords: FocusWords;
@@ -238,6 +242,9 @@ export class NewTalk {
   private town: string | null;
   private model: string | null = null;
   private effort: string | null = null;
+  /** The model and effort were chosen on this page, not taken as they
+   *  were kept. */
+  private chosenHere = false;
   /** The account chosen, as `hub/account`. */
   private account: string | null = remembered("account");
   /** The machines and folders it is pointed at. */
@@ -309,6 +316,7 @@ export class NewTalk {
       model: async (model, effort) => {
         this.model = model;
         this.effort = effort;
+        this.chosenHere = true;
         // Chosen here, it is what the next new conversation begins with.
         const agent = this.chosenOption()?.agent;
         if (agent) keepChoice(agent, model, effort);
@@ -317,6 +325,8 @@ export class NewTalk {
       tier: async () => {},
     });
     this.element.querySelector(".composer-menus")!.append(this.models.element);
+    // The account's preferences, read once asked, may name another model.
+    options.defaults?.watch(() => this.drawModel());
     this.focusPanel = new FocusPanel(
       {
         words: options.focusWords,
@@ -829,6 +839,7 @@ export class NewTalk {
         this.pick = value;
         this.model = null;
         this.effort = null;
+        this.chosenHere = false;
         this.opened = null;
         break;
       case "account":
@@ -1120,21 +1131,26 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
   }
 
   /** The model and effort, as the conversation's own chip and panel show
-   *  them: the chosen login's models, the one chosen last for this agent
-   *  or the program's default. */
+   *  them: the chosen login's models, the one chosen here, else the one
+   *  the account's preferences name, else the one chosen last on this
+   *  device for this agent, else the program's default. */
   private drawModel(): void {
     const option = this.chosenOption();
     const models = this.modelsOf(option);
     const agent = option?.agent ?? "";
+    const account = option ? (this.options.defaults?.of(this.loginFor(this.options.store.world.peek(), option), agent) ?? null) : null;
+    const here = this.chosenHere ? this.model : null;
     const model =
-      models.find((m) => m.model === this.model) ??
+      models.find((m) => m.model === here) ??
+      models.find((m) => m.model === account?.model) ??
       models.find((m) => m.model === keptModel(agent)) ??
       models.find((m) => m.is_default) ??
       models[0] ??
       null;
     this.model = model?.model ?? null;
     const efforts = model?.reasoning_efforts.map((e) => e.effort) ?? [];
-    this.effort = [this.effort, keptEffort(agent, this.model), model?.default_reasoning_effort].find((e) => e && efforts.includes(e)) ?? null;
+    this.effort =
+      [this.chosenHere ? this.effort : null, account?.effort, keptEffort(agent, this.model), model?.default_reasoning_effort].find((e) => e && efforts.includes(e)) ?? null;
     const offers: Offers = {
       controls: models.length ? ["model"] : [],
       commands: [],

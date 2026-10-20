@@ -7,6 +7,10 @@
 // along behind it like a pen across the paper. The glide is the slider
 // answering the hand, short and along the line, so it is kept where the
 // system asks for less motion too (用户 2026-10-12: 点一档要划过去，不要瞬移).
+//
+// The same slider stands for any short row of steps, and may hold none
+// chosen: a preference left to its default rests its knob, faint, where the
+// default stands, and the first press or drag chooses.
 
 import { blot, outline, ruled, seeded, type Point } from "../pen/shapes";
 
@@ -49,6 +53,8 @@ export class EffortSlider {
   private marker: SVGPathElement | null = null;
   private knob: SVGPathElement | null = null;
   private name: HTMLElement | null = null;
+  /** With none chosen: the name of what is taken instead. */
+  private resting: string | null = null;
 
   constructor(
     name: string,
@@ -104,6 +110,12 @@ export class EffortSlider {
   /** Shows these steps with `value` chosen; a value the steps lack keeps
    *  the nearest one there was. */
   set(steps: EffortStep[], value: string | null): void {
+    if (this.resting !== null) {
+      // From resting to chosen the knob is drawn anew where the choice is.
+      this.resting = null;
+      this.element.classList.remove("unset");
+      this.steps = [];
+    }
     const known = steps.findIndex((step) => step.value === value);
     const before = this.steps[this.index]?.value;
     const same = steps.length === this.steps.length && steps.every((step, index) => step.value === this.steps[index]!.value);
@@ -123,8 +135,23 @@ export class EffortSlider {
     this.drawPaper();
   }
 
+  /** Shows these steps with none chosen: the knob rests, faint, `at` steps
+   *  along, between two where what is taken instead falls between them, and
+   *  `label` names it. */
+  unset(steps: EffortStep[], at: number, label: string): void {
+    cancelAnimationFrame(this.glide);
+    const same = this.resting !== null && steps.length === this.steps.length && steps.every((step, index) => step.value === this.steps[index]!.value);
+    this.steps = steps;
+    this.resting = label;
+    this.element.classList.add("unset");
+    this.index = Math.max(0, Math.min(steps.length - 1, Math.round(at)));
+    this.at = Math.max(0, Math.min(steps.length - 1, at));
+    if (same && this.marker) this.place(this.at);
+    else this.drawPaper();
+  }
+
   get value(): string | null {
-    return this.steps[this.index]?.value ?? null;
+    return this.resting !== null ? null : (this.steps[this.index]?.value ?? null);
   }
 
   private x(at: number): number {
@@ -140,7 +167,11 @@ export class EffortSlider {
   }
 
   private choose(index: number): void {
-    const changed = index !== this.index;
+    const changed = index !== this.index || this.resting !== null;
+    if (this.resting !== null) {
+      this.resting = null;
+      this.element.classList.remove("unset");
+    }
     this.index = index;
     this.glideTo(index);
     if (changed) this.chosen(this.steps[index]!.value);
@@ -197,9 +228,10 @@ export class EffortSlider {
     this.at = at;
     const nearest = Math.round(at);
     const step = this.steps[nearest];
+    const resting = this.resting !== null && !this.press;
     this.element.setAttribute("aria-valuenow", String(this.index));
-    this.element.setAttribute("aria-valuetext", this.steps[this.index]?.label ?? "");
-    this.element.title = step && step.label !== step.value ? step.value : "";
+    this.element.setAttribute("aria-valuetext", resting ? this.resting! : (this.steps[this.index]?.label ?? ""));
+    this.element.title = resting || !step || step.label === step.value ? "" : step.value;
     if (!this.marker || !this.knob || !this.name || !step) return;
     const reach = this.x(at);
     // The marker starts past the first dot at full width, so no dot shows
@@ -212,6 +244,6 @@ export class EffortSlider {
     this.knob.setAttribute("d", blot([reach, LINE_Y], coarse.matches ? 9.5 : 6.5, seeded(`knob:${this.steps.length}`)));
     const labelX = Math.max(18, Math.min(WIDTH - 18, reach));
     this.name.style.left = `${((labelX / WIDTH) * 100).toFixed(2)}%`;
-    this.name.textContent = step.label;
+    this.name.textContent = resting ? this.resting! : step.label;
   }
 }

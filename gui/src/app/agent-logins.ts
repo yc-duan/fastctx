@@ -12,8 +12,13 @@
 //
 // A listed login is a row (`./agent-login-row`); with the workbench on it
 // carries its usage windows and what it used this week, and opens its own
-// page of usage (`./usage/login-page`). The machine and the tab last shown
-// are kept on this device; coming from a machine's page shows that one.
+// page of usage (`./usage/login-page`). The machine last shown is kept on
+// this device; coming from a machine's page shows that one.
+//
+// Where the device is logged in to an account, a switch in the head turns
+// the page to the account's preferences for this agent (`./host-prefs`):
+// they are the account's, not a machine's, so the machine's pill gives way
+// to the account's.
 
 import { Popover } from "../conversation/popover";
 import { escape } from "../conversation/prose";
@@ -30,12 +35,15 @@ import { foldersSection, foundOf, freshness, searching } from "./agent-folders";
 import { dirName, loginRow, planName, programLine } from "./agent-login-row";
 import type { AgentLoginsWords } from "./agent-logins-words";
 import { chosen, pickButton, pickMenu, pickables, type Pickable } from "./agent-machines";
+import { keepTab } from "./agent-sections";
 import { AssistSheet, assistChange, assistancesIn, fiveHourWindow, namesOn, type Assistance } from "./assist-sheet";
 import type { Confirm } from "./confirm";
 import { FolderPicker } from "./folder-picker";
 import { redrawKeepingFocus } from "./focus";
+import type { HostPrefs } from "./host-prefs";
 import { detailOf } from "./problem";
 import { isVisitor } from "./reach";
+import type { AgentTab, ProfileWords } from "./profile-words";
 import type { Page } from "./shell";
 import { effect, type Signal } from "./signals";
 import type { Store } from "./store";
@@ -57,9 +65,16 @@ export interface AgentLoginsOptions {
   agent: Agent;
   /** The machine to show, when one was named. */
   machine: string | null;
+  /** The tab shown first. */
+  tab: AgentTab;
+  /** The account's preferences for an agent, where this device keeps an
+   *  account's own configuration. */
+  prefs: { words: ProfileWords; make(agent: Agent): HostPrefs } | null;
   /** The machine shown changed, or the agent, as when a folder chosen is the
    *  other agent's login: the address and the sidebar follow. */
   showing(machine: string, agent: Agent): void;
+  /** The tab shown changed: the address follows. */
+  tabbed(tab: AgentTab, agent: Agent): void;
   when(at: Date, now: Date): string;
   /** Whether this device's workbench is on: the limits and the usage
    *  belong to it, and without it they are neither read nor shown. */
@@ -141,6 +156,10 @@ export class AgentLoginsPage implements Page {
   private machines: { element: HTMLElement; popover: Popover } | null = null;
   private pickDrawn = "";
   private drawn = "";
+  private prefs: HostPrefs | null;
+  private readonly tabs: HTMLElement;
+  private tab: AgentTab;
+  private tabsDrawn = "";
 
   constructor(private readonly options: AgentLoginsOptions) {
     const { words } = options;
@@ -148,12 +167,24 @@ export class AgentLoginsPage implements Page {
     this.title = options.agent === "claude" ? words.claude : words.codex;
     this.machine = options.machine ?? keptMachine();
     if (options.machine) keepMachine(options.machine);
+    this.tab = options.tab;
+    this.prefs = options.prefs?.make(options.agent) ?? null;
     this.element = document.createElement("div");
     this.element.className = "agents-page logins-page";
-    this.element.innerHTML = `${options.head(`<h1 class="page-title logins-title">${titleHtml(this.agent, this.title)}</h1><span class="agents-pick-place"></span>`, `<div class="logins-machine-state"></div>`)}
+    this.element.innerHTML = `${options.head(`<h1 class="page-title logins-title">${titleHtml(this.agent, this.title)}</h1><span class="host-tabs-place"></span><span class="agents-pick-place"></span><span class="host-account-place"></span>`, `<div class="logins-machine-state"></div><span class="host-status-place"></span>`)}
       <div class="logins-body scroller"></div>`;
     this.body = this.element.querySelector<HTMLElement>(".logins-body")!;
     this.pick = this.element.querySelector<HTMLElement>(".agents-pick-place")!;
+    this.tabs = this.element.querySelector<HTMLElement>(".host-tabs-place")!;
+    if (this.prefs) {
+      this.element.querySelector(".host-account-place")!.replaceWith(this.prefs.account);
+      this.element.querySelector(".host-status-place")!.replaceWith(this.prefs.status);
+      this.element.append(this.prefs.element);
+    }
+    this.tabs.addEventListener("click", (event) => {
+      const tab = (event.target as HTMLElement).closest<HTMLElement>("[data-host-tab]")?.dataset.hostTab as AgentTab | undefined;
+      if (tab) this.chooseTab(tab);
+    });
     this.assistSheet = new AssistSheet(options.access);
     this.sheet = new AgentChangeSheet(options.changeWords, {
       preview: (target) => options.preview(target.machine, target.agent, target.dir, target.into, !!target.takeBack),
@@ -179,9 +210,11 @@ export class AgentLoginsPage implements Page {
     this.choosing = new FolderPicker(options.words.picker);
     this.body.addEventListener("click", (event) => void this.click(event));
     this.stop = effect(() => {
-      options.store.world.get();
+      const world = options.store.world.get();
       options.store.clock.get();
       options.workbench.get();
+      this.prefs?.draw(world);
+      this.drawTabs();
       this.draw();
       this.ensure();
     });
@@ -192,6 +225,63 @@ export class AgentLoginsPage implements Page {
     clearTimeout(this.following);
     this.machines?.element.remove();
     this.menu.close();
+    this.prefs?.leave();
+  }
+
+  /** The tab shown: the preferences only where there is an account whose
+   *  they are. */
+  private shownTab(): AgentTab {
+    return this.tab === "prefs" && this.prefs?.available() ? "prefs" : "logins";
+  }
+
+  private chooseTab(tab: AgentTab): void {
+    if (tab === this.shownTab()) return;
+    this.tab = tab;
+    keepTab(tab);
+    this.drawTabs();
+    this.options.tabbed(tab, this.agent);
+  }
+
+  /** The preferences, made anew for the agent shown once it changed. */
+  private remakePrefs(): void {
+    const old = this.prefs;
+    if (!old || !this.options.prefs) return;
+    const next = this.options.prefs.make(this.agent);
+    old.leave();
+    old.account.replaceWith(next.account);
+    old.status.replaceWith(next.status);
+    old.element.replaceWith(next.element);
+    this.prefs = next;
+    next.draw(this.options.store.world.peek());
+    this.drawTabs();
+  }
+
+  /** The switch between the logins and the preferences, and what each
+   *  shows in the head and the body. */
+  private drawTabs(): void {
+    const shown = this.shownTab();
+    const words = this.options.prefs?.words;
+    const html =
+      this.prefs?.available() && words
+        ? `<div class="segmented host-tabs" role="tablist">${(["logins", "prefs"] as const)
+            .map((tab) => `<button class="segment${tab === shown ? " chosen" : ""}" type="button" role="tab" aria-selected="${tab === shown}" data-host-tab="${tab}">${escape(words.tabs[tab])}</button>`)
+            .join("")}</div>`
+        : "";
+    if (html !== this.tabsDrawn) {
+      this.tabs.innerHTML = html;
+      this.tabsDrawn = html;
+    }
+    const prefs = shown === "prefs";
+    this.element.classList.toggle("host-tabbed", html !== "");
+    this.body.hidden = prefs;
+    this.pick.hidden = prefs;
+    this.element.querySelector<HTMLElement>(".logins-machine-state")!.hidden = prefs;
+    if (this.prefs) {
+      this.prefs.element.hidden = !prefs;
+      this.prefs.account.hidden = !prefs;
+      this.prefs.status.hidden = !prefs;
+      if (prefs) this.prefs.shown();
+    }
   }
 
   /** Reads the machine shown once the World knows it, unless its record
@@ -710,6 +800,7 @@ export class AgentLoginsPage implements Page {
         this.title = marked.agent === "claude" ? this.options.words.claude : this.options.words.codex;
         const heading = this.element.querySelector<HTMLElement>(".logins-title");
         if (heading) heading.innerHTML = titleHtml(this.agent, this.title);
+        this.remakePrefs();
         this.options.showing(machine, marked.agent);
       }
       this.mark(marked.keys);
@@ -783,7 +874,7 @@ export class AgentLoginsPage implements Page {
 
 /** The head's name of the agent shown: its mark, then its name. */
 function titleHtml(agent: Agent, title: string): string {
-  return `<span class="logins-title-mark">${glyph(agent, 20)}</span>${escape(title)}`;
+  return `<span class="logins-title-mark">${glyph(agent, 20)}</span><span class="logins-title-name">${escape(title)}</span>`;
 }
 
 function keptMachine(): string | null {

@@ -93,23 +93,40 @@ pub const NAME_MOST: usize = 32;
 pub const RESERVED: &str = "fastctx";
 
 /// The Claude Code settings an account may set for its own sessions: what
-/// changes how the model works and what it writes, never what runs a
-/// program, loosens permissions, changes credentials, endpoints or the
-/// environment, enables servers or plugins, or reaches the whole
-/// installation.
+/// changes the model, how it works and what it writes, and when its
+/// context is compacted; never what runs a program, loosens permissions,
+/// changes credentials or endpoints, enables servers or plugins, or reaches
+/// the whole installation. Of the environment, only `CLAUDE_ENV`.
 pub const CLAUDE_SETTINGS: &[&str] = &[
-    "alwaysThinkingEnabled",
     "attribution",
+    "autoCompactEnabled",
+    "autoCompactWindow",
+    "effortLevel",
+    "env",
     "includeGitInstructions",
     "language",
+    "model",
     "outputStyle",
     "showThinkingSummaries",
 ];
 
+/// The variables an account may set in its Claude Code settings' `env`:
+/// the share of the window at which a session compacts. The node's own
+/// variables are written over them.
+pub const CLAUDE_ENV: &[&str] = &["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"];
+
 /// The Codex settings an account may set for its own threads, by the same
 /// rule.
-pub const CODEX_SETTINGS: &[&str] =
-    &["hide_agent_reasoning", "model_reasoning_summary", "model_verbosity", "show_raw_agent_reasoning"];
+pub const CODEX_SETTINGS: &[&str] = &[
+    "hide_agent_reasoning",
+    "model",
+    "model_auto_compact_token_limit",
+    "model_context_window",
+    "model_reasoning_effort",
+    "model_reasoning_summary",
+    "model_verbosity",
+    "show_raw_agent_reasoning",
+];
 
 impl Profile {
     /// Whether this is a profile an account may keep.
@@ -118,6 +135,7 @@ impl Profile {
             return Err(format!("the prompt is {} bytes; at most {PROMPT_MOST}", self.prompt.len()));
         }
         settings(&self.claude, CLAUDE_SETTINGS, "Claude Code")?;
+        claude_env(&self.claude)?;
         settings(&self.codex, CODEX_SETTINGS, "Codex")?;
         if self.servers.len() > SERVERS_MOST {
             return Err(format!("{} MCP servers; at most {SERVERS_MOST}", self.servers.len()));
@@ -164,6 +182,25 @@ fn settings(set: &Map<String, Value>, allowed: &[&str], host: &str) -> Result<()
         }
         None => Ok(()),
     }
+}
+
+/// Whether the `env` of `claude`, where there is one, sets only `CLAUDE_ENV`,
+/// each to a string.
+fn claude_env(claude: &Map<String, Value>) -> Result<(), String> {
+    let Some(env) = claude.get("env") else { return Ok(()) };
+    let Value::Object(env) = env else { return Err("env of the Claude Code settings is not a table".into()) };
+    for (key, value) in env {
+        if !CLAUDE_ENV.contains(&key.as_str()) {
+            return Err(format!(
+                "{key} is not a variable an account sets for its Claude Code sessions; these are: {}",
+                CLAUDE_ENV.join(", ")
+            ));
+        }
+        if !value.is_string() {
+            return Err(format!("{key} in the Claude Code settings' env is not a string"));
+        }
+    }
+    Ok(())
 }
 
 /// Whether `name` may name an MCP server: letters, digits, `_` and `-`, at

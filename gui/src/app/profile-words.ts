@@ -1,13 +1,18 @@
 // What the agents' sections and the account's own pages say
 // (`world-user-config.md`; `world-gui.md`, 智能体页): the sections under
-// 「智能体」 in the sidebar, the prompt, the MCP servers and the
-// preferences, and the servers' switches in a conversation's
-// 「机器与文件夹」.
+// 「智能体」 in the sidebar, the tabs of an agent's page, the prompt, the
+// MCP servers and an agent's preferences, and the servers' switches in a
+// conversation's 「机器与文件夹」.
 
-export type AgentSection = "claude" | "codex" | "prompt" | "mcp" | "prefs";
+export type AgentSection = "claude" | "codex" | "prompt" | "mcp";
+
+/** What an agent's page shows: its logins, or the account's preferences
+ *  for it. */
+export type AgentTab = "logins" | "prefs";
 
 export interface ProfileWords {
   sections: Record<AgentSection, string>;
+  tabs: Record<AgentTab, string>;
   /** The account a page is of, where the device is logged in to more than
    *  one. */
   account: string;
@@ -115,13 +120,27 @@ export interface ProfileWords {
   };
   prefs: {
     standard: string;
+    /** Said on hover over 「默认」: what is taken when nothing is set. */
+    standardTip: string;
     on: string;
     off: string;
+    modelSection: string;
+    contextSection: string;
+    otherSection: string;
+    model: string;
+    noModels: string;
+    effort: string;
+    window: string;
+    windowTip(size: string): string;
+    compact: string;
+    compactTip(size: string): string;
+    /** The step past the last share: no compacting by itself. */
+    never: string;
+    neverTip: string;
     language: string;
     languagePlaceholder: string;
     outputStyle: string;
     styles: { explanatory: string; learning: string };
-    thinking: string;
     summaries: string;
     git: string;
     attribution: string;
@@ -142,7 +161,8 @@ export interface ProfileWords {
 }
 
 export const zhProfile: ProfileWords = {
-  sections: { claude: "Claude Code", codex: "Codex", prompt: "提示词", mcp: "MCP", prefs: "偏好" },
+  sections: { claude: "Claude Code", codex: "Codex", prompt: "提示词", mcp: "MCP" },
+  tabs: { logins: "登录", prefs: "偏好" },
   account: "账号",
   olderHub: "这个网络的中枢服务器要先升级",
   reading: "正在读取",
@@ -237,13 +257,25 @@ export const zhProfile: ProfileWords = {
   },
   prefs: {
     standard: "默认",
+    standardTip: "用这个登录自己的设置",
     on: "开",
     off: "关",
+    modelSection: "模型",
+    contextSection: "上下文",
+    otherSection: "其他",
+    model: "默认模型",
+    noModels: "还没有哪台电脑说过它有哪些模型",
+    effort: "推理强度",
+    window: "上下文长度",
+    windowTip: (size) => `对话长到 ${size} token 为止`,
+    compact: "压缩点",
+    compactTip: (size) => `用到 ${size} token 时压缩`,
+    never: "不压缩",
+    neverTip: "不自动压缩，满了再说",
     language: "回答的语言",
     languagePlaceholder: "默认",
     outputStyle: "输出风格",
     styles: { explanatory: "解释型", learning: "学习型" },
-    thinking: "总是深入思考",
     summaries: "思考摘要",
     git: "Git 内置指引",
     attribution: "提交与 PR 署名",
@@ -259,7 +291,8 @@ export const zhProfile: ProfileWords = {
 };
 
 export const enProfile: ProfileWords = {
-  sections: { claude: "Claude Code", codex: "Codex", prompt: "Prompt", mcp: "MCP", prefs: "Preferences" },
+  sections: { claude: "Claude Code", codex: "Codex", prompt: "Prompt", mcp: "MCP" },
+  tabs: { logins: "Logins", prefs: "Preferences" },
   account: "Account",
   olderHub: "This network's server needs updating first",
   reading: "Reading",
@@ -354,13 +387,25 @@ export const enProfile: ProfileWords = {
   },
   prefs: {
     standard: "Default",
+    standardTip: "Use this login's own setting",
     on: "On",
     off: "Off",
+    modelSection: "Model",
+    contextSection: "Context",
+    otherSection: "Other",
+    model: "Default model",
+    noModels: "No computer has listed its models yet",
+    effort: "Reasoning effort",
+    window: "Context length",
+    windowTip: (size) => `A conversation grows to ${size} tokens`,
+    compact: "Compaction point",
+    compactTip: (size) => `Compacts at ${size} tokens`,
+    never: "Never",
+    neverTip: "Doesn't compact by itself",
     language: "Language",
     languagePlaceholder: "Default",
     outputStyle: "Output style",
     styles: { explanatory: "Explanatory", learning: "Learning" },
-    thinking: "Always think",
     summaries: "Thinking summaries",
     git: "Git instructions",
     attribution: "Attribution",

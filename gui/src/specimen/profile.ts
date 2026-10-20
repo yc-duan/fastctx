@@ -24,8 +24,8 @@ const kept = new Map<string, Map<string, CommandMcp>>([
 let profile: Profile = {
   version: 3,
   prompt: "一律用中文和我交流，代码注释用英文。\n动手之前先读相关的设计文档；拿不准的地方先问我，不要猜。\n改界面时三套主题、电脑与手机都要截图看过。",
-  claude: { language: "中文", alwaysThinkingEnabled: true },
-  codex: { model_reasoning_summary: "concise" },
+  claude: { language: "中文", model: "claude-opus-5-5", autoCompactWindow: 600_000, env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80" } },
+  codex: { model_reasoning_summary: "concise", model_reasoning_effort: "high" },
   servers: {
     unity: { kind: "command", machine: "desktop" },
     blender: { kind: "command", machine: "desktop" },

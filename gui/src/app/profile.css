@@ -1,4 +1,4 @@
-/* The account's own pages: its prompt, its preferences, its MCP servers.
+/* The account's own pages: its prompt and its MCP servers.
    One column, read as the settings are, under the head; what is long
    scrolls in its own place. */
 
@@ -142,22 +142,6 @@
   justify-content: flex-end;
   gap: var(--space-3);
   min-width: 0;
-}
-
-/* The preferences: as the device's settings, each agent a section under
-   its mark. */
-.prefs-host {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.prefs-host .glyph {
-  color: var(--text-3);
-}
-
-.prefs-page .choice-row {
-  grid-template-columns: 9em minmax(0, 1fr);
 }
 
 .prefs-word {
@@ -635,9 +619,6 @@
     display: none;
   }
 
-  .prefs-page .choice-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 /* On a phone the sheets rise across the whole width, as every sheet does. */

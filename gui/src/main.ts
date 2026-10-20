@@ -60,13 +60,15 @@ import "./app/usage/usage.css";
 import { specimenUsage } from "./specimen/usage";
 import { enAgentLogins, zhAgentLogins } from "./app/agent-logins-words";
 import { enProfile, zhProfile } from "./app/profile-words";
-import { isHost, keepSection, sectionOf } from "./app/agent-sections";
+import { isHost, keepSection, sectionOf, tabOf } from "./app/agent-sections";
 import "./app/agent-sections.css";
 import { PromptPage } from "./app/prompt-page";
-import { PrefsPage } from "./app/prefs-page";
+import { HostPrefs } from "./app/host-prefs";
+import { ProfileDefaults } from "./app/profile-defaults";
 import { McpPage } from "./app/mcp-page";
 import type { ProfileCalls } from "./app/profile-account";
 import "./app/profile.css";
+import "./app/host-prefs.css";
 import { mcp as mcpCall, readProfile, writeProfile } from "./world/profile";
 import { specimenProfileCalls } from "./specimen/profile";
 import { ServerLists } from "./app/mcp-switches";
@@ -287,6 +289,8 @@ import { installAccess } from "./app/access";
 import { installBack, setPageBack } from "./app/back";
 import { installFrame } from "./app/frame";
 import { nameCodeCopy } from "./conversation/prose";
+import { agentKind } from "./app/model-memory";
+import type { AgentModel } from "./world/agents";
 
 const params = new URLSearchParams(location.search);
 const language: "zh" | "en" = (() => {
@@ -346,10 +350,36 @@ let asDevice = live ? !onComputer() : params.has("phone");
 const head = (title: string, actions?: string) => pageHead(shellWords, title, actions, backName);
 /** The account's own configuration, from the World or the specimen's
  *  memory, which lasts the visit. */
-const profileCalls: ProfileCalls = live
+const profileWrites: ProfileCalls = live
   ? { read: readProfile, write: writeProfile, mcp: mcpCall }
   : specimenProfileCalls();
+/** What the account's preferences name for a new conversation; whatever
+ *  this device writes reaches it at once. */
+const profileDefaults = new ProfileDefaults(profileWrites);
+const profileCalls: ProfileCalls = {
+  ...profileWrites,
+  write: async (hub, account, profile) => {
+    const version = await profileWrites.write(hub, account, profile);
+    profileDefaults.saved(hub, account, { ...profile, version });
+    return version;
+  },
+};
 const serverLists = new ServerLists(profileCalls, store, english ? enProfile : zhProfile);
+
+/** The models an agent's logins offer across the machines this computer
+ *  reaches, each once, in the order the first machine to list it gave. */
+async function agentModels(agent: "claude" | "codex"): Promise<AgentModel[]> {
+  const world = await agentsOn(null);
+  const seen = new Map<string, AgentModel>();
+  for (const machine of world.machines) {
+    if (machine.kind !== "answered") continue;
+    for (const facts of machine.reply.agents) {
+      if (agentKind(facts.agent) !== agent || facts.models.kind !== "known") continue;
+      for (const model of facts.models.value) if (!seen.has(model.model)) seen.set(model.model, model);
+    }
+  }
+  return [...seen.values()];
+}
 
 let place: Place = { kind: "home" };
 
@@ -490,6 +520,7 @@ const makeNewTalk = (town: string | null) => new NewTalk({
   words: english ? enNewTalk : zhNewTalk,
   focusWords,
   servers: (login) => serverLists.switches(login),
+  defaults: profileDefaults,
   homeWords: agentHomeWords,
   modelWords: english ? enModelPanel : zhModelPanel,
   agents: (machine) => agentsOn(machine),
@@ -2062,10 +2093,6 @@ function show(next: Place): void {
         page = new PromptPage({ store, words: profile, head, calls: profileCalls });
         break;
       }
-      if (section === "prefs") {
-        page = new PrefsPage({ store, words: profile, head, calls: profileCalls });
-        break;
-      }
       if (!isHost(section)) {
         page = new McpPage({ store, words: profile, head, calls: profileCalls, confirm: accountConfirm, close: pageWords.close });
         break;
@@ -2079,6 +2106,16 @@ function show(next: Place): void {
         head,
         agent: section,
         machine: next.machine,
+        tab: tabOf(next),
+        prefs: {
+          words: profile,
+          make: (agent) => new HostPrefs({ agent, words: profile, english, calls: profileCalls, models: agentModels }),
+        },
+        tabbed: (tab, agent) => {
+          place = tab === "prefs" ? { kind: "agents", machine: null, section: agent, tab } : { kind: "agents", machine: null, section: agent };
+          history.replaceState(history.state, "", link(place));
+          shell.mark(place);
+        },
         showing: (machine, agent) => {
           // The address and the sidebar follow the machine and the agent
           // shown, without coming anew.

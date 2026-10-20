@@ -1,0 +1,129 @@
+/* An agent's page turned to the account's preferences (`host-prefs.ts`):
+   the switch beside the agent's name, the account's pill where the
+   machine's stood; below, a column read as the settings are, each step of
+   the way a hand-drawn slider with 「默认」 before it. */
+
+.host-tabs-place {
+  display: inline-flex;
+  align-self: center;
+  margin-left: var(--space-3);
+}
+
+.host-tabs-place:empty {
+  display: none;
+}
+
+.logins-page .agents-pick-place[hidden],
+.logins-page .logins-machine-state[hidden],
+.logins-page .logins-body[hidden],
+.logins-page .prof-account[hidden],
+.logins-page .prof-status[hidden],
+.host-prefs[hidden] {
+  display: none;
+}
+
+.logins-page .prof-account {
+  position: relative;
+  display: inline-flex;
+  align-self: center;
+  min-width: 0;
+  margin-left: var(--space-2);
+}
+
+.host-prefs {
+  --board: min(100% - 2 * var(--gutter), var(--column));
+  flex: 1;
+  min-height: 0;
+  padding-bottom: var(--space-12);
+}
+
+.hp-board > .home-section:first-child,
+.host-prefs > .hp-first {
+  margin-top: var(--space-6);
+}
+
+.host-prefs .choice-row {
+  grid-template-columns: 8em minmax(0, 1fr);
+  align-items: center;
+  min-height: 52px;
+}
+
+/* A row of steps: 「默认」, then the slider, its line level with the
+   pill's middle. */
+.hp-slid-options {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.hp-slid-options .hp-reset {
+  flex: none;
+  margin-bottom: 2px;
+}
+
+.host-prefs .hp-slider {
+  flex: 1;
+  max-width: 300px;
+}
+
+/* The model: a pill that opens the list, the login's own default named
+   beside 「默认」 in a quieter ink. */
+.hp-model-place {
+  position: relative;
+  display: inline-flex;
+}
+
+.hp-model {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.hp-model-sub {
+  color: var(--text-3);
+}
+
+.hp-model-sub:empty {
+  display: none;
+}
+
+.hp-model .glyph {
+  margin-right: -4px;
+  color: var(--text-3);
+}
+
+.hp-model-menu {
+  min-width: max(100%, 220px);
+}
+
+.agents-pick-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--size-text);
+  color: var(--text-3);
+}
+
+/* On a phone the head keeps one row: the agent is its mark, the switch
+   and the pill beside it; each preference's label stands over its
+   choices, the slider across the width. */
+@media (max-width: 560px) {
+  .logins-page.host-tabbed .logins-title-name {
+    display: none;
+  }
+
+  .host-tabs-place {
+    margin-left: var(--space-1);
+  }
+
+  .host-prefs .choice-row {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--space-1);
+    min-height: 0;
+    padding: var(--space-3) 0;
+  }
+
+  .host-prefs .hp-slider {
+    max-width: none;
+  }
+}

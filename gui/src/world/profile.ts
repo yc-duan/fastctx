@@ -97,10 +97,22 @@ export type McpReply =
 
 /** The Claude Code settings an account may set for itself
  *  (`fastctx_types::profile::CLAUDE_SETTINGS`). */
-export const CLAUDE_SETTINGS = ["alwaysThinkingEnabled", "attribution", "includeGitInstructions", "language", "outputStyle", "showThinkingSummaries"] as const;
+export const CLAUDE_SETTINGS = ["attribution", "autoCompactEnabled", "autoCompactWindow", "effortLevel", "env", "includeGitInstructions", "language", "model", "outputStyle", "showThinkingSummaries"] as const;
+
+/** The variables it may set in their `env` (`fastctx_types::profile::CLAUDE_ENV`). */
+export const CLAUDE_ENV = ["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] as const;
 
 /** The Codex settings it may (`fastctx_types::profile::CODEX_SETTINGS`). */
-export const CODEX_SETTINGS = ["hide_agent_reasoning", "model_reasoning_summary", "model_verbosity", "show_raw_agent_reasoning"] as const;
+export const CODEX_SETTINGS = [
+  "hide_agent_reasoning",
+  "model",
+  "model_auto_compact_token_limit",
+  "model_context_window",
+  "model_reasoning_effort",
+  "model_reasoning_summary",
+  "model_verbosity",
+  "show_raw_agent_reasoning",
+] as const;
 
 /** The longest prompt kept, in bytes. */
 export const PROMPT_MOST = 32 * 1024;
