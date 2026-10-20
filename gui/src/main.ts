@@ -173,6 +173,7 @@ import type { Away, Happening, WorldState } from "./home/model";
 import { happeningsOf } from "./home/since";
 import { enHome, zhHome } from "./home/words";
 import { installHints } from "./app/hint";
+import { installSheetDrag } from "./app/sheet-drag";
 import { installPresses } from "./app/press";
 import { installPointerHints } from "./app/pointer-hint";
 import { installPens } from "./pen/filters";
@@ -2608,6 +2609,7 @@ if (live) {
 installPens();
 installPresses();
 installHints();
+installSheetDrag();
 installPointerHints();
 installRules();
 installAccess();

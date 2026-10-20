@@ -60,6 +60,13 @@
   initial-value: 0px;
 }
 
+/* How far a finger has pulled a sheet down from its place (`sheet-drag.ts`). */
+@property --drag {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
 @property --grow {
   syntax: "<number>";
   inherits: false;

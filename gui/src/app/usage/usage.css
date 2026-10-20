@@ -702,9 +702,11 @@
 
 }
 
-/* On a phone the head keeps its title and a bare button. */
+/* On a phone the head keeps its title and a bare button: the plan and how
+   the login signs in are on its row on the agents page. */
 @media (max-width: 640px) {
-  .ledger-machine {
+  .ledger-machine,
+  .ledger-title .tag:not(.ledger-from) {
     display: none;
   }
 

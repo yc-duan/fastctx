@@ -1642,3 +1642,22 @@
 .canvas-hints .machines-film-again:hover {
   color: var(--text);
 }
+
+/* A touch screen pinches to zoom: of the controls the drawing keeps the one
+   that fits it whole, and the film's word is a solid pill over the ink as
+   the controls are. */
+@media (pointer: coarse) {
+  .machine-map .canvas-controls button:not(:last-child),
+  .machine-map .canvas-controls output {
+    display: none;
+  }
+
+  .canvas-hints .machines-film-again {
+    height: 44px;
+    margin-left: 0;
+    padding: 0 var(--space-3);
+    border-radius: var(--radius-m);
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    color: var(--text-2);
+  }
+}

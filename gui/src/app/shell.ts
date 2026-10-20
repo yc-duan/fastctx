@@ -6,6 +6,7 @@
 
 import type { Login } from "../world/accounts";
 import { layerOpened, leavePage, type Layer } from "./back";
+import { followDrawer } from "./drawer-swipe";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Place } from "./places";
@@ -128,6 +129,15 @@ export class Shell {
     }
     this.element.querySelector(".sidebar-frame")!.append(this.sidebar.element);
     this.element.querySelector(".scrim")!.addEventListener("click", () => this.closeDrawer());
+    // On a phone the drawer follows the finger.
+    followDrawer({
+      frame: this.element.querySelector<HTMLElement>(".sidebar-frame")!,
+      scrim: this.element.querySelector<HTMLElement>(".scrim")!,
+      narrow: () => narrow.matches && !this.element.classList.contains("alone"),
+      isOpen: () => this.element.classList.contains("drawer-open"),
+      open: () => this.drawer(true),
+      close: () => this.closeDrawer(),
+    });
     // Any page's menu button brings the sidebar back: as a drawer on a
     // narrow screen, unfolded on a wide one.
     this.main.addEventListener("click", (event) => {

@@ -618,6 +618,14 @@ body {
   text-overflow: ellipsis;
 }
 
+/* A phone keeps the way back's arrow alone: the page's own name needs the
+   room. */
+@media (max-width: 640px) {
+  .page-back span {
+    display: none;
+  }
+}
+
 .page-head-title {
   flex: 1;
   min-width: 0;

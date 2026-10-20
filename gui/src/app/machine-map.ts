@@ -125,6 +125,9 @@ const BARE = 0.75;
  *  about twelve pixels high. */
 const READABLE = 0.8;
 
+/** The side gutter a phone's drawing is fitted within, as the page's. */
+const NARROW_PAD = 16;
+
 /** Room round a hub's point for its name over it, in the drawing's units. */
 const HUB_ROOM = 64;
 
@@ -504,11 +507,13 @@ export class MachineMap {
       }),
     ];
     // Narrow, the drawing is fitted to the width and read from the top,
-    // moving down for the rest.
+    // moving down for the rest; never drawn larger than its own size, its
+    // names as large as a phone writes them.
     const view = this.surface.camera.view;
     // The page's head lies over the top of a phone's drawing: room above.
     const top = { ...placement.bounds, y: placement.bounds.y - 40, height: placement.bounds.height + 40 };
-    const fitted = this.narrow && view.width > 0 ? { ...top, height: Math.min(top.height, (top.width * view.height) / view.width) } : placement.bounds;
+    const wide = { ...top, width: Math.max(top.width, view.width - 2 * NARROW_PAD) };
+    const fitted = this.narrow && view.width > 0 ? { ...wide, height: Math.min(wide.height, (wide.width * view.height) / view.width) } : placement.bounds;
     // Folding or opening a box moves nothing else on the screen.
     const folds = [...scene.folded].sort().join("|");
     const folding = this.placedFolds !== null && folds !== this.placedFolds;

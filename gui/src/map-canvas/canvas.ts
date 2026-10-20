@@ -307,9 +307,11 @@ export class MapCanvas {
     cancelAnimationFrame(this.animation);
   }
   /** Room left round the world when it is fitted: a tenth of the shorter
-   *  side, from 24 to 76 pixels, so a phone's drawing is not shrunk away. */
+   *  side, from 24 to 76 pixels; on a phone's narrow frame its gutter, so
+   *  the drawing is not shrunk away. */
   private fitPadding(): number {
-    return Math.max(24, Math.min(76, Math.min(this.camera.view.width, this.camera.view.height) * 0.1));
+    const { width, height } = this.camera.view;
+    return width < 480 ? 16 : Math.max(24, Math.min(76, Math.min(width, height) * 0.1));
   }
   private measure(): void {
     const visibility = new Map([...this.buttons.values()].map(e => [e.label, e.label.hidden]));
