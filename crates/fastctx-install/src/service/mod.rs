@@ -198,6 +198,13 @@ impl Service {
         bail!("fastctx services support Windows, Linux and macOS; this platform is not supported")
     }
 
+    /// The process systemd runs the service as, 0 when it runs none.
+    #[cfg(target_os = "linux")]
+    pub fn main_pid(&self) -> anyhow::Result<u64> {
+        self.validate()?;
+        linux::main_pid(&self.normalized()?)
+    }
+
     /// Whether the protected guardian already runs this image. Linux's
     /// guardian is systemd itself, so a node image needs no privileged update.
     pub fn guardian_current(&self, digest: &str) -> anyhow::Result<bool> {

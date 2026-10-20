@@ -1347,6 +1347,16 @@ export class MachinesPage implements Page {
     const member = admin ? this.memberOf(spot.machine, admin, world) : undefined;
     const direct: Act[] =
       member?.kind !== "computer" ? [] : member.direct?.length ? [{ act: "direct", label: words.stopDirect, icon: "link", on: true }] : member.reach ? [{ act: "direct", label: words.allowDirect, icon: "link", on: false }] : [];
+    // Relaying for its owner's other machines on its network is the owner's
+    // to allow, a visitor's too, on a hub that keeps relays; where it takes
+    // direct connections, they forward already.
+    const own = this.ownersOf(spot.machine, world)[0];
+    const mine = own ? this.memberOf(spot.machine, own, world) : undefined;
+    const relays = !!own && !!world.accounts.hubs.find((hub) => hub.hub === own.hub)?.lan_relays;
+    const relay: Act[] =
+      relays && mine?.kind === "computer" && !mine.direct?.length && (mine.relay?.length || mine.reach?.interfaces?.length)
+        ? [{ act: "relay", label: words.relay, icon: "relay", on: !!mine.relay?.length }]
+        : [];
     // Its owner and the network's administrator rename it.
     const rename: Act[] = renamerOf(spot.machine, world, this.options.change, this.options.renaming.here)
       ? [{ act: "rename", label: this.options.renaming.words.rename, icon: "edit" }]
@@ -1366,6 +1376,7 @@ export class MachinesPage implements Page {
           ]),
       ...(shares ? [{ act: "share", label: words.share, icon: "colleague" as const }] : []),
       ...direct,
+      ...relay,
       ...rename,
       ...group,
       details,
@@ -1499,6 +1510,14 @@ export class MachinesPage implements Page {
         if (!admin || !member) return;
         if (member.direct?.length) this.stopDirect(admin, machine, key, member.direct);
         else this.allowDirect(admin, machine, key, member);
+        return;
+      }
+      case "relay": {
+        const own = this.ownersOf(machine, world)[0];
+        const member = own ? this.memberOf(machine, own, world) : undefined;
+        if (!own || !member) return;
+        if (member.relay?.length) void this.stopRelay(own, machine, member.relay);
+        else this.allowRelay(own, machine, key, member);
         return;
       }
     }
@@ -1757,6 +1776,54 @@ export class MachinesPage implements Page {
         }
       },
     );
+  }
+
+  /** The card that lets one's own computer relay for one's other machines
+   *  on its network: its network cards' addresses to choose from, and the
+   *  port. Nothing checks it from outside: only its own network reaches it. */
+  private allowRelay(login: Login, machine: Machine, key: string, member: MemberSeen): void {
+    const { words } = this.options;
+    // An IPv6 link-local address is named by each machine's own card, so no
+    // other machine reaches the relay at it.
+    const cards = (member.reach?.interfaces ?? []).map(hostOf).filter((host) => !/^fe[89ab][0-9a-f]:/i.test(host));
+    const at = this.map.screenOf(key) ?? [0, 0];
+    this.openCard(
+      key,
+      at,
+      `<p class="map-card-title">${escape(words.relayTitle(machine.written))}</p>
+       <fieldset class="map-card-field"><legend>${escape(words.relayAddresses)}</legend><div class="choice-options">${cards
+         .map((host, index) => `<label class="choice map-card-choice"><input type="checkbox" name="host" value="${escape(host)}"${index === 0 ? " checked" : ""}><span class="mono">${escape(host)}</span><span class="choice-note">${escape(words.directCard)}</span></label>`)
+         .join("")}</div></fieldset>
+       <label class="field map-card-port"><span class="field-label">${escape(words.directPort)}</span><input class="mono" name="port" inputmode="numeric" value="${DIRECT_PORT}" autocomplete="off" spellcheck="false" required></label>
+       <p class="map-card-wrong" role="alert" hidden></p>
+       <details class="map-card-more"><summary>${escape(words.more)}</summary><p>${escape(words.relayWhat)}</p></details>
+       <footer class="map-card-acts"><button class="text-button" type="button" data-card="cancel">${escape(words.cancel)}</button><button class="text-button map-card-go" type="submit">${escape(words.relayGo)}</button></footer>`,
+      async () => {
+        const wrong = this.card.querySelector<HTMLElement>(".map-card-wrong")!;
+        const hosts = [...this.card.querySelectorAll<HTMLInputElement>("input[name=host]:checked")].map((input) => input.value);
+        const port = Number(this.card.querySelector<HTMLInputElement>("input[name=port]")!.value.trim());
+        const refuse = (said: string) => {
+          wrong.textContent = said;
+          wrong.hidden = false;
+          return new Error("kept open");
+        };
+        if (!hosts.length) throw refuse(words.directPickOne);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) throw refuse(words.directPortWrong);
+        try {
+          await this.options.change(login, { change: "relay", machine: machine.name, at: hosts.map((host) => (host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`)) });
+        } catch (error) {
+          throw refuse(error instanceof Error ? error.message : String(error));
+        }
+      },
+    );
+  }
+
+  /** Stops one's own computer relaying at once; for a moment it can be
+   *  turned on again where it was. */
+  private async stopRelay(login: Login, machine: Machine, before: string[]): Promise<void> {
+    const { words } = this.options;
+    await this.options.change(login, { change: "relay", machine: machine.name, at: [] });
+    this.offerUndo(words.relayStopped(machine.written), () => this.options.change(login, { change: "relay", machine: machine.name, at: before }));
   }
 
   /** Takes direct connections to a machine away at once, after a small

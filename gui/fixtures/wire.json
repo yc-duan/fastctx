@@ -1829,6 +1829,8 @@
             "roles": true,
             "groups": true,
             "dissolves": true,
+            "deletes_projects": true,
+            "lan_relays": true,
             "versions": true,
             "due": true,
             "uninstalls": true,
@@ -1901,6 +1903,9 @@
                 "home": "ada",
                 "direct": [
                   "203.0.113.20:7444"
+                ],
+                "relay": [
+                  "192.168.1.30:7444"
                 ],
                 "added": "2026-10-09T08:30:00Z",
                 "online": true,

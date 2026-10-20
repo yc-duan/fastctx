@@ -67,6 +67,12 @@ pub struct Member {
     /// (`world-network.md`, 直连). Its node listens at their ports.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub direct: Vec<std::net::SocketAddr>,
+    /// Where it carries its owner's other machines' connections to the hub,
+    /// joining ones among them, when its owner let it: addresses on its own
+    /// network (`world-network.md`, 替局域网里的机器连中枢). Its node listens
+    /// at their ports for that alone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relay: Vec<std::net::SocketAddr>,
     pub added: Timestamp,
     /// Whether it is connected now, as the hub saw when it made the view.
     #[serde(default)]
@@ -665,6 +671,16 @@ pub struct View {
     /// session of a member that sent one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dissolves: bool,
+    /// Whether this hub deletes a project its owner asks it to
+    /// (`Change::DeleteProject`). Earlier hubs omit it, and would end the
+    /// session of a member that sent one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deletes_projects: bool,
+    /// Whether this hub keeps the machines that relay for their owner's
+    /// others on their network (`Member::relay`, `Change::Relay`). Earlier
+    /// hubs omit it, and would end the session of a member that sent one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub lan_relays: bool,
     /// Whether this hub keeps the network's versions: it takes
     /// `Up::Versions`, answers `Question::Package`, takes `Change::Updates`
     /// and the data connections of packages. Earlier hubs omit it, and would
@@ -732,6 +748,8 @@ impl View {
             roles: false,
             groups: false,
             dissolves: false,
+            deletes_projects: false,
+            lan_relays: false,
             versions: false,
             package_progress: false,
             due: false,

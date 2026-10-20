@@ -49,6 +49,8 @@ pub(crate) struct Said {
     pub versions: bool,
     /// Whether it reads the records of updates due and made as asked.
     pub due: bool,
+    /// Whether it reads the records of projects deleted.
+    pub project_deletes: bool,
     /// What a machine taken off could not do of the uninstall it was asked.
     pub left: Option<String>,
     /// Whether it reads that a call it answers is over for its caller.
@@ -479,6 +481,7 @@ fn open(
     entry.roles = said.roles;
     entry.versions = said.versions;
     entry.due = said.due;
+    entry.project_deletes = said.project_deletes;
     if too_old {
         // A member back on a release from before names of any language,
         // which would fail on the first name it cannot read: it is told why
@@ -1218,6 +1221,7 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
                     forgets: letters.forgets,
                     versions: letters.versions,
                     due: letters.due,
+                    project_deletes: letters.project_deletes,
                 });
             store
                 .book

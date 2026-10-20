@@ -133,6 +133,7 @@ pub(crate) async fn remote_join(
     session: u64,
     token: String,
     keep_open: Option<bool>,
+    proxy: Option<String>,
     steps: Channel<&'static str>,
 ) -> Result<(), String> {
     steps.send("join").map_err(|error| error.to_string())?;
@@ -143,7 +144,7 @@ pub(crate) async fn remote_join(
         .get(&session)
         .cloned()
         .ok_or("the connection to the server is gone")?;
-    remote.join(&token).await?;
+    remote.join(&token, proxy.as_deref()).await?;
     if keep_open == Some(true) {
         return Ok(());
     }

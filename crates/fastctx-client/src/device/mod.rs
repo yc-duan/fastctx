@@ -197,7 +197,7 @@ impl Device {
     }
 
     async fn logged_in(self: &Arc<Self>, joined: Joined) -> Result<DeviceJoined, Error> {
-        let Joined { hub, hub_name, name, account, addresses, cert } = joined;
+        let Joined { hub, hub_name, name, account, addresses, cert, relays } = joined;
         match self.session(&hub) {
             Some(session) => session.link.refresh().await.map_err(failed)?,
             None => {
@@ -208,6 +208,7 @@ impl Device {
                     addresses,
                     cert,
                     kind: Kind::Phone,
+                    relays,
                 };
                 self.store.keep(&membership)?;
                 self.start(membership)?;

@@ -500,6 +500,12 @@ export function renameHere(name: string): Promise<void> {
   return invoke("rename_here", { name });
 }
 
+/** The HTTP proxy this computer reaches its hubs through: read it, or with
+ *  `change`, set it, none clearing it. */
+export function hubProxy(url: string | null, change: boolean): Promise<string | null> {
+  return invoke("hub_proxy", { url, change });
+}
+
 /** This computer's addresses another might reach it at. */
 export function hereAddresses(): Promise<{ interface: string; address: string; physical: boolean }[]> {
   return invoke("here_addresses");
@@ -735,10 +741,10 @@ export function remoteOpen(server: RemoteServer, step: (step: RemoteStep) => voi
   return invoke("remote_open", { server, steps });
 }
 
-export function remoteJoin(session: number, token: string, step: (step: RemoteStep) => void, keepOpen = false): Promise<void> {
+export function remoteJoin(session: number, token: string, step: (step: RemoteStep) => void, keepOpen = false, proxy: string | null = null): Promise<void> {
   const steps = new Channel<RemoteStep>();
   steps.onmessage = step;
-  return invoke("remote_join", { session, token, keepOpen, steps });
+  return invoke("remote_join", { session, token, keepOpen, proxy, steps });
 }
 
 /** Installs the service of the hub moving to the server the session is open to. */

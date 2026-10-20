@@ -311,6 +311,10 @@ pub(crate) struct Inner {
     checks: watch::Sender<u64>,
     /// Woken when the ways to the hub this machine should connect by changed.
     rerouted: Notify,
+    /// The way to the hub that last opened a session: tried first next time,
+    /// so a machine whose own line is closed does not wait it out on every
+    /// return (`session::connect`).
+    last_way: Mutex<Option<Upstream>>,
     /// Counts the changes of this machine's network the link noticed; the
     /// direct links dial again at once on each.
     network: watch::Sender<u64>,
@@ -461,6 +465,7 @@ impl Link {
             check: Notify::new(),
             checks: watch::channel(0).0,
             rerouted: Notify::new(),
+            last_way: Mutex::new(None),
             network: watch::channel(0).0,
             hub_ms: Mutex::new(None),
             line: Mutex::default(),
@@ -835,11 +840,20 @@ impl Inner {
     }
 
     /// The ways to the hub, in order: this machine's own line, then through
-    /// each machine that allows direct connections, in the hub's order.
+    /// each machine that forwards for it, in the hub's order. Before its
+    /// first view, a machine that joined through relays reaches the hub
+    /// through those its code named.
     fn upstreams(&self) -> Vec<Upstream> {
         let view = self.view();
         let forwarders = view.forwarders.iter().filter(|forwarder| !view.is_me(&forwarder.name)).cloned();
-        std::iter::once(Upstream::Hub(self.hub_addresses())).chain(forwarders.map(Upstream::Through)).collect()
+        let mut ways: Vec<Upstream> =
+            std::iter::once(Upstream::Hub(self.hub_addresses())).chain(forwarders.map(Upstream::Through)).collect();
+        if view.me().is_none() {
+            ways.extend(self.membership().relays.into_iter().map(|relay| {
+                Upstream::Through(crate::dial::Forwarder { name: crate::dial::relay_name(), at: vec![relay] })
+            }));
+        }
+        ways
     }
 
     /// Where a data connection through the hub goes: the way the control

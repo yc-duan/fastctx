@@ -314,7 +314,7 @@ export function quota(input: QuotaInput): { svg: string; said: string } {
       carried += dot([x(now + (until - now) * t), y(week.last + (reaches - week.last) * t)], 1.3, random);
     }
   }
-  const nowLine = now < end ? `<path class="ledger-now" d="${ruled([x(now), top - 2], [x(now), yb(0)], 0.8, random)}"/><text class="ledger-axis strong" x="${f(x(now) + 5)}" y="${top + 9}">${escape(words.now)}</text>` : "";
+  const nowLine = now < end ? `<path class="ledger-now-line" d="${ruled([x(now), top - 2], [x(now), yb(0)], 0.8, random)}"/><text class="ledger-axis strong" x="${f(x(now) + 5)}" y="${top + 9}">${escape(words.now)}</text>` : "";
   const resetMark = `<text class="ledger-axis" x="${f(left + w)}" y="${top - 2}" text-anchor="end">${escape(words.reset)}</text>`;
   // An hour's hover: the last shares read by then.
   let hits = "";

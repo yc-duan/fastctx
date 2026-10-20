@@ -356,11 +356,13 @@ impl Remote {
         &self.hostname
     }
 
-    /// Installs the server as one of the World's machines with `token`.
-    pub async fn join(&self, token: &str) -> Result<(), String> {
+    /// Installs the server as one of the World's machines with `token`,
+    /// reaching the hub through `proxy` from then on where one is given.
+    pub async fn join(&self, token: &str, proxy: Option<&str>) -> Result<(), String> {
+        let proxy = proxy.map(|proxy| format!(" --proxy {}", quote(proxy))).unwrap_or_default();
         run(
             &self.handle,
-            &format!("cd {} && ./fastctx server install {}", quote(&self.dir), quote(token)),
+            &format!("cd {} && ./fastctx server install {}{proxy}", quote(&self.dir), quote(token)),
             self.sudo.line().into_bytes(),
         )
         .await?

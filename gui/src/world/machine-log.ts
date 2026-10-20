@@ -48,6 +48,7 @@ export type MachineLogAction =
   | { change: "open_project"; town: string; name: string }
   | { change: "share_project"; town: string; name: string | null; with: AccountName; shared: boolean }
   | { change: "move_project"; town: string; name: string | null; to: AccountName }
+  | { change: "delete_project"; town: string; name: string | null }
   | { change: "joined"; name: MachineName; kind: MemberKind; registered: boolean; via: "password" | "token"; managed?: boolean }
   | { change: "allow_acting"; machine: MachineName; agent: string; home: string | null }
   | { change: "acting_stopped"; machine: MachineName; account: AccountName }

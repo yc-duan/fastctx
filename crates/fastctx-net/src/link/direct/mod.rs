@@ -216,7 +216,10 @@ impl Inner {
     }
 
     fn follow_listening(self: &Arc<Self>, view: &View) {
-        let mut at: Vec<SocketAddr> = view.me().map(|me| me.direct.clone()).unwrap_or_default();
+        // Where it takes direct connections, and where it relays its
+        // owner's other machines to the hub.
+        let mut at: Vec<SocketAddr> =
+            view.me().map(|me| me.direct.iter().chain(&me.relay).copied().collect()).unwrap_or_default();
         at.extend(view.trial.iter().copied());
         let wanted = ports(&at);
         let started = {

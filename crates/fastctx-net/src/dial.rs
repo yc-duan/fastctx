@@ -40,6 +40,12 @@ pub struct Dialed {
     pub certificate: Vec<u8>,
 }
 
+/// What a relay named by a code is called until a view names its machine:
+/// it is said only where a way is told, as in `through relay`.
+pub fn relay_name() -> MachineName {
+    MachineName::try_from("relay".to_string()).expect("a valid machine name")
+}
+
 /// A machine that allows direct connections, through which others reach
 /// the hub when their own line is down.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -330,8 +336,13 @@ where
             failures.push(format!("{address}: {note}"));
         }
         for exit in exits {
+            // Silence before a connection is a way closed on the network;
+            // after one, something on the way or at the other end that
+            // takes connections and says nothing.
+            let reached = std::sync::atomic::AtomicBool::new(false);
             let tried = async {
                 let tcp = connect(&exit, *address).await?;
+                reached.store(true, std::sync::atomic::Ordering::Relaxed);
                 configure(&tcp);
                 let mut dialed = attempt(tcp, *address).await?;
                 dialed.route = if address.ip().is_loopback() { Route::Local } else { exit.route() };
@@ -343,7 +354,11 @@ where
                     return Ok(dialed);
                 }
                 Ok(Err(error)) => failures.push(format!("{address} {exit}: {error}")),
-                Err(_) => failures.push(format!("{address} {exit}: no answer within {} s", SILENCE.as_secs())),
+                Err(_) if reached.load(std::sync::atomic::Ordering::Relaxed) => failures.push(format!(
+                    "{address} {exit}: connected, then no answer within {} s",
+                    SILENCE.as_secs()
+                )),
+                Err(_) => failures.push(format!("{address} {exit}: no connection within {} s", SILENCE.as_secs())),
             }
         }
     }
@@ -386,7 +401,7 @@ pub(crate) async fn connect_tcp(addresses: &[SocketAddr]) -> Result<TcpStream, S
                     return Ok(tcp);
                 }
                 Ok(Err(error)) => failures.push(format!("{address} {exit}: {error}")),
-                Err(_) => failures.push(format!("{address} {exit}: no answer within {} s", SILENCE.as_secs())),
+                Err(_) => failures.push(format!("{address} {exit}: no connection within {} s", SILENCE.as_secs())),
             }
         }
     }

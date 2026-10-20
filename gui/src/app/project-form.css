@@ -72,7 +72,7 @@
 
 .pf-place {
   display: grid;
-  grid-template-columns: 16px minmax(8em, 14em) minmax(0, 1fr) auto;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
   align-items: center;
   column-gap: var(--space-2);
   width: 100%;
@@ -80,23 +80,6 @@
 }
 
 .pf-place > .glyph {
-  color: var(--text-3);
-}
-
-.project-sheet .pf-what {
-  width: 100%;
-  min-width: 0;
-  height: 30px;
-  padding: 0 var(--space-2);
-  border: 0;
-  border-radius: var(--radius-s);
-  outline: 0;
-  background: var(--field);
-  color: var(--text);
-  font: inherit;
-}
-
-.pf-what::placeholder {
   color: var(--text-3);
 }
 
@@ -109,7 +92,7 @@
   direction: rtl;
   text-align: left;
   unicode-bidi: plaintext;
-  color: var(--text-3);
+  color: var(--text);
 }
 
 .pf-places > .focus-add {
@@ -138,8 +121,8 @@
   margin-top: var(--space-3);
 }
 
-/* On a phone the names go one under the other, and a place's path under
-   its word. */
+/* On a phone the names go one under the other, and a place is a row a
+   finger can take. */
 @media (max-width: 760px) {
   .project-sheet .sheet-body {
     width: 100%;
@@ -150,29 +133,7 @@
   }
 
   .pf-place {
-    grid-template-columns: 16px minmax(0, 1fr) auto;
-    grid-template-areas:
-      "mark what cross"
-      ". path path";
-    row-gap: 2px;
-    padding: var(--space-1) 0;
-  }
-
-  .pf-place > .glyph {
-    grid-area: mark;
-  }
-
-  .project-sheet .pf-what {
-    grid-area: what;
-    height: 40px;
-  }
-
-  .pf-path {
-    grid-area: path;
-  }
-
-  .pf-place > .focus-remove {
-    grid-area: cross;
+    min-height: 44px;
   }
 
   .pf-list {

@@ -1,7 +1,7 @@
-//! The system's proxy, for when a connection pinned to the physical card
-//! cannot reach the hub: an HTTP proxy, taken from `HTTPS_PROXY` or
-//! `ALL_PROXY`, or on Windows from the Internet Settings, reached with
-//! `CONNECT`.
+//! The proxy for when a connection pinned to the physical card cannot reach
+//! the hub: an HTTP proxy chosen in Fastctx itself (`choose`), or else the
+//! system's, taken from `HTTPS_PROXY` or `ALL_PROXY`, or on Windows from the
+//! Internet Settings; reached with `CONNECT`.
 
 use std::net::SocketAddr;
 
@@ -25,15 +25,59 @@ impl std::fmt::Display for Proxy {
     }
 }
 
-/// The proxy the system would use for `target`, if any. `NO_PROXY` exempts
-/// a target it names.
+/// The proxy chosen in Fastctx, which a node its system service starts reads
+/// as well as one a shell starts.
+static CHOSEN: std::sync::RwLock<Option<Proxy>> = std::sync::RwLock::new(None);
+
+/// Whether `url` is an HTTP proxy `choose` takes, as `http://host:port`:
+/// one reached in plain HTTP, which is how `connect` speaks to it.
+pub fn check(url: &str) -> Result<Proxy, String> {
+    let url = url.trim();
+    let plain = url.split_once("://").is_none_or(|(scheme, _)| scheme.eq_ignore_ascii_case("http"));
+    plain
+        .then(|| parse(url, "Fastctx's setting"))
+        .flatten()
+        .ok_or_else(|| format!("{} is no HTTP proxy: write it as http://host:port", shown(url)))
+}
+
+/// `url` as it may be shown or logged: a password in it is starred.
+pub fn shown(url: &str) -> String {
+    let (scheme, rest) = match url.split_once("://") {
+        Some((scheme, rest)) => (format!("{scheme}://"), rest),
+        None => (String::new(), url),
+    };
+    let authority = rest.split('/').next().unwrap_or(rest);
+    match authority.rsplit_once('@') {
+        Some((user, _)) => match user.split_once(':') {
+            Some((name, _)) => format!("{scheme}{name}:***@{}", &rest[user.len() + 1..]),
+            None => format!("{scheme}{rest}"),
+        },
+        None => format!("{scheme}{rest}"),
+    }
+}
+
+/// Takes `url` as the proxy every connection tries before the system's;
+/// with none, the system's alone.
+pub fn choose(url: Option<&str>) -> Result<Option<Proxy>, String> {
+    let proxy = url.map(check).transpose()?;
+    *CHOSEN.write().expect("never poisoned") = proxy.clone();
+    Ok(proxy)
+}
+
+/// The proxy this computer uses for `target`, if any: the one chosen in
+/// Fastctx, or the system's. `NO_PROXY` exempts a target it names from the
+/// system's.
 pub fn system(target: SocketAddr) -> Option<Proxy> {
     system_for(&target.ip().to_string())
 }
 
-/// The proxy the system would use for `host`, a name or an address, if any.
-/// `NO_PROXY` exempts a host it names, and a name under a domain it names.
+/// The proxy this computer uses for `host`, a name or an address, if any:
+/// the one chosen in Fastctx, or the system's, from which `NO_PROXY`
+/// exempts a host it names, and a name under a domain it names.
 pub fn system_for(host: &str) -> Option<Proxy> {
+    if let Some(chosen) = CHOSEN.read().expect("never poisoned").clone() {
+        return Some(chosen);
+    }
     for name in ["NO_PROXY", "no_proxy"] {
         if let Ok(list) = std::env::var(name)
             && list.split(',').map(str::trim).filter(|entry| !entry.is_empty()).any(|entry| {

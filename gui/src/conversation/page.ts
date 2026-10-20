@@ -347,6 +347,8 @@ export class ConversationPage {
     this.element.querySelector(".find-toggle")!.addEventListener("click", () => (this.finder.open ? this.finder.close() : this.finder.show()));
     document.addEventListener("keydown", this.findKey);
     this.name = this.element.querySelector<HTMLElement>(".who-name")!;
+    // Cut or whole again as the head narrows or widens, its hint follows.
+    new ResizeObserver(() => this.nameHint()).observe(this.name);
     // The title is renamed in place, where the conversation takes a name.
     this.name.addEventListener("click", () => this.rename());
     this.name.addEventListener("keydown", (event) => {
@@ -2018,6 +2020,16 @@ export class ConversationPage {
   private said: string | null = null;
   private spoken!: HTMLElement;
 
+  /** What resting on the title says: the whole title where the line cuts
+   *  it; otherwise, where it can be renamed, that it can. */
+  private nameHint(): void {
+    const cut = this.name.scrollWidth > this.name.clientWidth;
+    const rename = this.name.classList.contains("renamable") ? (this.options.controls?.words.commands.rename ?? "") : "";
+    const said = cut ? (this.name.textContent ?? "") : rename;
+    if (said) this.name.title = said;
+    else this.name.removeAttribute("title");
+  }
+
   private drawState(): void {
     const { words, someone, conversation } = this.options;
     // The host's own title for the conversation, once it gives one; until
@@ -2027,13 +2039,9 @@ export class ConversationPage {
     if (!this.renaming && this.name.innerHTML !== name) this.name.innerHTML = name;
     const renamable = !!this.offered?.controls.includes("rename");
     this.name.classList.toggle("renamable", renamable);
-    if (renamable) {
-      this.name.tabIndex = 0;
-      this.name.title = this.options.controls?.words.commands.rename ?? "";
-    } else {
-      this.name.removeAttribute("tabindex");
-      this.name.removeAttribute("title");
-    }
+    if (renamable) this.name.tabIndex = 0;
+    else this.name.removeAttribute("tabindex");
+    this.nameHint();
     // Archived or deleted, it is not said to work or wait.
     const waiting = !this.gone && this.away === null && conversation.waiting();
     // Working for the whole of a turn, not only while something shows.

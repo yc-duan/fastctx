@@ -134,6 +134,25 @@ function manyOnes(): ManyOne[] {
   return ones;
 }
 
+/** With `?s=tour`, the Claude of that conversation (`tour.ts`), at work
+ *  across four machines. */
+function touring(): ResidentNow[] {
+  if (new URLSearchParams(location.search).get("s") !== "tour") return [];
+  return [
+    resident("claude-t0ur", "laptop", claude(), "mark50", "claude-opus-5-5", "14:10:00", {
+      focus: {
+        machines: [
+          { machine: "laptop", folders: ["C:/Users/me/mark50/firmware"] },
+          { machine: "lab", folders: ["/srv/mark50"] },
+          { machine: "server", folders: ["/srv/telemetry"] },
+          { machine: "gpu", folders: ["/home/bo/runs"] },
+        ],
+      },
+      now: { owed: {}, answering: [], activity: "idle", since: at("14:38:00"), turn: null, trouble: null, desk: false, waiting_for_user: false, title: "肘关节前馈" },
+    }),
+  ];
+}
+
 function many(): Node[] {
   return manyOnes().map((one, index) => {
     const linux = index % 3 !== 0;
@@ -202,6 +221,8 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       roles: true,
       groups: true,
       dissolves: true,
+      deletes_projects: true,
+      lan_relays: true,
       versions: true,
       due: true,
       uninstalls: true,
@@ -316,6 +337,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
               now: { owed: {}, answering: [], activity: "asleep", since: at("13:34:00"), turn: null, trouble: null, desk: false, waiting_for_user: false, title: null },
               last_action: action("13:33:40", "laptop", "run", "cargo test -p ctrl overflow_repro", "exit 101"),
             }),
+            ...touring(),
             resident("codex-7f3a", "laptop", codex(), "ingest", "gpt-6.1-sol", "08:40:00", {
               focus: { machines: [{ machine: "lab", folders: ["/srv/ingest", "/srv/ingest/fixtures"] }, { machine: "laptop", folders: [] }] },
               now: {
@@ -747,6 +769,10 @@ function peopleChanged(world: WorldNow, hub: string, made: AccountChange): World
       }));
     case "move_project":
       return change((one) => ({ ...one, projects: one.projects.map((project) => (project.name === made.town ? { ...project, owner: made.to, granted: project.granted.filter((to) => to !== made.to) } : project)) }));
+    case "delete_project":
+      return change((one) => ({ ...one, projects: one.projects.filter((project) => project.name !== made.town) }));
+    case "relay":
+      return change((one) => ({ ...one, members: one.members.map((member) => (member.name === made.machine ? { ...member, relay: made.at } : member)) }));
     case "group":
       return change((one) => ({ ...one, members: one.members.map((member) => (member.name === made.machine ? inGroup(member, made.group) : member)) }));
     case "rename_group":

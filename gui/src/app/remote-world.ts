@@ -80,7 +80,7 @@ export interface RemoteSeams {
    *  is; the session stays open for the server to join. */
   open(server: RemoteServer, step: (step: RemoteStep) => void): Promise<{ session: number; machine: string }>;
   /** Joins the server; kept open, the session stays for what follows. */
-  join(session: number, token: string, step: (step: RemoteStep) => void, keepOpen?: boolean): Promise<void>;
+  join(session: number, token: string, step: (step: RemoteStep) => void, keepOpen?: boolean, proxy?: string | null): Promise<void>;
   /** Installs the service of the hub moving to the server. */
   arrive(session: number, step: (step: RemoteStep) => void): Promise<void>;
   /** Takes the World the server keeps off it. */
@@ -128,7 +128,7 @@ interface Progress {
 
 export class RemoteWorld {
   private stage: Stage = "server";
-  private typed = { host: "", sshPort: "22", user: "root", by: "password" as "password" | "key", world: "", admin: "", hubPort: HUB_PORT, name: "", here: "", confirm: "" };
+  private typed = { host: "", sshPort: "22", user: "root", by: "password" as "password" | "key", world: "", admin: "", hubPort: HUB_PORT, name: "", here: "", confirm: "", proxy: "" };
   private key: { text: string; name: string } | null = null;
   private secret = { login: "", passphrase: "", sudo: "", password: "", again: "" };
   private shown: RemoteKey | null = null;
@@ -260,7 +260,7 @@ export class RemoteWorld {
 
   private keep(): void {
     const value = (name: string) => this.body.querySelector<HTMLInputElement>(`[name="${name}"]`)?.value;
-    for (const name of ["host", "sshPort", "user", "world", "admin", "hubPort", "name", "here", "confirm"] as const) this.typed[name] = value(name) ?? this.typed[name];
+    for (const name of ["host", "sshPort", "user", "world", "admin", "hubPort", "name", "here", "confirm", "proxy"] as const) this.typed[name] = value(name) ?? this.typed[name];
     this.secret.login = value("login") ?? this.secret.login;
     this.secret.passphrase = value("passphrase") ?? this.secret.passphrase;
     this.secret.sudo = value("sudo") ?? this.secret.sudo;
@@ -304,6 +304,11 @@ export class RemoteWorld {
               ? `<label class="field"><span class="field-label">${escape(words.password)}</span><input name="login" type="password" required autocomplete="off" value="${escape(this.secret.login)}"></label>`
               : `<div class="field remote-key"><span class="field-label">${escape(words.keyFile)}</span><span class="remote-key-pick"><input name="keyfile" type="file" hidden><button class="pick-file" type="button" data-remote="choose-key">${glyph("file", 16)}<span>${escape(words.chooseKey)}</span></button><span class="remote-key-name mono">${escape(this.key?.name ?? "")}</span></span></div>
                  <label class="field"><span class="field-label">${escape(words.keyPassword)}<span class="field-optional">${escape(words.optional)}</span></span><input name="passphrase" type="password" autocomplete="off" value="${escape(this.secret.passphrase)}"></label>`
+          }
+          ${
+            this.options.adding
+              ? `<label class="field" title="${escape(words.proxyWhat)}"><span class="field-label">${escape(words.proxy)}<span class="field-optional">${escape(words.optional)}</span></span><input name="proxy" class="mono" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="http://host:port" value="${escape(this.typed.proxy)}"></label>`
+              : ""
           }
           ${foot(this.busy ? words.looking : words.next, back(null))}${close}`;
         break;
@@ -793,7 +798,7 @@ export class RemoteWorld {
       if (!this.joined) {
         this.mark("join", "doing");
         const token = await adding.token(machine);
-        await seams.join(this.opened.session, token, step, !!adding.then);
+        await seams.join(this.opened.session, token, step, !!adding.then, this.typed.proxy.trim() || null);
         this.joined = true;
       }
       this.mark("join", "done");

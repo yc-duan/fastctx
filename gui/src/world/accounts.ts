@@ -93,6 +93,9 @@ export interface MemberSeen {
   /** Where other machines connect to it directly, when the network's
    *  administrator allowed that. */
   direct?: string[];
+  /** Where it relays its owner's other machines to the hub, when its owner
+   *  let it. */
+  relay?: string[];
   added: Timestamp;
   online: boolean;
   since: Timestamp | null;
@@ -257,6 +260,11 @@ export interface HubAccounts {
   /** Whether the hub dissolves its network when its super administrator
    *  asks (`world-network.md`, 解散网络). */
   dissolves?: boolean;
+  /** Whether the hub deletes a project its owner asks it to. */
+  deletes_projects?: boolean;
+  /** Whether the hub keeps the machines that relay for their owner's others
+   *  on their network. */
+  lan_relays?: boolean;
   /** Whether the hub keeps the network's versions and their policy. */
   versions?: boolean;
   package_progress?: boolean;
@@ -342,6 +350,12 @@ export type AccountChange =
   | { change: "dissolve"; name: HubName }
   | { change: "share_project"; town: TownName; with: AccountName; shared: boolean }
   | { change: "move_project"; town: TownName; to: AccountName }
+  /** The owner deletes a project and its ledger, on a hub that says it
+   *  deletes projects. */
+  | { change: "delete_project"; town: TownName }
+  /** The owner lets one of their machines relay their others to the hub at
+   *  addresses on its own network, or, with none, no longer. */
+  | { change: "relay"; machine: MachineName; at: string[] }
   | { change: "seen"; name: MachineName };
 
 /** One login of this computer or device: an account on a hub. */

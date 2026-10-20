@@ -36,6 +36,10 @@ pub struct Membership {
     pub addresses: Vec<SocketAddr>,
     pub cert: CertPin,
     pub kind: Kind,
+    /// The relays the code it joined with named: its ways to the hub until
+    /// its first view names them (`Inner::upstreams`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relays: Vec<SocketAddr>,
 }
 
 /// Where this machine's letters stand with the hub.

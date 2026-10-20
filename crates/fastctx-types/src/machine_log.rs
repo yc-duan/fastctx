@@ -78,8 +78,9 @@ pub enum Action {
         machine: MachineName,
         relays: Vec<Relay>,
     },
-    /// Before direct connections replaced relays: a machine made a relay at
-    /// `addresses`, or, with none, no longer.
+    /// A machine relays to the hub for its account's machines on its local
+    /// network at `addresses`, or, with none, no longer. Before direct
+    /// connections it was the relay any machine connected through.
     RelayAt {
         machine: MachineName,
         addresses: Vec<SocketAddr>,
@@ -209,6 +210,11 @@ pub enum Action {
         name: Option<TownName>,
         to: AccountName,
     },
+    /// Its owner deleted a project and its ledger.
+    DeleteProject {
+        town: crate::access::TownId,
+        name: Option<TownName>,
+    },
     /// A password login or token use. `registered` says whether the device
     /// is a machine of the joining account after a successful login.
     Joined {
@@ -280,6 +286,16 @@ impl Action {
         matches!(self, Self::Forget { .. } | Self::Forgotten { .. })
     }
 
+    /// Whether the record is of a project: read only by the accounts the
+    /// project is theirs or shared with, the super administrator not among
+    /// them unless it is (`world-network.md`, 项目也照同一个规矩).
+    pub fn of_project(&self) -> bool {
+        matches!(
+            self,
+            Self::OpenProject { .. } | Self::ShareProject { .. } | Self::MoveProject { .. } | Self::DeleteProject { .. }
+        )
+    }
+
     /// What a reader must say it reads to be given a record of this kind: a
     /// release reads a page whole, and one kind it does not know fails all
     /// of it (`world-versions.md`). A kind added later names here what its
@@ -290,6 +306,7 @@ impl Action {
             Self::Forget { .. } | Self::Forgotten { .. } => Needs::Forgets,
             Self::Updates { .. } => Needs::Versions,
             Self::UpdateDue { .. } | Self::Updated { .. } | Self::UninstallLeft { .. } => Needs::Due,
+            Self::DeleteProject { .. } => Needs::ProjectDeletes,
             Self::Collab { .. }
             | Self::Share { .. }
             | Self::Assist { .. }
@@ -340,6 +357,9 @@ pub enum Needs {
     /// A reader of the records of updates due and made as asked, which came
     /// in 1.0.1-beta.3 with the other kinds that release keeps.
     Due,
+    /// A reader of the records of projects deleted, which came in
+    /// 1.0.1-beta.6.
+    ProjectDeletes,
 }
 
 /// What one reader of the machine log says it reads.
@@ -349,6 +369,7 @@ pub struct Reads {
     pub forgets: bool,
     pub versions: bool,
     pub due: bool,
+    pub project_deletes: bool,
 }
 
 impl Reads {
@@ -360,6 +381,7 @@ impl Reads {
             Needs::Forgets => self.forgets,
             Needs::Versions => self.versions,
             Needs::Due => self.due,
+            Needs::ProjectDeletes => self.project_deletes,
         }
     }
 }

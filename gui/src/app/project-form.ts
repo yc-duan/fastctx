@@ -101,10 +101,6 @@ export class ProjectForm {
         const slug = this.body.querySelector<HTMLInputElement>("[name=slug]");
         if (slug) slug.value = suggest(target.value);
       }
-      if (target.classList.contains("pf-what")) {
-        const place = this.places[Number(target.dataset.index)];
-        if (place) place.what = target.value;
-      }
       if (target.classList.contains("pf-filter")) {
         this.query = target.value.trim().toLowerCase();
         this.drawChoice();
@@ -131,6 +127,9 @@ export class ProjectForm {
     const here = this.options.store.world.peek()?.here;
     this.machines = editing ? [...editing.record.machines] : here ? [here] : [];
     this.places = editing ? editing.record.places.map((place) => ({ ...place })) : [];
+    // A form opened anew starts from its record, never from what the last
+    // one opened left in the fields.
+    this.body.replaceChildren();
     this.draw(editing?.record ?? null);
     if (!this.dialog.open) this.dialog.showModal();
     this.body.querySelector<HTMLInputElement>("[name=name]")?.focus();
@@ -201,11 +200,6 @@ export class ProjectForm {
       chosen: (path) => {
         if (!this.places.some((place) => place.machine === machine && place.path === path)) this.places.push({ what: folderName(path), machine, path });
         this.drawChosen();
-        // The word on what is there is the next thing to write.
-        const fields = this.body.querySelectorAll<HTMLInputElement>(".pf-what");
-        const last = [...fields].find((field) => this.places[Number(field.dataset.index)]?.path === path);
-        last?.focus();
-        last?.select();
       },
     });
   }
@@ -240,6 +234,8 @@ export class ProjectForm {
       const may = new Set(this.allowed().map((machine) => machine.name));
       for (const machine of [...this.machines]) if (!may.has(machine)) this.drop(machine);
     }
+    // Drawn again in place, as when another account is chosen, the form keeps
+    // what was typed; `open` empties it first.
     const kept = {
       name: this.body.querySelector<HTMLInputElement>("[name=name]")?.value ?? record?.name ?? "",
       slug: this.body.querySelector<HTMLInputElement>("[name=slug]")?.value ?? "",
@@ -312,7 +308,7 @@ export class ProjectForm {
               .filter(({ one }) => one.machine === machine)
               .map(
                 ({ one, index }) =>
-                  `<div class="pf-place">${glyph("folder", 16)}<input class="pf-what" data-index="${index}" value="${escape(one.what)}" placeholder="${escape(words.placeWhat)}" aria-label="${escape(`${words.placeWhat} ${one.path}`)}" autocomplete="off"><span class="pf-path" title="${escape(one.path)}">${escape(one.path)}</span><button type="button" class="focus-remove" data-act="unplace" data-index="${index}" aria-label="${escape(`${words.removePlace} ${one.path}`)}" title="${escape(words.removePlace)}">${glyph("close", 12)}</button></div>`,
+                  `<div class="pf-place">${glyph("folder", 16)}<span class="pf-path" title="${escape(one.path)}">${escape(one.path)}</span><button type="button" class="focus-remove" data-act="unplace" data-index="${index}" aria-label="${escape(`${words.removePlace} ${one.path}`)}" title="${escape(words.removePlace)}">${glyph("close", 12)}</button></div>`,
               )
               .join("");
             return `<div class="focus-held pf-machine${away ? " offline" : ""}"${away ? ` title="${escape(focusWords.offline)}"` : ""}>

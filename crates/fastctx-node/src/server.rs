@@ -1153,6 +1153,16 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             crate::world::rename_here(node, to).await.map(|()| Reply::Done)
         }
+        Call::HubProxy { url, change } => {
+            users_voice(node, peer)?;
+            if change {
+                crate::proxy_setting::set(node, url).await.map(|url| Reply::HubProxy { url })
+            } else {
+                crate::proxy_setting::kept(&node.world)
+                    .map(|url| Reply::HubProxy { url })
+                    .map_err(|error| Failure::new(format!("reading the proxy kept: {error}")))
+            }
+        }
         Call::MachineLog { hub, account, before } => {
             users_voice(node, peer)?;
             crate::world::hub_link(node, Some(&hub))?

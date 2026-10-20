@@ -36,7 +36,10 @@ pub(super) fn registrations(installation: &crate::uninstall::Installation) -> an
         }
         let uid: u32 =
             text.lines().find_map(|line| line.strip_prefix("User=")).context("unit has no account")?.parse()?;
-        let start = text.lines().find_map(|line| line.strip_prefix("ExecStart=:")).context("unit has no command")?;
+        let start = text
+            .lines()
+            .find_map(|line| line.strip_prefix("ExecStart=:").or_else(|| line.strip_prefix("ExecStart=")))
+            .context("unit has no command")?;
         let words = unquote(start)?;
         let kind = if words.get(1).is_some_and(|word| word == "node") {
             super::Kind::Node
@@ -81,6 +84,9 @@ fn unquote(text: &str) -> anyhow::Result<Vec<std::ffi::OsString>> {
                 at += 4;
             } else if bytes[at..].starts_with(b"%%") {
                 decoded.push(b'%');
+                at += 2;
+            } else if bytes[at..].starts_with(b"$$") {
+                decoded.push(b'$');
                 at += 2;
             } else {
                 decoded.push(bytes[at]);
@@ -141,8 +147,8 @@ impl Registration {
 
     fn status(&self, installed: bool) -> anyhow::Result<Status> {
         if !installed {
-            let load = systemctl(&["show", &self.name, "--property=LoadState", "--value"])?;
-            if load.trim() != "not-found" {
+            let load = systemctl(&["show", &self.name, "--property=LoadState"])?;
+            if load.trim().strip_prefix("LoadState=").unwrap_or(load.trim()) != "not-found" {
                 bail!("{} is loaded from another location; refusing to manage it", self.name);
             }
             return Ok(Status {
@@ -199,15 +205,13 @@ impl Registration {
         );
         let output = checked(Command::new("busctl").args([
             "--system",
-            "--json=short",
             "get-property",
             "org.freedesktop.systemd1",
             &path,
             &format!("org.freedesktop.systemd1.{interface}"),
             property,
         ]))?;
-        let result: serde_json::Value = serde_json::from_str(&output)?;
-        result.get("data").cloned().context("busctl omitted property data")
+        busctl_value(&output)
     }
 }
 
@@ -217,14 +221,19 @@ pub(super) fn status(service: &Service) -> anyhow::Result<Status> {
     reg.status(reg.read()?.is_some())
 }
 
+pub(super) fn main_pid(service: &Service) -> anyhow::Result<u64> {
+    let pid = Registration::new(service).property("Service", "MainPID")?;
+    pid.as_u64().context("systemd omitted the service's MainPID")
+}
+
 pub(super) fn install(service: &Service) -> anyhow::Result<Status> {
-    require_manager_features()?;
+    let version = manager_version()?;
     let reg = Registration::new(service);
     let _lock = FileLock::acquire(&PathBuf::from("/run/lock").join(format!("{}.lock", reg.name)))?;
     if !service.executable.is_file() || !service.directory.is_dir() {
         bail!("the executable and service data directory must exist before installation");
     }
-    let content = definition(service, &reg);
+    let content = definition(service, &reg, version)?;
     transaction::run(
         &reg.file.with_extension("transaction"),
         &reg.marker,
@@ -241,7 +250,7 @@ pub(super) fn install(service: &Service) -> anyhow::Result<Status> {
                 publish_link(&reg.executable, &service.executable)?;
                 publish(&reg.file, content.as_bytes(), Permissions::KeepExisting)?;
             }
-            reg.watchdog.write(&reg.name)?;
+            reg.watchdog.write(&reg.name, version)?;
             systemctl(&["daemon-reload"])?;
             systemctl(&["enable", &reg.name])?;
             systemctl(&["start", &reg.name])?;
@@ -262,31 +271,39 @@ pub(super) fn install(service: &Service) -> anyhow::Result<Status> {
     )
 }
 
-fn require_manager_features() -> anyhow::Result<()> {
-    // OnSuccess, required to restore an explicit stop immediately, was added
-    // in systemd 249. Ask the running manager, not an upgraded client's version.
+/// The running manager's version, not an upgraded client's: the unit is
+/// written for what it reads (`definition`).
+fn manager_version() -> anyhow::Result<u32> {
     let output = checked(Command::new("busctl").args([
         "--system",
-        "--json=short",
         "get-property",
         "org.freedesktop.systemd1",
         "/org/freedesktop/systemd1",
         "org.freedesktop.systemd1.Manager",
         "Version",
     ]))?;
-    let value: serde_json::Value = serde_json::from_str(&output)?;
-    let text = value.get("data").and_then(serde_json::Value::as_str).context("systemd omitted its Version")?;
-    let version: u32 = text
-        .trim_start_matches('v')
+    let value = busctl_value(&output)?;
+    let text = value.as_str().context("systemd gave its Version as no string")?;
+    text.trim_start_matches('v')
         .chars()
         .take_while(char::is_ascii_digit)
         .collect::<String>()
         .parse()
-        .with_context(|| format!("unrecognized systemd version {text:?}"))?;
-    if version < 249 {
-        bail!("fastctx services require systemd 249 or newer for immediate recovery after stop; running {text}");
+        .with_context(|| format!("unrecognized systemd version {text:?}"))
+}
+
+/// A property as busctl prints it plainly: its type, then its value, as
+/// `s "active"` or `i 0`.
+fn busctl_value(output: &str) -> anyhow::Result<serde_json::Value> {
+    let (kind, value) = output.trim().split_once(' ').context("busctl printed no value")?;
+    match kind {
+        "s" | "o" => {
+            let inner = value.strip_prefix('"').and_then(|value| value.strip_suffix('"')).context("busctl printed an unquoted string")?;
+            Ok(serde_json::Value::String(inner.replace("\\\"", "\"").replace("\\\\", "\\")))
+        }
+        "b" => Ok(serde_json::Value::Bool(value == "true")),
+        _ => Ok(serde_json::Value::from(value.parse::<i64>().with_context(|| format!("busctl printed {output:?}"))?)),
     }
-    Ok(())
 }
 
 fn capture(reg: &Registration) -> anyhow::Result<Before> {
@@ -387,7 +404,12 @@ pub(super) fn systemctl(args: &[&str]) -> anyhow::Result<String> {
     checked(Command::new("systemctl").arg("--system").args(args))
 }
 
-fn definition(service: &Service, reg: &Registration) -> String {
+/// The unit, written for the systemd running: 249 brought the `:` that
+/// keeps `$` as it is and `OnSuccess=`, which restores an explicit stop at
+/// once; 240 `Type=exec`; 230 the start limit in `[Unit]`. An older one
+/// gets their older forms, and an explicit stop is restored by the timer's
+/// check within a minute (`linux_watchdog`).
+fn definition(service: &Service, reg: &Registration, version: u32) -> anyhow::Result<String> {
     // The node owns its ordinary children; independently supervised world
     // jobs must survive a foreground restart or an idle identity handoff.
     let args = std::iter::once(reg.executable.as_os_str())
@@ -395,14 +417,23 @@ fn definition(service: &Service, reg: &Registration) -> String {
         .map(word)
         .collect::<Vec<_>>()
         .join(" ");
-    format!(
-        "{}[Unit]\nDescription=fastctx {}\nStartLimitIntervalSec=0\nOnSuccess={}\n\n[Service]\nType=exec\nUser={}\nExecStart=:{}\nRestart=always\nRestartSec=0\nKillMode=process\nStandardInput=null\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n",
-        reg.marker,
-        service.role(),
-        reg.watchdog.checker,
-        service.uid,
-        args,
-    )
+    let (start, args) = if version >= 249 { (":", args) } else { ("", args.replace("\\x24", "$$")) };
+    let mut unit = format!("{}[Unit]\nDescription=fastctx {}\n", reg.marker, service.role());
+    if version >= 230 {
+        unit.push_str("StartLimitIntervalSec=0\n");
+    }
+    if version >= 249 {
+        unit.push_str(&format!("OnSuccess={}\n", reg.watchdog.checker));
+    }
+    unit.push_str(&format!("\n[Service]\nType={}\n", if version >= 240 { "exec" } else { "simple" }));
+    if version < 230 {
+        unit.push_str("StartLimitInterval=0\n");
+    }
+    unit.push_str(&format!(
+        "User={}\nExecStart={start}{args}\nRestart=always\nRestartSec=0\nKillMode=process\nStandardInput=null\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n",
+        service.uid
+    ));
+    Ok(unit)
 }
 
 fn read_link(path: &std::path::Path) -> anyhow::Result<Option<PathBuf>> {

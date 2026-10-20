@@ -374,6 +374,14 @@ export interface SettingsWords {
   /** This computer's data: a row, and the way to its page. */
   data: string;
   dataOpen: string;
+  proxy: string;
+  proxyWhat: string;
+  proxySystem: string;
+  proxyChange: string;
+  proxySave: string;
+  proxyCancel: string;
+  proxyWrong: string;
+  proxyFailed: string;
   days(n: number): string;
   keys: string;
   keyList: [string, string][];
@@ -471,6 +479,14 @@ export const zhSettings: SettingsWords = {
   retention: "命令输出保留",
   data: "本机数据",
   dataOpen: "查看与管理",
+  proxy: "连中枢的代理",
+  proxyWhat: "这台电脑要经 HTTP 代理才连得上中枢服务器时填，比如 http://127.0.0.1:7890；清空就跟随系统",
+  proxySystem: "跟随系统",
+  proxyChange: "修改",
+  proxySave: "保存",
+  proxyCancel: "取消",
+  proxyWrong: "写成 http://主机:端口",
+  proxyFailed: "没改成",
   days: (n) => `${n} 天`,
   theme: "主题",
   system: "跟随系统",
@@ -582,6 +598,14 @@ export const enSettings: SettingsWords = {
   retention: "Keep command output",
   data: "Data on this computer",
   dataOpen: "View and manage",
+  proxy: "Proxy to the hub",
+  proxyWhat: "Where this computer reaches the hub only through an HTTP proxy, as http://127.0.0.1:7890; emptied, the system's settings again",
+  proxySystem: "The system's",
+  proxyChange: "Change",
+  proxySave: "Save",
+  proxyCancel: "Cancel",
+  proxyWrong: "Write it as http://host:port",
+  proxyFailed: "Not changed",
   days: (n) => (n === 1 ? "1 day" : `${n} days`),
   theme: "Theme",
   system: "System",
@@ -876,9 +900,6 @@ export interface ProjectFormWords {
   needName: string;
   needWhat: string;
   needMachine: string;
-  /** What is in a place, written beside its folder. */
-  placeWhat: string;
-  placePath: string;
   addPlace: string;
   removePlace: string;
   canon: string;
@@ -910,8 +931,6 @@ export const zhProjectForm: ProjectFormWords = {
   needName: "写一个名称",
   needWhat: "写几句须知",
   needMachine: "至少选一台机器",
-  placeWhat: "这里放着什么",
-  placePath: "路径",
   addPlace: "位置",
   removePlace: "删除",
   canon: "定论",
@@ -943,8 +962,6 @@ export const enProjectForm: ProjectFormWords = {
   needName: "Give it a name",
   needWhat: "Write a few instructions",
   needMachine: "Choose at least one machine",
-  placeWhat: "What is here",
-  placePath: "Path",
   addPlace: "Location",
   removePlace: "Delete",
   canon: "Decisions",

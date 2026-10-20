@@ -556,6 +556,7 @@ fn join(
                         code: token.copied(),
                         group,
                         direct: Vec::new(),
+                        relay: Vec::new(),
                         added: Timestamp::now(),
                         online: false,
                         since: None,

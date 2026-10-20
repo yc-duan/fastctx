@@ -59,6 +59,9 @@ pub struct Joined {
     /// The addresses the device reached the hub at.
     pub addresses: Vec<SocketAddr>,
     pub cert: CertPin,
+    /// The relays the code named, kept for reaching the hub until the first
+    /// view.
+    pub relays: Vec<SocketAddr>,
 }
 
 /// The device logging in.
@@ -132,9 +135,28 @@ pub async fn with_password(
     joined(&mut socket, hub, CertPin::of(&presented)).await
 }
 
+/// Reaches the hub a token names: at its addresses, then through each relay
+/// it names, a machine of the account on this network that carries the
+/// connection whole (`world-network.md`, 替局域网里的机器连中枢).
+async fn dial_token(token: &Token) -> Result<dial::Dialed, String> {
+    let direct = match dial::dial(&token.addresses, Some(token.cert), wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME).await {
+        Ok(dialed) => return Ok(dialed),
+        Err(error) => error,
+    };
+    let mut failures = vec![direct];
+    for relay in &token.relays {
+        let through = dial::Upstream::Through(dial::Forwarder { name: dial::relay_name(), at: vec![*relay] });
+        match dial::dial_upstream(&through, &token.hub, token.cert, wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME).await {
+            Ok(dialed) => return Ok(dialed),
+            Err(error) => failures.push(format!("through the relay at {relay}: {error}")),
+        }
+    }
+    Err(failures.join("; "))
+}
+
 /// Logs in with an enrollment token.
 pub async fn with_token(token: &Token, device: Device<'_>) -> Result<Joined, String> {
-    let dialed = dial::dial(&token.addresses, Some(token.cert), wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME).await?;
+    let dialed = dial_token(token).await?;
     let (mut socket, binding) = (dialed.socket, dialed.binding);
     let key = token.secret.key();
     let intent = Intent::Token {
@@ -143,10 +165,11 @@ pub async fn with_token(token: &Token, device: Device<'_>) -> Result<Joined, Str
         member: device.joining(&binding),
     };
     hello(&mut socket, intent).await?;
-    let joined = joined(&mut socket, &token.addresses, token.cert).await?;
+    let mut joined = joined(&mut socket, &token.addresses, token.cert).await?;
     if joined.hub != token.hub {
         return Err(format!("the hub is {}, not {} the token names", joined.hub, token.hub));
     }
+    joined.relays = token.relays.clone();
     Ok(joined)
 }
 
@@ -156,7 +179,7 @@ pub async fn with_token(token: &Token, device: Device<'_>) -> Result<Joined, Str
 /// refuses the asking connection; that is said as `Ok(None)`, as such a hub
 /// makes no token for one.
 pub async fn peek(token: &Token, member: Option<&PublicKey>) -> Result<Option<Peeked>, String> {
-    let dialed = dial::dial(&token.addresses, Some(token.cert), wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME).await?;
+    let dialed = dial_token(token).await?;
     let (mut socket, binding) = (dialed.socket, dialed.binding);
     let key = token.secret.key();
     let intent =
@@ -239,7 +262,7 @@ async fn joined(socket: &mut HubSocket, addresses: &[SocketAddr], cert: CertPin)
     let _ = futures_util::SinkExt::close(socket).await;
     match answer? {
         Down::LoggedIn { hub, hub_name, name, account } => {
-            Ok(Joined { hub, hub_name, name, account, addresses: addresses.to_vec(), cert })
+            Ok(Joined { hub, hub_name, name, account, addresses: addresses.to_vec(), cert, relays: Vec::new() })
         }
         Down::Refused { reason } => Err(reason.to_string()),
         _ => Err("the hub answered the login with something else".to_string()),

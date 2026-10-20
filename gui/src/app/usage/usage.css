@@ -62,10 +62,12 @@
   background: var(--fill-strong);
 }
 
+/* The page lays itself out by the room it has, the sidebar's taken. */
 .ledger-body {
   flex: 1;
   padding: var(--space-2) var(--gutter) var(--space-10);
   scrollbar-gutter: stable;
+  container: ledger-page / inline-size;
 }
 
 /* What stands now stands alone where the reader is assisted. */
@@ -98,21 +100,17 @@
   padding: var(--space-6) 0;
 }
 
-/* What stands now: the windows as rings, and this week. */
+/* What stands now: the windows as rings, and this week beside them, or
+   under them where the card is too narrow for both. */
 .ledger-now {
   grid-area: now;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-5);
+  gap: var(--space-4) var(--space-5);
   padding: var(--space-4) var(--space-5);
   border-radius: var(--radius-l);
   background: var(--fill);
-}
-
-/* An account the login assists without an allowance has no ring. */
-.ledger-now.ringless {
-  grid-template-columns: minmax(0, 1fr);
 }
 
 /* Who used it, or the assistance the reader uses it by. */
@@ -127,6 +125,7 @@
 
 .ledger-rings {
   display: flex;
+  flex: none;
   gap: var(--space-4);
 }
 
@@ -215,6 +214,7 @@
 
 .ledger-totals {
   display: flex;
+  flex: 1 1 11em;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
@@ -581,7 +581,7 @@
   fill: color-mix(in srgb, var(--pen-graphite) 22%, transparent);
 }
 
-.ledger-now {
+.ledger-now-line {
   fill: var(--pen-graphite);
   fill-opacity: 0.7;
 }
@@ -696,7 +696,7 @@
 }
 
 /* Narrower, what stands now and who used it one above the other. */
-@media (max-width: 900px) {
+@container ledger-page (max-width: 820px) {
   .ledger-sheet {
     grid-template-rows: auto auto auto minmax(280px, 1fr) auto;
     grid-template-areas:
@@ -719,7 +719,7 @@
 }
 
 /* A phone reads it down, the drawing at a height of its own. */
-@media (max-width: 640px) {
+@container ledger-page (max-width: 600px) {
   .ledger-sheet {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: none;
@@ -733,9 +733,11 @@
   }
 
   .ledger-now {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-4);
     padding: var(--space-4);
+  }
+
+  .ledger-totals {
+    flex-basis: 100%;
   }
 
   .ledger-who-card {
@@ -762,6 +764,10 @@
     padding: var(--space-3);
   }
 
+}
+
+/* On a phone the head keeps its title and a bare button. */
+@media (max-width: 640px) {
   .ledger-machine {
     display: none;
   }

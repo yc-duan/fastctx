@@ -1,0 +1,13 @@
+/* The settings' proxy row, changed in the field renaming uses. On a phone
+   the address takes the row, its buttons under it. */
+@media (max-width: 760px) {
+  .proxy-row .rename-row {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    row-gap: var(--space-1);
+  }
+
+  .proxy-row .rename-input {
+    flex-basis: 100%;
+  }
+}

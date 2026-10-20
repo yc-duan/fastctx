@@ -134,6 +134,7 @@ fn migrate(world: &WorldDir) -> io::Result<()> {
         addresses: membership.hub,
         cert: membership.cert,
         kind: Kind::Computer,
+        relays: Vec::new(),
     };
     fastctx_net::link::state::write(&target.join("membership.json"), &fourth)?;
     std::fs::rename(&old, aside.join("membership.json"))
@@ -268,7 +269,7 @@ fn asked_name(node: &Node, name: Option<MachineName>) -> Result<MachineName, Fai
 /// Records the membership `joined` gives, renames this computer to the
 /// name it got when it was on no hub, and starts or refreshes the link.
 async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
-    let Joined { hub, hub_name, name, account, addresses, cert } = joined;
+    let Joined { hub, hub_name, name, account, addresses, cert, relays } = joined;
     // A computer on no hub yet takes the name as the hub writes it; one on
     // other hubs keeps its own spelling of the same name.
     if name.as_str() != node.machine().as_str() && !(name == node.machine() && node.connected_anywhere()) {
@@ -302,6 +303,7 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
                 addresses,
                 cert,
                 kind: Kind::Computer,
+                relays,
             };
             let net = net_dir(&node.world, &hub);
             net.prepare()
@@ -1211,6 +1213,8 @@ impl fastctx_net::link::Node for Handler {
                 if let Err(error) = crate::ledger::query::follow_view(&node, &link).await {
                     node.log.line(format_args!("taking a project shared with this computer: {error}"));
                 }
+                // One deleted, or no longer this computer's to keep, goes.
+                crate::ledger::letgo::let_go(&node, &link).await;
                 node.shown_changed();
             });
         }

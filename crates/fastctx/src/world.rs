@@ -27,6 +27,10 @@ pub struct LoginArgs {
     /// given. It has this name on every hub it is on.
     #[arg(long)]
     name: Option<MachineName>,
+    /// The HTTP proxy this computer reaches its hubs through, as
+    /// http://host:port, kept in Fastctx before it logs in.
+    #[arg(long, value_parser = crate::proxy::parser)]
+    proxy: Option<String>,
 }
 
 #[derive(Args)]
@@ -360,6 +364,9 @@ pub enum HubCommand {
 /// A computer that logs in joins as one of the account's machines
 /// (`world-network.md`, 一台电脑和中枢): there is no logging in without it.
 pub fn login(args: LoginArgs) -> anyhow::Result<()> {
+    if let Some(url) = args.proxy {
+        crate::proxy::set(Some(url))?;
+    }
     let reply = match args.token {
         Some(token) => call(Call::LoginWithToken { token, name: args.name })?,
         None => {

@@ -165,13 +165,26 @@ struct Opened {
     afoot_pending: bool,
 }
 
-/// Opens a session by the first way to the hub that takes it.
+/// Opens a session by the first way to the hub that takes it, the way that
+/// last did tried first. The ways before the one it opens on, in their own
+/// order, are asked again while it is on (`ask_preferred`), so a machine on
+/// another machine's forwarding goes back to its own line once that works.
 async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ended {
     let upstreams = inner.upstreams();
+    let last = inner.last_way.lock().expect("never poisoned").clone();
+    let mut order: Vec<usize> = (0..upstreams.len()).collect();
+    if let Some(first) = last.and_then(|last| upstreams.iter().position(|upstream| *upstream == last)) {
+        order.retain(|index| *index != first);
+        order.insert(0, first);
+    }
     let mut failures = Vec::new();
-    for (index, upstream) in upstreams.iter().enumerate() {
+    for index in order {
+        let upstream = &upstreams[index];
         match open(inner, upstream).await {
-            Ok(opened) => return connected(inner, online_since, &upstreams[..=index], opened).await,
+            Ok(opened) => {
+                *inner.last_way.lock().expect("never poisoned") = Some(upstream.clone());
+                return connected(inner, online_since, &upstreams[..=index], opened).await;
+            }
             Err(Ended::Retry(reason)) => failures.push(format!("{upstream}: {reason}")),
             Err(ended) => return ended,
         }
@@ -215,6 +228,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             roles: true,
             versions: true,
             due: true,
+            project_deletes: true,
             left: None,
             cancels: true,
             presence: true,
@@ -425,6 +439,9 @@ async fn connected(
                     checking = None;
                     continue;
                 }
+                // On another network the way that worked last means
+                // nothing: every way is tried again in its own order.
+                *inner.last_way.lock().expect("never poisoned") = None;
                 break Ended::Reroute("the hub did not answer a check after the network changed".to_string());
             },
             () = inner.check.notified() => {
@@ -442,7 +459,12 @@ async fn connected(
             _ = &mut writer_stopped => break Ended::Retry("writing to the hub failed".to_string()),
             () = up.overflowed() => break Ended::Retry("the hub took nothing while frames for it piled up".to_string()),
             () = &mut rerouted => break Ended::Reroute("the ways this machine connects to the hub by changed".to_string()),
-            Ok(upstream) = &mut preferred_back => break Ended::Reroute(format!("{upstream} takes sessions again")),
+            Ok(upstream) = &mut preferred_back => {
+                // The next session opens on the way that is back, not again
+                // on the one it leaves.
+                *inner.last_way.lock().expect("never poisoned") = Some(upstream.clone());
+                break Ended::Reroute(format!("{upstream} takes sessions again"));
+            },
             failed = &mut letters_failed => break Ended::Retry(failed.unwrap_or_else(|_| "taking letters stopped".to_string())),
             failed = &mut outbox_failure => break Ended::Retry(failed.unwrap_or_else(|_| "sending letters stopped".to_string())),
             next = stream.next() => next,

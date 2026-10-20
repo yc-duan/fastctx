@@ -222,6 +222,7 @@ import {
   hubMove,
   remoteArrive,
   remoteJoin,
+  hubProxy,
   remoteLook,
   remoteOpen,
   remoteProbe,
@@ -694,6 +695,16 @@ const projectActs = new ProjectActs({
   store,
   confirm: accountConfirm,
   change: (login, made) => change(login, made),
+  conversations: (town) => {
+    const world = store.world.peek();
+    return [...residentsOf(world, true), ...unreachedOf(world, true)].filter((r) => r.town === town);
+  },
+  forget: (r) => talkActs.delete(r),
+  deleted: (town) => {
+    // A page of the project deleted is left for the front page.
+    const at = placeOf(location.hash);
+    if ((at.kind === "project" || at.kind === "journal" || at.kind === "page") && at.town === town) replacePlace(link({ kind: "home" }));
+  },
 });
 const talkToast = new TalkToast({ undo: talkMenuWords.undo }, () => shell.footBox());
 const talkActs = new TalkActs({
@@ -1247,7 +1258,7 @@ function specimenTalk(address: Address): KeepablePage {
   const name = address.resident;
   const sample: Specimen & { later?: SessionEvent[]; rate?: number; timed?: boolean } = name.startsWith("stream")
     ? streamSpecimen(params)
-    : (specimens[name === "codex-a51c" ? "asking" : name === "claude-5teps" ? "steps" : name === "trips-1" ? "trips" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
+    : (specimens[name === "codex-a51c" ? "asking" : name === "claude-5teps" ? "steps" : name === "trips-1" ? "trips" : name === "claude-t0ur" ? "tour" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
   const conversation = new Conversation();
   conversation.thoughtWords = sample.agent !== "codex";
   // A specimen keeps its whole history as a shell would, and its page holds
@@ -2199,6 +2210,7 @@ function show(next: Place): void {
                   const reply = await data({ do: "list" });
                   return reply.data === "listed" ? totalOf(reply) : 0;
                 },
+                proxy: { get: () => hubProxy(null, false), set: (url) => hubProxy(url, true) },
                 renewing: {
                   state: renewalState,
                   // The program the interface carries is put in place,
@@ -2309,6 +2321,8 @@ function specimenPlace(): Place | null {
       return { kind: "talk", address: { resident: "claude-5teps", machine: "laptop" } };
     case "trips":
       return { kind: "talk", address: { resident: "trips-1", machine: "desktop" } };
+    case "tour":
+      return { kind: "talk", address: { resident: "claude-t0ur", machine: "laptop" } };
     case "decision":
       return { kind: "file", machine: "desktop", path: "D:/work/mark50/specs/控制环.md", tail: false };
     case "log":

@@ -277,6 +277,7 @@ impl World {
                 addresses: vec![line.address],
                 cert: joined.cert,
                 kind: MemberKind::Computer,
+                relays: Vec::new(),
             };
             let dir = root.join(name);
             std::fs::create_dir_all(&dir)?;

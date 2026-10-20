@@ -49,6 +49,8 @@ export interface LoginWords {
   fingerprintChanged: string;
   sudoPassword: string;
   sudoWanted: string;
+  proxy: string;
+  proxyWhat: string;
   portClosed(port: string): string;
   /** What the server said, in the person's words. */
   sshRefused: string;
@@ -220,6 +222,8 @@ export const zhLogin: LoginWords = {
   fingerprintChanged: "这台服务器的指纹和这台电脑记下的不一样，没有连接",
   sudoPassword: "sudo 密码",
   sudoWanted: "需要 sudo 密码",
+  proxy: "代理",
+  proxyWhat: "服务器要经 HTTP 代理才能上网时填，比如 http://127.0.0.1:7890；它以后一直经这个代理连中枢服务器",
   portClosed: (port) => `连不上端口 ${port}，防火墙或安全组要放行它`,
   sshRefused: "服务器没有接受这个用户名和密码或钥匙",
   sshUnreachable: "连不上这台服务器的 SSH 端口",
@@ -353,6 +357,8 @@ export const enLogin: LoginWords = {
   fingerprintChanged: "This server's fingerprint differs from the one this computer recorded; not connected",
   sudoPassword: "sudo password",
   sudoWanted: "sudo needs a password",
+  proxy: "Proxy",
+  proxyWhat: "Where the server reaches the internet through an HTTP proxy, as http://127.0.0.1:7890; it reaches the hub through it from then on",
   portClosed: (port) => `Port ${port} can't be reached; allow it in the firewall or security group`,
   sshRefused: "The server didn't accept this user and password or key",
   sshUnreachable: "Can't reach this server's SSH port",
@@ -669,6 +675,12 @@ export interface MachinesWords {
   stopDirectTitle(machine: string): string;
   stopDirectSaid: string;
   directStopped(machine: string): string;
+  relay: string;
+  relayTitle(machine: string): string;
+  relayAddresses: string;
+  relayWhat: string;
+  relayGo: string;
+  relayStopped(machine: string): string;
   /** Dissolving the network: the super administrator's, from beside the
    *  server on the drawing; `away`, its machines and phones offline now
    *  (`world-network.md`, 解散网络). */
@@ -915,6 +927,12 @@ export const zhMachines: MachinesWords = {
   stopDirectTitle: (machine) => `不再允许直接连到 ${machine}？`,
   stopDirectSaid: "别的机器和它之间改经中枢服务器转。",
   directStopped: (machine) => `已不再允许直接连到 ${machine}`,
+  relay: "替局域网里的机器连中枢",
+  relayTitle: (machine) => `让 ${machine} 替局域网里的机器连中枢`,
+  relayAddresses: "局域网里的机器连它的地址",
+  relayWhat: "你在这个局域网里的机器连不上中枢服务器时，经它连过去，加入网络也能经它。它只转加密的连接，读不到内容；它开着，那些机器才在线。",
+  relayGo: "开启",
+  relayStopped: (machine) => `${machine} 已不再替局域网里的机器连中枢`,
   dissolve: "解散网络",
   dissolveTitle: (hub) => `解散 ${hub}？`,
   dissolveWhat: (hub, away) =>
@@ -989,7 +1007,7 @@ export const zhMachines: MachinesWords = {
       case "relays":
         return `改了 ${a.machine} 连中枢服务器的方式`;
       case "relay_at":
-        return `改了 ${a.machine} 对外的地址`;
+        return a.addresses.length ? `让 ${a.machine} 替局域网里的机器连中枢` : `${a.machine} 不再替局域网里的机器连中枢`;
       case "direct":
         return a.at.length ? `允许直接连到 ${a.machine}` : `不再允许直接连到 ${a.machine}`;
       case "remove":
@@ -1223,6 +1241,12 @@ export const enMachines: MachinesWords = {
   stopDirectTitle: (machine) => `Stop direct connections to ${machine}?`,
   stopDirectSaid: "What goes between it and other machines will go through the hub.",
   directStopped: (machine) => `No more direct connections to ${machine}`,
+  relay: "Relay for machines on this network",
+  relayTitle: (machine) => `Let ${machine} relay for machines on its network`,
+  relayAddresses: "Where machines on its network reach it",
+  relayWhat: "Your machines on this network that cannot reach the hub reach it through this one, joining too. It carries their encrypted connection and reads nothing of it; they are online while it is.",
+  relayGo: "Turn on",
+  relayStopped: (machine) => `${machine} no longer relays for machines on its network`,
   dissolve: "Dissolve network",
   dissolveTitle: (hub) => `Dissolve ${hub}?`,
   dissolveWhat: (hub, away) =>
@@ -1297,7 +1321,7 @@ export const enMachines: MachinesWords = {
       case "relays":
         return `Changed how ${a.machine} reaches the hub`;
       case "relay_at":
-        return `Changed ${a.machine}'s public address`;
+        return a.addresses.length ? `Let ${a.machine} relay for machines on its network` : `${a.machine} no longer relays for machines on its network`;
       case "direct":
         return a.at.length ? `Allowed direct connections to ${a.machine}` : `No more direct connections to ${a.machine}`;
       case "remove":

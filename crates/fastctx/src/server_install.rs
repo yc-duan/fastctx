@@ -25,6 +25,11 @@ pub enum ServerCommand {
         code: String,
         #[arg(long)]
         name: Option<MachineName>,
+        /// The HTTP proxy this server reaches the hub through, as
+        /// http://host:port: kept in Fastctx before it joins, so its boot
+        /// service uses it too.
+        #[arg(long, value_parser = crate::proxy::parser)]
+        proxy: Option<String>,
         /// On Windows, the part done as the account SYSTEM installs for:
         /// placing its program and joining, the service being SYSTEM's.
         #[arg(long, hide = true)]
@@ -33,22 +38,22 @@ pub enum ServerCommand {
 }
 
 pub fn run(command: ServerCommand) -> anyhow::Result<()> {
-    let ServerCommand::Install { code, name, account_part } = command;
+    let ServerCommand::Install { code, name, proxy, account_part } = command;
     #[cfg(target_os = "linux")]
     {
         let _ = account_part;
-        install(code, name)
+        install(code, name, proxy)
     }
     #[cfg(windows)]
-    return windows::install(code, name, account_part);
+    return windows::install(code, name, proxy, account_part);
     #[cfg(target_os = "macos")]
     {
         let _ = account_part;
-        here(code, name, false)
+        here(code, name, proxy, false)
     }
     #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
     {
-        let _ = (code, name, account_part);
+        let _ = (code, name, proxy, account_part);
         bail!("server installation requires Linux with systemd 249 or newer, Windows or macOS")
     }
 }
@@ -59,12 +64,15 @@ pub fn run(command: ServerCommand) -> anyhow::Result<()> {
 /// root on a Mac, that node is a LaunchDaemon; run as a person, it is
 /// theirs, as when the application installs it.
 #[cfg(any(windows, target_os = "macos"))]
-fn here(code: String, name: Option<MachineName>, account_part: bool) -> anyhow::Result<()> {
+fn here(code: String, name: Option<MachineName>, proxy: Option<String>, account_part: bool) -> anyhow::Result<()> {
     let root = fastctx_platform::fastctx_root()?;
     // The program is placed for this account and runs from there; one
     // already there and newer stays (`world-upgrade.md`, 版本只往前走).
     if let Some(result) = crate::program::deliver(&root)? {
         return result;
+    }
+    if let Some(url) = proxy {
+        crate::proxy::set(Some(url)).context("keeping the proxy")?;
     }
     // The same code again, from this computer, finds it logged in already.
     let joined = match crate::ask::call(Call::LoginWithToken { token: code, name }).context("joining with the code")?.0
@@ -99,13 +107,13 @@ mod windows {
 
     const SYSTEM: &str = "S-1-5-18";
 
-    pub fn install(code: String, name: Option<MachineName>, account_part: bool) -> anyhow::Result<()> {
+    pub fn install(code: String, name: Option<MachineName>, proxy: Option<String>, account_part: bool) -> anyhow::Result<()> {
         if fastctx_platform::current_user_sid()? == SYSTEM {
             ensure!(!account_part, "the account's part is never SYSTEM's");
             beside_the_account()?;
             fastctx_platform::system_home::prepare().context("making SYSTEM's home for Fastctx")?;
         }
-        super::here(code, name, account_part)
+        super::here(code, name, proxy, account_part)
     }
 
     /// A computer 1.0.1-beta.3 installed from its line by SYSTEM keeps its
@@ -134,7 +142,7 @@ fn joined(name: &impl std::fmt::Display, account: &impl std::fmt::Display, hub: 
 }
 
 #[cfg(target_os = "linux")]
-fn install(code: String, name: Option<MachineName>) -> anyhow::Result<()> {
+fn install(code: String, name: Option<MachineName>, proxy: Option<String>) -> anyhow::Result<()> {
     use fastctx_install::service::{Kind, Service};
 
     let root = fastctx_platform::fastctx_root()?;
@@ -150,6 +158,9 @@ fn install(code: String, name: Option<MachineName>) -> anyhow::Result<()> {
         println!("fastctx {} is installed at {} already", env!("CARGO_PKG_VERSION"), installed.display());
     } else {
         println!("Installed fastctx {} at {}", env!("CARGO_PKG_VERSION"), installed.display());
+    }
+    if let Some(url) = proxy {
+        crate::proxy::set(Some(url)).context("keeping the proxy")?;
     }
     // The same token again, from this computer, finds it logged in already.
     let joined = match crate::ask::call(Call::LoginWithToken { token: code, name }).context("joining with the code")?.0
@@ -223,33 +234,10 @@ fn hand_over_to_service(root: &Path, installed: &Path) -> anyhow::Result<()> {
     use fastctx_platform::ipc::{self, Endpoint};
     use fastctx_types::layout::WorldDir;
 
-    let status = Service::new(Kind::Node, installed, root).status()?;
+    let service = Service::new(Kind::Node, installed, root);
+    let status = service.status()?;
     ensure!(status.installed && status.enabled, "the boot service is not installed and enabled");
-    let unit = status
-        .name
-        .bytes()
-        .map(|byte| if byte.is_ascii_alphanumeric() { (byte as char).to_string() } else { format!("_{byte:02x}") })
-        .collect::<String>();
-    // Read only MainPID: systemctl show also requests unrelated properties,
-    // which cannot be serialized when ExecStart contains non-UTF-8 paths.
-    let output = Command::new("busctl")
-        .args([
-            "--system",
-            "--json=short",
-            "get-property",
-            "org.freedesktop.systemd1",
-            &format!("/org/freedesktop/systemd1/unit/{unit}"),
-            "org.freedesktop.systemd1.Service",
-            "MainPID",
-        ])
-        .output()?;
-    ensure!(
-        output.status.success(),
-        "busctl could not identify the node service: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    let service_pid = result.get("data").and_then(serde_json::Value::as_u64).context("systemd omitted its MainPID")?;
+    let service_pid = service.main_pid().context("identifying the node service")?;
     let world = WorldDir::under(root);
     let connection = tokio::runtime::Builder::new_current_thread()
         .enable_all()

@@ -6,8 +6,9 @@
 //! only when that key is a member's in the roster this machine last had;
 //! the hub's check is answered with this machine's own proof; a forward is
 //! carried to the hub byte for byte, for any machine, since the hub itself
-//! checks who it is. A connection that does not get that far is logged,
-//! with where it came from and why.
+//! checks who it is. A machine that only relays for its owner's others
+//! (`Member::relay`) takes forwards alone. A connection that does not get
+//! that far is logged, with where it came from and why.
 
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -130,6 +131,17 @@ async fn connected(inner: Weak<Inner>, tcp: tokio::net::TcpStream, from: SocketA
     let forward = format!("{}/{}", peer::FORWARD_PATH, inner.hub);
     if path == forward {
         return forward_to_hub(inner, socket, from).await;
+    }
+    // A machine that relays and takes no direct connections, nor is checked
+    // for them now, carries forwards to the hub alone.
+    let takes_direct = {
+        let view = inner.view();
+        view.me().is_some_and(|me| !me.direct.is_empty()) || !view.trial.is_empty()
+    };
+    if !takes_direct {
+        log(format!("refused a connection on {path}: this machine only relays to the hub"));
+        let _ = peer::send(&mut socket, &Frame::Refused { reason: "this machine only relays to the hub".to_string() }).await;
+        return;
     }
     if path != peer::LINK_PATH && path != peer::DATA_PATH {
         log(format!("refused a connection on {path}"));

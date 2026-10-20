@@ -35,6 +35,10 @@ pub(crate) fn change(
     let mut ended = Vec::new();
     let renaming = matches!(change, Change::Rename { .. });
     let dissolving = matches!(change, Change::Dissolve { .. });
+    let deleting = match &change {
+        Change::DeleteProject { town } => Some(town.clone()),
+        _ => None,
+    };
     let told = match made(hub, asker, account, change, &mut ended, renaming) {
         Ok(told) => told,
         Err(reason) => return (Err(reason), Vec::new()),
@@ -48,6 +52,9 @@ pub(crate) fn change(
                 ));
             }
         });
+    }
+    if let Some(town) = deleting {
+        crate::ledger::delete(hub, town);
     }
     hub.changed();
     if dissolving {
@@ -359,7 +366,19 @@ fn apply(
                 used: Vec::new(),
                 way,
             });
-            let token = Token { addresses: store.hub.public.clone(), cert: hub.pin, hub: store.hub.id.clone(), secret };
+            // A machine of the account that relays on a network takes one
+            // joining there that reaches no further (`world-network.md`,
+            // 替局域网里的机器连中枢).
+            let relays = store
+                .book
+                .directory
+                .machines()
+                .filter(|member| member.home.as_ref() == Some(account))
+                .flat_map(|member| member.relay.iter().copied())
+                .take(TOKEN_RELAYS)
+                .collect();
+            let token =
+                Token { addresses: store.hub.public.clone(), relays, cert: hub.pin, hub: store.hub.id.clone(), secret };
             Ok(Told::Token { text: token.to_text() })
         }
         Change::PasswordStart { target, request } => {
@@ -554,7 +573,9 @@ fn apply(
             }
             let project = directory.projects.iter_mut().find(|project| project.town == town);
             let project = project.ok_or_else(|| format!("there is no project {town}"))?;
-            if project.owner != *account && !super_ {
+            // A project is its owner's to share, the super administrator's
+            // no more than anyone's (`world-network.md`, 项目也照同一个规矩).
+            if project.owner != *account {
                 return Err(format!("the project {} is the account {}'s", project.name, project.owner));
             }
             if shared {
@@ -565,19 +586,65 @@ fn apply(
             Ok(Told::Done)
         }
         Change::MoveProject { town, to } => {
-            need_super()?;
             let book = &mut store.book;
             if book.directory.account(&to).is_none() {
                 return Err(format!("there is no account {to}"));
             }
             if let Some(position) = book.archived.iter().position(|project| project.town == town) {
+                // Archived with a deleted account, a project is the super
+                // administrator's to hand on.
+                need_super()?;
                 let mut project = book.archived.remove(position);
                 project.owner = to;
                 book.directory.projects.push(project);
             } else {
                 let project = book.directory.projects.iter_mut().find(|project| project.town == town);
-                project.ok_or_else(|| format!("there is no project {town}"))?.owner = to;
+                let project = project.ok_or_else(|| format!("there is no project {town}"))?;
+                if project.owner != *account {
+                    return Err(format!("the project {} is the account {}'s", project.name, project.owner));
+                }
+                project.granted.remove(&to);
+                project.owner = to;
             }
+            Ok(Told::Done)
+        }
+        Change::Relay { machine, at } => {
+            let directory = &mut store.book.directory;
+            let member = directory.members.iter_mut().find(|member| member.name == machine);
+            let member = member.ok_or_else(|| format!("there is no machine named {machine}"))?;
+            if !member.is_machine() {
+                return Err(format!("{machine} is a device, not a machine; only machines relay"));
+            }
+            // Its owner's to choose, a visitor's too: it carries the
+            // owner's own machines, and the hub checks who each one is.
+            if member.home.as_ref() != Some(account) {
+                return Err(format!("{machine} is not the account {account}'s; only its owner lets it relay"));
+            }
+            if !at.iter().all(relay_reachable) {
+                return Err("a relay is at an address of its network, with a port".to_string());
+            }
+            let mut addresses = Vec::new();
+            for address in at {
+                if !addresses.contains(&address) {
+                    addresses.push(address);
+                }
+            }
+            if addresses.len() > RELAY_ADDRESSES {
+                return Err(format!("a relay is at {RELAY_ADDRESSES} addresses at most"));
+            }
+            member.relay = addresses;
+            Ok(Told::Done)
+        }
+        Change::DeleteProject { town } => {
+            let projects = &mut store.book.directory.projects;
+            let position = projects.iter().position(|project| project.town == town);
+            let position = position.ok_or_else(|| format!("there is no project {town}"))?;
+            if projects[position].owner != *account {
+                return Err(format!("the project {} is the account {}'s", projects[position].name, projects[position].owner));
+            }
+            // Its ledger goes once the directory without it is kept
+            // (`change`).
+            projects.remove(position);
             Ok(Told::Done)
         }
     }
@@ -587,6 +654,29 @@ fn apply(
 /// it; a machine acting for it opens projects for it. A managed machine,
 /// logged in to nothing, makes none, leaving among them: its owner takes it
 /// off (`world-network.md`, 受管机器).
+/// The addresses one machine relays at, at most.
+const RELAY_ADDRESSES: usize = 8;
+
+/// The relays a join code carries, at most: a code names 255 addresses at
+/// most, and a machine joining tries each in turn.
+const TOKEN_RELAYS: usize = 16;
+
+/// Whether another machine on a network may reach a relay at `address`: an
+/// address of one of its cards, with a port, not one only the relay itself
+/// reaches or that names no one machine. An IPv6 link-local address is the
+/// relay's own card's, which a machine elsewhere names by its own.
+fn relay_reachable(address: &std::net::SocketAddr) -> bool {
+    let ip = match address.ip() {
+        std::net::IpAddr::V6(ip) => ip.to_ipv4_mapped().map_or(std::net::IpAddr::V6(ip), std::net::IpAddr::V4),
+        ip => ip,
+    };
+    let names_one = match ip {
+        std::net::IpAddr::V4(ip) => !ip.is_broadcast() && !ip.is_multicast(),
+        std::net::IpAddr::V6(ip) => !ip.is_multicast() && !ip.is_unicast_link_local(),
+    };
+    address.port() != 0 && !ip.is_unspecified() && !ip.is_loopback() && names_one
+}
+
 fn may_change(
     directory: &fastctx_net::directory::Directory,
     change: &Change,
@@ -728,6 +818,7 @@ fn log_out(
     if unregistered {
         member.home = None;
         member.direct.clear();
+        member.relay.clear();
     }
     let left = member.logins.is_empty();
     if unregistered {

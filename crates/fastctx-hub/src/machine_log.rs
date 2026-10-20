@@ -176,7 +176,10 @@ impl History {
                 accounts.insert(to.clone());
                 accounts.extend(directory.accounts.iter().map(|account| account.name.clone()));
             }
-            Action::OpenProject { town, .. } | Action::ShareProject { town, .. } | Action::MoveProject { town, .. } => {
+            Action::OpenProject { town, .. }
+            | Action::ShareProject { town, .. }
+            | Action::MoveProject { town, .. }
+            | Action::DeleteProject { town, .. } => {
                 if let Some(project) = directory.project(town) {
                     accounts.insert(project.owner.clone());
                     accounts.extend(project.granted.iter().cloned());
@@ -230,9 +233,11 @@ impl History {
             }
         }
         // A conversation's record is its account's alone: the member that
-        // asked or did it reads it by that account.
+        // asked or did it reads it by that account. A project's is its
+        // accounts' alone, whoever else the machine that did it acts for.
         if let Some(member) = actor.member.as_ref().and_then(|name| directory.member(name))
             && !action.of_conversation()
+            && !action.of_project()
         {
             members.insert(member.key);
             accounts.extend(member.home.iter().cloned());
@@ -256,7 +261,8 @@ impl History {
     /// The records `me` reads for `account`, newest first. A kind of record
     /// its release does not read is left out (`Action::needs`): it could
     /// read nothing of a page with one. The super administrator reads every
-    /// record but those of conversations, which only their account reads.
+    /// record but those of conversations and projects, which only their
+    /// accounts read.
     pub(crate) fn read(
         &self,
         directory: &Directory,
@@ -283,7 +289,7 @@ impl History {
             .iter()
             .rev()
             .filter(|kept| {
-                let private = kept.record.action.of_conversation();
+                let private = kept.record.action.of_conversation() || kept.record.action.of_project();
                 before.is_none_or(|before| kept.record.id < before)
                     && reads.covers(kept.record.action.needs())
                     && kept.record.at.checked_add(RETENTION).expect("timestamp in range") > now
@@ -391,6 +397,8 @@ pub(crate) fn action(change: &Change, book: &Book) -> Action {
         Change::MoveProject { town, to } => {
             Action::MoveProject { town: town.clone(), name: project_name(town), to: to.clone() }
         }
+        Change::DeleteProject { town } => Action::DeleteProject { town: town.clone(), name: project_name(town) },
+        Change::Relay { machine, at } => Action::RelayAt { machine: machine.clone(), addresses: at.clone() },
     }
 }
 

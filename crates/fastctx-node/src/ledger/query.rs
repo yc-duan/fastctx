@@ -131,12 +131,28 @@ fn sees(node: &Node, acting: &Acting, place: &super::names::Place) -> bool {
     }
 }
 
-/// The projects kept here, asking no hub: what an interface lists
-/// (`crate::shown`). Those this computer may use and does not span are
-/// taken as they come and change (`follow`).
+/// The projects kept here of the accounts logged in here, asking no hub:
+/// what an interface lists (`crate::shown`). One kept for an account this
+/// computer only acts for, as one it assists, is not theirs to see
+/// (`world-network.md`, 项目也照同一个规矩). Those this computer may use and
+/// does not span are taken as they come and change (`follow`).
 pub async fn held(node: &Arc<Node>) -> Result<Vec<TownSummary>, Failure> {
-    let towns = available(node, None).await.map_err(Failure::new)?.into_keys().collect();
-    summaries(node, towns).await
+    let towns: Vec<TownName> = available(node, None).await.map_err(Failure::new)?.into_keys().collect();
+    let world = node.world.clone();
+    let names = towns.clone();
+    let places = tokio::task::spawn_blocking(move || {
+        names.iter().map(|town| super::names::place(&world, town)).collect::<std::io::Result<Vec<_>>>()
+    })
+    .await
+    .map_err(|error| Failure::new(format!("reading the projects: {error}")))?
+    .map_err(|error| Failure::new(format!("reading the projects: {error}")))?;
+    let mine = towns
+        .into_iter()
+        .zip(places)
+        .filter(|(_, place)| place.as_ref().is_some_and(|place| sees(node, &Acting::Here, place)))
+        .map(|(town, _)| town)
+        .collect();
+    summaries(node, mine).await
 }
 
 /// Takes, from `link`'s hub, `town`'s new entries when this computer keeps

@@ -137,8 +137,17 @@ export async function specimenPeek(token: string): Promise<TokenPeek | null> {
 export function specimenComputer() {
   let kept = false;
   let days = 7;
+  let proxy: string | null = null;
   const after = <T>(value: T) => new Promise<T>((resolve) => setTimeout(() => resolve(value), 900));
   return {
+    proxy: {
+      get: async () => proxy,
+      set: async (url: string | null) => {
+        if (url && !/^(https?:\/\/)?[^\s/:@]+(:\d+)?$/.test(url)) throw new Error(`${url} is no HTTP proxy: write it as http://host:port`);
+        proxy = await after(url);
+        return proxy;
+      },
+    },
     retention: {
       read: async () => days,
       write: async (n: number) => {

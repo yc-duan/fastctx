@@ -51,6 +51,7 @@ pub(crate) fn view_for(
     let mine = all.acts_for(me);
     let whole = mine.iter().any(|account| all.logged_in(me, account) && all.is_super(account));
     let mut directory = if whole { all.clone() } else { cut(all, me, &mine) };
+    directory.projects = projects_for(all, me, &mine);
     for member in &mut directory.members {
         let others = member.name != *me
             && member.home.as_ref().is_some_and(|owner| all.is_visitor(owner) && !mine.contains(owner));
@@ -60,6 +61,7 @@ pub(crate) fn view_for(
         present(store, online, member, reach);
         if others {
             member.direct.clear();
+            member.relay.clear();
             member.through = None;
             member.paths = None;
             member.group = None;
@@ -102,10 +104,22 @@ pub(crate) fn view_for(
             made_at: Some(record.made_at),
         })
         .collect();
+    // Those that take direct connections forward for any machine; one that
+    // relays, for its owner's own.
     let forwarders = all
         .machines()
-        .filter(|member| !member.direct.is_empty() && member.name != *me)
-        .map(|member| fastctx_net::dial::Forwarder { name: member.name.clone(), at: member.direct.clone() })
+        .filter(|member| member.name != *me)
+        .filter_map(|member| {
+            let relays = member.home.as_ref().is_some_and(|owner| mine.contains(owner)) && !member.relay.is_empty();
+            let at = if !member.direct.is_empty() {
+                member.direct.clone()
+            } else if relays {
+                member.relay.clone()
+            } else {
+                return None;
+            };
+            Some(fastctx_net::dial::Forwarder { name: member.name.clone(), at })
+        })
         .collect();
     View {
         machine_log: true,
@@ -124,6 +138,8 @@ pub(crate) fn view_for(
         roles: true,
         groups: true,
         dissolves: true,
+        deletes_projects: true,
+        lan_relays: true,
         versions: true,
         package_progress: true,
         due: true,
@@ -218,16 +234,23 @@ fn cut(all: &Directory, me: &MachineName, mine: &BTreeSet<AccountName>) -> Direc
             .filter(|acting| accounts.contains(&acting.account) && seen.contains(&acting.machine))
             .cloned()
             .collect(),
-        projects: all
-            .projects
-            .iter()
-            .filter(|project| {
-                accounts.contains(&project.owner) || project.granted.iter().any(|account| accounts.contains(account))
-            })
-            .cloned()
-            .collect(),
+        projects: Vec::new(),
         members,
     }
+}
+
+/// The projects of the accounts `me` acts for or that may work on it: what
+/// it checks a call naming a project against. The super administrator's
+/// machine gets no others; and of these, its people are shown only their
+/// own accounts' (`world-network.md`, 项目也照同一个规矩).
+fn projects_for(all: &Directory, me: &MachineName, mine: &BTreeSet<AccountName>) -> Vec<fastctx_net::directory::Project> {
+    let users = users_of(all, me);
+    let concerned = |account: &AccountName| mine.contains(account) || users.contains(account);
+    all.projects
+        .iter()
+        .filter(|project| concerned(&project.owner) || project.granted.iter().any(concerned))
+        .cloned()
+        .collect()
 }
 
 fn present(store: &Store, online: &HashMap<MachineName, Presence>, member: &mut Member, reach: bool) {

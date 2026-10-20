@@ -53,31 +53,7 @@ pub fn wait_for_node(root: &Path, executable: &Path) -> Result<(), String> {
         if !status.installed || !status.enabled || status.state != "active/running" {
             return Err(format!("the node service is {}", status.state));
         }
-        let unit = status
-            .name
-            .bytes()
-            .map(|byte| if byte.is_ascii_alphanumeric() { (byte as char).to_string() } else { format!("_{byte:02x}") })
-            .collect::<String>();
-        let output = Command::new("busctl")
-            .args([
-                "--system",
-                "--json=short",
-                "get-property",
-                "org.freedesktop.systemd1",
-                &format!("/org/freedesktop/systemd1/unit/{unit}"),
-                "org.freedesktop.systemd1.Service",
-                "MainPID",
-            ])
-            .output()
-            .map_err(|error| error.to_string())?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).into_owned());
-        }
-        let value: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())?;
-        let pid = value
-            .get("data")
-            .and_then(serde_json::Value::as_u64)
-            .ok_or("systemd omitted the node service's MainPID")?;
+        let pid = service.main_pid().map_err(|error| error.to_string())?;
         let endpoint = Endpoint::for_world(world.path()).map_err(|error| error.to_string())?;
         match runtime.block_on(ipc::connect(&endpoint)) {
             Ok(connection) => {

@@ -183,6 +183,13 @@ pub(crate) async fn rename_here(shell: tauri::State<'_, Shell>, name: String) ->
     shell.world().rename_here(to).await.map_err(|error| error.to_string())
 }
 
+/// The HTTP proxy this computer reaches its hubs through: read, or with
+/// `change`, set to `url`, none clearing it.
+#[fastctx_gui_command::command]
+pub(crate) async fn hub_proxy(shell: tauri::State<'_, Shell>, url: Option<String>, change: bool) -> Result<Option<String>, String> {
+    shell.world().hub_proxy(url, change).await.map_err(|error| error.to_string())
+}
+
 /// The line that installs fastctx on a Linux server, or on a Windows computer
 /// when `windows`, and registers it as a machine of `account`, valid until
 /// `expires`: for `uses` of them, one when none, any number at zero, its code

@@ -138,6 +138,14 @@ impl Link {
                 Change::ShareProject { town: town_id(&town)?, with, shared }
             }
             AccountChange::MoveProject { town, to } => Change::MoveProject { town: town_id(&town)?, to },
+            AccountChange::DeleteProject { .. } if !self.view().deletes_projects => {
+                return Err(format!("the hub {} runs an older fastctx that deletes no project", self.hub_name()));
+            }
+            AccountChange::DeleteProject { town } => Change::DeleteProject { town: town_id(&town)? },
+            AccountChange::Relay { .. } if !self.view().lan_relays => {
+                return Err(format!("the hub {} runs an older fastctx that keeps no relays", self.hub_name()));
+            }
+            AccountChange::Relay { machine, at } => Change::Relay { machine, at },
             AccountChange::Seen { .. } => return Err("what the user saw stays on their computer".to_string()),
         };
         let preparing = match &wire {
@@ -238,6 +246,8 @@ impl Link {
             roles: view.roles,
             groups: view.groups,
             dissolves: view.dissolves,
+            deletes_projects: view.deletes_projects,
+            lan_relays: view.lan_relays,
             versions: view.versions,
             package_progress: view.package_progress,
             due: view.due,
@@ -266,6 +276,7 @@ impl Link {
                     logins: member.logins.iter().cloned().collect(),
                     home: member.home.clone(),
                     direct: member.direct.clone(),
+                    relay: member.relay.clone(),
                     added: member.added,
                     online: member.online,
                     since: member.since,
@@ -316,9 +327,18 @@ impl Link {
                     since: acting.since,
                 })
                 .collect(),
+            // The view holds the projects of every account that may work on
+            // this machine, to check calls against; its people are shown
+            // only those of the accounts logged in here (`world-network.md`,
+            // 项目也照同一个规矩).
             projects: view
                 .projects
                 .iter()
+                .filter(|project| {
+                    view.me().is_some_and(|me| {
+                        me.logins.contains(&project.owner) || project.granted.iter().any(|account| me.logins.contains(account))
+                    })
+                })
                 .map(|project| ProjectSeen {
                     name: project.name.clone(),
                     owner: project.owner.clone(),

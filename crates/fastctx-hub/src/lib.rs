@@ -524,7 +524,8 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
     };
     let secrets = HubSecrets::from_bytes(&std::fs::read(Store::secrets_file(dir))?).map_err(anyhow::Error::msg)?;
     let tls = releases::http::Tls::of(&certificate).map_err(anyhow::Error::msg)?;
-    let ledgers = ledger::Ledgers::open(dir)?;
+    let mut ledgers = ledger::Ledgers::open(dir)?;
+    let swept = ledgers.sweep(&store.book)?;
     let listen = store.hub.listen;
     let kept = bind(kept, listen).await?;
     log.line(format_args!(
@@ -534,6 +535,9 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         env!("CARGO_PKG_VERSION"),
         certificate.pin()
     ));
+    for town in &swept {
+        log.line(format_args!("deleted the ledger of {town}, a project deleted before the hub stopped"));
+    }
     for line in &store.upgraded {
         log.line(format_args!("took up the directory of an earlier fastctx: {line}"));
     }
@@ -749,6 +753,7 @@ async fn intended(
                 roles,
                 versions,
                 due,
+                project_deletes,
                 left,
                 cancels,
                 presence,
@@ -767,6 +772,7 @@ async fn intended(
                 roles,
                 versions,
                 due,
+                project_deletes,
                 left,
                 cancels,
                 presence,

@@ -2,6 +2,7 @@
 // this device is in the World. Choices take effect at once and are kept on
 // this device; the language takes effect as the interface starts again.
 
+import { ProxyRow, type ProxySeam } from "./proxy-row";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { redrawKeepingFocus } from "./focus";
@@ -54,6 +55,8 @@ export interface SettingsOptions {
     renewing: Renewing;
     /** How much World keeps on this computer, in bytes. */
     dataSize?(): Promise<number>;
+    /** The proxy it reaches its hubs through. */
+    proxy?: ProxySeam;
   } | undefined;
   /** New versions of the application: its rows, and the card a new one
    *  opens in; `relays` where this device passes packages to the network. */
@@ -121,6 +124,8 @@ export class SettingsPage implements Page {
     );
     this.device = this.element.querySelector<HTMLElement>(".device")!;
     this.name = this.element.querySelector<HTMLElement>(".settings-name")!;
+    // The proxy to the hubs follows the computer's name.
+    if (options.computer?.proxy) this.name.after(new ProxyRow(words, options.computer.proxy).element);
     this.name.addEventListener("click", (event) => {
       if ((event.target as HTMLElement).closest("[data-rename]")) this.rename();
     });

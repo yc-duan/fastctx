@@ -761,6 +761,15 @@ impl World {
         }
     }
 
+    /// The HTTP proxy this computer reaches its hubs through: read, or with
+    /// `change`, set to `url`, none clearing it.
+    pub async fn hub_proxy(&self, url: Option<String>, change: bool) -> Result<Option<String>, Error> {
+        match self.ask(Call::HubProxy { url, change }).await? {
+            Reply::HubProxy { url } => Ok(url),
+            other => Err(unexpected(other)),
+        }
+    }
+
     /// Renames this computer `to`; the names it had keep naming it.
     pub async fn rename_here(&self, to: MachineName) -> Result<(), Error> {
         match self.ask(Call::RenameHere { to }).await? {

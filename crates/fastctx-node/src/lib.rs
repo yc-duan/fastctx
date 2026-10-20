@@ -65,6 +65,7 @@ mod labels;
 mod learned;
 mod leases;
 mod ledger;
+mod proxy_setting;
 mod letters;
 mod lifetime;
 mod lines;
@@ -480,6 +481,10 @@ pub async fn run_prepared(
         log.line(format_args!("could not read {}: {error}", path.display()));
     }
 
+    // The proxy chosen in Fastctx goes before any hub is dialled.
+    if let Err(error) = proxy_setting::take_kept(&world) {
+        log.line(format_args!("{error}; the system's proxy is used"));
+    }
     let memberships = world::load(&world).context("reading this computer's memberships")?;
     let endpoint = Endpoint::for_world(world.path())?;
     let mut listener = Listener::bind(&endpoint)?;

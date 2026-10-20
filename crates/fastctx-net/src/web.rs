@@ -1,7 +1,7 @@
 //! Plain requests to the open web, for new versions on GitHub: over HTTPS
-//! checked against the web's public certificate authorities, by the system's
-//! proxy when it names one, as the hub is reached. Plain HTTP is spoken only
-//! to this computer itself.
+//! checked against the web's public certificate authorities, by the proxy
+//! chosen in Fastctx or else the system's when one is named, as the hub is
+//! reached. Plain HTTP is spoken only to this computer itself.
 
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;

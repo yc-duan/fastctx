@@ -186,12 +186,39 @@ impl Ledgers {
     /// The projects `name` spans, with each one's latest entry: a project
     /// says the machines it spans under the names they had when it was
     /// written, which still name them.
+    /// A project archived with a deleted account spans nothing until it is
+    /// handed on: no machine may read it meanwhile.
     pub fn towns_of(&self, directory: &Directory, name: &MachineName) -> Vec<(TownId, u64)> {
         self.towns
             .iter()
+            .filter(|(town, _)| directory.project(town).is_some())
             .filter(|(_, ledger)| ledger.machines.iter().any(|machine| directory.same(machine, name)))
             .map(|(town, ledger)| (town.clone(), ledger.next - 1))
             .collect()
+    }
+
+    /// Lets a deleted project's ledger go from what the hub holds; returns
+    /// the folder of its files, which the caller removes.
+    pub fn forget(&mut self, town: &TownId) -> PathBuf {
+        self.towns.remove(town);
+        self.writing.remove(town);
+        self.dir.join(town.as_str())
+    }
+
+    /// Lets go the ledgers of projects the directory no longer names,
+    /// archived ones kept: a hub stopped while it deleted one finishes here.
+    /// Returns the projects whose ledgers went.
+    pub fn sweep(&mut self, book: &crate::store::Book) -> io::Result<Vec<TownId>> {
+        let gone: Vec<TownId> = self
+            .towns
+            .keys()
+            .filter(|town| book.directory.project(town).is_none() && !book.archived.iter().any(|project| &project.town == *town))
+            .cloned()
+            .collect();
+        for town in &gone {
+            remove_folder(&self.forget(town))?;
+        }
+        Ok(gone)
     }
 
     /// Every project with a ledger, with its latest entry.
@@ -300,6 +327,13 @@ pub(crate) async fn write(hub: &Arc<Hub>, from: &MachineName, town: TownId, sign
     let (seq, tell) = {
         let store = hub.store();
         let directory = &store.book.directory;
+        // Deleted while its entry was written: the entry goes with it.
+        if directory.project(&town).is_none() && !store.book.archived.iter().any(|project| project.town == town) {
+            let folder = hub.ledgers.lock().expect("never poisoned").forget(&town);
+            drop(store);
+            remove_later(hub, town.clone(), folder);
+            return Err(format!("the project {town} was deleted"));
+        }
         let (seq, mut tell) = hub.ledgers.lock().expect("never poisoned").commit(directory, from, &town, checked);
         tell.extend(
             directory
@@ -317,4 +351,28 @@ pub(crate) async fn write(hub: &Arc<Hub>, from: &MachineName, town: TownId, sign
         hub.tell(&machine, Down::LedgerChanged { town: town.clone() });
     }
     Ok(Told::Written { seq })
+}
+
+/// Lets the deleted project `town`'s ledger go: at once from what the hub
+/// holds, so no machine is told of it or reads it again, and its files off
+/// the hub's locks.
+pub(crate) fn delete(hub: &Hub, town: TownId) {
+    let folder = hub.ledgers.lock().expect("never poisoned").forget(&town);
+    remove_later(hub, town, folder);
+}
+
+fn remove_later(hub: &Hub, town: TownId, folder: PathBuf) {
+    let log = hub.log.clone();
+    tokio::task::spawn_blocking(move || {
+        if let Err(error) = remove_folder(&folder) {
+            log.line(format_args!("deleting the ledger of {town}: {error}; done when the hub opens next"));
+        }
+    });
+}
+
+fn remove_folder(folder: &Path) -> io::Result<()> {
+    match std::fs::remove_dir_all(folder) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
 }

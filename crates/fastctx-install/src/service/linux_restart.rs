@@ -14,7 +14,8 @@ use fastctx_platform::atomic::{Permissions, publish};
 const RULES: &str = "/etc/sudoers.d";
 
 /// The systemctl a rule names and a restart runs: sudo matches it by path.
-fn systemctl() -> Option<PathBuf> {
+/// A system whose `/bin` is not `/usr/bin` has it in `/bin` alone.
+pub(super) fn systemctl() -> Option<PathBuf> {
     ["/usr/bin/systemctl", "/bin/systemctl"].into_iter().map(PathBuf::from).find(|path| path.is_file())
 }
 

@@ -317,6 +317,7 @@ impl Call {
             | Self::Account { .. }
             | Self::Accounts { .. }
             | Self::RenameHere { .. }
+            | Self::HubProxy { .. }
             | Self::ServerCommand { .. }
             | Self::HubMove { .. }
             | Self::HubArrived { .. }

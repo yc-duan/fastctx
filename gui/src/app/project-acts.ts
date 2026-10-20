@@ -1,15 +1,15 @@
 // A project's "⋯" (`world-gui.md`, 账号、机器、共享与协助): its owner shares
-// it with other accounts on its hub and takes it back, and hands it to
-// another account; the network's administrator hands any project on. A
-// project shared with the reader says whose it is.
+// it with other accounts on its hub and takes it back, hands it to another
+// account, and deletes it with the conversations in it. A project shared
+// with the reader says whose it is.
 
 import { escape } from "../conversation/prose";
 import { loginsOf, type AccountChange, type HubAccounts, type Login, type ProjectSeen } from "../world/accounts";
+import type { ResidentNow } from "../world/world";
 import type { AccessWords } from "./account-words";
 import { ActsMenu, type MenuAct } from "./acts-menu";
 import type { Confirm } from "./confirm";
 import { GiveSheet } from "./machine-sheets";
-import { isSuper } from "./reach";
 import type { Store } from "./store";
 
 export interface ProjectActsWords {
@@ -26,6 +26,11 @@ export interface ProjectActsWords {
   transferTo: string;
   transferGo: string;
   sharedBy(owner: string): string;
+  remove: string;
+  removeTitle(project: string): string;
+  removeWhat(conversations: number): string;
+  removeShared: string;
+  removeGo: string;
 }
 
 export const zhProjectActs: ProjectActsWords = {
@@ -42,6 +47,12 @@ export const zhProjectActs: ProjectActsWords = {
   transferTo: "交给",
   transferGo: "转交",
   sharedBy: (owner) => `${owner} 共享给你`,
+  remove: "删除项目…",
+  removeTitle: (project) => `删除「${project}」`,
+  removeWhat: (conversations) =>
+    conversations ? `项目、它的记录和里面的 ${conversations} 段对话都会删掉，拿不回来。` : "项目和它的记录都会删掉，拿不回来。",
+  removeShared: "共享给的人在里面的对话会移出项目。",
+  removeGo: "删除",
 };
 
 export const enProjectActs: ProjectActsWords = {
@@ -58,6 +69,14 @@ export const enProjectActs: ProjectActsWords = {
   transferTo: "To",
   transferGo: "Hand over",
   sharedBy: (owner) => `shared with you by ${owner}`,
+  remove: "Delete project…",
+  removeTitle: (project) => `Delete “${project}”`,
+  removeWhat: (conversations) =>
+    conversations
+      ? `The project, its records and the ${conversations} conversation${conversations === 1 ? "" : "s"} in it are deleted for good.`
+      : "The project and its records are deleted for good.",
+  removeShared: "The conversations of those it is shared with move out of it.",
+  removeGo: "Delete",
 };
 
 export interface ProjectActsOptions {
@@ -66,16 +85,21 @@ export interface ProjectActsOptions {
   store: Store;
   confirm: Confirm;
   change(login: Login, change: AccountChange): Promise<void>;
+  /** The reader's conversations in the project `town`, archived ones too. */
+  conversations(town: string): ResidentNow[];
+  /** Deletes a conversation everywhere, as its own "⋯" does. */
+  forget(r: ResidentNow): void;
+  /** `town` was deleted: a page of it is left. */
+  deleted(town: string): void;
 }
 
-/** How the reader holds a project: as which login, on which hub, whether
- *  it is theirs, and whether they are the network's administrator. */
+/** How the reader holds a project: as which login, on which hub, and
+ *  whether it is theirs. */
 interface Hold {
   login: Login;
   hub: HubAccounts;
   project: ProjectSeen;
   mine: boolean;
-  admin: boolean;
 }
 
 export class ProjectActs {
@@ -93,7 +117,8 @@ export class ProjectActs {
     if (!hold) return [];
     return [
       ...(hold.mine ? [{ act: "share", icon: "colleague" as const, label: words.share }] : []),
-      ...(hold.mine || hold.admin ? [{ act: "transfer", icon: "move" as const, label: words.transfer }] : []),
+      ...(hold.mine ? [{ act: "transfer", icon: "move" as const, label: words.transfer }] : []),
+      ...(hold.mine && hold.hub.deletes_projects ? [{ act: "delete", icon: "trash" as const, label: words.remove, danger: true }] : []),
     ];
   }
 
@@ -111,6 +136,32 @@ export class ProjectActs {
   run(act: string, town: string, name: string): void {
     if (act === "share") this.share(town, name);
     else if (act === "transfer") this.transfer(town, name);
+    else if (act === "delete") this.remove(town, name);
+  }
+
+  /** Deletes the project after a red card says what goes: the project and
+   *  its records first, then the reader's conversations that were in it, as
+   *  each one's own deletion does. A project the server keeps leaves every
+   *  conversation as it was. */
+  private remove(town: string, name: string): void {
+    const hold = this.hold(town);
+    if (!hold?.mine) return;
+    const { words, change, store, confirm, conversations, forget, deleted } = this.options;
+    const talks = conversations(town);
+    const shared = hold.project.granted.length > 0;
+    confirm.ask({
+      title: words.removeTitle(name),
+      what: shared ? `${words.removeWhat(talks.length)}${words.removeShared}` : words.removeWhat(talks.length),
+      go: words.removeGo,
+      act: async () => {
+        await change(hold.login, { change: "delete_project", town });
+        for (const r of talks) forget(r);
+      },
+      done: () => {
+        deleted(town);
+        void store.refresh();
+      },
+    });
   }
 
   private share(town: string, name: string): void {
@@ -159,7 +210,7 @@ export class ProjectActs {
       const owner = logins.find((login) => login.account === project.owner);
       const login = owner ?? logins[0];
       if (!login) continue;
-      return { login, hub, project, mine: !!owner, admin: logins.some((one) => isSuper(world, one)) };
+      return { login, hub, project, mine: !!owner };
     }
     return null;
   }

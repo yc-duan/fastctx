@@ -39,11 +39,13 @@
 }
 
 /* A conversation's head, one line by design: the agent's seal, which says
-   who it is; the title, in the display face; where it lives, quietly, on a
-   computer; then, at the right, what it is pointed at and the tools. That it
-   works is the conversation's own line and the composer's to say; only
-   trouble with the line or the conversation is said here, in words. */
+   who it is; the title, in the display face, cut at a length of its own and
+   whole on resting there; then, at the right, where it lives, quietly, on a
+   computer, what it is pointed at and the tools. That it works is the
+   conversation's own line and the composer's to say; only trouble with the
+   line or the conversation is said here, in words. */
 .who {
+  flex: 1;
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -71,6 +73,7 @@
 
 .who-name {
   min-width: 0;
+  max-width: 20em;
   margin: 0;
   font-family: var(--font-display);
   font-weight: 400;
@@ -85,6 +88,7 @@
 
 .who-home {
   flex: none;
+  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 5px;

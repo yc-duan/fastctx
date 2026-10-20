@@ -124,6 +124,7 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
             code: None,
             group: None,
             direct: Vec::new(),
+            relay: Vec::new(),
             added: admitted.joined_at,
             online: false,
             since: None,

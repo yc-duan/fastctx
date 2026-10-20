@@ -572,6 +572,14 @@ pub enum Call {
     RenameHere {
         to: MachineName,
     },
+    /// The HTTP proxy this computer reaches its hubs through, chosen in
+    /// Fastctx: read it, or with `change`, set it to `url`, none clearing it.
+    HubProxy {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        change: bool,
+    },
     /// An enrollment token that registers a Linux server, or a Windows
     /// computer, as a machine of `account`, and the line that installs it
     /// there with this node's version.
@@ -638,6 +646,10 @@ pub enum Call {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum Reply {
+    /// The HTTP proxy chosen in Fastctx, if one is (`Call::HubProxy`).
+    HubProxy {
+        url: Option<String>,
+    },
     MachineLog(crate::machine_log::Page),
     CollabRead(crate::collab::CollabView),
     CollabWritten {

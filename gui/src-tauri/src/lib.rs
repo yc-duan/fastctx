@@ -1257,6 +1257,7 @@ pub fn run() {
             folders,
             machine_stats,
             accounts::rename_here,
+            accounts::hub_proxy,
             pages::page_read,
             pages::page_history,
             pages::page_consent,

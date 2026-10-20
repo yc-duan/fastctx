@@ -182,6 +182,11 @@ pub enum Intent {
         /// so, and could read nothing of a machine log page with one.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         due: bool,
+        /// The member reads the records of projects deleted. Earlier
+        /// releases do not say so, and could read nothing of a machine log
+        /// page with one.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        project_deletes: bool,
         /// A machine taken off the hub that was to uninstall Fastctx then,
         /// and could not do all of it: what was left, and why. The hub
         /// keeps it for its machine log, and refuses the session as before.
@@ -807,10 +812,23 @@ pub enum Change {
         with: AccountName,
         shared: bool,
     },
-    /// Hands a project to another account; the super administrator's change.
+    /// Hands a project to another account: its owner's change, and the
+    /// super administrator's for a project archived with a deleted account.
     MoveProject {
         town: TownId,
         to: AccountName,
+    },
+    /// Deletes a project and its ledger: its owner's change. Sent only to a
+    /// hub whose view says it deletes projects.
+    DeleteProject {
+        town: TownId,
+    },
+    /// Lets `machine` relay its owner's other machines to the hub at `at`,
+    /// or, with none, no longer: its owner's change, a visitor's too. Sent
+    /// only to a hub whose view says it keeps relays.
+    Relay {
+        machine: MachineName,
+        at: Vec<std::net::SocketAddr>,
     },
 }
 

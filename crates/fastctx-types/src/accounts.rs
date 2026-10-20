@@ -301,6 +301,17 @@ pub enum AccountChange {
         town: TownName,
         to: AccountName,
     },
+    /// The owner deletes a project and its ledger, on a hub that says it
+    /// deletes projects.
+    DeleteProject {
+        town: TownName,
+    },
+    /// The owner lets one of their machines relay their others to the hub at
+    /// addresses on its own network, or, with none, no longer.
+    Relay {
+        machine: MachineName,
+        at: Vec<SocketAddr>,
+    },
     /// The user saw that `name` came into the account; nothing goes to the
     /// hub.
     Seen {
@@ -361,6 +372,13 @@ pub struct HubAccounts {
     /// asks (`world-network.md`, 解散网络).
     #[serde(default)]
     pub dissolves: bool,
+    /// Whether the hub deletes a project its owner asks it to.
+    #[serde(default)]
+    pub deletes_projects: bool,
+    /// Whether the hub keeps the machines that relay for their owner's
+    /// others on their network.
+    #[serde(default)]
+    pub lan_relays: bool,
     /// Whether the hub keeps the network's versions and hands out packages
     /// (`world-upgrade.md`).
     #[serde(default)]
@@ -555,6 +573,10 @@ pub struct MemberSeen {
     /// administrator allowed that.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub direct: Vec<SocketAddr>,
+    /// Where it relays its owner's other machines to the hub, when its owner
+    /// let it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relay: Vec<SocketAddr>,
     pub added: Timestamp,
     pub online: bool,
     /// When it connected, when online; when it was last connected, when not.

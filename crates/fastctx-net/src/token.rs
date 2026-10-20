@@ -27,6 +27,9 @@ use crate::sign::{Digest, SecretKey};
 
 const PREFIX: &str = "FX5";
 const KIND: u8 = 1;
+/// A token that names relays as well, after its secret: one a release before
+/// them does not read, so a token without relays stays of the first kind.
+const KIND_RELAYS: u8 = 2;
 const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 /// A token's secret, from which its one-time key comes.
@@ -57,6 +60,9 @@ impl TokenSecret {
 #[derive(Clone, Debug)]
 pub struct Token {
     pub addresses: Vec<SocketAddr>,
+    /// Machines of the account that carry a connection to the hub from their
+    /// network, for a computer joining that reaches the hub no other way.
+    pub relays: Vec<SocketAddr>,
     pub cert: CertPin,
     pub hub: HubId,
     pub secret: TokenSecret,
@@ -64,11 +70,14 @@ pub struct Token {
 
 impl Token {
     pub fn to_text(&self) -> String {
-        let mut bytes = vec![KIND];
+        let mut bytes = vec![if self.relays.is_empty() { KIND } else { KIND_RELAYS }];
         addresses(&mut bytes, &self.addresses);
         bytes.extend_from_slice(&self.cert.0.0);
         bytes.extend_from_slice(&self.hub.bytes());
         bytes.extend_from_slice(&*self.secret.0);
+        if !self.relays.is_empty() {
+            addresses(&mut bytes, &self.relays);
+        }
         let check = crate::sign::sha256(&bytes);
         bytes.extend_from_slice(&check[..2]);
         format!("{PREFIX}{}", encode(&bytes))
@@ -94,17 +103,19 @@ impl Token {
             return Err(mistyped());
         }
         let mut reader = Reader(bytes);
-        if reader.take(1).ok_or_else(mistyped)?[0] != KIND {
+        let kind = reader.take(1).ok_or_else(mistyped)?[0];
+        if kind != KIND && kind != KIND_RELAYS {
             return Err("this token is of a kind this fastctx does not know; it may be newer".to_string());
         }
         let addresses = reader.addresses().ok_or_else(mistyped)?;
         let cert = CertPin(Digest(reader.array().ok_or_else(mistyped)?));
         let hub = HubId::from_bytes(reader.array().ok_or_else(mistyped)?);
         let secret = TokenSecret(Zeroizing::new(reader.array().ok_or_else(mistyped)?));
+        let relays = if kind == KIND_RELAYS { reader.addresses().ok_or_else(mistyped)? } else { Vec::new() };
         if !reader.0.is_empty() {
             return Err(mistyped());
         }
-        Ok(Token { addresses, cert, hub, secret })
+        Ok(Token { addresses, relays, cert, hub, secret })
     }
 }
 

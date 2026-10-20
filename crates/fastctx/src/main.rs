@@ -25,6 +25,7 @@ mod page;
 mod paths;
 mod program;
 mod project;
+mod proxy;
 mod renew;
 mod secret;
 mod self_update;
@@ -268,6 +269,11 @@ enum Command {
     /// Rename a machine: this computer, one of an account's machines, or,
     /// for the network's administrator, any. Its names before still name it.
     Rename(world::RenameArgs),
+    /// The HTTP proxy this computer reaches its hubs through: set it, clear
+    /// it, or see it. It is kept in Fastctx, so the node its boot service
+    /// starts uses it too.
+    #[command(subcommand)]
+    Proxy(proxy::ProxyCommand),
     /// Put machines in a group, or take them out: a group only shows them
     /// together. Or rename a group, or end it.
     Group(world::GroupArgs),
@@ -473,6 +479,7 @@ fn main() -> ExitCode {
         Command::Remove(args) => world::remove(args),
         Command::Dissolve(args) => world::dissolve(args),
         Command::Rename(args) => world::rename(args),
+        Command::Proxy(command) => proxy::run(command),
         Command::Group(args) => world::group(args),
         Command::Direct(args) => world::direct(args),
         Command::Hub(command) => world::hub(command),
@@ -495,7 +502,7 @@ fn print_licenses() -> ExitCode {
 
 /// The commands a person runs on a machine: its node, joining and managing
 /// the World, talking to residents, the TUI.
-const PEOPLE_ONLY: [&str; 23] = [
+const PEOPLE_ONLY: [&str; 24] = [
     "ui",
     "data",
     "node",
@@ -514,6 +521,7 @@ const PEOPLE_ONLY: [&str; 23] = [
     "disallow",
     "remove",
     "rename",
+    "proxy",
     "direct",
     "hub",
     "apply",
