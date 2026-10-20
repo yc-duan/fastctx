@@ -31,6 +31,7 @@ pub fn find(path: Option<&OsString>) -> Option<PathBuf> {
 pub struct Start<'a> {
     pub plugin: &'a Path,
     pub settings: &'a Path,
+    pub mcp: &'a Path,
     pub instructions: &'a Path,
     pub first_words: &'a str,
     pub model: Option<&'a str>,
@@ -65,6 +66,8 @@ fn settings_args(start: &Start) -> Vec<OsString> {
         start.plugin.into(),
         "--settings".into(),
         start.settings.into(),
+        "--mcp-config".into(),
+        start.mcp.into(),
         // Nothing waits for approval and nothing is refused for want of it:
         // the session can do whatever Claude Code can where the user works.
         // Claude Code starts it only once the user has accepted this mode

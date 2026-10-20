@@ -24,6 +24,13 @@ pub enum McpCall {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         machine: Option<Written>,
     },
+    /// Imports a candidate on its machine without returning its command or environment.
+    Import {
+        machine: Written,
+        source: Source,
+        name: String,
+        as_name: String,
+    },
     Remove {
         name: String,
     },
@@ -85,7 +92,7 @@ pub enum ListedServer {
 #[serde(rename_all = "snake_case", tag = "state")]
 pub enum CommandState {
     /// The machine keeps it so.
-    Kept { server: CommandMcp },
+    Kept,
     /// The machine is not connected now.
     Offline,
     /// The machine keeps no server of that name for the account.
@@ -113,7 +120,7 @@ pub struct Tested {
 pub struct Found {
     pub source: Source,
     pub name: String,
-    pub server: Server,
+    pub server: FoundServer,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,4 +143,31 @@ pub struct ProfileView {
     /// Whether the hub keeps profiles at all; an older one does not, and
     /// takes no change to one.
     pub kept: bool,
+}
+
+/// Imported command contents remain on the machine that found them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum FoundServer {
+    Command,
+    Remote(RemoteMcp),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "do")]
+pub enum MachineCall {
+    Status { names: Vec<String> },
+    Keep { name: String, version: u64, server: CommandMcp },
+    Import { name: String, version: u64, source: Source, original: String },
+    Found,
+    Test { name: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "reply")]
+pub enum MachineReply {
+    Status { kept: std::collections::BTreeSet<String> },
+    Kept,
+    Found { servers: Vec<Found> },
+    Tested(Tested),
 }

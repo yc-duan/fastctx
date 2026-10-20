@@ -27,6 +27,11 @@ pub async fn manage(
     let managed = if machine.hub.is_none() && node.is_me(&machine.name) {
         here(node, &resident, action).await?
     } else {
+        if matches!(action, Management::Mcp { .. }) {
+            let (link, account) =
+                node.speaking(&Acting::Here, &machine, Purpose::Agents).map_err(|e| Failure::new(e.to_string()))?;
+            crate::mcp::supports(node, &link, &account, &machine.name).await?;
+        }
         let call = RemoteCall::Manage { resident: resident.clone(), action };
         match node
             .call(&Acting::Here, &machine, Purpose::Agents, call)
@@ -335,8 +340,30 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                 Err(error) => step(&mut result, "notification", Outcome::Failed, error.message),
             }
         }
-        Management::Mcp { .. } => {
-            step(&mut result, "records", Outcome::Unsupported, "This release keeps no MCP servers yet.".into());
+        Management::Mcp { off } => {
+            for name in &off {
+                fastctx_types::profile::name_of(name).map_err(Failure::not_run)?;
+            }
+            let mut options = crate::session_options::read(node, id)?;
+            options.mcp_off = off.clone();
+            // About is authoritative once the conversation exists. A restart
+            // reads it even if writing the secondary options file was interrupted.
+            node.residents.set_mcp_off(&node.world, id, off).map_err(|e| Failure::new(e.to_string()))?;
+            let options_path = node.world.conversation(id).session_options();
+            fastctx_platform::ensure_private_dir(options_path.parent().expect("options directory"))
+                .map_err(|e| Failure::new(e.to_string()))?;
+            fastctx_platform::publish(
+                &options_path,
+                &serde_json::to_vec(&options).unwrap(),
+                fastctx_platform::Permissions::Private,
+            )
+            .map_err(|e| Failure::new(e.to_string()))?;
+            if about.host.agent.as_str() == "claude" {
+                crate::profile::session::claude(node, id, false)?;
+            } else {
+                crate::codex::moved(node, id).await;
+            }
+            step(&mut result, "records", Outcome::Done, "MCP selection saved for the next session load.".into());
         }
         Management::Focus { focus } => {
             crate::focus::pointable(&about)?;

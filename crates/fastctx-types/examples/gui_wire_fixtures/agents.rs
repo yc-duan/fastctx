@@ -216,6 +216,7 @@ pub fn fixtures() -> Fixtures {
         remote_calls: vec![
             RemoteCall::Agents,
             RemoteCall::Open {
+                mcp_off: Default::default(),
                 agent: "claude".parse().unwrap(),
                 town: None,
                 text: "First words".into(),

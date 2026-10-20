@@ -112,6 +112,7 @@ pub(crate) async fn directory(
             crate::focus::hand_to_session(&node.world.conversation(&id), &source)?;
         }
         // Its project's record, with the user's instructions for it.
+        crate::profile::session::hand_to_session(node, &id, &source)?;
         crate::town::instructions::hand_to_session(node, &id, &source)?;
         if registration.process.is_some() {
             fastctx_platform::publish(

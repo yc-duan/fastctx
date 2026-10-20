@@ -774,7 +774,20 @@ pub async fn open(
             Ok((Address { machine: here, resident: id }, landed))
         }
         Some(target) => {
+            let profile = crate::profile::session::get(node, &acting);
+            if !choices.mcp_off.is_empty()
+                || !profile.prompt.is_empty()
+                || !profile.claude.is_empty()
+                || !profile.codex.is_empty()
+                || !profile.servers.is_empty()
+            {
+                let (link, account) = node
+                    .speaking(&acting, &(&target).into(), Purpose::Agents)
+                    .map_err(|e| Failure::new(e.to_string()))?;
+                crate::mcp::supports(node, &link, &account, &target).await?;
+            }
             let call = RemoteCall::Open {
+                mcp_off: choices.mcp_off.clone(),
                 agent,
                 town,
                 text,
@@ -813,6 +826,8 @@ pub async fn open_here(
     // The login it is born in must be in this machine's agent list, the
     // default one too (`world-agent-logins.md`); the default one is recorded
     // as none, so that it follows the user's environment.
+    let mut options = options;
+    options.mcp_off = choices.mcp_off;
     let home = crate::homes::listed(node, agent.as_str(), choices.home.as_deref())?;
     let opened = Opened { acting, focus: choices.focus, home, files_on: choices.files_on };
     match agent.as_str() {
@@ -842,7 +857,7 @@ pub async fn open_here(
     let (thread, model) = node.codex.home(opened.home.as_deref())?.start_thread(spec).await.map_err(Failure::new)?;
     let born_at = Timestamp::now();
     let about = About {
-        mcp_off: Default::default(),
+        mcp_off: options.mcp_off.clone(),
         id: id.clone(),
         host: Host { agent, client: "codex app-server".to_string(), version: String::new() },
         machine: node.machine(),

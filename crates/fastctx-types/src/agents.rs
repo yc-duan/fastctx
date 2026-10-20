@@ -287,6 +287,8 @@ pub struct Choices {
 /// Omitted fields keep the official program's configured defaults.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionOptions {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub mcp_off: std::collections::BTreeSet<String>,
     pub model: Option<String>,
     pub reasoning_effort: Option<String>,
 }

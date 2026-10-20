@@ -221,6 +221,13 @@ pub fn name_of(name: &str) -> Result<(), String> {
 /// A name for `name` that `taken` does not hold yet: as it is, then with
 /// what of `machine`'s name can be part of one, then numbered.
 pub fn free_name(name: &str, machine: &str, taken: impl Fn(&str) -> bool) -> String {
+    let mut cleaned: String =
+        name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '-' }).collect();
+    cleaned = cleaned.trim_matches('-').chars().take(NAME_MOST).collect();
+    if name_of(&cleaned).is_err() {
+        cleaned = "server".into();
+    }
+    let name = cleaned.as_str();
     if !taken(name) {
         return name.to_string();
     }

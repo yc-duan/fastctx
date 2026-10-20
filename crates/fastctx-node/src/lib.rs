@@ -55,8 +55,8 @@ mod homes;
 mod hub_arrival;
 mod hub_moving;
 mod inbox;
-mod intake;
 mod initializing;
+mod intake;
 mod job_reader;
 mod job_receipts;
 mod job_watch;
@@ -65,7 +65,6 @@ mod labels;
 mod learned;
 mod leases;
 mod ledger;
-mod proxy_setting;
 mod letters;
 mod lifetime;
 mod lines;
@@ -76,12 +75,15 @@ mod look;
 mod machine;
 mod managed;
 mod management;
+mod mcp;
 mod on;
 mod on_delivery;
 mod on_stop;
 mod own_collab;
 mod pages;
+mod profile;
 mod program_collection;
+mod proxy_setting;
 mod ranked;
 mod reach;
 mod recovery;
@@ -151,6 +153,7 @@ pub(crate) struct Node {
     /// hub renames it (`world::follow_rename`).
     machine: RwLock<machine::MachineFile>,
     jobs: jobs::Jobs,
+    mcp_keeping: std::sync::Mutex<()>,
     job_watches: job_watch::Watches,
     disk: ranked::Disk,
     /// Each conversation's place here, deleted alone (`data::places`).
@@ -519,6 +522,7 @@ pub async fn run_prepared(
         fastctx,
         machine: RwLock::new(machine),
         jobs: jobs::Jobs::new(),
+        mcp_keeping: std::sync::Mutex::new(()),
         job_watches: Default::default(),
         disk: Default::default(),
         places: Default::default(),
@@ -621,6 +625,7 @@ pub async fn run_prepared(
     recovery::start(&node, jobs_reconciled);
     on_delivery::resume(&node);
     retention::start(&node).context("starting command artifact retention")?;
+    profile::session::start(&node);
     updates::start(&node);
     afoot::start(&node);
     forget::start(&node);

@@ -23,6 +23,7 @@ mod calls;
 mod changes;
 mod clock;
 mod collab;
+mod profile;
 mod direct;
 mod kernel;
 mod ledger;

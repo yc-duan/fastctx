@@ -37,6 +37,7 @@ mod server;
 mod title;
 mod tool_images;
 mod transport;
+mod user_config;
 mod user_images;
 mod user_picture;
 pub use user_picture::UserPicture;
@@ -135,6 +136,8 @@ pub const SERVER_NAME: &str = "fastctx";
 /// app-server.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ThreadSpec {
+    #[serde(default)]
+    pub user_mcp: std::collections::BTreeSet<String>,
     /// The resident whose user pictures this thread can address.
     pub owner: fastctx_types::Address,
     pub cwd: PathBuf,
@@ -357,6 +360,8 @@ struct Thread {
     completed_item: bool,
     spec: Option<ThreadSpec>,
     loaded: bool,
+    #[serde(default)]
+    configuration_changed: bool,
     subscribed: bool,
     /// The turn running now: reported started, or named in the answer to
     /// the words that started it.
@@ -447,7 +452,14 @@ impl CodexHost {
     /// Makes a thread started before known again, as after the node
     /// restarted; it is resumed when words next go to it.
     pub fn adopt(&self, thread: &str, spec: ThreadSpec) {
-        self.lock().threads.entry(thread.to_string()).or_default().spec = Some(spec);
+        let mut state = self.lock();
+        let entry = state.threads.entry(thread.to_string()).or_default();
+        entry.configuration_changed |= entry.spec.as_ref().is_some_and(|old| {
+            old.config != spec.config
+                || old.cwd != spec.cwd
+                || old.developer_instructions != spec.developer_instructions
+        });
+        entry.spec = Some(spec);
     }
 
     /// Starts a thread without a turn, so the caller can record it before
@@ -455,6 +467,7 @@ impl CodexHost {
     /// its ID and model, so an idle app-server replacement can resume it.
     pub async fn start_thread(self: &Arc<Self>, spec: ThreadSpec) -> Result<(String, Option<String>), String> {
         let server = self.server().await?;
+        let effective = user_config::effective(&server, &spec).await?;
         let answer = server
             .request(
                 "thread/start",
@@ -462,8 +475,8 @@ impl CodexHost {
                     "cwd": spec.cwd,
                     "approvalPolicy": "never",
                     "sandbox": "danger-full-access",
-                    "developerInstructions": spec.developer_instructions,
-                    "config": spec.config,
+                    "developerInstructions": effective.developer_instructions,
+                    "config": effective.config,
                     "ephemeral": false,
                     "historyMode": "paginated",
                     "environments": [],
@@ -828,6 +841,26 @@ impl CodexHost {
 
     async fn ensure_loaded(&self, server: &Arc<AppServer>, thread: &str) -> Result<(), String> {
         let _loading = self.loading.lock().await;
+        let reload = self
+            .lock()
+            .threads
+            .get(thread)
+            .is_some_and(|entry| entry.configuration_changed && entry.loaded && entry.turn.is_none());
+        if reload {
+            let answer = server.request("thread/unsubscribe", json!({"threadId":thread})).await?;
+            if answer["status"] == "notLoaded"
+                && let Some(entry) = self.lock().threads.get_mut(thread)
+            {
+                entry.loaded = false;
+                entry.subscribed = false;
+            }
+            // An idle, unsubscribed runtime is a cache entry. Resume with
+            // changed overrides replaces it; waiting for its idle eviction
+            // would otherwise take thirty minutes (app-server 0.160).
+            if let Some(entry) = self.lock().threads.get_mut(thread) {
+                entry.subscribed = false;
+            }
+        }
         let spec = {
             let mut state = self.lock();
             if !matches!(&state.server, Some((current, _)) if Arc::ptr_eq(current, server)) {
@@ -846,6 +879,7 @@ impl CodexHost {
             entry.spec.clone().ok_or_else(|| format!("how the Codex thread {thread} was started is not known"))?
         };
         let selection = controls::Selection::read(&spec.choices)?;
+        let effective = user_config::effective(server, &spec).await?;
         let answer = server
             .request(
                 "thread/resume",
@@ -854,8 +888,8 @@ impl CodexHost {
                     "cwd": spec.cwd,
                     "approvalPolicy": "never",
                     "sandbox": "danger-full-access",
-                    "developerInstructions": spec.developer_instructions,
-                    "config": spec.config,
+                    "developerInstructions": effective.developer_instructions,
+                    "config": effective.config,
                     "excludeTurns": true,
                 }),
             )
@@ -867,6 +901,11 @@ impl CodexHost {
         let entry = state.threads.entry(thread.to_string()).or_default();
         // Another client may have started a turn while resume's reply was
         // in flight. Preserve any turn already reported by a notification.
+        entry.configuration_changed = entry.spec.as_ref().is_some_and(|current| {
+            current.config != spec.config
+                || current.developer_instructions != spec.developer_instructions
+                || current.cwd != spec.cwd
+        });
         entry.loaded = true;
         entry.subscribed = true;
         entry.selection = selection;

@@ -47,6 +47,9 @@ pub struct MachineFacts {
     /// itself.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stats: bool,
+    /// Account configuration and command MCP service calls.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mcp: bool,
     /// The bash `run` uses there, such as `bash 5.2.37 (Git for Windows,
     /// MSYS)`: on MSYS, arguments shaped like Unix paths are rewritten
     /// before a Windows program sees them (`world-run.md`). Empty when the

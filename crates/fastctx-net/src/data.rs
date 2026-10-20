@@ -10,6 +10,8 @@
 //! for gone when the other falls silent (`line`).
 
 mod line;
+mod duplex;
+pub use duplex::{ReadHalf, WriteHalf};
 mod receipt;
 mod writing;
 pub use receipt::{ReceiptWork, Settlement, settling_ping};

@@ -163,6 +163,7 @@ pub fn fixtures() -> Fixtures {
                 id: Some("words-1".into()),
             },
             RemoteCall::Open {
+                mcp_off: Default::default(),
                 agent: "codex".parse().unwrap(),
                 town,
                 text: text.clone(),

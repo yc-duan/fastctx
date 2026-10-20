@@ -174,7 +174,7 @@ where
 /// TLS checked against the public authorities Mozilla trusts, carried in
 /// the program, so a server or phone without a certificate store of its own
 /// checks GitHub the same way.
-fn config() -> Arc<rustls::ClientConfig> {
+pub(crate) fn config() -> Arc<rustls::ClientConfig> {
     static CONFIG: OnceLock<Arc<rustls::ClientConfig>> = OnceLock::new();
     CONFIG
         .get_or_init(|| {

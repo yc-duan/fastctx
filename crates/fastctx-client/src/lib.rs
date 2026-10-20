@@ -32,8 +32,10 @@ mod line_rows;
 mod lines;
 mod lines_read;
 mod management;
+pub mod mcp_relay;
 mod originals;
 pub mod pages;
+mod profile;
 pub mod renewal;
 pub mod shown;
 mod thumbnail;
@@ -111,6 +113,7 @@ pub struct Client {
     pub machine: MachineName,
     /// The node binary's version.
     pub node_version: String,
+    pub profiles: bool,
     /// The connected node's facts, including when another starter won.
     pub node_lifetime: Option<Box<fastctx_types::node_lifetime::NodeLifetime>>,
 }
@@ -145,8 +148,8 @@ impl Client {
             .map_err(io_error)?
             .ok_or_else(|| io_error(std::io::ErrorKind::UnexpectedEof.into()))?;
         match serde_json::from_slice::<Welcome>(&welcome).map_err(|error| io_error(std::io::Error::other(error)))? {
-            Welcome::Accepted { machine, version, node_lifetime } => {
-                Ok(Self { connection, next: 0, machine, node_version: version, node_lifetime })
+            Welcome::Accepted { machine, version, node_lifetime, profiles } => {
+                Ok(Self { connection, next: 0, machine, node_version: version, node_lifetime, profiles })
             }
             Welcome::Refused { reason, mismatch } => {
                 let mismatch = mismatch.or_else(|| renewal::legacy_mismatch(&reason));
@@ -257,6 +260,17 @@ impl Client {
 
     /// Sends `call` and waits for its answer.
     pub async fn call(&mut self, call: Call) -> Result<Reply, CallError> {
+        if !self.profiles
+            && matches!(
+                call,
+                Call::ProfileRead { .. } | Call::ProfileWrite { .. } | Call::Mcp { .. } | Call::McpRelay { .. }
+            )
+        {
+            return Err(CallError::Failed(Failure::not_run(format!(
+                "upgrade {} to use user-level configuration",
+                self.machine
+            ))));
+        }
         self.next += 1;
         let id = self.next;
         self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
@@ -274,7 +288,9 @@ impl Client {
             NodeFrame::Reply { id: answered, .. } => {
                 Err(broken(format!("the node answered call {answered}, not {id}")))
             }
-            NodeFrame::Watched { .. }
+            NodeFrame::McpOpened { .. }
+            | NodeFrame::McpLine { .. }
+            | NodeFrame::Watched { .. }
             | NodeFrame::On { .. }
             | NodeFrame::ToolsChanged { .. }
             | NodeFrame::Features { .. }

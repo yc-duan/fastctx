@@ -9,6 +9,7 @@ mod features;
 pub(crate) mod file_read;
 mod file_search;
 mod lines;
+mod mcp;
 mod store;
 mod thumbnail;
 mod updates;

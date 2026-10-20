@@ -69,6 +69,8 @@ pub enum SessionHint {
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Welcome {
     Accepted {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        profiles: bool,
         machine: MachineName,
         version: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -84,7 +86,10 @@ pub enum Welcome {
 /// A frame from a client after the welcome.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
+// Calls retain their existing allocation-free representation on ordinary connections.
+#[allow(clippy::large_enum_variant)]
 pub enum ClientFrame {
+    McpLine { line: usize },
     Call { id: u64, call: crate::Call },
 }
 
@@ -92,25 +97,55 @@ pub enum ClientFrame {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum NodeFrame {
+    McpOpened {
+        id: u64,
+    },
+    McpLine {
+        id: u64,
+        line: usize,
+    },
     /// The one answer to a call; nothing more comes for its id.
-    Reply { id: u64, reply: Result<crate::Reply, Failure> },
+    Reply {
+        id: u64,
+        reply: Result<crate::Reply, Failure>,
+    },
     /// Part of what a `Watch` call hands over, which goes on until the
     /// client closes the connection or a `Reply` ends it.
-    Watched { id: u64, watched: crate::session::Watched },
+    Watched {
+        id: u64,
+        watched: crate::session::Watched,
+    },
     /// A byte-read header; see `FileReadPart` for the following binary frame.
-    FileRead { id: u64, part: crate::file_read::FileReadPart },
+    FileRead {
+        id: u64,
+        part: crate::file_read::FileReadPart,
+    },
     /// A bounded UTF-8 piece of a logical row, followed by ReadComplete.
-    LinesRead { id: u64, part: crate::lines::Part },
+    LinesRead {
+        id: u64,
+        part: crate::lines::Part,
+    },
     /// Part of what an `On` call hands over, until its `Reply`.
-    On { id: u64, piece: crate::on::OnPiece },
+    On {
+        id: u64,
+        piece: crate::on::OnPiece,
+    },
     /// The tools a `WatchTools` session is offered may have changed.
-    ToolsChanged { id: u64 },
+    ToolsChanged {
+        id: u64,
+    },
     /// The interface's optional parts as a `WatchFeatures` call sees them:
     /// first as they are, then after each change.
-    Features { id: u64, features: crate::features::Features },
+    Features {
+        id: u64,
+        features: crate::features::Features,
+    },
     /// The World as a `WatchWorld` call sees it: first as it is, then after
     /// each change.
-    World { id: u64, world: Box<crate::world::WorldNow> },
+    World {
+        id: u64,
+        world: Box<crate::world::WorldNow>,
+    },
 }
 
 /// Why a call did not do what it asked, in words for whoever reads the

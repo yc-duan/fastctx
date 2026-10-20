@@ -1,4 +1,148 @@
 {
+  "profile": {
+    "calls": [
+      {
+        "call": "profile_read"
+      },
+      {
+        "call": "profile_write",
+        "hub": "home",
+        "account": "ada",
+        "profile": {
+          "version": 4,
+          "prompt": "Use concise answers.",
+          "claude": {
+            "language": "English"
+          },
+          "codex": {
+            "model_verbosity": "low"
+          },
+          "servers": {
+            "docs": {
+              "kind": "remote",
+              "url": "https://mcp.example.org/tools",
+              "headers": {
+                "Authorization": "Bearer fixture"
+              }
+            },
+            "editor": {
+              "kind": "command",
+              "machine": "laptop"
+            }
+          }
+        }
+      },
+      {
+        "call": "mcp",
+        "mcp": {
+          "do": "keep",
+          "name": "editor",
+          "server": {
+            "kind": "command",
+            "command": "python",
+            "args": [
+              "-m",
+              "example_mcp"
+            ],
+            "env": {
+              "PYTHONUTF8": "1"
+            }
+          },
+          "machine": "laptop"
+        }
+      }
+    ],
+    "replies": [
+      {
+        "reply": "profile",
+        "hub": "home",
+        "account": "ada",
+        "profile": {
+          "version": 4,
+          "prompt": "Use concise answers.",
+          "claude": {
+            "language": "English"
+          },
+          "codex": {
+            "model_verbosity": "low"
+          },
+          "servers": {
+            "docs": {
+              "kind": "remote",
+              "url": "https://mcp.example.org/tools",
+              "headers": {
+                "Authorization": "Bearer fixture"
+              }
+            },
+            "editor": {
+              "kind": "command",
+              "machine": "laptop"
+            }
+          }
+        },
+        "kept": true
+      },
+      {
+        "reply": "profile_written",
+        "version": 5
+      },
+      {
+        "reply": "mcp",
+        "result": {
+          "reply": "listed",
+          "servers": [
+            {
+              "name": "docs",
+              "server": {
+                "kind": "remote",
+                "url": "https://mcp.example.org/tools",
+                "headers": {
+                  "Authorization": "Bearer fixture"
+                }
+              }
+            },
+            {
+              "name": "editor",
+              "server": {
+                "kind": "command",
+                "machine": "laptop",
+                "state": {
+                  "state": "kept"
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "reply": "mcp",
+        "result": {
+          "reply": "tested",
+          "tools": [
+            "scene"
+          ]
+        }
+      },
+      {
+        "reply": "mcp",
+        "result": {
+          "reply": "found",
+          "machine": "laptop",
+          "servers": [
+            {
+              "source": {
+                "app": "cursor"
+              },
+              "name": "editor",
+              "server": {
+                "kind": "command"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
   "machine_log": [
     {
       "records": [
@@ -2305,7 +2449,10 @@
             }
           ]
         },
-        "home": "C:/Users/ada/.claude-work"
+        "home": "C:/Users/ada/.claude-work",
+        "mcp_off": [
+          "editor"
+        ]
       },
       {
         "files_on": "laptop"
@@ -11819,6 +11966,7 @@
           "case_sensitive": false,
           "version": "fixture-version",
           "stats": true,
+          "mcp": true,
           "shell": "",
           "node_lifetime": {
             "process": {
@@ -11875,6 +12023,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -11929,6 +12078,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -11959,6 +12109,7 @@
           "case_sensitive": false,
           "version": "fixture-version",
           "stats": true,
+          "mcp": true,
           "shell": "",
           "node_lifetime": {
             "process": {
@@ -12017,6 +12168,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -12071,6 +12223,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -12101,6 +12254,7 @@
           "case_sensitive": false,
           "version": "fixture-version",
           "stats": true,
+          "mcp": true,
           "shell": "",
           "node_lifetime": {
             "process": {
@@ -12159,6 +12313,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -12213,6 +12368,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -12243,6 +12399,7 @@
           "case_sensitive": false,
           "version": "fixture-version",
           "stats": true,
+          "mcp": true,
           "shell": "",
           "node_lifetime": {
             "process": {
@@ -12300,6 +12457,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -12354,6 +12512,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -12384,6 +12543,7 @@
           "case_sensitive": false,
           "version": "fixture-version",
           "stats": true,
+          "mcp": true,
           "shell": "",
           "node_lifetime": {
             "process": {
@@ -12442,6 +12602,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -12496,6 +12657,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -12526,6 +12688,7 @@
           "case_sensitive": false,
           "version": "fixture-version",
           "stats": true,
+          "mcp": true,
           "shell": "",
           "node_lifetime": {
             "process": {
@@ -12587,6 +12750,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -12641,6 +12805,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -12671,6 +12836,7 @@
           "case_sensitive": false,
           "version": "fixture-version",
           "stats": true,
+          "mcp": true,
           "shell": "",
           "node_lifetime": {
             "process": {
@@ -12733,6 +12899,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -12787,6 +12954,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -12817,6 +12985,7 @@
           "case_sensitive": false,
           "version": "fixture-version",
           "stats": true,
+          "mcp": true,
           "shell": "",
           "node_lifetime": {
             "process": {
@@ -12879,6 +13048,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -12933,6 +13103,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -12963,6 +13134,7 @@
           "case_sensitive": false,
           "version": "fixture-version",
           "stats": true,
+          "mcp": true,
           "shell": "",
           "node_lifetime": {
             "process": {
@@ -13024,6 +13196,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -13078,6 +13251,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -13108,6 +13282,7 @@
           "case_sensitive": false,
           "version": "fixture-version",
           "stats": true,
+          "mcp": true,
           "shell": "",
           "node_lifetime": {
             "process": {
@@ -13171,6 +13346,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -13225,6 +13401,7 @@
                     "path_separator": "/",
                     "case_sensitive": true,
                     "version": "fixture-version",
+                    "mcp": true,
                     "shell": ""
                   }
                 },
@@ -13254,6 +13431,7 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "mcp": true,
           "shell": ""
         },
         "hubs": []

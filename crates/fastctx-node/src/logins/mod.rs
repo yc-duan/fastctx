@@ -416,3 +416,10 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
     }
     here(node).await
 }
+
+/// Claude configuration directories already known on this machine.
+pub(crate) fn claude_directories(node: &Node) -> Result<Vec<PathBuf>, Failure> {
+    let context = Context::of(node)?;
+    let kept = kept::read(node).map_err(|e| Failure::new(e.to_string()))?;
+    Ok(dirs(node, &context, &kept, "claude")?.into_iter().map(|(dir, _)| dir).collect())
+}

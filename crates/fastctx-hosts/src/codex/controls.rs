@@ -134,7 +134,8 @@ impl CodexHost {
                 service_tier: entry.selection.service_tier.clone().or_else(|| entry.service_tier.clone()),
             }
         };
-        let mut config = spec.config.clone();
+        let effective = super::user_config::effective(&server, &spec).await?;
+        let mut config = effective.config;
         if let Some(effort) = &selection.effort {
             config["model_reasoning_effort"] = json!(effort);
         }
@@ -144,7 +145,7 @@ impl CodexHost {
                 json!({
                     "threadId": source, "lastTurnId": through, "cwd": spec.cwd,
                     "model": selection.model, "approvalPolicy":"never", "sandbox":"danger-full-access",
-                    "developerInstructions":spec.developer_instructions,"config":config,
+                    "developerInstructions":effective.developer_instructions,"config":config,
                     "excludeTurns":true,
                     "serviceTier":selection.service_tier,
                 }),

@@ -52,6 +52,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         return Ok(());
     }
     let welcome = Welcome::Accepted {
+        profiles: true,
         machine: node.machine(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         node_lifetime: Some(Box::new(node.lifetime.clone())),
@@ -65,7 +66,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
     let caller = calling(&hello.peer);
     while let Some(frame) = reader.recv().await? {
         let _doing = fastctx_platform::doing::doing(format!("{} from {caller}", crate::labels::call_in(&frame)));
-        let ClientFrame::Call { id, call } = match parse(&frame) {
+        let ClientFrame::Call { id, call } = (match parse(&frame) {
             Ok(call) => call,
             Err(error) => {
                 let envelope: serde_json::Value = parse(&frame)?;
@@ -77,6 +78,8 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 writer.drain().await?;
                 continue;
             }
+        }) else {
+            return Err(std::io::Error::other("an MCP frame requires its own relay connection"));
         };
         if legacy && !crate::renewal_legacy::call(hello.protocol, &hello.peer, &call) {
             writer
@@ -93,6 +96,9 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
             writer.drain().await?;
             continue;
+        }
+        if let Call::McpRelay { name } = call {
+            return crate::mcp::local::serve(node, &hello.peer, name, id, reader, writer).await;
         }
         if let Call::Watch { resident, machine, composer, held, now } = call {
             // Watching a conversation anywhere is the user's, with this
@@ -994,7 +1000,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             crate::managed::refuse(node)?;
 
-            let options = fastctx_types::agents::SessionOptions { model, reasoning_effort };
+            let options = fastctx_types::agents::SessionOptions { model, reasoning_effort, ..Default::default() };
             crate::talk::open(node, agent, town, target, text, options, attachments, choices)
                 .await
                 .map(|(resident, landed)| Reply::Opened { resident, landed })
@@ -1234,9 +1240,30 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 }
             }
         }
-        Call::ProfileRead { .. } | Call::ProfileWrite { .. } | Call::Mcp { .. } => {
-            users_voice(node, peer)?;
-            Err(Failure::new("this release keeps no user-level configuration yet"))
+        Call::McpRelay { .. } => Err(Failure::not_run("MCP relay requires a dedicated connection")),
+        Call::ProfileRead { hub, account } => {
+            let (link, account) =
+                crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
+            link.profile_read(&account).map(|view| Reply::Profile(Box::new(view))).map_err(Failure::new)
+        }
+        Call::ProfileWrite { hub, account, profile } => {
+            let (link, account) =
+                crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
+            let current = link.profile_read(&account).map_err(Failure::new)?;
+            if profile.servers != current.profile.servers {
+                return Err(Failure::not_run("change MCP servers through fastctx mcp"));
+            }
+            link.profile_write(&account, profile)
+                .await
+                .map(|version| Reply::ProfileWritten { version })
+                .map_err(Failure::new)
+        }
+        Call::Mcp { hub, account, mcp } => {
+            let caller = caller::of(node, peer)?;
+            let (link, account) = crate::profile::scope(node, &caller, hub.as_ref(), account.as_ref())?;
+            crate::mcp::call(node, link, account, mcp, matches!(caller, Caller::Resident(_)))
+                .await
+                .map(|result| Reply::Mcp { result })
         }
         Call::Features => crate::features::read(&node.world).map(Reply::Features),
         Call::SetFeature { feature, on } => {

@@ -28,6 +28,8 @@ mod logins;
 mod machine_log;
 #[path = "gui_wire_fixtures/pages.rs"]
 mod pages;
+#[path = "gui_wire_fixtures/profile.rs"]
+mod profile;
 #[path = "gui_wire_fixtures/renewal.rs"]
 mod renewal;
 #[path = "gui_wire_fixtures/session.rs"]
@@ -49,6 +51,7 @@ mod run_facts;
 
 #[derive(Serialize)]
 struct Fixtures {
+    profile: profile::Fixtures,
     machine_log: Vec<fastctx_types::machine_log::Page>,
     run_facts: run_facts::Fixtures,
     accounts: accounts::Fixtures,
@@ -73,6 +76,7 @@ struct Fixtures {
 
 fn main() {
     let fixtures = Fixtures {
+        profile: profile::fixtures(),
         machine_log: machine_log::fixtures(),
         run_facts: run_facts::fixtures(),
         accounts: accounts::fixtures(),

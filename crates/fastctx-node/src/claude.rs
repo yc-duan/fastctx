@@ -1269,6 +1269,9 @@ async fn wake(
     id: fastctx_types::NoticeId,
 ) -> Result<Landed, Failure> {
     let Command { program, cwd, env } = command(node, home)?;
+    if let Some(resident) = node.residents.resident_of_thread(session) {
+        crate::profile::session::claude(node, &resident, false)?;
+    }
     let args = background::wake_args(session, &words);
     let world = node.world.path().to_path_buf();
     // Not tried twice: a resume refused for trust may already have queued
@@ -1348,6 +1351,7 @@ pub async fn open_here(
     let Command { program, env, .. } = launching.clone();
     // A login assisting another account starts without the browser of this
     // machine (`background::Start::assisting`).
+    crate::profile::session::ready(node, &opened.acting).await?;
     let assisting = node.works_here(&opened.acting).is_err();
     let (words, heard) =
         crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &opened.acting, false).await?;
@@ -1356,7 +1360,7 @@ pub async fn open_here(
     crate::focus::open(node, &node.world.conversation(&id), &opened.acting, &opened.focus).await?;
     let born_at = Timestamp::now();
     let about = About {
-        mcp_off: Default::default(),
+        mcp_off: options.mcp_off.clone(),
         id: id.clone(),
         host: Host { agent, client: "claude-code".to_string(), version: String::new() },
         machine: node.machine(),
@@ -1397,6 +1401,7 @@ pub async fn open_here(
     let instructions = directory.claude_instructions();
     let written = std::fs::write(&settings, settings_json(&id)).and_then(|()| std::fs::write(&instructions, words));
     written.map_err(|error| Failure::new(format!("writing the session's settings: {error}")))?;
+    let mcp = crate::profile::session::claude(node, &id, true)?;
     let cwd = crate::colleagues::standing(node, town.as_ref())?;
     let plugin = claude::plugin_dir(node.world.path());
     // Its files other than images go where the user chose, as later words'
@@ -1426,6 +1431,7 @@ pub async fn open_here(
         let start = background::Start {
             plugin: &plugin,
             settings: &settings,
+            mcp: &mcp,
             instructions: &instructions,
             first_words: &text,
             model: options.model.as_deref(),
@@ -1514,7 +1520,7 @@ pub(crate) fn untrust(directory: &Path, home: Option<&Path>) -> Result<(), Strin
 /// which its plugin reads back from them when it starts. The session runs
 /// without approvals (`background::settings_args`), so nothing else needs
 /// allowing.
-fn settings_json(id: &ResidentId) -> String {
+pub(crate) fn settings_json(id: &ResidentId) -> String {
     let mut settings = serde_json::json!({
         "env": {
             "MAX_MCP_OUTPUT_TOKENS": fastctx_hosts::claude::MAX_MCP_OUTPUT_TOKENS.to_string(),

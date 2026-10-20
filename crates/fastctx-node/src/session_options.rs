@@ -25,13 +25,16 @@ pub fn keep(node: &Node, id: &ResidentId, options: &SessionOptions) -> Result<()
 
 pub fn read(node: &Node, id: &ResidentId) -> Result<SessionOptions, Failure> {
     let path = path(node, id);
-    match std::fs::read(&path) {
-        Ok(bytes) => {
-            serde_json::from_slice(&bytes).map_err(|error| Failure::new(format!("reading {}: {error}", path.display())))
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(SessionOptions::default()),
-        Err(error) => Err(Failure::new(format!("reading {}: {error}", path.display()))),
+    let mut options = match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice::<SessionOptions>(&bytes)
+            .map_err(|error| Failure::new(format!("reading {}: {error}", path.display())))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => SessionOptions::default(),
+        Err(error) => return Err(Failure::new(format!("reading {}: {error}", path.display()))),
+    };
+    if let Some((about, _)) = node.residents.about(id) {
+        options.mcp_off = about.mcp_off;
     }
+    Ok(options)
 }
 
 pub fn configure(config: &mut serde_json::Value, options: SessionOptions) {

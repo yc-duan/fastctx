@@ -15,13 +15,42 @@ use crate::residents::Heard;
 
 /// The lines for the head of the resident `id`'s next answer.
 pub fn notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Option<Heard>)> {
+    let (mut notes, mut heard) = project_notes(node, id)?;
+    let Some((about, town)) = node.residents.about(id) else {
+        return Ok((notes, heard));
+    };
+    let prompt = crate::profile::session::prompt(node, &about.acting);
+    let hash = crate::profile::session::hash(&prompt);
+    let previous = node.residents.heard(id);
+    if previous.as_ref().and_then(|h| h.user_prompt.as_ref()) != Some(&hash) {
+        if !prompt.is_empty() || previous.as_ref().is_some_and(|h| h.user_prompt.is_some()) {
+            notes.insert(0, format!("{}\n{}", crate::profile::session::CHANGED, prompt));
+        }
+        if heard.is_none() {
+            heard = Some(Heard {
+                town: town.clone(),
+                ledger: match town {
+                    Some(town) => crate::ledger::seq(&node.world, &town)?,
+                    None => 0,
+                },
+                user_prompt: None,
+            });
+        }
+    }
+    if let Some(heard) = &mut heard {
+        heard.user_prompt = Some(hash);
+    }
+    Ok((notes, heard))
+}
+
+fn project_notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Option<Heard>)> {
     let here = node.machine();
     let Some(town) = node.residents.town_of(id) else { return Ok((Vec::new(), None)) };
     let ledger = match &town {
         Some(town) => crate::ledger::seq(&node.world, town)?,
         None => 0,
     };
-    let now = Heard { town: town.clone(), ledger };
+    let now = Heard { user_prompt: None, town: town.clone(), ledger };
     // A session that may not work on this computer is not told it is here
     // (`world-network.md`, 一个居民替谁干活).
     let works_here = node.residents.about(id).is_none_or(|(about, _)| node.works_here(&about.acting).is_ok());
