@@ -99,19 +99,20 @@ certificate. Append no archive name to the directory.
 The installer appends `fastctx-<architecture>-unknown-linux-gnu.tar.gz`.
 The invitation itself remains an opaque word.
 
-The generated line uses a POSIX shell, uname, mktemp, curl, tar with gzip
-support, and sha256sum. Debian slim does not include curl; it must be present
-before the line runs.
-It downloads the archive, checks its complete digest before unpacking, and
-runs `./fastctx server install <code>`. Hub downloads use curl's `-k` together
-with `--pinnedpubkey sha256//…`, which still checks the peer's key on the
-download connection. Temporary extraction is private and removed on exit.
-There is no Python dependency or downloaded executable bootstrap script.
-The OpenSSL builds shipped for Ubuntu 24.04 (curl 8.5.0), Debian 12 (7.88.1),
-and Debian 13 (8.14.1) were checked with self-signed TLS fixtures: a correct
-pin downloads, and a different key returns curl exit 90 before an HTTP GET.
-The [curl option contract](https://curl.se/docs/manpage.html#--pinnedpubkey)
-defines this check independently of `-k`.
+The generated line uses a POSIX shell, uname, date, curl, tar with gzip
+support, and sha256sum. Missing curl and permanent download errors stop
+with an actionable diagnostic. Interrupted transfers resume with exponential
+backoff, bounded by twenty minutes and a finite attempt count; persistent
+HTTP errors stop earlier. Partial downloads remain in
+`$HOME/.cache/fastctx-install` (under `/var/tmp` when HOME is absent) for a
+later attempt. A successful installation removes that version's directory.
+
+The line checks the complete archive SHA-256 before unpacking or executing
+anything. Hub downloads use `-k`, as the Mac and Windows lines do: the digest
+in the trusted invitation line authenticates the bytes, without requiring
+curl's newer public-key pin support. The enrollment code is used only by the
+verified program over its own authenticated connection. There is no Python
+dependency or downloaded executable bootstrap script.
 
 The Rust subcommand copies its own image atomically into `~/.fastctx/bin`,
 retains the three license files, joins, and enables the system service. It
@@ -121,8 +122,10 @@ different root. A repeat leaves the installed image and an already running
 service alone. Interrupted downloads restart; durable placement, enrollment
 and service steps repeat without an enrollment receipt. Joining relies on
 net-v3's confirmation of the same World/code/identity after a lost reply.
-Service registration requires systemd 249+. Errors return nonzero with their
-actual reason. Agent hosts, login state and Claude/Codex setup are untouched.
+Service registration adapts units to the running manager, including systemd
+219. Older managers use a timer to recover an enabled service after a stop.
+Errors retain their actual reason; failed automatic restart authorization
+is reported during installation and in the renewal status. Agent hosts, login state and Claude/Codex setup are untouched.
 
 # Hosting the release in your World
 
@@ -227,3 +230,30 @@ python scripts/concurrency.py PROGRAM --codex CODEX --minutes 4 --restarts
 The node finds Codex on the user's PATH as the system keeps it, not on the
 drill's: CI installs `codex` there first. `model_mock.py` runs alone too, for
 trying a session by hand against it.
+
+
+# Old Linux lifecycle gates
+
+The `old-linux` drill uses the kernel artifact already built by CI. It boots
+an official CentOS 7.9 image with its own 3.10 kernel, tests the actual hub
+installation line, file transfer and MCP `run`/`on`, reboots, renews a local
+beta.6 installation to the candidate, and uninstalls both fixtures. Images
+and the guest Python runtime have pinned digests and are cached; each run
+uses a disposable qcow2 overlay. KVM is probed before use, with TCG available
+where nested virtualization is unavailable. Guest serial output and phase
+logs remain when a check fails.
+
+Run `python scripts/old-linux.py PROGRAM --cache CACHE --work NEW_DIRECTORY`
+on a Linux test host with QEMU, qemu-img, genisoimage and OpenSSH. An optional
+`--previous` supplies the baseline locally instead of downloading it from
+`GITHUB_REPOSITORY`; supply one of these outside GitHub Actions. The script
+installs services only in its guest.
+
+The separate `oldkernel-smoke.py` requires a disposable host with root access:
+`sudo python scripts/oldkernel-smoke.py WRAPPER PROGRAM --root NEW_DIRECTORY`.
+Its temporary systemd generator wraps only services under that test root,
+so the hub and service nodes inherit the same seccomp filter as the caller.
+The wrapper verifies its rejected syscalls before exec; smoke also checks
+service processes and both local and remote shell children. The generator
+is removed even when smoke fails. Do not run service smoke on a personal
+installation or a production host.
