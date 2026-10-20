@@ -41,6 +41,7 @@ pub mod password;
 pub mod process;
 pub mod profile;
 pub mod mcp;
+pub mod mcp_message;
 pub mod project;
 pub mod remote;
 pub mod renewal;

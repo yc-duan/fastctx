@@ -95,16 +95,12 @@ impl Line {
         }
     }
 
-    /// Sends `message`; returns once it is written, or once the connection
-    /// is over, whichever comes first.
+    pub(super) fn sender(&self) -> Sender {
+        Sender { outgoing: self.outgoing.clone(), over: self.over.clone(), stopped: self.stopped.clone() }
+    }
+
     pub(super) async fn send(&self, message: WsMessage) -> Result<(), String> {
-        let (sent, written) = oneshot::channel();
-        self.outgoing.send(Out::Message(message, sent)).map_err(|_| self.gone())?;
-        let mut over = self.over.clone();
-        tokio::select! {
-            written = written => written.map_err(|_| self.gone())?,
-            _ = over.wait_for(|over| *over) => Err(self.gone()),
-        }
+        self.sender().send(message).await
     }
 
     /// The next thing the other end sent; none once it closed the
@@ -127,9 +123,29 @@ impl Line {
             let _ = done.await;
         }
     }
+}
+
+pub(super) struct Sender {
+    outgoing: mpsc::UnboundedSender<Out>,
+    over: watch::Receiver<bool>,
+    stopped: Arc<Mutex<Option<String>>>,
+}
+
+impl Sender {
+    /// Sends `message`; returns once it is written, or once the connection
+    /// is over, whichever comes first.
+    pub(super) async fn send(&self, message: WsMessage) -> Result<(), String> {
+        let (sent, written) = oneshot::channel();
+        self.outgoing.send(Out::Message(message, sent)).map_err(|_| self.gone())?;
+        let mut over = self.over.clone();
+        tokio::select! {
+            written = written => written.map_err(|_| self.gone())?,
+            _ = over.wait_for(|over| *over) => Err(self.gone()),
+        }
+    }
 
     fn gone(&self) -> String {
-        self.stopped.lock().expect("never poisoned").clone().unwrap_or_else(|| "the data connection ended".to_string())
+        self.stopped.lock().expect("never poisoned").clone().unwrap_or_else(|| "the data connection ended".into())
     }
 }
 
