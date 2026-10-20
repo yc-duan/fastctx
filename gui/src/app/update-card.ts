@@ -1,30 +1,51 @@
 // The card a new version opens in, from the sidebar's button (`world-upgrade.md`,
 // 界面上的样子): its version and what it says of itself, how large it is, a
-// bar as it comes, and the one button that brings it, then installs it.
+// bar as it comes, and the one button that brings it, then installs it; why
+// it did not go through in the interface's words, the update's own a hover
+// away; and, where other machines this device's accounts may update can
+// take a newer version too, a word on how many, opening their update view.
 
 import { Sheet } from "./confirm";
 import { escape } from "../conversation/prose";
 import { effect } from "./signals";
 import type { Offered, Updates } from "./updates";
+import type { UpdateViewWords } from "./update-view-words";
 import type { UpdateWords } from "./update-words";
+
+export interface CardOthers {
+  view: UpdateViewWords;
+  /** How many other machines this device's accounts may update can take
+   *  a newer version, as the hub says. */
+  count(): Promise<number>;
+  /** Opens the machines on their update view. */
+  open(): void;
+}
 
 export class UpdateCard {
   private sheet: Sheet | null = null;
   private stop: (() => void) | null = null;
   private drawn = "";
+  /** The other machines that can update, as last counted. */
+  private others = 0;
 
   constructor(
     private readonly updates: Updates,
     private readonly words: UpdateWords,
     /** Whether this is a phone, whose system asks before it installs. */
     private readonly phone: boolean,
+    private readonly network: CardOthers,
   ) {}
 
   open(): void {
     if (!this.sheet) {
       const sheet = new Sheet("update-sheet");
       sheet.body.addEventListener("click", (event) => {
-        if ((event.target as HTMLElement).closest("[data-update-go]")) this.updates.go();
+        const target = event.target as HTMLElement;
+        if (target.closest("[data-update-go]")) this.updates.go();
+        if (target.closest("[data-update-others]")) {
+          sheet.close();
+          this.network.open();
+        }
       });
       sheet.dialog.addEventListener("close", () => {
         this.stop?.();
@@ -37,6 +58,16 @@ export class UpdateCard {
     this.drawn = "";
     this.stop = effect(() => this.draw(sheet, this.updates.offered.get()));
     sheet.show();
+    // Asked as it opens: the hub knows which of them run what.
+    void this.network.count().then(
+      (count) => {
+        if (count === this.others) return;
+        this.others = count;
+        this.drawn = "";
+        this.draw(sheet, this.updates.offered.peek());
+      },
+      () => {},
+    );
   }
 
   private draw(sheet: Sheet, offered: Offered | null): void {
@@ -74,9 +105,11 @@ export class UpdateCard {
       case "permission":
         foot = `<span class="update-said">${escape(words.permission)}</span>${go(words.go)}`;
         break;
-      case "failed":
-        foot = `<span class="update-said update-failed" title="${escape(stage.why)}">${escape(words.failed(stage.why))}</span>${go(words.retry)}`;
+      case "failed": {
+        const failures = this.network.view.failures;
+        foot = `<span class="update-said update-failed" title="${escape(stage.why)}">${escape(words.failed(failures[stage.reason?.kind ?? "other"]))}</span>${go(words.retry)}`;
         break;
+      }
     }
     const html = `${sheet.head(words.title, words.close)}
       <div class="update-card">
@@ -85,6 +118,7 @@ export class UpdateCard {
         ${facts ? `<p class="update-facts">${escape(facts)}</p>` : ""}
         ${offered.minimum ? `<p class="update-minimum">${escape(words.minimum(offered.minimum))}</p>` : ""}
         <div class="update-foot">${foot}</div>
+        ${this.others ? `<button class="text-button quiet-button update-others" type="button" data-update-others>${escape(words.others(this.others))}</button>` : ""}
       </div>`;
     if (html !== this.drawn) {
       this.drawn = html;

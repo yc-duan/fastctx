@@ -46,6 +46,7 @@ import { RenameField, renamerOf, type Renamer } from "./rename";
 import type { Page } from "./shell";
 import { effect, type Signal } from "./signals";
 import { newestKnown, type UpdateCall, type UpdateState } from "../world/updates";
+import type { UpdateViewWords } from "./update-view-words";
 import type { UpdateWords } from "./update-words";
 import type { VersionWindow } from "./version-window";
 import { jobsOf, residentsOf, type Store } from "./store";
@@ -86,6 +87,7 @@ export interface MachinePageOptions {
         versions: VersionWindow;
         versionsHere(look: boolean): void;
         words: UpdateWords;
+        view: UpdateViewWords;
       }
     | undefined;
   manage: ManageWords;
@@ -203,6 +205,7 @@ export class MachinePage implements Page {
     this.fastctx = updates
       ? new FastctxBlock({
           words: options.manage,
+          view: updates.view,
           versions: updates.versions,
           local: updates.state,
           remote: updates.remote,

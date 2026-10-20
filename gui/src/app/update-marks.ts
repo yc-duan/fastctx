@@ -37,11 +37,13 @@ export function lineOf(version: string | null | undefined): string | null {
   return version ? (/^(\d+\.\d+\.\d+)/.exec(version)?.[1] ?? null) : null;
 }
 
-export function markOf(machine: MachineUpdate, line: string | null, words: UpdateViewWords): Mark {
+/** How an update under way or stopped stands, as a node says it: the same
+ *  mark and sentence wherever a machine's update is shown, the machines'
+ *  update view, a machine's own page and this device's settings; none when
+ *  nothing is under way. */
+export function stageMark(stage: UpdateStage, line: string | null, words: UpdateViewWords): Mark | null {
   const short = (version: string) => `<span class="ml-num">${escape(shortVersion(version, line))}</span>`;
   const with_ = (kind: MarkKind, icon: Parameters<typeof glyph>[0], version: string, said: string): Mark => ({ kind, html: `${glyph(icon, 16)}${short(version)}`, said });
-  if (machine.kind === "phone") return { kind: "quiet", html: "", said: words.reasons.phone };
-  const stage = machine.stage;
   switch (stage.kind) {
     case "fetching": {
       const percent = stage.total ? Math.min(100, Math.floor((stage.received / stage.total) * 100)) : null;
@@ -67,6 +69,15 @@ export function markOf(machine: MachineUpdate, line: string | null, words: Updat
     case "failed":
       return with_("failed", "cross", stage.version, words.failed(stage.version, words.failures[stage.problem.reason.kind]));
   }
+  return null;
+}
+
+export function markOf(machine: MachineUpdate, line: string | null, words: UpdateViewWords): Mark {
+  const short = (version: string) => `<span class="ml-num">${escape(shortVersion(version, line))}</span>`;
+  const with_ = (kind: MarkKind, icon: Parameters<typeof glyph>[0], version: string, said: string): Mark => ({ kind, html: `${glyph(icon, 16)}${short(version)}`, said });
+  if (machine.kind === "phone") return { kind: "quiet", html: "", said: words.reasons.phone };
+  const staged = stageMark(machine.stage, line, words);
+  if (staged) return staged;
   if (machine.due) {
     const blocked = machine.due.problem;
     return blocked

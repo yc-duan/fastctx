@@ -169,6 +169,16 @@ const VIEW_KEY = "machines.view";
 
 type View = "map" | "list" | "updates";
 
+/** The machines open next on their update view: the view kept is the one
+ *  a page opens on. */
+export function showUpdatesNext(): void {
+  try {
+    localStorage.setItem(VIEW_KEY, "updates");
+  } catch {
+    // Not kept: the machines open on the view they last showed.
+  }
+}
+
 function keptView(): View {
   try {
     const kept = localStorage.getItem(VIEW_KEY);

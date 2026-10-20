@@ -54,7 +54,7 @@ import { ProjectActs, enProjectActs, zhProjectActs } from "./app/project-acts";
 import { enMe, zhMe } from "./app/me-words";
 import { enPeople, zhPeople } from "./app/people-words";
 import { LoginPage } from "./app/login";
-import { MachinesPage } from "./app/machines";
+import { MachinesPage, showUpdatesNext } from "./app/machines";
 import { AgentLoginsPage } from "./app/agent-logins";
 import { LoginUsagePage } from "./app/usage/login-page";
 import { enUsage, zhUsage } from "./app/usage/words";
@@ -957,12 +957,26 @@ const appUpdates = (() => {
     );
   return updates;
 })();
-/** Has a machine of 1.0.1 beta 1 or 2 update itself, its line named first
- *  under an earlier hub (`app/update-older.ts`). */
 /** Has a machine of a release before 1.0.1 beta 3 update itself to the
  *  newest on its line: what such a machine takes. */
 const updateOlderMachine = (name: string) => updatesAsked.machine(name);
-const updateCard = new UpdateCard(appUpdates, updateWords, live ? !onComputer() : params.has("phone"));
+const updateCard = new UpdateCard(appUpdates, updateWords, live ? !onComputer() : params.has("phone"), {
+  view: english ? enUpdateView : zhUpdateView,
+  // The other machines this device's first account that the hub answers
+  // for may update, that can take a newer version.
+  count: async () => {
+    const world = store.world.peek();
+    for (const login of loginsOf(world?.accounts)) {
+      const reply = await askUpdatesView(login.hub, login.account, { do: "view" }).catch(() => null);
+      if (reply?.kind === "view") return reply.view.machines.filter((one) => one.machine !== world?.here && one.offer && one.actions.update.allowed).length;
+    }
+    return 0;
+  },
+  open: () => {
+    showUpdatesNext();
+    location.hash = link({ kind: "machines" });
+  },
+});
 const versionWindow = new VersionWindow(updateWords.versions);
 // A picture attached and not yet sent opens in the same viewer as the
 // conversation's pictures.
@@ -2054,6 +2068,7 @@ function show(next: Place): void {
           versions: versionWindow,
           versionsHere,
           words: updateWords,
+          view: english ? enUpdateView : zhUpdateView,
         },
         manage: english ? enManage : zhManage,
         ...(live ? { allowPrivacy: () => void allowPrivacy().catch((error: unknown) => console.error("opening the Mac's privacy settings", error)) } : {}),
@@ -2349,6 +2364,7 @@ function show(next: Place): void {
         updates: {
           updates: appUpdates,
           words: updateWords,
+          view: english ? enUpdateView : zhUpdateView,
           versions: versionsHere,
           relays: live ? onComputer() : !params.has("phone"),
         },

@@ -634,6 +634,11 @@
   color: var(--accent);
 }
 
+/* An update that did not go through. */
+.settings-said .settings-wrong {
+  color: var(--wrong);
+}
+
 /* The notice of another fastctx first on a PATH: a line each, its path
    under it in the code face. */
 .path-rows {

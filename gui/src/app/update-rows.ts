@@ -7,7 +7,9 @@
 
 import { escape } from "../conversation/prose";
 import { effect } from "./signals";
+import { lineOf, stageMark } from "./update-marks";
 import type { Updates } from "./updates";
+import type { UpdateViewWords } from "./update-view-words";
 import type { UpdateWords } from "./update-words";
 import type { UpdateSettings, UpdateState } from "../world/updates";
 
@@ -19,6 +21,8 @@ export class UpdateRows {
     private readonly element: HTMLElement,
     private readonly updates: Updates,
     private readonly words: UpdateWords,
+    /** How an update under way is said, as the machines' update view says it. */
+    private readonly view: UpdateViewWords,
     /** The window of versions, looking on GitHub again when asked. */
     private readonly versions: (look: boolean) => void,
     /** Whether this device passes packages on: a computer does, a phone not. */
@@ -56,20 +60,39 @@ export class UpdateRows {
     });
   }
 
-  private draw(state: UpdateState | null): void {
+  /** The one line of how this device's updates stand, and what is behind
+   *  it a hover away. */
+  private line(state: UpdateState | null): string {
     const { words } = this;
     const offered = this.updates.offered.peek();
-    let line: string;
-    if (this.said) line = escape(this.said);
-    else if (offered)
-      line = `<button class="text-button quiet-button" type="button" data-update-open>${escape(words.available(offered.manifest.version))}</button>`;
-    else if (!state) line = "";
-    else {
-      const parts = [words.latest];
-      if (state.looked.github === false) parts.push(words.unreachable);
-      if (state.looked.github === false && state.network?.[state.channel === "beta" ? "beta" : "stable"]) parts.push(words.heardFromNetwork);
-      line = escape(parts.join(" "));
+    if (this.said) return escape(this.said);
+    if (!state) return "";
+    const looked = state.looked;
+    const said = (text: string, title = "", tone = "") => `<span${tone ? ` class="${tone}"` : ""}${title ? ` title="${escape(title)}"` : ""}>${escape(text)}</span>`;
+    if (looked.checking) return said(words.looking);
+    const stage = state.stage ? stageMark(state.stage, lineOf(this.updates.version), this.view) : null;
+    if (stage) return said(stage.said, "", stage.kind === "failed" ? "settings-wrong" : "");
+    if (offered) return `<button class="text-button quiet-button" type="button" data-update-open>${escape(words.available(offered.manifest.version))}</button>`;
+    const next = looked.next ? words.nextCheck(new Date(looked.next)) : "";
+    const failure = looked.failure;
+    if (failure) {
+      const heard = state.network?.[state.channel === "beta" ? "beta" : "stable"] ? words.heardFromNetwork : "";
+      const text =
+        failure.kind === "rate_limited"
+          ? words.rateLimited(failure.until ? new Date(failure.until) : null)
+          : failure.kind === "http"
+            ? words.githubError(failure.status)
+            : failure.kind === "unreachable"
+              ? words.reach[failure.reason]
+              : words.checkFailed;
+      return said(text, [heard, looked.why ?? "", next].filter(Boolean).join("\n"));
     }
+    return said(words.latest, [looked.at ? words.versions.looked(looked.at) : "", next].filter(Boolean).join("\n"));
+  }
+
+  private draw(state: UpdateState | null): void {
+    const { words } = this;
+    const line = this.line(state);
     const choices = (kind: string, options: [string, string][], chosen: string) =>
       `<div class="choice-options">${options
         .map(

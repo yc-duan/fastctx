@@ -733,6 +733,13 @@
   overflow: hidden;
 }
 
+/* On a phone it rises edge to edge, as every sheet there. */
+@media (max-width: 760px) {
+  .agent-change-sheet .sheet-body {
+    width: 100%;
+  }
+}
+
 .agent-change {
   flex: 1 1 auto;
   min-height: 0;

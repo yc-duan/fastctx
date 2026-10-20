@@ -12,6 +12,8 @@ import { escape } from "../conversation/prose";
 import { copyButton, copyFrom } from "./copy-button";
 import type { Login } from "../world/accounts";
 import { compareVersions, newestKnown, type UpdateCall, type UpdateSettings, type UpdateState } from "../world/updates";
+import { lineOf, stageMark } from "./update-marks";
+import type { UpdateViewWords } from "./update-view-words";
 import type { ManageWords } from "./machine-manage-words";
 import type { Machine } from "./reach";
 import type { Signal } from "./signals";
@@ -24,6 +26,9 @@ const MOVING_MS = 1_000;
 
 export interface FastctxOptions {
   words: ManageWords;
+  /** How an update under way or stopped is said, as the machines' update
+   *  view says it. */
+  view: UpdateViewWords;
   versions: VersionWindow;
   /** How updates stand on this device: what it knows of releases, and of
    *  the network's machines. */
@@ -153,7 +158,10 @@ export class FastctxBlock {
     const { machine, manages } = subject;
     const button = (act: string, label: string, title = "") =>
       `<button class="text-button quiet-button" type="button" data-act="${act}"${title ? ` title="${escape(title)}"` : ""}>${escape(label)}</button>`;
+    // A node that says how its update stands is said in the update view's words.
+    const staged = state?.stage ? stageMark(state.stage, lineOf(running), this.options.view) : null;
     if (machine.here) {
+      if (staged) return `<span${staged.kind === "failed" ? ` class="fx-wrong"` : ""}>${escape(staged.said)}</span>${button("fx-versions-here", words.update)}`;
       const offer = state?.offer && running && compareVersions(state.offer.version, running) > 0 ? state.offer.version : null;
       return `<span>${escape(offer ? words.canTake(offer) : words.upToDate)}</span>${button("fx-versions-here", words.update)}`;
     }
@@ -177,6 +185,16 @@ export class FastctxBlock {
     }
     if (!manages) return newest ? `<span>${escape(words.canTake(newest))}</span>` : `<span>${escape(words.upToDate)}</span>`;
     if (!state) return `<span class="fx-quiet">${escape(this.problem ?? words.asking)}</span>`;
+    if (staged && state.stage) {
+      const stage = state.stage;
+      const said = `<span${staged.kind === "failed" ? ` class="fx-wrong"` : ""}>${escape(staged.said)}</span>`;
+      if (stage.kind === "fetching") {
+        const percent = stage.total ? Math.min(100, Math.floor((stage.received / stage.total) * 100)) : null;
+        return `${said}<span class="fx-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"${percent === null ? "" : ` aria-valuenow="${percent}"`}><span style="width:${percent ?? 6}%"></span></span>`;
+      }
+      if (stage.kind === "administrator") return `${said}<span class="fx-admin"><span>${escape(words.adminThere)}</span><code class="mono">${escape(ADMIN_LINE)}</code>${copyButton(ADMIN_LINE, words.copy, `data-act="fx-copy"`)}</span>`;
+      return staged.kind === "failed" ? `${said}${button("fx-versions", words.update)}` : said;
+    }
     const megabytes = (bytes: number) => `${(bytes / 1_000_000).toFixed(1)} MB`;
     if (state.fetching) {
       const { received, total, via, version } = state.fetching;

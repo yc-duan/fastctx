@@ -6,7 +6,7 @@
 // nothing here is under way.
 
 import { signal, type Signal } from "./signals";
-import { compareVersions, majorOf, type Manifest, type UpdateSeam, type UpdateSettings, type UpdateState } from "../world/updates";
+import { compareVersions, majorOf, type FailureReason, type Manifest, type UpdateSeam, type UpdateSettings, type UpdateState } from "../world/updates";
 
 /** What the sidebar's button and the card show. */
 export interface Offered {
@@ -22,7 +22,7 @@ export interface Offered {
     | { kind: "installing" }
     /** A phone sent the user to allow installing apps. */
     | { kind: "permission" }
-    | { kind: "failed"; why: string };
+    | { kind: "failed"; why: string; reason?: FailureReason };
   /** The network asks for at least this version, which this one is not. */
   minimum: string | null;
 }
@@ -177,7 +177,7 @@ export class Updates {
     }
     const failed = state.failed;
     if (failed && failed.version === manifest.version && failed.target === target) {
-      return { ...base, stage: { kind: "failed", why: failed.why } };
+      return { ...base, stage: { kind: "failed", why: failed.why, ...(failed.reason ? { reason: failed.reason } : {}) } };
     }
     return { ...base, stage: { kind: "offered" } };
   }

@@ -2,6 +2,8 @@
 // rows, the window of versions, another machine's update, and the network's
 // policy.
 
+import type { ReachFailure } from "../world/updates";
+
 /** The window of versions (`version-window.ts`). */
 export interface VersionWords {
   title: string;
@@ -49,6 +51,8 @@ const ago = (iso: string, zh: boolean): string => {
 };
 
 const megabytes = (bytes: number): string => `${(bytes / 1_000_000).toFixed(1)} MB`;
+
+const clock = (at: Date): string => `${at.getHours()}:${String(at.getMinutes()).padStart(2, "0")}`;
 
 export const zhVersions: VersionWords = {
   title: "版本",
@@ -150,6 +154,16 @@ export interface UpdateWords {
   available(version: string): string;
   unreachable: string;
   heardFromNetwork: string;
+  /** How the last look on GitHub went, where it did not: limited until
+   *  when, an error, or why it could not be reached; when it looks again. */
+  rateLimited(until: Date | null): string;
+  githubError(status: number): string;
+  checkFailed: string;
+  reach: Record<ReachFailure, string>;
+  nextCheck(at: Date): string;
+  /** The card's word on the network's machines this device's accounts may
+   *  update that can take a newer version, opening the machines' updates. */
+  others(count: number): string;
   auto: string;
   /** Beside automatic updates the owner never chose. */
   autoByDefault: string;
@@ -199,6 +213,12 @@ export const zhUpdate: UpdateWords = {
   available: (version) => `有新版本 ${version}`,
   unreachable: "连不上 GitHub",
   heardFromNetwork: "经网络得知",
+  rateLimited: (until) => (until ? `GitHub 限流，${clock(until)} 以后再查` : "GitHub 限流，稍后再查"),
+  githubError: (status) => `GitHub 出了错（${status}）`,
+  checkFailed: "没查成",
+  reach: { dns: "找不到 GitHub 的地址", connect: "连不上 GitHub", tls: "和 GitHub 的安全连接没建起来", timeout: "连 GitHub 超时", interrupted: "和 GitHub 的连接断了", proxy: "代理没连通", other: "连不上 GitHub" },
+  nextCheck: (at) => `${clock(at)} 再查`,
+  others: (count) => `网络里还有 ${count} 台能更新`,
   auto: "自动更新",
   autoByDefault: "默认",
   on: "开",
@@ -245,6 +265,12 @@ export const enUpdate: UpdateWords = {
   available: (version) => `Version ${version} available`,
   unreachable: "Can't reach GitHub",
   heardFromNetwork: "Heard from the network",
+  rateLimited: (until) => (until ? `GitHub is rate-limiting; checks again after ${clock(until)}` : "GitHub is rate-limiting; checks again later"),
+  githubError: (status) => `GitHub returned an error (${status})`,
+  checkFailed: "Couldn't check",
+  reach: { dns: "Can't find GitHub's address", connect: "Can't reach GitHub", tls: "Couldn't set up a secure connection to GitHub", timeout: "GitHub timed out", interrupted: "The connection to GitHub broke", proxy: "The proxy didn't connect", other: "Can't reach GitHub" },
+  nextCheck: (at) => `Checks again at ${clock(at)}`,
+  others: (count) => `${count} more in the network can update`,
   auto: "Automatic updates",
   autoByDefault: "By default",
   on: "On",

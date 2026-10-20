@@ -12,6 +12,7 @@ import type { KeptNow, Legacy, Setup, WorldNow } from "../world/bridge";
 import { RenewalRow, type Renewing } from "./renewal";
 import { UpdateRows } from "./update-rows";
 import type { Updates } from "./updates";
+import type { UpdateViewWords } from "./update-view-words";
 import type { UpdateWords } from "./update-words";
 import { PhoneRow, type PhoneSeam } from "./phone";
 import { desktopAvailable } from "../world/desktop";
@@ -60,7 +61,7 @@ export interface SettingsOptions {
   } | undefined;
   /** New versions of the application: its rows, and the card a new one
    *  opens in; `relays` where this device passes packages to the network. */
-  updates?: { updates: Updates; words: UpdateWords; versions(look: boolean): void; relays: boolean } | undefined;
+  updates?: { updates: Updates; words: UpdateWords; view: UpdateViewWords; versions(look: boolean): void; relays: boolean } | undefined;
   /** This is an Android phone: what it lets the World do in the background. */
   phone?: PhoneSeam | undefined;
   /** Whether calls are wanted changed, for where calls are made by more
@@ -140,6 +141,7 @@ export class SettingsPage implements Page {
         this.element.querySelector<HTMLElement>(".settings-app")!,
         updates.updates,
         updates.words,
+        updates.view,
         updates.versions,
         updates.relays,
       );

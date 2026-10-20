@@ -69,9 +69,15 @@
   background: var(--accent);
 }
 
-/* The card. */
+/* The card; on a phone edge to edge, as every sheet there. */
 .update-sheet .sheet-body {
   width: min(440px, 100vw - 32px);
+}
+
+@media (max-width: 760px) {
+  .update-sheet .sheet-body {
+    width: 100%;
+  }
 }
 
 .update-card {
@@ -123,6 +129,12 @@
   gap: var(--space-3);
   min-height: 34px;
   margin-top: var(--space-3);
+}
+
+/* The network's other machines that can take a newer version: a quiet
+   line under the foot, its words in line with the card's. */
+.update-others {
+  margin: var(--space-2) 0 0 calc(-1 * var(--space-3));
 }
 
 .update-bar {
