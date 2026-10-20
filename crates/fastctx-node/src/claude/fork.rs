@@ -14,6 +14,9 @@ use serde_json::json;
 use crate::Node;
 
 pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<String>) -> Result<Controlled, Failure> {
+    if let Some(why) = super::fork_ready::pending(node, resident)? {
+        return Err(Failure::new(why));
+    }
     let (source, town) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
     let session =
         source.session.ok_or_else(|| Failure::new("Claude has not identified the source conversation yet"))?;
@@ -25,7 +28,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     let selection = super::control::selection(node, resident, running).await?;
     let model = selection.model;
     let effort = selection.reasoning_effort;
-    let checkpoints = if running {
+    let mut checkpoints = if running {
         Some(super::control::invoke(node, resident, json!({"do":"checkpoint_export"})).await?)
     } else {
         let path = fastctx_hosts::claude::control::directory(node.world.path(), &session).join("checkpoints.json");
@@ -65,6 +68,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &source.acting, false).await?;
     let directory = node.world.conversation(&id);
     fastctx_platform::ensure_private_dir(directory.path()).map_err(failure)?;
+    super::fork_ready::begin(node, &id)?;
     let cwd = crate::colleagues::standing(node, town.as_ref())?;
     crate::profile::session::ready(node, &source.acting).await?;
     let assisting = node.works_here(&source.acting).is_err();
@@ -100,13 +104,22 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         )?;
         let settings = directory.claude_settings();
         let instructions = directory.claude_instructions();
-        std::fs::write(&settings, super::settings_json(&id))
+        std::fs::write(&settings, super::settings_json(node, &id))
             .and_then(|()| std::fs::write(&instructions, words))
             .map_err(failure)?;
         let mcp = crate::profile::session::claude(node, &id, true)?;
         let plugin = claude::plugin_dir(node.world.path());
         let world = node.world.path().to_path_buf();
-        let source_session = session.clone();
+        let snapshot = checkpoint
+            .as_ref()
+            .map(|point| super::fork_source::prefix(node, &session, directory.path(), point, &mut checkpoints))
+            .transpose()?;
+        let source_session = match &snapshot {
+            Some(path) => {
+                path.to_str().ok_or_else(|| Failure::new("the fork source path is not valid Unicode"))?.to_owned()
+            }
+            None => session.clone(),
+        };
         let selected_model = model.clone();
         let selected_effort = effort.clone();
         let _birth = node.claude.births.read().await;
@@ -134,12 +147,12 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
             return Err(Failure::new("Claude Code returned the original session for a requested fork"));
         }
         node.residents.set_session(&node.world, &id, &short, model, None).map_err(failure)?;
-        node.residents
-            .change_now(&node.world, &id, |now| now.activity = fastctx_types::residents::Activity::Asleep)
-            .map_err(failure)?;
+
         let finishing = async {
             drop(_birth);
-            super::replay(node).await;
+            super::fork_ready::wait(node, &id, false).await?;
+            super::control::invoke(node, &id, json!({"do":"fork_prepare"})).await?;
+            super::fork_ready::wait(node, &id, true).await?;
             super::fork_history::seed(node, &id, &inherited)?;
             crate::turns::apply(
                 node,
@@ -164,44 +177,26 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
                         .await;
                 imported?;
             }
-            if let Some(checkpoint) = checkpoint {
-                let mut checkpoint = checkpoint;
-                let child_point =
-                    super::control::invoke(node, &id, json!({"do":"checkpoint", "through":through})).await?;
-                checkpoint["retained_until"] = child_point["retained_until"].clone();
-                let result = super::control::invoke(node, &id, json!({"do":"rewind", "checkpoint":checkpoint})).await;
-                match result {
-                    Ok(value) if value["kind"] == "rewound" => {
-                        super::rewind::finish(node, &id, &value, None).await?;
-                    }
-                    result => {
-                        return Err(Failure::new(match result {
-                            Ok(value) => value.to_string(),
-                            Err(error) => error.message,
-                        }));
-                    }
-                }
+            if let Some(snapshot) = snapshot {
+                std::fs::remove_file(&snapshot).map_err(failure)?;
+                std::fs::remove_dir(snapshot.parent().expect("fork source directory")).map_err(failure)?;
             }
             Ok::<_, Failure>(())
         }
         .await;
         if let Err(error) = finishing {
+            super::fork_ready::failed(node, &id, &error.message)?;
             return Ok(Controlled::ForkIncomplete {
                 resident: Address { machine: node.machine(), resident: id.clone() },
                 why: error.message,
             });
         }
+        super::fork_ready::finish(node, &id).await?;
         Ok(Controlled::Forked { resident: Address { machine: node.machine(), resident: id.clone() } })
     }
     .await;
-    if completion.is_err() {
-        node.residents
-            .change_now(&node.world, &id, |now| {
-                if now.turn.is_none() {
-                    now.activity = fastctx_types::residents::Activity::Asleep;
-                }
-            })
-            .map_err(failure)?;
+    if let Err(error) = &completion {
+        super::fork_ready::failed(node, &id, &error.message)?;
     }
     completion
 }

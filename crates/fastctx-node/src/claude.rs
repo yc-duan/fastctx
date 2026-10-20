@@ -21,6 +21,8 @@ pub(crate) mod calls;
 pub(crate) mod control;
 mod fork;
 mod fork_history;
+mod fork_ready;
+mod fork_source;
 pub(crate) mod garbage;
 pub(crate) mod history;
 mod image_records;
@@ -33,6 +35,7 @@ mod plugin_check;
 mod process;
 mod rewind;
 mod startup;
+mod startup_recovery;
 mod thoughts;
 mod titles;
 pub(crate) mod turn_facts;
@@ -73,7 +76,7 @@ pub struct Claude {
 
 struct State {
     sessions: HashMap<String, Session>,
-    starting: HashSet<ResidentId>,
+    starting: HashSet<(ResidentId, fastctx_types::NoticeId)>,
     /// Resident to the session it is.
     paired: crate::residents::cache::Index,
     observed: HashSet<fastctx_types::ProcessIdentity>,
@@ -242,6 +245,7 @@ pub async fn replay(node: &Arc<Node>) {
 }
 
 pub(crate) fn recover_startups(node: &Arc<Node>) {
+    fork_ready::recover(node);
     startup::recover(node);
 }
 
@@ -761,6 +765,7 @@ async fn uncertain_inputs(
 /// tell; words kept before this was recorded go with the session.
 fn had(pending: &Pending, registered: Option<Timestamp>) -> bool {
     match (pending.state, pending.since, registered) {
+        (PendingState::Waiting, _, _) => false,
         (PendingState::Waking, Some(since), Some(registered)) => since <= registered,
         (PendingState::Handed, Some(since), Some(registered)) => since >= registered,
         _ => true,
@@ -1072,10 +1077,20 @@ pub async fn deliver(
 ) -> Option<Result<Landed, Failure>> {
     let delivering = node.claude.delivering.get_or_insert_with(to, || crate::ranked::delivering(to));
     let _delivering = delivering.lock().await;
-    let session: String = node.claude.state.lock().expect("never poisoned").paired.get(to)?;
-    if let Err(error) = crate::inbox::target(directory, &pending.delivery.id, &session) {
-        return Some(Err(Failure::new(error.to_string())));
+    match fork_ready::pending(node, to) {
+        Ok(Some(why)) => return Some(Ok(Landed::Waiting { why: Some(why), answered: true })),
+        Err(error) => return Some(Err(error)),
+        Ok(None) => {}
     }
+    let session: String = node
+        .claude
+        .state
+        .lock()
+        .expect("never poisoned")
+        .paired
+        .get(to)
+        .or_else(|| about.world_started.then(|| about.session.clone()).flatten())?;
+
     let asleep = node.residents.now(to).is_some_and(|now| now.activity == Activity::Asleep);
     let stopped_background = if !about.world_started && asleep {
         match management::background_session(node, about.home.as_deref(), &session).await {
@@ -1091,17 +1106,23 @@ pub async fn deliver(
         return Some(into_inbox(node, to, &session, directory, pending));
     }
     Some(match alive(node, about.home.as_deref(), &session).await {
-        Ok(true) => into_inbox(node, to, &session, directory, pending),
+        Ok(true) => match startup::ready(node, to) {
+            Ok(true) => into_inbox(node, to, &session, directory, pending),
+            Ok(false) => match startup_recovery::watch_waiting(node, to, &session, pending) {
+                Ok(true) => into_inbox(node, to, &session, directory, pending),
+                Ok(false) => {
+                    Ok(Landed::Waiting { why: Some("waiting for Claude's plugin to start".into()), answered: true })
+                }
+                Err(error) => Err(Failure::new(format!("observing Claude startup: {error}"))),
+            },
+            Err(error) => Err(Failure::new(format!("checking Claude startup: {error}"))),
+        },
         // What rides with the next turn wakes nobody: it waits for the turn
         // that wakes it, and goes in then (`speech::along`).
         Ok(false) if pending.delivery.notice.along().is_some() => Ok(Landed::Waiting { why: None, answered: true }),
         // Its supervisor stopped it: the words wake it, as they are, and its
         // next turn takes them.
         Ok(false) => {
-            let (text, as_user) = words(&pending.delivery.notice);
-            if as_user {
-                node.claude.handing(to, &text);
-            }
             let claimed: std::io::Result<bool> = (|| {
                 let taking = node.taking.lock().expect("never poisoned");
                 if taking.contains(&(to.clone(), pending.delivery.id.clone())) {
@@ -1113,24 +1134,21 @@ pub async fn deliver(
                 if current.state != PendingState::Waiting {
                     return Ok(false);
                 }
-                crate::inbox::set_state(directory, &pending.delivery.id, PendingState::Waking)?;
                 Ok(true)
             })();
             match claimed {
-                Ok(true) => {
-                    match wake(
-                        node,
-                        about.home.as_deref(),
-                        &session,
-                        if as_user { text } else { claude::framed(&text) },
-                        pending.delivery.id.clone(),
-                    )
-                    .await
-                    {
-                        Ok(landed) => Ok(landed),
-                        Err(error) => failed_wake(node, to, directory, &pending.delivery.id, error).await,
+                Ok(true) => match wake(node, to, about.home.as_deref(), &session, pending.delivery.id.clone()).await {
+                    Ok(landed) => Ok(landed),
+                    Err(error) => {
+                        let why = format!(
+                            "Could not wake Claude: {}; the queued words have not been submitted",
+                            error.message
+                        );
+                        startup_recovery::waiting(node, to, why.clone())
+                            .map(|()| Landed::Waiting { why: Some(why), answered: true })
+                            .map_err(|error| Failure::new(error.to_string()))
                     }
-                }
+                },
                 Ok(false) => Ok(Landed::Waiting {
                     why: Some("these words already have a handover in progress".to_string()),
                     answered: true,
@@ -1182,6 +1200,15 @@ fn into_inbox(
     directory: &ConversationDir,
     pending: &Pending,
 ) -> Result<Landed, Failure> {
+    if let Some(why) = fork_ready::pending(node, resident)? {
+        return Ok(Landed::Waiting { why: Some(why), answered: true });
+    }
+    if !startup::ready(node, resident).map_err(|error| Failure::new(error.to_string()))? {
+        return Ok(Landed::Waiting {
+            why: Some("waiting for Claude's plugin to finish registering".into()),
+            answered: true,
+        });
+    }
     let taking = node.taking.lock().expect("never poisoned");
     if taking.iter().any(|(_, id)| *id == pending.delivery.id) {
         return Ok(Landed::Waiting {
@@ -1263,26 +1290,41 @@ async fn running(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Result
 
 async fn wake(
     node: &Arc<Node>,
+    resident: &ResidentId,
     home: Option<&Path>,
     session: &str,
-    words: String,
     id: fastctx_types::NoticeId,
 ) -> Result<Landed, Failure> {
-    let Command { program, cwd, env } = command(node, home)?;
-    if let Some(resident) = node.residents.resident_of_thread(session) {
-        crate::profile::session::claude(node, &resident, false)?;
-    }
-    let args = background::wake_args(session, &words);
+    let launching = command(node, home)?;
+    let Command { program, cwd, env } = launching.clone();
+    crate::profile::session::claude(node, resident, false)?;
+    let previous = exchange::registration(&exchange::sessions(node.world.path()).join(session))
+        .map_err(|error| Failure::new(format!("reading the previous Claude activation: {error}")))?
+        .and_then(|registration| registration.process);
+    claude::control::write(
+        &claude::startup_hook::opening(&node.world.conversation(resident)),
+        &claude::startup_hook::Opening { input: id.clone(), at: Timestamp::now(), previous },
+    )
+    .map_err(|error| Failure::new(format!("recording Claude wake: {error}")))?;
+    let args = background::wake_args(session, "");
     let world = node.world.path().to_path_buf();
-    // Not tried twice: a resume refused for trust may already have queued
-    // the words.
-    tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+    // Resume idle. The new mod activation, not a durable pairing from the
+    // retired process, must acknowledge the queued input.
+    let output = tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         trust(&[world.as_path()], &env).and_then(|()| background::claude(&program, &args, &cwd, &env))
     }))
     .await
     .map_err(|error| Failure::new(format!("waking the session: {error}")))?
     .map_err(Failure::new)?;
-    Ok(Landed::Handed { id })
+    let started = background::started(&output)
+        .ok_or_else(|| Failure::new(format!("Claude did not identify its resumed background session: {output}")))?;
+    if !session.starts_with(&started) {
+        return Err(Failure::new(format!(
+            "Claude started {started} instead of resuming {session}; no queued words were submitted"
+        )));
+    }
+    startup::observe(node, resident, id, launching);
+    Ok(Landed::Waiting { why: None, answered: true })
 }
 
 /// The `claude` command, where to run it, and the environment it gets: the
@@ -1399,7 +1441,8 @@ pub async fn open_here(
     let directory = node.world.conversation(&id);
     let settings = directory.claude_settings();
     let instructions = directory.claude_instructions();
-    let written = std::fs::write(&settings, settings_json(&id)).and_then(|()| std::fs::write(&instructions, words));
+    let written =
+        std::fs::write(&settings, settings_json(node, &id)).and_then(|()| std::fs::write(&instructions, words));
     written.map_err(|error| Failure::new(format!("writing the session's settings: {error}")))?;
     let mcp = crate::profile::session::claude(node, &id, true)?;
     let cwd = crate::colleagues::standing(node, town.as_ref())?;
@@ -1407,22 +1450,24 @@ pub async fn open_here(
     // Its files other than images go where the user chose, as later words'
     // do.
     let attachments = crate::attachments::place(node, &id, attachments, opened.files_on.as_ref()).await?;
-    // The first words go in as the prompt the session starts with, which it
-    // reads as the user's: they are. They are kept until its first turn
-    // takes them, so whoever follows them knows which turn that is.
+    // Start idle: a background process can load MCP without loading its mod.
+    // Pairing hands these words to the mod once it can acknowledge delivery.
     let first = Pending {
         delivery: crate::attachments::delivery(typed_on, text, attachments, None),
         readers: Vec::new(),
-        state: PendingState::Waking,
+        state: PendingState::Waiting,
         working: false,
         session: None,
-        // The session it starts is the first to have them.
-        since: Some(Timestamp::now()),
+        since: None,
     };
     crate::inbox::keep(&directory, &first)
         .map_err(|error| Failure::new(format!("keeping the first words: {error}")))?;
-    let text = self::words(&first.delivery.notice).0;
-    node.claude.handing(&id, &text);
+    claude::control::write(
+        &claude::startup_hook::opening(&directory),
+        &claude::startup_hook::Opening { input: first.delivery.id.clone(), at: Timestamp::now(), previous: None },
+    )
+    .map_err(|error| Failure::new(format!("recording the idle Claude birth: {error}")))?;
+
     let world = node.world.path().to_path_buf();
     // Until the World knows which session this is, a Claude session's MCP
     // connection it cannot place waits, rather than becoming someone new.
@@ -1433,7 +1478,7 @@ pub async fn open_here(
             settings: &settings,
             mcp: &mcp,
             instructions: &instructions,
-            first_words: &text,
+            first_words: "",
             model: options.model.as_deref(),
             reasoning_effort: options.reasoning_effort.as_deref(),
             assisting,
@@ -1466,8 +1511,12 @@ pub async fn open_here(
         Ok(short) => short,
         Err(error) => {
             drop(_birth);
-            let landed = failed_wake(node, &id, &directory, &first.delivery.id, error).await?;
-            return Ok((id, landed));
+            let why = format!(
+                "Could not start Claude: {}; the first words remain queued and have not been submitted",
+                error.message
+            );
+            startup_recovery::waiting(node, &id, why.clone()).map_err(|error| Failure::new(error.to_string()))?;
+            return Ok((id, Landed::Waiting { why: Some(why), answered: true }));
         }
     };
     // The session is known by the start of its id until its mod reports the
@@ -1478,7 +1527,7 @@ pub async fn open_here(
     drop(_birth);
     replay(node).await;
     startup::observe(node, &id, first.delivery.id.clone(), launching);
-    Ok((id, Landed::Handed { id: first.delivery.id }))
+    Ok((id, Landed::Waiting { why: None, answered: true }))
 }
 
 /// The World's directories where its sessions stand are trusted in Claude
@@ -1520,7 +1569,8 @@ pub(crate) fn untrust(directory: &Path, home: Option<&Path>) -> Result<(), Strin
 /// which its plugin reads back from them when it starts. The session runs
 /// without approvals (`background::settings_args`), so nothing else needs
 /// allowing.
-pub(crate) fn settings_json(id: &ResidentId) -> String {
+pub(crate) fn settings_json(node: &Node, id: &ResidentId) -> String {
+    let program = node.root.join("bin").join(if cfg!(windows) { "fastctx.exe" } else { "fastctx" });
     let mut settings = serde_json::json!({
         "env": {
             "MAX_MCP_OUTPUT_TOKENS": fastctx_hosts::claude::MAX_MCP_OUTPUT_TOKENS.to_string(),
@@ -1530,6 +1580,11 @@ pub(crate) fn settings_json(id: &ResidentId) -> String {
         "permissions": {
             "deny": ["Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob"],
         },
+        "hooks": { "SessionStart": [{ "hooks": [{
+            "type": "command",
+            "command": crate::world::native(&program),
+            "args": ["claude-started", crate::world::native(node.world.path()), id.as_str()],
+        }] }] },
     });
     // Claude Code lets root skip approvals only in a sandbox declared as
     // one: where the World's conversations run as root, they are declared

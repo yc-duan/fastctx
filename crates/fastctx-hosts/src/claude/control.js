@@ -282,6 +282,13 @@ async function controlExecute($, state, control) {
     return { hashes: state.checkpoints.messages.slice(0, count), retained_until: state.checkpoints.turns[control.through].after_uuid }
   }
   if (control.do === 'checkpoint_export') return state.checkpoints.full === true ? state.checkpoints : null
+  if (control.do === 'fork_prepare') {
+    // An idle CLI fork keeps its history in memory until the first new row.
+    // A native system notice persists it without a prompt or model request.
+    const result = await $.session.append({ message: { type: 'system', content: [{ type: 'text', text: 'Conversation forked in the World.' }] } })
+    if (result.deny !== undefined) throw new Error(result.deny)
+    return { kind: 'done', said: null }
+  }
   if (control.do === 'checkpoint_import') {
     const current = await $.session.messages()
     const hashes = await messageFingerprints(current)

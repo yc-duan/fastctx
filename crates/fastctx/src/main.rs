@@ -12,6 +12,7 @@ mod apply;
 mod ask;
 mod attach;
 mod claude_session_directory;
+
 mod copy;
 mod data;
 mod first_program;
@@ -99,6 +100,13 @@ enum Command {
         cwd: Option<String>,
         #[arg(long)]
         conversation: Option<String>,
+    },
+    /// The native startup receipt, independent of the JavaScript mod.
+    #[command(hide = true)]
+    ClaudeStarted {
+        #[arg(value_parser = paths::parser())]
+        world: PathBuf,
+        conversation: fastctx_types::ResidentId,
     },
     /// Wait for the person answering one public Claude mod request.
     #[command(hide = true)]
@@ -400,6 +408,7 @@ fn main() -> ExitCode {
             | Command::Supervise { .. }
             | Command::ParentProcess
             | Command::ClaudeSessionDirectory { .. }
+            | Command::ClaudeStarted { .. }
             | Command::ClaudeRequest { .. }
             | Command::ClaudeElicitation { .. }
             | Command::ClaudeControlOwner { .. }
@@ -442,6 +451,9 @@ fn main() -> ExitCode {
             fastctx_node::claude_request::run(&directory, false).map_err(Into::into)
         }
         Command::ClaudeElicitation { world } => fastctx_node::claude_request::run(&world, true).map_err(Into::into),
+        Command::ClaudeStarted { world, conversation } => {
+            fastctx_node::claude_started::run(&world, &conversation).map_err(Into::into)
+        }
         Command::ClaudeControlOwner { world } => fastctx_node::claude_request::owner(&world).map_err(Into::into),
         Command::ClaudeControlGuard { watch, root } => {
             fastctx_node::claude_request::guard(watch.as_deref().zip(root.as_deref())).map_err(Into::into)

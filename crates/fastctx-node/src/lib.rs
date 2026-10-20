@@ -25,6 +25,7 @@ mod attachments;
 mod books;
 mod claude;
 pub mod claude_request;
+pub mod claude_started;
 mod codex;
 mod codex_title;
 mod collab;

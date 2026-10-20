@@ -120,7 +120,7 @@ pub(crate) fn claude(node: &Node, id: &ResidentId, creating: bool) -> Result<std
     let mcp = directory.path().join("claude-mcp.json");
     let profile = get(node, &about.acting);
     let options = crate::session_options::read(node, id)?;
-    let mut settings: Value = serde_json::from_str(&crate::claude::settings_json(id)).expect("session settings");
+    let mut settings: Value = serde_json::from_str(&crate::claude::settings_json(node, id)).expect("session settings");
     for (key, value) in profile.claude {
         if key == "env" {
             // The account's variables join the session's own, which the

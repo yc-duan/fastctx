@@ -162,7 +162,7 @@ pub fn policy(world: &Path, session: &str, messages: Option<usize>, after_compac
         let _ = sender.send(fastctx_platform::host_process::wait_for_exit(&controller).map(|()| true));
     });
     let mut transcript_watched = false;
-    let mut behind_since: Option<Instant> = None;
+    let behind_since = messages.map(|_| Instant::now());
     loop {
         if messages.is_some()
             && let Some(host) = control::host(&directory)?
@@ -214,9 +214,7 @@ pub fn policy(world: &Path, session: &str, messages: Option<usize>, after_compac
                             "the native file has more context than the mod's observed prefix",
                         ));
                     }
-                    Ok(_) => {
-                        behind_since.get_or_insert_with(Instant::now);
-                    }
+                    Ok(_) => {}
                     Err(error) if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::Interrupted) => {}
                     Err(error) => return Err(error),
                 }

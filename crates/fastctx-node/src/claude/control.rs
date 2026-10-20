@@ -39,6 +39,9 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
     match control {
         Control::Fork { through } => super::fork::fork(node, resident, through).await,
         Control::Answer { request, answer } => answer_request(node, resident, request, answer).await,
+        Control::Rewind { .. } if cannot_replace_prefix(node, resident) => Err(Failure::new(
+            "Claude Code 2.1.303 skips a plugin's own compaction handler, so rewind cannot preserve the requested prefix; fork through the selected turn instead",
+        )),
         Control::Rewind { from } => {
             super::history::wait_stored(
                 node,
@@ -269,6 +272,14 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
             ..Default::default()
         }
     };
+    if cannot_replace_prefix(node, resident) {
+        offers.controls.retain(|control| *control != ControlKind::Rewind);
+        if let Some(points) = &mut offers.checkpoints {
+            for point in points {
+                point.rewind = false;
+            }
+        }
+    }
     if about.session.is_some() && super::command(node, about.home.as_deref()).is_ok() {
         offers.controls.push(ControlKind::Fork);
     }
@@ -277,6 +288,12 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
         offers.controls.push(ControlKind::Answer);
     }
     Ok(offers)
+}
+
+// 2026-10-20: this version skips the caller's hooks and would run model
+// compaction instead of the requested prefix replacement.
+fn cannot_replace_prefix(node: &Node, resident: &ResidentId) -> bool {
+    node.residents.about(resident).is_some_and(|(about, _)| about.host.version == "2.1.303")
 }
 
 fn live_host(node: &Node, resident: &ResidentId) -> Result<(PathBuf, Host), Failure> {
