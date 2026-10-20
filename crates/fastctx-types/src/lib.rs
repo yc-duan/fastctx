@@ -39,6 +39,8 @@ pub mod on;
 pub mod pages;
 pub mod password;
 pub mod process;
+pub mod profile;
+pub mod mcp;
 pub mod project;
 pub mod remote;
 pub mod renewal;

@@ -52,6 +52,14 @@ pub(crate) fn view_for(
     let whole = mine.iter().any(|account| all.logged_in(me, account) && all.is_super(account));
     let mut directory = if whole { all.clone() } else { cut(all, me, &mine) };
     directory.projects = projects_for(all, me, &mine);
+    // An account's own configuration goes whole only to the machines that
+    // work for it; another is given what of it runs there, the super
+    // administrator's own included.
+    for account in &mut directory.accounts {
+        if !mine.contains(&account.name) {
+            account.profile = account.profile.as_ref().map(|profile| profile.located(|machine| all.same(machine, me)));
+        }
+    }
     for member in &mut directory.members {
         let others = member.name != *me
             && member.home.as_ref().is_some_and(|owner| all.is_visitor(owner) && !mine.contains(owner));
@@ -141,6 +149,7 @@ pub(crate) fn view_for(
         deletes_projects: true,
         lan_relays: true,
         paced_intake: true,
+        profiles: true,
         versions: true,
         package_progress: true,
         due: true,

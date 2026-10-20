@@ -319,6 +319,10 @@ pub struct Letters {
     /// deleted.
     #[serde(default)]
     pub project_deletes: bool,
+    /// The member's last session said it reads the records of profiles
+    /// written.
+    #[serde(default)]
+    pub profiles: bool,
     /// Why the hub refused letters of the member's that it may send again,
     /// by number: kept in its count's file (`Taken`), not here.
     #[serde(skip)]
@@ -348,6 +352,7 @@ impl Letters {
             versions: false,
             due: false,
             project_deletes: false,
+            profiles: false,
             refused,
         })
     }

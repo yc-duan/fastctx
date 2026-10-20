@@ -1234,6 +1234,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 }
             }
         }
+        Call::ProfileRead { .. } | Call::ProfileWrite { .. } | Call::Mcp { .. } => {
+            users_voice(node, peer)?;
+            Err(Failure::new("this release keeps no user-level configuration yet"))
+        }
         Call::Features => crate::features::read(&node.world).map(Reply::Features),
         Call::SetFeature { feature, on } => {
             users_voice(node, peer)?;

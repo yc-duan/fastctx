@@ -64,6 +64,10 @@ pub struct About {
     /// The machines and folders the user points it to.
     #[serde(default, skip_serializing_if = "crate::focus::Focus::is_empty")]
     pub focus: crate::focus::Focus,
+    /// The MCP servers of the account it works for that it starts without
+    /// (`world-user-config.md`).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub mcp_off: std::collections::BTreeSet<String>,
     /// The agent's home it was born in, its account on this machine
     /// (`agents::AgentHome`), when not the default one.
     #[serde(default, skip_serializing_if = "Option::is_none")]

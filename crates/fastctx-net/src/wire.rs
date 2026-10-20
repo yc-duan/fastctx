@@ -187,6 +187,11 @@ pub enum Intent {
         /// page with one.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         project_deletes: bool,
+        /// The member reads the records of profiles written. Earlier
+        /// releases do not say so, and could read nothing of a machine log
+        /// page with one.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        profiles: bool,
         /// A machine taken off the hub that was to uninstall Fastctx then,
         /// and could not do all of it: what was left, and why. The hub
         /// keeps it for its machine log, and refuses the session as before.
@@ -616,6 +621,11 @@ pub enum Change {
     Collab {
         collab: fastctx_types::collab::Collab,
     },
+    /// Writes the account's profile over the version it was read at; a
+    /// machine that works for the account may (`world-user-config.md`).
+    Profile {
+        profile: fastctx_types::profile::Profile,
+    },
     /// Shares `machine`, one of the account's own, with `to`, or no longer.
     Share {
         machine: MachineName,
@@ -845,6 +855,9 @@ pub enum Told {
         page: fastctx_types::machine_log::Page,
     },
     CollabWritten {
+        version: u64,
+    },
+    ProfileWritten {
         version: u64,
     },
     KernelRelease {

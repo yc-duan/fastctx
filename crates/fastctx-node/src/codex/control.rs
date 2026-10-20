@@ -244,6 +244,7 @@ async fn fork(
     let (fork, model) = codex.fork(thread, through.as_deref(), spec).await.map_err(Failure::new)?;
     let at = Timestamp::now();
     let about = About {
+        mcp_off: Default::default(),
         id: id.clone(),
         host: source.host,
         machine: node.machine(),

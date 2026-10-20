@@ -229,6 +229,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             versions: true,
             due: true,
             project_deletes: true,
+            profiles: true,
             left: None,
             cancels: true,
             presence: true,

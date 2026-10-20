@@ -121,6 +121,7 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
         locked: false,
         opened: Timestamp::now(),
         collab: None,
+        profile: None,
         promotion: false,
     });
     book.passwords.insert(new.admin.clone(), Bytes(record));
@@ -754,6 +755,7 @@ async fn intended(
                 versions,
                 due,
                 project_deletes,
+                profiles,
                 left,
                 cancels,
                 presence,
@@ -773,6 +775,7 @@ async fn intended(
                 versions,
                 due,
                 project_deletes,
+                profiles,
                 left,
                 cancels,
                 presence,

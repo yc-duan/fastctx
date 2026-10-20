@@ -208,6 +208,7 @@ pub async fn ask_here(
     })?;
     let born_at = Timestamp::now();
     let about = About {
+        mcp_off: Default::default(),
         id: id.clone(),
         host: Host { agent, client: "codex app-server".to_string(), version: String::new() },
         machine: node.machine(),

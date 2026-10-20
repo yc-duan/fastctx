@@ -92,6 +92,7 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
         locked: false,
         opened: Timestamp::now(),
         collab: None,
+        profile: None,
         promotion: false,
     });
     book.passwords.insert(new.admin.clone(), Bytes(crate::password_record(&secrets, &new.admin, &new.password)?));

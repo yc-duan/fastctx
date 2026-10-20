@@ -46,7 +46,8 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
                     | Management::Sleep
                     | Management::Wake
                     | Management::Move { .. }
-                    | Management::Focus { .. },
+                    | Management::Focus { .. }
+                    | Management::Mcp { .. },
                 ..
             }
             | RemoteCall::Offers { .. }

@@ -902,7 +902,7 @@ impl fastctx_net::link::Node for Handler {
                 }
                 RemoteCall::Open { agent, town, text, model, reasoning_effort, attachments, focus, home, files_on } => {
                     let options = fastctx_types::agents::SessionOptions { model, reasoning_effort };
-                    let choices = fastctx_types::agents::Choices { account: None, focus, home, files_on };
+                    let choices = fastctx_types::agents::Choices { account: None, focus, home, files_on, mcp_off: Default::default() };
                     let (resident, landed) =
                         crate::talk::open_here(&node, &from, acting, agent, town, text, options, attachments, choices)
                             .await?;

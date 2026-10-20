@@ -9,6 +9,7 @@ use std::time::Duration;
 use crate::calls::Call;
 use crate::file_search::FileSearchRequest;
 use crate::lines::Request as Lines;
+use crate::mcp::McpCall;
 use crate::remote::RemoteCall;
 use crate::update::UpdateCall;
 
@@ -233,6 +234,8 @@ impl Call {
         match self {
             Self::MachineLog { .. }
             | Self::CollabRead { .. }
+            | Self::ProfileRead { .. }
+            | Self::Mcp { mcp: McpCall::List | McpCall::Test { .. } | McpCall::Found { .. }, .. }
             | Self::Features { .. }
             | Self::WatchFeatures { .. }
             | Self::WorldNow { .. }
@@ -270,6 +273,8 @@ impl Call {
                 ..
             }
             | Self::CollabWrite { .. }
+            | Self::ProfileWrite { .. }
+            | Self::Mcp { mcp: McpCall::Keep { .. } | McpCall::Remove { .. }, .. }
             | Self::SetFeature { .. }
             | Self::SetLanguage { .. }
             | Self::Reopened { .. }

@@ -323,6 +323,7 @@ pub(crate) async fn open_account(
             locked: false,
             opened: Timestamp::now(),
             collab: None,
+            profile: None,
             promotion: false,
         });
         store.book.passwords.insert(account.clone(), Bytes(record));

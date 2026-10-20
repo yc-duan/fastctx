@@ -146,6 +146,7 @@ pub fn fixtures() -> Fixtures {
                 reasoning_effort: Some("medium".into()),
                 attachments: Vec::new(),
                 choices: fastctx_types::agents::Choices {
+                    mcp_off: Default::default(),
                     account: Some(fastctx_types::access::HubAccount {
                         hub: "w-0123456789abcdef".parse().unwrap(),
                         account: "ada".parse().unwrap(),

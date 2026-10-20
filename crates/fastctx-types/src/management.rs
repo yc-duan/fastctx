@@ -30,6 +30,11 @@ pub enum Management {
     Focus {
         focus: crate::focus::Focus,
     },
+    /// The account's MCP servers it goes without, replacing those before
+    /// (`world-user-config.md`); it takes the others at its next start.
+    Mcp {
+        off: std::collections::BTreeSet<String>,
+    },
 }
 
 /// Each completed stage remains reported if a later stage fails. A host

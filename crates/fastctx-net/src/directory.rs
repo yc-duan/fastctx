@@ -242,6 +242,11 @@ pub struct Account {
     pub opened: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collab: Option<fastctx_types::collab::Collab>,
+    /// Its own layer of configuration for the sessions that work for it
+    /// (`world-user-config.md`). A machine that does not work for it is
+    /// given only the servers on that machine (`Profile::located`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<fastctx_types::profile::Profile>,
     /// A visitor the super administrator made a member, until it agrees
     /// (`world-network.md`, 超级管理员管什么).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -686,6 +691,11 @@ pub struct View {
     /// and would end the session of a member that sent one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub paced_intake: bool,
+    /// Whether this hub keeps each account's own configuration
+    /// (`Account::profile`, `Change::Profile`). Earlier hubs omit it, and
+    /// would end the session of a member that sent one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub profiles: bool,
     /// Whether this hub keeps the network's versions: it takes
     /// `Up::Versions`, answers `Question::Package`, takes `Change::Updates`
     /// and the data connections of packages. Earlier hubs omit it, and would
@@ -756,6 +766,7 @@ impl View {
             deletes_projects: false,
             lan_relays: false,
             paced_intake: false,
+            profiles: false,
             versions: false,
             package_progress: false,
             due: false,

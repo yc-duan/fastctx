@@ -108,6 +108,7 @@ fn made(
             crate::machine_log::effects(&mut store, &before.directory, &actor, &action)?;
             let committed = match &told {
                 Told::CollabWritten { version } => fastctx_types::machine_log::Action::Collab { version: *version },
+                Told::ProfileWritten { version } => fastctx_types::machine_log::Action::Profile { version: *version },
                 _ => action.clone(),
             };
             crate::machine_log::keep(&mut store, &before.directory, actor.clone(), committed, Outcome::Done)?;
@@ -195,6 +196,38 @@ fn apply(
             let version = collab.version;
             found.collab = Some(collab);
             Ok(Told::CollabWritten { version })
+        }
+        Change::Profile { mut profile } => {
+            profile.validate()?;
+            let directory = &store.book.directory;
+            let current = directory.account(account).expect("checked").profile.clone().unwrap_or_default();
+            // A server a command starts is kept on a machine the account may
+            // run commands on; one it was given before stays until removed.
+            for (name, entry) in &mut profile.servers {
+                let fastctx_types::profile::Entry::Command { machine } = entry else { continue };
+                let kept = matches!(
+                    current.servers.get(name),
+                    Some(fastctx_types::profile::Entry::Command { machine: before }) if before == machine
+                );
+                if kept {
+                    continue;
+                }
+                if !directory.rights(account, machine).hands {
+                    return Err(format!("{account} may not run commands on {machine}"));
+                }
+                *machine = directory.canonical(machine).clone();
+            }
+            if profile.version != current.version {
+                return Err(format!(
+                    "the profile changed: version {} was read, current version is {}",
+                    profile.version, current.version
+                ));
+            }
+            profile.version = current.version.checked_add(1).ok_or("the profile version cannot be incremented")?;
+            let version = profile.version;
+            let found = store.book.directory.accounts.iter_mut().find(|found| found.name == *account).expect("checked");
+            found.profile = Some(profile);
+            Ok(Told::ProfileWritten { version })
         }
         Change::Share { machine, to, shared } => {
             let directory = &mut store.book.directory;
@@ -412,6 +445,7 @@ fn apply(
                 locked: false,
                 opened: Timestamp::now(),
                 collab: None,
+                profile: None,
                 promotion: false,
             });
             Ok(Told::Done)
@@ -701,7 +735,7 @@ fn may_change(
     account: &AccountName,
 ) -> bool {
     match change {
-        Change::OpenProject { .. } => directory.may_act_for(account, asker),
+        Change::OpenProject { .. } | Change::Profile { .. } => directory.may_act_for(account, asker),
         _ => directory.logged_in(asker, account),
     }
 }

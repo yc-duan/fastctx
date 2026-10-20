@@ -78,6 +78,7 @@ fn residents() -> Vec<ResidentNow> {
                 detail: "cargo test".into(),
             }],
             about: About {
+                mcp_off: Default::default(),
                 id: format!("codex-ab1{i}").parse().unwrap(),
                 host: host(),
                 machine: machine(),

@@ -335,6 +335,9 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                 Err(error) => step(&mut result, "notification", Outcome::Failed, error.message),
             }
         }
+        Management::Mcp { .. } => {
+            step(&mut result, "records", Outcome::Unsupported, "This release keeps no MCP servers yet.".into());
+        }
         Management::Focus { focus } => {
             crate::focus::pointable(&about)?;
             let changed = match node.residents.set_focus(&node.world, id, focus.clone()) {

@@ -387,6 +387,7 @@ pub fn fixtures() -> Fixtures {
         choices: vec![
             Choices::default(),
             Choices {
+                mcp_off: Default::default(),
                 account: Some(HubAccount { hub: "w-0123456789abcdef".parse().unwrap(), account: account() }),
                 focus: fastctx_types::focus::Focus {
                     machines: vec![

@@ -279,6 +279,9 @@ pub struct Choices {
     /// its own (`world-run.md`, 这里).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub files_on: Option<crate::access::Written>,
+    /// The account's MCP servers it starts without (`world-user-config.md`).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub mcp_off: std::collections::BTreeSet<String>,
 }
 
 /// Omitted fields keep the official program's configured defaults.
