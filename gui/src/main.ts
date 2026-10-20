@@ -32,6 +32,7 @@ import "./app/assist.css";
 import "./app/machines.css";
 import "./app/machine-framed.css";
 import "./app/machine-list.css";
+import "./app/update-view.css";
 import "./app/machine-page.css";
 import "./app/machine-manage.css";
 import "./app/agents.css";
@@ -278,13 +279,14 @@ import { en, zh } from "./words";
 import { updates as updateSeam } from "./world/updates";
 import { Updates } from "./app/updates";
 import { UpdateCard } from "./app/update-card";
-import { updateOlder } from "./app/update-older";
-import { superLoginOver } from "./app/machine-logins";
 import { VersionWindow } from "./app/version-window";
 import { showAttachedWith } from "./conversation/attached-pictures";
 import { viewPictures } from "./conversation/pictures";
 import { enUpdate, zhUpdate } from "./app/update-words";
 import { specimenUpdates } from "./specimen/updates";
+import { specimenUpdateView } from "./specimen/update-view";
+import { networkUpdates } from "./world/update-view";
+import { enUpdateView, zhUpdateView } from "./app/update-view-words";
 import { getVersion } from "@tauri-apps/api/app";
 import { desktopAvailable } from "./world/desktop";
 import { answerWith, notifying, startPresence } from "./app/presence";
@@ -934,6 +936,8 @@ const updateWords = english ? enUpdate : zhUpdate;
 /** Where updates are asked: this device's node or device, or the specimen's
  *  stand-in, one for the page's whole life so what it keeps holds. */
 const specimenUpdate = live ? null : specimenUpdates(params, params.has("phone"));
+/** Each login's update view of the machines page, from its hub. */
+const askUpdatesView = live ? networkUpdates : specimenUpdateView(() => store.world.peek());
 const updatesAsked = specimenUpdate ? specimenUpdate.seam : updateSeam;
 const appUpdates = (() => {
   const updates = new Updates(updatesAsked, idleHere);
@@ -947,20 +951,9 @@ const appUpdates = (() => {
 })();
 /** Has a machine of 1.0.1 beta 1 or 2 update itself, its line named first
  *  under an earlier hub (`app/update-older.ts`). */
-const updateOlderMachine = (name: string) =>
-  updateOlder(name, {
-    network: () => appUpdates.state.peek()?.network,
-    superOver: (machine) => {
-      const world = store.world.peek();
-      // The policy this device knows is its one hub's; on several, whose it
-      // is is not told apart here, and the line is left as it is.
-      if (!world || world.accounts.hubs.length !== 1) return undefined;
-      const found = machinesOf(world).find((one) => one.name === machine);
-      return found ? superLoginOver(found, world) : undefined;
-    },
-    change,
-    machine: (one) => updatesAsked.machine(one),
-  });
+/** Has a machine of a release before 1.0.1 beta 3 update itself to the
+ *  newest on its line: what such a machine takes. */
+const updateOlderMachine = (name: string) => updatesAsked.machine(name);
 const updateCard = new UpdateCard(appUpdates, updateWords, live ? !onComputer() : params.has("phone"));
 const versionWindow = new VersionWindow(updateWords.versions);
 // A picture attached and not yet sent opens in the same viewer as the
@@ -2023,8 +2016,9 @@ function show(next: Place): void {
       page = new MachinesPage({
         store,
         updates: {
-          policy: () => appUpdates.state.peek()?.network?.policy ?? {},
           words: updateWords,
+          view: english ? enUpdateView : zhUpdateView,
+          ask: askUpdatesView,
           minimum: minimumVersions,
           state: appUpdates.state,
           remote: (name, call) => updatesAsked.remote(name, call),

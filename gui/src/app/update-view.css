@@ -1,0 +1,297 @@
+/* The machines page's update view (`update-ruler.ts`, `update-marks.ts`,
+   `machine-list.ts`): the version ruler drawn by hand at the top, the
+   network's policy in one quiet line under it, then the list's tree with
+   what each machine runs, a mark of where its update stands and its switch. */
+
+.uv-ruler {
+  position: relative;
+  max-width: 1080px;
+  margin: var(--space-2) 0 var(--space-1);
+}
+
+.uv-ruler svg {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+
+.uv-rule {
+  fill: var(--text-3);
+}
+
+.uv-away {
+  fill: var(--pen-graphite);
+  opacity: 0.45;
+}
+
+.uv-awake {
+  fill: var(--text-2);
+}
+
+.uv-trail {
+  fill: var(--pen-clay);
+  opacity: 0.8;
+}
+
+.uv-moving {
+  fill: var(--pen-clay);
+}
+
+.uv-pencil {
+  fill: var(--pen-graphite);
+  opacity: 0.8;
+}
+
+.uv-tick,
+.uv-count,
+.uv-note,
+.uv-moving-name {
+  position: absolute;
+  translate: -50% 0;
+  font-size: var(--size-fine);
+  color: var(--text-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.uv-tick.newest {
+  color: var(--accent);
+}
+
+.uv-count {
+  color: var(--text-2);
+}
+
+.uv-moving-name {
+  color: var(--pen-clay);
+}
+
+.uv-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* What a bar counts, said when pointed at. */
+.uv-hit {
+  position: absolute;
+  width: 32px;
+}
+
+/* The network's policy, the super administrator's: one quiet line. */
+.uv-policy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-8);
+  margin: var(--space-2) 0 var(--space-4);
+  color: var(--text-2);
+}
+
+/* On a phone, one line until it is opened. */
+.uv-policy-fold {
+  margin: var(--space-1) 0 var(--space-3);
+}
+
+.uv-policy-fold > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  color: var(--text-2);
+  list-style: none;
+  cursor: pointer;
+}
+
+.uv-policy-fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.uv-policy-fold > summary .glyph {
+  rotate: -90deg;
+  color: var(--text-3);
+  transition: rotate var(--hover) ease;
+}
+
+.uv-policy-fold[open] > summary .glyph {
+  rotate: 0deg;
+}
+
+.uv-policy-fold .uv-policy {
+  margin-top: 0;
+}
+
+.uv-policy-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.uv-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  color: var(--text);
+  transition: background-color var(--hover) ease;
+}
+
+.uv-chip:hover {
+  background: var(--hairline);
+}
+
+/* A machine's own updating by itself, and the managed machines': the
+   interface's switch, in ink rather than clay, since on is the usual. */
+.uv-auto {
+  display: inline-flex;
+  cursor: pointer;
+}
+
+.uv-auto[aria-checked="true"] .switch-track {
+  background: var(--text-2);
+}
+
+.uv-auto.fixed {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.uv-old {
+  margin: var(--space-6) 0;
+  color: var(--text-3);
+}
+
+/* The list in the update view: what it runs, its mark, its switch. */
+.ml-list.updates .ml-row {
+  grid-template-columns: 16px minmax(180px, 380px) 96px minmax(180px, 1fr) 0 52px 16px;
+}
+
+.ml-list.updates .ml-name .ml-count {
+  margin-left: var(--space-2);
+}
+
+.uv-version {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.uv-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-2);
+}
+
+.uv-mark .glyph {
+  flex: none;
+  color: var(--text-3);
+}
+
+.uv-mark.behind .glyph,
+.uv-mark.going .glyph {
+  color: var(--text-2);
+}
+
+.uv-mark.due .glyph {
+  color: var(--pen-clay);
+}
+
+.uv-mark.failed,
+.uv-mark.failed .glyph {
+  color: var(--wrong);
+}
+
+.uv-bar {
+  flex: none;
+  width: 64px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--fill-strong);
+  overflow: hidden;
+}
+
+.uv-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--pen-clay);
+}
+
+/* A group's small bar. */
+.uv-meter {
+  display: flex;
+  gap: 2px;
+  width: 112px;
+  height: 6px;
+}
+
+.uv-meter > span {
+  border-radius: 2px;
+}
+
+.uv-meter .newest {
+  background: var(--text-2);
+}
+
+.uv-meter .going {
+  background: var(--pen-clay);
+}
+
+.uv-meter .behind {
+  background: color-mix(in srgb, var(--pen-graphite) 45%, transparent);
+}
+
+.uv-meter .failed {
+  background: var(--wrong);
+}
+
+/* A phone: one line a machine, the machine on the left, its mark in a
+   column of its own on the right; what it runs is held, its switch is in
+   how they update. */
+@container ml (max-width: 520px) {
+  .ml-list.updates .ml-row,
+  .ml-list.updates .ml-fold {
+    grid-template-columns: minmax(0, 1fr) 104px;
+    grid-template-areas: "name mark";
+    min-height: 48px;
+    padding: 0 var(--space-3);
+  }
+
+  .ml-list.updates.selecting .ml-row,
+  .ml-list.updates.selecting .ml-fold {
+    grid-template-columns: 16px minmax(0, 1fr) 104px;
+    grid-template-areas: "pick name mark";
+  }
+
+  .ml-list.updates .ml-system,
+  .ml-list.updates .ml-busy,
+  .ml-list.updates .ml-given,
+  .ml-list.updates .ml-go {
+    display: none;
+  }
+
+  .ml-list.updates .uv-mark {
+    grid-area: mark;
+    justify-content: flex-end;
+  }
+
+  .ml-list.updates .ml-count {
+    display: inline;
+    margin-left: var(--space-2);
+  }
+
+  .ml-list.updates .ml-name .tag {
+    display: none;
+  }
+
+  .uv-meter {
+    width: 96px;
+  }
+
+  .uv-policy {
+    gap: var(--space-3);
+  }
+}

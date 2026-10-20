@@ -17,6 +17,11 @@
 // of its row, and a group, a person and the account's own section one for
 // all their machines, half filled when some are chosen: the boxes show where
 // pointed at, and on every row once any is chosen (`machine-picking.ts`).
+//
+// The update view is this same tree, narrowed to the machines this device's
+// accounts may update, with what each runs, a mark of where its update
+// stands and its own updating by itself in place of its facts; the version
+// ruler and the network's policy stand over it (`update-ruler.ts`).
 
 import { glyph, type GlyphName } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -30,6 +35,9 @@ import type { MapNode } from "./map-nodes";
 import { pickable, pickableIn } from "./machine-picking";
 import { link } from "./places";
 import { assistantsOf, machinesOf, owns, type Machine } from "./reach";
+import { compareVersions, type MachineUpdate } from "../world/updates";
+import { groupMark, markOf, runningOf, shortVersion, type Mark } from "./update-marks";
+import type { UpdateViewWords } from "./update-view-words";
 
 export interface ListNow {
   world: WorldNow;
@@ -47,6 +55,21 @@ export interface ListNow {
   /** Whether a group's or a person's row is open: as the viewer last left
    *  it, else `byDefault`. */
   open(key: string, byDefault: boolean): boolean;
+  /** The update view, when it is the one shown. */
+  updates?: UpdatesNow | undefined;
+}
+
+/** The update view: the machines that may be updated, by name, and what
+ *  stands over the tree. */
+export interface UpdatesNow {
+  byName: ReadonlyMap<string, MachineUpdate>;
+  /** The release line every version shown shares. */
+  line: string | null;
+  words: UpdateViewWords;
+  /** The ruler and the policy, drawn. */
+  head: string;
+  /** What scheduling a machine's update just said, by its name. */
+  said: ReadonlyMap<string, string>;
 }
 
 /** Up to this many dots for the agents at work on a machine; more are a
@@ -71,9 +94,10 @@ interface Holding {
 }
 
 export function machineList(now: ListNow, words: MachinesWords): string {
-  const { world } = now;
-  const { hubs, nodes, hubLabels } = mapOf(world, words);
+  const { world, updates } = now;
+  const { hubs, nodes: all, hubLabels } = mapOf(world, words);
   const machines = new Map(machinesOf(world).map((machine) => [`m:${machine.written}`, machine]));
+  const nodes = updates ? all.filter((node) => updateOf(node, machines, updates)) : all;
   const hubRows = hubs.map((hub) => {
     const seen = world.accounts.hubs.find((one) => one.hub === hub.id);
     const ms = seen?.link.kind === "online" ? seen.link.ms : null;
@@ -119,7 +143,7 @@ export function machineList(now: ListNow, words: MachinesWords): string {
   const sections: string[] = [];
   if (mine) {
     const all = everyNode(mine);
-    const add = now.adds.length
+    const add = now.adds.length && !updates
       ? `<button class="ml-row ml-add" type="button" data-ml-add="${escape(now.adds[0]!)}"><span class="ml-pick none" aria-hidden="true"></span>${nameCell(glyph("plus", 15), `<span class="ml-name-text">${escape(words.addMachine)}</span>`, false)}</button>`
       : "";
     const body = draw.leaves(mine.loose, 0) + mine.bands.map((band) => draw.band(band, 0, band.nodes.length <= OPEN_GROUP)).join("") + add;
@@ -134,8 +158,20 @@ export function machineList(now: ListNow, words: MachinesWords): string {
     const body = holders.map((holder) => draw.person(holder, opens && everyNode(holder).length <= OPEN_PERSON)).join("");
     sections.push(section(label, words.groupSub(all.length, online(all)), "", body));
   }
-  if (assisting.length) sections.push(section(words.assistSection, words.groupSub(assisting.length, online(assisting)), "", draw.leaves(assisting, 0)));
+  if (assisting.length && !updates) sections.push(section(words.assistSection, words.groupSub(assisting.length, online(assisting)), "", draw.leaves(assisting, 0)));
+  if (updates) return `${updates.head}${sections.join("")}`;
   return `<div class="ml-hubs">${hubRows.join("")}</div>${sections.join("")}`;
+}
+
+/** What the update view knows of the machine a node is: a phone by its
+ *  name, a machine by the name the network gives it. */
+function updateOf(node: MapNode, machines: Map<string, Machine>, updates: UpdatesNow): MachineUpdate | undefined {
+  return updates.byName.get(machines.get(node.key)?.name ?? node.name);
+}
+
+/** A mark as a row's cell: what it says, said when pointed at. */
+function markCell(mark: Mark): string {
+  return `<span class="ml-link uv-mark ${mark.kind}"${mark.said ? ` title="${escape(mark.said)}"` : ""}>${mark.html}</span>`;
 }
 
 /** A section: its name, how many and how many online, a hand-drawn line;
@@ -215,6 +251,23 @@ class Drawing {
   private fold(key: string, icon: string, label: string, tags: string, nodes: MapNode[], depth: number, byDefault: boolean, inside: () => string, faint = false): string {
     const { now, words } = this;
     const open = now.open(key, byDefault);
+    if (now.updates) {
+      const updates = now.updates;
+      const known = nodes.flatMap((node) => updateOf(node, this.machines, updates) ?? []);
+      const versions = [...new Set(known.flatMap((machine) => runningOf(machine) ?? []))].sort(compareVersions);
+      const span = versions.length ? (versions.length === 1 ? versions[0]! : `${versions[0]}–${versions[versions.length - 1]}`) : "";
+      const shown = versions.length ? (versions.length === 1 ? shortVersion(versions[0]!, updates.line) : `${shortVersion(versions[0]!, updates.line)}–${shortVersion(versions[versions.length - 1]!, updates.line)}`) : "";
+      const row = `<button class="ml-row ml-fold${open ? " open" : ""}${faint ? " visitor" : ""}" type="button" data-ml-fold="${escape(key)}" aria-expanded="${open}"${indent(depth)}>
+      ${box(`list:${key}`, label, this.nodes, now) || `<span class="ml-pick none" aria-hidden="true"></span>`}
+      ${nameCell(icon, `<span class="ml-name-text">${escape(label)}</span>${tags}<span class="ml-count">${escape(words.groupSub(nodes.length, online(nodes)))}</span>`, true)}
+      <span class="ml-system uv-version"${span ? ` title="${escape(updates.words.runs(span))}"` : ""}>${escape(shown)}</span>
+      ${markCell(groupMark(known, updates.line, updates.words))}
+      <span class="ml-given"></span>
+      <span class="ml-busy"></span>
+      <span class="ml-go" aria-hidden="true"></span>
+    </button>`;
+      return open ? row + inside() : row;
+    }
     const busy = nodes.reduce((sum, node) => sum + node.busy, 0);
     const count = `<span class="ml-count">${escape(words.groupSub(nodes.length, online(nodes)))}</span>`;
     const row = `<button class="ml-row ml-fold${open ? " open" : ""}${faint ? " visitor" : ""}" type="button" data-ml-fold="${escape(key)}" aria-expanded="${open}"${indent(depth)}>
@@ -270,7 +323,16 @@ class Drawing {
       : `<span class="ml-pick none" aria-hidden="true"></span>`;
     const title = assist && agents.length ? `${node.title}　${agents.map(agentName).join("、")}` : node.title;
     const go = visitor ? "" : glyph("chevron", 16);
-    const inner = `${pick}
+    const update = now.updates ? updateOf(node, this.machines, now.updates) : undefined;
+    const inner = now.updates && update
+      ? `${node.device ? `<span class="ml-pick none" aria-hidden="true"></span>` : pick}
+      ${nameCell(glyph(icon, 15), `<span class="ml-name-text">${escape(node.name)}</span>${tags}`, false)}
+      ${versionCell(update, now.updates)}
+      ${markCell(now.updates.said.has(update.machine) ? { kind: "failed", html: glyph("cross", 16), said: now.updates.said.get(update.machine)! } : markOf(update, now.updates.line, now.updates.words))}
+      <span class="ml-given"></span>
+      <span class="ml-busy">${autoSwitch(update, now.updates)}</span>
+      <span class="ml-go" aria-hidden="true">${go}</span>`
+      : `${pick}
       ${nameCell(glyph(icon, 15), `<span class="ml-name-text">${escape(node.name)}</span>${tags}`, false)}
       <span class="ml-system">${system}</span>
       <span class="ml-link">${linkSaid(node, machine, now, words)}</span>
@@ -287,6 +349,20 @@ class Drawing {
       ? `<button class="${kind}" type="button" data-ml-open="${escape(node.key)}" title="${escape(title)}"${at}>${inner}</button>`
       : `<a class="${kind}" href="${link({ kind: "machine", name: node.name })}" title="${escape(title)}"${keyed}${at}>${inner}</a>`;
   }
+}
+
+/** What a machine runs, short, the whole version said when pointed at. */
+function versionCell(update: MachineUpdate, updates: UpdatesNow): string {
+  const running = runningOf(update);
+  return `<span class="ml-system uv-version"${running ? ` title="${escape(updates.words.runs(running))}"` : ""}>${escape(running ? shortVersion(running, updates.line) : "")}</span>`;
+}
+
+/** A machine's own updating by itself, a switch where it may be set from
+ *  here; none for a phone, or one that never said. */
+function autoSwitch(update: MachineUpdate, updates: UpdatesNow): string {
+  if (update.kind === "phone" || update.auto === null) return "";
+  const settable = update.actions.settings.allowed;
+  return `<span class="uv-auto${update.auto ? " on" : ""}${settable ? "" : " fixed"}" role="switch" aria-checked="${update.auto}" aria-label="${escape(updates.words.auto)}" title="${escape(settable ? updates.words.auto : updates.words.reasons[update.actions.settings.reason ?? "other"])}"${settable ? ` data-uv-auto="${escape(update.machine)}"` : ""}><span class="switch-track"><span class="switch-knob"></span></span></span>`;
 }
 
 /** How far in a row stands: nothing at the first level. */

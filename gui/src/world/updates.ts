@@ -44,6 +44,8 @@ export interface Running {
 
 /** An update a machine away is to make once it is back. */
 export interface Due {
+  manifest?: Manifest;
+  problem?: UpdateProblem;
   version: string;
   by: string;
   at: string;
@@ -58,6 +60,7 @@ export interface Policy {
 }
 
 export interface UpdateNetwork {
+  updates_view?: boolean;
   stable?: Manifest;
   beta?: Manifest;
   policy: Policy;
@@ -76,6 +79,11 @@ export interface Release {
 }
 
 export interface Looked {
+  checking?: boolean;
+  failure?: CheckFailure;
+  github_at?: string;
+  next?: string;
+  failures?: number;
   at?: string;
   github?: boolean;
   why?: string;
@@ -103,6 +111,8 @@ export interface Fetching {
 }
 
 export interface UpdateState {
+  progress?: boolean;
+  stage?: UpdateStage;
   /** The World program the node that answers runs; none from a node
    *  before 1.0.1 beta 3. */
   running?: string;
@@ -120,7 +130,7 @@ export interface UpdateState {
   network?: UpdateNetwork;
   offer?: Manifest;
   fetching?: Fetching;
-  failed?: { version: string; target: string; why: string };
+  failed?: { version: string; target: string; why: string; reason?: FailureReason };
   kept?: { version: string; target: string; path: string }[];
   app?: { version: string; target: string };
   kernel_target: string;
@@ -134,11 +144,81 @@ export interface UpdateState {
 
 /** What an interface asks a machine's node about updates. */
 export type UpdateCall =
+  | { do: "preferences"; auto: boolean | null; relays: boolean | null }
+  | { do: "progress"; stage: UpdateStage }
   | { do: "state" }
   | { do: "look" }
   | { do: "set"; settings: UpdateSettings }
   | { do: "kernel"; version?: string }
   | { do: "choose"; version?: string };
+
+export type ReachFailure = "dns" | "connect" | "tls" | "timeout" | "interrupted" | "proxy" | "other";
+export type CheckFailure =
+  | { kind: "unreachable"; reason: ReachFailure }
+  | { kind: "rate_limited"; until: string | null }
+  | { kind: "http"; status: number }
+  | { kind: "unreadable" | "other" };
+export type FailureReason =
+  | { kind: "no_package" | "signature" | "disk" | "not_newer" | "other" }
+  | { kind: "sources"; sources: { via: "github" | "network"; why: string }[] }
+  | { kind: "installer"; code: number | null };
+export interface UpdateProblem { reason: FailureReason; why: string }
+export type UpdateStage =
+  | { kind: "idle" | "unknown" }
+  | { kind: "fetching"; version: string; via: "github" | "network" | null; received: number; total: number | null }
+  | { kind: "ready" | "waiting_idle" | "waiting_app" | "installing" | "administrator"; version: string }
+  | { kind: "renewing"; version: string; phase: import("./renewal").RenewalPhase }
+  | { kind: "failed"; version: string; problem: UpdateProblem };
+export type UpdateKind = "app" | "headless" | "managed" | "phone";
+export type ActionReason = "not_owner" | "visitor" | "phone" | "too_old" | "development" | "offline" | "unknown_version" | "missing_machine" | "no_package" | "not_newer" | "unavailable" | "other";
+export interface UpdatePermission { allowed: boolean; reason: ActionReason | null }
+export interface UpdateActions {
+  update: UpdatePermission;
+  choose: UpdatePermission;
+  settings: UpdatePermission;
+  schedule: UpdatePermission;
+  cancel: UpdatePermission;
+}
+export interface MachineUpdate {
+  machine: string;
+  owner: string;
+  group: string | null;
+  kind: UpdateKind;
+  online: boolean;
+  reported: string | null;
+  kernel: string | null;
+  app: { version: string; target: string } | null;
+  target: string | null;
+  channel: Channel;
+  auto: boolean | null;
+  auto_chosen: boolean;
+  relays: boolean | null;
+  github: boolean | null;
+  github_at: string | null;
+  check_failure: CheckFailure | null;
+  checking: boolean;
+  stage: UpdateStage;
+  due: Due | null;
+  offer: Manifest | null;
+  actions: UpdateActions;
+}
+export interface UpdatesView {
+  hub: string;
+  stable: Manifest | null;
+  beta: Manifest | null;
+  releases: Manifest[];
+  policy: Policy | null;
+  machines: MachineUpdate[];
+  available: number;
+}
+export type UpdatesViewCall =
+  | { do: "view" }
+  | { do: "schedule"; machines: string[]; version: string | null }
+  | { do: "policy"; minimum: string | null; managed_auto: boolean };
+export type UpdatesViewReply =
+  | { kind: "view"; view: UpdatesView }
+  | { kind: "scheduled"; results: { machine: string; done: boolean; reason: ActionReason | null; why: string | null }[] }
+  | { kind: "done" };
 
 export interface UpdateSeam {
   state(): Promise<UpdateState>;

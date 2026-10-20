@@ -1,132 +1,152 @@
-/* Machines chosen together (`machine-framed.ts`): a row each to open it by,
-   solid, no lines, ending with what it runs or how an update of it goes;
-   under them what is done to them together, and how an update of several
-   went once it is through. The head's close lets them go. */
+/* Machines chosen together (`machine-framed.ts`): a bar floating at the
+   foot of the page, solid, no lines: let them go, how many, what is done to
+   them together. It takes no room from the list beneath it. On a phone it
+   lies along the bottom, a mark over a short word each. */
 
-.framed-head {
-  padding-right: var(--space-6);
-}
-
-.framed-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: var(--space-3) 0;
-  padding: 0;
-  list-style: none;
-}
-
-.framed-row {
+.ms-bar {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--gutter) + var(--space-4));
+  z-index: 9;
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  width: 100%;
-  min-height: 36px;
-  padding: 0 var(--space-3);
-  border-radius: var(--radius-m);
-  background: var(--fill);
-  color: var(--text);
-  font-size: var(--size-text);
-  text-align: left;
+  max-width: calc(100% - 2 * var(--gutter) - var(--space-8));
+  padding: 6px var(--space-2) 6px 6px;
+  border-radius: var(--radius-l);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  translate: -50% var(--lift);
+  opacity: var(--shown);
+  animation: ms-rise var(--enter) var(--ease-out) both;
 }
 
-.framed-row:hover {
+.ms-bar[hidden] {
+  display: none;
+}
+
+@keyframes ms-rise {
+  from {
+    --shown: 0;
+    --lift: 10px;
+  }
+}
+
+:root[data-reduced] .ms-bar {
+  animation: none;
+}
+
+.ms-count {
+  flex: none;
+  margin: 0 var(--space-3) 0 var(--space-1);
+  color: var(--text-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.ms-acts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.ms-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-s);
+  color: var(--text-2);
+  white-space: nowrap;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.ms-act:hover {
+  color: var(--text);
   background: var(--fill-strong);
 }
 
-/* The machine's kind, in ink while it is there, grey with its name while
-   it is away, as on the list. */
-.framed-icon {
-  flex: none;
-  display: grid;
-  place-items: center;
-  color: var(--text-2);
+.ms-act.primary {
+  background: var(--accent);
+  color: var(--bg);
 }
 
-.framed-row.offline .framed-icon {
-  color: var(--text-3);
-  opacity: 0.6;
+.ms-act.primary:hover {
+  background: var(--accent-bright);
+  color: var(--bg);
 }
 
-.framed-row.offline .framed-name {
-  color: var(--text-3);
+.ms-act.danger {
+  color: var(--wrong);
 }
 
-.framed-name {
+/* On a wide page the label says it, how many it reaches written in it. */
+.ms-mark,
+.ms-word {
+  display: none;
+}
+
+/* While some are chosen the list scrolls its last rows clear of the bar. */
+.ml-list.picking {
+  padding-bottom: 104px;
+}
+
+/* Pointed at, an action that does not reach every machine chosen: those
+   it leaves stand back, on the list and the drawing. */
+.ms-left {
+  opacity: 0.35;
+  transition: opacity var(--hover) ease;
+}
+
+/* A phone: along the bottom, the acts in equal columns, a mark over a short
+   word, how many it reaches a small figure on its mark; how many are chosen
+   is said in the page's head. */
+.ms-bar.phone {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 15;
+  max-width: none;
+  padding: var(--space-1) var(--space-2) calc(var(--space-1) + var(--safe-bottom));
+  border-radius: var(--radius-l) var(--radius-l) 0 0;
+  translate: 0 var(--lift);
+}
+
+.ms-bar.phone .ms-close,
+.ms-bar.phone .ms-count,
+.ms-bar.phone .ms-label {
+  display: none;
+}
+
+.ms-bar.phone .ms-acts {
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.framed-sub {
-  flex: none;
-  color: var(--text-3);
-  font-size: var(--size-text);
-}
-
-.framed-tail {
-  flex: none;
-  max-width: 56%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--size-text);
-  font-variant-numeric: tabular-nums;
-  color: var(--text-3);
-}
-
-.framed-row.newer .framed-tail {
-  color: var(--text);
-}
-
-.framed-row.done .framed-tail {
-  color: var(--text-2);
-}
-
-.framed-row.wrong .framed-tail {
-  color: var(--wrong);
-}
-
-/* Nothing here may be done to it: it stands back. */
-.framed-row.faint {
-  opacity: 0.5;
-}
-
-.framed-acts {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px;
-  margin: var(--space-4) 0 0 calc(-1 * var(--space-3));
-}
-
-.framed-acts .sheet-go {
-  margin: 0 var(--space-2) 0 var(--space-3);
-}
-
-.framed-said {
-  padding: 0 var(--space-3);
-  font-size: var(--size-text);
-  color: var(--text-2);
-}
-
-/* On a phone, what is done to several chosen by a long press: the sheet's
-   row of marks over words, alone along the bottom. */
-.framed-bar .sheet-act.danger {
-  color: var(--wrong);
-}
-
-/* How many of those chosen it reaches, when not all: a small figure on
-   its mark. */
-.framed-mark {
-  position: relative;
   display: grid;
+  grid-template-columns: repeat(var(--acts), minmax(0, 1fr));
+}
+
+.ms-bar.phone .ms-act {
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  height: 56px;
+  padding: 0 var(--space-1);
+  font-size: var(--size-fine);
+}
+
+.ms-bar.phone .ms-mark,
+.ms-bar.phone .ms-word {
+  display: grid;
+}
+
+.ms-mark {
+  position: relative;
   place-items: center;
 }
 
-.framed-reach {
+.ms-reach {
   position: absolute;
   top: -6px;
   left: calc(100% - 4px);
@@ -136,10 +156,15 @@
   border-radius: var(--radius-full);
   background: var(--fill-strong);
   color: var(--text-2);
-  font-size: var(--size-text);
+  font-size: var(--size-fine);
   line-height: 17px;
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+
+.ms-act.primary .ms-reach {
+  background: color-mix(in srgb, var(--bg) 25%, transparent);
+  color: var(--bg);
 }
 
 /* Setting how several update: those left, and why. */
