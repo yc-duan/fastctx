@@ -2,14 +2,16 @@ name: Release
 
 # Every platform's installer from one commit: the command-line programs built and run on the machines
 # they are for; World's installers carrying those very programs; each package signed bound to the
-# release's version; and, for a version tag, a GitHub release of them with the manifest the updater
-# reads. Nothing goes to npm.
+# release's version; and the manifest the updater reads. Nothing goes to npm.
 #
-# A version tag's run tests what a release cannot go without: each program's smoke test on the
-# machines it is for, on Linux once more as an old kernel, the installers installed and opened, the
-# updater taking a later version, and the interface reading what the World writes. A push to a ci/ branch runs the drills as well (the
-# network drill against the earlier release, the concurrency drill, the guardians' renewal, and the
-# bundled ripgrep, the node's lifetime, job control and byte streams) and releases nothing.
+# A release is built once (AGENTS.md, 发版). A push to a ci/ branch builds, signs and tests every
+# platform's programs: each program's smoke test on the machines it is for, on Linux once more as an
+# old kernel, the installers installed and opened, the updater taking a later version, the interface
+# reading what the World writes, and the drills (the network drill against the earlier release, the
+# concurrency drill, the guardians' renewal, and the bundled ripgrep, the node's lifetime, job
+# control and byte streams); what a release publishes is kept as its `release` artifact. A version
+# tag on that very commit builds nothing: it publishes that run's artifact once every job of the run
+# has passed.
 #
 # The notices the programs carry are the tree's own (`dist/THIRD_PARTY_LICENSES.md`), so no build
 # waits for them; the notices job writes them again, and nothing is released when they differ. The
@@ -45,6 +47,7 @@ jobs:
   # The notices in the tree must be the ones scripts/notices.py writes for it; when they are not,
   # nothing is released and the ones to commit are uploaded.
   notices:
+    if: github.ref_type == 'branch'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -75,6 +78,7 @@ jobs:
           if-no-files-found: ignore
 
   kernel-windows:
+    if: github.ref_type == 'branch'
     name: kernel ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -234,6 +238,7 @@ jobs:
           if-no-files-found: ignore
 
   kernel-linux:
+    if: github.ref_type == 'branch'
     name: kernel ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -296,9 +301,10 @@ jobs:
       - name: Smoke test on this machine
         run: python scripts/smoke.py kernel/fastctx --service
       # The servers people bring are often far older than this one. The same smoke test runs again
-      # with every system call Linux 3.13 lacked answering ENOSYS, as such a kernel answers it, so a
-      # call the World makes with no way for an old kernel stops the release. As root, since a
-      # program kept from new privileges cannot sudo.
+      # with every system call Linux 3.13 lacked answering ENOSYS, and what CentOS 7's kernel has but
+      # refuses as invalid refused so, as such a kernel answers them, so a call the World makes with
+      # no way for an old kernel stops the release. As root, since a program kept from new
+      # privileges cannot sudo.
       - if: matrix.target == 'x86_64-unknown-linux-gnu'
         name: Smoke test as an old kernel
         run: |
@@ -337,6 +343,7 @@ jobs:
           tests/network_drill --root "$RUNNER_TEMP" "${earlier[@]}"
 
   kernel-macos:
+    if: github.ref_type == 'branch'
     name: kernel ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -886,6 +893,7 @@ jobs:
           if-no-files-found: error
 
   android:
+    if: github.ref_type == 'branch'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -1079,24 +1087,41 @@ jobs:
             assets/*.apk
           if-no-files-found: error
 
+  # A version tag publishes what the ci/ run of its very commit built and tested, once every job of
+  # that run has passed; nothing is built again.
   publish:
-    needs: manifest
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
+      - name: Find the run that built and tested this commit
+        id: built
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs?head_sha=$GITHUB_SHA&event=push&status=success&per_page=100" \
+            --jq '[.workflow_runs[] | select(.head_branch | startswith("ci/"))] | first | .id // empty')"
+          if [ -z "$run" ]; then
+            echo "no ci/ run of $GITHUB_SHA passed every job: push this commit to a ci/ branch, and tag it once that run is green"
+            exit 1
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with:
           name: release
           path: release
+          run-id: ${{ steps.built.outputs.run }}
+          github-token: ${{ github.token }}
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
           test "$GITHUB_REF_NAME" = "v$version"
+          test "$(python3 -c 'import json; print(json.load(open("release/latest.json"))["version"])')" = "$version"
           # A test release is a prerelease, which releases/latest and the old updaters never see; a
           # stable one is the latest.
           case "$version" in

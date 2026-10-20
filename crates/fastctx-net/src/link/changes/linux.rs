@@ -40,10 +40,19 @@ impl Changes {
         }
         // BOOTTIME timers expire during sleep and are readable on resume;
         // they do not wake the machine. A short sleep not crossing this
-        // deadline is detected within one heartbeat.
+        // deadline is detected within one heartbeat. A kernel before 3.15
+        // has no BOOTTIME timer and refuses it as invalid: a MONOTONIC one
+        // stands still while the machine sleeps, so a resume is seen at the
+        // first heartbeat after it, by the clocks it compares.
         // SAFETY: no pointers; the returned descriptor is owned below.
-        let timer =
-            owned(unsafe { libc::timerfd_create(libc::CLOCK_BOOTTIME, libc::TFD_NONBLOCK | libc::TFD_CLOEXEC) })?;
+        let flags = libc::TFD_NONBLOCK | libc::TFD_CLOEXEC;
+        let timer = match owned(unsafe { libc::timerfd_create(libc::CLOCK_BOOTTIME, flags) }) {
+            Err(error) if error.raw_os_error() == Some(libc::EINVAL) => {
+                // SAFETY: as above.
+                owned(unsafe { libc::timerfd_create(libc::CLOCK_MONOTONIC, flags) })?
+            }
+            timer => timer?,
+        };
         let period = libc::timespec { tv_sec: HEARTBEAT.as_secs() as _, tv_nsec: 0 };
         let spec = libc::itimerspec { it_interval: period, it_value: period };
         // SAFETY: a timer descriptor and initialized specification.

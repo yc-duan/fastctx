@@ -386,7 +386,12 @@ mod imp {
                 * 1024
         };
         let total = field("MemTotal");
-        let available = field("MemAvailable");
+        // A kernel before 3.14 says nothing of what is available: what is
+        // free and what its caches would give back stand for it.
+        let available = match field("MemAvailable") {
+            0 => field("MemFree") + field("Buffers") + field("Cached") + field("SReclaimable"),
+            available => available,
+        };
         let swap_total = field("SwapTotal");
         Ok(MemoryUse {
             total,

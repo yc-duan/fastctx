@@ -380,8 +380,16 @@ impl Link {
     /// Starts the link of the machine `membership` describes, which says
     /// who it is with `key`.
     pub fn start(dir: NetDir, membership: Membership, key: SecretKey, node: Arc<dyn Node>) -> io::Result<Self> {
-        let changes = changes::Changes::new(node.clone())?;
-        Self::start_with_changes(dir, membership, key, node, Some(changes))
+        // Noticing this machine's network change or wake only hastens a
+        // reconnect: without it, heartbeats and retries still find the hub.
+        let changes = match changes::Changes::new(node.clone()) {
+            Ok(changes) => Some(changes),
+            Err(error) => {
+                node.log(format!("not watching this machine's network and sleep: {error}"));
+                None
+            }
+        };
+        Self::start_with_changes(dir, membership, key, node, changes)
     }
 
     /// Starts a link whose network and resume notifications are supplied by
