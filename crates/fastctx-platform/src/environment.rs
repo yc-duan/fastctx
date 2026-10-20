@@ -114,13 +114,13 @@ mod imp {
 
 #[cfg(unix)]
 mod imp {
-    use std::ffi::{CStr, OsStr, OsString};
+    use std::ffi::{OsStr, OsString};
     use std::io;
     use std::os::unix::ffi::OsStrExt as _;
     use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
 
     pub fn user_environment() -> io::Result<Vec<(OsString, OsString)>> {
-        let account = Account::current()?;
+        let account = crate::unix_account::current()?;
         let mut env = Environment::default();
         env.set("USER", &account.name);
         env.set("LOGNAME", &account.name);
@@ -236,47 +236,5 @@ mod imp {
             }
         }
         Ok(if root { b"/sbin:/bin:/usr/sbin:/usr/bin".to_vec() } else { b"/bin:/usr/bin".to_vec() })
-    }
-
-    struct Account {
-        uid: u32,
-        name: OsString,
-        home: OsString,
-        shell: OsString,
-    }
-
-    impl Account {
-        fn current() -> io::Result<Self> {
-            // SAFETY: getpwuid_r writes into the buffers given; the entry's
-            // strings point into `buffer`, which outlives their use.
-            unsafe {
-                let uid = libc::getuid();
-                let mut entry: libc::passwd = std::mem::zeroed();
-                let mut found: *mut libc::passwd = std::ptr::null_mut();
-                let mut buffer = vec![0 as libc::c_char; 16 * 1024];
-                let code = libc::getpwuid_r(uid, &mut entry, buffer.as_mut_ptr(), buffer.len(), &mut found);
-                if code != 0 {
-                    return Err(io::Error::from_raw_os_error(code));
-                }
-                if found.is_null() {
-                    return Err(io::Error::other(format!("user {uid} has no entry in the account database")));
-                }
-                let text = |field: *const libc::c_char| -> OsString {
-                    if field.is_null() {
-                        OsString::new()
-                    } else {
-                        OsStr::from_bytes(CStr::from_ptr(field).to_bytes()).into()
-                    }
-                };
-                let shell = text(entry.pw_shell);
-                Ok(Self {
-                    uid,
-                    name: text(entry.pw_name),
-                    home: text(entry.pw_dir),
-                    // An empty shell field means /bin/sh, as login(1) reads it.
-                    shell: if shell.is_empty() { "/bin/sh".into() } else { shell },
-                })
-            }
-        }
     }
 }

@@ -83,30 +83,17 @@ fn absolute(what: &str, path: OsString) -> io::Result<PathBuf> {
 
 #[cfg(unix)]
 mod imp {
-    use std::ffi::{CStr, OsStr};
     use std::io;
-    use std::os::unix::ffi::OsStrExt as _;
     use std::path::PathBuf;
 
     pub fn user_home() -> io::Result<PathBuf> {
         if let Some(home) = std::env::var_os("HOME").filter(|home| !home.is_empty()) {
             return super::absolute("HOME", home);
         }
-        // SAFETY: getpwuid_r writes into the buffers given; the entry's
-        // strings point into `buffer`, which outlives their use.
-        unsafe {
-            let mut entry: libc::passwd = std::mem::zeroed();
-            let mut found: *mut libc::passwd = std::ptr::null_mut();
-            let mut buffer = vec![0 as libc::c_char; 16 * 1024];
-            let code = libc::getpwuid_r(libc::getuid(), &mut entry, buffer.as_mut_ptr(), buffer.len(), &mut found);
-            if code != 0 {
-                return Err(io::Error::from_raw_os_error(code));
-            }
-            if found.is_null() || entry.pw_dir.is_null() {
-                return Err(io::Error::other("HOME is unset and this user has no entry in the account database"));
-            }
-            super::absolute("the account's home", OsStr::from_bytes(CStr::from_ptr(entry.pw_dir).to_bytes()).into())
-        }
+        // SAFETY: getuid has no preconditions.
+        let account = crate::unix_account::lookup(unsafe { libc::getuid() })?
+            .ok_or_else(|| io::Error::other("HOME is unset and this user has no entry in the account database"))?;
+        super::absolute("the account's home", account.home)
     }
 }
 

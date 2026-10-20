@@ -136,9 +136,9 @@ fn account(uid: u32) -> anyhow::Result<(std::ffi::CString, u32)> {
     let mut found = std::ptr::null_mut();
     let mut buffer = Vec::new();
     // sysconf reports the platform's initial passwd-query buffer size.
-    let size = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
-    anyhow::ensure!(size > 0, "the system did not provide a passwd-query buffer size");
-    buffer.resize(size as usize, 0u8);
+    let hint = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
+    let size = if hint > 0 { hint as usize } else { 16 * 1024 };
+    buffer.resize(size, 0u8);
     loop {
         let code = unsafe { libc::getpwuid_r(uid, &mut record, buffer.as_mut_ptr().cast(), buffer.len(), &mut found) };
         if code == libc::ERANGE {
