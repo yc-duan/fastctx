@@ -1406,6 +1406,10 @@ export interface AccessWords {
   weeklyNone: string;
   weeklyOf(amount: string): string;
   weeklyBad: string;
+  /** The Fable limit that comes with a weekly one, half of it, under the
+   *  weekly field. */
+  fableOf(amount: string): string;
+  fableHint: string;
   daily: string;
   dailyHint: string;
   dailyOf(amount: string): string;
@@ -1464,6 +1468,8 @@ export const zhAccess: AccessWords = {
   weeklyHint: "约 $ 按 API 标价折算；到了就停，和这个登录的 7 天额度一起重置。空着是不限。",
   weeklyNone: "不限",
   weeklyOf: (amount) => `每周 约 ${amount}`,
+  fableOf: (amount) => `其中 Fable 至多 ${amount}`,
+  fableHint: "Fable 的上限自动是每周上限的一半，不能另填。",
   weeklyBad: "每周上限要填一个大于 0 的金额",
   daily: "每天上限",
   dailyHint: "约 $ 按 API 标价折算；按最近 24 小时算，到了就停。空着是不限。",
@@ -1518,6 +1524,8 @@ export const enAccess: AccessWords = {
   weeklyHint: "Dollars at the API's list prices; reaching it stops them until this login's 7-day limit resets. Empty is no limit.",
   weeklyNone: "No limit",
   weeklyOf: (amount) => `≈ ${amount} a week`,
+  fableOf: (amount) => `Fable: up to ${amount} of it`,
+  fableHint: "Fable gets half the weekly limit, set for you.",
   weeklyBad: "The weekly limit needs an amount above 0",
   daily: "Daily limit",
   dailyHint: "Dollars at the API's list prices over the last 24 hours; reaching it stops them. Empty is no limit.",

@@ -28,7 +28,7 @@ import { detailOf } from "../problem";
 import type { Page } from "../shell";
 import { effect, type Signal } from "../signals";
 import type { Store } from "../store";
-import { bar, calendar, parts, punch, quota, ring, weeks, type Amounts, type RingPart } from "./draw";
+import { bar, calendar, meter, parts, punch, quota, weeks, type Amounts, type RingPart } from "./draw";
 import { keepRecord, keptRecord, keptReport, readReport, reportKey } from "./kept";
 import { allowanceTrack, between, byDay, byHourOfWeek, dayOf, DAY_MS, daysBefore, longestRun, pace, total, track, usageOf, valueOf, type Person, type Span, type Unit, type Usage, type Went } from "./model";
 import { assistingMe, assistsOf, namer } from "./people";
@@ -83,6 +83,8 @@ export class LoginUsagePage implements Page {
   private view: { tab: Tab; unit: Unit } = kept();
   /** The person everything below is narrowed to, by key. */
   private only: string | null = null;
+  /** Every one who used it listed, not the first few and the rest folded. */
+  private everyone = false;
   private width = 0;
   private height = 0;
   private refitting = false;
@@ -156,9 +158,10 @@ export class LoginUsagePage implements Page {
   /** A person picked narrows everything below to them; picked again, or
    *  another picked, it widens or moves. */
   private click(event: Event): void {
-    const target = (event.target as HTMLElement).closest<HTMLElement>("[data-view], [data-only]");
+    const target = (event.target as HTMLElement).closest<HTMLElement>("[data-view], [data-only], [data-everyone]");
     if (!target) return;
-    if (target.dataset.only !== undefined) this.only = this.only === target.dataset.only ? null : target.dataset.only;
+    if (target.dataset.everyone !== undefined) this.everyone = target.dataset.everyone === "1";
+    else if (target.dataset.only !== undefined) this.only = this.only === target.dataset.only ? null : target.dataset.only;
     else {
       const [what, value] = target.dataset.view!.split(":") as [keyof LoginUsagePage["view"], string];
       this.view = { ...this.view, [what]: value };
@@ -269,80 +272,71 @@ export class LoginUsagePage implements Page {
     return this.view.tab === "quota" && mine && !caps?.weekly ? "calendar" : this.view.tab;
   }
 
-  /** What stands now: the windows, this week, and who used it. */
+  /** What stands now, one table of rows in shared columns: this week's
+   *  figure, the account's windows as bars, under the seven-day one a row
+   *  for each who used its week, pressed to narrow the page to them; the
+   *  one picked has their allowances under their row, the two one block. */
   private strip(usage: Usage, limits: Fact<AgentLimits> | null, unit: Unit, amounts: Amounts, mine: Mine | null, only: Person | null, caps: Caps | null, now: number): string {
     const { words } = this.options;
-    const rings = mine ? this.allowanceRings(usage, caps, now) : this.windowRings(usage, limits, only, caps, now);
-    const shown = only ? [only] : usage.people;
+    const windows = mine ? "" : this.windowMeters(usage, limits, only, now);
+    const allowances = mine ? this.allowanceMeters(usage, caps) : "";
+    // The figure is always the whole login's week (the reader's own where it
+    // assists them); each one's share is on their row.
+    const shown = usage.people;
     const week = shown.reduce((sum, person) => sum + valueOf(person.week, unit), 0);
     const weekTokens = shown.reduce((sum, person) => sum + person.week.tokens, 0);
     const { start } = usage.week;
     const elapsed = now - start;
-    const before = total(between(usage, unit, start - 7 * DAY_MS, start - 7 * DAY_MS + elapsed, only?.index ?? null));
-    const sofar = total(between(usage, unit, start, now + 1, only?.index ?? null));
-    const today = total(between(usage, unit, dayOf(now), now + 1, only?.index ?? null));
+    const before = total(between(usage, unit, start - 7 * DAY_MS, start - 7 * DAY_MS + elapsed, null));
+    const sofar = total(between(usage, unit, start, now + 1, null));
+    const today = total(between(usage, unit, dayOf(now), now + 1, null));
     const change = before > 0 ? Math.round((sofar / before - 1) * 100) : null;
-    const big =
-      unit === "usd"
-        ? `<span class="ledger-about" title="${escape(words.aboutWhy)}">${escape(words.about)}</span>${escape(words.money(week))}`
-        : `${escape(words.tokens(week))}<span class="ledger-unit">${escape(words.tokenUnit)}</span>`;
-    const facts = [
-      unit === "usd" ? `<span>${escape(words.tokens(weekTokens))} ${escape(words.tokenUnit)}</span>` : "",
-      change === null ? (sofar > 0 ? `<span>${escape(words.noLastWeek)}</span>` : "") : `<span class="${change > 0 ? "ledger-up" : ""}">${escape(words.vsLastWeek(change))}</span>`,
-      `<span>${escape(words.today(today > 0 ? amounts.say(today) : null))}</span>`,
-    ].join("");
-    const key = mine ? words.myWeek : only ? words.whoseWeek(only.name) : words.thisWeek;
-    const totals = `<div class="ledger-totals">
-        <span class="ledger-key" title="${escape(`${words.weekSpan(new Date(start), new Date(usage.week.end))}\n${words.weekWhy(usage.week.window)}`)}">${escape(key)}</span>
-        <span class="ledger-big">${big}</span>
-        <span class="ledger-facts">${facts}</span>
+    // The week's figure is the first row of the same columns as the bars:
+    // whose week, the amount, and its change from last week where the bars
+    // have their notes; how it is reckoned, its tokens and today a hover away.
+    const number = unit === "usd" ? escape(words.money(week)) : `${escape(words.tokens(week))}<span class="ledger-unit">${escape(words.tokenUnit)}</span>`;
+    const said = [unit === "usd" ? words.aboutWhy : "", unit === "usd" ? `${words.tokens(weekTokens)} ${words.tokenUnit}` : "", words.today(today > 0 ? amounts.say(today) : null)].filter(Boolean).join("\n");
+    const delta = change === null ? "" : `${change > 0 ? "+" : change < 0 ? "−" : "±"}${Math.abs(change)}%`;
+    const deltaSaid = change === null ? (sofar > 0 ? words.noLastWeek : "") : words.vsLastWeek(change);
+    const span = `${words.weekSpan(new Date(start), new Date(usage.week.end))}\n${words.weekWhy(usage.week.window)}`;
+    const figure = `<div class="ledger-meter ledger-week">
+        <span class="ledger-meter-name" title="${escape(span)}">${escape(words.thisWeek)}</span>
+        <span class="ledger-week-big" title="${escape(said)}">${number}</span>
+        <span class="ledger-meter-used"></span>
+        <span class="ledger-meter-note${change !== null && change > 0 ? " up" : ""}"${deltaSaid ? ` title="${escape(deltaSaid)}"` : ""}>${escape(delta)}</span>
       </div>`;
-    const who = mine ? "" : `<section class="ledger-who-card">${this.people(usage, unit, amounts)}</section>`;
-    // An account the login assists reads its week in its allowances' rings;
-    // without any, in the week's figures.
-    const figures = mine && rings ? "" : totals;
-    return `<section class="ledger-now${rings ? "" : " ringless"}">${rings ? `<div class="ledger-rings">${rings}</div>` : ""}${figures}</section>${who}`;
+    // An account the login assists reads its week in its allowances' bars;
+    // without any, in the week's figure.
+    const first = mine && allowances ? "" : figure;
+    const people = mine ? "" : this.peopleRows(usage, unit, amounts, caps);
+    return `<section class="ledger-now"><div class="ledger-meters">${first}${windows}${people}${allowances}</div></section>`;
   }
 
-  /** The login's windows as rings; the seven-day one drawn in the parts
-   *  of those who used its week, the one picked in full and the rest
-   *  faded. The one picked, given a weekly allowance, has a ring of it. */
-  private windowRings(usage: Usage, limits: Fact<AgentLimits> | null, only: Person | null, caps: Caps | null, now: number): string {
+  /** The login's windows as bars; the seven-day one in the parts of those
+   *  who used its week, the one picked in full and the rest faded. */
+  private windowMeters(usage: Usage, limits: Fact<AgentLimits> | null, only: Person | null, now: number): string {
     const { words } = this.options;
     const known = limits?.kind === "known" ? limits.value : null;
     const week = current(usage);
-    const rings = [300, 10080].map((minutes) => {
+    const rows = [300, 10080].map((minutes) => {
       const window = known?.windows.find((one) => one.minutes === minutes || one.name.startsWith(minutes === 300 ? "five_hour" : "seven_day")) ?? null;
       // A reading without this window: the account has none.
       if (known && !window) return "";
-      if (minutes === 300 || !week?.parts.size) return this.windowRing(minutes, window, known?.observed_at ?? null, now, [], null);
-      const ringParts: RingPart[] = usage.people.filter((person) => week.parts.has(person.index)).map((person) => ({ share: week.parts.get(person.index)!, ink: person.ink, faded: !!only && only.index !== person.index }));
-      const said = usage.people.filter((person) => week.parts.has(person.index)).map((person) => words.partOf(person.name, Math.round(week.parts.get(person.index)! * 100)));
-      const part = only ? { text: words.partOf(only.name, Math.round((week.parts.get(only.index) ?? 0) * 100)), ink: only.ink } : null;
-      return this.windowRing(minutes, window, known?.observed_at ?? null, now, ringParts, part, said);
+      if (minutes === 300 || !week?.parts.size) return this.windowMeter(minutes, window, known?.observed_at ?? null, now, [], []);
+      const users = usage.people.filter((person) => week.parts.has(person.index));
+      const ringParts: RingPart[] = users.map((person) => ({ share: week.parts.get(person.index)!, ink: person.ink, faded: !!only && only.index !== person.index }));
+      const said = users.map((person) => words.partOf(person.name, Math.round(week.parts.get(person.index)! * 100)));
+      return this.windowMeter(minutes, window, known?.observed_at ?? null, now, ringParts, said);
     });
-    if (only && caps?.weekly && only.week.usd !== null) {
-      const spent = only.week.usd;
-      const left = usage.week.window ? this.options.logins.resetsIn(new Date(usage.week.end), new Date(now)) : "";
-      rings.push(
-        this.face({
-          name: words.capRing(only.name),
-          share: spent / caps.weekly,
-          under: words.capOf(words.money(spent), wholeDollars(caps.weekly)),
-          said: [words.weekCapSaid(wholeDollars(caps.weekly), words.money(spent)), left ? words.resetsIn(left) : ""].filter(Boolean).join("\n"),
-          seed: `${this.key}:cap:${only.key}`,
-          parts: [{ share: spent / caps.weekly, ink: only.ink }],
-        }),
-      );
-    }
-    return rings.join("");
+    return rows.join("");
   }
 
-  /** One window's ring: how much is used and how long until it resets; a
-   *  window past the reset it was read before is empty and says it has
-   *  reset; one never read, empty and says so. When it was read, what it
-   *  had used before a reset, and each person's part, a hover away. */
-  private windowRing(minutes: number, window: LimitWindow | null, observed: string | null, now: number, ringParts: RingPart[], part: { text: string; ink: string } | null, said: string[] = []): string {
+  /** One window's bar: how much is used and how long until it resets, a
+   *  pencil mark where the window stands now; a window past the reset it
+   *  was read before is empty and says it has reset; one never read is a
+   *  dashed empty bar. When it was read, what it had used before a reset,
+   *  and each person's part, a hover away. */
+  private windowMeter(minutes: number, window: LimitWindow | null, observed: string | null, now: number, ringParts: RingPart[], said: string[]): string {
     const { words, logins } = this.options;
     const name = words.window(minutes, window?.name ?? "");
     const read = observed ? logins.observed(this.options.when(new Date(observed), new Date(now))) : "";
@@ -356,76 +350,101 @@ export class LoginUsagePage implements Page {
       : reset
         ? [`${name}: ${logins.reset}`, logins.usedBefore(percent), read].join("\n")
         : [`${name}: ${logins.used(percent)}`, window.resets_at ? logins.resets(new Date(window.resets_at), new Date(now)) : "", read, ...parted].filter(Boolean).join("\n");
-    const under = !window ? words.notRead : reset ? logins.reset : left ? words.resetsIn(left) : "";
-    return this.face({ name, share, under, said: hover, seed: `${this.key}:${minutes}`, parts: share === null ? [] : ringParts, part: ringParts.length ? part : undefined });
+    const note = !window ? escape(words.notRead) : reset ? escape(logins.reset) : left ? `${glyph("history", 13)}<span>${escape(left)}</span>` : "";
+    return this.meterRow({ name, share, parts: share === null ? [] : ringParts, note, said: hover, seed: `${this.key}:${minutes}`, unread: !window });
   }
 
-  /** The allowances the reader has of the login, as rings: what they
-   *  used of each against it, and over what time, the week's with the
-   *  login's own reset. */
-  private allowanceRings(usage: Usage, caps: Caps | null, now: number): string {
-    const { words, logins } = this.options;
-    const me = usage.people.find((person) => person.me) ?? null;
-    const quiet = "var(--text-3)";
-    const rings: string[] = [];
-    if (caps?.daily) {
-      const spent = me?.day?.usd ?? 0;
-      rings.push(this.face({ name: words.aDay, share: spent / caps.daily, under: words.capOf(words.money(spent), wholeDollars(caps.daily)), part: { text: words.lastDay, ink: quiet }, said: words.dayCapSaid(wholeDollars(caps.daily), words.money(spent)), seed: `${this.key}:day` }));
+  /** What one assisted has spent against their allowances: a day's, a
+   *  week's and Fable's, half the week's (`world-usage.md`, 协助的上限). */
+  private capMeters(usage: Usage, person: Person | null, caps: Caps, ink: string | null): string {
+    const { words } = this.options;
+    const seed = `${this.key}:cap:${person?.key ?? ""}`;
+    const parts = (share: number): RingPart[] => (ink ? [{ share, ink }] : []);
+    const row = (name: string, spent: number, cap: number, said: string, suffix: string) =>
+      this.meterRow({ name, share: spent / cap, parts: parts(spent / cap), note: escape(words.capOf(words.money(spent), wholeDollars(cap))), said, seed: seed + suffix, unread: false });
+    const rows: string[] = [];
+    if (caps.daily) {
+      const spent = person?.day?.usd ?? 0;
+      rows.push(row(words.dayCap, spent, caps.daily, words.dayCapSaid(wholeDollars(caps.daily), words.money(spent)), ":day"));
     }
-    if (caps?.weekly) {
-      const spent = me?.week.usd ?? 0;
-      const left = usage.week.window ? logins.resetsIn(new Date(usage.week.end), new Date(now)) : "";
-      const said = [words.weekCapSaid(wholeDollars(caps.weekly), words.money(spent)), words.weekSpan(new Date(usage.week.start), new Date(usage.week.end))].join("\n");
-      rings.push(this.face({ name: words.aWeek, share: spent / caps.weekly, under: words.capOf(words.money(spent), wholeDollars(caps.weekly)), part: { text: left ? words.resetsIn(left) : "", ink: quiet }, said, seed: `${this.key}:week` }));
+    if (caps.weekly) {
+      const spent = person?.week.usd ?? 0;
+      rows.push(row(words.weekCap, spent, caps.weekly, [words.weekCapSaid(wholeDollars(caps.weekly), words.money(spent)), words.weekSpan(new Date(usage.week.start), new Date(usage.week.end))].join("\n"), ":week"));
+      if (person?.fable?.usd != null) rows.push(row(words.fable, person.fable.usd, caps.weekly / 2, words.fableCapSaid(wholeDollars(caps.weekly / 2), words.money(person.fable.usd)), ":fable"));
     }
-    return rings.join("");
+    return rows.join("");
   }
 
-  /** A ring with its figure, name and the line under it. */
-  private face(ring_: { name: string; share: number | null; under: string; said: string; seed: string; parts?: RingPart[]; part?: { text: string; ink: string } | null | undefined }): string {
-    const { share } = ring_;
+  /** The allowances the reader has of the login, as bars. */
+  private allowanceMeters(usage: Usage, caps: Caps | null): string {
+    if (!caps) return "";
+    return this.capMeters(usage, usage.people.find((person) => person.me) ?? null, caps, null);
+  }
+
+  /** One limit's row in the shared columns: its name, the bar, how much
+   *  is used, and a short note. */
+  private meterRow(row: { name: string; share: number | null; parts: RingPart[]; note: string; said: string; seed: string; unread: boolean }): string {
+    const { share } = row;
     const level = share === null ? "" : share >= 1 ? " spent" : share >= 0.9 ? " high" : "";
-    const part =
-      ring_.part === undefined
-        ? ""
-        : `<span class="ledger-ring-part"${ring_.part ? ` style="color:${ring_.part.ink}"` : ""}>${ring_.part ? escape(ring_.part.text) : ""}</span>`;
-    return `<div class="ledger-ring" title="${escape(ring_.said)}">
-      <span class="ledger-ring-face">${ring(share, ring_.seed, 76, ring_.parts ?? [])}<span class="ledger-ring-num${level}"><span>${share === null ? "–" : `${Math.round(share * 100)}<small>%</small>`}</span></span></span>
-      <span class="ledger-ring-name">${escape(ring_.name)}</span>
-      <span class="ledger-ring-left">${escape(ring_.under)}</span>
-      ${part}
+    return `<div class="ledger-meter${level}${row.unread ? " unread" : ""}" title="${escape(row.said)}">
+      <span class="ledger-meter-name">${escape(row.name)}</span>
+      <span class="ledger-meter-track">${meter(share, row.seed, row.parts)}</span>
+      <span class="ledger-meter-used">${share === null ? "" : `${Math.round(share * 100)}%`}</span>
+      <span class="ledger-meter-note">${row.note}</span>
     </div>`;
   }
 
-  /** Who used it this week, each a row to narrow everything below to:
-   *  what they used, against the others, and their part of the week's
-   *  window. */
-  private people(usage: Usage, unit: Unit, amounts: Amounts): string {
+  /** Who used it this week, a row each under the seven-day bar: their bar
+   *  in their ink against the window, their part of it, and what they
+   *  spent; on what terms, and when an assistance ends, a hover away. The
+   *  one picked has their allowances under their row. One alone has
+   *  nothing to tell apart: the seven-day bar is theirs. */
+  private peopleRows(usage: Usage, unit: Unit, amounts: Amounts, caps: Caps | null): string {
     const { words } = this.options;
+    if (usage.people.length < 2) return "";
     const week = current(usage);
+    const parted = week?.reached !== null && week?.reached !== undefined;
     const most = Math.max(1e-9, ...usage.people.map((person) => valueOf(person.week, unit)));
-    const now = this.options.store.clock.peek();
-    const rows = usage.people
+    const clock = this.options.store.clock.peek();
+    // Past five, the first four by use and the one picked are rows, the rest
+    // one row together until unfolded.
+    const folds = usage.people.length > MOST_ROWS;
+    const listed = !folds || this.everyone ? usage.people : usage.people.filter((person, index) => index < MOST_ROWS - 1 || person.key === this.only);
+    const rest = usage.people.filter((person) => !listed.includes(person));
+    const rows = listed
       .map((person) => {
         const assisted = this.assistOf(person);
-        // An assistance that ends shows when after the name; its terms, with
-        // their part of the week, are a hover away.
-        const terms = assisted ? [words.assistUntil(assisted.until ? new Date(assisted.until) : null, now), assisted.daily ? words.daily(wholeDollars(assisted.daily / 1_000_000)) : "", assisted.weekly ? words.weekly(wholeDollars(assisted.weekly / 1_000_000)) : "", assisted.five_hour ? words.fiveHourCap(assisted.five_hour) : ""].filter(Boolean) : [];
-        const ends = assisted?.until ? `<span class="ledger-person-until">${glyph("history", 13)}<span>${escape(words.untilShort(new Date(assisted.until), now))}</span></span>` : "";
+        const terms = assisted ? [words.assistUntil(assisted.until ? new Date(assisted.until) : null, clock), assisted.daily ? words.daily(wholeDollars(assisted.daily / 1_000_000)) : "", assisted.weekly ? words.weekly(wholeDollars(assisted.weekly / 1_000_000)) : "", assisted.five_hour ? words.fiveHourCap(assisted.five_hour) : ""].filter(Boolean) : [];
         const value = valueOf(person.week, unit);
-        const part = week?.reached !== null && week?.reached !== undefined ? (week.parts.get(person.index) ?? 0) : null;
-        const state = this.only === person.key ? " on" : this.only ? " faded" : "";
-        const said = [part === null ? "" : words.partSaid(person.name, Math.round(part * 100)), ...terms].filter(Boolean).join("\n");
-        return `<button class="ledger-person${state}" type="button" data-only="${escape(person.key)}"${said ? ` title="${escape(said)}"` : ""}>
-          <span class="ledger-swatch" style="background:${person.ink}"></span>
-          <span class="ledger-person-name"><span>${escape(person.name)}</span>${ends}</span>
-          <span class="ledger-person-value">${escape(value ? amounts.say(value) : "–")}</span>
-          ${bar(value / most, `${this.key}:${person.key}`, 92, 12, person.ink)}
-          <span class="ledger-person-part">${part === null ? "" : escape(`${Math.round(part * 100)}%`)}</span>
+        const part = parted ? (week!.parts.get(person.index) ?? 0) : null;
+        const picked = this.only === person.key;
+        const said = [words.spentWeek(person.name, value ? amounts.say(value) : "–"), part === null ? "" : words.partSaid(person.name, Math.round(part * 100)), ...terms].filter(Boolean).join("\n");
+        // Against the seven-day window where each one's part of it is known,
+        // else against the most anyone used.
+        const share = part ?? value / most;
+        const ends = assisted?.until ? glyph("history", 12) : "";
+        const row = `<button class="ledger-meter ledger-person${picked ? " on" : ""}" type="button" data-only="${escape(person.key)}" title="${escape(said)}">
+          <span class="ledger-meter-name ledger-person-name"><span>${escape(person.name)}</span>${ends}</span>
+          <span class="ledger-meter-track">${meter(share, `${this.key}:person:${person.key}`, [{ share, ink: person.ink }], false)}</span>
+          <span class="ledger-meter-used">${part === null ? "" : `${Math.round(part * 100)}%`}</span>
+          <span class="ledger-meter-note">${escape(value ? amounts.say(value) : "–")}</span>
         </button>`;
+        return picked && caps ? `<div class="ledger-group">${row}${this.capMeters(usage, person, caps, person.ink)}</div>` : row;
       })
       .join("");
-    return `<div class="ledger-people"><div class="ledger-key-row"><span class="ledger-key">${escape(words.who)}</span>${week?.reached !== null && week?.reached !== undefined ? `<span class="ledger-key-part" title="${escape(words.partsWhy)}">${escape(words.partHead)}</span>` : ""}</div>${rows || `<p class="ledger-none">${escape(words.noneThisWeek)}</p>`}</div>`;
+    if (rest.length) {
+      const value = rest.reduce((sum, person) => sum + valueOf(person.week, unit), 0);
+      const part = parted ? rest.reduce((sum, person) => sum + (week!.parts.get(person.index) ?? 0), 0) : null;
+      const share = part ?? value / most;
+      const said = rest.map((person) => words.spentWeek(person.name, amounts.say(valueOf(person.week, unit)))).join("\n");
+      return `${rows}<button class="ledger-meter ledger-person ledger-others" type="button" data-everyone="1" title="${escape(said)}">
+          <span class="ledger-meter-name ledger-person-name"><span>${escape(words.others(rest.length))}</span></span>
+          <span class="ledger-meter-track">${meter(share, `${this.key}:others`, [{ share, ink: "var(--pen-graphite)" }], false)}</span>
+          <span class="ledger-meter-used">${part === null ? "" : `${Math.round(part * 100)}%`}</span>
+          <span class="ledger-meter-note">${escape(amounts.say(value))}</span>
+        </button>`;
+    }
+    return folds ? `${rows}<button class="ledger-fewer" type="button" data-everyone="0">${escape(words.fewer)}</button>` : rows;
   }
 
   private tabs(usage: Usage, current_: Tab, mine: Mine | null, caps: Caps | null): string {
@@ -468,8 +487,8 @@ export class LoginUsagePage implements Page {
         if (looked && caps?.weekly && usage.usd) {
           const cap = caps.weekly;
           const spent = allowanceTrack(usage, looked.index, cap, now);
-          const drawn = quota({ width, height, start: usage.week.start, end: usage.week.end, now, window: usage.week.window, week: spent, five: null, pace: spent ? pace(spent, now) : null, words, seed: `${this.key}:cap:${looked.key}`, ink: looked.ink, at: (at, percent) => words.capAt(at, percent ?? 0, `${words.about} ${words.money(((percent ?? 0) / 100) * cap)}`) });
-          return `<div class="ledger-panel-head"><span class="ledger-panel-title">${escape(words.capTitle(`${words.about} ${wholeDollars(cap)}`))}</span>${drawn.said ? `<span class="ledger-panel-said">${escape(drawn.said)}</span>` : ""}</div><div class="ledger-figure">${drawn.svg}</div>`;
+          const drawn = quota({ width, height, start: usage.week.start, end: usage.week.end, now, window: usage.week.window, week: spent, five: null, pace: spent ? pace(spent, now) : null, words, seed: `${this.key}:cap:${looked.key}`, ink: looked.ink, at: (at, percent) => words.capAt(at, percent ?? 0, words.money(((percent ?? 0) / 100) * cap)) });
+          return `<div class="ledger-panel-head"><span class="ledger-panel-title">${escape(words.capTitle(wholeDollars(cap)))}</span>${drawn.said ? `<span class="ledger-panel-said">${escape(drawn.said)}</span>` : ""}</div><div class="ledger-figure">${drawn.svg}</div>`;
         }
         const week = track(usage, 10080);
         const five = track(usage, 300);
@@ -482,7 +501,7 @@ export class LoginUsagePage implements Page {
         const fit = Math.max(1, Math.floor((width - 52) / WEEK_SLOT));
         const columns = usage.weeks.slice(-fit).map((span) => weekColumn(span, unit, index));
         const legend = shown.length > 1 ? `<span class="ledger-legend">${shown.map((person) => `<span class="ledger-keyed"><i style="background:${person.ink}"></i>${escape(person.name)}</span>`).join("")}</span>` : "";
-        const cap = unit === "usd" && caps?.weekly ? { value: caps.weekly, said: `${words.about} ${wholeDollars(caps.weekly)}` } : null;
+        const cap = unit === "usd" && caps?.weekly ? { value: caps.weekly, said: wholeDollars(caps.weekly) } : null;
         return `<div class="ledger-panel-head"><span class="ledger-panel-title">${escape(words.weeksTitle(columns.length))}</span><span class="ledger-grow"></span>${legend}</div><div class="ledger-figure">${weeks({ width, height: Math.max(200, this.height), columns, people: shown, amounts, words, seed, cap, only: only ? { index: only.index, ink: only.ink } : null })}</div>`;
       }
       case "punch": {
@@ -509,7 +528,7 @@ export class LoginUsagePage implements Page {
         { value: kinds.cache_write, ink: "var(--pen-sky)", label: words.kinds.cache_write, said: words.money(kinds.cache_write) },
         { value: kinds.input, ink: "var(--pen-sage)", label: words.kinds.input, said: words.money(kinds.input) },
         { value: kinds.output, ink: "var(--pen-clay)", label: words.kinds.output, said: words.money(kinds.output) },
-      ].map((one) => ({ ...one, said: `${one.label} ${words.about} ${one.said}`, label: `${one.label} ${percent(one.value)}` }));
+      ].map((one) => ({ ...one, said: `${one.label} ${one.said}`, label: `${one.label} ${percent(one.value)}` }));
       note = words.byMoney;
     } else {
       const input = tokens.input + tokens.cache_read + tokens.cache_write;
@@ -571,9 +590,12 @@ function weekColumn(span: Span, unit: Unit, only: number | null): { start: numbe
 }
 
 /** How amounts read in a unit: dollars marked as an estimate. */
+/** Who used it are rows up to this many; past it, the rest fold into one. */
+const MOST_ROWS = 5;
+
 export function amountsOf(words: UsageWords, unit: Unit): Amounts {
   return unit === "usd"
-    ? { say: (value) => `${words.about} ${words.money(value)}`, axis: (value) => words.money(value).replace(/\.00$/, "") }
+    ? { say: (value) => words.money(value), axis: (value) => words.money(value).replace(/\.00$/, "") }
     : { say: (value) => words.tokens(value), axis: (value) => words.tokens(value) };
 }
 

@@ -6,7 +6,7 @@
 // what it stands for.
 
 import { escape } from "../../conversation/prose";
-import { blot, circle, dashed, dot, outline, ruled, ruledPoints, seeded, swatch, type Point } from "../../pen/shapes";
+import { blot, dashed, dot, outline, ruled, ruledPoints, seeded, swatch, type Point } from "../../pen/shapes";
 import { DAY_MS, HOUR_MS, dayOf, daysBefore, levels, total, weekdayOf, type Person, type Track } from "./model";
 import type { UsageWords } from "./words";
 
@@ -38,43 +38,41 @@ export interface RingPart {
   faded?: boolean;
 }
 
-/** A ring for a window: how much of it is used, clay turning to caution near
- *  the end and to wrong past it. Given the parts of those who used it, each
- *  is drawn in turn in its own ink, what no part covers in graphite. */
-export function ring(share: number | null, seed: string, size = 76, parts: RingPart[] = []): string {
-  const r = size * 0.38;
-  const c: Point = [size / 2, size / 2];
-  const random = seeded(`ring:${seed}`);
-  const track = circle(c, r, 1.3, random);
-  const arc = (from: number, to: number, last: boolean): string => {
-    const sweep = (Math.min(1, to) - from) * Math.PI * 2;
-    if (sweep <= 0) return "";
-    const steps = Math.max(4, Math.round((sweep * r) / 2.5));
-    const points: Point[] = [];
-    for (let index = 0; index <= steps; index += 1) {
-      const angle = -Math.PI / 2 + from * Math.PI * 2 + (sweep * index) / steps;
-      points.push([c[0] + Math.cos(angle) * r, c[1] + Math.sin(angle) * r]);
-    }
-    return outline(points, size * 0.07, random, { pressure: 0.2, taperStart: from ? 0.01 : 0.03, taperEnd: last ? Math.min(0.2, 0.05 / Math.min(1, to - from)) : 0.01 });
+/** A limit's bar: a ruled line, inked along how much of it is used, clay
+ *  turning to caution near the end and to wrong past it. Given the parts
+ *  of those who used it, each is inked in turn in its own colour, what no
+ *  part covers in graphite. Drawn at a width of its own and stretched to
+ *  the column it is in. What is no limit (`limit` false) keeps its inks to
+ *  the end. */
+export function meter(share: number | null, seed: string, parts: RingPart[] = [], limit = true, width = 400, height = 14): string {
+  const random = seeded(`meter:${seed}`);
+  const y = height / 2;
+  const whole = ruled([2, y], [width - 2, y], 1, random);
+  const span = (from: number, to: number): string => {
+    const x0 = 3 + (width - 6) * from;
+    const x1 = 3 + (width - 6) * Math.min(1, to);
+    if (x1 - x0 < 1) return "";
+    // A short part keeps its full width to its ends: tapered, it would be
+    // a diamond.
+    return outline(ruledPoints([x0, y], [x1, y], random), height * 0.72, random, { pressure: 0.12, taper: x1 - x0 < 40 ? 0 : 0.02 });
   };
-  const level = share === null ? "" : share >= 1 ? " spent" : share >= 0.9 ? " high" : "";
+  const level = share === null || !limit ? "" : share >= 1 ? " spent" : share >= 0.9 ? " high" : "";
   let ink = "";
-  if (share !== null && share >= 0.012) {
-    const shown = parts.filter((part) => part.share >= 0.004);
+  if (share !== null && share >= 0.005) {
+    const shown = parts.filter((part) => part.share >= 0.003);
     // Near the end, the warning says more than who used it.
-    if (!shown.length || level) ink = `<path class="ledger-arc${level}" d="${arc(0, share, true)}"/>`;
+    if (!shown.length || level) ink = `<path class="ledger-arc${level}" d="${span(0, share)}"/>`;
     else {
       let from = 0;
-      shown.forEach((part, index) => {
+      for (const part of shown) {
         const to = Math.min(share, from + part.share);
-        const last = index === shown.length - 1 && to >= share - 0.004;
-        ink += `<path fill="${part.ink}"${part.faded ? ' fill-opacity="0.28"' : ""} d="${arc(from, to, last)}"/>`;
+        ink += `<path fill="${part.ink}"${part.faded ? ' fill-opacity="0.28"' : ""} d="${span(from, to)}"/>`;
         from = to;
-      });
-      if (share - from >= 0.004) ink += `<path fill="var(--pen-graphite)" fill-opacity="0.5" d="${arc(from, share, true)}"/>`;
+      }
+      if (share - from >= 0.003) ink += `<path fill="var(--pen-graphite)" fill-opacity="0.5" d="${span(from, share)}"/>`;
     }
   }
-  return `<svg class="ledger-ring-ink${share === null ? " unread" : ""}" viewBox="0 0 ${size} ${size}" aria-hidden="true"><path class="ledger-trace" d="${track}"/><g filter="url(#pen-marker-lite)">${ink}</g></svg>`;
+  return `<svg class="ledger-meter-ink${share === null ? " unread" : ""}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true"><path class="ledger-trace" d="${whole}"/><g filter="url(#pen-marker-lite)">${ink}</g></svg>`;
 }
 
 /** A short bar: a ruled line, inked along `share` of it. */

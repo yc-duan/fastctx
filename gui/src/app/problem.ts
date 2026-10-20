@@ -35,6 +35,17 @@ export interface ProblemWords {
   outputLimit: string;
   /** An assistance's allowance reached, until it has room again. */
   allowanceUsed(reached: Reached): string;
+  /** The machine's Claude Code is older than the oldest the World works
+   *  with, `oldest`. */
+  claudeTooOld(oldest: string): string;
+  /** The machine's Claude Code said no version the World can read. */
+  claudeVersionUnknown: string;
+  /** A fork that did not finish; it is made again from its source. */
+  forkIncomplete: string;
+  /** A fork still being prepared, which takes words once it is done. */
+  forkPreparing: string;
+  /** This Claude Code cannot rewind; forking through a turn can. */
+  noRewind: string;
   somethingElse: string;
 }
 
@@ -62,8 +73,14 @@ export const zhProblems: ProblemWords = {
   allowanceUsed: (reached) => {
     const until = `${reached.until.getMonth() + 1}月${reached.until.getDate()}日 ${clock(reached.until)}`;
     if (reached.kind === "fiveHour") return `这个登录的 5 小时额度已用到 ${reached.share}%，协助暂停，${until} 后继续`;
+    if (reached.kind === "fable") return `这周的 Fable 额度（约 ${reached.amount}）用完了，换别的型号可以接着用，${until} 后恢复`;
     return `${reached.kind === "daily" ? "每天" : "这周"}的协助额度（约 ${reached.amount}）用完了，${until} 后继续`;
   },
+  claudeTooOld: (oldest) => `这台的 Claude Code 太旧，先升级到 ${oldest} 或更新`,
+  claudeVersionUnknown: "认不出这台 Claude Code 的版本",
+  forkIncomplete: "这次分叉没完成，请从原来的对话再分一次",
+  forkPreparing: "分叉还在准备",
+  noRewind: "这一版 Claude Code 不能回退，可以从这一轮分叉",
   somethingElse: "操作未完成",
 };
 
@@ -91,12 +108,22 @@ export const enProblems: ProblemWords = {
   allowanceUsed: (reached) => {
     const until = `${reached.until.toLocaleString("en", { month: "short", day: "numeric" })} ${clock(reached.until)}`;
     if (reached.kind === "fiveHour") return `This login's 5-hour limit is ${reached.share}% used, so assisting pauses; it goes on ${until}`;
+    if (reached.kind === "fable") return `This week's Fable allowance (≈ ${reached.amount}) is used up; other models go on, and Fable comes back ${until}`;
     return `${reached.kind === "daily" ? "A day's" : "This week's"} assistance (≈ ${reached.amount}) is used up; it goes on ${until}`;
   },
+  claudeTooOld: (oldest) => `This machine's Claude Code is too old. Update it to ${oldest} or later`,
+  claudeVersionUnknown: "Can't tell which Claude Code this machine has",
+  forkIncomplete: "This fork didn't finish. Fork the original conversation again",
+  forkPreparing: "The fork is still being prepared",
+  noRewind: "This Claude Code can't rewind. Fork from this turn instead",
   somethingElse: "Something went wrong",
 };
 
 const KNOWN: [RegExp, keyof ProblemWords][] = [
+  [/did not say a version the World can read/, "claudeVersionUnknown"],
+  [/fork is incomplete|Claude fork incomplete|stopped before finishing this fork/, "forkIncomplete"],
+  [/waiting for Claude to finish copying the fork/, "forkPreparing"],
+  [/skips a plugin's own compaction handler/, "noRewind"],
   [/password is wrong|does not exist there or the password/i, "wrongPassword"],
   [/too many wrong passwords/i, "tooManyTries"],
   [/is locked/i, "locked"],
@@ -124,15 +151,18 @@ const KNOWN: [RegExp, keyof ProblemWords][] = [
  *  (`fastctx-node`, `usage::allowance`): a weekly or daily amount spent, or
  *  the login's five-hour window at the share it assists up to, and until
  *  when. */
-export type Reached = { kind: "weekly" | "daily"; amount: string; until: Date } | { kind: "fiveHour"; share: number; until: Date };
+export type Reached = { kind: "weekly" | "daily" | "fable"; amount: string; until: Date } | { kind: "fiveHour"; share: number; until: Date };
 
 const ALLOWANCE = /the (weekly|daily) allowance of \$([\d.,]+) this login gives \S+ is used up until (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) UTC/;
+const FABLE = /the Fable allowance of \$([\d.,]+) this login gives \S+ is used up until (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) UTC/;
 const FIVE_HOUR = /this login's five-hour window is past the (\d+)% it assists \S+ up to until (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) UTC/;
 
 /** The allowance reached and until when, where `text` says so. */
 export function allowanceOf(text: string): Reached | null {
   const spent = ALLOWANCE.exec(text);
   if (spent) return { kind: spent[1] as "weekly" | "daily", amount: `$${spent[2]!.replace(/\.00$/, "")}`, until: new Date(`${spent[3]}T${spent[4]}:00Z`) };
+  const fable = FABLE.exec(text);
+  if (fable) return { kind: "fable", amount: `$${fable[1]!.replace(/\.00$/, "")}`, until: new Date(`${fable[2]}T${fable[3]}:00Z`) };
   const window = FIVE_HOUR.exec(text);
   return window ? { kind: "fiveHour", share: Number(window[1]), until: new Date(`${window[2]}T${window[3]}:00Z`) } : null;
 }
@@ -146,6 +176,8 @@ export function known(error: unknown, words: ProblemWords): string | null {
   const detail = error instanceof Error ? error.message : String(error);
   const allowance = allowanceOf(detail);
   if (allowance) return words.allowanceUsed(allowance);
+  const old = /older than (\d+\.\d+\.\d+), the oldest the World works with/.exec(detail);
+  if (old) return words.claudeTooOld(old[1]!);
   const found = KNOWN.find(([pattern]) => pattern.test(detail));
   const said = found ? words[found[1]] : null;
   return typeof said === "string" ? said : null;

@@ -141,7 +141,7 @@ for (const session of sessions) {
       const loaded = once("Page.loadEventFired");
       const two = session.endsWith("-2");
       const named = two ? session.slice(0, -2) : session;
-      const shown = named.startsWith("invite-") ? "invite" : named === "stop" ? "claude" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "lend" || named === "relays" ? "machines" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named;
+      const shown = named.startsWith("invite-") ? "invite" : named === "stop" ? "claude" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named;
       // `welcome` and `create` are a computer's first open, in no World yet.
       const alone = named === "welcome" || named === "create" || named === "created";
       const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "");
@@ -267,14 +267,31 @@ for (const session of sessions) {
           })()`,
         });
       }
-      if (session === "share" || session === "lend" || session === "relays") {
-        // Sharing lab, lending a login of this computer's, and the relays
-        // lab connects through.
-        // lab is pointed at on the drawing first; the panel shows this
-        // computer until then.
-        const button = session === "lend" ? '[data-machine="desktop"] [data-act="lend"]' : `[data-machine="lab"] [data-act="${session}"]`;
-        const pick = session === "lend" ? "" : `document.querySelector('.map-node[data-key="m:lab"]')?.click();`;
-        await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise(r => setTimeout(r, 300)).then(() => { ${pick} return new Promise(r => setTimeout(r, 900)); }).then(() => document.querySelector('${button}')?.click())` });
+      if (session === "share" || session === "relays") {
+        // Sharing lab, and the relays lab connects through. lab is pointed
+        // at on the drawing first; the panel shows this computer until then.
+        const button = `[data-machine="lab"] [data-act="${session}"]`;
+        await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise(r => setTimeout(r, 300)).then(() => { document.querySelector('.map-node[data-key="m:lab"]')?.click(); return new Promise(r => setTimeout(r, 900)); }).then(() => document.querySelector('${button}')?.click())` });
+      }
+      if (session.startsWith("ledger")) {
+        // The desktop Claude login's usage page: as it opens; ada, who has
+        // allowances, picked; the people past the first few unfolded; ada
+        // picked and then bo, the pick moving.
+        const pickOne = (name) => `[...document.querySelectorAll('.ledger-person[data-only]')].find((b) => b.textContent.includes('${name}'))?.click();`;
+        const steps = { "ledger-ada": [pickOne("ada")], "ledger-all": ["document.querySelector('.ledger-others')?.click();"], "ledger-switch": [pickOne("ada"), pickOne("bo")] }[session] ?? [];
+        const then = steps.map((step) => `.then(() => { ${step} return new Promise(r => setTimeout(r, 500)); })`).join("");
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise(r => { location.hash = '#/agents/desktop/claude/' + encodeURIComponent(['C:', 'Users', 'me', '.claude'].join(String.fromCharCode(92))); setTimeout(r, 1500); })${then}`,
+        });
+      }
+      if (session === "lend") {
+        // A Claude login of this computer lent: its assist sheet from the
+        // login's menu, with a weekly limit typed and the Fable limit under it.
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: "new Promise(r => { location.hash = '#/agents/claude'; setTimeout(r, 900); }).then(() => { document.querySelector('.logins-more')?.click(); return new Promise(r => setTimeout(r, 300)); }).then(() => { document.querySelector('[data-act=\"assist\"]')?.click(); return new Promise(r => setTimeout(r, 700)); }).then(() => { const w = document.querySelector('.assist-new [name=weekly]'); if (w) { w.value = '100'; w.dispatchEvent(new Event('input', { bubbles: true })); } return new Promise(r => setTimeout(r, 200)); })",
+        });
       }
       if (session === "create" || session === "created") {
         await send("Runtime.evaluate", { awaitPromise: true, expression: "new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('[data-way=create]')?.click())" });

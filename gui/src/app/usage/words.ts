@@ -47,6 +47,17 @@ export interface UsageWords {
   weekCapSaid(cap: string, spent: string): string;
   /** A person's own weekly allowance, beside the windows. */
   capRing(name: string): string;
+  /** The Fable limit's ring, half the weekly one, and its hover. */
+  fable: string;
+  fableCapSaid(cap: string, spent: string): string;
+  /** The allowances' bars, by name. */
+  dayCap: string;
+  weekCap: string;
+  /** What one used this week, for their row's hover. */
+  spentWeek(name: string, amount: string): string;
+  /** The row the people past the first few fold into, and its undoing. */
+  others(count: number): string;
+  fewer: string;
   capOf(spent: string, cap: string): string;
   /** Each person's part of the account's seven-day window. */
   partOf(name: string, percent: number): string;
@@ -167,6 +178,13 @@ export const zhUsage: UsageWords = {
   dayCapSaid: (cap, spent) => `每天上限 约 ${cap}\n最近 24 小时用了 约 ${spent}`,
   weekCapSaid: (cap, spent) => `每周上限 约 ${cap}\n这一周用了 约 ${spent}`,
   capRing: (name) => `${name} 的上限`,
+  fable: "Fable",
+  fableCapSaid: (cap, spent) => `Fable 上限是每周上限的一半，约 ${cap}\n这一周用了 约 ${spent}`,
+  dayCap: "每天上限",
+  weekCap: "每周上限",
+  spentWeek: (name, amount) => `${name} 这一周用了 ${amount}`,
+  others: (count) => `其余 ${count} 人`,
+  fewer: "收起",
   capOf: (spent, cap) => `${spent} / ${cap}`,
   partOf: (name, percent) => `${name} 约 ${percent}%`,
   partSaid: (name, percent) => `${name} 用掉整个号这一周额度的约 ${percent}%`,
@@ -174,7 +192,7 @@ export const zhUsage: UsageWords = {
   partsWhy: "按这一周各人在 Fastctx 里记下的用量分摊整个号的 7 天额度：Claude 按 Claude Code 账本里的美元，Codex 按 token，缓存读算十分之一、输出算八倍（OpenAI 标价的比例）",
   weekReached: (percent) => `整个号 7 天额度用到 ${percent}%`,
   tabs: { calendar: "日历", quota: "额度", weeks: "每周", punch: "时段" },
-  usd: "约 $",
+  usd: "$",
   tokenTab: "token",
   year: "过去一年",
   recentWeeks: (weeks) => `近 ${weeks} 周`,
@@ -258,6 +276,13 @@ export const enUsage: UsageWords = {
   dayCapSaid: (cap, spent) => `≈ ${cap} a day at most\n≈ ${spent} in the last 24 hours`,
   weekCapSaid: (cap, spent) => `≈ ${cap} a week at most\n≈ ${spent} this week`,
   capRing: (name) => `${name}'s allowance`,
+  fable: "Fable",
+  fableCapSaid: (cap, spent) => `Fable gets half the weekly limit, ≈ ${cap}\n≈ ${spent} this week`,
+  dayCap: "Daily limit",
+  weekCap: "Weekly limit",
+  spentWeek: (name, amount) => `${name}: ${amount} this week`,
+  others: (count) => `${count} others`,
+  fewer: "Show fewer",
   capOf: (spent, cap) => `${spent} / ${cap}`,
   partOf: (name, percent) => `${name} ≈ ${percent}%`,
   partSaid: (name, percent) => `${name} used ≈ ${percent}% of the account's limit this week`,
@@ -265,7 +290,7 @@ export const enUsage: UsageWords = {
   partsWhy: "The account's 7-day limit shared out by what each person used this week as Fastctx recorded it: Claude by Claude Code's own dollars, Codex by tokens, a cache read a tenth and output eight times (OpenAI's list-price ratios)",
   weekReached: (percent) => `The account's 7-day limit at ${percent}%`,
   tabs: { calendar: "Calendar", quota: "Limit", weeks: "Weeks", punch: "Hours" },
-  usd: "≈ $",
+  usd: "$",
   tokenTab: "Tokens",
   year: "The past year",
   recentWeeks: (weeks) => `The last ${weeks} weeks`,

@@ -63,6 +63,11 @@ const SPECIMENS: Record<string, Specimen> = {
       { account: null, daily: 34, weekday: 0.9, weekend: 0.5, since: 400 },
       { account: home("me"), daily: 18, weekday: 0.6, weekend: 0.25, since: 150 },
       { account: home("ada"), daily: 6, weekday: 0.7, weekend: 0.2, since: 45 },
+      { account: home("bo"), daily: 4, weekday: 0.6, weekend: 0.3, since: 30, owl: true },
+      { account: home("chen"), daily: 3, weekday: 0.7, weekend: 0.1, since: 20 },
+      { account: home("dai"), daily: 2, weekday: 0.5, weekend: 0.2, since: 18 },
+      { account: home("eve"), daily: 1.5, weekday: 0.6, weekend: 0.1, since: 12 },
+      { account: home("fang"), daily: 1, weekday: 0.4, weekend: 0.2, since: 10 },
     ],
     claude: true,
     week: 0.64,
@@ -149,6 +154,8 @@ export function specimenUsage(machine: string, agent: string, dir: string, at: D
     account: person.account,
     week: { tokens: weekly[index]!.tokens, ...(specimen.claude ? { usd: weekly[index]!.usd } : {}) },
     day: { tokens: lastDay[index]!.tokens, ...(specimen.claude ? { usd: lastDay[index]!.usd } : {}) },
+    // A Claude login's people put about a third of their week into Fable.
+    ...(specimen.claude ? { fable: { tokens: Math.round(weekly[index]!.tokens * 0.34), usd: Math.round(weekly[index]!.usd * 0.34) } } : {}),
     went: went(specimen.claude, weekly[index]!.tokens, weekly[index]!.usd, index),
   }));
   const tokens = weekly.reduce((sum, one) => sum + one.tokens, 0);

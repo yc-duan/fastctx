@@ -22,7 +22,7 @@ import { AnchorLayout } from "../longview";
 import type { ChangePreview, ChangeStep, LoginChange, OutputLimit, Step } from "../world/logins";
 import { previewDiff, shortPath } from "./change-diff";
 import { Sheet } from "./confirm";
-import { detailOf } from "./problem";
+import { detailOf, enProblems, known, zhProblems } from "./problem";
 import { mark } from "./removal";
 
 export interface AgentChangeWords {
@@ -64,6 +64,8 @@ export interface AgentChangeWords {
   close: string;
   done: string;
   removedDone: string;
+  /** A change that did not happen, in the interface's words; the
+   *  kernel's own reason goes in the hover. */
   failed(reason: string): string;
   previewFailed: string;
   elsewhere(machine: string): string;
@@ -111,7 +113,7 @@ export const zhAgentChange: AgentChangeWords = {
   close: "关闭",
   done: "已接入",
   removedDone: "已移除",
-  failed: (reason) => `没办成：${reason}`,
+  failed: (reason) => known(reason, zhProblems) ?? "没办成",
   previewFailed: "算不出要改什么",
   elsewhere: (machine) => `由 ${machine} 自己去改`,
 };
@@ -158,7 +160,7 @@ export const enAgentChange: AgentChangeWords = {
   close: "Close",
   done: "Hooked up",
   removedDone: "Removed",
-  failed: (reason) => `Not done: ${reason}`,
+  failed: (reason) => known(reason, enProblems) ?? "Not done",
   previewFailed: "Couldn't work out the change",
   elsewhere: (machine) => `${machine} makes the change itself`,
 };

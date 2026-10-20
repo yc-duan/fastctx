@@ -217,6 +217,15 @@
   max-width: 200px;
 }
 
+/* The Fable limit a weekly amount brings, under it: one line held even
+   while empty. */
+.assist-fable {
+  min-height: calc(var(--size-text) * var(--leading-ui));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* An amount: its unit written in the field, dollars before what is typed
    and the percent after it. */
 .assist-amount-input {

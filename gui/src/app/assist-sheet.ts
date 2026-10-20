@@ -132,6 +132,13 @@ export class AssistSheet {
       else if (button.dataset.save) this.save();
       else if (button.hasAttribute("data-cancel")) this.edit(null);
     });
+    // The Fable limit under the weekly field follows what is typed there.
+    this.sheet.body.addEventListener("input", (event) => {
+      const input = event.target;
+      if (!(input instanceof HTMLInputElement) || input.name !== "weekly") return;
+      const line = input.closest("label")?.querySelector<HTMLElement>("[data-fable]");
+      if (line) line.textContent = this.fableOf(input.value);
+    });
     this.sheet.body.addEventListener("submit", (event) => {
       event.preventDefault();
       if (this.editing) return this.save();
@@ -305,11 +312,22 @@ export class AssistSheet {
   /** The daily and weekly amounts side by side: dollars, empty for no
    *  limit. */
   private amountFields(daily: string, weekly: string): string {
-    const field = (name: string, label: string, hint: string, value: string) =>
+    const field = (name: string, label: string, hint: string, value: string, under = "") =>
       `<label class="field assist-amount" title="${escape(hint)}"><span class="field-label">${escape(label)}</span>
-      <span class="assist-amount-input"><span class="assist-unit">$</span><input name="${name}" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="${escape(this.words.weeklyNone)}" value="${escape(value)}"></span></label>`;
+      <span class="assist-amount-input"><span class="assist-unit">$</span><input name="${name}" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="${escape(this.words.weeklyNone)}" value="${escape(value)}"></span>${under}</label>`;
     const { words } = this;
-    return `<div class="assist-amounts">${field("daily", words.daily, words.dailyHint, daily)}${field("weekly", words.weekly, words.weeklyHint, weekly)}</div>`;
+    // Kept in its place while empty, so typing the first digit moves nothing.
+    const fable = `<span class="field-hint assist-fable" data-fable title="${escape(words.fableHint)}">${escape(this.fableOf(weekly))}</span>`;
+    return `<div class="assist-amounts">${field("daily", words.daily, words.dailyHint, daily)}${field("weekly", words.weekly, words.weeklyHint, weekly, fable)}</div>`;
+  }
+
+  /** The Fable limit a weekly amount as typed brings: half of it, to the
+   *  cent; nothing while it is no amount. */
+  private fableOf(weekly: string): string {
+    const amount = amountOf(weekly);
+    if (typeof amount !== "number") return "";
+    const half = Math.round(amount * 50) / 100;
+    return this.words.fableOf(`$${Number.isInteger(half) ? half : half.toFixed(2)}`);
   }
 
   private acts(): string {
