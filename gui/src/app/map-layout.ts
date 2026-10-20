@@ -34,6 +34,8 @@ export const RING = 24;
 export const KNOT = 8;
 /** A box's title strip. */
 export const TITLE = 34;
+/** How large a box's name is written on its strip, at its own size. */
+const TITLE_NAME = 14;
 /** From the hub down to the bus, and from the bus down to the boxes. */
 const BUS_DROP = 70;
 const BOX_DROP = 44;
@@ -128,6 +130,9 @@ export interface LayoutChoices {
   /** The room a name takes beside its ring at its size: what a still
    *  drawing measures of its own names, the widest a name may be otherwise. */
   room?: number;
+  /** How wide a box's name is at its own size, where a still drawing
+   *  measures it: its box is never narrower than its name, grown. */
+  label?: (text: string) => number;
   /** For the network's administrator: every person, each a box even with
    *  no machine yet. */
   people?: readonly MapPerson[];
@@ -231,12 +236,15 @@ export class MapLayout {
   }
 
   update(hubs: readonly MapHub[], nodes: readonly MapNode[], choices: LayoutChoices = {}): Placement {
-    const { links = [], folded = new Set<string>(), narrow = false, rows = ROWS, vacant = true, grow = 1, room = NAME, people = [], adding = new Set<string>() } = choices;
+    const { links = [], folded = new Set<string>(), narrow = false, rows = ROWS, vacant = true, grow = 1, room = NAME, people = [], adding = new Set<string>(), label: labelWidth } = choices;
     // The room a name takes beside its ring, across a column and down a
     // row, as large as it is drawn.
     const NAME_AT = room * grow;
     const COLUMN_AT = TWIG + RING * 2 + (room + COLUMN - TWIG - RING * 2 - NAME) * grow;
     const ROW_AT = Math.max(ROW, LABEL * grow + ROW - RING * 2);
+    // A box's title strip holds its name as large as it is drawn.
+    const TITLE_AT = Math.max(TITLE, Math.round(TITLE_NAME * grow + 8));
+    const BAND_AT = Math.max(BAND, Math.round(TITLE_NAME * grow + 6));
     const ending = (kind: string) => vacant && kind === "mine";
     for (const hub of [...hubs].sort((a, b) => a.id.localeCompare(b.id))) if (!this.hubOrder.includes(hub.id)) this.hubOrder.push(hub.id);
     const live = new Set(hubs.map((hub) => hub.id));
@@ -289,7 +297,7 @@ export class MapLayout {
         // The dashed box that adds a person is a title strip alone.
         if (kind === "adding") {
           const grid = gridOf([]);
-          return { kind, key: `adding:${id}`, label: "", grid, bands: [], fold: false, strip: true, width: TRUNK + 20 + ADDING * grow, height: TITLE, count: 0, online: 0 };
+          return { kind, key: `adding:${id}`, label: "", grid, bands: [], fold: false, strip: true, width: TRUNK + 20 + ADDING * grow, height: TITLE_AT, count: 0, online: 0 };
         }
         const loose = chained(own.filter((node) => (node.group?.key ?? "mine") === kind).sort(byOrder), links);
         const person = persons.find((one) => kind === `of:${one.account}`);
@@ -311,20 +319,30 @@ export class MapLayout {
         const size = (): { width: number; height: number } => {
           if (narrow) {
             // The groups under the rest, each under its band.
-            const below = bands.reduce((sum, band) => sum + BAND + band.grid.height, 0) + (bands.length && !grid.slots.length ? BAND_EDGE : 0) + (bands.length && !bands[bands.length - 1]!.grid.height ? BAND_EDGE : 0);
-            return { width: Math.max(widthOf(grid), ...bands.map((band) => widthOf(band.grid))), height: TITLE + grid.height + below };
+            const below = bands.reduce((sum, band) => sum + BAND_AT + band.grid.height, 0) + (bands.length && !grid.slots.length ? BAND_EDGE : 0) + (bands.length && !bands[bands.length - 1]!.grid.height ? BAND_EDGE : 0);
+            return { width: Math.max(widthOf(grid), ...bands.map((band) => widthOf(band.grid))), height: TITLE_AT + grid.height + below };
           }
           // The groups to the right of the rest, the rows level.
           const columns = (grid.slots.length ? grid.columns : 0) + bands.reduce((sum, band) => sum + band.grid.columns, 0);
           const tallest = Math.max(0, ...[grid, ...bands.map((band) => band.grid)].map((one) => Math.min(one.slots.length, one.perColumn)));
-          const head = bands.length ? BAND_TOP + BAND + BAND_UNDER - PAD : 0;
-          return { width: TRUNK + TWIG + PAD + (Math.max(1, columns) - 1) * COLUMN_AT + RING * 2 + NAME_AT, height: TITLE + head + (tallest ? PAD * 2 + (tallest - 1) * ROW_AT + RING * 2 : BAND_EDGE - head + BAND_TOP + BAND) };
+          const head = bands.length ? BAND_TOP + BAND_AT + BAND_UNDER - PAD : 0;
+          return { width: TRUNK + TWIG + PAD + (Math.max(1, columns) - 1) * COLUMN_AT + RING * 2 + NAME_AT, height: TITLE_AT + head + (tallest ? PAD * 2 + (tallest - 1) * ROW_AT + RING * 2 : BAND_EDGE - head + BAND_TOP + BAND_AT) };
         };
-        const { width, height } = strip ? { width: widthOf(grid), height: TITLE } : size();
+        const label = loose[0]?.group?.label ?? inside[0]?.group?.within?.label ?? person?.label ?? "";
+        const sized = strip ? { width: widthOf(grid), height: TITLE_AT } : size();
+        // Its name on its strip, from the trunk to a little air at its end;
+        // on a wide screen its last group's name on that group's band too,
+        // which runs to the box's end.
+        const named = (text: string) => (labelWidth && text ? TRUNK + 14 + labelWidth(text) * grow + 14 : 0);
+        const shown = fold ? [] : bands;
+        const last = shown[shown.length - 1];
+        const before = (grid.slots.length ? grid.columns : 0) + shown.slice(0, -1).reduce((sum, band) => sum + band.grid.columns, 0);
+        const banded = !last ? 0 : narrow ? Math.max(...shown.map((band) => named(band.label))) : before * COLUMN_AT + named(last.label) + BAND_EDGE;
+        const { width, height } = { width: Math.max(sized.width, named(label), strip ? 0 : banded), height: sized.height };
         return {
           kind,
           key,
-          label: loose[0]?.group?.label ?? inside[0]?.group?.within?.label ?? person?.label ?? "",
+          label,
           person,
           grid,
           bands: fold ? [] : bands,
@@ -349,9 +367,9 @@ export class MapLayout {
       // hanging from the fork under the strip, the rows level.
       const side = (block: Block, x: number, y: number, from: number) => {
         const banded = block.bands.length > 0;
-        const fork = y + TITLE + (banded ? BAND_TOP / 2 : PAD * 0.55);
-        const bandTop = y + TITLE + BAND_TOP;
-        const first = banded ? bandTop + BAND + BAND_UNDER + RING : y + TITLE + PAD + RING;
+        const fork = y + TITLE_AT + (banded ? BAND_TOP / 2 : PAD * 0.55);
+        const bandTop = y + TITLE_AT + BAND_TOP;
+        const first = banded ? bandTop + BAND_AT + BAND_UNDER + RING : y + TITLE_AT + PAD + RING;
         const ringAt = (row: number) => first + row * ROW_AT;
         const sections = [...(block.grid.slots.length ? [{ grid: block.grid, band: null }] : []), ...block.bands.map((band) => ({ grid: band.grid, band }))];
         const trunks: number[] = [];
@@ -360,13 +378,13 @@ export class MapLayout {
           const left = x + column * COLUMN_AT;
           if (band) {
             const width = at === sections.length - 1 ? x + block.width - BAND_EDGE - left : grid.columns * COLUMN_AT - 12;
-            groups.push({ key: band.key, hub: id, kind: band.kind, label: band.label, count: band.count, online: band.online, folded: band.fold, box: { x: left, y: bandTop, width, height: y + block.height - bandTop - BAND_EDGE }, strip: BAND, point: [left + TRUNK + 50, bandTop + BAND / 2], within: block.key });
+            groups.push({ key: band.key, hub: id, kind: band.kind, label: band.label, count: band.count, online: band.online, folded: band.fold, box: { x: left, y: bandTop, width, height: y + block.height - bandTop - BAND_EDGE }, strip: BAND_AT, point: [left + TRUNK + 50, bandTop + BAND_AT / 2], within: block.key });
           }
           for (let one = 0; one < grid.columns; one += 1) {
             const trunk = left + TRUNK + one * COLUMN_AT;
             const tall = Math.min(grid.perColumn, grid.slots.length - one * grid.perColumn);
             trunks.push(trunk);
-            branches.push({ points: [[trunk, column + one === 0 ? from : fork], [trunk, tall > 0 ? ringAt(tall - 1) : bandTop + BAND / 2]], hub: id });
+            branches.push({ points: [[trunk, column + one === 0 ? from : fork], [trunk, tall > 0 ? ringAt(tall - 1) : bandTop + BAND_AT / 2]], hub: id });
           }
           twigs(grid, left + TRUNK, ringAt);
           column += grid.columns;
@@ -377,23 +395,23 @@ export class MapLayout {
       // screen its machines in no group under its strip, then each group's
       // band and machines.
       const place = (block: Block, x: number, y: number, from: number) => {
-        groups.push({ key: block.key, hub: id, kind: block.kind, label: block.label, count: block.count, online: block.online, folded: block.fold, box: { x, y, width: block.width, height: block.height }, strip: TITLE, point: [x + TRUNK + 50, y + TITLE / 2], person: block.person });
+        groups.push({ key: block.key, hub: id, kind: block.kind, label: block.label, count: block.count, online: block.online, folded: block.fold, box: { x, y, width: block.width, height: block.height }, strip: TITLE_AT, point: [x + TRUNK + 50, y + TITLE_AT / 2], person: block.person });
         const drop = x + TRUNK;
         // To a strip alone the line stops in the middle of it, broken to
         // the box that adds a person.
         if (block.strip) {
-          branches.push({ points: [[drop, from], [drop, y + TITLE / 2]], hub: id, out: block.kind === "adding" });
+          branches.push({ points: [[drop, from], [drop, y + TITLE_AT / 2]], hub: id, out: block.kind === "adding" });
           return;
         }
         if (!narrow) return side(block, x, y, from);
-        const regions: { grid: Grid; top: number }[] = [{ grid: block.grid, top: y + TITLE }];
-        let at = y + TITLE + (block.grid.slots.length ? block.grid.height : BAND_EDGE);
-        let end = y + TITLE / 2;
+        const regions: { grid: Grid; top: number }[] = [{ grid: block.grid, top: y + TITLE_AT }];
+        let at = y + TITLE_AT + (block.grid.slots.length ? block.grid.height : BAND_EDGE);
+        let end = y + TITLE_AT / 2;
         for (const band of block.bands) {
-          const height = BAND + band.grid.height;
-          groups.push({ key: band.key, hub: id, kind: band.kind, label: band.label, count: band.count, online: band.online, folded: band.fold, box: { x, y: at, width: block.width, height }, strip: BAND, point: [x + TRUNK + 50, at + BAND / 2], within: block.key });
-          end = at + BAND / 2;
-          regions.push({ grid: band.grid, top: at + BAND });
+          const height = BAND_AT + band.grid.height;
+          groups.push({ key: band.key, hub: id, kind: band.kind, label: band.label, count: band.count, online: band.online, folded: band.fold, box: { x, y: at, width: block.width, height }, strip: BAND_AT, point: [x + TRUNK + 50, at + BAND_AT / 2], within: block.key });
+          end = at + BAND_AT / 2;
+          regions.push({ grid: band.grid, top: at + BAND_AT });
           at += height;
         }
         // Each region's machines in their columns; the first column's trunk
@@ -414,7 +432,7 @@ export class MapLayout {
         let y = below + BUS_DROP;
         let join = y;
         for (const block of blocks) {
-          join = y + TITLE / 2;
+          join = y + TITLE_AT / 2;
           branches.push({ points: [[0, join], [SIDE + TRUNK, join]], hub: id, out: block.kind === "adding" });
           place(block, SIDE, y, join);
           y += block.height + BOX_GAP;
@@ -442,7 +460,7 @@ export class MapLayout {
       left += width + HUB_GAP;
     }
     // No hub to hang on: a row, as before any network is joined.
-    nodes.filter((node) => !hubOf(node)).sort(byOrder).forEach((node, index) => machines.set(node.key, [index * COLUMN_AT, TITLE]));
+    nodes.filter((node) => !hubOf(node)).sort(byOrder).forEach((node, index) => machines.set(node.key, [index * COLUMN_AT, TITLE_AT]));
 
     this.write(new Set(nodes.map((node) => node.key)));
     // Room round everything: the hub's name above it, as large as it is

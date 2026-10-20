@@ -21,7 +21,7 @@ import { MapCanvas, PenLayer, type Bounds, type CanvasEvent, type CanvasFrame, t
 import { blot, circle, outline, ruled, seeded, ticks } from "../pen/shapes";
 import type { MachinesWords } from "./account-words";
 import { boxParts, groupMoreKey } from "./machine-groups";
-import { KNOT, MapLayout, RING, ROWS, TITLE, TRUNK, type Placement } from "./map-layout";
+import { KNOT, MapLayout, RING, ROWS, TRUNK, type Placement } from "./map-layout";
 import type { MapHub, MapLink, MapNode, MapPerson } from "./map-nodes";
 import type { PeopleWords } from "./people-words";
 
@@ -112,10 +112,14 @@ export function foldedOf(nodes: readonly MapNode[], chosen: ReadonlyMap<string, 
 }
 
 /** A still drawing's names are never drawn smaller than this share of their
- *  size, nor larger than twice it to get there: past that the title strip of
- *  a box no longer holds its name. */
+ *  size, nor larger than twice it to get there, each box's title strip
+ *  growing to hold its name; on a phone's narrow frame, where the drawing
+ *  is smallest, they keep their whole size and grow as far as three times. */
 const LEGIBLE = 0.85;
 const MOST_GROWN = 2;
+const LEGIBLE_NARROW = 1;
+const MOST_GROWN_NARROW = 3;
+const NARROW_FRAME = 480;
 
 /** Names that would be drawn smaller than this share of their size, grown as
  *  far as they may, are not drawn at all: under ten pixels high. */
@@ -325,8 +329,9 @@ export class MachineMap {
     const height = this.element.clientHeight;
     this.framed = `${width}x${height}`;
     const named = this.nameRoom(scene);
+    const label = (text: string) => this.labelWidth(text);
     const lay = (rows: number, grow: number, room: number | undefined) =>
-      this.layout.update(scene.hubs, scene.nodes, { links: scene.links, folded: scene.folded, rows, vacant: scene.adds.length > 0, grow, ...(room === undefined ? {} : { room }) });
+      this.layout.update(scene.hubs, scene.nodes, { links: scene.links, folded: scene.folded, rows, vacant: scene.adds.length > 0, grow, label, ...(room === undefined ? {} : { room }) });
     if (!width || !height) {
       this.grow = 1;
       this.bare = false;
@@ -342,7 +347,7 @@ export class MachineMap {
         let placement = lay(rows, grow, room);
         let scale = scaleOf(placement);
         for (let round = 0; round < 4; round += 1) {
-          const next = Math.min(MOST_GROWN, Math.max(1, LEGIBLE / scale));
+          const next = Math.min(this.mostGrown(), Math.max(1, this.legible() / scale));
           if (Math.abs(next - grow) < 0.02) break;
           grow = next;
           placement = lay(rows, grow, room);
@@ -369,6 +374,16 @@ export class MachineMap {
     }
     this.grow = best.grow;
     return best.placement;
+  }
+
+  /** The least share of their size a still drawing's names are drawn at,
+   *  and the most they grow to get there. */
+  private legible(): number {
+    return this.element.clientWidth < NARROW_FRAME ? LEGIBLE_NARROW : LEGIBLE;
+  }
+
+  private mostGrown(): number {
+    return this.element.clientWidth < NARROW_FRAME ? MOST_GROWN_NARROW : MOST_GROWN;
   }
 
   /** What a box's strip says of whose it is: its label, or drawn bare,
@@ -398,6 +413,16 @@ export class MachineMap {
    *  one, at their size and with a little air: the room a name takes beside
    *  its ring in a still drawing, which lays it no wider than its own names
    *  need. */
+  /** How wide a box's name is written on its strip, at its own size. */
+  private labelWidth(text: string): number {
+    this.measuring ??= document.createElement("canvas").getContext("2d");
+    const context = this.measuring;
+    if (!context) return 0;
+    const family = getComputedStyle(document.documentElement).getPropertyValue("--font-emphasis").trim() || "serif";
+    context.font = `14px ${family}`;
+    return context.measureText(text).width;
+  }
+
   private nameRoom(scene: MachineMapScene): number | undefined {
     this.measuring ??= document.createElement("canvas").getContext("2d");
     const context = this.measuring;
@@ -446,7 +471,7 @@ export class MachineMap {
       if (this.scene && `${this.element.clientWidth}x${this.element.clientHeight}` !== this.framed) this.update(this.scene);
       // Drawn small, its names grow back to stay readable, as large as it
       // was laid for.
-      this.element.style.setProperty("--name-grow", Math.min(this.grow, Math.max(1, LEGIBLE / frame.view.scale)).toFixed(3));
+      this.element.style.setProperty("--name-grow", Math.min(this.grow, Math.max(1, this.legible() / frame.view.scale)).toFixed(3));
     } else if (this.scene && this.isNarrow() !== this.narrow) this.update(this.scene);
     if (frame.view.level !== this.level) {
       this.level = frame.view.level;
@@ -615,8 +640,8 @@ export class MachineMap {
       if (group.kind !== "adding") continue;
       const { x, y, width } = group.box;
       const random = seeded(`adding:${group.hub}`);
-      for (const d of ticks(stripPoints(x, y, width, TITLE, 7), 7, 4, 1.3, random)) add(d, { x: x - 4, y: y - 4, width: width + 8, height: TITLE + 8 }, "dry", graphite, 0.6);
-      const at: Point = [x + TRUNK + 14, y + TITLE / 2];
+      for (const d of ticks(stripPoints(x, y, width, group.strip, 7), 7, 4, 1.3, random)) add(d, { x: x - 4, y: y - 4, width: width + 8, height: group.strip + 8 }, "dry", graphite, 0.6);
+      const at: Point = [x + TRUNK + 14, y + group.strip / 2];
       const arm = 5;
       add(outline([[at[0] - arm, at[1]], [at[0] + arm, at[1]]], 1.5, random), around(at, arm + 3), "dry", graphite, 0.75);
       add(outline([[at[0], at[1] - arm], [at[0], at[1] + arm]], 1.5, random), around(at, arm + 3), "dry", graphite, 0.75);
@@ -712,9 +737,10 @@ export class MachineMap {
         // A group's band lies in its owner's box over the group's machines;
         // drawn bare with no room for its name, not at all.
         if (group.within) return this.bare && !this.labelOf(group) ? "" : `<g class="box ${tone}"><rect class="box-band" x="${x}" y="${y}" width="${width}" height="${group.strip}" rx="6"/></g>`;
-        const strip = height <= TITLE
-          ? `<rect class="box-title" x="${x}" y="${y}" width="${width}" height="${TITLE}" rx="7"/>`
-          : `<rect class="box-body" x="${x}" y="${y}" width="${width}" height="${height}" rx="7"/><path class="box-title" d="M${x} ${y + TITLE}V${y + 7}Q${x} ${y} ${x + 7} ${y}H${x + width - 7}Q${x + width} ${y} ${x + width} ${y + 7}V${y + TITLE}Z"/>`;
+        const title = group.strip;
+        const strip = height <= title
+          ? `<rect class="box-title" x="${x}" y="${y}" width="${width}" height="${title}" rx="7"/>`
+          : `<rect class="box-body" x="${x}" y="${y}" width="${width}" height="${height}" rx="7"/><path class="box-title" d="M${x} ${y + title}V${y + 7}Q${x} ${y} ${x + 7} ${y}H${x + width - 7}Q${x + width} ${y} ${x + width} ${y + 7}V${y + title}Z"/>`;
         return `<g class="box ${tone}${locked}${visitor}">${strip}</g>`;
       })
       .join("");
@@ -893,7 +919,7 @@ function lockPath(x: number, y: number): string {
  *  a group's band, the top two over a box's body. */
 function cornersOf(group: Placement["groups"][number]): [number, number, number, number] {
   if (group.within) return [6, 6, 6, 6];
-  return group.box.height <= TITLE ? [7, 7, 7, 7] : [7, 7, 0, 0];
+  return group.box.height <= group.strip ? [7, 7, 7, 7] : [7, 7, 0, 0];
 }
 
 /** Points round a rounded rectangle, for a box drawn as broken strokes. */
