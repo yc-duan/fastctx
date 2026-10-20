@@ -163,57 +163,24 @@ pub(crate) fn start(node: &Node, request: RunRequest) -> (Option<Written>, RunRe
     (None, request)
 }
 
-/// The machine and the script of a script that is one `on` and nothing
-/// else, written as a here-document with a quoted delimiter, which bash
-/// leaves as written, or as plain words: `on gpu <<'EOF' … EOF`, `on gpu
-/// nvidia-smi`. Any other shape, such as an unquoted delimiter that the
-/// sending shell would expand, is left to the shell.
+/// The sole literal `on` and its body, recognized with the same source
+/// scanner as ordinary runs. Expansion belongs to the sending shell and
+/// therefore disqualifies this direct dispatch.
 pub(crate) fn single_on(script: &str) -> Option<(Written, String)> {
-    let script = script.trim_matches(|c: char| c == '\n' || c == '\r' || c == ' ' || c == '\t');
-    let (first, rest) = match script.split_once('\n') {
-        Some((first, rest)) => (first.trim_end_matches('\r'), Some(rest)),
-        None => (script, None),
-    };
-    let mut words = first.split_whitespace();
-    if words.next() != Some("on") {
-        return None;
-    }
-    let machine = Written::parse(words.next()?).ok()?;
-    let words: Vec<&str> = words.collect();
-    match (words.as_slice(), rest) {
-        ([redirect], Some(rest)) | (["<<", redirect], Some(rest)) => {
-            let redirect = if words.len() == 1 { redirect.strip_prefix("<<")? } else { redirect };
-            let delimiter = quoted(redirect)?;
-            let mut body = Vec::new();
-            let mut lines = rest.split('\n').map(|line| line.trim_end_matches('\r'));
-            for line in lines.by_ref() {
-                if line == delimiter {
-                    // Nothing may follow the here-document.
-                    return lines.all(|line| line.trim().is_empty()).then(|| (machine, body.join("\n")));
-                }
-                body.push(line);
-            }
-            None
-        }
-        (words, None) if !words.is_empty() && words.iter().all(|word| plain(word)) => Some((machine, words.join(" "))),
-        _ => None,
-    }
+    let (machine, body) = fastctx_hands::run::preread::on_only(script).ok()?;
+    Some((Written::parse(&machine).ok()?, body?))
 }
 
-/// A here-document's delimiter written quoted, so its body is left as
-/// written: 'EOF', "EOF" or \EOF.
-fn quoted(word: &str) -> Option<&str> {
-    let inner = word
-        .strip_prefix('\'')
-        .and_then(|word| word.strip_suffix('\''))
-        .or_else(|| word.strip_prefix('"').and_then(|word| word.strip_suffix('"')))
-        .or_else(|| word.strip_prefix('\\'))?;
-    (!inner.is_empty() && inner.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')).then_some(inner)
-}
-
-/// A word bash reads back as itself: no quoting, expansion or operator.
-fn plain(word: &str) -> bool {
-    word.chars().all(|c| c.is_ascii_alphanumeric() || "_./:=@%+,-".contains(c))
+/// Old installations without a guardian orchestrate literal `on`s on the
+/// first named machine. Validate the original source before stripping `on`.
+pub(crate) fn transition(node: &Node, request: RunRequest) -> Result<(Option<Written>, RunRequest), Failure> {
+    let (machine, body) =
+        fastctx_hands::run::preread::on_only(&request.script).map_err(|failure| Failure::not_run(failure.message))?;
+    let machine = Written::parse(&machine).map_err(|error| Failure::not_run(error.to_string()))?;
+    if node.is_here(&machine) {
+        return Err(Failure::not_run(fastctx_hands::assist::here_refused(&machine.to_string())));
+    }
+    Ok((Some(machine), RunRequest { script: body.unwrap_or(request.script), cwd: None, ..request }))
 }
 
 /// Runs `request` for `resident`, of this machine, on `to`, the one machine

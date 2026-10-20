@@ -132,16 +132,21 @@ impl Session {
     }
 
     pub async fn run(self: &Arc<Self>, arguments: &Value, meta: Option<&Value>) -> Answer {
-        let mut answer = self.run_answer(arguments, meta).await;
+        let whereabouts = match self.whereabouts(meta).await {
+            Ok(whereabouts) => whereabouts,
+            Err(error) => return Answer::error(format!("=== run (not run: {error}) ===")),
+        };
+        let mut sent = false;
+        let mut answer = self.run_answer(arguments, meta, &whereabouts, &mut sent).await;
         let call_id = meta
             .and_then(|meta| meta.get("claudecode/toolUseId").or_else(|| meta.get("callId")))
             .and_then(Value::as_str)
             .filter(|id| !id.is_empty());
         if answer.is_error
+            && !sent
             && let Some(id) = call_id
         {
             let recorded = async {
-                let whereabouts = self.whereabouts(meta).await?;
                 let mut client = self.client(meta).await?;
                 let error = answer
                     .content
@@ -153,7 +158,7 @@ impl Session {
                     .collect::<Vec<_>>()
                     .join("\n");
                 client
-                    .call(Call::RecordRunFailure { resident: whereabouts.resident, call_id: id.into(), error })
+                    .call(Call::RecordRunFailure { resident: whereabouts.resident.clone(), call_id: id.into(), error })
                     .await
                     .map_err(|error| error.to_string())
             }
@@ -165,7 +170,13 @@ impl Session {
         answer
     }
 
-    async fn run_answer(self: &Arc<Self>, arguments: &Value, meta: Option<&Value>) -> Answer {
+    async fn run_answer(
+        self: &Arc<Self>,
+        arguments: &Value,
+        meta: Option<&Value>,
+        whereabouts: &Whereabouts,
+        sent: &mut bool,
+    ) -> Answer {
         let command = match arguments.get("command") {
             Some(Value::String(command)) => command.clone(),
             // Some hosts drop or reshape what the model wrote (#34); saying
@@ -212,10 +223,6 @@ impl Session {
                 }
             },
         };
-        let whereabouts = match self.whereabouts(meta).await {
-            Ok(whereabouts) => whereabouts,
-            Err(error) => return Answer::error(format!("=== run (not run: {error}) ===")),
-        };
         let reply = async {
             let mut client = self.client(meta).await?;
             let call = Call::Run {
@@ -230,6 +237,9 @@ impl Session {
                 request: RunRequest { call_id: None, script: command, cwd, writes_off: self.writes_off, wait },
                 node: None,
             };
+            // The node records failures after accepting Run; the one-use host
+            // proof must never be consumed again to record the same call.
+            *sent = true;
             client.call(call).await.map_err(|error| error.to_string())
         }
         .await;
@@ -292,7 +302,7 @@ impl Session {
             Ok(other) => Answer::error(format!("=== run (the node answered something else: {other:?}) ===")),
             Err(error) => Answer::error(format!("=== run (not run) ===\n{error}")),
         };
-        self.add_waiting_words_about(&whereabouts, answering, &mut answer, meta).await;
+        self.add_waiting_words_about(whereabouts, answering, &mut answer, meta).await;
         answer
     }
 

@@ -6,6 +6,9 @@
 
 use fastctx_types::ipc::Failure;
 
+mod on_only;
+pub(super) use on_only::plan as on_only;
+
 #[derive(Default)]
 struct Command {
     words: Vec<Word>,
@@ -25,6 +28,7 @@ struct Word {
     quoted: bool,
     dynamic: bool,
     assignment: bool,
+    pattern: bool,
 }
 
 struct Document {
@@ -606,6 +610,7 @@ impl Scanner<'_> {
             quoted: false,
             dynamic: false,
             assignment: false,
+            pattern: false,
         };
         while let Some(byte) = self.byte() {
             if !delimiter && (self.at(b"$(") || self.at(b"<(") || self.at(b">(")) {
@@ -685,6 +690,7 @@ impl Scanner<'_> {
                 if !delimiter && matches!(byte, b'$' | b'*' | b'?' | b'~') {
                     word.dynamic = true;
                 }
+                word.pattern |= !delimiter && matches!(byte, b'[' | b'{');
                 word.text.push(byte);
                 self.advance(1);
             }
@@ -847,6 +853,7 @@ impl Scanner<'_> {
                     quoted: true,
                     dynamic: false,
                     assignment: false,
+            pattern: false,
                 };
                 self.advance(1);
                 if byte == b'"' {

@@ -1368,7 +1368,21 @@ async fn run(
     call_id: Option<&str>,
 ) -> Result<RunReply, Failure> {
     request.call_id = call_id.map(str::to_owned);
-    let (goes_to, request) = crate::here::start(node, request);
+    let dispatched = if crate::here::assisting(node, &resident) {
+        crate::here::transition(node, request)
+    } else {
+        Ok(crate::here::start(node, request))
+    };
+    let (goes_to, request) = match dispatched {
+        Ok(dispatched) => dispatched,
+        Err(error) => {
+            if let Some(id) = call_id {
+                crate::run_facts::record_failure(node, &resident, id, &error.message)
+                    .map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
+            }
+            return Err(error);
+        }
+    };
     let machine = goes_to.as_ref().map(|place| place.name.clone()).unwrap_or_else(|| node.machine());
     if let Some(id) = call_id {
         crate::run_facts::begin_for(node, &resident, id, machine)

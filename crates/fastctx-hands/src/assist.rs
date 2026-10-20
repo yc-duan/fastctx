@@ -12,7 +12,7 @@ pub fn opening(machines: &str) -> String {
         "You have access to no machine yet: the user has none you may work on, so no command of yours can run anywhere; tell the user.".to_string()
     } else {
         format!(
-            "You have access to these machines: {machines}. Every command must name its machine with `on`: each script you run is a single `on MACHINE ...`, such as `on laptop cargo test`, or `on laptop <<'EOF'`, then the script, then `EOF`. To work on several machines in one script, put the script inside one `on` and use `on` again inside it."
+            "You have access to these machines: {machines}. Every outer command must start with `on MACHINE`. Several literal `on` commands can follow one another; the first named machine orchestrates them. Put variables, loops, conditions and expansions inside a quoted `on` here-document."
         )
     };
     format!(
@@ -20,8 +20,9 @@ pub fn opening(machines: &str) -> String {
     )
 }
 
-/// The answer to a script of an assisting agent that is not a single `on`.
-pub const SCRIPT_REFUSED: &str = "nothing ran: you have no access to the computer this program runs on, so every command must name its machine with `on`, and this script is not a single `on MACHINE ...`. Write `on MACHINE COMMAND`, or `on MACHINE <<'EOF'`, then the script, then `EOF`; to work on several machines, put the script inside one `on` and use `on` again inside it.";
+/// The answer to an assisting script that needs a local shell before a
+/// guardian has been installed.
+pub const SCRIPT_REFUSED: &str = "nothing ran: this installation has no local shell for your account yet. Start every outer command with `on MACHINE`; several literal `on` commands may follow one another. Put variables, conditions and loops inside a quoted `on` here-document.";
 
 /// The answer to an `on` of an assisting agent that names the computer it
 /// runs on.
