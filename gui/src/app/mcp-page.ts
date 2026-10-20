@@ -164,7 +164,9 @@ export class McpPage implements Page {
       const machine = machineOf(machines, name);
       const away = machine?.online !== true && !machine?.here;
       const windows = osOf(world, machine?.name ?? name) === "windows";
-      const title = `<h2 class="picker-title mcp-group-title${away ? " away" : ""}"><span class="mcp-group-name">${glyph(machine?.form ?? "desktop", 16)}${escape(name)}${machine?.here ? `<span class="mcp-group-note">${escape(words.mcp.here)}</span>` : ""}</span></h2>`;
+      const addable = !away && machine !== undefined && machine.hold !== "assist";
+      const add = addable ? `<button class="mcp-group-add" type="button" data-add-on="${escape(name)}" aria-label="${escape(words.mcp.addOn(name))}" title="${escape(words.mcp.addOn(name))}">${glyph("plus", 14)}</button>` : "";
+      const title = `<h2 class="picker-title mcp-group-title${away ? " away" : ""}"><span class="mcp-group-name">${glyph(machine?.form ?? "desktop", 16)}${escape(name)}${machine?.here ? `<span class="mcp-group-note">${escape(words.mcp.here)}</span>` : ""}</span>${add}</h2>`;
       return `<section class="mcp-group prof-board">${title}<ul class="mcp-rows">${(byMachine.get(name) ?? []).map((listed) => this.row(listed, away, windows)).join("")}</ul></section>`;
     });
     if (remote.length) {
@@ -237,6 +239,11 @@ export class McpPage implements Page {
     if (!login) return;
     const taken = this.state.kind === "ready" ? this.state.servers.map((one) => one.name) : [];
     const world = this.options.store.world.peek();
+    const on = target.closest<HTMLElement>("[data-add-on]");
+    if (on) {
+      this.sheet.open({ mode: "add", machine: on.dataset.addOn!, taken, machines: placeable(world), calls: this.options.calls, login, done: () => this.reload() });
+      return;
+    }
     if (target.closest("[data-add]")) {
       this.sheet.open({ mode: "add", taken, machines: placeable(world), calls: this.options.calls, login, done: () => this.reload() });
       return;

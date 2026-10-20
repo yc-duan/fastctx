@@ -35,6 +35,8 @@ export interface ProfileWords {
   };
   mcp: {
     add: string;
+    /** Adding one on a machine, from its group. */
+    addOn(machine: string): string;
     import: string;
     /** The group of servers by address. */
     remote: string;
@@ -90,6 +92,8 @@ export interface ProfileWords {
     headersPlaceholder: string;
     sse: string;
     on: string;
+    /** Said on hover beside where a server a command starts runs. */
+    onTip: string;
     noMachine: string;
     go(count: number): string;
     save: string;
@@ -158,6 +162,7 @@ export const zhProfile: ProfileWords = {
   },
   mcp: {
     add: "添加",
+    addOn: (machine) => `在 ${machine} 上添加`,
     import: "导入",
     remote: "网址",
     here: "本机",
@@ -209,7 +214,8 @@ export const zhProfile: ProfileWords = {
     headers: "请求头（可选）",
     headersPlaceholder: "Name: value，一行一个",
     sse: "旧式 SSE",
-    on: "放在",
+    on: "运行在",
+    onTip: "这条命令在哪台电脑上起。Unity、Blender 这类要连本机软件的，选开着那个软件的电脑；别的机器上的对话经 World 用它。",
     noMachine: "没有能放命令的机器在线",
     go: (count) => (count > 1 ? `添加 ${count} 个` : "添加"),
     save: "保存",
@@ -218,7 +224,7 @@ export const zhProfile: ProfileWords = {
   },
   import: {
     title: "导入",
-    from: "从",
+    from: "从哪台导入",
     reading: "正在读",
     none: "这台上没找到",
     had: "已有",
@@ -273,6 +279,7 @@ export const enProfile: ProfileWords = {
   },
   mcp: {
     add: "Add",
+    addOn: (machine) => `Add on ${machine}`,
     import: "Import",
     remote: "By address",
     here: "This computer",
@@ -325,6 +332,7 @@ export const enProfile: ProfileWords = {
     headersPlaceholder: "Name: value, one per line",
     sse: "Older SSE",
     on: "Runs on",
+    onTip: "The computer this command starts on. One that drives local software, such as Unity or Blender, runs where that software is open; conversations on other machines reach it through the World.",
     noMachine: "No machine to run it on is online",
     go: (count) => (count > 1 ? `Add ${count}` : "Add"),
     save: "Save",
@@ -333,7 +341,7 @@ export const enProfile: ProfileWords = {
   },
   import: {
     title: "Import",
-    from: "From",
+    from: "Import from",
     reading: "Reading",
     none: "None found here",
     had: "Added",

@@ -220,6 +220,44 @@
   color: var(--text-3);
 }
 
+/* Adding one on a group's machine: at the end of its ruled line, there
+   while the pointer is on the group, always under a finger. */
+.mcp-group-title::after {
+  order: 1;
+}
+
+.mcp-group-add {
+  order: 2;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  --shown: 0;
+  opacity: var(--shown);
+  transition: --shown var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.mcp-group:hover .mcp-group-add,
+.mcp-group-add:focus-visible {
+  --shown: 1;
+}
+
+.mcp-group-add:hover {
+  color: var(--text);
+  background: var(--fill-strong);
+}
+
+@media (hover: none) {
+  .mcp-group-add {
+    width: 44px;
+    height: 44px;
+    margin: -10px -10px -10px 0;
+    --shown: 1;
+  }
+}
+
 .mcp-rows {
   display: grid;
   gap: 6px;
@@ -377,6 +415,10 @@
   margin-bottom: var(--space-2);
 }
 
+.mcp-pane {
+  margin-top: var(--space-4);
+}
+
 .mcp-sheet .choice .glyph {
   align-self: center;
   color: var(--text-3);
@@ -417,7 +459,7 @@
 
 .mcp-found-row {
   display: grid;
-  grid-template-columns: 18px minmax(7em, 12em) minmax(0, 1fr);
+  grid-template-columns: 18px minmax(7em, 12em) minmax(0, 1fr) auto;
   align-items: center;
   column-gap: var(--space-3);
   row-gap: 2px;
@@ -434,6 +476,20 @@
   color: var(--text-strong);
   font: inherit;
   font-size: var(--size-text);
+}
+
+/* Where a pasted server goes: the machine chosen, or its address. */
+.mcp-found-on,
+.mcp-on-fixed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.mcp-on-fixed {
+  color: var(--text-2);
 }
 
 .mcp-found-note {
@@ -529,29 +585,29 @@
     padding: var(--space-2) 0 var(--space-2) var(--space-3);
   }
 
-  .mcp-kind {
+  .mcp-row > .mcp-kind {
     grid-area: kind;
   }
 
-  .mcp-name {
+  .mcp-row > .mcp-name {
     grid-area: name;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  .mcp-detail {
+  .mcp-row > .mcp-detail {
     grid-area: detail;
   }
 
-  .mcp-detail:empty {
+  .mcp-row > .mcp-detail:empty {
     display: none;
   }
 
-  .mcp-tag {
+  .mcp-row > .mcp-tag {
     grid-area: tag;
   }
 
-  .mcp-more,
+  .mcp-row > .mcp-more,
   .mcp-row > .mcp-detail + .mcp-more {
     grid-area: more;
     width: 44px;
@@ -563,11 +619,12 @@
   }
 
   .mcp-found-row {
-    grid-template-columns: 18px minmax(0, 1fr);
+    grid-template-columns: 18px minmax(0, 1fr) auto;
   }
 
   .mcp-found-row .mcp-detail {
-    grid-column: 2;
+    grid-column: 2 / -1;
+    grid-row: 2;
   }
 
   .mcp-pick {
@@ -580,5 +637,12 @@
 
   .prefs-page .choice-row {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* On a phone the sheets rise across the whole width, as every sheet does. */
+@media (max-width: 760px) {
+  .mcp-sheet .sheet-body {
+    width: 100%;
   }
 }

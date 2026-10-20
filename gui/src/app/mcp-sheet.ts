@@ -1,10 +1,12 @@
 // Adding an MCP server, or editing one (`world-user-config.md`, 三种配法): a
 // sheet with two ways in, pasting the `mcpServers` JSON every tool writes or
-// filling in a form. Pasted, each server it names is a line, its name a field
-// that takes a free one when the account already has it. A server a command
-// starts runs on a machine chosen below, this computer first; one at an
-// address goes to the account. Each is kept in turn; one refused stops the
-// rest and says why.
+// filling in a form. Where a server a command starts runs is chosen first, at
+// its top: this computer, or another the user may run commands on, as a
+// server they would not log in to for this. Pasted, each server it names is
+// a line, its name a field that takes a free one when the account already
+// has it, and its end says where it goes: the machine chosen, or the address
+// for one reached at one. Each is kept in turn; one refused stops the rest
+// and says why.
 
 import { escape } from "../conversation/prose";
 import { glyph } from "../conversation/glyphs";
@@ -27,7 +29,9 @@ interface Common {
   done(): void;
 }
 
-export type SheetOpening = ({ mode: "add" } & Common) | ({ mode: "edit"; name: string; server: Server; machine?: string } & Common);
+/** Adding, on `machine` where it was asked from a machine's group; or
+ *  editing one the account has. */
+export type SheetOpening = ({ mode: "add"; machine?: string } & Common) | ({ mode: "edit"; name: string; server: Server; machine?: string } & Common);
 
 type Way = "paste" | "form";
 
@@ -79,6 +83,10 @@ export class McpSheet {
           one.classList.toggle("chosen", on);
           one.setAttribute("aria-checked", String(on));
         }
+        const pasted = body.querySelector<HTMLTextAreaElement>(".mcp-paste");
+        if (pasted?.value.trim()) this.parse(pasted.value);
+        this.drawFound();
+        this.drawGo();
       }
     });
     body.addEventListener("input", (event) => {
@@ -112,7 +120,7 @@ export class McpSheet {
     } else {
       this.way = "paste";
       this.kind = "command";
-      this.machine = null;
+      this.machine = opening.machine ?? null;
     }
     this.machine ??= opening.machines.find((one) => one.here && one.online !== false)?.written ?? opening.machines.find((one) => one.online === true)?.written ?? null;
     this.draw();
@@ -133,8 +141,8 @@ export class McpSheet {
     const pane = this.way === "paste" ? this.pastePane() : this.formPane(opening);
     this.sheet.body.innerHTML = `${this.sheet.head(editing ? words.add.editTitle(opening.name) : words.add.title, this.close)}
       ${ways}
-      <div class="mcp-pane">${pane}</div>
       ${this.machinesField()}
+      <div class="mcp-pane">${pane}</div>
       <p class="sheet-note" role="alert"${this.problem ? "" : " hidden"}>${this.problem ? `${escape(this.problem.text)}<span class="sheet-note-detail">${escape(this.problem.detail)}</span>` : ""}</p>
       <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(editing ? words.add.save : words.add.go(this.count()))}</button></footer>`;
     this.drawFound();
@@ -170,13 +178,20 @@ export class McpSheet {
     return `${kinds}${name}${fields}`;
   }
 
-  /** Where a server a command starts runs: shown while one is in hand. */
+  /** Where a server a command starts runs, chosen first: hidden only when
+   *  what is in hand starts none. Editing, it is said, not chosen. */
   private machinesField(): string {
     const opening = this.opening;
     if (!opening) return "";
-    const commands = this.way === "paste" ? this.pasted.some((one) => one.server.kind === "command") : this.kind === "command";
-    if (!commands || opening.mode === "edit") return `<div class="field mcp-on" hidden></div>`;
     const { words } = this;
+    const label = `<span class="field-label">${escape(words.add.on)}<span class="field-tip" tabindex="0" aria-label="${escape(words.add.onTip)}">?<span class="field-tip-card" role="tooltip">${escape(words.add.onTip)}</span></span></span>`;
+    if (opening.mode === "edit") {
+      if (opening.server.kind !== "command" || !opening.machine) return `<div class="field mcp-on" hidden></div>`;
+      const machine = opening.machines.find((one) => one.name === opening.machine || one.written === opening.machine);
+      return `<div class="field mcp-on">${label}<span class="mcp-on-fixed">${glyph(machine?.form ?? "desktop", 15)}${escape(machine?.written ?? opening.machine)}</span></div>`;
+    }
+    const commands = this.way === "paste" ? !this.pasted.length || this.pasted.some((one) => one.server.kind === "command") : this.kind === "command";
+    if (!commands) return `<div class="field mcp-on" hidden></div>`;
     const online = opening.machines.filter((one) => one.here || one.online === true);
     const choices = online.length
       ? opening.machines
@@ -187,7 +202,7 @@ export class McpSheet {
           })
           .join("")
       : `<span class="choice-none">${escape(words.add.noMachine)}</span>`;
-    return `<div class="field mcp-on"><span class="field-label">${escape(words.add.on)}</span><div class="choice-options">${choices}</div></div>`;
+    return `<div class="field mcp-on">${label}<div class="choice-options">${choices}</div></div>`;
   }
 
   private parse(text: string): void {
@@ -224,6 +239,7 @@ export class McpSheet {
             <span class="mcp-kind">${glyph(one.server.kind === "command" ? "terminal" : "link", 16)}</span>
             <input class="mcp-found-name" type="text" data-index="${index}" value="${escape(one.name)}" spellcheck="false" autocomplete="off" aria-label="${escape(words.add.name)}">
             <span class="mcp-detail">${escape(serverLine(one.server))}</span>
+            <span class="mcp-found-on">${one.server.kind === "command" ? `${glyph(this.form(), 14)}${escape(this.machine ?? "")}` : `${glyph("web", 14)}${escape(words.mcp.remote)}`}</span>
             <span class="mcp-found-note"></span>
           </li>`,
         )
@@ -235,6 +251,11 @@ export class McpSheet {
     const field = this.sheet.body.querySelector<HTMLElement>(".mcp-on");
     const html = this.machinesField();
     if (field && field.outerHTML !== html) field.outerHTML = html;
+  }
+
+  /** What kind of computer the machine chosen is, for its mark. */
+  private form(): "desktop" | "laptop" | "server" {
+    return this.opening?.machines.find((one) => one.written === this.machine)?.form ?? "desktop";
   }
 
   /** Beside each pasted name, why it cannot be kept, when it cannot. */
