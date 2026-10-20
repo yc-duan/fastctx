@@ -619,7 +619,7 @@ export class MachinePage implements Page {
         case "cpu": {
           const busy = stats.cpu.busy ?? null;
           vital.ring.set(busy, percentHtml(busy));
-          set(vital.note, words.threads(stats.cpu.threads));
+          note(vital.note, words.threads(stats.cpu.threads));
           const load = stats.cpu.load;
           const points = series((sample) => sample.cpu);
           // Where the system keeps load averages they say more; elsewhere,
@@ -634,7 +634,7 @@ export class MachinePage implements Page {
           const { total, used, swap_total, swap_used } = stats.memory;
           const share = total ? used / total : null;
           vital.ring.set(share, percentHtml(share));
-          set(vital.note, swap_total ? words.swap(windows, bytesSaid(swap_used), bytesSaid(swap_total)) : "");
+          note(vital.note, swap_total ? words.swap(windows, bytesSaid(swap_used), bytesSaid(swap_total)) : "");
           set(vital.sub, words.of(bytesSaid(used), bytesSaid(total)));
           vital.spark.draw([{ points: series((sample) => sample.memory), max: 1, kind: "clay", area: true, gap: READ_GAP_MS }], from, at);
           break;
@@ -646,7 +646,7 @@ export class MachinePage implements Page {
           if (!one) break;
           const busy = one.busy ?? null;
           vital.ring.set(busy, percentHtml(busy));
-          set(vital.note, one.name);
+          note(vital.note, one.name);
           vital.note.title = one.name;
           set(vital.sub, one.memory_total ? words.vram(bytesSaid(one.memory_used), bytesSaid(one.memory_total)) : "");
           vital.spark.draw([{ points: series((sample) => sample.gpus[index] ?? null), max: 1, kind: "clay", area: true, gap: READ_GAP_MS }], from, at);
@@ -1306,6 +1306,12 @@ function tag(text: string, kind = "", title = ""): string {
 /** Sets an element's text where it changed. */
 function set(element: HTMLElement, text: string): void {
   if (element.textContent !== text) element.textContent = text;
+}
+
+/** A vital's note, whole under the pointer where its cell cuts it short. */
+function note(element: HTMLElement, text: string): void {
+  set(element, text);
+  if (element.title !== text) element.title = text;
 }
 
 /** A share as a ring says it: a whole percent, its sign small. */

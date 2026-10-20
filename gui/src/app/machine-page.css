@@ -1024,7 +1024,10 @@
   }
 }
 
-/* A phone: the vitals two by two, each a ring over its trace. */
+/* A phone: the vitals two by two, each a ring over its trace; what a
+   vital notes goes under its name in the fine size, every head two lines
+   so the rings stand level, and its figures wrap rather than being cut
+   short. */
 @container machine-page (max-width: 560px) {
   .mp-board {
     --gap: var(--space-3);
@@ -1032,6 +1035,23 @@
 
   .mp-vitals {
     gap: var(--space-4);
+  }
+
+  .mp-vital-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    min-height: calc(var(--size-text) * 1.5 + var(--size-fine) * 1.5);
+  }
+
+  .mp-vital-note {
+    flex: none;
+    text-align: left;
+    font-size: var(--size-fine);
+  }
+
+  .mp-vital-sub {
+    white-space: normal;
   }
 
   .mp-vital-body {
