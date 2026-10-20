@@ -4,7 +4,7 @@ import type { UsageCallsQuery, UsageCallsPage } from "./usage-calls";
 // core's client. Outside the shell there is no World to reach, and
 // `inShell` says so.
 
-import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { HomeChange, WorldAgents } from "./agents";
 import type { ChangePreview, FolderChange, LoginChange, MachineLogins, WorldLogins } from "./logins";
@@ -25,8 +25,14 @@ import type { MachineStats } from "./stats";
 import type { Looked, RemoteHub, RemoteKey, RemoteServer, RemoteStep } from "../app/remote-world";
 import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
 
+/** A development build asked for its specimen (`?specimen`) draws it even
+ *  inside the app's shell, so a phone's own WebView can be tried with real
+ *  fingers; a release build has no such door. */
+const specimenAsked = import.meta.env.DEV && new URLSearchParams(location.search).has("specimen");
+
+/** Whether the page runs in the app's shell, with the World behind it. */
 export function inShell(): boolean {
-  return "__TAURI_INTERNALS__" in window;
+  return "__TAURI_INTERNALS__" in window && !specimenAsked;
 }
 
 /** In the shell on a computer, where this machine can be set up; a phone
@@ -693,7 +699,7 @@ export function agentActivity(address: Address, agent: string): Promise<AgentAct
 
 /** Whether this interface runs in the Android shell, which reads QR codes
  *  with the camera. */
-export const canScan = (): boolean => isTauri() && /Android/i.test(navigator.userAgent);
+export const canScan = (): boolean => inShell() && /Android/i.test(navigator.userAgent);
 
 /** Reads a login token's QR code with the phone's camera; null when the
  *  person turned back. */

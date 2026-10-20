@@ -34,6 +34,7 @@ import { fillStep, stepKey, stepRowHtml, stepRowText, type StepItem } from "./tr
 import { diffCard, unifiedDiff, type DiffCard, type DiffKind } from "./diff-card";
 import { handOnAtEdge } from "../scroll-handoff";
 import { ActsMenu } from "../app/acts-menu";
+import { onHeld } from "../app/press";
 import type { AgentActivity, Content, Health, MachineName, Notice, Speaker, Tool, TurnEnd } from "../world/events";
 import type { Attachment } from "../world/attachments";
 import type { Decoding } from "../world/remote-lines";
@@ -322,15 +323,11 @@ export class ConversationView {
     });
     // On a touch screen every answer has its actions under it; the user's
     // own words have none shown, and held, their two float up beside them.
-    root.addEventListener("contextmenu", (event) => {
-      if (!this.own(event) || !matchMedia("(hover: none)").matches) return;
-      const target = event.target as HTMLElement;
-      const block = target.closest<HTMLElement>(".block");
-      const acts = block?.querySelector<HTMLElement>(".user-acts");
-      const bubble = block?.querySelector<HTMLElement>(".bubble");
-      if (!acts || !bubble || target.closest("a, button, input, textarea, pre")) return;
-      event.preventDefault();
-      this.heldMenu(bubble, acts);
+    onHeld(root, ".bubble", (bubble, event, input) => {
+      if (input !== "touch" || !this.own(event)) return false;
+      const acts = bubble.closest<HTMLElement>(".block")?.querySelector<HTMLElement>(".user-acts");
+      if (!acts || (event.target as HTMLElement).closest("a, button, pre")) return false;
+      return this.heldMenu(bubble, acts);
     });
     // Enter in an answer's field answers, as the card's first button would.
     root.addEventListener("keydown", (event) => {
@@ -1248,10 +1245,10 @@ export class ConversationView {
    *  name: a press does what the mark beside the turn would. */
   /** The user's words held on a touch screen: their actions as a small
    *  menu beside them, each doing what its mark does. */
-  private heldMenu(bubble: HTMLElement, acts: HTMLElement): void {
+  private heldMenu(bubble: HTMLElement, acts: HTMLElement): boolean {
     const buttons = [...acts.querySelectorAll<HTMLButtonElement>("button.turn-icon")];
     const shown = buttons.filter((button) => !(button.dataset.needs && !this.root.classList.contains(`can-${button.dataset.needs}`)));
-    if (!shown.length) return;
+    if (!shown.length) return false;
     heldMenu.open(
       bubble,
       "",
@@ -1259,6 +1256,7 @@ export class ConversationView {
       (act) => shown[Number(act)]?.click(),
       true,
     );
+    return true;
   }
 
   /** The user chose in a card: an option is marked, an answer is sent. */
@@ -1423,9 +1421,9 @@ export class ConversationView {
       // A long message shows its first lines, the rest a press away.
       if (key && longWords(text)) {
         const open = this.unfolded.has(key);
-        return `${who}<div class="bubble long${open ? " open" : ""}${state}"><div class="bubble-text">${plain(text)}</div><button class="bubble-more" type="button" data-unfold="${escape(key)}" aria-expanded="${open}">${escape(open ? words.bubbleLess : words.bubbleMore)}</button></div>${note}`;
+        return `${who}<div class="bubble long${open ? " open" : ""}${state}" data-own-press><div class="bubble-text">${plain(text)}</div><button class="bubble-more" type="button" data-unfold="${escape(key)}" aria-expanded="${open}">${escape(open ? words.bubbleLess : words.bubbleMore)}</button></div>${note}`;
       }
-      return `${who}<div class="bubble${state}">${plain(text)}</div>${note}`;
+      return `${who}<div class="bubble${state}" data-own-press>${plain(text)}</div>${note}`;
     }
     // Words from another resident, or the World's own telling from a node
     // too old to say it as facts: never in the user's bubble. The head notes

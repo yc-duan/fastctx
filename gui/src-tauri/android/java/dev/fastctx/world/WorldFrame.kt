@@ -7,6 +7,7 @@ import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
@@ -148,6 +149,8 @@ class WorldFrame(private val activity: ComponentActivity, private val pageReady:
     private inner class Bridge {
         @JavascriptInterface fun insets(): String = this@WorldFrame.insets
         @JavascriptInterface fun ready() { main.post { pageReady() } }
+        /** A long press the page answered: the knock the system gives its own, as the user set it. */
+        @JavascriptInterface fun press() { main.post { webView.get()?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS) } }
 
         @JavascriptInterface fun paint(theme: String, chosen: Boolean, lightUnderBars: Boolean, darkCover: Boolean) {
             require(theme in THEMES) { "Unknown theme: $theme" }

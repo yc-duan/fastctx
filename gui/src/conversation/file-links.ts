@@ -7,6 +7,7 @@
 // on once the way is back, while the page is open.
 
 import { layerOpened } from "../app/back";
+import { onHeld } from "../app/press";
 import type { MachineName } from "../world/events";
 import type { AttachmentSource } from "../world/files";
 import { HeldReads, LetGo, shareOf, type HeldRead, type ReadProgress } from "../world/reads";
@@ -77,12 +78,9 @@ export class FileLinks {
       this.closeMenu();
       this.open(link);
     });
-    root.addEventListener("contextmenu", (event) => {
-      const link = linkOf(event.target);
-      if (!link) return;
-      event.preventDefault();
+    onHeld(root, "a[data-file]", (link, event, input) => {
       event.stopPropagation();
-      this.openMenu(link, event.clientX, event.clientY);
+      this.openMenu(link, event.clientX, event.clientY, input === "touch");
     });
     // Where the file is, said on hover only once asked for.
     root.addEventListener("pointerover", (event) => {
@@ -139,12 +137,11 @@ export class FileLinks {
       );
   }
 
-  private openMenu(link: HTMLElement, x: number, y: number): void {
+  private openMenu(link: HTMLElement, x: number, y: number, sheet: boolean): void {
     this.closeMenu();
     const { words, here, reveal } = this.options;
     const machine = link.dataset.fileMachine ?? this.options.machine;
     const path = link.dataset.file!;
-    const sheet = matchMedia("(hover: none)").matches;
     const menu = document.createElement("div");
     menu.className = `file-menu${sheet ? " as-sheet" : ""}`;
     menu.setAttribute("role", "menu");

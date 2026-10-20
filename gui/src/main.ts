@@ -20,6 +20,7 @@ import "./conversation/model-panel.css";
 import "./conversation/agents.css";
 import "./longview/longview.css";
 import "./app/shell.css";
+import "./app/press.css";
 import "./app/sheet.css";
 import "./app/updates.css";
 import "./app/versions.css";
@@ -97,6 +98,7 @@ import "./app/talk-menu.css";
 import "./app/focus-panel.css";
 import "./app/project-form.css";
 import "./app/folder-picker.css";
+import "./app/fingers.css";
 import { Palette, type PaletteItem } from "./app/palette";
 import { ProjectForm } from "./app/project-form";
 import { link, placeOf, talkLink, type Place } from "./app/places";
@@ -165,6 +167,7 @@ import type { Away, Happening, WorldState } from "./home/model";
 import { happeningsOf } from "./home/since";
 import { enHome, zhHome } from "./home/words";
 import { installHints } from "./app/hint";
+import { installPresses } from "./app/press";
 import { installPointerHints } from "./app/pointer-hint";
 import { installPens } from "./pen/filters";
 import { installRules } from "./pen/rules";
@@ -2561,6 +2564,7 @@ if (live) {
 }
 
 installPens();
+installPresses();
 installHints();
 installPointerHints();
 installRules();

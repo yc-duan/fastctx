@@ -9,12 +9,12 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { isTauri } from "@tauri-apps/api/core";
+import { inShell } from "../world/bridge";
 import { escape } from "../conversation/prose";
 import type { PresenceWords } from "./presence";
 import type { SettingsWords } from "./words";
 
-export const onPhone = (): boolean => isTauri() && /Android/i.test(navigator.userAgent);
+export const onPhone = (): boolean => inShell() && /Android/i.test(navigator.userAgent);
 
 const call = <T>(command: string, args?: Record<string, unknown>) => invoke<T>(`plugin:android-world|${command}`, args);
 

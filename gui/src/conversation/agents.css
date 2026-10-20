@@ -380,4 +380,6 @@
 :root[data-reduced] .composer-agents .glyph,
 :root[data-reduced] .agents-pop,
 :root[data-reduced] .lane-head,
-:root[data-reduced] .row.row-found > .row-line,
+:root[data-reduced] .row.row-found > .row-line {
+  animation: none;
+}

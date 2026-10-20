@@ -1,5 +1,6 @@
-import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { nativeMessage } from "./native-message";
+import { inShell } from "../world/bridge";
 
 /** A page's transport and lifetime. Native surfaces have a real parent
  * document of their own, outside the interface's Tauri webview. */
@@ -23,7 +24,7 @@ type Delivery = { kind: "message"; value: unknown } | { kind: "failed"; value: s
 /** Browser previews retain the browser sandbox. Packaged applications use
  * the platform module; a mount failure never falls back to a Tauri iframe. */
 export function mountFrame(into: HTMLElement, html: string, title: string): PageFrame {
-  return isTauri() ? nativeFrame(into, html, title) : browserFrame(into, html, title);
+  return inShell() ? nativeFrame(into, html, title) : browserFrame(into, html, title);
 }
 
 function browserFrame(into: HTMLElement, html: string, title: string): PageFrame {

@@ -41,6 +41,7 @@ import { factsByMachine, talkRow, talksOf } from "./talk-row";
 import type { ShellWords } from "./words";
 import type { Offered } from "./updates";
 import type { UpdateWords } from "./update-words";
+import { onHeld } from "./press";
 
 export interface SidebarOptions {
   store: Store;
@@ -211,11 +212,9 @@ export class Sidebar {
     });
     // A project held on a touch screen, or pressed with the right button,
     // opens its "⋯" too.
-    this.list.addEventListener("contextmenu", (event) => {
-      const row = (event.target as HTMLElement).closest<HTMLElement>(".project-place");
-      const more = row?.querySelector<HTMLElement>("[data-project-more]");
-      if (!more) return;
-      event.preventDefault();
+    onHeld(this.list, ".project-row", (row) => {
+      const more = row.querySelector<HTMLElement>("[data-project-more]");
+      if (!more) return false;
       this.openProjectMenu(more);
     });
     effect(() => {
@@ -418,7 +417,7 @@ export class Sidebar {
         // are in its "⋯". Shut, it says whether something in it waits or
         // works, and how many are in it.
         return `<li class="project-place${shut ? " shut" : ""}" data-town="${escape(town)}" data-name="${escape(name)}">
-          <div class="place-row project-row">
+          <div class="place-row project-row" data-own-press>
             <button class="place project-fold${current ? " current" : ""}" type="button" data-fold="${escape(town)}" aria-expanded="${!shut}" aria-label="${escape(words.agentsIn(name))}"${current ? ' aria-current="page"' : ""}>
               <span class="place-mark">${glyph(shut ? "folder" : "folder-open", 18)}</span><span class="place-name">${escape(name)}</span>
               <span class="project-shut-marks">${shutMark ? `<span class="mark ${shutMark}" aria-hidden="true"></span>` : ""}${inside.length ? `<span class="count">${inside.length}</span>` : ""}</span>

@@ -359,11 +359,20 @@
   --stagger: 0ms;
 }
 
-/* Every glyph at its nominal size times the scale, in whole pixels; where
-   rounding is not understood, the glyph keeps its nominal size. */
+/* Every glyph at its nominal size times the scale, in whole pixels where
+   the system can round. A phone's WebView may be versions behind: a value
+   with var() in it is only found wanting as it is used, too late for a
+   plain one beside it to stand in, so the rounding is asked for first. */
 .glyph {
-  width: round(nearest, calc(var(--glyph, 20) * var(--icon-scale) * 1px), 1px);
-  height: round(nearest, calc(var(--glyph, 20) * var(--icon-scale) * 1px), 1px);
+  width: calc(var(--glyph, 20) * var(--icon-scale) * 1px);
+  height: calc(var(--glyph, 20) * var(--icon-scale) * 1px);
+}
+
+@supports (width: round(nearest, 1px, 1px)) {
+  .glyph {
+    width: round(nearest, calc(var(--glyph, 20) * var(--icon-scale) * 1px), 1px);
+    height: round(nearest, calc(var(--glyph, 20) * var(--icon-scale) * 1px), 1px);
+  }
 }
 
 /* Under a finger the glyphs are larger again: read at arm's length, pressed

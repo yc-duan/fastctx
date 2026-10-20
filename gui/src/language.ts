@@ -5,6 +5,7 @@
 // before the interface loads, which reads it from this window as it starts.
 
 import { readFeatures, setLanguage } from "./world/features";
+import { inShell } from "./world/bridge";
 
 export type Language = "zh" | "en";
 
@@ -51,7 +52,7 @@ export async function settleLanguage(): Promise<void> {
   const params = new URLSearchParams(location.search);
   const asked = params.get("lang");
   if (asked === "zh" || asked === "en") return;
-  const shell = "__TAURI_INTERNALS__" in window;
+  const shell = inShell();
   const here = kept();
   if (here) {
     // Chosen in this window before the device kept one: the device learns

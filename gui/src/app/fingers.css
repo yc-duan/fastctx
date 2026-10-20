@@ -1,0 +1,48 @@
+/* What a finger presses is at least 44 pixels square, and buttons side by
+   side stand far enough apart that a thumb meant for one does not land on
+   the next (`world-gui.md`, 界面的结构). The marks keep their size; the
+   target grows around them. Places with a target of their own size say so
+   beside their rules; this sheet holds what is common, and the few whose
+   own rules were for a pointer's size. */
+@media (pointer: coarse) {
+  .icon-button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .composer-tools {
+    gap: var(--space-2);
+  }
+
+  .prose-copy,
+  .io-foot .long-text-full,
+  .to-latest {
+    width: 44px;
+    height: 44px;
+  }
+
+  .io-foot .long-text-full {
+    margin-top: -12px;
+    margin-bottom: -12px;
+  }
+
+  /* Its line keeps its height: the target spills over it. */
+  .side-add {
+    width: 44px;
+    height: 44px;
+    margin-block: -11px;
+    margin-right: -15px;
+  }
+
+  .ml-view,
+  .map-order,
+  .ledger-switch button,
+  .ledger-switch.small button {
+    min-height: 44px;
+  }
+
+  .logins-candidate,
+  .logins-folder-head {
+    min-height: 44px;
+  }
+}

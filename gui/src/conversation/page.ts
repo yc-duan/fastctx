@@ -82,6 +82,9 @@ export interface Someone {
  *  that tells the World nothing of its turns); or not taken. */
 export type Sent = "turn" | "unseen" | "failed";
 
+/** A phone's width, where the conversation's measure is its dial alone. */
+const phoneWide = matchMedia("(max-width: 480px)");
+
 export interface PageOptions {
   words: Words;
   here: string;
@@ -377,6 +380,8 @@ export class ConversationPage {
     this.spoken.setAttribute("role", "status");
     this.element.append(this.spoken);
     this.context = this.element.querySelector<HTMLElement>(".composer-context")!;
+    this.placeDial();
+    phoneWide.addEventListener("change", this.placeDial);
     if (options.controls) {
       this.badge = new UsageBadge(this.context, options.controls.words.usage);
       const usagePop = this.element.querySelector<HTMLElement>(".usage-pop")!;
@@ -845,8 +850,18 @@ export class ConversationPage {
     }
   }
 
+  /** On a phone the dial stands in the head, away from the button that
+   *  sends and stops under the thumb; elsewhere it ends the input's row. */
+  private readonly placeDial = () => {
+    const head = this.element.querySelector<HTMLElement>(".page-head-actions");
+    const row = this.element.querySelector<HTMLElement>(".composer-row")!;
+    if (phoneWide.matches && head) head.prepend(this.context);
+    else row.insertBefore(this.context, row.querySelector(".composer-action"));
+  };
+
   /** Stops what the page keeps asking for. */
   leave(): void {
+    phoneWide.removeEventListener("change", this.placeDial);
     clearTimeout(this.offersAgain);
     cancelAnimationFrame(this.frame);
     this.view.destroy();

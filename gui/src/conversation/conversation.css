@@ -11,8 +11,8 @@
   --rail-glyph: 16px;
   --rail-gap: 12px;
   --leading-prose: 1.72;
-  --row-leading: round(nearest, calc(var(--body-size) * var(--leading-ui)), 1px);
-  --code-leading: round(nearest, calc(var(--size-code) * var(--leading-code)), 1px);
+  --row-leading: calc(var(--body-size) * var(--leading-ui));
+  --code-leading: calc(var(--size-code) * var(--leading-code));
   /* Room above a block, more above a turn. */
   --block-gap: var(--space-5);
   --turn-gap: calc(var(--space-10) + var(--space-1));
@@ -21,6 +21,14 @@
   padding: var(--space-6) var(--gutter) var(--space-12);
   display: flex;
   flex-direction: column;
+}
+
+/* In whole pixels where the system can round. */
+@supports (width: round(nearest, 1px, 1px)) {
+  .transcript {
+    --row-leading: round(nearest, calc(var(--body-size) * var(--leading-ui)), 1px);
+    --code-leading: round(nearest, calc(var(--size-code) * var(--leading-code)), 1px);
+  }
 }
 
 /* Rhythm: blocks part by a line's space; a turn begins further down. The

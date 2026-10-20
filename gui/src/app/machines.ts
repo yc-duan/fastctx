@@ -14,6 +14,7 @@
 
 import { glyph } from "../conversation/glyphs";
 import { layerOpened, type Layer } from "./back";
+import { onHeld } from "./press";
 import { escape } from "../conversation/prose";
 import { Film } from "../film/film";
 import { network } from "../film/network";
@@ -144,11 +145,6 @@ interface Act {
 }
 
 
-/** How long a finger rests before it is a long press, as Android counts it,
- *  and how far it may drift meanwhile, in CSS pixels. */
-const LONG_PRESS_MS = 500;
-const PRESS_SLOP = 10;
-
 /** How long a taking back can be undone from the drawing's corner. */
 const UNDO_MS = 6_000;
 
@@ -260,12 +256,10 @@ export class MachinesPage implements Page {
   private framing: string[] = [];
   /** The list's row a range chosen with Shift starts from. */
   private anchor: string | null = null;
-  /** Choosing several on a touch screen: begun by a finger resting on a
+  /** Choosing several on a touch screen: begun by a finger held on a
    *  machine's row, the rows show their boxes, a press ticks one, and the
    *  page's head says how many until it is let go. */
   private selecting = false;
-  /** The press a long press ends in, which opens nothing. */
-  private longPressed = false;
   private readonly selectLayer: Layer = { isOpen: () => this.selecting && this.element.isConnected, close: () => this.setPicked([]) };
   private readonly chosen: FramedPanel;
   private readonly removing: RemoveMachineSheet;
@@ -373,12 +367,6 @@ export class MachinesPage implements Page {
     this.list.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
       const press = event as MouseEvent;
-      // The press a long press ends in opens nothing.
-      if (this.longPressed) {
-        this.longPressed = false;
-        event.preventDefault();
-        return;
-      }
       const all = target.closest<HTMLElement>("[data-ml-pick-all]")?.dataset.mlPickAll;
       if (all) {
         event.preventDefault();
@@ -755,50 +743,19 @@ export class MachinesPage implements Page {
     return this.pickableKeys().has(key);
   }
 
-  /** A finger resting on a machine's row starts choosing several, that one
+  /** A finger held on a machine's row starts choosing several, that one
    *  ticked, as phones do; the system's own long-press menu gives way. */
   private longPresses(): void {
     this.list.dataset.ownPress = "";
-    let timer = 0;
-    let start: { x: number; y: number; key: string } | null = null;
-    const cancel = () => {
-      clearTimeout(timer);
-      start = null;
-    };
-    const begin = (key: string) => {
-      cancel();
-      this.longPressed = true;
-      navigator.vibrate?.(8);
+    onHeld(this.list, "[data-ml-key]", (row, _event, input) => {
+      if (input !== "touch") return false;
+      if (this.selecting) return;
+      const key = row.dataset.mlKey!;
+      if (!this.isPickable(key)) return false;
       this.selecting = true;
       layerOpened(this.selectLayer);
       this.anchor = key;
       this.setPicked([key]);
-    };
-    this.list.addEventListener(
-      "pointerdown",
-      (event) => {
-        this.longPressed = false;
-        if (event.pointerType === "mouse" || this.selecting) return;
-        const key = (event.target as HTMLElement).closest<HTMLElement>("[data-ml-key]")?.dataset.mlKey;
-        if (!key || !this.isPickable(key)) return;
-        start = { x: event.clientX, y: event.clientY, key };
-        timer = window.setTimeout(() => begin(key), LONG_PRESS_MS);
-      },
-      { passive: true },
-    );
-    this.list.addEventListener(
-      "pointermove",
-      (event) => {
-        if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > PRESS_SLOP) cancel();
-      },
-      { passive: true },
-    );
-    this.list.addEventListener("pointerup", cancel, { passive: true });
-    this.list.addEventListener("pointercancel", cancel, { passive: true });
-    // A system that raises its own menu first has the long press begin then.
-    this.list.addEventListener("contextmenu", (event) => {
-      if (start) begin(start.key);
-      if (this.longPressed || this.selecting) event.preventDefault();
     });
   }
 

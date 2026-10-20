@@ -65,8 +65,15 @@
   /* The tree's measures. A level in is one icon and its gap less the
      glyph's own margin, so a child's icon stands under its parent's name. */
   --ml-twisty: 14px;
-  --ml-icon: round(nearest, calc(15px * var(--icon-scale)), 1px);
+  --ml-icon: calc(15px * var(--icon-scale));
   --ml-step: calc(var(--ml-icon) + var(--space-2) - 3px);
+}
+
+/* In whole pixels where the system can round. */
+@supports (width: round(nearest, 1px, 1px)) {
+  .ml-list {
+    --ml-icon: round(nearest, calc(15px * var(--icon-scale)), 1px);
+  }
 }
 
 .ml-list[hidden] {

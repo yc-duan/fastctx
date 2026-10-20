@@ -367,11 +367,19 @@
   opacity: 0.5;
 }
 
-/* On a phone the model's name keeps its room: the dial alone, as small as
+/* On a phone the dial alone, in the page's head (`page.ts`), as small as
    the context's ring always was, the figures a press away. */
 @media (max-width: 480px) {
   .talk-gauge {
     display: none;
+  }
+
+  .page-head-actions > button.composer-context {
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border-radius: var(--radius-s);
   }
 
   .talk-gauge-dial:not(:empty) {

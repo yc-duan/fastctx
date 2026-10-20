@@ -11,7 +11,8 @@
  *  Real buttons retain keyboard and accessibility activation through click.
  *  Do not also bind Tauri drag-region or window actions to these elements.
  */
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
+import { inShell } from "./bridge";
 import { listen } from "@tauri-apps/api/event";
 
 export interface TitlebarState {
@@ -20,7 +21,7 @@ export interface TitlebarState {
   pressed: boolean;
 }
 
-export const titlebarAvailable = (): boolean => isTauri() && navigator.userAgent.includes("Windows");
+export const titlebarAvailable = (): boolean => inShell() && navigator.userAgent.includes("Windows");
 
 type Rect = { x: number; y: number; width: number; height: number };
 type Regions = { drag: Rect[]; client: Rect[]; maximize: Rect | null; scale: number };

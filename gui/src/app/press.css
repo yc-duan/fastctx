@@ -1,0 +1,17 @@
+/* While the last pointer down is a finger (`press.ts`), what answers a long
+   press itself, and a mark whose hint a long press raises, start neither the
+   system's selection of their text nor its callout: either takes the touch
+   away from the page as the long press comes. A finger drags no link and no
+   picture, for the same reason; a drag the interface wants it draws itself. */
+:root[data-input="touch"] [data-own-press],
+:root[data-input="touch"] [data-own-press] *:not(input):not(textarea),
+:root[data-input="touch"] [title] {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+:root[data-input="touch"] a,
+:root[data-input="touch"] img {
+  -webkit-user-drag: none;
+}

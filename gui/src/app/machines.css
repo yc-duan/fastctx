@@ -102,36 +102,13 @@
   text-decoration: none;
 }
 
-/* The drawing: graph paper that moves with it, a fine line every step and
-   a firmer one every fourth (their size and offset follow the camera). The
-   same paper under the drawing as a picture on another page. */
+/* The drawing, on the plain page: its lines and rings are the only marks
+   on it (user 2026-10-20: the graph paper behind it blurred the whole page).
+   The same under the drawing as a picture on another page. */
 :is(.machines-canvas .machine-map, .machine-map.map-still) {
   --canvas-ink: var(--text);
   --canvas-selection: var(--accent);
   --canvas-paper: var(--bg);
-  --paper-step: 32px;
-  --paper-x: 0px;
-  --paper-y: 0px;
-}
-
-/* The paper fades out toward the edges. */
-:is(.machines-canvas .machine-map, .machine-map.map-still)::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background-image:
-    linear-gradient(color-mix(in srgb, var(--pen-graphite) 10%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in srgb, var(--pen-graphite) 10%, transparent) 1px, transparent 1px),
-    linear-gradient(color-mix(in srgb, var(--pen-graphite) 20%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in srgb, var(--pen-graphite) 20%, transparent) 1px, transparent 1px);
-  background-size:
-    var(--paper-step) var(--paper-step),
-    var(--paper-step) var(--paper-step),
-    calc(var(--paper-step) * 4) calc(var(--paper-step) * 4),
-    calc(var(--paper-step) * 4) calc(var(--paper-step) * 4);
-  background-position: var(--paper-x) var(--paper-y);
-  mask-image: radial-gradient(ellipse 70% 72% at 50% 50%, black 45%, transparent 100%);
 }
 
 .machine-map .canvas-ink {

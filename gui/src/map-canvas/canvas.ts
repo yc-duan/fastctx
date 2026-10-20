@@ -2,6 +2,7 @@ import { CanvasCamera, type CameraOptions } from "./camera";
 import { DropTargets, nearestItem, type ValidTarget } from "./drop";
 import { placeLabels } from "./labels";
 import { onMotion, reducedMotion } from "../motion";
+import { inputOf, pressFelt } from "../app/press";
 import type { Bounds, CanvasEvent, CanvasFrame, CanvasHandle, CanvasItem, Draft, Point } from "./types";
 import "./canvas.css";
 
@@ -72,6 +73,8 @@ export class MapCanvas {
   private disposed = false;
   private longPress = 0;
   private longPressed = false;
+  /** Where a finger's hold began, on which item, while it may still become a long press. */
+  private held: { item: string; point: Point } | null = null;
   private rect = this.element.getBoundingClientRect();
   private fitOnResize = true;
   /** Whether the whole drawing was asked for, however small that makes it. */
@@ -144,6 +147,9 @@ export class MapCanvas {
     this.element.addEventListener("contextmenu", e => {
       if (this.isControl(e.target)) return;
       e.preventDefault();
+      // A finger's long press comes when the phone's own does: the hold
+      // begun on an item ends now, not at the drawing's own interval.
+      if (inputOf(e) === "touch") { if (this.longPress) this.holdEnded(); return; }
       if (!this.longPressed) this.options.event({ kind: "context", key: this.itemAt(this.local(e)), at: this.local(e), input: "mouse" });
     }, { signal });
     this.element.addEventListener("keydown", e => this.key(e), { signal });
@@ -389,7 +395,17 @@ export class MapCanvas {
     this.options.event({ kind: "select", key, at, add });
     this.schedule();
   }
-  private stopLongPress(): void { clearTimeout(this.longPress); this.longPress = 0; }
+  private stopLongPress(): void { clearTimeout(this.longPress); this.longPress = 0; this.held = null; }
+  /** A finger held on an item long enough: it is chosen, and its menu asked for. */
+  private holdEnded(): void {
+    const held = this.held;
+    this.stopLongPress();
+    if (!held) return;
+    this.longPressed = true;
+    this.select(held.item, held.point);
+    this.options.event({ kind: "context", key: held.item, at: held.point, input: "touch" });
+    pressFelt();
+  }
   private clearPointers(): void {
     this.stopLongPress();
     for (const id of this.pointers.keys()) { if (this.element.hasPointerCapture(id)) this.element.releasePointerCapture(id); }
@@ -422,12 +438,10 @@ export class MapCanvas {
       else {
         this.cancelDraft("interrupted");
         if (e.pointerType === "touch" && item) {
-          // 500 ms is the gesture's deliberate hold interval, not an operation timeout.
-          this.longPress = window.setTimeout(() => {
-            this.longPressed = true;
-            this.select(item, point);
-            this.options.event({ kind: "context", key: item, at: point, input: "touch" });
-          }, 500);
+          // 500 ms is the gesture's deliberate hold interval, not an operation
+          // timeout; the system's own long press ends it sooner where it comes.
+          this.held = { item, point };
+          this.longPress = window.setTimeout(() => this.holdEnded(), 500);
         }
       }
     } else {

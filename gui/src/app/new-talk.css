@@ -378,7 +378,14 @@
   /* A level in is one small step, as in the sidebar. */
   --ap-pad: var(--space-2);
   --ap-step: 18px;
-  --ap-icon: round(nearest, calc(15px * var(--icon-scale)), 1px);
+  --ap-icon: calc(15px * var(--icon-scale));
+}
+
+/* In whole pixels where the system can round. */
+@supports (width: round(nearest, 1px, 1px)) {
+  .agent-picker {
+    --ap-icon: round(nearest, calc(15px * var(--icon-scale)), 1px);
+  }
 }
 
 .agent-group {

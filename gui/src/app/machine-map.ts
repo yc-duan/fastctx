@@ -445,10 +445,6 @@ export class MachineMap {
       // was laid for.
       this.element.style.setProperty("--name-grow", Math.min(this.grow, Math.max(1, LEGIBLE / frame.view.scale)).toFixed(3));
     } else if (this.scene && this.isNarrow() !== this.narrow) this.update(this.scene);
-    // The graph paper moves with the drawing, a line every 32 of its units.
-    this.element.style.setProperty("--paper-step", `${(32 * frame.view.scale).toFixed(2)}px`);
-    this.element.style.setProperty("--paper-x", `${frame.view.x.toFixed(1)}px`);
-    this.element.style.setProperty("--paper-y", `${frame.view.y.toFixed(1)}px`);
     if (frame.view.level !== this.level) {
       this.level = frame.view.level;
       this.compose();

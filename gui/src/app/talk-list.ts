@@ -1,7 +1,7 @@
 // What a list of conversations does with its rows (`talk-row.ts`) beyond
 // following them: a row's "⋯" opens its menu, the right button opens it where
-// it was pressed, a finger resting on a row raises it from below, and a row
-// is renamed in place (`world-gui.md`, 界面的结构). The sidebar and the page of
+// it was pressed, a finger held on a row raises it from below, and a row is
+// renamed in place (`world-gui.md`, 界面的结构). The sidebar and the page of
 // every conversation both list them so.
 
 import { titleOf } from "../world/names";
@@ -12,12 +12,7 @@ import type { TalkMenu } from "./talk-menu";
 import type { TalkMenuWords } from "./talk-menu-words";
 import type { RowActs } from "./talk-row";
 import { composing } from "../typing";
-
-/** How long a finger rests on a row before its menu rises, as Android
- *  counts a long press. */
-const LONG_PRESS_MS = 500;
-/** How far a finger may drift and still be resting, in CSS pixels. */
-const SLOP = 10;
+import { onHeld } from "./press";
 
 export interface TalkListOptions {
   acts: TalkActs;
@@ -36,8 +31,6 @@ export class TalkList {
   private rows = new Map<string, ResidentNow>();
   /** The conversation whose name is a field now, and what it holds. */
   private renaming: { key: string; name: string } | null = null;
-  /** A press that became a long press: the click it ends in is swallowed. */
-  private pressed = false;
 
   constructor(
     private readonly list: HTMLElement,
@@ -46,12 +39,6 @@ export class TalkList {
     list.addEventListener(
       "click",
       (event) => {
-        if (this.pressed) {
-          this.pressed = false;
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
         const target = event.target as HTMLElement;
         // Typing a name into a row is not following it.
         if (target.closest(".talk-rename")) {
@@ -78,14 +65,14 @@ export class TalkList {
       },
       true,
     );
-    list.addEventListener("contextmenu", (event) => {
-      const r = this.rowOf(event.target as HTMLElement);
-      if (!r) return;
-      event.preventDefault();
-      if (this.pressed || (event as PointerEvent).pointerType === "touch") return;
-      options.menu.open(r, { at: { x: event.clientX, y: event.clientY }, rename: () => this.rename(r) });
+    // Held by a finger, the menu rises from below; opened with the right
+    // button, it stands where it was pressed.
+    onHeld(list, ".talk-item[data-resident]", (item, event, input) => {
+      const r = this.rowOf(item);
+      if (!r) return false;
+      const rename = () => this.rename(r);
+      options.menu.open(r, input === "touch" ? { rename } : { at: { x: event.clientX, y: event.clientY }, rename });
     });
-    this.longPresses();
   }
 
   /** Takes the conversations about to be drawn. */
@@ -117,42 +104,6 @@ export class TalkList {
   private rowOf(element: HTMLElement): ResidentNow | null {
     const item = element.closest<HTMLElement>(".talk-item[data-resident]");
     return item ? (this.rows.get(`${item.dataset.machine}\n${item.dataset.resident}`) ?? null) : null;
-  }
-
-  /** A finger resting on a row raises its menu from below. */
-  private longPresses(): void {
-    let timer = 0;
-    let start: { x: number; y: number } | null = null;
-    const cancel = () => {
-      clearTimeout(timer);
-      start = null;
-    };
-    this.list.addEventListener(
-      "pointerdown",
-      (event) => {
-        this.pressed = false;
-        if (event.pointerType === "mouse") return;
-        const r = this.rowOf(event.target as HTMLElement);
-        if (!r || (event.target as HTMLElement).closest(".talk-rename")) return;
-        start = { x: event.clientX, y: event.clientY };
-        timer = window.setTimeout(() => {
-          start = null;
-          this.pressed = true;
-          navigator.vibrate?.(8);
-          this.options.menu.open(r, { rename: () => this.rename(r) });
-        }, LONG_PRESS_MS);
-      },
-      { passive: true },
-    );
-    this.list.addEventListener(
-      "pointermove",
-      (event) => {
-        if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > SLOP) cancel();
-      },
-      { passive: true },
-    );
-    this.list.addEventListener("pointerup", cancel, { passive: true });
-    this.list.addEventListener("pointercancel", cancel, { passive: true });
   }
 
   /** The row's name becomes a field: Enter or leaving it keeps what is
