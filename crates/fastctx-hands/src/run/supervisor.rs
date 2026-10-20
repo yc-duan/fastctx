@@ -27,8 +27,10 @@ pub fn supervise(world: &Path, record_path: &Path, fastctx_dir: &Path) -> io::Re
         let resident = room(record_path)?;
         shell::ensure_prelude(fastctx_dir)?;
         let fastctx_home = std::env::var_os("FASTCTX_HOME");
-        let scratch = resident.job_scratch(&record.id);
+        let scratch = resident.scratch();
+        let job_temp = resident.job_scratch(&record.id);
         fastctx_platform::ensure_private_dir(&scratch)?;
+        fastctx_platform::ensure_private_dir(&job_temp)?;
         let on_state = record.on.as_ref().map(|on| std::path::PathBuf::from(&on.state));
         shell::prepare(
             &resident.job_script(&record.id),
@@ -40,6 +42,7 @@ pub fn supervise(world: &Path, record_path: &Path, fastctx_dir: &Path) -> io::Re
                 fastctx_home: fastctx_home.as_deref(),
                 job: Some(&record.id),
                 scratch: Some(&scratch),
+                job_temp: Some(&job_temp),
                 writes_off: record.writes_off,
                 on_state: on_state.as_deref(),
             },

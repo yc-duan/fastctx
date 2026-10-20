@@ -30,9 +30,10 @@ pub struct Context<'a> {
     /// The job the script is, so that a command in it can tell itself apart
     /// from the other things running, as `fastctx w` does.
     pub job: Option<&'a fastctx_types::JobId>,
-    /// A directory of the job's resident where the World's shell functions
-    /// may leave files for the commands they call, such as `on`'s state.
+    /// Working files retained for this conversation on this machine.
     pub scratch: Option<&'a Path>,
+    /// Internal files with the job's confirmed-end lifetime, including `on` state.
+    pub job_temp: Option<&'a Path>,
     /// The World's write commands refuse in this shell (`world-write.md`).
     pub writes_off: bool,
     /// The state an `on` brought from the sending script, which the
@@ -100,6 +101,10 @@ pub fn environment_from(mut env: Vec<(OsString, OsString)>, context: &Context<'_
     match context.scratch {
         Some(scratch) => set(&mut env, "FASTCTX_SCRATCH", forward_slashes(scratch)),
         None => unset(&mut env, "FASTCTX_SCRATCH"),
+    }
+    match context.job_temp {
+        Some(directory) => set(&mut env, "FASTCTX_JOB_TEMP", forward_slashes(directory)),
+        None => unset(&mut env, "FASTCTX_JOB_TEMP"),
     }
     match context.on_state {
         Some(state) => set(&mut env, "FASTCTX_ON_STATE", forward_slashes(state)),

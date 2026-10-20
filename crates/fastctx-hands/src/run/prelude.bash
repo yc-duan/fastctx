@@ -85,7 +85,7 @@ __fastctx_on() {
     # This shell's own process: BASHPID from bash 4 on; in bash 3.2, which
     # macOS keeps, the parent of a program it starts.
     builtin set -- "${BASHPID:-$(builtin exec /usr/bin/env -i /bin/sh -c 'echo "$PPID"')}" "$@"
-    builtin set -- "${FASTCTX_SCRATCH:?on works only inside a script run by the run tool}/on-$1-$RANDOM$RANDOM" "$@"
+    builtin set -- "${FASTCTX_JOB_TEMP:?on works only inside a script run by the run tool}/on-$1-$RANDOM$RANDOM" "$@"
     __fastctx_state "$-" >"$1.state" || builtin return 255
     if [ -r "/proc/$2/winpid" ]; then
         builtin set -- "$1" "$(/usr/bin/cat "/proc/$2/winpid")" "${@:3}"

@@ -219,7 +219,7 @@ fn collect(
     words: &[String],
     pipe_in: bool,
 ) -> anyhow::Result<OnPackage> {
-    let scratch = match std::env::var_os("FASTCTX_SCRATCH") {
+    let scratch = match std::env::var_os("FASTCTX_JOB_TEMP") {
         Some(scratch) => PathBuf::from(scratch),
         None => fastctx_platform::temp_dir().context("finding the temporary directory")?,
     };

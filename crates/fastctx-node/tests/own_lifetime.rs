@@ -55,6 +55,7 @@ fn main() -> anyhow::Result<()> {
                         fastctx_home: Some(root.as_os_str()),
                         job: Some(&job.id),
                         scratch: None,
+                        job_temp: None,
                         writes_off: false,
                         on_state: None,
                     },

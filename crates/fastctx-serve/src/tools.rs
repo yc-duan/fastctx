@@ -196,9 +196,10 @@ const RUN_START_ASSISTING: &str = "\
 - Each call is a fresh login shell on the machine its `on` names, starting in that machine's home directory. Nothing carries over between calls, and standard input is empty. Standard output and standard error come back together; output too long to show whole comes back as its start and end, and the answer names the file that holds all of it.";
 
 const RUN_TOGETHER_ASSISTING: &str = "\
-For you, each of these goes inside one `on`, as in `on laptop <<'EOF'`, then the commands, then `EOF`.";
+For you, variables, loops and conditions go inside a quoted `on` here-document. Several literal `on` commands can follow one another.";
 
 const RUN_SHELL_REST: &str = "\
+- Keep temporary files in the current machine's `$FASTCTX_SCRATCH`; it survives runs and is deleted with this conversation.
 - Calls share nothing, so you can make several at once, and call this tool from your scripts and subagents like any other. The steps of one piece of work belong in one script; separate pieces of work can go in separate calls.
 - Images a program draws with the kitty or iTerm2 terminal protocols come back as images.
 - A call answers as soon as the script ends. A script still running after 15 seconds, or after `wait` seconds when you set it (up to 600), goes on by itself in the background as a job: it is never stopped for taking long, and the answer names the job and the file its output continues in. `wait` 0 sends the script to the background at once, before it has printed anything: for work you will not wait for.

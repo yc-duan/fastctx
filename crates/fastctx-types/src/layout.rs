@@ -565,6 +565,11 @@ impl ConversationDir {
         self.out().join(format!("{job}.log"))
     }
 
+    /// Working files retained across runs, owned by this conversation here.
+    pub fn scratch(&self) -> PathBuf {
+        self.path.join("scratch")
+    }
+
     /// Temporary files owned by this job share its confirmed-end lifetime.
     pub fn job_scratch(&self, job: &JobId) -> PathBuf {
         self.out().join(format!("{job}.tmp"))
