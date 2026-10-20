@@ -47,7 +47,7 @@ impl Looker<'_> {
     /// looker's to see: the two work for an account in common, a
     /// conversation opened here working for the accounts this computer is
     /// logged in to.
-    fn sees(self, node: &Node, acting: &Acting) -> bool {
+    pub(crate) fn sees(self, node: &Node, acting: &Acting) -> bool {
         match (self, acting) {
             (Looker::Asker(asker), _) => node.serves(acting, &asker.hub, &asker.account),
             (Looker::Here(_), Acting::Accounts { accounts }) => {

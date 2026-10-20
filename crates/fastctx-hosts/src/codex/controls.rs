@@ -222,6 +222,7 @@ impl CodexHost {
             "model/rerouted" => {
                 if let (Some(turn), Some(model)) = (params["turnId"].as_str(), params["toModel"].as_str()) {
                     entry.accounting.rerouted(turn, model);
+                    entry.model = Some(model.to_string());
                 }
             }
             "thread/reverted" => entry.accounting.reloaded(),

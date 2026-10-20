@@ -976,6 +976,12 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }
+        Call::AgentCalls { machine, agent, dir, query } => {
+            users_voice(node, peer)?;
+            crate::logins::remote::calls(node, machine, agent, dir, query)
+                .await
+                .map(|page| Reply::AgentCalls(Box::new(page)))
+        }
         Call::AgentUsage { machine, agent, dir } => {
             users_voice(node, peer)?;
             crate::logins::remote::usage(node, machine, agent, dir)

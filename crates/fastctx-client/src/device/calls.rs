@@ -170,6 +170,9 @@ impl Device {
             Call::ChangeAgentLogin { machine, agent, dir, into, raise_output_limit, take_back } => {
                 (machine, RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit, take_back }, None)
             }
+            Call::AgentCalls { machine, agent, dir, query } => {
+                (machine, RemoteCall::AgentCalls { agent, dir, query }, None)
+            }
             Call::AgentUsage { machine, agent, dir } => (machine, RemoteCall::AgentUsage { agent, dir }, None),
             Call::ReadAgentLimits { machine, agent, dir } => {
                 (machine, RemoteCall::ReadAgentLimits { agent, dir }, None)
@@ -297,6 +300,7 @@ impl Device {
             (RemoteCall::AttachmentThumbnail { .. }, RemoteReply::Thumbnail(reply)) => Reply::Thumbnail(reply),
             (RemoteCall::Lines { .. }, RemoteReply::Lines(reply)) => Reply::Lines(reply),
             (RemoteCall::Homes { .. }, RemoteReply::Set) => Reply::Done,
+            (RemoteCall::AgentCalls { .. }, RemoteReply::AgentCalls(page)) => Reply::AgentCalls(page),
             (RemoteCall::AgentUsage { .. }, RemoteReply::AgentUsage(report)) => Reply::AgentUsage(report),
             (
                 RemoteCall::ScanAgents { .. }

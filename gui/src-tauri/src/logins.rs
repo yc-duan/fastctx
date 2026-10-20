@@ -124,6 +124,18 @@ pub(crate) async fn agent_usage(
     shell.world().agent_usage(machine(machine_name)?, agent(agent_name)?, dir).await.map_err(|error| error.to_string())
 }
 
+/// Request records as this caller may see them.
+#[fastctx_gui_command::command]
+pub(crate) async fn agent_calls(
+    shell: tauri::State<'_, Shell>,
+    machine_name: String,
+    agent_name: String,
+    dir: PathBuf,
+    query: fastctx_types::usage_calls::UsageCallsQuery,
+) -> Result<fastctx_types::usage_calls::UsageCallsPage, String> {
+    shell.world().agent_calls(machine(machine_name)?, agent(agent_name)?, dir, query).await.map_err(|e| e.to_string())
+}
+
 /// Reads a login's limits afresh on its machine.
 #[fastctx_gui_command::command]
 pub(crate) async fn read_agent_limits(

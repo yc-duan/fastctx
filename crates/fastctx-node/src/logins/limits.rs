@@ -37,7 +37,9 @@ pub(crate) fn listen(node: Arc<Node>, mut reports: mpsc::UnboundedReceiver<Limit
 /// them.
 pub(super) fn keep(node: &Node, report: LimitsReport) -> std::io::Result<bool> {
     let (home, at) = (report.home.clone(), report.at);
-    kept::change(node, |kept| {
+    let _keeping = node.logins.keeping.lock().expect("never poisoned");
+    let mut kept = kept::read(node)?;
+    {
         let limits = &mut kept.codex.limits;
         let index = limits.iter().position(|known| crate::homes::same_dir(&known.dir, &report.home));
         match report.how {
@@ -65,20 +67,33 @@ pub(super) fn keep(node: &Node, report: LimitsReport) -> std::io::Result<bool> {
                 entry.at = report.at;
             }
         }
-    })?;
-    Ok(match kept_of(node, &home)? {
-        Fact::Known { value } => crate::usage::codex_reading(node, &home, value.windows, at),
+    }
+    // 2026-10-20: publish credits only after the matching windows are committed,
+    // so a reader of the new snapshot cannot see the previous quota period.
+    let changed = match raw_of(&kept, &home) {
+        Fact::Known { value } => crate::usage::codex_reading(node, &home, value.windows, at)?,
         _ => false,
-    })
+    };
+    kept::write(node, &kept)?;
+    Ok(changed)
 }
 
 /// The limits of the Codex login in `dir` as they were last read or pushed.
 pub(crate) fn kept_of(node: &Node, dir: &Path) -> std::io::Result<Fact<AgentLimits>> {
-    Ok(of(&kept::read(node)?, dir))
+    Ok(of(node, &kept::read(node)?, dir))
 }
 
 /// The kept limits of the Codex login in `dir`.
-pub(super) fn of(kept: &kept::Kept, dir: &Path) -> Fact<AgentLimits> {
+pub(super) fn of(node: &Node, kept: &kept::Kept, dir: &Path) -> Fact<AgentLimits> {
+    let raw = raw_of(kept, dir);
+    let Some(mut merged) = crate::usage::last_limits(node, "codex", dir) else { return raw };
+    if let Fact::Known { value } = raw {
+        merged.credits = value.credits;
+    }
+    Fact::known(merged)
+}
+
+fn raw_of(kept: &kept::Kept, dir: &Path) -> Fact<AgentLimits> {
     match kept.codex.limits.iter().find(|known| crate::homes::same_dir(&known.dir, dir)) {
         Some(known) => fastctx_hosts::codex::limits_of(&known.buckets, known.at),
         None => Fact::unavailable("not read yet"),

@@ -381,6 +381,19 @@ impl World {
 
     /// What a login on a machine was used for, as this computer's user may
     /// see it.
+    pub async fn agent_calls(
+        &self,
+        machine: fastctx_types::MachineName,
+        agent: fastctx_types::AgentName,
+        dir: std::path::PathBuf,
+        query: fastctx_types::usage_calls::UsageCallsQuery,
+    ) -> Result<fastctx_types::usage_calls::UsageCallsPage, crate::Error> {
+        match self.ask(Call::AgentCalls { machine, agent, dir, query }).await? {
+            Reply::AgentCalls(page) => Ok(*page),
+            other => Err(unexpected(other)),
+        }
+    }
+
     pub async fn agent_usage(
         &self,
         machine: MachineName,

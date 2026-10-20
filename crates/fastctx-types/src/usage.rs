@@ -108,6 +108,9 @@ pub struct UsagePerson {
     /// it. Older nodes do not say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub day: Option<UsageSum>,
+    /// What it used on Fable models in this week. Older nodes do not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fable: Option<UsageSum>,
     /// What its week went to. Older nodes do not say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub went: Option<WeekUse>,
@@ -133,7 +136,7 @@ impl UsageSum {
 /// One hour's use for one person.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UsageHour {
-    /// The hour's start.
+    /// The hour's start, or the weekly boundary that split it.
     pub at: Timestamp,
     /// Its place in `people`.
     pub person: u32,
@@ -148,7 +151,7 @@ pub struct UsageSpan {
     pub start: Timestamp,
     pub end: Timestamp,
     /// How much of the seven-day window the login's account had used by
-    /// the week's last reading, in tenths of a percent; none to an account
+    /// the week's highest reading, in tenths of a percent; none to an account
     /// the login only assists.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub used_tenths: Option<u32>,

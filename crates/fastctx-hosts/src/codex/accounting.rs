@@ -97,30 +97,35 @@ impl Accounting {
         self.turns.entry(turn.to_string()).or_default();
     }
 
-    pub(super) fn usage(&mut self, turn: Option<&str>, usage: &Value) {
+    pub(super) fn usage(&mut self, turn: Option<&str>, usage: &Value) -> Option<TurnTokens> {
+        let observed = turn.and_then(|turn| self.turns.get_mut(turn));
         let Some(total) = Counts::read(&usage["total"]) else {
             self.previous = None;
-            if let Some(observed) = turn.and_then(|turn| self.turns.get_mut(turn)) {
+            if let Some(observed) = observed {
                 observed.incomplete = true;
             }
-            return;
+            return None;
         };
         let previous = self.previous.replace(total.clone());
         if total.synthetic_full(usage["modelContextWindow"].as_u64()) {
-            return;
+            return None;
         }
-        let Some(observed) = turn.and_then(|turn| self.turns.get_mut(turn)) else { return };
         let Some(delta) = previous.and_then(|previous| total.difference(&previous)) else {
-            observed.incomplete = true;
-            return;
+            if let Some(observed) = observed {
+                observed.incomplete = true;
+            }
+            return None;
         };
         if delta.total == 0 {
-            return;
+            return None;
         }
-        match &mut observed.counts {
-            Some(counts) => counts.add(delta),
-            None => observed.counts = Some(delta),
+        if let Some(observed) = observed {
+            match &mut observed.counts {
+                Some(counts) => counts.add(delta.clone()),
+                None => observed.counts = Some(delta.clone()),
+            }
         }
+        Some(delta.tokens())
     }
 
     pub(super) fn rerouted(&mut self, turn: &str, model: &str) {
@@ -154,7 +159,7 @@ pub fn recorded_turn_facts(events: &[SessionEvent], turn: &str, initially_empty:
     for event in events {
         match &event.happened {
             Happened::Changed { turn: observed, change: SessionChange::Usage { usage } } => {
-                accounting.usage(observed.as_deref(), usage);
+                let _ = accounting.usage(observed.as_deref(), usage);
             }
             Happened::Changed { turn: Some(observed), change: SessionChange::Rerouted { to, .. } }
                 if observed == turn =>

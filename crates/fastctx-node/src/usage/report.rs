@@ -13,16 +13,9 @@ use fastctx_types::usage::{
 };
 use jiff::{SignedDuration, Timestamp};
 
+use super::ledger::{Reading, Use};
 use super::{Entry, WEEK_SECONDS, Week};
 use crate::Node;
-
-/// What a token of each kind costs, against one of uncached input, at
-/// Anthropic's list prices for every model: a cache read a tenth, a cache
-/// write a quarter more, output five times. They split what the ledger
-/// says a week cost by kind; the ledger itself says what it cost in all.
-const READ: f64 = 0.1;
-const WRITE: f64 = 1.25;
-const OUTPUT: f64 = 5.0;
 
 /// The same at OpenAI's list prices for its GPT-5 models, which share out
 /// a week's window among those who used a Codex login, which keeps no
@@ -40,11 +33,29 @@ const SAME_RESET: SignedDuration = SignedDuration::from_secs(120);
 pub(crate) fn report(node: &Node, agent: &str, dir: &Path, only: Option<&HubAccount>) -> io::Result<UsageReport> {
     let ledger = super::ledger(node, agent, dir);
     let now = Timestamp::now();
-    let since = now - SignedDuration::from_hours(24 * super::KEPT_DAYS);
+    let oldest = now - SignedDuration::from_hours(24 * super::KEPT_DAYS);
+    let since = Timestamp::from_second(oldest.as_second().div_euclid(86400) * 86400).expect("retained day");
+    super::with_book(node, &ledger, |book| {
+        summarize(
+            agent,
+            only,
+            now,
+            book.reading.as_ref(),
+            book.history.entries(&ledger, since, now, book.reading.as_ref())?,
+        )
+    })
+}
+
+pub(super) fn summarize(
+    agent: &str,
+    only: Option<&HubAccount>,
+    now: Timestamp,
+    reading: Option<&Reading>,
+    entries: Vec<Entry>,
+) -> io::Result<UsageReport> {
     let day = now - SignedDuration::from_hours(24);
-    let week = super::week(node, &ledger, now);
+    let week = super::readings::week(reading, now);
     let in_week = |at: Timestamp| at >= week.start && at < week.end.max(now);
-    let entries = super::entries(&ledger, since)?;
     let spans = spans(&entries, week);
     let span_of = |at: Timestamp| {
         let index = spans.partition_point(|span| span.start <= at).checked_sub(1)?;
@@ -54,59 +65,65 @@ pub(crate) fn report(node: &Node, agent: &str, dir: &Path, only: Option<&HubAcco
     // those who used it; an account the login only assists is told none.
     let mut reached: Vec<Option<u32>> = vec![None; spans.len()];
     let mut weights: BTreeMap<(usize, u32), f64> = BTreeMap::new();
-    let mut people: Vec<Option<HubAccount>> = Vec::new();
-    let mut person = |who: Option<HubAccount>| -> u32 {
-        let index = people.iter().position(|known| *known == who).unwrap_or_else(|| {
-            people.push(who);
-            people.len() - 1
-        });
-        u32::try_from(index).expect("fewer people than u32 counts")
-    };
-    let mut hours: BTreeMap<(i64, u32), UsageSum> = BTreeMap::new();
+    let mut people: Vec<Option<HubAccount>> = entries
+        .iter()
+        .flat_map(Entry::uses)
+        .map(|(who, _)| who)
+        .filter(|who| only.is_none_or(|only| who.as_ref() == Some(only)))
+        .collect();
+    people.sort_by_key(|who| who.as_ref().map(|who| (who.hub.to_string(), who.account.to_string())));
+    people.dedup();
+    let person = |who: &Option<HubAccount>| people.iter().position(|known| known == who).expect("known person") as u32;
+    let mut hours: BTreeMap<(Timestamp, u32), UsageSum> = BTreeMap::new();
     let mut used: BTreeMap<(usize, u32), UsageSum> = BTreeMap::new();
     let mut weekly: BTreeMap<u32, UsageSum> = BTreeMap::new();
+    let mut fable: BTreeMap<u32, UsageSum> = BTreeMap::new();
     let mut daily: BTreeMap<u32, UsageSum> = BTreeMap::new();
     let mut went: BTreeMap<u32, Tally> = BTreeMap::new();
     let mut all = Tally::default();
     let mut readings = Vec::new();
+    let boundaries = boundaries(&spans, week);
     for entry in entries {
-        let (at, who, tokens, usd, model) = match entry {
-            Entry::Cost { at, who, model, usd } => (at, who, None, Some(usd), model),
-            Entry::Tokens { at, who, model, tokens } => (at, who, Some(tokens), None, model),
-            Entry::Reading { at, windows } => {
-                if only.is_some() {
-                    continue;
-                }
-                if let Some(span) = span_of(at)
-                    && let Some(window) = windows.iter().find(|window| {
-                        window.minutes == Some(10_080) && window.resets_at.is_some_and(|reset| same(reset, spans[span].reset))
-                    })
-                {
-                    reached[span] = Some(reached[span].unwrap_or(0).max(window.used_tenths));
-                }
-                if in_week(at) {
-                    readings.push(UsageReading { at, windows });
-                }
+        let at = entry.at();
+        if let Entry::Reading { windows, .. } = &entry {
+            if only.is_some() {
                 continue;
             }
-        };
-        if only.is_some_and(|only| who.as_ref() != Some(only)) {
+            if let Some(span) = span_of(at)
+                && let Some(window) = windows.iter().find(|window| {
+                    window.minutes == Some(10_080)
+                        && window.resets_at.is_some_and(|reset| same(reset, spans[span].reset))
+                })
+            {
+                reached[span] = Some(reached[span].unwrap_or(0).max(window.used_tenths));
+            }
+            if in_week(at) {
+                readings.push(UsageReading { at, windows: windows.clone() });
+            }
             continue;
         }
-        let index = person(who);
-        let count = tokens.as_ref().map_or(0, Tokens::total);
-        hours.entry((hour(at), index)).or_default().add(count, usd);
-        if let Some(span) = span_of(at) {
-            used.entry((span, index)).or_default().add(count, usd);
-            *weights.entry((span, index)).or_default() += weight(agent, tokens.as_ref(), usd);
-        }
-        if at >= day {
-            daily.entry(index).or_default().add(count, usd);
-        }
-        if in_week(at) {
-            weekly.entry(index).or_default().add(count, usd);
-            went.entry(index).or_default().add(&model, tokens.as_ref(), usd);
-            all.add(&model, tokens.as_ref(), usd);
+        for (who, usage) in entry.uses() {
+            if only.is_some_and(|only| who.as_ref() != Some(only)) {
+                continue;
+            }
+            let index = person(&who);
+            let count = usage.tokens.total();
+            hours.entry((bucket(at, &boundaries), index)).or_default().add(count, usage.usd);
+            if let Some(span) = span_of(at) {
+                used.entry((span, index)).or_default().add(count, usage.usd);
+                *weights.entry((span, index)).or_default() += weight(agent, Some(&usage.tokens), usage.usd);
+            }
+            if at >= day {
+                daily.entry(index).or_default().add(count, usage.usd);
+            }
+            if in_week(at) {
+                weekly.entry(index).or_default().add(count, usage.usd);
+                if fastctx_hosts::claude::pricing::is_fable(&usage.model) {
+                    fable.entry(index).or_default().add(count, usage.usd);
+                }
+                went.entry(index).or_default().add(&usage);
+                all.add(&usage);
+            }
         }
     }
     Ok(UsageReport {
@@ -119,18 +136,12 @@ pub(crate) fn report(node: &Node, agent: &str, dir: &Path, only: Option<&HubAcco
                     account,
                     week: weekly.get(&index).copied().unwrap_or_default(),
                     day: Some(daily.get(&index).copied().unwrap_or_default()),
+                    fable: (agent == "claude").then(|| fable.get(&index).copied().unwrap_or_default()),
                     went: Some(went.remove(&index).unwrap_or_default().went()),
                 }
             })
             .collect(),
-        hours: hours
-            .into_iter()
-            .map(|((at, person), sum)| UsageHour {
-                at: Timestamp::from_second(at).expect("an hour within a year of now"),
-                person,
-                sum,
-            })
-            .collect(),
+        hours: hours.into_iter().map(|((at, person), sum)| UsageHour { at, person, sum }).collect(),
         week: UsageWeek { start: Some(week.start), end: Some(week.end), window: week.window, went: all.went() },
         readings,
         weeks: spans
@@ -149,7 +160,11 @@ pub(crate) fn report(node: &Node, agent: &str, dir: &Path, only: Option<&HubAcco
                     used_tenths: reached[index],
                     used: used
                         .range((index, 0)..=(index, u32::MAX))
-                        .map(|((_, person), sum)| UsageShare { person: *person, sum: *sum, quota_tenths: part(*person) })
+                        .map(|((_, person), sum)| UsageShare {
+                            person: *person,
+                            sum: *sum,
+                            quota_tenths: part(*person),
+                        })
                         .collect(),
                 }
             })
@@ -159,10 +174,10 @@ pub(crate) fn report(node: &Node, agent: &str, dir: &Path, only: Option<&HubAcco
 
 /// One week of the login's own window: when it began and ended, and the
 /// reset its readings named.
-struct Span {
-    start: Timestamp,
-    end: Timestamp,
-    reset: Timestamp,
+pub(super) struct Span {
+    pub start: Timestamp,
+    pub end: Timestamp,
+    pub reset: Timestamp,
 }
 
 fn same(a: Timestamp, b: Timestamp) -> bool {
@@ -176,7 +191,9 @@ fn weight(agent: &str, tokens: Option<&Tokens>, usd: Option<Usd>) -> f64 {
         return usd.map_or(0.0, |usd| usd.0 as f64);
     }
     tokens.map_or(0.0, |tokens| {
-        tokens.input as f64 + tokens.cache_read as f64 * CODEX_READ + (tokens.output + tokens.reasoning) as f64 * CODEX_OUTPUT
+        tokens.input as f64
+            + tokens.cache_read as f64 * CODEX_READ
+            + (tokens.output + tokens.reasoning) as f64 * CODEX_OUTPUT
     })
 }
 
@@ -184,7 +201,7 @@ fn weight(agent: &str, tokens: Option<&Tokens>, usd: Option<Usd>) -> f64 {
 /// week back from each reset of its seven-day window a reading had, each
 /// ended where the next began if that was sooner, as when another account
 /// logged in. Only weeks a reading recorded: none before the first.
-fn spans(entries: &[Entry], current: Week) -> Vec<Span> {
+pub(super) fn spans(entries: &[Entry], current: Week) -> Vec<Span> {
     if !current.window {
         return Vec::new();
     }
@@ -201,7 +218,8 @@ fn spans(entries: &[Entry], current: Week) -> Vec<Span> {
     resets.sort();
     resets.dedup_by(|later, earlier| same(*later, *earlier));
     let week = SignedDuration::from_secs(WEEK_SECONDS);
-    let mut spans: Vec<Span> = resets.into_iter().map(|reset| Span { start: reset - week, end: reset, reset }).collect();
+    let mut spans: Vec<Span> =
+        resets.into_iter().map(|reset| Span { start: reset - week, end: reset, reset }).collect();
     spans.push(Span { start: current.start, end: current.end, reset: current.end });
     for index in 1..spans.len() {
         let next = spans[index].start;
@@ -213,55 +231,59 @@ fn spans(entries: &[Entry], current: Week) -> Vec<Span> {
     spans
 }
 
-/// What a week's use went to, as it is counted.
+/// What a week's committed per-model uses went to.
 #[derive(Default)]
 struct Tally {
     models: BTreeMap<String, UsageSum>,
     tokens: Tokens,
-    spent: Option<Usd>,
+    kinds: Option<KindsUsd>,
+    legacy: BTreeMap<String, (Tokens, Option<Usd>)>,
 }
-
 impl Tally {
-    fn add(&mut self, model: &str, tokens: Option<&Tokens>, usd: Option<Usd>) {
-        let count = tokens.map_or(0, Tokens::total);
-        self.models.entry(model.to_string()).or_default().add(count, usd);
-        if let Some(tokens) = tokens {
-            self.tokens.add(tokens);
-        }
-        if let Some(usd) = usd {
-            self.spent = Some(self.spent.unwrap_or(Usd::ZERO).saturating_add(usd));
+    fn add(&mut self, usage: &Use) {
+        self.models.entry(usage.model.clone()).or_default().add(usage.tokens.total(), usage.usd);
+        self.tokens.add(&usage.tokens);
+        if let Some(kinds) = usage.kinds {
+            super::claude::add_kinds(self.kinds.get_or_insert_with(Default::default), kinds);
+        } else {
+            // Old rows kept costs and turn tokens separately. Pair only those
+            // legacy quantities by model, without reclassifying modern requests.
+            let (tokens, usd) = self.legacy.entry(usage.model.clone()).or_default();
+            tokens.add(&usage.tokens);
+            if let Some(amount) = usage.usd {
+                *usd = Some(usd.unwrap_or_default().saturating_add(amount));
+            }
         }
     }
-
-    fn went(self) -> WeekUse {
+    fn went(mut self) -> WeekUse {
+        for (model, (tokens, usd)) in &self.legacy {
+            if let Some(usd) = usd {
+                super::claude::add_kinds(
+                    self.kinds.get_or_insert_with(Default::default),
+                    super::claude::kinds(model, tokens, *usd),
+                );
+            }
+        }
         let mut models: Vec<ModelUse> = self.models.into_iter().map(|(model, sum)| ModelUse { model, sum }).collect();
-        models.sort_by(|a, b| b.sum.usd.cmp(&a.sum.usd).then(b.sum.tokens.cmp(&a.sum.tokens)));
-        WeekUse { models, tokens: self.tokens, kinds_usd: self.spent.map(|spent| kinds(&self.tokens, spent)) }
+        models.sort_by(|a, b| {
+            b.sum.usd.cmp(&a.sum.usd).then(b.sum.tokens.cmp(&a.sum.tokens)).then(a.model.cmp(&b.model))
+        });
+        WeekUse { models, tokens: self.tokens, kinds_usd: self.kinds }
     }
 }
 
-/// The start of the hour `at` is in, in seconds.
-fn hour(at: Timestamp) -> i64 {
-    at.as_second().div_euclid(3600) * 3600
+pub(super) fn boundaries(spans: &[Span], week: Week) -> Vec<Timestamp> {
+    let mut cuts: Vec<_> = spans.iter().flat_map(|span| [span.start, span.end]).collect();
+    if week.window {
+        cuts.extend([week.start, week.end]);
+    }
+    cuts.sort();
+    cuts.dedup();
+    cuts
 }
 
-/// What a week spent, split by kind of token at list prices.
-fn kinds(tokens: &Tokens, spent: Usd) -> KindsUsd {
-    let weights = [
-        tokens.input as f64,
-        tokens.cache_read as f64 * READ,
-        tokens.cache_write as f64 * WRITE,
-        (tokens.output + tokens.reasoning) as f64 * OUTPUT,
-    ];
-    let total: f64 = weights.iter().sum();
-    if total <= 0.0 {
-        return KindsUsd::default();
-    }
-    let share = |weight: f64| Usd((spent.0 as f64 * weight / total).round() as u64);
-    KindsUsd {
-        input: share(weights[0]),
-        cache_read: share(weights[1]),
-        cache_write: share(weights[2]),
-        output: share(weights[3]),
-    }
+/// Hour buckets are split at every recorded weekly boundary.
+pub(super) fn bucket(at: Timestamp, boundaries: &[Timestamp]) -> Timestamp {
+    let hour = Timestamp::from_second(at.as_second().div_euclid(3600) * 3600).expect("existing hour");
+    boundaries.iter().rev().find(|cut| **cut <= at && **cut > hour).copied().unwrap_or(hour)
 }

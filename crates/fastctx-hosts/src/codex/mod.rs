@@ -15,6 +15,7 @@
 mod account;
 pub use account::{LimitsHow, LimitsReport, buckets, limits_of, merge};
 mod accounting;
+mod requests;
 pub use accounting::recorded_turn_facts;
 mod agents;
 mod answers;
@@ -317,8 +318,9 @@ struct State {
     /// effort checks against it rather than asking again.
     catalog: Option<Vec<fastctx_types::session::control::ModelOffer>>,
     /// Hidden threads making a title now, each waiting for its turn to end
-    /// (`title`). Their notifications stay here, never reaching the node.
+    /// (`title`). Only their attributed usage deltas reach the node.
     title_waiters: HashMap<String, oneshot::Sender<Result<String, String>>>,
+    title_usage: HashMap<String, title::Usage>,
 }
 
 struct StateGuard<'a>(std::sync::MutexGuard<'a, State>);
@@ -347,6 +349,8 @@ struct Thread {
     submissions: user_images::Submissions,
     #[serde(default)]
     accounting: accounting::Accounting,
+    #[serde(default)]
+    request_timing: requests::Requests,
     selection: controls::Selection,
     model: Option<String>,
     effort: Option<String>,
@@ -427,6 +431,7 @@ impl CodexHost {
                 version: None,
                 catalog: None,
                 title_waiters: HashMap::new(),
+                title_usage: HashMap::new(),
             }),
             finished,
             generation: Mutex::new(()),
@@ -876,6 +881,7 @@ impl CodexHost {
             // from here on counts.
             entry.tools_settled = false;
             entry.tools_missing = None;
+            entry.accounting.reloaded();
             entry.spec.clone().ok_or_else(|| format!("how the Codex thread {thread} was started is not known"))?
         };
         let selection = controls::Selection::read(&spec.choices)?;
@@ -1101,12 +1107,13 @@ impl CodexHost {
             return;
         }
         // A hidden title thread's notifications are its own: its turn's end
-        // goes to whoever waits for it, and nothing of it reaches the node.
+        // goes to whoever waits for it; usage alone goes to the root's ledger.
         if let Some(thread) =
             params.get("threadId").or_else(|| params.pointer("/thread/id")).and_then(Value::as_str).map(str::to_string)
         {
             let waiting = self.lock().title_waiters.contains_key(&thread);
             if waiting {
+                self.title_usage(&thread, method, params, at);
                 if method == "turn/completed" {
                     let title = title::read_turn_message(params).ok_or_else(|| {
                         format!(
@@ -1134,6 +1141,26 @@ impl CodexHost {
         };
         let text = |pointer: &str| params.pointer(pointer).and_then(Value::as_str).map(str::to_string);
         let turn = text("/turnId").or_else(|| self.running_turn(&thread));
+        let repeated_end = method == "turn/completed"
+            && params
+                .pointer("/turn/id")
+                .and_then(Value::as_str)
+                .is_some_and(|turn| self.finished.contains(&thread, turn));
+        let failed =
+            if repeated_end {
+                None
+            } else {
+                let mut state = self.lock();
+                let entry = state.threads.entry(thread.clone()).or_default();
+                entry.request_timing.observe(method, params, at).map(|request| json!({ "counted": {
+                "thread": thread, "turn": params.pointer("/turn/id").and_then(Value::as_str).or(turn.as_deref()),
+                "model": entry.model, "tokens": null, "request": request,
+            }}))
+            };
+        if let Some(usage) = failed {
+            self.emit(&thread, at, Happened::Changed { turn: turn.clone(), change: SessionChange::Usage { usage } });
+        }
+
         if let Some(mut happened) = notifications::read(method, params) {
             if let Happened::Changed { change: SessionChange::Resolved { id, .. }, .. } = &mut happened {
                 *id = self.request_address(id);
@@ -1330,20 +1357,23 @@ impl CodexHost {
                 self.emit(&thread, at, Happened::Steps { turn, steps, note: text("/explanation") });
             }
             "thread/tokenUsage/updated" => {
-                self.lock()
-                    .threads
-                    .entry(thread.clone())
-                    .or_default()
-                    .accounting
-                    .usage(params.get("turnId").and_then(Value::as_str), &params["tokenUsage"]);
+                let counted = {
+                    let mut state = self.lock();
+                    let entry = state.threads.entry(thread.clone()).or_default();
+                    entry
+                        .accounting
+                        .usage(params.get("turnId").and_then(Value::as_str), &params["tokenUsage"])
+                        .map(|tokens| json!({ "thread": thread, "turn": turn, "model": entry.model, "tokens": tokens,
+                            "request": entry.request_timing.finish(at, fastctx_types::usage_calls::CallOutcome::Completed) }))
+                };
+                let mut usage = params["tokenUsage"].clone();
+                if let Some(counted) = counted {
+                    usage["counted"] = counted;
+                }
                 let Some(used) = params.pointer("/tokenUsage/last/totalTokens").and_then(Value::as_u64) else { return };
                 let window = params.pointer("/tokenUsage/modelContextWindow").and_then(Value::as_u64);
                 self.emit(&thread, at, Happened::Context { used, window });
-                self.emit(
-                    &thread,
-                    at,
-                    Happened::Changed { turn, change: SessionChange::Usage { usage: params["tokenUsage"].clone() } },
-                );
+                self.emit(&thread, at, Happened::Changed { turn, change: SessionChange::Usage { usage } });
             }
             "thread/name/updated" => {
                 let Some(title) = text("/threadName") else { return };

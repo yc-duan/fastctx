@@ -258,7 +258,7 @@ async fn hand_over_locked(
     };
     node.ready().await;
     node.residents.active(to)?;
-    if let Err(error) = crate::homes::available(node, about).and_then(|()| crate::assists::may_turn(node, about)) {
+    if let Err(error) = crate::homes::available(node, about).and_then(|()| crate::assists::may_turn(node, to, about)) {
         return Ok(Landed::Waiting { why: Some(error.message), answered: answered(node, to, about) });
     }
     if let Some(landed) = crate::claude::deliver(node, to, about, directory, &pending).await {
@@ -354,7 +354,7 @@ async fn submit_thread(
     // Its home's app-server holds its thread.
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::new(format!("{id} has no record here")))?;
     crate::homes::available(node, &about)?;
-    crate::assists::may_turn(node, &about)?;
+    crate::assists::may_turn(node, id, &about)?;
     let codex = node.codex.of(&about)?;
     // Its tools start before the words go in, outside the lock others' words
     // and its turns' ends wait on.

@@ -2,8 +2,8 @@
 //! one (`world-agent-logins.md`, 在哪个登录里干活): once a conversation has
 //! its first words, a hidden thread that persists nothing and can touch
 //! nothing asks a cheap model for a short title. Nothing of the hidden thread
-//! is kept or shown; its turn's end comes back on a channel of its own
-//! (`State::title_waiters`), never to the node. The caller asks only when the
+//! is shown; only its token deltas reach the root conversation's ledger. Its
+//! answer comes back on its own channel (`State::title_waiters`). The caller asks only when the
 //! login wants it and the thread has no name yet, and names the thread with
 //! the title only if it still has none by then: the user may have named it
 //! while the title was being made.
@@ -15,6 +15,21 @@ use tokio::sync::oneshot;
 
 use super::items::{self, Read};
 use super::{CodexHost, What};
+use fastctx_types::session::{Happened, SessionChange};
+
+pub(super) struct Usage {
+    root: String,
+    model: Option<String>,
+    accounting: super::accounting::Accounting,
+    requests: super::requests::Requests,
+}
+impl Usage {
+    pub(super) fn new(root: String, model: Option<String>) -> Self {
+        let mut accounting = super::accounting::Accounting::default();
+        accounting.empty_thread();
+        Self { root, model, accounting, requests: Default::default() }
+    }
+}
 
 /// The cheap model the official client titles with, when the login can use
 /// it; otherwise the thread's current model names itself.
@@ -35,6 +50,37 @@ const WITHIN: std::time::Duration = std::time::Duration::from_secs(30);
 const INSTRUCTIONS: &str = "Generate a concise, single-line task title of at most 36 characters and under five words where possible. Start with an imperative verb. Capitalize only the first word unless the user's language, proper nouns, acronyms, or code terms require otherwise. Preserve ticket references exactly. Write in the user's language. Do not use quotes, markdown, or trailing punctuation. Do not answer the request.";
 
 impl CodexHost {
+    pub(super) fn title_usage(&self, thread: &str, method: &str, params: &Value, at: jiff::Timestamp) {
+        let counted = {
+            let mut state = self.lock();
+            let Some(usage) = state.title_usage.get_mut(thread) else { return };
+            if method == "model/rerouted" {
+                usage.model = params.get("toModel").and_then(Value::as_str).map(str::to_string);
+            }
+            let failed = usage.requests.observe(method, params, at);
+            let tokens = (method == "thread/tokenUsage/updated")
+                .then(|| usage.accounting.usage(None, &params["tokenUsage"]))
+                .flatten();
+            let request = if tokens.is_some() {
+                Some(usage.requests.finish(at, fastctx_types::usage_calls::CallOutcome::Completed))
+            } else {
+                failed
+            };
+            request.map(|request| {
+                (
+                    usage.root.clone(),
+                    json!({ "counted": {
+                        "thread": thread, "turn": params.get("turnId").or_else(|| params.pointer("/turn/id")),
+                        "model": usage.model, "tokens": tokens, "request": request, "background": true,
+                    }}),
+                )
+            })
+        };
+        if let Some((root, usage)) = counted {
+            self.emit(&root, at, Happened::Changed { turn: None, change: SessionChange::Usage { usage } });
+        }
+    }
+
     /// Makes a title for `thread` from `user_text`; `None` when the model
     /// gave none of the shape asked for. The thread is not named here.
     pub async fn make_title(self: &Arc<Self>, thread: &str, user_text: &str) -> Result<Option<String>, String> {
@@ -76,7 +122,9 @@ impl CodexHost {
             .and_then(Value::as_str)
             .ok_or("the hidden title thread started without an id")?
             .to_string();
+        self.lock().title_usage.insert(temp.clone(), Usage::new(thread.to_string(), model.clone()));
         let answer = self.ask_title(&server, &temp, user_text, model.as_deref() == Some(TITLE_MODEL)).await;
+        self.lock().title_usage.remove(&temp);
         // The hidden thread is let go however the turn went: with no
         // subscriber and no running turn, the app-server unloads it.
         let _ = server.request("thread/unsubscribe", json!({ "threadId": temp })).await;

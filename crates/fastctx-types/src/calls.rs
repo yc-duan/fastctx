@@ -388,6 +388,13 @@ pub enum Call {
         agent: AgentName,
         dir: std::path::PathBuf,
     },
+    /// Up to one hundred request records, newest first, redacted for this reader.
+    AgentCalls {
+        machine: MachineName,
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        query: crate::usage_calls::UsageCallsQuery,
+    },
     /// One resident or job in detail, by its id, from every machine that
     /// has it (`fastctx w <id>`).
     Look {
@@ -804,6 +811,7 @@ pub enum Reply {
     AgentLogins(crate::logins::WorldLogins),
     MachineAgentLogins(Box<crate::logins::MachineLogins>),
     AgentUsage(Box<crate::usage::UsageReport>),
+    AgentCalls(Box<crate::usage_calls::UsageCallsPage>),
     AgentChangePreview(Box<crate::logins::ChangePreview>),
     AgentLoginChanged(Box<crate::logins::LoginChange>),
     Towns {

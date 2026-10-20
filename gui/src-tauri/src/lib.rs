@@ -1220,6 +1220,7 @@ pub fn run() {
             logins::read_agent_limits,
             logins::set_agent_title,
             logins::agent_usage,
+            logins::agent_calls,
             world_watch::world_now,
             world_watch::world_watch,
             since,

@@ -32,9 +32,16 @@ pub fn fixtures() -> Fixtures {
                 account: None,
                 week: sum(61_200_000, Some(96_400_000)),
                 day: Some(sum(2_800_000, Some(4_390_000))),
+                fable: Some(sum(1_000_000, Some(3_000_000))),
                 went: Some(WeekUse {
                     models: vec![ModelUse { model: "claude-opus-5-5".into(), sum: sum(57_300_000, Some(90_610_000)) }],
-                    tokens: Tokens { input: 610_000, cache_read: 55_300_000, cache_write: 3_700_000, output: 1_590_000, reasoning: 0 },
+                    tokens: Tokens {
+                        input: 610_000,
+                        cache_read: 55_300_000,
+                        cache_write: 3_700_000,
+                        output: 1_590_000,
+                        reasoning: 0,
+                    },
                     kinds_usd: Some(KindsUsd {
                         input: Usd(2_870_000),
                         cache_read: Usd(28_760_000),
@@ -47,9 +54,16 @@ pub fn fixtures() -> Fixtures {
                 account: Some(ada),
                 week: sum(3_900_000, Some(5_790_000)),
                 day: Some(sum(220_000, Some(310_000))),
+                fable: Some(sum(0, Some(0))),
                 went: Some(WeekUse {
                     models: vec![ModelUse { model: "claude-haiku-5-5".into(), sum: sum(3_900_000, Some(5_790_000)) }],
-                    tokens: Tokens { input: 40_000, cache_read: 3_600_000, cache_write: 200_000, output: 60_000, reasoning: 0 },
+                    tokens: Tokens {
+                        input: 40_000,
+                        cache_read: 3_600_000,
+                        cache_write: 200_000,
+                        output: 60_000,
+                        reasoning: 0,
+                    },
                     kinds_usd: None,
                 }),
             },
@@ -121,7 +135,7 @@ pub fn fixtures() -> Fixtures {
     // Codex: tokens alone, over the seven days up to now while no window
     // was read.
     let codex = UsageReport {
-        people: vec![UsagePerson { account: None, week: sum(17_000_000, None), day: None, went: None }],
+        people: vec![UsagePerson { account: None, week: sum(17_000_000, None), day: None, fable: None, went: None }],
         hours: vec![UsageHour { at: at("2026-10-12T10:00:00Z"), person: 0, sum: sum(2_400_000, None) }],
         week: UsageWeek {
             start: Some(at("2026-10-05T14:00:00Z")),

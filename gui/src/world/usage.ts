@@ -24,12 +24,14 @@ export interface UsagePerson {
   /** What it used over the last 24 hours, as its daily allowance counts
    *  it; older nodes do not say. */
   day?: UsageSum;
+  /** What it used on Fable models this week; older nodes do not say. */
+  fable?: UsageSum;
   /** What its week went to; older nodes do not say. */
   went?: WeekUse;
 }
 
 export interface UsageHour extends UsageSum {
-  /** The hour's start. */
+  /** The hour's start, or the weekly boundary that split it. */
   at: Timestamp;
   /** Its place in the report's people. */
   person: number;
@@ -74,7 +76,7 @@ export interface UsageSpan {
   start: Timestamp;
   end: Timestamp;
   /** How much of the seven-day window the account had used by the week's
-   *  last reading, in tenths of a percent; absent to an account the login
+   *  highest reading, in tenths of a percent; absent to an account the login
    *  only assists. */
   used_tenths?: number;
   /** Each person's use, and their part of the window's, shared out by what

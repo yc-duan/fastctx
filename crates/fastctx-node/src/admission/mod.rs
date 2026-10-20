@@ -28,6 +28,7 @@ pub mod local;
 pub mod seen;
 
 /// Who asked, and what that lets it see here.
+#[derive(Clone)]
 pub struct Asker {
     pub machine: MachineName,
     pub hub: HubId,

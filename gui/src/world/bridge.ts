@@ -1,3 +1,4 @@
+import type { UsageCallsQuery, UsageCallsPage } from "./usage-calls";
 // The way to the World from inside the shell: each function is one of the
 // shell's commands (`src-tauri/src/lib.rs`), which is one call of the
 // core's client. Outside the shell there is no World to reach, and
@@ -395,6 +396,11 @@ export function setAgentTitle(machine: MachineName, agent: string, dir: string, 
  *  see it. */
 export function agentUsage(machine: MachineName, agent: string, dir: string): Promise<UsageReport> {
   return invoke("agent_usage", { machineName: machine, agentName: agent, dir });
+}
+
+/** Request records, already filtered and redacted by the login's machine. */
+export function agentCalls(machine: MachineName, agent: string, dir: string, query: UsageCallsQuery = {}): Promise<UsageCallsPage> {
+  return invoke("agent_calls", { machineName: machine, agentName: agent, dir, query });
 }
 
 /** Residents or jobs in detail, from every machine that has them. */

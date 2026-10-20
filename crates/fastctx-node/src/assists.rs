@@ -19,8 +19,10 @@ use crate::Node;
 /// here, as this machine's view of their hub says at this moment; an
 /// account of a hub that has given this machine no view yet, or that this
 /// machine is no longer on, has nothing to judge by and is passed over.
-pub(crate) fn may_turn(node: &Node, about: &About) -> Result<(), Failure> {
+pub(crate) fn may_turn(node: &Node, id: &fastctx_types::ResidentId, about: &About) -> Result<(), Failure> {
     let Acting::Accounts { accounts } = &about.acting else { return Ok(()) };
+    let options = crate::session_options::read(node, id)?;
+    let model = options.model.as_deref().or(about.model.as_deref());
     let mut refused = Vec::new();
     let mut spent = None;
     for account in accounts {
@@ -31,7 +33,7 @@ pub(crate) fn may_turn(node: &Node, about: &About) -> Result<(), Failure> {
             return Ok(());
         }
         if view.may_use_login(&account.account, &here, &about.host.agent, about.home.as_deref()) {
-            match crate::usage::used_up(node, about, account) {
+            match crate::usage::used_up(node, about, account, model) {
                 None => return Ok(()),
                 Some(used) => {
                     spent.get_or_insert(used.said(account));

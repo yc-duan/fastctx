@@ -859,7 +859,8 @@ impl fastctx_net::link::Node for Handler {
                 | RemoteCall::PreviewAgentChange { .. }
                 | RemoteCall::ChangeAgentLogin { .. }
                 | RemoteCall::ReadAgentLimits { .. }
-                | RemoteCall::AgentUsage { .. }) => {
+                | RemoteCall::AgentUsage { .. }
+                | RemoteCall::AgentCalls { .. }) => {
                     crate::logins::remote::answer(&node, &link.view(), &asker, call).await
                 }
                 RemoteCall::Folders { path } => {

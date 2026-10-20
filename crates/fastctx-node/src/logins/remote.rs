@@ -270,6 +270,44 @@ pub(crate) async fn usage(
     }
 }
 
+/// Request records with the financial scope and conversation ownership checked independently.
+pub(crate) async fn calls(
+    node: &Arc<Node>,
+    machine: MachineName,
+    agent: AgentName,
+    dir: PathBuf,
+    query: fastctx_types::usage_calls::UsageCallsQuery,
+) -> Result<fastctx_types::usage_calls::UsageCallsPage, Failure> {
+    if node.is_me(&machine) {
+        return here_calls(node, agent, dir, None, query).await;
+    }
+    match ask(node, &machine, Purpose::Look, RemoteCall::AgentCalls { agent, dir, query }).await? {
+        RemoteReply::AgentCalls(page) => Ok(*page),
+        _ => Err(other(&machine)),
+    }
+}
+
+async fn here_calls(
+    node: &Arc<Node>,
+    agent: AgentName,
+    dir: PathBuf,
+    asker: Option<Asker>,
+    query: fastctx_types::usage_calls::UsageCallsQuery,
+) -> Result<fastctx_types::usage_calls::UsageCallsPage, Failure> {
+    let node = node.clone();
+    tokio::task::spawn_blocking(move || {
+        use crate::admission::seen::Looker;
+        let only =
+            asker.as_ref().filter(|a| !a.hands).map(|a| HubAccount { hub: a.hub.clone(), account: a.account.clone() });
+        let here = Acting::Here;
+        let looker = asker.as_ref().map_or(Looker::Here(&here), Looker::Asker);
+        crate::usage::calls(&node, agent.as_str(), &dir, only.as_ref(), looker, &query)
+    })
+    .await
+    .map_err(|e| Failure::new(e.to_string()))?
+    .map_err(|e| Failure::new(format!("reading the login's calls: {e}")))
+}
+
 /// What a login here was used for: everyone's, or `only`'s alone.
 async fn here_usage(
     node: &Arc<Node>,
@@ -344,6 +382,21 @@ pub(crate) async fn answer(
             here_usage(node, agent, login.dir.clone(), only)
                 .await
                 .map(|report| RemoteReply::AgentUsage(Box::new(report)))
+        }
+        RemoteCall::AgentCalls { agent, dir, query } => {
+            let record = super::here(node).await?;
+            let side = record.of(agent.as_str()).ok_or_else(|| Failure::not_run(format!("{agent} keeps no logins")))?;
+            let login = side
+                .listed
+                .iter()
+                .find(|login| crate::homes::same_dir(&login.dir, &dir))
+                .filter(|login| may_see(view, asker, &agent, &login.dir, login.default))
+                .ok_or_else(|| {
+                    Failure::not_run(format!("no {agent} login {} here is the account's to see", dir.display()))
+                })?;
+            here_calls(node, agent, login.dir.clone(), Some(asker.clone()), query)
+                .await
+                .map(|page| RemoteReply::AgentCalls(Box::new(page)))
         }
         _ => Err(Failure::new("not a call about the agents' logins")),
     }

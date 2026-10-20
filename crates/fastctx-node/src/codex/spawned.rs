@@ -32,7 +32,7 @@ enum Thread {
     /// Being asked about: what it reported meanwhile, in order.
     Asking(Vec<HostEvent>),
     /// An agent of the resident whose thread is `root`.
-    Agent { root: String },
+    Agent { root: String, model: Option<String> },
     /// No resident's agent.
     Other,
 }
@@ -53,9 +53,9 @@ pub(super) fn took(
             waiting.push(event);
             None
         }
-        Some(Thread::Agent { root }) => {
+        Some(Thread::Agent { root, model }) => {
             let root = root.clone();
-            tell(node, &root, thread, event, plain);
+            tell(node, &root, thread, model.as_deref(), event, plain);
             None
         }
         None => {
@@ -82,7 +82,7 @@ fn settle(
     let Some(Thread::Asking(waiting)) = threads.remove(thread) else { return };
     match found {
         Some((root, parent, spawned)) => {
-            threads.insert(thread.to_string(), Thread::Agent { root: root.clone() });
+            threads.insert(thread.to_string(), Thread::Agent { root: root.clone(), model: spawned.model.clone() });
             let at = waiting.iter().find_map(|event| match event {
                 HostEvent::Happened { event, .. } => Some(event.at),
                 _ => None,
@@ -97,7 +97,7 @@ fn settle(
                             parent,
                             kind: spawned.role,
                             name: spawned.nickname,
-                            model: spawned.model,
+                            model: spawned.model.clone(),
                             background: true,
                             live: true,
                             ..Default::default()
@@ -110,7 +110,7 @@ fn settle(
                 node.log.line(format_args!("telling of the agent {thread}: {error}"));
             }
             for event in waiting {
-                tell(node, &root, thread, event, plain);
+                tell(node, &root, thread, spawned.model.as_deref(), event, plain);
             }
         }
         None => {
@@ -130,6 +130,7 @@ fn tell(
     node: &Arc<Node>,
     root: &str,
     agent: &str,
+    model: Option<&str>,
     event: HostEvent,
     plain: fn(&Arc<Node>, String, HostEvent) -> std::io::Result<()>,
 ) {
@@ -157,7 +158,13 @@ fn tell(
         HostEvent::Desk { .. } | HostEvent::Unloaded { .. } | HostEvent::Synchronized { .. } => Vec::new(),
     };
     node.codex.acknowledge(&event);
-    for event in told {
+    for mut event in told {
+        if let Happened::Changed { change: SessionChange::Usage { usage }, .. } = &mut event.happened
+            && let Some(counted) = usage.get_mut("counted")
+            && counted.get("model").is_none_or(serde_json::Value::is_null)
+        {
+            counted["model"] = serde_json::json!(model);
+        }
         let wrapped = SessionEvent {
             at: event.at,
             happened: Happened::Changed {
@@ -187,7 +194,7 @@ async fn whose(node: &Arc<Node>, thread: &str) -> Option<(String, Option<String>
                 return Some((above, parent, spawned));
             }
             let known = match node.codex_agents.threads.lock().expect("never poisoned").get(&above) {
-                Some(Thread::Agent { root }) => Some(root.clone()),
+                Some(Thread::Agent { root, .. }) => Some(root.clone()),
                 _ => None,
             };
             if let Some(root) = known {

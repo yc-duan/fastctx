@@ -136,6 +136,7 @@ impl RemoteCall {
             | Self::PreviewAgentChange { .. }
             | Self::ReadAgentLimits { .. }
             | Self::AgentUsage { .. }
+            | Self::AgentCalls { .. }
             | Self::Offers { .. }
             | Self::Lines { request: Lines::Find { .. } } => Contract::ASKS_AGENT,
             Self::Composer { .. }
@@ -269,6 +270,7 @@ impl Call {
             | Self::PreviewAgentChange { .. }
             | Self::ReadAgentLimits { .. }
             | Self::AgentUsage { .. }
+            | Self::AgentCalls { .. }
             | Self::Look { .. }
             | Self::Watch { .. }
             | Self::Offers { .. }

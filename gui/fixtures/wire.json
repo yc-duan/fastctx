@@ -20830,6 +20830,10 @@
               "tokens": 2800000,
               "usd": 4390000
             },
+            "fable": {
+              "tokens": 1000000,
+              "usd": 3000000
+            },
             "went": {
               "models": [
                 {
@@ -20864,6 +20868,10 @@
             "day": {
               "tokens": 220000,
               "usd": 310000
+            },
+            "fable": {
+              "tokens": 0,
+              "usd": 0
             },
             "went": {
               "models": [
@@ -21043,6 +21051,10 @@
               "tokens": 2800000,
               "usd": 4390000
             },
+            "fable": {
+              "tokens": 1000000,
+              "usd": 3000000
+            },
             "went": {
               "models": [
                 {
@@ -21077,6 +21089,10 @@
             "day": {
               "tokens": 220000,
               "usd": 310000
+            },
+            "fable": {
+              "tokens": 0,
+              "usd": 0
             },
             "went": {
               "models": [
@@ -21197,6 +21213,163 @@
             ]
           }
         ]
+      }
+    ]
+  },
+  "usage_calls": {
+    "calls": [
+      {
+        "call": "agent_calls",
+        "machine": "laptop",
+        "agent": "claude",
+        "dir": "/home/me/.claude",
+        "query": {
+          "person": null,
+          "model": null,
+          "source": "agent",
+          "outcome": null,
+          "conversation": null,
+          "turn": null,
+          "before": null
+        }
+      }
+    ],
+    "replies": [
+      {
+        "reply": "agent_calls",
+        "rows": [
+          {
+            "cursor": {
+              "at": "2026-10-20T12:00:00Z",
+              "key": "example-request"
+            },
+            "who": null,
+            "model": "claude-haiku-5-5",
+            "tokens": {
+              "input": 100,
+              "output": 50
+            },
+            "usd": 35,
+            "source": "agent",
+            "agent": "worker",
+            "timing": {
+              "started_at": "2026-10-20T12:00:00Z",
+              "first_at": "2026-10-20T12:00:00Z",
+              "ended_at": "2026-10-20T12:00:00Z",
+              "approximate": false
+            },
+            "outcome": "completed",
+            "phase": "finished",
+            "conversation": "claude-abcd",
+            "turn": "turn-one"
+          },
+          {
+            "cursor": {
+              "at": "2026-10-20T12:00:00Z",
+              "key": "example-request"
+            },
+            "who": null,
+            "model": "claude-haiku-5-5",
+            "tokens": {
+              "input": 100,
+              "output": 50
+            },
+            "usd": 35,
+            "source": "agent",
+            "agent": "worker",
+            "timing": {
+              "started_at": "2026-10-20T12:00:00Z",
+              "first_at": "2026-10-20T12:00:00Z",
+              "ended_at": "2026-10-20T12:00:00Z",
+              "approximate": false
+            },
+            "outcome": "completed",
+            "phase": "finished",
+            "conversation": null,
+            "turn": null
+          }
+        ],
+        "next": {
+          "at": "2026-10-20T12:00:00Z",
+          "key": "next-page"
+        }
+      }
+    ],
+    "remote_calls": [
+      {
+        "call": "agent_calls",
+        "agent": "claude",
+        "dir": "/home/me/.claude",
+        "query": {
+          "person": null,
+          "model": null,
+          "source": "agent",
+          "outcome": null,
+          "conversation": null,
+          "turn": null,
+          "before": null
+        }
+      }
+    ],
+    "remote_replies": [
+      {
+        "reply": "agent_calls",
+        "rows": [
+          {
+            "cursor": {
+              "at": "2026-10-20T12:00:00Z",
+              "key": "example-request"
+            },
+            "who": null,
+            "model": "claude-haiku-5-5",
+            "tokens": {
+              "input": 100,
+              "output": 50
+            },
+            "usd": 35,
+            "source": "agent",
+            "agent": "worker",
+            "timing": {
+              "started_at": "2026-10-20T12:00:00Z",
+              "first_at": "2026-10-20T12:00:00Z",
+              "ended_at": "2026-10-20T12:00:00Z",
+              "approximate": false
+            },
+            "outcome": "completed",
+            "phase": "finished",
+            "conversation": "claude-abcd",
+            "turn": "turn-one"
+          },
+          {
+            "cursor": {
+              "at": "2026-10-20T12:00:00Z",
+              "key": "example-request"
+            },
+            "who": null,
+            "model": "claude-haiku-5-5",
+            "tokens": {
+              "input": 100,
+              "output": 50
+            },
+            "usd": 35,
+            "source": "agent",
+            "agent": "worker",
+            "timing": {
+              "started_at": "2026-10-20T12:00:00Z",
+              "first_at": "2026-10-20T12:00:00Z",
+              "ended_at": "2026-10-20T12:00:00Z",
+              "approximate": false
+            },
+            "outcome": "completed",
+            "phase": "finished",
+            "conversation": null,
+            "turn": null
+          }
+        ],
+        "next": {
+          "at": "2026-10-20T12:00:00Z",
+          "key": "next-page"
+        }
       }
     ]
   }

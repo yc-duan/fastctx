@@ -260,6 +260,12 @@ pub enum RemoteCall {
         agent: AgentName,
         dir: std::path::PathBuf,
     },
+    /// Up to one hundred request records, newest first, redacted for this reader.
+    AgentCalls {
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        query: crate::usage_calls::UsageCallsQuery,
+    },
     /// The documents of a canon there, for a town's map.
     Canon {
         path: String,
@@ -512,6 +518,7 @@ impl RemoteCall {
             | RemoteCall::AgentLogins
             | RemoteCall::ReadAgentLimits { .. }
             | RemoteCall::AgentUsage { .. }
+            | RemoteCall::AgentCalls { .. }
             | RemoteCall::Look { .. }
             | RemoteCall::Find { .. }
             | RemoteCall::Who { .. }
@@ -566,6 +573,7 @@ pub enum RemoteReply {
     Agents(AgentsReply),
     AgentLogins(Box<crate::logins::MachineLogins>),
     AgentUsage(Box<crate::usage::UsageReport>),
+    AgentCalls(Box<crate::usage_calls::UsageCallsPage>),
     AgentChangePreview(Box<crate::logins::ChangePreview>),
     AgentLoginChanged(Box<crate::logins::LoginChange>),
     FileRead {

@@ -55,15 +55,37 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
     if about.host.agent.as_str() == "claude" {
         crate::claude::turn_facts::observe(&directory, &event.happened)?;
     }
-    crate::usage::measurement(node, id, &about, &event).await;
-    // The account's windows went to the login's ledger; the conversation's
-    // record keeps none, so an account the login only assists does not read
-    // them there.
-    if about.host.agent.as_str() == "claude"
-        && let Happened::Changed { change: SessionChange::Usage { usage }, .. } = &mut event.happened
-        && let Some(usage) = usage.as_object_mut()
+    // A ledger that cannot take this report never holds up the conversation:
+    // totals are cumulative, so the next report carries what this one did,
+    // and only this report's request detail is lost.
+    if let Err(error) = crate::usage::measurement(node, id, &about, &event).await {
+        node.log.line(format_args!("recording {id}'s usage: {error}"));
+    }
+    // 2026-10-20: hidden title threads feed only the ledger; publishing their
+    // internal-only usage would replace the main conversation's usage display.
+    if about.host.agent.as_str() == "codex"
+        && matches!(&event.happened, Happened::Changed { change: SessionChange::Usage { usage }, .. }
+            if usage.as_object().is_some_and(|value| value.len() == 1 && value.contains_key("counted")))
     {
-        usage.remove("rateLimits");
+        return Ok(());
+    }
+    // Account windows are held by the login's ledger. Internal accounting
+    // metadata is removed from both main and nested agent events before storage.
+    let mut happened = &mut event.happened;
+    loop {
+        match happened {
+            Happened::Changed { change: SessionChange::AgentEvent { happened: inner, .. }, .. } => happened = inner,
+            Happened::Changed { change: SessionChange::Usage { usage }, .. } => {
+                if let Some(usage) = usage.as_object_mut() {
+                    usage.remove("counted");
+                    if about.host.agent.as_str() == "claude" {
+                        usage.remove("rateLimits");
+                    }
+                }
+                break;
+            }
+            _ => break,
+        }
     }
     crate::run_facts::attach(&directory, &mut event)?;
     if let Happened::Changed { change: SessionChange::Status { waiting_for_user: Some(waiting), .. }, .. } =

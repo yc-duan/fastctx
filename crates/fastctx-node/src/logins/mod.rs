@@ -195,7 +195,7 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
                 Err(error) => return Err(Failure::new(format!("reading how {} stands: {error}", dir.display()))),
             };
             let listed = integration == Integration::In;
-            let limits = if agent == "codex" { limits::of(&kept, dir) } else { claude_limits(node, dir) };
+            let limits = if agent == "codex" { limits::of(node, &kept, dir) } else { claude_limits(node, dir) };
             let models = if agent == "codex" {
                 known.map(|login| login.models.clone()).unwrap_or_default()
             } else {
