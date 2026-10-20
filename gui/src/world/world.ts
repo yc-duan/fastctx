@@ -172,6 +172,9 @@ export interface MachineFacts {
   form?: "desktop" | "laptop" | "server";
   /** It tells how it is doing (`machine_stats`); older nodes do not. */
   stats?: boolean;
+  /** It keeps and runs an account's command MCP servers; older nodes do
+   *  not. */
+  mcp?: boolean;
   name: MachineName;
   os: string;
   arch: string;

@@ -49,7 +49,10 @@ import type { ComposerSnapshot, ComposerMutation, ComposerUpdated } from "../src
 import type { MachineLogPage } from "../src/world/machine-log";
 import type { MachineStats } from "../src/world/stats";
 import type { UsageReport } from "../src/world/usage";
+import type { McpReply, ProfileView } from "../src/world/profile";
 export const fixture = ${json.trimEnd()} satisfies {
+  // An account's own configuration as its pages read and change it.
+  profile: { calls: unknown; replies: (({ reply: "profile" } & ProfileView) | { reply: "profile_written"; version: number } | { reply: "mcp"; result: McpReply })[] };
   machine_log: MachineLogPage[];
   composer: { snapshots: ComposerSnapshot[]; mutations: ComposerMutation[]; updated: ComposerUpdated };
   // Accounts as the interface reads and changes them, the device's

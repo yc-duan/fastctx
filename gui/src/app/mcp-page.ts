@@ -16,7 +16,7 @@ import { ActsMenu } from "./acts-menu";
 import { pickables, type Pickable } from "./agent-machines";
 import type { Confirm } from "./confirm";
 import { McpImport } from "./mcp-import";
-import { McpSheet, serverLine } from "./mcp-sheet";
+import { McpSheet } from "./mcp-sheet";
 import { machinesOf } from "./reach";
 import { AccountChoice, loginKey, type ProfileCalls } from "./profile-account";
 import type { ProfileWords } from "./profile-words";
@@ -191,8 +191,7 @@ export class McpPage implements Page {
       hint = words.mcp.remoteReaches;
     } else if (server.kind === "command") {
       const state = server.state;
-      if (state.state === "kept") detail = serverLine({ kind: "command", ...state.server });
-      else if (state.state === "missing") tag = `<span class="mcp-tag caution">${escape(words.mcp.missing)}</span>`;
+      if (state.state === "missing") tag = `<span class="mcp-tag caution">${escape(words.mcp.missing)}</span>`;
       else if (state.state === "older") tag = `<span class="mcp-tag caution">${escape(words.mcp.older)}</span>`;
       else if (state.state === "failed") tag = `<span class="mcp-tag caution" title="${escape(state.problem)}">${escape(words.mcp.failed)}</span>`;
       if (windows) hint = words.mcp.sessionZero;
@@ -265,10 +264,13 @@ export class McpPage implements Page {
     const listed = this.listedOf(name);
     if (!listed) return;
     const { words } = this.options;
+    // A command server's machine keeps its command to itself: it is filled
+    // in anew, never shown.
     const editable = listed.server.kind === "remote" || (listed.server.kind === "command" && listed.server.state.state === "kept");
+    const edit = listed.server.kind === "command" ? words.mcp.refill : words.mcp.edit;
     this.menu.open(more, name, [
       { act: "test", icon: "tool", label: words.mcp.test },
-      ...(editable ? [{ act: "edit", icon: "edit" as const, label: words.mcp.edit }] : []),
+      ...(editable ? [{ act: "edit", icon: "edit" as const, label: edit }] : []),
       { rule: true },
       { act: "remove", icon: "trash", label: words.mcp.remove, danger: true },
     ], (act) => {
@@ -300,7 +302,7 @@ export class McpPage implements Page {
       const { kind: _, ...remote } = server;
       this.sheet.open({ mode: "edit", name: listed.name, server: { kind: "remote", ...remote }, taken, machines: placeable(world), calls: this.options.calls, login, done: () => this.reload() });
     } else if (server.kind === "command" && server.state.state === "kept") {
-      this.sheet.open({ mode: "edit", name: listed.name, server: { kind: "command", ...server.state.server }, machine: server.machine, taken, machines: placeable(world), calls: this.options.calls, login, done: () => this.reload() });
+      this.sheet.open({ mode: "edit", name: listed.name, server: { kind: "command", command: "" }, machine: server.machine, taken, machines: placeable(world), calls: this.options.calls, login, done: () => this.reload() });
     }
   }
 

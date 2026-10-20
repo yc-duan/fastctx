@@ -146,7 +146,7 @@ export class McpImport {
         <span class="mcp-check" aria-hidden="true">${candidate.ticked ? glyph("check", 14) : ""}</span>
         <span class="mcp-kind">${glyph(server.kind === "command" ? "terminal" : "link", 16)}</span>
         <span class="mcp-name">${escape(candidate.name)}</span>
-        <span class="mcp-detail">${escape(serverLine(server))}</span>
+        <span class="mcp-detail">${escape(server.kind === "remote" ? serverLine(server) : "")}</span>
         ${candidate.had ? `<span class="mcp-tag">${escape(words.import.had)}</span>` : ""}
       </button></li>`;
   }
@@ -165,7 +165,15 @@ export class McpImport {
     try {
       for (const one of ticked) {
         const server = one.found.server;
-        await opening.calls.mcp(opening.login.hubName, opening.login.account, { do: "keep", name: one.name, server, ...(server.kind === "command" ? { machine: reading.machine } : {}) });
+        // One a command starts is taken by its machine, from where it was
+        // found; one at an address is kept on the account as it is.
+        await opening.calls.mcp(
+          opening.login.hubName,
+          opening.login.account,
+          server.kind === "command"
+            ? { do: "import", machine: reading.machine, source: one.found.source, name: one.found.name, as_name: one.name }
+            : { do: "keep", name: one.name, server },
+        );
         one.ticked = false;
         one.had = true;
         kept += 1;

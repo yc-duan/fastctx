@@ -55,12 +55,16 @@ export type McpCall =
   | { do: "keep"; name: string; server: Server; machine?: string }
   | { do: "remove"; name: string }
   | { do: "test"; name: string }
+  /** Takes what one of them has on `machine` as `as_name`, on that
+   *  machine: its command never leaves it. */
+  | { do: "import"; machine: string; source: Source; name: string; as_name: string }
   /** What Claude Desktop, Claude Code and Cursor on `machine` have. */
   | { do: "found"; machine?: string };
 
-/** What the machine of a command server says of it. */
+/** What the machine of a command server says of it; what it keeps never
+ *  leaves it. */
 export type CommandState =
-  | { state: "kept"; server: CommandMcp }
+  | { state: "kept" }
   | { state: "offline" }
   | { state: "missing" }
   | { state: "older" }
@@ -82,10 +86,14 @@ export interface Tested {
 
 export type Source = { app: "claude_desktop" } | { app: "claude_code"; home: string } | { app: "cursor" };
 
+/** What a tool on a machine has configured: of one a command starts, only
+ *  that it is one. */
+export type FoundServer = { kind: "command" } | ({ kind: "remote" } & RemoteMcp);
+
 export interface Found {
   source: Source;
   name: string;
-  server: Server;
+  server: FoundServer;
 }
 
 export type McpReply =

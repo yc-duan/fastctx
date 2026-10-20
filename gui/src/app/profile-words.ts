@@ -56,6 +56,9 @@ export interface ProfileWords {
     remoteReaches: string;
     test: string;
     edit: string;
+    /** Editing a server a command starts: filled in anew, as its machine
+     *  keeps the command to itself. */
+    refill: string;
     remove: string;
     more: string;
     testing: string;
@@ -194,6 +197,7 @@ export const zhProfile: ProfileWords = {
     remoteReaches: "地址与请求头会交给替你干活的机器",
     test: "试一下",
     edit: "编辑",
+    refill: "重新填写",
     remove: "移除",
     more: "更多",
     testing: "正在试",
@@ -324,6 +328,7 @@ export const enProfile: ProfileWords = {
     remoteReaches: "The address and headers go to the machines that work for you",
     test: "Try it",
     edit: "Edit",
+    refill: "Re-enter",
     remove: "Remove",
     more: "More",
     testing: "Trying",

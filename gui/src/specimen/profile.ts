@@ -37,9 +37,9 @@ let profile: Profile = {
 };
 
 const found: Found[] = [
-  { source: { app: "claude_desktop" }, name: "unityMCP", server: { kind: "command", command: "uvx", args: ["--offline", "--from", "mcpforunityserver==10.1.0", "mcp-for-unity", "--transport", "stdio"] } },
-  { source: { app: "claude_desktop" }, name: "blender", server: { kind: "command", command: "uvx", args: ["mcp-for-blender"] } },
-  { source: { app: "claude_code", home: "C:/Users/me/.claude" }, name: "playwright", server: { kind: "command", command: "npx", args: ["@playwright/mcp@latest"] } },
+  { source: { app: "claude_desktop" }, name: "unityMCP", server: { kind: "command" } },
+  { source: { app: "claude_desktop" }, name: "blender", server: { kind: "command" } },
+  { source: { app: "claude_code", home: "C:/Users/me/.claude" }, name: "playwright", server: { kind: "command" } },
   { source: { app: "cursor" }, name: "github", server: { kind: "remote", url: "https://api.githubcopilot.com/mcp/" } },
 ];
 
@@ -47,7 +47,7 @@ function listed(): Listed[] {
   return Object.entries(profile.servers ?? {}).map(([name, entry]): Listed => {
     if (entry.kind === "command") {
       const server = kept.get(entry.machine)?.get(name);
-      return { name, server: { kind: "command", machine: entry.machine, state: server ? { state: "kept", server } : { state: "missing" } } };
+      return { name, server: { kind: "command", machine: entry.machine, state: server ? { state: "kept" } : { state: "missing" } } };
     }
     return entry.kind === "remote" ? { name, server: entry } : { name, server: { kind: "unknown" } };
   });
@@ -89,6 +89,8 @@ async function answer(call: McpCall): Promise<McpReply> {
       if (call.name === "unity") return { reply: "tested", tools: ["manage_scene", "manage_gameobject", "manage_asset", "manage_script", "read_console", "execute_menu_item", "manage_editor", "manage_shader", "find_in_scene", "set_component_property", "create_prefab", "run_tests", "screenshot", "play_mode"] };
       if (call.name === "blender") return { reply: "tested", tools: [], problem: "it closed its output before answering initialize", log: "Traceback (most recent call last):\n  File \"mcp_for_blender/server.py\", line 41, in connect\nConnectionRefusedError: [WinError 10061] No connection could be made because the target machine actively refused it (127.0.0.1:9876)" };
       return { reply: "tested", tools: ["get_figma_data", "download_figma_images"] };
+    case "import":
+      return keep(call.as_name, { kind: "command", command: "uvx", args: [call.name] }, call.machine);
     case "found":
       return { reply: "found", machine: call.machine ?? "desktop", servers: found };
   }

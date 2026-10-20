@@ -99,8 +99,11 @@ pub(crate) fn codex(
     config: &mut Value,
 ) -> Result<BTreeSet<String>, Failure> {
     let profile = get(node, acting);
+    // Only what an account may set, whatever its hub sent.
     for (key, value) in profile.codex {
-        config[&key] = value;
+        if fastctx_types::profile::CODEX_SETTINGS.contains(&key.as_str()) {
+            config[&key] = value;
+        }
     }
     let options = crate::session_options::read(node, id)?;
     let added = servers(node, id, acting, &options.mcp_off, true);
@@ -119,7 +122,22 @@ pub(crate) fn claude(node: &Node, id: &ResidentId, creating: bool) -> Result<std
     let options = crate::session_options::read(node, id)?;
     let mut settings: Value = serde_json::from_str(&crate::claude::settings_json(id)).expect("session settings");
     for (key, value) in profile.claude {
-        settings[&key] = value;
+        if key == "env" {
+            // The account's variables join the session's own, which the
+            // plugin reads and which are never written over; only those an
+            // account may set.
+            let Value::Object(theirs) = value else { continue };
+            let own = settings["env"].as_object_mut().expect("session settings carry an env");
+            for (name, value) in theirs {
+                if fastctx_types::profile::CLAUDE_ENV.contains(&name.as_str()) {
+                    own.entry(name).or_insert(value);
+                }
+            }
+            continue;
+        }
+        if fastctx_types::profile::CLAUDE_SETTINGS.contains(&key.as_str()) {
+            settings[&key] = value;
+        }
     }
     fastctx_platform::publish(
         &directory.claude_settings(),
