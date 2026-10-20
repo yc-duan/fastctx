@@ -119,6 +119,7 @@ export function specimenUpdates(params: URLSearchParams, phone: boolean): { seam
   };
   const seam: UpdateSeam = {
     state: async () => state(),
+    progress: async () => state(),
     look: async () => {
       await new Promise((done) => setTimeout(done, 600));
       return state();

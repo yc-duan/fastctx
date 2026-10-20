@@ -6,7 +6,7 @@
 // nothing here is under way.
 
 import { signal, type Signal } from "./signals";
-import { compareVersions, majorOf, type FailureReason, type Manifest, type UpdateSeam, type UpdateSettings, type UpdateState } from "../world/updates";
+import { compareVersions, majorOf, type FailureReason, type Manifest, type UpdateSeam, type UpdateSettings, type UpdateStage, type UpdateState } from "../world/updates";
 
 /** What the sidebar's button and the card show. */
 export interface Offered {
@@ -35,6 +35,8 @@ export class Updates {
   private failed: string | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private known: string | null = null;
+  /** What was last told the node of what only the interface knows. */
+  private told = "idle";
 
   constructor(
     private readonly seam: UpdateSeam,
@@ -139,12 +141,31 @@ export class Updates {
     const state = this.state.peek();
     const offered = state ? this.offerOf(state) : null;
     this.offered.set(offered);
+    if (state) this.tell(state, offered);
     if (!state || !offered || this.installing || this.failed) return;
     const asked = state.take === offered.manifest.version;
-    const within = state.hub_major === undefined || majorOf(offered.manifest.version) <= state.hub_major;
+    // The node says which release automatic updates may take; a node before
+    // it said so is reckoned with here, under the hubs' major version.
+    const within =
+      state.automatic !== undefined
+        ? state.automatic === offered.manifest.version
+        : state.hub_major === undefined || majorOf(offered.manifest.version) <= state.hub_major;
     if (!asked && !(this.automatic(state) && within)) return;
     if (offered.stage.kind === "offered") this.go();
     else if (offered.stage.kind === "waiting" && this.idle()) this.install(offered.manifest.version);
+  }
+
+  /** Tells the node that an update waits here for the work under way, or
+   *  that it no longer does; a node that takes no such word is not told. */
+  private tell(state: UpdateState, offered: Offered | null): void {
+    if (!state.progress) return;
+    const stage: UpdateStage = offered?.stage.kind === "waiting" ? { kind: "waiting_idle", version: offered.manifest.version } : { kind: "idle" };
+    const said = JSON.stringify(stage);
+    if (said === this.told) return;
+    this.told = said;
+    this.seam.progress(stage).catch(() => {
+      this.told = "";
+    });
   }
 
   /** Whether this device takes new releases by itself, as its node says. */
@@ -153,7 +174,7 @@ export class Updates {
   }
 
   private offerOf(state: UpdateState): Offered | null {
-    const manifest = state.offer;
+    const manifest = state.available ?? state.offer;
     const target = state.app?.target;
     if (!manifest || !target || !this.known || compareVersions(manifest.version, this.known) <= 0) return null;
     const pack = manifest.platforms[target];

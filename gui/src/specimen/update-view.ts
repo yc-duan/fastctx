@@ -101,10 +101,16 @@ export function specimenUpdateView(world: () => WorldNow | null): (hub: string, 
         });
       }
     }
-    return { hub: v(7), stable: null, beta: manifest(v(8)), releases: [8, 7, 6, 5].map((n) => manifest(v(n))), policy: { ...policy }, machines, available: machines.filter((one) => one.offer && one.actions.schedule.allowed).length };
+    const releases = [8, 7, 6, 5].map((n) => manifest(v(n)));
+    const versions = releases.map((one) => ({ version: one.version, published: one.pub_date ?? null, summary: one.notes ?? null, manifest: one, problem: null }));
+    return { hub: v(7), stable: null, beta: manifest(v(8)), releases, versions, policy: { ...policy }, machines, available: machines.filter((one) => one.offer && one.actions.schedule.allowed).length };
   };
   return async (_hub, _account, call) => {
     if (call.do === "view") return { kind: "view", view: view() };
+    if (call.do === "release") {
+      const one = manifest(call.version);
+      return { kind: "release", choice: { version: one.version, published: one.pub_date ?? null, summary: one.notes ?? null, manifest: one, problem: null } };
+    }
     if (call.do === "policy") {
       if (call.minimum) policy.minimum = call.minimum;
       else delete policy.minimum;

@@ -251,10 +251,14 @@ export interface UpdateSeam {
   machine(name: string): Promise<UpdateState>;
   /** Asks another machine about its updates. */
   remote(name: string, call: UpdateCall): Promise<UpdateState>;
+  /** Tells this device's node what only the interface knows of its update,
+   *  as waiting for the work under way; `idle` clears it. */
+  progress(stage: UpdateStage): Promise<UpdateState>;
 }
 
 export const updates: UpdateSeam = {
   state: () => invoke<UpdateState>("update_state"),
+  progress: (stage) => invoke<UpdateState>("update_progress", { stage }),
   look: () => invoke<UpdateState>("update_look"),
   set: (settings) => invoke<UpdateState>("update_set", { settings }),
   fetch: (version) => invoke<UpdateState>("update_fetch", { version }),
