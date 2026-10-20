@@ -1,9 +1,15 @@
-// Background-safe command knowledge for Claude Code 2.1.294. Offsets below
-// are zero-based characters in the decoded Bun modules, not byte offsets.
+// Background-safe command knowledge, read from Claude Code 2.1.294 and each
+// entry run as the interface runs it in a 2.1.303 background session
+// (2026-10-20). Offsets below are zero-based characters in 2.1.294's
+// decoded Bun modules, not byte offsets. Left out: what waits on an
+// interactive picker (keybindings), what moves the conversation to another
+// session the World then loses (branch, fork, clear, reset, new; the
+// interface forks and starts conversations itself), and what opens a
+// browser on the agent's machine (stickers, radio).
 // command.describe supplies the host's final hints; list has no execution type.
 // Unknown built-ins and unknown plugin registrations are not assumed safe.
 const commandDescriptions = new Map()
-const commandPolicies294 = {
+const commandPolicies = {
   // exe-230444374.js:3664 I3n, 4807 ROs. Empty arguments generate a name.
   rename: { arguments: 'optional', args: '[name]', route: 'native' },
   // Request overrides leave the user's saved host preference alone.
@@ -40,17 +46,17 @@ const commandPolicies294 = {
   review: { arguments: 'optional', args: '[target] [effort]', route: 'review' },
 }
 
-for (const name of ['clear', 'reset', 'new', 'color', 'keybindings', 'design-consent', 'design-revoke',
-  'install-slack-app', 'voice', 'terminal-setup', 'tui', 'branch', 'fork', 'agents', 'reload-plugins',
-  'heapdump', 'stickers', 'radio', 'exit', 'quit', 'list-agents', 'peers', 'brief', 'low-priority', 'focus', 'claim-credit']) {
-  commandPolicies294[name] = { arguments: 'optional', args: null, route: 'native' }
+for (const name of ['color', 'design-consent', 'design-revoke', 'install-slack-app', 'voice',
+  'terminal-setup', 'tui', 'agents', 'reload-plugins', 'heapdump', 'exit', 'quit', 'list-agents',
+  'peers', 'brief', 'low-priority', 'focus', 'claim-credit']) {
+  commandPolicies[name] = { arguments: 'optional', args: null, route: 'native' }
 }
-for (const name of ['background', 'bg', 'stop']) commandPolicies294[name] = { arguments: 'optional', args: null, route: 'native' }
-commandPolicies294.subtask = { arguments: 'required', args: '<task>', route: 'native' }
+for (const name of ['background', 'bg', 'stop']) commandPolicies[name] = { arguments: 'optional', args: null, route: 'native' }
+commandPolicies.subtask = { arguments: 'required', args: '<task>', route: 'native' }
 
 // Prompt expanders inspected at exe-226157729.js:231528 U8e and their
 // registrars. Commands with panel subcommands have separate argument policies.
-const promptCommands294 = new Map([
+const promptCommands = new Map([
   // exe-226157729.js registrars; null means no argumentHint was defined.
   ['design-sync', '[<project hint, e.g. "Acme DS">]'], // 116892
   ['dataviz', null], // 106356
@@ -92,7 +98,6 @@ const promptCommands294 = new Map([
 
 async function controlCatalog($, state) {
   const commands = await $.command.list()
-  const version = (await $.session.version()).version
   const counts = new Map()
   for (const command of commands) counts.set(command.name, (counts.get(command.name) ?? 0) + 1)
   const offered = []
@@ -101,10 +106,12 @@ async function controlCatalog($, state) {
     // with a fabricated identity that $.command.run cannot honor.
     if (counts.get(command.name) !== 1) continue
     let policy
-    if (version === '2.1.294' && command.source === 'builtin') {
-      policy = commandPolicies294[command.name]
-      if (!policy && promptCommands294.has(command.name)) {
-        policy = { arguments: command.name === 'batch' ? 'required' : 'optional', args: promptCommands294.get(command.name), route: 'native' }
+    if (command.source === 'builtin') {
+      // Known by name in every version the World works with; a built-in
+      // this table does not know is left out until it is checked.
+      policy = commandPolicies[command.name]
+      if (!policy && promptCommands.has(command.name)) {
+        policy = { arguments: command.name === 'batch' ? 'required' : 'optional', args: promptCommands.get(command.name), route: 'native' }
       }
     } else if (command.source === 'user' || command.source === 'mcp') {
       // 2.1.294's YY source projection maps Markdown skills/old commands to
