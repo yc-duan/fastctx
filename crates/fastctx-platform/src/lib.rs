@@ -54,6 +54,7 @@ pub mod rolling_log;
 pub mod service_channel;
 #[cfg(windows)]
 pub mod shell_process;
+pub mod shell_quote;
 pub mod system;
 pub mod system_home;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]

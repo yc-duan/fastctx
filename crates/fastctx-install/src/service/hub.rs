@@ -59,8 +59,8 @@ fn elevated(dir: &Path, executable: &Path) -> anyhow::Result<Kept> {
 fn elevated(dir: &Path, executable: &Path) -> anyhow::Result<Kept> {
     Ok(Kept::Command(format!(
         "sudo {} service hub install --dir {} --executable {}",
-        executable.display(),
-        dir.display(),
-        executable.display()
+        fastctx_platform::shell_quote::path(executable),
+        fastctx_platform::shell_quote::path(dir),
+        fastctx_platform::shell_quote::path(executable)
     )))
 }
