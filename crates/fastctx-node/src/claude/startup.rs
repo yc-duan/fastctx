@@ -1,4 +1,4 @@
-//! Observes background startup and recovers an unpaired idle activation.
+//! Observes a background birth until the mod pairs, without timing it out.
 
 use std::ffi::OsString;
 use std::future::Future;
@@ -25,34 +25,11 @@ pub(super) struct Listed {
     answer: Result<String, String>,
 }
 
-/// Pairing from a previous process is not readiness for a new activation.
-pub(super) fn ready(node: &Node, resident: &ResidentId) -> std::io::Result<bool> {
-    if !super::paired(node, resident) {
-        return Ok(false);
-    }
-    let directory = node.world.conversation(resident);
-    let opening = fastctx_hosts::claude::control::read::<fastctx_hosts::claude::startup_hook::Opening>(
-        &fastctx_hosts::claude::startup_hook::opening(&directory),
-    )?;
-    let Some(session) = node.residents.about(resident).and_then(|(about, _)| about.session) else { return Ok(false) };
-    let registration = fastctx_hosts::claude::exchange::registration(
-        &fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session),
-    )?;
-    let Some(registration) = registration.filter(|registration| {
-        registration.instance.is_some()
-            && registration.process.is_some()
-            && opening.as_ref().is_none_or(|opening| registration.process != opening.previous)
-    }) else {
-        return Ok(false);
-    };
-    super::pairing::present(node, &registration)
-}
-
 pub(super) fn observe(node: &Arc<Node>, resident: &ResidentId, id: NoticeId, command: super::Command) {
-    if ready(node, resident).unwrap_or(false) {
+    if super::paired(node, resident) {
         return;
     }
-    if !node.claude.state.lock().expect("never poisoned").starting.insert((resident.clone(), id.clone())) {
+    if !node.claude.state.lock().expect("never poisoned").starting.insert(resident.clone()) {
         return;
     }
     let node = node.clone();
@@ -69,7 +46,7 @@ pub(super) fn observe(node: &Arc<Node>, resident: &ResidentId, id: NoticeId, com
             }
             tokio::time::sleep(again.next().max(fastctx_hosts::claude::MOD_LOOK)).await;
         }
-        node.claude.state.lock().expect("never poisoned").starting.remove(&(resident, id));
+        node.claude.state.lock().expect("never poisoned").starting.remove(&resident);
     });
 }
 
@@ -81,11 +58,13 @@ pub(super) fn recover(node: &Arc<Node>) {
         if record.removed.is_some()
             || !about.world_started
             || about.host.agent.as_str() != "claude"
-            || ready(node, &about.id).unwrap_or(false)
+            || super::paired(node, &about.id)
         {
             continue;
         }
-
+        if about.session.as_ref().is_some_and(|session| session.len() != 8) {
+            continue;
+        }
         let directory = node.world.conversation(&about.id);
         let kept = match crate::inbox::pending(&directory) {
             Ok(pending) => pending,
@@ -94,20 +73,7 @@ pub(super) fn recover(node: &Arc<Node>) {
                 continue;
             }
         };
-        let birth: Option<fastctx_hosts::claude::startup_hook::Opening> =
-            match fastctx_hosts::claude::control::read(&fastctx_hosts::claude::startup_hook::opening(&directory)) {
-                Ok(birth) => birth,
-                Err(error) => {
-                    node.log.line(format_args!("reading Claude birth for {}: {error}", about.id));
-                    continue;
-                }
-            };
-        let Some(first) = kept.into_iter().find(|pending| match &birth {
-            Some(birth) => pending.delivery.id == birth.input,
-            None => {
-                pending.state == PendingState::Waking && about.session.as_ref().is_none_or(|session| session.len() == 8)
-            }
-        }) else {
+        let Some(first) = kept.into_iter().find(|pending| pending.state == PendingState::Waking) else {
             // Born and stopped before its first words were kept: no session
             // was asked for, and nothing will end the work it was shown at.
             if about.session.is_none()
@@ -137,9 +103,6 @@ pub(super) fn recover(node: &Arc<Node>) {
                             return Ok(());
                         }
                         let why = "the node restarted before recording Claude Code's background session ID; its startup outcome is unknown";
-                        if first.state == PendingState::Waiting {
-                            return super::startup_recovery::waiting(&node, &about.id, format!("{why}; the first words remain queued and have not been submitted"));
-                        }
                         super::failed_wake(&node, &about.id, &directory, &first.delivery.id, Failure::new(why))
                             .await.map(|_| ()).map_err(std::io::Error::other)
                     }.await;
@@ -170,7 +133,7 @@ pub(super) fn recover(node: &Arc<Node>) {
     }
 }
 
-pub(super) async fn run(command: &super::Command, args: Vec<OsString>) -> Result<String, String> {
+async fn run(command: &super::Command, args: Vec<OsString>) -> Result<String, String> {
     let command = command.clone();
     tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         background::claude(&command.program, &args, &command.cwd, &command.env)
@@ -238,20 +201,13 @@ fn daemon_said(command: &super::Command, short: &str) -> Option<String> {
 const DAEMON_TAIL: u64 = 256 * 1024;
 
 fn pending(node: &Node, resident: &ResidentId, id: &NoticeId) -> std::io::Result<bool> {
-    if ready(node, resident)? || node.residents.removed(resident).is_some() {
+    if super::paired(node, resident) || node.residents.removed(resident).is_some() {
         return Ok(false);
     }
     if node.residents.about(resident).is_none() {
         return Ok(false);
     }
     let directory = node.world.conversation(resident);
-    if fastctx_hosts::claude::control::read::<fastctx_hosts::claude::startup_hook::Opening>(
-        &fastctx_hosts::claude::startup_hook::opening(&directory),
-    )?
-    .is_some_and(|opening| opening.input != *id)
-    {
-        return Ok(false);
-    }
     crate::inbox::read(&directory, id).map(|pending| pending.is_some())
 }
 
@@ -261,8 +217,7 @@ async fn watch(
     id: &NoticeId,
     command: &super::Command,
 ) -> std::io::Result<()> {
-    let Some(session) = node.residents.about(resident).and_then(|(about, _)| about.session) else { return Ok(()) };
-    let short = session.get(..8).unwrap_or(&session).to_string();
+    let Some(short) = node.residents.about(resident).and_then(|(about, _)| about.session) else { return Ok(()) };
     let home = command
         .env
         .iter()
@@ -298,11 +253,6 @@ async fn watch(
         }
         match listed.and_then(|listed| startup::background(&listed, &short)) {
             Ok(Some(job)) => {
-                if !job.ended() && super::startup_recovery::observe(node, resident, id, &short, command).await? {
-                    after = Some(Instant::now());
-                    blocked = false;
-                    continue;
-                }
                 if let Some(pid) = job.pid.filter(|pid| *pid != 0) {
                     match fastctx_platform::identity_of(pid) {
                         Ok(Some(identity)) if process.as_ref() != Some(&identity) => {
@@ -326,13 +276,7 @@ async fn watch(
                         Err(error) => node.log.line(format_args!("observing Claude startup process {pid}: {error}")),
                     }
                 }
-                let idle_start = fastctx_hosts::claude::control::read::<fastctx_hosts::claude::startup_hook::Opening>(
-                    &fastctx_hosts::claude::startup_hook::opening(&node.world.conversation(resident)),
-                )?
-                .is_some_and(|opening| opening.input == *id);
-                // An empty background session can be blocked before mounting.
-                // Its native startup receipt, not that state, drives recovery.
-                if job.ended() || (job.blocked() && !blocked && !idle_start) {
+                if job.ended() || (job.blocked() && !blocked) {
                     if job.ended()
                         && process
                             .as_ref()
@@ -373,15 +317,6 @@ async fn watch(
                             return Ok(());
                         }
                         let directory = node.world.conversation(resident);
-                        if crate::inbox::read(&directory, id)?.is_some_and(|first| first.state == PendingState::Waiting)
-                        {
-                            super::startup_recovery::waiting(
-                                node,
-                                resident,
-                                format!("{why}; the first words remain queued and have not been submitted"),
-                            )?;
-                            return Ok(());
-                        }
                         super::failed_wake(node, resident, &directory, id, Failure::new(why))
                             .await
                             .map_err(std::io::Error::other)?;

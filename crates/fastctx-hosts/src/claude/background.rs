@@ -47,9 +47,7 @@ pub struct Start<'a> {
 /// (it says so); `started` reads the id back from what it prints.
 pub fn start_args(start: &Start) -> Vec<OsString> {
     let mut args = settings_args(start);
-    if !start.first_words.is_empty() {
-        args.extend(["--".into(), start.first_words.into()]);
-    }
+    args.extend(["--".into(), start.first_words.into()]);
     args
 }
 
@@ -107,11 +105,7 @@ pub const UNTRUSTED: &str = "Workspace not trusted";
 
 /// The one way to wake a stopped session as it was.
 pub fn wake_args(session: &str, words: &str) -> Vec<OsString> {
-    let mut args = vec!["--resume".into(), session.into(), "--bg".into()];
-    if !words.is_empty() {
-        args.push(words.into());
-    }
-    args
+    vec!["--resume".into(), session.into(), "--bg".into(), words.into()]
 }
 
 /// Runs `claude` with `args` in `cwd` and the environment `env`, and
@@ -150,7 +144,6 @@ pub fn claude(program: &Path, args: &[OsString], cwd: &Path, env: &[(OsString, O
 fn within(args: &[OsString]) -> std::time::Duration {
     let starts = args.iter().any(|arg| arg == "--bg" || arg == "--resume" || arg == "--fork-session");
     let seconds = match args.first().and_then(|arg| arg.to_str()) {
-        Some("respawn") => 120,
         _ if starts => 120,
         Some("stop" | "rm" | "plugin") => 60,
         _ => 30,

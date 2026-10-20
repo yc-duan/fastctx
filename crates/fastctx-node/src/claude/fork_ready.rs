@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use fastctx_hosts::claude::{control, exchange};
 use fastctx_types::ipc::Failure;
+use fastctx_types::residents::{Activity, Trouble};
+use fastctx_types::session::{Health, HealthKind};
 use fastctx_types::{ProcessIdentity, ResidentId};
 use serde::{Deserialize, Serialize};
 
@@ -48,7 +50,18 @@ pub(super) fn failed(node: &Arc<Node>, resident: &ResidentId, why: &str) -> Resu
         preparing.failure = Some(why.into());
         control::write(&path(node, resident), &preparing).map_err(failure)?;
     }
-    super::startup_recovery::waiting(node, resident, format!("Claude fork incomplete: {why}; fork the source again"))
+    let text = format!("Claude fork incomplete: {why}; fork the source again");
+    node.log.line(&text);
+    crate::turns::health(node, resident, None, Health { kind: HealthKind::Error, text: text.clone() })
+        .map_err(failure)?;
+    node.residents
+        .change_now(&node.world, resident, |now| {
+            if now.turn.is_none() {
+                now.activity = Activity::Idle;
+                now.since = jiff::Timestamp::now();
+                now.trouble = Some(Trouble { at: now.since, text });
+            }
+        })
         .map_err(failure)
 }
 
@@ -106,7 +119,7 @@ pub(super) async fn wait(node: &Arc<Node>, resident: &ResidentId, saved: bool) -
         if let Some(session) = about.session {
             let directory = exchange::sessions(node.world.path()).join(&session);
             let host = control::host(&directory.join("control")).map_err(failure)?;
-            if super::startup::ready(node, resident).map_err(failure)?
+            if registered(node, resident).map_err(failure)?
                 && host.as_ref().is_some_and(|host| control::active(&directory.join("control"), host).unwrap_or(false))
                 && (!saved || exchange::transcript(&directory).map_err(failure)?.is_some_and(|path| path.is_file()))
             {
@@ -118,6 +131,20 @@ pub(super) async fn wait(node: &Arc<Node>, resident: &ResidentId, saved: bool) -
             () = tokio::time::sleep(fastctx_hosts::claude::MOD_LOOK) => {},
             () = &mut deadline => return Err(Failure::new("Claude's fork did not finish registering its control bridge and saved history within 120 s")),
         }
+    }
+}
+
+/// Whether the fork's session is paired and its mod registered whole, in a
+/// process that is alive.
+fn registered(node: &Node, resident: &ResidentId) -> std::io::Result<bool> {
+    if !super::paired(node, resident) {
+        return Ok(false);
+    }
+    let Some(session) = node.residents.about(resident).and_then(|(about, _)| about.session) else { return Ok(false) };
+    let registration = exchange::registration(&exchange::sessions(node.world.path()).join(session))?;
+    match registration.filter(|registration| registration.instance.is_some() && registration.process.is_some()) {
+        Some(registration) => super::pairing::present(node, &registration),
+        None => Ok(false),
     }
 }
 

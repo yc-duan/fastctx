@@ -106,7 +106,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         )?;
         let settings = directory.claude_settings();
         let instructions = directory.claude_instructions();
-        std::fs::write(&settings, super::settings_json(node, &id))
+        std::fs::write(&settings, super::settings_json(&id))
             .and_then(|()| std::fs::write(&instructions, words))
             .map_err(failure)?;
         let mcp = crate::profile::session::claude(node, &id, true)?;

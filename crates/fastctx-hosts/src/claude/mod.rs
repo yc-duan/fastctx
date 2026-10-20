@@ -24,7 +24,6 @@ mod oldest;
 pub mod pricing;
 pub mod projects;
 pub mod startup;
-pub mod startup_hook;
 pub mod subagents;
 pub mod tail;
 pub mod temp;

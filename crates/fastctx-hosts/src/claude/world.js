@@ -667,9 +667,7 @@ async function reserveDirectory($, context) {
   return JSON.parse(reserved.stdout)
 }
 
-async function startSession($, context, registry) {
-  // Every retry establishes tool ownership before publishing a ready session.
-  await worldTools($, registry)
+async function startSession($, context) {
   const id = context.sessionId
   const reserving = reserveDirectory($, context)
   reservations.set(id, reserving)
@@ -731,8 +729,14 @@ async function startSession($, context, registry) {
   // The receipts directory exists from the start, so failing to list it
   // means a failure, never "nothing handed over yet".
   await $.fs.write(context.dir + '/receipts/.created', '')
+  await $.fs.write(context.dir + '/session.json', JSON.stringify(registration))
   context.registration = registration
   await observeModels($, context)
+  // What already waits when the session starts again is handed over, not
+  // skipped: a closed session's answers are what it should see on return.
+  // After that, the session's control helper says when there is more.
+  controlWake(id, () => look($, context).catch((error) => worldFailure($, 'look', error)))
+  $.clock.after(0, () => look($, context).catch((error) => worldFailure($, 'look', error)))
   // Background observations retain this conversation even after /clear.
   context.observe = (happened) => {
     try {
@@ -747,12 +751,6 @@ async function startSession($, context, registry) {
   // Which live thinking item a stored row ended: the node finds that row in
   // the file for Claude Code's own measure of it and the request's usage.
   context.thought = ({ uuid, turn, item }) => streamEvent($, context, { kind: 'thought', uuid, turn, item })
-  await startControls($)
-  controlWake(id, () => look($, context).catch((error) => worldFailure($, 'look', error)))
-  $.clock.after(0, () => look($, context).catch((error) => worldFailure($, 'look', error)))
-  // Publishing the registration releases queued input. Everything that
-  // receives and reports it, including the wake-up helper, must exist first.
-  await $.fs.write(context.dir + '/session.json', JSON.stringify(registration))
 }
 
 // The session's figures as Claude Code's status line has them, its cost
@@ -972,7 +970,7 @@ async function session($, registry, id, renew = false) {
     if (!retried) registry.cleared = null
     registry.sessions.set(id, context)
     const starting = context
-    context.ready = startSession($, context, registry)
+    context.ready = startSession($, context)
     context.ready.catch(() => { starting.failedAt = Date.now() })
   }
   await context.ready
@@ -991,12 +989,13 @@ async function route($, registry, name, e) {
 }
 
 export function register(on) {
-  const registry = { sessions: new Map(), turns: new Map(), toolOwners: new Map(), cleared: null, worldTools: new Set(), provedCalls: new Set(), readingToolOwners: 0 }
+  const registry = { sessions: new Map(), turns: new Map(), toolOwners: new Map(), cleared: null, worldTools: new Set(), provedCalls: new Set() }
   // Every handler first steps aside once fastctx is being removed. Each keeps
   // its literal on('…') call, the shape the official loader reads.
   on('session.start', async ($, e, next) => {
     await usageOrigin($, await $.session.id())
     if (await removed($)) return next(e)
+    await worldTools($, registry)
     // The session's directory is reserved before its controls make or
     // watch anything in it (`reservations`).
     await session($, registry, await $.session.id(), true)
@@ -1046,7 +1045,6 @@ export function register(on) {
   }).catch(($, e, next) => continueToolWithoutWorld($, registry, e, next))
   on('tool.check', async ($, e, next) => {
     if (await removed($)) return next(e)
-    await session($, registry, await $.session.id())
     return controlPermission($, e, next)
   }).catch(($, e, next) => continueWithoutWorld($, 'tool.check', e, next))
   on('session.append', async ($, e, next) => {
@@ -1087,7 +1085,7 @@ export function register(on) {
     return alongPrompt($, await session($, registry, await $.session.id()), e, next)
   }).catch(($, e, next) => continueWithoutWorld($, 'prompt.submit', e, next))
   on('prompt.context', async ($, e, next) => {
-    if (registry.readingToolOwners !== 0 || await removed($)) return next(e)
+    if (await removed($)) return next(e)
     const result = await next(e)
     const context = await session($, registry, await $.session.id())
     const added = [
@@ -1100,7 +1098,7 @@ export function register(on) {
     return { ...result, blocks: [...result.blocks.filter((block) => !names.includes(block.name)), ...added] }
   }).catch(($, e, next) => continueWithoutWorld($, 'prompt.context', e, next))
   on('prompt.section', async ($, e, next) => {
-    if (registry.readingToolOwners !== 0 || await removed($)) return next(e)
+    if (await removed($)) return next(e)
     if (!['env_info_simple', 'env_info_static'].includes(e.name)) return next(e)
     const context = await session($, registry, await $.session.id())
     return (await sessionPolicy($, context)).assisting ? { text: null } : next(e)
@@ -1116,7 +1114,6 @@ export function register(on) {
   }).catch(($, e, next) => continueWithoutWorld($, 'classic.PostModelSwitch', e, next))
   on('classic.Elicitation', async ($, e, next) => {
     if (await removed($)) return next(e)
-    await session($, registry, await $.session.id())
     await startControls($)
     // Classic mod results cannot carry action/content. The official command
     // hook under next publishes the answerable request with that contract.
@@ -1191,8 +1188,9 @@ export function register(on) {
   }).catch(($, e, next) => continueWithoutWorld($, 'session.end', e, next))
   on('classic.SessionStart', async ($, e, next) => {
     if (await removed($)) return next(e)
-    const context = await session($, registry, await $.session.id(), e.source === 'clear' || e.source === 'resume')
     await startControls($)
+    await worldTools($, registry)
+    const context = await session($, registry, await $.session.id(), e.source === 'clear' || e.source === 'resume')
     await transcript($, context, e.transcript_path)
     await observeTitle($, context, e)
     return next(e)
@@ -1209,24 +1207,16 @@ async function proveCall($, context, id) {
 }
 
 async function worldTools($, registry) {
+  registry.worldTools = new Set()
   const connected = await $.mcp.connect('fastctx')
-  if (!connected.isConnected) {
-    if (await startedFor($) !== null) throw new Error('the World MCP server did not connect: ' + (connected.message || connected.reason || 'unknown reason'))
-    registry.worldTools = new Set()
-    return
-  }
+  if (!connected.isConnected) return
   // connect answers the server's name as /mcp lists it, which for a
   // deduplicated server is the name it runs under; a tool carries the
   // name's tool-name spelling, every character outside [A-Za-z0-9_-] made
   // `_` (`claude.ai Gmail`, `claude_ai_Gmail` in the mod reference; 2.1.289
   // lists `plugin:fastctx-world:fastctx` and `plugin_fastctx-world_fastctx`).
   const spelled = connected.server.replace(/[^A-Za-z0-9_-]/g, '_')
-  // This read builds prompt sections. They must not await the startup whose
-  // ownership map is being read (Claude Code 2.1.303, 2026-10-20).
-  registry.readingToolOwners++
-  let usage
-  try { usage = await $.session.usage({ breakdown: 'summary' }) }
-  finally { registry.readingToolOwners-- }
+  const usage = await $.session.usage({ breakdown: 'summary' })
   if (usage.context.breakdown === undefined) throw new Error('the host did not provide its MCP tool ownership map')
   const owners = new Map()
   for (const tool of usage.context.breakdown.mcpTools) {
