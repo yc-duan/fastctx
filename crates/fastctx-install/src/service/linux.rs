@@ -233,6 +233,7 @@ pub(super) fn install(service: &Service) -> anyhow::Result<Status> {
     if !service.executable.is_file() || !service.directory.is_dir() {
         bail!("the executable and service data directory must exist before installation");
     }
+    super::linux_directory::prepare(service)?;
     let content = definition(service, &reg, version)?;
     transaction::run(
         &reg.file.with_extension("transaction"),
@@ -262,8 +263,12 @@ pub(super) fn install(service: &Service) -> anyhow::Result<Status> {
                 super::Kind::Node => Some(service.uid),
                 super::Kind::Hub => std::env::var("SUDO_UID").ok().and_then(|uid| uid.parse().ok()),
             };
-            if let Some(uid) = served {
-                let _ = super::linux_restart::allow(&reg.id, uid);
+            if let Some(uid) = served
+                && let Err(error) = super::linux_restart::allow(&reg.id, uid)
+            {
+                eprintln!(
+                    "fastctx: automatic service restart was not authorized: {error:#}; a renewal will need an administrator"
+                );
             }
             reg.status(true)
         },
@@ -298,7 +303,10 @@ fn busctl_value(output: &str) -> anyhow::Result<serde_json::Value> {
     let (kind, value) = output.trim().split_once(' ').context("busctl printed no value")?;
     match kind {
         "s" | "o" => {
-            let inner = value.strip_prefix('"').and_then(|value| value.strip_suffix('"')).context("busctl printed an unquoted string")?;
+            let inner = value
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+                .context("busctl printed an unquoted string")?;
             Ok(serde_json::Value::String(inner.replace("\\\"", "\"").replace("\\\\", "\\")))
         }
         "b" => Ok(serde_json::Value::Bool(value == "true")),
@@ -404,9 +412,9 @@ pub(super) fn systemctl(args: &[&str]) -> anyhow::Result<String> {
     checked(Command::new("systemctl").arg("--system").args(args))
 }
 
-/// The unit, written for the systemd running: 249 brought the `:` that
-/// keeps `$` as it is and `OnSuccess=`, which restores an explicit stop at
-/// once; 240 `Type=exec`; 230 the start limit in `[Unit]`. An older one
+/// The unit, written for the systemd running: 249 brought `OnSuccess=`,
+/// which restores an explicit stop at once; 242 the `:` prefix preserving
+/// `$`; 240 `Type=exec`; 230 the start limit in `[Unit]`. An older one
 /// gets their older forms, and an explicit stop is restored by the timer's
 /// check within a minute (`linux_watchdog`).
 fn definition(service: &Service, reg: &Registration, version: u32) -> anyhow::Result<String> {

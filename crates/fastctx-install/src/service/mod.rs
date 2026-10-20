@@ -24,6 +24,8 @@ mod keep;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
+mod linux_directory;
+#[cfg(target_os = "linux")]
 mod linux_restart;
 #[cfg(target_os = "linux")]
 mod linux_watchdog;
@@ -233,10 +235,9 @@ impl Service {
         }
     }
 
-    /// Whether this process may restart the boot service without asking: on
-    /// Linux as root, or by the rule its install left; elsewhere the
-    /// service's own rights decide.
-    pub fn may_restart(&self) -> anyhow::Result<bool> {
+    /// Checks whether this process can restart without prompting. On Linux,
+    /// a refusal includes the sudo policy or execution error.
+    pub fn may_restart(&self) -> anyhow::Result<()> {
         self.validate()?;
         #[cfg(target_os = "linux")]
         {
@@ -244,7 +245,7 @@ impl Service {
             linux_restart::may(&normalized.id(&normalized.uid.to_le_bytes()))
         }
         #[cfg(not(target_os = "linux"))]
-        Ok(true)
+        Ok(())
     }
 
     /// As root on Linux: lets the account with `uid` restart this service
