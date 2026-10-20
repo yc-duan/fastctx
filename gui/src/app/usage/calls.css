@@ -1,0 +1,344 @@
+/* A login's requests (`calls.ts`): the usage page's fifth view, in the
+   panel the drawings take. Rows in shared columns, grouped by day under a
+   quiet heading that stays while its rows scroll; what each request was
+   made of a small bar in the inks of where the use went. */
+
+.uc {
+  gap: 0;
+}
+
+.uc-head {
+  padding-bottom: var(--space-2);
+}
+
+.uc-filters {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+/* A filter: a solid pill, its value in it once set, washed. */
+.uc-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 28px;
+  padding: 0 6px 0 12px;
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  color: var(--text-2);
+  white-space: nowrap;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.uc-filter:hover {
+  color: var(--text);
+}
+
+.uc-filter.on {
+  background: var(--accent-wash);
+  color: var(--text-strong);
+}
+
+.uc-filter .glyph {
+  color: var(--text-3);
+}
+
+.uc-turn {
+  padding-right: 8px;
+}
+
+.uc-legend i.uc-k-read,
+.uc-legend i.uc-k-write,
+.uc-legend i.uc-k-input,
+.uc-legend i.uc-k-output,
+.uc-legend i.uc-k-reason {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.uc-k-read {
+  background: var(--pen-graphite);
+}
+
+.uc-k-write {
+  background: var(--pen-sky);
+}
+
+.uc-k-input {
+  background: var(--pen-sage);
+}
+
+.uc-k-output {
+  background: var(--pen-clay);
+}
+
+.uc-k-reason {
+  background: var(--pen-rose);
+}
+
+/* The rows scroll in the panel's own room. */
+.uc-rows {
+  flex: 1 1 0;
+  min-height: 0;
+  margin: 0 calc(-1 * var(--space-4));
+  padding: 0 var(--space-4) var(--space-2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  --uc-cols: 64px minmax(0, 200px) minmax(48px, 1fr) 48px 56px 16px 16px;
+}
+
+.uc-rows.dollars {
+  --uc-cols: 64px minmax(0, 200px) minmax(48px, 1fr) 48px 60px 56px 16px 16px;
+}
+
+.uc-rows.several {
+  --uc-cols: 64px 104px minmax(0, 200px) minmax(48px, 1fr) 48px 56px 16px 16px;
+}
+
+.uc-rows.several.dollars {
+  --uc-cols: 64px 104px minmax(0, 200px) minmax(48px, 1fr) 48px 60px 56px 16px 16px;
+}
+
+/* A day's heading stays over its rows as they scroll. */
+.uc-day {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--space-3) 0 var(--space-1);
+  /* The panel's own ground, solid: its fill over the page. */
+  background: linear-gradient(var(--fill), var(--fill)) var(--bg);
+  color: var(--text-3);
+}
+
+.uc-row {
+  display: grid;
+  grid-template-columns: var(--uc-cols);
+  align-items: center;
+  column-gap: var(--space-3);
+  width: calc(100% + 2 * var(--space-2));
+  min-height: 32px;
+  margin: 0 calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
+  box-sizing: border-box;
+  border-radius: var(--radius-s);
+  color: var(--text);
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+
+.uc-row.own {
+  cursor: pointer;
+  transition: background-color var(--hover) ease;
+}
+
+.uc-row.own:hover {
+  background: var(--fill-strong);
+}
+
+/* Right-aligned, so an hour of one figure keeps the colons in line. */
+.uc-time {
+  color: var(--text-2);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.uc-sec {
+  color: var(--text-3);
+}
+
+.uc-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-2);
+}
+
+.uc-who i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+}
+
+.uc-who span,
+.uc-model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.uc-model {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-strong);
+}
+
+.uc-model.quiet {
+  color: var(--text-3);
+}
+
+.uc-hook {
+  display: none;
+  flex: none;
+  color: var(--text-3);
+}
+
+.uc-tag {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  color: var(--text-2);
+  font-size: var(--size-fine);
+  line-height: 1.4;
+}
+
+/* What the request was made of: its length the square root of its share
+   of 400k tokens, its parts the kinds. */
+.uc-bar {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+}
+
+.uc-mix {
+  display: flex;
+  gap: 1px;
+  height: 7px;
+  min-width: 4px;
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.uc-mix i {
+  flex-basis: 0;
+  min-width: 1px;
+}
+
+.uc-tokens,
+.uc-usd,
+.uc-took {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.uc-tokens,
+.uc-took {
+  color: var(--text-2);
+}
+
+.uc-mark {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.uc-mark.failed {
+  color: var(--wrong);
+}
+
+.uc-mark.held {
+  color: var(--text-2);
+}
+
+.uc-open {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.uc-open .glyph {
+  rotate: -90deg;
+}
+
+.uc-row.own:hover .uc-open {
+  color: var(--text);
+}
+
+.uc-note {
+  padding: var(--space-4) 0;
+}
+
+.uc-kept {
+  margin: var(--space-3) 0 0;
+  color: var(--text-3);
+  font-size: var(--size-fine);
+}
+
+.uc-end {
+  height: 1px;
+}
+
+/* Narrower, the seconds and the open mark go; a phone reads one line a
+   request: when, whose ink, the model, its bar, and what it cost, or its
+   tokens where nothing is costed; the rest a long press away. The page
+   scrolls the rows itself. */
+@container ledger-page (max-width: 600px) {
+  .uc-head .uc-legend {
+    display: none;
+  }
+
+  .uc-head {
+    row-gap: var(--space-2);
+  }
+
+  .uc-filters {
+    width: 100%;
+  }
+
+  .uc-filter {
+    min-height: 36px;
+  }
+
+  .uc-rows {
+    flex: none;
+    overflow: visible;
+    margin: 0;
+    padding: 0;
+    scrollbar-gutter: auto;
+  }
+
+  .uc-rows,
+  .uc-rows.dollars {
+    --uc-cols: 44px minmax(0, 1fr) 64px 52px 16px;
+  }
+
+  .uc-rows.several,
+  .uc-rows.several.dollars {
+    --uc-cols: 44px 8px minmax(0, 1fr) 64px 52px 16px;
+  }
+
+  .uc-row {
+    min-height: 44px;
+    column-gap: var(--space-2);
+  }
+
+  .uc-sec,
+  .uc-who span,
+  .uc-took,
+  .uc-open,
+  .uc-tag,
+  .uc-rows.dollars .uc-tokens {
+    display: none;
+  }
+
+  .uc-hook {
+    display: grid;
+    margin-right: calc(-1 * var(--space-1));
+  }
+
+  .uc-rows:not(.dollars) .uc-tokens {
+    display: block;
+  }
+
+  .uc-day {
+    top: 0;
+  }
+}

@@ -191,8 +191,35 @@
   animation: paper-in var(--quick) ease both;
 }
 
+/* The gap between the mark and the card is the card's: the pointer
+   crossing it to reach the card keeps it open. */
+.turn-info-card::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 8px;
+}
+
 .turn-info-label {
   color: var(--text-3);
+}
+
+/* The turn's requests, on its login's usage page: the card's one act. */
+.turn-info-calls {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin: var(--space-1) 0 0 calc(-1 * var(--space-2));
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-s);
+  color: var(--text-2);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.turn-info-calls:hover {
+  color: var(--text);
+  background: var(--fill-strong);
 }
 
 /* The login's windows as the turn left them: a short bar each, as the

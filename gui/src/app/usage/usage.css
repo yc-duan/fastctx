@@ -96,6 +96,15 @@
   min-height: 100%;
 }
 
+/* The requests take the room of the drawing and of the cards under it. */
+.ledger-sheet.calls:not(.alone) {
+  grid-template-rows: auto auto minmax(300px, 1fr);
+  grid-template-areas:
+    "now now"
+    "tabs tabs"
+    "panel panel";
+}
+
 .ledger-reading {
   padding: var(--space-6) 0;
 }
@@ -659,6 +668,11 @@
   .ledger-sheet.alone {
     grid-template-rows: none;
     grid-template-areas: "now" "tabs" "panel" "where" "models";
+  }
+
+  .ledger-sheet.calls:not(.alone) {
+    grid-template-rows: none;
+    grid-template-areas: "now" "tabs" "panel";
   }
 
   .ledger-now {

@@ -2,7 +2,8 @@
 // `world-gui.md`, 智能体页): across the top what stands now, its windows as
 // rings, this week's use and who used it; below, four drawings to choose
 // from, a year of days, the week's limit, the login's reset weeks and the
-// hours of the week; at the foot what the use went to and on which models.
+// hours of the week, and beside them its requests one by one (`calls.ts`);
+// at the foot what the use went to and on which models.
 // Claude Code counts in dollars as well as tokens, Codex in tokens alone.
 // Everything here is Fastctx's own bookkeeping on the login's machine:
 // opening the page asks that machine's node, never the model's vendor.
@@ -17,17 +18,22 @@
 import { glyph } from "../../conversation/glyphs";
 import { escape } from "../../conversation/prose";
 import { modelName } from "../../conversation/view";
-import type { AssistSeen } from "../../world/accounts";
+import type { AssistSeen, HubAccount } from "../../world/accounts";
 import type { AgentLimits, Fact, LimitWindow } from "../../world/agents";
 import { isReset } from "../agent-homes";
 import type { Login, MachineLogins, WorldLogins } from "../../world/logins";
 import { wholeDollars } from "../../world/money";
 import type { UsageReport } from "../../world/usage";
+import type { UsageCallsPage, UsageCallsQuery } from "../../world/usage-calls";
+import type { ResidentId } from "../../world/wire";
+import type { ActsMenu } from "../acts-menu";
 import type { AgentLoginsWords } from "../agent-logins-words";
 import { detailOf } from "../problem";
 import type { Page } from "../shell";
 import { effect, type Signal } from "../signals";
 import type { Store } from "../store";
+import { CallsList, type CallsContext } from "./calls";
+import type { CallsWords } from "./calls-words";
 import { bar, calendar, meter, parts, punch, quota, weeks, type Amounts, type RingPart } from "./draw";
 import { keepRecord, keptRecord, keptReport, readReport, reportKey } from "./kept";
 import { allowanceTrack, between, byDay, byHourOfWeek, dayOf, DAY_MS, daysBefore, longestRun, pace, total, track, usageOf, valueOf, type Person, type Span, type Unit, type Usage, type Went } from "./model";
@@ -35,12 +41,12 @@ import { assistingMe, assistsOf, namer } from "./people";
 import type { UsageWords } from "./words";
 
 type Agent = "codex" | "claude";
-type Tab = "calendar" | "quota" | "weeks" | "punch";
+type Tab = "calendar" | "quota" | "weeks" | "punch" | "calls";
 type Mine = NonNullable<ReturnType<typeof assistingMe>>;
 /** The allowances, in dollars, of the person the page looks at. */
 type Caps = { weekly: number | null; daily: number | null };
 
-const TABS: readonly Tab[] = ["calendar", "quota", "weeks", "punch"];
+const TABS: readonly Tab[] = ["calendar", "quota", "weeks", "punch", "calls"];
 
 export interface LoginUsageOptions {
   store: Store;
@@ -57,6 +63,16 @@ export interface LoginUsageOptions {
   when(at: Date, now: Date): string;
   /** Begins a conversation in this login. */
   talk(machine: string, agent: Agent, home: string | null): void;
+  /** The login's requests one by one; opened on one turn's, when a
+   *  conversation asked for them, until that is let go. */
+  calls: {
+    words: CallsWords;
+    menu: ActsMenu;
+    ask(machine: string, agent: Agent, dir: string, query: UsageCallsQuery): Promise<UsageCallsPage>;
+    open(machine: string, conversation: ResidentId, turn: string | null): void;
+    turn: { conversation: ResidentId; turn: string } | null;
+    unturn(): void;
+  };
 }
 
 const KEPT = "usage.view";
@@ -89,9 +105,13 @@ export class LoginUsagePage implements Page {
   private height = 0;
   private refitting = false;
   private drawn = "";
+  /** The requests' panel, kept across drawings once it is first shown. */
+  private calls: CallsList | null = null;
 
   constructor(private readonly options: LoginUsageOptions) {
     this.key = reportKey(options.machine, options.agent, options.dir);
+    // A turn's requests asked for open on them, and are not kept as the view.
+    if (options.calls.turn) this.view = { ...this.view, tab: "calls" };
     this.record = keptRecord(options.machine);
     this.report = keptReport(this.key)?.report ?? null;
     this.title = this.who();
@@ -121,6 +141,7 @@ export class LoginUsagePage implements Page {
     this.stop();
     this.resize.disconnect();
     clearTimeout(this.again);
+    this.calls?.leave();
   }
 
   private async read(): Promise<void> {
@@ -142,6 +163,7 @@ export class LoginUsagePage implements Page {
     const [, used] = await Promise.allSettled([record, report]);
     if (used.status === "rejected") this.problem = detailOf(used.reason);
     this.draw();
+    if (this.calls?.element.isConnected) void this.calls.again();
     this.again = window.setTimeout(() => void this.read(), AGAIN_MS);
   }
 
@@ -178,6 +200,7 @@ export class LoginUsagePage implements Page {
     const login = this.login();
     this.head(login);
     let html: string;
+    let context: CallsContext | null = null;
     if (!options.workbench.peek()) {
       html = `<p class="feature-quiet">${escape(words.workbenchOff)}</p>`;
     } else if (!this.report) {
@@ -197,16 +220,38 @@ export class LoginUsagePage implements Page {
       this.width = figure?.clientWidth || this.body.clientWidth - 2 * 32 || 760;
       this.height = figure?.clientHeight || 280;
       const went: Went = only?.went ?? usage.week;
-      html = `<div class="ledger-sheet${mine ? " alone" : ""}">${this.strip(usage, login?.limits ?? null, unit, amounts, mine, only, caps, now)}
+      // The requests take the drawing's room, and, beside the drawings,
+      // the room of the week's cards at its foot.
+      const calls = tab === "calls";
+      if (calls) context = this.callsContext(usage, mine, only, now);
+      const foot = calls && !mine ? "" : `${this.where(went, unit)}${this.models(went, unit, amounts, only?.ink)}`;
+      html = `<div class="ledger-sheet${mine ? " alone" : ""}${calls ? " calls" : ""}">${this.strip(usage, login?.limits ?? null, unit, amounts, mine, only, caps, now)}
         ${this.tabs(usage, tab, mine, caps)}
-        <section class="ledger-panel">${this.panel(usage, tab, only, looked, caps, unit, amounts, now)}</section>
-        ${this.where(went, unit)}${this.models(went, unit, amounts, only?.ink)}
+        ${calls ? `<section class="ledger-panel" data-calls></section>` : `<section class="ledger-panel">${this.panel(usage, tab, only, looked, caps, unit, amounts, now)}</section>`}
+        ${foot}
         ${this.problem ? `<p class="feature-note ledger-problem" title="${escape(this.problem)}">${escape(words.failed)}</p>` : ""}</div>`;
     }
-    if (html === this.drawn) return;
+    if (html === this.drawn) {
+      if (context) this.calls?.placed(context);
+      return;
+    }
     this.drawn = html;
     const top = this.body.scrollTop;
     this.body.innerHTML = html;
+    if (context) {
+      this.calls ??= new CallsList({
+        words: options.calls.words,
+        usage: words,
+        claude: options.agent === "claude",
+        menu: options.calls.menu,
+        ask: (query) => options.calls.ask(options.machine, options.agent, options.dir, query),
+        open: (conversation, turn) => options.calls.open(options.machine, conversation, turn),
+        turn: options.calls.turn,
+        unturn: () => options.calls.unturn(),
+      });
+      this.body.querySelector("[data-calls]")?.replaceWith(this.calls.element);
+      this.calls.placed(context);
+    }
     this.body.scrollTop = top;
     // The figure's size is known once it is laid out: a first drawing at a
     // guess is drawn again, once, at the size it has.
@@ -451,7 +496,7 @@ export class LoginUsagePage implements Page {
     const { words } = this.options;
     const shown = TABS.filter((tab) => tab !== "quota" || !mine || caps?.weekly);
     const tab = (value: Tab) => `<button type="button" role="tab" class="${current_ === value ? "current" : ""}" aria-selected="${current_ === value}" data-view="tab:${value}">${escape(words.tabs[value])}</button>`;
-    const unit = usage.usd && current_ !== "quota"
+    const unit = usage.usd && current_ !== "quota" && current_ !== "calls"
       ? `<div class="ledger-switch" role="group">${(["usd", "tokens"] as const).map((value) => `<button type="button" class="${this.view.unit === value ? "current" : ""}" aria-pressed="${this.view.unit === value}" data-view="unit:${value}">${escape(value === "usd" ? words.usd : words.tokenTab)}</button>`).join("")}</div>`
       : "";
     return `<div class="ledger-tabs"><div class="ledger-switch" role="tablist">${shown.map(tab).join("")}</div>${unit}</div>`;
@@ -510,7 +555,26 @@ export class LoginUsagePage implements Page {
         const night = grid.reduce((sum, row) => sum + row.slice(0, 6).reduce((a, b) => a + b, 0), 0);
         return `<div class="ledger-panel-head"><span class="ledger-panel-title">${escape(words.punchTitle)}</span>${all ? `<span class="ledger-panel-said">${escape(words.punchSaid(Math.round((night / all) * 100)))}</span>` : ""}</div><div class="ledger-figure">${punch({ width, height: Math.max(200, this.height), grid, ink, amounts, words, seed })}</div>`;
       }
+      case "calls":
+        return "";
     }
+  }
+
+  /** Whose the requests are, named and inked as the rest of the page
+   *  draws them, and the one it is narrowed to. */
+  private callsContext(usage: Usage, mine: Mine | null, only: Person | null, now: number): CallsContext {
+    const { options } = this;
+    const name = namer(options.store.world.peek(), options.machine, options.words);
+    const inks = new Map(usage.people.map((person) => [person.key, person.ink]));
+    const who = (account: HubAccount | null) => {
+      const named = name(account);
+      return { key: named.key, name: named.name, ink: inks.get(named.key) ?? "var(--pen-graphite)" };
+    };
+    // Where the page counts the machine's own sessions as its owner's, the
+    // machine cannot narrow to both at once: the rows are narrowed here.
+    const local = !!only && name(null).key === only.key;
+    const person = mine || !only ? undefined : { key: only.key, account: local ? null : { account: accountOf(only.key) } };
+    return { who, several: !mine && usage.people.length > 1, person, models: usage.week.models.map((one) => one.model), now };
   }
 
   /** What the week's use went to: by what it cost, or by tokens. */
@@ -619,6 +683,12 @@ function keep(view: { tab: Tab; unit: Unit }): void {
   } catch {
     // Not kept: the calendar shows first next time.
   }
+}
+
+/** The account a person's key names (`people.ts`). */
+function accountOf(key: string): HubAccount | null {
+  const at = key.indexOf(":");
+  return at > 0 ? { hub: key.slice(0, at), account: key.slice(at + 1) } : null;
 }
 
 function dirName(dir: string): string {

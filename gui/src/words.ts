@@ -246,6 +246,8 @@ export interface Words {
     costOf(usd: number): string;
     limits: string;
     window(name: string, minutes: number | null): string;
+    /** The turn's requests one by one, on its login's usage page. */
+    requests: string;
   };
   /** How many steps a stretch of work has taken. */
   steps(n: number): string;
@@ -517,6 +519,7 @@ export const zh: Words = {
     costOf: (usd) => (underCent(usd) ? "不到 $0.01" : `约 ${dollars(usd)}`),
     limits: "额度",
     window: (name, minutes) => (minutes === 300 || name.startsWith("five_hour") ? "5 小时" : minutes === 10080 || name.startsWith("seven_day") ? "7 天" : name),
+    requests: "查看每个请求",
   },
   took: (ms) => {
     const seconds = Math.max(0, Math.round(ms / 1000));
@@ -788,6 +791,7 @@ export const en: Words = {
     costOf: (usd) => (underCent(usd) ? "under $0.01" : `≈ ${dollars(usd)}`),
     limits: "Limits",
     window: (name, minutes) => (minutes === 300 || name.startsWith("five_hour") ? "5 hours" : minutes === 10080 || name.startsWith("seven_day") ? "7 days" : name),
+    requests: "View requests",
   },
   took: (ms) => {
     const seconds = Math.max(0, Math.round(ms / 1000));

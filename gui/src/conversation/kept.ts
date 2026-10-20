@@ -19,6 +19,8 @@ export interface KeepablePage extends Page {
   resume(): void;
   /** It ends for good. */
   leave(): void;
+  /** Brings one of its turns into view, once it holds it. */
+  reach?(turn: string): void;
 }
 
 export class KeptPages {
@@ -54,6 +56,12 @@ export class KeptPages {
         }
       },
     };
+  }
+
+  /** Brings a turn of the page for `key` into view, once it is shown. */
+  reach(key: string, turn: string): void {
+    const page = this.pages.get(key);
+    if (page?.reach) queueMicrotask(() => page.reach!(turn));
   }
 
   /** Ends the page for `key`, so that it is made anew next time. */

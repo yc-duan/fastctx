@@ -59,7 +59,12 @@ import { AgentLoginsPage } from "./app/agent-logins";
 import { LoginUsagePage } from "./app/usage/login-page";
 import { enUsage, zhUsage } from "./app/usage/words";
 import "./app/usage/usage.css";
+import { enCalls, zhCalls } from "./app/usage/calls-words";
+import "./app/usage/calls.css";
+import { keptRecord } from "./app/usage/kept";
+import { ActsMenu } from "./app/acts-menu";
 import { specimenUsage } from "./specimen/usage";
+import { specimenCalls } from "./specimen/calls";
 import { enAgentLogins, zhAgentLogins } from "./app/agent-logins-words";
 import { enProfile, zhProfile } from "./app/profile-words";
 import { isHost, keepSection, sectionOf, tabOf } from "./app/agent-sections";
@@ -203,6 +208,7 @@ import { enPages, zhPages } from "./pages/words";
 import { act as pageAct, consent as pageConsent, pageHistory, readPage, restore as restorePage, withdraw as withdrawPage } from "./world/pages";
 import { specimenPageTools, specimenPageWorld } from "./specimen/pages";
 import type { Address, SessionEvent } from "./world/events";
+import type { MachineLogins } from "./world/logins";
 import { ownerResident, type ResidentNow } from "./world/world";
 import { agentName, titleOf } from "./world/names";
 import { foldedOf, MachineMap, MAP_ORDER, type MachineMapScene } from "./app/machine-map";
@@ -210,6 +216,7 @@ import { mapOf } from "./app/map-of";
 import {
   addAgentLogin,
   agentFolder,
+  agentCalls,
   agentLogins,
   agentUsage,
   changeAgentLogin,
@@ -1438,6 +1445,7 @@ function specimenTalk(address: Address): KeepablePage {
     jobOutput: async (job) => specimenOutput(job.command),
     lines: async (_machine, path) => specimenLines(path),
     agentRecord: (agent) => specimenAgentRecord(agent),
+    calls: (turn) => void openCalls(known?.about ?? { machine: address.machine, host: { agent: sample.agent } }, address, turn),
   });
   // What it started that still runs, as the specimen World lists it.
   const runningJobs = effect(() => {
@@ -1500,6 +1508,7 @@ function specimenTalk(address: Address): KeepablePage {
     element: page.element,
     title: sample.title,
     suspend: () => page.suspend(),
+    reach: (turn: string) => page.showTurn(turn),
     resume: () => page.resume(),
     leave() {
       left = true;
@@ -1656,6 +1665,10 @@ function liveTalk(address: Address): KeepablePage {
     jobOutput: (job) => RemoteLines.open(job.machine, job.output, { kind: "output", job: job.job }),
     lines: (machine, path, decoding) => RemoteLines.open(machine, path, decoding),
     agentRecord: (agent) => agentActivity(address, agent),
+    calls: (turn) => {
+      const about = residentAt(store.world.peek(), address)?.about;
+      if (about) void openCalls(about, address, turn);
+    },
   });
   let left = false;
   // What it started that still runs, as the World last answered.
@@ -1770,6 +1783,7 @@ function liveTalk(address: Address): KeepablePage {
     element: page.element,
     title: `${someone.agent} ${someone.machine}`,
     suspend: () => page.suspend(),
+    reach: (turn: string) => page.showTurn(turn),
     resume: () => page.resume(),
     leave() {
       left = true;
@@ -1788,6 +1802,36 @@ const QUIET_BEFORE_LISTED = 10_000;
 
 /** The conversations looked at last, alive (`conversation/kept.ts`). */
 const keptTalks = new KeptPages();
+
+/** The menu of the requests' filters, made when first opened. */
+let callsMenu: ActsMenu | null = null;
+
+/** A turn to bring into view as its conversation is shown. */
+let turnWanted: { key: string; turn: string } | null = null;
+
+/** Opens a conversation at one of its turns: a request's, from its
+ *  login's usage. */
+function openTurn(address: Address, turn: string | null): void {
+  turnWanted = turn ? { key: talkKey(address), turn } : null;
+  location.hash = talkLink(address);
+}
+
+/** One turn's requests, on the usage page of the login its conversation
+ *  works in: the default one's folder as that machine's logins were last
+ *  read, or read now. */
+async function openCalls(about: { machine: string; host: { agent: string }; home?: string | undefined }, address: Address, turn: string): Promise<void> {
+  const agent = about.host.agent;
+  if (agent !== "claude" && agent !== "codex") return;
+  const machine = about.machine;
+  const defaultOf = (logins: MachineLogins | null) => logins?.[agent].listed.find((login) => login.default)?.dir ?? null;
+  let dir = about.home ?? defaultOf(keptRecord(machine));
+  if (!dir) {
+    const read = await (live ? agentLogins(machine) : specimenLogins(machine, specimen.now)).catch(() => null);
+    const heard = read?.machines.find((one) => one.kind === "answered" && one.logins.machine === machine);
+    dir = heard?.kind === "answered" ? defaultOf(heard.logins) : null;
+  }
+  if (dir) location.hash = link({ kind: "usage", machine, agent, dir, turn: { conversation: address.resident, turn } });
+}
 const talkKey = (address: Address) => `${address.resident}@${address.machine}`;
 
 function projectPage(town: string): Page {
@@ -1955,7 +1999,10 @@ function show(next: Place): void {
       break;
     case "talk": {
       const address = next.address;
-      page = keptTalks.page(talkKey(address), () => (live ? liveTalk(address) : specimenTalk(address)));
+      const key = talkKey(address);
+      page = keptTalks.page(key, () => (live ? liveTalk(address) : specimenTalk(address)));
+      if (turnWanted?.key === key) keptTalks.reach(key, turnWanted.turn);
+      turnWanted = null;
       break;
     }
     case "new": {
@@ -2127,7 +2174,8 @@ function show(next: Place): void {
       });
       break;
     }
-    case "usage":
+    case "usage": {
+      const usagePlace = next;
       page = new LoginUsagePage({
         store,
         words: english ? enUsage : zhUsage,
@@ -2141,8 +2189,22 @@ function show(next: Place): void {
         usage: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen.now)),
         when,
         talk: (machine, agent, home) => beginTalk(null, loginKey(machine, agent, home), machine),
+        calls: {
+          words: english ? enCalls : zhCalls,
+          menu: (callsMenu ??= new ActsMenu()),
+          ask: (machine, agent, dir, query) => (live ? agentCalls(machine, agent, dir, query) : specimenCalls(machine, agent, dir, query, specimen.now)),
+          open: (machine, conversation, turn) => openTurn({ resident: conversation, machine }, turn),
+          turn: next.turn ?? null,
+          // The address no longer names the turn, and the page stays.
+          unturn: () => {
+            const { turn: _turn, ...all } = usagePlace;
+            place = all;
+            history.replaceState(history.state, "", link(all));
+          },
+        },
       });
       break;
+    }
     case "talks":
     case "archived":
       page = new TalksPage({

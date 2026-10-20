@@ -66,7 +66,7 @@ export interface UsageWords {
   partsWhy: string;
   weekReached(percent: number): string;
   /** The tabs and the unit. */
-  tabs: { calendar: string; quota: string; weeks: string; punch: string };
+  tabs: { calendar: string; quota: string; weeks: string; punch: string; calls: string };
   usd: string;
   tokenTab: string;
   /** The calendar. */
@@ -191,7 +191,7 @@ export const zhUsage: UsageWords = {
   partHead: "占周额度",
   partsWhy: "按这一周各人在 Fastctx 里记下的用量分摊整个号的 7 天额度：Claude 按 Claude Code 账本里的美元，Codex 按 token，缓存读算十分之一、输出算八倍（OpenAI 标价的比例）",
   weekReached: (percent) => `整个号 7 天额度用到 ${percent}%`,
-  tabs: { calendar: "日历", quota: "额度", weeks: "每周", punch: "时段" },
+  tabs: { calendar: "日历", quota: "额度", weeks: "每周", punch: "时段", calls: "调用" },
   usd: "$",
   tokenTab: "token",
   year: "过去一年",
@@ -289,7 +289,7 @@ export const enUsage: UsageWords = {
   partHead: "Of the limit",
   partsWhy: "The account's 7-day limit shared out by what each person used this week as Fastctx recorded it: Claude by Claude Code's own dollars, Codex by tokens, a cache read a tenth and output eight times (OpenAI's list-price ratios)",
   weekReached: (percent) => `The account's 7-day limit at ${percent}%`,
-  tabs: { calendar: "Calendar", quota: "Limit", weeks: "Weeks", punch: "Hours" },
+  tabs: { calendar: "Calendar", quota: "Limit", weeks: "Weeks", punch: "Hours", calls: "Requests" },
   usd: "$",
   tokenTab: "Tokens",
   year: "The past year",

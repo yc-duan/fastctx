@@ -116,6 +116,8 @@ export interface Context {
    *  same again, or to fork from `turn`; offered only where the
    *  conversation takes it. */
   turnAct?: ((act: "rewind" | "regenerate" | "fork", turn: string, words: string | null, kept: Attachment[]) => void) | undefined;
+  /** A turn's requests one by one, on the usage page of its login. */
+  turnCalls?: ((turn: string) => void) | undefined;
   /** Lines of a file or a job's output on the machine holding them, read a
    *  screen at a time: a write's change, a command's whole output. */
   lines?: ((machine: MachineName, path: string, decoding: Decoding) => Promise<OpenedLines>) | undefined;
@@ -1151,7 +1153,7 @@ export class ConversationView {
       info.length
         ? `<span class="turn-icon turn-info" tabindex="0" aria-label="${escape(info.map(({ label, text }) => `${label} ${text}`).join("; "))}">${glyph("info", 16)}<span class="turn-info-card" role="tooltip">${info
             .map(({ label, text, html }) => `<span class="turn-info-label">${escape(label)}</span><span>${html ?? escape(text)}</span>`)
-            .join("")}</span></span>`
+            .join("")}${this.context.turnCalls ? `<button class="turn-info-calls" type="button" data-turn-calls="${escape(entry.turn)}">${escape(words.turnInfo.requests)}</button>` : ""}</span></span>`
         : ""
     }</div>`;
   }
@@ -2412,7 +2414,7 @@ export class ConversationView {
       return;
     }
     const target = (event.target as HTMLElement).closest<HTMLElement>(
-      "[data-open], [data-fold], [data-gap], [data-earlier], [data-asked], .code-copy, .ask-option, [data-ask], [data-copy], [data-copy-turn], [data-turn-act], [data-question-pick], [data-question-send], [data-question-skip], [data-question-change]",
+      "[data-open], [data-fold], [data-gap], [data-earlier], [data-asked], .code-copy, .ask-option, [data-ask], [data-copy], [data-copy-turn], [data-turn-act], [data-turn-calls], [data-question-pick], [data-question-send], [data-question-skip], [data-question-change]",
     );
     if (!target) return;
     if (target.dataset.asked !== undefined) {
@@ -2459,6 +2461,10 @@ export class ConversationView {
     }
     if (target.dataset.questionSend !== undefined || target.dataset.questionSkip !== undefined || target.dataset.questionChange !== undefined) {
       void this.answerQuestions(target);
+      return;
+    }
+    if (target.dataset.turnCalls) {
+      this.context.turnCalls?.(target.dataset.turnCalls);
       return;
     }
     if (target.dataset.turnAct) {

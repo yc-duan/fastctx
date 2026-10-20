@@ -26,8 +26,9 @@ export type Place =
    *  named; a host's section on one machine, or the last one shown, or
    *  the account's preferences for that host (`tab`). */
   | { kind: "agents"; machine: string | null; section?: AgentSection; tab?: AgentTab }
-  /** What an agent's login on a machine was used for. */
-  | { kind: "usage"; machine: string; agent: "codex" | "claude"; dir: string }
+  /** What an agent's login on a machine was used for; opened on one
+   *  turn's requests when a conversation asks for them. */
+  | { kind: "usage"; machine: string; agent: "codex" | "claude"; dir: string; turn?: { conversation: string; turn: string } }
   /** The features, one card each, and a feature's own page. */
   | { kind: "features" }
   | { kind: "feature"; feature: Feature }
@@ -72,7 +73,7 @@ export function link(place: Place): string {
       if (place.section) return `#/agents/${place.section}${place.machine === null ? "" : `/${part(place.machine)}`}`;
       return place.machine === null ? "#/agents" : `#/agents/${part(place.machine)}`;
     case "usage":
-      return `#/agents/${part(place.machine)}/${place.agent}/${part(place.dir)}`;
+      return `#/agents/${part(place.machine)}/${place.agent}/${part(place.dir)}${place.turn ? `/calls/${part(place.turn.conversation)}/${part(place.turn.turn)}` : ""}`;
     case "features":
       return "#/features";
     case "feature":
@@ -124,7 +125,10 @@ export function placeOf(hash: string): Place {
       if (parts[1]) return { kind: "machine", name: parts[1] };
       break;
     case "agents":
-      if (parts[1] && (parts[2] === "codex" || parts[2] === "claude") && parts[3]) return { kind: "usage", machine: parts[1], agent: parts[2], dir: parts[3] };
+      if (parts[1] && (parts[2] === "codex" || parts[2] === "claude") && parts[3]) {
+        const turn = parts[4] === "calls" && parts[5] && parts[6] ? { turn: { conversation: parts[5], turn: parts[6] } } : {};
+        return { kind: "usage", machine: parts[1], agent: parts[2], dir: parts[3], ...turn };
+      }
       // A host's preferences; `#/agents/prefs` alone was the preferences'
       // own section, now the last host's.
       if (parts[1] === "prefs") return { kind: "agents", machine: null, tab: "prefs", ...(parts[2] === "claude" || parts[2] === "codex" ? { section: parts[2] } : {}) };

@@ -175,6 +175,8 @@ export interface PageOptions {
   /** One of the host's own agents' own record, read from the
    *  conversation's machine as its box opens. */
   agentRecord?: ((agent: string) => Promise<AgentActivity>) | undefined;
+  /** A turn's requests one by one, on its login's usage page. */
+  calls?: ((turn: string) => void) | undefined;
 }
 
 /** How many times what a conversation offers is asked again after asking
@@ -457,6 +459,7 @@ export class ConversationPage {
       turnAct: controls && ((act, turn, words, kept) => this.turnAct(act, turn, words, kept)),
       lines: options.lines,
       agentRecord: options.agentRecord,
+      turnCalls: options.calls,
     });
     // The host's own agents as one picture (`agents-panel.ts`): a lane
     // pressed brings the row of the call that started it into view.
@@ -819,6 +822,7 @@ export class ConversationPage {
     const turn = place ? this.turnOf(place.key) : null;
     apply();
     this.update({ read: true });
+    if (this.wantedTurn) return this.bringTurn();
     if (!place) return;
     cancelAnimationFrame(this.frame);
     this.render();
@@ -827,6 +831,42 @@ export class ConversationPage {
     void this.options.conversation.reachTurn(turn).then((reached) => {
       this.render();
       if (!reached || !this.view.restore(place)) this.toLatest();
+    });
+  }
+
+  /** A turn asked for from elsewhere, as a request in its login's usage,
+   *  until it is brought into view. */
+  private wantedTurn: string | null = null;
+
+  /** Brings `turn` into view, read first where it is not held; a page
+   *  whose conversation has not come yet brings it once it does. */
+  showTurn(turn: string): void {
+    this.wantedTurn = turn;
+    this.bringTurn();
+  }
+
+  private bringTurn(): void {
+    const turn = this.wantedTurn;
+    if (!turn || !this.element.isConnected) return;
+    const conversation = this.options.conversation;
+    const first = () => conversation.blocks().find((block) => this.turnOf(block.key) === turn);
+    const bring = (key: string) => {
+      this.wantedTurn = null;
+      this.following = false;
+      cancelAnimationFrame(this.frame);
+      this.render();
+      this.view.bring(key);
+      this.drawLatest();
+    };
+    const held = first();
+    if (held) return bring(held.key);
+    void conversation.reachTurn(turn).then((reached) => {
+      if (this.wantedTurn !== turn) return;
+      const found = reached ? first() : undefined;
+      if (found) bring(found.key);
+      // A conversation that came without it does not have it: it opens
+      // as it would.
+      else if (conversation.blocks().length) this.wantedTurn = null;
     });
   }
 
