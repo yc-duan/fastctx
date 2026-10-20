@@ -23,7 +23,8 @@ pub struct Kernel<'a> {
 
 /// A release directory containing the platform archive. A hub must supply its
 /// SHA-256 over the certificate's DER SubjectPublicKeyInfo, encoded as base64.
-/// This is curl's public-key pin, separate from the opaque invitation.
+/// The fingerprint is validated as issuer metadata. Bootstrap downloads are
+/// authenticated by the archive digest carried in the installation line.
 #[derive(Clone, Copy, Debug)]
 pub enum Source<'a> {
     GitHub,
@@ -42,9 +43,9 @@ pub fn certificate_pin(certificate_der: &[u8]) -> anyhow::Result<String> {
 
 /// Builds one physical shell line: select the host architecture, download and
 /// verify the complete archive, unpack it, then run `fastctx server install`.
-/// A download that breaks goes on from where it stopped, again and again,
-/// waiting twice as long each time up to a minute (`world-network.md`, 断开不是
-/// 结束); a source that cannot resume is read again from the start.
+/// Hub downloads use `-k`: the line's archive digest authenticates every byte
+/// before extraction, without depending on curl's public-key pin support.
+/// Interrupted transfers resume with bounded backoff; permanent errors stop.
 /// Requires a POSIX shell, uname, curl, tar and sha256sum; no Python.
 /// The kernel owns durable installation, enrollment and service registration.
 pub fn command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> anyhow::Result<String> {
@@ -71,10 +72,7 @@ pub fn command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> anyh
                 bytes.len() == 32 && STANDARD.encode(&bytes) == spki_sha256,
                 "SPKI SHA-256 must be a canonical base64-encoded 32-byte digest"
             );
-            (
-                release_directory.trim_end_matches('/').to_owned(),
-                format!(" -k --pinnedpubkey {}", quote(&format!("sha256//{spki_sha256}"))),
-            )
+            (release_directory.trim_end_matches('/').to_owned(), " -k".to_owned())
         }
     };
     let download = unix_download(kernel.version, "unknown-linux-gnu", &directory, &pin, "sha256sum");
@@ -89,7 +87,7 @@ pub fn command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> anyh
 /// Builds the one line for a Mac, shaped as the Linux one: Apple silicon or
 /// Intel by `uname -m`, a download that goes on from where it broke, checked
 /// with `shasum`, which every Mac has. From a hub it trusts the digest it
-/// carries, as the Windows line does, rather than pinning the hub's key.
+/// carries, as the Linux and Windows lines do, without a curl key pin.
 /// Run as root it makes a node that starts at boot; run as a person, theirs.
 pub fn mac_command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> anyhow::Result<String> {
     ensure!(
@@ -133,10 +131,16 @@ pub fn mac_command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> 
 /// and then it stays in `/var/tmp`, which a restart keeps. A complete archive is reused; an incorrect one is resumed
 /// and checked, then fetched afresh, just as in the Windows line.
 fn unix_download(version: &str, target: &str, directory: &str, options: &str, checksum: &str) -> String {
-    format!(
-        "d=\"${{HOME:-/var/tmp}}/.cache/fastctx-install/v{version}/$a-{target}\";mkdir -p \"$d\";cd \"$d\";check(){{ echo \"$h  a\"|{checksum} -c - >/dev/null;}};download(){{ w=1;until curl --proto '=https' -fL -C - -o a{options} {}/fastctx-$a-{target}.tar.gz;do r=$?;[ $r = 33 ]&&rm -f a;echo \"download stopped (curl $r); again in $w s\" >&2;sleep $w;w=$((w*2));[ $w -gt 60 ]&&w=60;done;}};check 2>/dev/null||{{ download;check;}}||{{ rm -f a;download;check;}}||{{ echo \"fastctx: the download is not the release it should be; run the line again\" >&2;exit 1;}}",
-        quote(directory),
-    )
+    include_str!("server/download.sh")
+        .replace("@VERSION@", version)
+        .replace("@TARGET@", target)
+        .replace("@CHECKSUM@", checksum)
+        .replace("@OPTIONS@", options)
+        .replace("@URL@", &quote(directory))
+        .lines()
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn mac_architecture(digest: Option<&str>, version: &str) -> String {
@@ -155,7 +159,7 @@ fn mac_architecture(digest: Option<&str>, version: &str) -> String {
 /// what Windows 10 1803 and later carry: cmd, curl, certutil and tar. Its one
 /// pair of quotes is cmd's own, so either prompt passes it on as it is.
 ///
-/// From a hub it does not pin the hub's key as the Linux line does: the curl
+/// From a hub, like the Unix lines, it authenticates the archive digest: curl
 /// of many Windows releases cannot (Windows Server 2022's answers that the
 /// option is not built in). The digest the line carries is what holds: an
 /// archive that is not the one meant is never unpacked, whoever served it,
