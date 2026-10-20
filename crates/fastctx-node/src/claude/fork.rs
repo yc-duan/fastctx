@@ -66,6 +66,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     let directory = node.world.conversation(&id);
     fastctx_platform::ensure_private_dir(directory.path()).map_err(failure)?;
     let cwd = crate::colleagues::standing(node, town.as_ref())?;
+    crate::profile::session::ready(node, &source.acting).await?;
     let assisting = node.works_here(&source.acting).is_err();
     let at = Timestamp::now();
     let about = About {
@@ -91,13 +92,18 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         crate::session_options::keep(
             node,
             &id,
-            &fastctx_types::agents::SessionOptions { model: model.clone(), reasoning_effort: effort.clone(), mcp_off: source.mcp_off.clone() },
+            &fastctx_types::agents::SessionOptions {
+                model: model.clone(),
+                reasoning_effort: effort.clone(),
+                mcp_off: source.mcp_off.clone(),
+            },
         )?;
         let settings = directory.claude_settings();
         let instructions = directory.claude_instructions();
         std::fs::write(&settings, super::settings_json(&id))
             .and_then(|()| std::fs::write(&instructions, words))
             .map_err(failure)?;
+        let mcp = crate::profile::session::claude(node, &id, true)?;
         let plugin = claude::plugin_dir(node.world.path());
         let world = node.world.path().to_path_buf();
         let source_session = session.clone();
@@ -108,6 +114,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
             let start = background::Start {
                 plugin: &plugin,
                 settings: &settings,
+                mcp: &mcp,
                 instructions: &instructions,
                 first_words: "",
                 model: selected_model.as_deref(),

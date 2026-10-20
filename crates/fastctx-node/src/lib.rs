@@ -625,6 +625,7 @@ pub async fn run_prepared(
     recovery::start(&node, jobs_reconciled);
     on_delivery::resume(&node);
     retention::start(&node).context("starting command artifact retention")?;
+    profile::session::start(&node);
     updates::start(&node);
     afoot::start(&node);
     forget::start(&node);

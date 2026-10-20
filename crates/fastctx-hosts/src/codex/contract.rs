@@ -26,6 +26,7 @@ fn dormant_threads_and_completed_turns_release_runtime_state_without_losing_iden
         host.adopt(
             &thread,
             super::ThreadSpec {
+                user_mcp: Default::default(),
                 owner: fastctx_types::Address {
                     machine: "desktop".parse().unwrap(),
                     resident: "codex-c0de".parse().unwrap(),

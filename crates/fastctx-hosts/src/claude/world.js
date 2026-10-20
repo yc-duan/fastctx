@@ -932,6 +932,7 @@ const FOCUS_BLOCK = 'machinesAndFolders'
 // instructions for all work in it first, as the node keeps it in the
 // session's directory, up to date: read into the context the same way.
 // None where it works in no project.
+const USER_BLOCK = 'userInstructions'
 const PROJECT_BLOCK = 'projectRecord'
 
 async function blockText($, context, name) {
@@ -1084,6 +1085,7 @@ export function register(on) {
     const context = await session($, registry, await $.session.id())
     const added = [
       { name: FOCUS_BLOCK, text: await focus($, context) },
+      { name: USER_BLOCK, text: await blockText($, context, 'user.md') },
       { name: PROJECT_BLOCK, text: await blockText($, context, 'project.md') },
     ].filter((block) => block.text !== null)
     if (!added.length) return result

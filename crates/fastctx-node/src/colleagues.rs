@@ -334,6 +334,7 @@ pub async fn thread_spec(
             None
         }
     };
+    crate::profile::session::ready(node, acting).await?;
     let mut config = codex::world_tools(&binary, &env, &tools, fastctx_hands::run::window::BUDGET);
     let started = crate::collab::started(node, id)?;
     if started.as_ref().is_some_and(|started| !started.callee.screen) || node.works_here(acting).is_err() {
@@ -341,6 +342,7 @@ pub async fn thread_spec(
         let (servers, plugins) = codex::desktop_hands(config_home).map_err(Failure::new)?;
         codex::assisting(&mut config, &servers, &plugins);
     }
+    let user_mcp = crate::profile::session::codex(node, id, acting, &mut config)?;
     crate::session_options::configure(&mut config, crate::session_options::read(node, id)?);
     let (mut developer_instructions, heard) = instructions(node, id, town, origin, acting, true).await?;
     // The machines and folders the user pointed it at, in the words its
@@ -361,6 +363,7 @@ pub async fn thread_spec(
     developer_instructions.push_str(fastctx_install::briefing::CODEX_EXEC);
     Ok((
         ThreadSpec {
+            user_mcp,
             owner: Address { machine: node.machine(), resident: id.clone() },
             cwd,
             developer_instructions,
@@ -378,7 +381,7 @@ pub fn heard_now(node: &Node, town: Option<&TownName>) -> std::io::Result<Heard>
         Some(town) => crate::ledger::seq(&node.world, town)?,
         None => 0,
     };
-    Ok(Heard { town: town.cloned(), ledger })
+    Ok(Heard { user_prompt: None, town: town.cloned(), ledger })
 }
 
 /// The town's bookkeeping directory, where a resident the World starts
@@ -408,7 +411,8 @@ pub(crate) async fn instructions(
     acting: &Acting,
     record: bool,
 ) -> Result<(String, Heard), Failure> {
-    let heard = heard_now(node, town).map_err(|error| Failure::new(format!("reading the town's ledger: {error}")))?;
+    let mut heard =
+        heard_now(node, town).map_err(|error| Failure::new(format!("reading the town's ledger: {error}")))?;
     // An agent assisting another account is given the machines it may work
     // on, and never the name of the one it runs on (`world-run.md`, 这里).
     let assisting = node.works_here(acting).is_err().then(|| {
@@ -416,6 +420,13 @@ pub(crate) async fn instructions(
         fastctx_types::world::listed(&others, &groups, None)
     });
     let words = words(id, &node.machine(), assisting.as_deref(), town, origin, record);
+    let prompt = crate::profile::session::prompt(node, acting);
+    heard.user_prompt = Some(crate::profile::session::hash(&prompt));
+    let words = if record && !prompt.is_empty() {
+        format!("{}\n\n{words}", crate::profile::session::text(&prompt))
+    } else {
+        words
+    };
     let text = match town {
         Some(town) if record => format!("{words}\n\n{}", crate::town::map::brief(node, town).await?),
         _ => words,
