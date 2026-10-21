@@ -1026,7 +1026,7 @@ export class MachinePage implements Page {
       ? `<div class="given-row"><span class="given-label">${escape(machines.assisting)}</span>${assists
           .map((assist) => {
             const label = `${agentName(assist.agent)} ${assist.account}`;
-            const at = `data-to="${escape(assist.account)}" data-agent="${escape(assist.agent)}"${assist.home ? ` data-home="${escape(assist.home)}"` : ""}${assist.until ? ` data-until="${escape(assist.until)}"` : ""}`;
+            const at = `data-to="${escape(assist.account)}" data-agent="${escape(assist.agent)}"${assist.home ? ` data-home="${escape(assist.home)}"` : ""}${assist.until ? ` data-until="${escape(assist.until)}"` : ""}${assist.daily ? ` data-daily="${assist.daily}"` : ""}${assist.weekly ? ` data-weekly="${assist.weekly}"` : ""}${assist.five_hour ? ` data-five-hour="${assist.five_hour}"` : ""}`;
             const until = assist.until ? new Date(assist.until) : null;
             const said = until ? access.moment.until(until, now) : access.when.none;
             const day = until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : "";
@@ -1127,15 +1127,20 @@ export class MachinePage implements Page {
         const to = target.dataset.to ?? "";
         const agent = target.dataset.agent ?? "";
         const home = target.dataset.home ? { home: target.dataset.home } : {};
-        // Given again by the undo, it ends when it was to.
+        // Given again by the undo, it ends when it was to, and keeps its allowances.
         const until = target.dataset.until ? { until: target.dataset.until } : {};
+        const caps = {
+          ...(target.dataset.daily ? { daily: Number(target.dataset.daily) } : {}),
+          ...(target.dataset.weekly ? { weekly: Number(target.dataset.weekly) } : {}),
+          ...(target.dataset.fiveHour ? { five_hour: Number(target.dataset.fiveHour) } : {}),
+        };
         if (owner)
           void this.takeBack(
             button,
             owner,
             `${agentName(agent)} ${to}`,
             { change: "assist", machine: machine.name, to, agent, ...home, assisting: false },
-            { change: "assist", machine: machine.name, to, agent, ...home, assisting: true, ...until },
+            { change: "assist", machine: machine.name, to, agent, ...home, assisting: true, ...until, ...caps },
           );
         return;
       }

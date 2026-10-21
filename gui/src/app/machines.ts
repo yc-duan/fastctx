@@ -632,15 +632,20 @@ export class MachinesPage implements Page {
         const to = button.dataset.to ?? "";
         const agent = button.dataset.agent ?? "";
         const home = button.dataset.home ? { home: button.dataset.home } : {};
-        // Given again by the undo, it ends when it was to.
+        // Given again by the undo, it ends when it was to, and keeps its allowances.
         const until = button.dataset.until ? { until: button.dataset.until } : {};
+        const caps = {
+          ...(button.dataset.daily ? { daily: Number(button.dataset.daily) } : {}),
+          ...(button.dataset.weekly ? { weekly: Number(button.dataset.weekly) } : {}),
+          ...(button.dataset.fiveHour ? { five_hour: Number(button.dataset.fiveHour) } : {}),
+        };
         if (login)
           void this.takeBack(
             button,
             login,
             `${agentName(agent)} ${to}`,
             { change: "assist", machine, to, agent, ...home, assisting: false },
-            { change: "assist", machine, to, agent, ...home, assisting: true, ...until },
+            { change: "assist", machine, to, agent, ...home, assisting: true, ...until, ...caps },
           );
         return;
       }
@@ -2375,7 +2380,7 @@ export class MachinesPage implements Page {
         const chips = assists
           .map((assist) => {
             const label = `${agentName(assist.agent)} ${assist.account}`;
-            const at = `data-to="${escape(assist.account)}" data-agent="${escape(assist.agent)}"${assist.home ? ` data-home="${escape(assist.home)}"` : ""}${assist.until ? ` data-until="${escape(assist.until)}"` : ""}`;
+            const at = `data-to="${escape(assist.account)}" data-agent="${escape(assist.agent)}"${assist.home ? ` data-home="${escape(assist.home)}"` : ""}${assist.until ? ` data-until="${escape(assist.until)}"` : ""}${assist.daily ? ` data-daily="${assist.daily}"` : ""}${assist.weekly ? ` data-weekly="${assist.weekly}"` : ""}${assist.five_hour ? ` data-five-hour="${assist.five_hour}"` : ""}`;
             const until = assist.until ? new Date(assist.until) : null;
             const said = until ? access.moment.until(until, now) : access.when.none;
             const day = until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : "";
