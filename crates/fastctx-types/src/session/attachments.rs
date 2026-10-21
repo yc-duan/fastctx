@@ -11,7 +11,7 @@ const HEAD: &str = "=== from fastctx (user attachments, v2) ===\n";
 /// The head written before 2026-10-09 (UTC); histories still hold it.
 const HEAD_V1: &str = "=== from the World (user attachments, v1) ===\n";
 const WORDS: &str = "\n=== user's words (verbatim) ===\n";
-const EXPLANATION: &str = "The user attached these files. Each original stays on owner.machine at path; sizes are in bytes. Use fastctx view directly for files on your shell's machine, and use on with the named machine for files elsewhere. Images come back as images.";
+const EXPLANATION: &str = "The user attached these files. Each original stays on owner.machine at path; sizes are in bytes. Look at one on its machine, as in `on MACHINE fastctx view PATH`; images come back as images.";
 
 /// Metadata belongs to the World; text after the delimiter is the user's
 /// exact input. A delivery id lets native history and live receipts agree.

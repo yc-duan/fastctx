@@ -144,30 +144,16 @@ pub(crate) fn check_named(node: &Node, acting: &Acting, script: &str) -> Result<
     Ok(())
 }
 
-/// Whether `resident` lives on this machine, registered or being born: its
-/// shell is here, whoever it works for (`world-run.md`, 这里).
-pub(crate) fn lives_here(node: &Node, resident: &ResidentId) -> bool {
-    node.residents.about(resident).is_some() || node.births.0.lock().expect("never poisoned").contains_key(resident)
-}
-
-/// Where a run goes, and what runs there: another machine, or here when it
-/// is `None`.
-pub(crate) fn start(node: &Node, request: RunRequest) -> (Option<Written>, RunRequest) {
-    if let Some((machine, script)) = single_on(&request.script) {
-        // The part sent there starts in that machine's home, whatever the
-        // script would have started in.
-        let whole = RunRequest { script, cwd: None, ..request };
-        return ((!node.is_here(&machine)).then_some(machine), whole);
-    }
-    (None, request)
-}
-
-/// The sole literal `on` and its body, recognized with the same source
-/// scanner as ordinary runs. Expansion belongs to the sending shell and
-/// therefore disqualifies this direct dispatch.
-pub(crate) fn single_on(script: &str) -> Option<(Written, String)> {
-    let (machine, body) = fastctx_hands::run::preread::on_only(script).ok()?;
-    Some((Written::parse(&machine).ok()?, body?))
+/// Where a run goes, and what runs there: every script of a session is one
+/// literal `on MACHINE`, its body run on that machine from its home
+/// (`world-run.md`, 脚本在哪台机器上跑). `None` is this machine. A script of
+/// anything else is refused with why, before anything of it runs.
+pub(crate) fn start(node: &Node, request: RunRequest) -> Result<(Option<Written>, RunRequest), String> {
+    let (machine, body) = fastctx_hands::run::preread::on_only(&request.script).map_err(|failure| failure.message)?;
+    let body = body.ok_or("a script is one `on MACHINE`; put the rest inside it, where `on` reaches the other machines")?;
+    let machine = Written::parse(&machine).map_err(|error| error.to_string())?;
+    let whole = RunRequest { script: body, cwd: None, ..request };
+    Ok(((!node.is_here(&machine)).then_some(machine), whole))
 }
 
 /// Runs `request` for `resident`, of this machine, on `to`, the one machine

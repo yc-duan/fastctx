@@ -104,7 +104,6 @@ pub(crate) async fn note(node: &Arc<Node>, acting: &Acting, focus: &Focus) -> Op
     if focus.is_empty() {
         return None;
     }
-    let home = node.machine();
     // Every machine is read at once: one slow to answer delays only itself.
     let mut reading = tokio::task::JoinSet::new();
     for (index, machine) in focus.machines.iter().enumerate() {
@@ -123,9 +122,6 @@ pub(crate) async fn note(node: &Arc<Node>, acting: &Acting, focus: &Focus) -> Op
     for (machine, outlines) in focus.machines.iter().zip(read) {
         text.push_str("\n\n");
         text.push_str(&machine.machine.to_string());
-        if home == machine.machine.name && machine.machine.hub.is_none() {
-            text.push_str(" (this machine)");
-        }
         if machine.folders.is_empty() {
             text.push_str(": the machine as a whole");
             continue;

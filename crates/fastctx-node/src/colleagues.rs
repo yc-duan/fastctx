@@ -413,13 +413,7 @@ pub(crate) async fn instructions(
 ) -> Result<(String, Heard), Failure> {
     let mut heard =
         heard_now(node, town).map_err(|error| Failure::new(format!("reading the town's ledger: {error}")))?;
-    // An agent assisting another account is told where its home is
-    // (`world-run.md`, 这里).
-    let assisting = crate::assists::assisting(node, acting).then(|| {
-        let (_, others, _) = crate::world::grouped_machines(node, acting, true);
-        fastctx_hands::assist::assisting(!others.is_empty())
-    });
-    let words = words(id, &node.machine(), assisting.as_deref(), town, origin, record);
+    let words = words(id, town, origin, record);
     let prompt = crate::profile::session::prompt(node, acting);
     heard.user_prompt = Some(crate::profile::session::hash(&prompt));
     let words = if record && !prompt.is_empty() {
@@ -434,16 +428,7 @@ pub(crate) async fn instructions(
     Ok((text, heard))
 }
 
-/// `assisting` is what an agent assisting another account is told besides
-/// (`fastctx_hands::assist`).
-fn words(
-    id: &ResidentId,
-    machine: &MachineName,
-    assisting: Option<&str>,
-    town: Option<&TownName>,
-    origin: &Origin,
-    record: bool,
-) -> String {
+fn words(id: &ResidentId, town: Option<&TownName>, origin: &Origin, record: bool) -> String {
     let given = if record { "Its record follows" } else { "Its record comes with your context" };
     let place = match (town, origin) {
         (Some(town), _) => format!(
@@ -459,14 +444,11 @@ fn words(
         ),
         Origin::User => "The user started this session from fastctx and talks to you here.".to_string(),
     };
-    // Many users have this one computer only: other machines are spoken of
-    // as `run`'s description lists them, never assumed.
-    let on =
-        "when `run`'s description lists other machines, `on MACHINE` in the script runs a part of it on one of them";
-    let runs = format!("It runs bash on this machine; {on}");
-    let assisting = assisting.map(|assisting| format!("\n\n{assisting}")).unwrap_or_default();
+    // Where scripts run is said by the machines `run`'s description lists,
+    // never by where the session lives (`world-run.md`, 脚本在哪台机器上跑).
+    let runs = "It runs a bash script on one of the machines its description lists, the script written as one `on MACHINE`";
     format!(
-        "You are {id}, an agent session on {machine}.{assisting}{place}\n\n{working}\n\nWork through the `run` tool; it is your only shell, editor and image viewer. {runs}; `fastctx view` shows files, images and documents, and `edit` and `write` change files. Its description says how. Paths are absolute, each the path on its own machine, written like C:/Users/me on Windows. A script still running when its call stops waiting (15 seconds by default) goes on by itself in the background; when it ends you are told automatically, with its exit status and last lines, while you work or after you end your turn."
+        "You are {id}, an agent session.{place}\n\n{working}\n\nWork through the `run` tool; it is your only shell, editor and image viewer. {runs}; `fastctx view` shows files, images and documents, and `edit` and `write` change files. Its description says how. Paths are absolute, each the path on its own machine, written like C:/Users/me on Windows. A script still running when its call stops waiting (15 seconds by default) goes on by itself in the background; when it ends you are told automatically, with its exit status and last lines, while you work or after you end your turn."
     )
 }
 

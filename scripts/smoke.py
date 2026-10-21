@@ -240,11 +240,14 @@ def hands(lab, expect_bash, expect_seccomp=False):
         check("an agent's session starts", False, error)
         return
     try:
-        script = (f'echo "here $FASTCTX_MACHINE ${{BASH_VERSION%%(*}}"\n'
+        # Every script of a session is one `on`; the one inside it reaches beta.
+        script = ("on alpha <<'RUN'\n"
+                  f'echo "here $FASTCTX_MACHINE ${{BASH_VERSION%%(*}}"\n'
                   f'carried={marker}\n'
                   "on beta <<'EOF'\n"
                   'echo "there $FASTCTX_MACHINE $carried ${BASH_VERSION%%(*}"\n'
-                  "EOF\n")
+                  "EOF\n"
+                  "RUN\n")
         text, failed = agent.run(script)
         print(f"     {text.strip().splitlines()[-3:] if text.strip() else text!r}", flush=True)
         check("an agent's run answers on alpha", not failed and re.search(r"^here alpha \d", text, re.M), text)
@@ -255,8 +258,8 @@ def hands(lab, expect_bash, expect_seccomp=False):
             check(f"both run in bash {expect_bash}", len(versions) == 2
                   and all(version.startswith(expect_bash) for version in versions), versions)
         if expect_seccomp:
-            text, failed = agent.run("awk '/^Seccomp:/ {print \"local-filter \" $2}' /proc/$$/status\n"
-                                     "on beta <<'EOF'\nawk '/^Seccomp:/ {print \"remote-filter \" $2}' /proc/$$/status\nEOF\n")
+            text, failed = agent.run("on alpha <<'RUN'\nawk '/^Seccomp:/ {print \"local-filter \" $2}' /proc/$$/status\n"
+                                     "on beta <<'EOF'\nawk '/^Seccomp:/ {print \"remote-filter \" $2}' /proc/$$/status\nEOF\nRUN\n")
             check("run and on inherit the old-kernel filter", not failed and "local-filter 2" in text and "remote-filter 2" in text, text)
     except Exception as error:  # noqa: BLE001 - reported as the check's failure
         check("an agent's run answers", False, error)

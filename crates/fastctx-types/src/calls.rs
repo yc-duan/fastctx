@@ -879,14 +879,9 @@ pub enum Reply {
     HubMove(crate::hub_move::HubMoveReply),
     Nodes(NodesReply),
     Machines {
-        /// Where the session's shell starts, as written: the machine it
-        /// lives on. None for whoever asks without living here and may not
-        /// work here.
+        /// The machine the session lives on, as written, where the accounts
+        /// it works for may work on it; None where they may not.
         here: Option<String>,
-        /// Whether the session is an agent assisting another account with
-        /// one of `here`'s owner's logins.
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        assisting: bool,
         /// The other machines it may work on.
         others: Vec<String>,
         /// Those of `others` their owners put in groups, group by group.

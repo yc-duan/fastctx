@@ -8,7 +8,7 @@ use std::io;
 
 use fastctx_types::layout::WorldDir;
 use fastctx_types::project::{Record, Writer};
-use fastctx_types::{Address, MachineName, ResidentId, TownName};
+use fastctx_types::{Address, ResidentId, TownName};
 
 use crate::Node;
 use crate::residents::Heard;
@@ -52,7 +52,7 @@ fn project_notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Optio
     };
     let now = Heard { user_prompt: None, town: town.clone(), ledger };
     let notes = match node.residents.heard(id) {
-        None => vec![introduction(&node.world, id, &here, town.as_ref())?],
+        None => vec![introduction(&node.world, id, town.as_ref())?],
         // It moved: entering gave it the new town's record.
         Some(heard) if heard.town != town => Vec::new(),
         Some(heard) if heard.ledger >= ledger => return Ok((Vec::new(), None)),
@@ -67,17 +67,14 @@ fn project_notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Optio
     Ok((notes, Some(now)))
 }
 
-fn introduction(world: &WorldDir, id: &ResidentId, here: &MachineName, town: Option<&TownName>) -> io::Result<String> {
-    let on = format!(" on {here}");
+fn introduction(world: &WorldDir, id: &ResidentId, town: Option<&TownName>) -> io::Result<String> {
     Ok(match town {
         Some(town) => match super::instructions::text(world, town)? {
-            Some(record) => format!("=== you are {id}{on}, working in the project {town} ===\n{record}"),
-            None => {
-                format!("=== you are {id}{on}, working in the project {town}; its record: `fastctx project show` ===")
-            }
+            Some(record) => format!("=== you are {id}, working in the project {town} ===\n{record}"),
+            None => format!("=== you are {id}, working in the project {town}; its record: `fastctx project show` ==="),
         },
         // When to enter a project is said once, in the session's guidance.
-        None => format!("=== you are {id}{on}, in no project ==="),
+        None => format!("=== you are {id}, in no project ==="),
     })
 }
 

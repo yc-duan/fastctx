@@ -93,24 +93,11 @@ impl Jobs {
         {
             node.residents.active(&address.resident)?;
         }
-        // An agent assisting another account starts in its own scratch folder,
-        // not in this computer's owner's home (`fastctx_hands::assist::START`).
-        let scratch = owner.resident().filter(|address| node.is_me(&address.machine)).and_then(|address| {
-            let (about, _) = node.residents.about(&address.resident)?;
-            crate::assists::assisting(node, &about.acting).then(|| node.world.conversation(&address.resident).scratch())
-        });
         let (world, names, executable) = (node.world.clone(), node.names(), node.fastctx.clone());
         let registering = node.clone();
         let launched = tokio::task::spawn_blocking(move || -> Result<run::Launched, Failure> {
             let _collecting = registering.disk.lock();
-            let home = match scratch {
-                Some(scratch) => {
-                    fastctx_platform::ensure_private_dir(&scratch)
-                        .map_err(|error| failure("preparing the scratch folder", error))?;
-                    scratch
-                }
-                None => user_home().map_err(|error| failure("finding the home directory", error))?,
-            };
+            let home = user_home().map_err(|error| failure("finding the home directory", error))?;
             let environment =
                 world_process_environment().map_err(|error| failure("reading the user's environment", error))?;
             // An `on` job hands its standard error back apart from its output,
