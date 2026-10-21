@@ -477,14 +477,18 @@ export class LoginUsagePage implements Page {
         const own = this.capsOf(assisted);
         const shown = own?.weekly ? "weekly" : own?.daily ? "daily" : null;
         const cap = shown === "weekly" ? { cap: own!.weekly!, spent: person.week.usd ?? 0 } : shown === "daily" ? { cap: own!.daily!, spent: person.day?.usd ?? 0 } : null;
-        const share = cap ? cap.spent / cap.cap : null;
-        const level = share === null ? "" : share >= 1 ? " spent" : share >= 0.9 ? " high" : "";
+        // Each one's bar is their part of the login's seven days, as long as
+        // their part of the bar above; an allowance of their own is said
+        // beside it, in caution as it runs out, and drawn when they are
+        // picked (`capMeters`).
+        const spent = cap ? cap.spent / cap.cap : null;
+        const level = spent === null ? "" : spent >= 1 ? " spent" : spent >= 0.9 ? " high" : "";
         const ends = assisted?.until ? glyph("history", 12) : "";
-        const row = `<button class="ledger-meter ledger-person${picked ? " on" : ""}${level}" type="button" data-only="${escape(person.key)}" title="${escape(said)}">
+        const row = `<button class="ledger-meter ledger-person${picked ? " on" : ""}" type="button" data-only="${escape(person.key)}" title="${escape(said)}">
           <span class="ledger-meter-name ledger-person-name"><span>${escape(person.name)}</span>${ends}</span>
-          <span class="ledger-meter-track">${share === null ? "" : meter(share, `${this.key}:person:${person.key}`, [{ share, ink: person.ink }])}</span>
-          <span class="ledger-meter-used">${share === null ? "" : `${Math.round(share * 100)}%`}</span>
-          <span class="ledger-meter-note">${escape(cap ? words.capOf(words.money(cap.spent), wholeDollars(cap.cap)) : value ? amounts.say(value) : "–")}</span>
+          <span class="ledger-meter-track">${part === null ? "" : meter(part, `${this.key}:person:${person.key}`, [{ share: part, ink: person.ink }], false)}</span>
+          <span class="ledger-meter-used">${part === null ? "" : `${Math.round(part * 100)}%`}</span>
+          <span class="ledger-meter-note${level}">${escape(cap ? words.capOf(words.money(cap.spent), wholeDollars(cap.cap)) : value ? amounts.say(value) : "–")}</span>
         </button>`;
         const more = picked && caps ? this.capMeters(usage, person, caps, person.ink, shown) : "";
         return more ? `<div class="ledger-group" data-only="${escape(person.key)}">${row}${more}</div>` : row;
@@ -494,10 +498,12 @@ export class LoginUsagePage implements Page {
       // Together they have no one allowance: what they spent, each a hover away.
       const value = rest.reduce((sum, person) => sum + valueOf(person.week, unit), 0);
       const said = rest.map((person) => words.spentWeek(person.name, amounts.say(valueOf(person.week, unit)))).join("\n");
+      // Their parts of the seven days together, in graphite: no one's ink.
+      const part = parted ? rest.reduce((sum, person) => sum + (week!.parts.get(person.index) ?? 0), 0) : null;
       return `${rows}<button class="ledger-meter ledger-person ledger-others" type="button" data-everyone="1" title="${escape(said)}">
           <span class="ledger-meter-name ledger-person-name"><span>${escape(words.others(rest.length))}</span></span>
-          <span class="ledger-meter-track"></span>
-          <span class="ledger-meter-used"></span>
+          <span class="ledger-meter-track">${part === null ? "" : meter(part, `${this.key}:others`, [{ share: part, ink: "color-mix(in srgb, var(--pen-graphite) 70%, var(--bg))" }], false)}</span>
+          <span class="ledger-meter-used">${part === null ? "" : `${Math.round(part * 100)}%`}</span>
           <span class="ledger-meter-note">${escape(amounts.say(value))}</span>
         </button>`;
     }

@@ -166,6 +166,15 @@
   color: var(--accent);
 }
 
+/* One's own allowance running out, said beside their bar. */
+.ledger-meter-note.high {
+  color: var(--caution);
+}
+
+.ledger-meter-note.spent {
+  color: var(--wrong);
+}
+
 .ledger-meter-track {
   position: relative;
   height: 14px;
