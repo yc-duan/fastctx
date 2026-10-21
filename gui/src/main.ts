@@ -171,6 +171,7 @@ import { redrawDiagrams } from "./conversation/diagrams";
 import { HomePage } from "./home/page";
 import type { Away, Happening, WorldState } from "./home/model";
 import { happeningsOf } from "./home/since";
+import type { SinceEvent } from "./world/since";
 import { enHome, zhHome } from "./home/words";
 import { installHints } from "./app/hint";
 import { installSheetDrag } from "./app/sheet-drag";
@@ -1314,10 +1315,13 @@ function home(): Page {
   let away: Away | null = live ? null : specimen.away;
   // What happened while the reader was away is asked of every machine when
   // the page opens, and again whenever the present changes in a way that
-  // leaves something to tell; one question at a time.
+  // leaves something to tell; one question at a time. Asked again, only
+  // what came after the last reading began is read, and added to what was:
+  // whole again where a machine did not answer, or a new one is there.
   let shape = "";
   let asking = false;
   let again = false;
+  let heard: { events: Map<string, SinceEvent>; machines: string; from: Date } | null = null;
   const ask = async (): Promise<void> => {
     if (!lastVisit) return;
     if (asking) {
@@ -1326,7 +1330,17 @@ function home(): Page {
     }
     asking = true;
     try {
-      const read = happeningsOf(await since(lastVisit, null));
+      const known = heard;
+      const answer = await since(known?.from ?? lastVisit, null);
+      const answered = answer.machines.flatMap((machine) => (machine.kind === "answered" ? [machine.reply] : []));
+      const machines = answer.machines.map((machine) => (machine.kind === "answered" ? machine.reply.machine : machine.machine)).sort().join(" ");
+      const events = new Map(known && known.machines === machines ? known.events : []);
+      for (const event of answer.events) events.set(event.id, event);
+      const whole = answered.length === answer.machines.length && (!known || known.machines === machines);
+      const began = Math.min(...answered.map((reply) => Date.parse(reply.read_started_at)));
+      heard = whole && Number.isFinite(began) ? { events, machines, from: new Date(Math.max(lastVisit.getTime(), began - 2000)) } : null;
+      if (known && known.machines !== machines) again = true;
+      const read = happeningsOf({ ...answer, events: [...events.values()].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)) });
       away = { happenings: await withFirstLines(read.happenings), unasked: read.unasked, trouble: null };
     } catch (error) {
       away = { happenings: away?.happenings ?? [], unasked: [], trouble: String(error) };
