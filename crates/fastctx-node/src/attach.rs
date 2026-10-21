@@ -53,7 +53,7 @@ pub async fn command(node: &Arc<Node>, resident: &ResidentId) -> Result<HostComm
         // The official Codex joins the World's own app-server on its socket,
         // with the thread loaded under the World's settings first.
         "codex" => {
-            let codex = node.codex.of(&about)?;
+            let codex = node.codex.of(node, &about)?;
             let (program, address, codex_home) = codex.attachable(&session).await.map_err(Failure::new)?;
             Ok(HostCommand {
                 program,

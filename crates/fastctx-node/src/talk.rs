@@ -274,7 +274,7 @@ pub(crate) fn subscribe(
     let events = node.watchers.watch(resident);
     match &about.session {
         Some(thread) if about.host.agent.as_str() == "codex" => {
-            let codex = node.codex.of(&about)?;
+            let codex = node.codex.of(node, &about)?;
             let pending = if about.world_started { codex.requests(thread) } else { Vec::new() };
             Ok((crate::codex::watch::requests(codex, thread.clone(), events), pending))
         }
@@ -314,7 +314,7 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRea
         // from the same record as one it started.
         Some(thread) if about.host.agent.as_str() == "codex" => {
             crate::homes::available(node, &about)?;
-            let codex = node.codex.of(&about)?;
+            let codex = node.codex.of(node, &about)?;
             let history = codex.history(thread, &owner).await.map_err(Failure::new)?;
             codex.flush_events(thread).await.map_err(Failure::new)?;
             // Reverted turns remain in the World's audit record, but no
@@ -365,7 +365,7 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRea
     }
     let pending = match &about.session {
         Some(thread) if about.world_started && about.host.agent.as_str() == "codex" => {
-            node.codex.of(&about)?.requests(thread)
+            node.codex.of(node, &about)?.requests(thread)
         }
         _ => Vec::new(),
     };
@@ -853,7 +853,12 @@ pub async fn open_here(
             .await?;
     // Until it is claimed below, reports of threads nobody claims are kept.
     let _starting = crate::codex::starting(node);
-    let (thread, model) = node.codex.home(opened.home.as_deref())?.start_thread(spec).await.map_err(Failure::new)?;
+    let (thread, model) = node
+        .codex
+        .session(opened.home.as_deref(), crate::assists::host::kept(node, &id)?.unwrap_or(false))?
+        .start_thread(spec)
+        .await
+        .map_err(Failure::new)?;
     let born_at = Timestamp::now();
     let about = About {
         mcp_off: options.mcp_off.clone(),
@@ -951,7 +956,7 @@ pub async fn stop_here(node: &Arc<Node>, resident: &ResidentId) -> Result<bool, 
         return Ok(true);
     }
     match (about.host.agent.as_str(), about.world_started, &about.session) {
-        ("codex", true, Some(thread)) => node.codex.of(&about)?.interrupt(thread).await.map_err(Failure::new),
+        ("codex", true, Some(thread)) => node.codex.of(node, &about)?.interrupt(thread).await.map_err(Failure::new),
         ("claude", _, _) => crate::claude::stop(node, resident),
         _ => Err(Failure::new(format!("{resident} is a session the World does not hold; stop it where it is open"))),
     }

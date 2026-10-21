@@ -353,7 +353,7 @@ async fn host(node: &Arc<Node>, about: &About, measured: &Measured) -> Result<()
     match about.host.agent.as_str() {
         "codex" => {
             let Some(session) = &about.session else { return Ok(()) };
-            let codex = node.codex.of(about).map_err(|failure| Stop::Failed(failure.message))?;
+            let codex = node.codex.of(node, about).map_err(|failure| Stop::Failed(failure.message))?;
             let deleted = codex
                 .delete(session)
                 .await

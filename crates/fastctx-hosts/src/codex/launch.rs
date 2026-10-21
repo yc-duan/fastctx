@@ -21,6 +21,7 @@ pub struct Launch {
     pub source: ProgramSource,
     pub args: Vec<String>,
     computer_use: Option<toml::Value>,
+    pub(super) assisted_config: Option<toml::Table>,
 }
 
 impl Launch {
@@ -28,7 +29,10 @@ impl Launch {
     /// tool connection require replacing the process. Codex itself writes
     /// project trust into config.toml while starting threads (0.160).
     pub fn same_runtime(&self, other: &Self) -> bool {
-        self.binary == other.binary && self.args == other.args && self.computer_use == other.computer_use
+        self.binary == other.binary
+            && self.args == other.args
+            && self.computer_use == other.computer_use
+            && self.assisted_config == other.assisted_config
     }
 }
 
@@ -79,6 +83,7 @@ pub fn discover(codex_home: &Path, path: Option<&OsString>) -> Result<Option<Lau
                 "app-server".to_string(),
             ],
             computer_use,
+            assisted_config: None,
         }));
     }
     let names: &[&str] = if cfg!(windows) { &["codex.exe", "codex.cmd"] } else { &["codex"] };
@@ -91,6 +96,7 @@ pub fn discover(codex_home: &Path, path: Option<&OsString>) -> Result<Option<Lau
         source: ProgramSource::Path,
         args: vec!["app-server".to_string()],
         computer_use,
+        assisted_config: None,
     }))
 }
 

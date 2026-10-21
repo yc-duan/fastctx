@@ -134,7 +134,7 @@ impl CodexHost {
                 service_tier: entry.selection.service_tier.clone().or_else(|| entry.service_tier.clone()),
             }
         };
-        let effective = super::user_config::effective(&server, &spec).await?;
+        let effective = super::user_config::effective(&server, &spec, self.assisted.is_some()).await?;
         let mut config = effective.config;
         if let Some(effort) = &selection.effort {
             config["model_reasoning_effort"] = json!(effort);

@@ -182,7 +182,7 @@ fn measure_conversations(node: &Node, wanted: Option<&str>) -> io::Result<BTreeM
     let user_home = fastctx_platform::user_home()?;
     let environment = crate::claude::environment().map_err(|failure| io::Error::other(failure.message))?;
     let claude_default = crate::homes::claude_default(&environment, &user_home);
-    let codex_default = node.codex.default().config_home().to_path_buf();
+
     for (name, one) in measured.iter_mut() {
         let Some(Kind::Home(id)) = Kind::of(name) else { continue };
         let directory = world.conversation(&id);
@@ -206,7 +206,12 @@ fn measure_conversations(node: &Node, wanted: Option<&str>) -> io::Result<BTreeM
             "codex" => {
                 if let Some(thread) = &about.session {
                     one.sessions.push(thread.clone());
-                    let home = about.home.clone().unwrap_or_else(|| codex_default.clone());
+                    let home = node
+                        .codex
+                        .of(node, &about)
+                        .map_err(|error| io::Error::other(error.message))?
+                        .session_home()
+                        .to_path_buf();
                     if !rollouts.contains_key(&home) {
                         rollouts.insert(home.clone(), host::codex_rollouts(&home)?);
                     }

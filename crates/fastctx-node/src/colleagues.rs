@@ -204,9 +204,14 @@ pub async fn ask_here(
     let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref(), &acting, home.as_deref()).await?;
     // Until it is claimed below, reports of threads nobody claims are kept.
     let _starting = crate::codex::starting(node);
-    let (thread, model) = node.codex.home(home.as_deref())?.start_thread(spec).await.map_err(|error| {
-        Failure::new(format!("starting Codex on {}, where colleagues live: {error}", node.machine()))
-    })?;
+    let (thread, model) = node
+        .codex
+        .session(home.as_deref(), crate::assists::host::kept(node, &id)?.unwrap_or(false))?
+        .start_thread(spec)
+        .await
+        .map_err(|error| {
+            Failure::new(format!("starting Codex on {}, where colleagues live: {error}", node.machine()))
+        })?;
     let born_at = Timestamp::now();
     let about = About {
         mcp_off: Default::default(),
@@ -306,7 +311,7 @@ pub async fn ask_here(
 /// its own name. Also what it is told of its town by that. `home` is the
 /// Codex login it is of, none for the default one here; a login assisting
 /// another account goes without the hands that work this machine's screen
-/// and browser (`codex::assisting`).
+/// and browser, and has its own instruction and extension home.
 pub async fn thread_spec(
     node: &Arc<Node>,
     id: &ResidentId,
@@ -316,7 +321,13 @@ pub async fn thread_spec(
     home: Option<&std::path::Path>,
 ) -> Result<(ThreadSpec, Heard), Failure> {
     let here = node.machine();
-    let cwd = standing(node, town)?;
+    crate::profile::session::ready(node, acting).await?;
+    let assisting = crate::assists::host::starting(node, id, acting)?;
+    let host = node.codex.session(home, assisting)?;
+    let cwd = match host.assisted_cwd() {
+        Some(cwd) => cwd.to_path_buf(),
+        None => standing(node, town)?,
+    };
     let binary = node.fastctx.clone();
     let address = Address { machine: here.clone(), resident: id.clone() };
     let env = vec![
@@ -334,16 +345,23 @@ pub async fn thread_spec(
             None
         }
     };
-    crate::profile::session::ready(node, acting).await?;
     let mut config = codex::world_tools(&binary, &env, &tools, fastctx_hands::run::window::BUDGET);
     let started = crate::collab::started(node, id)?;
-    if started.as_ref().is_some_and(|started| !started.callee.screen) || node.works_here(acting).is_err() {
+    if !assisting && started.as_ref().is_some_and(|started| !started.callee.screen) {
         let config_home = home.unwrap_or_else(|| node.codex.default().config_home());
         let (servers, plugins) = codex::desktop_hands(config_home).map_err(Failure::new)?;
-        codex::assisting(&mut config, &servers, &plugins);
+        codex::without_desktop(&mut config, &servers, &plugins);
     }
     let user_mcp = crate::profile::session::codex(node, id, acting, &mut config)?;
     crate::session_options::configure(&mut config, crate::session_options::read(node, id)?);
+    let user_mcp = if assisting {
+        let world = config["mcp_servers"][codex::SERVER_NAME].clone();
+        config["mcp_servers"] = serde_json::json!({ codex::SERVER_NAME: world });
+        codex::assisted::configure_thread(&mut config);
+        Default::default()
+    } else {
+        user_mcp
+    };
     let (mut developer_instructions, heard) = instructions(node, id, town, origin, acting, true).await?;
     // The machines and folders the user pointed it at, in the words its
     // thread started with, each time it is resumed (`crate::focus`).

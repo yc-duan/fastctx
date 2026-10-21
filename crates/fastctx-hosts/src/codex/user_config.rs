@@ -4,13 +4,23 @@ use super::{AppServer, ThreadSpec};
 use serde_json::json;
 use std::collections::BTreeSet;
 
-pub(super) async fn effective(server: &AppServer, spec: &ThreadSpec) -> Result<ThreadSpec, String> {
-    if spec.user_mcp.is_empty() {
+pub(super) async fn effective(server: &AppServer, spec: &ThreadSpec, assisting: bool) -> Result<ThreadSpec, String> {
+    if spec.user_mcp.is_empty() && !assisting {
         return Ok(spec.clone());
     }
     let answer = server.request("config/read", json!({"cwd":spec.cwd,"includeLayers":false})).await?;
     let mut occupied: BTreeSet<String> =
         answer["config"]["mcp_servers"].as_object().map(|m| m.keys().cloned().collect()).unwrap_or_default();
+    if assisting {
+        let mut effective = spec.clone();
+        for name in &occupied {
+            if name != super::SERVER_NAME {
+                effective.config["mcp_servers"][name] = json!({"enabled":false});
+            }
+        }
+        super::assisted::configure_thread(&mut effective.config);
+        return Ok(effective);
+    }
     let inherited = occupied.clone();
     let mut effective = spec.clone();
     let servers = effective.config["mcp_servers"].as_object_mut().ok_or("the thread has no MCP table")?;

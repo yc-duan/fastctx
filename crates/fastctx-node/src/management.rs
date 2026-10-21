@@ -93,7 +93,7 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
             let host = match (about.host.agent.as_str(), &about.session, about.world_started) {
                 ("codex", Some(thread), _) => {
                     crate::codex::claim(node, thread, id).await;
-                    match node.codex.of(&about) {
+                    match node.codex.of(node, &about) {
                         Ok(codex) => codex.archive(thread).await.map_err(Failure::new),
                         Err(failure) => Err(failure),
                     }
@@ -158,7 +158,7 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                 return Ok(result);
             }
             let host = match (about.host.agent.as_str(), &about.session) {
-                ("codex", Some(thread)) => match node.codex.of(&about) {
+                ("codex", Some(thread)) => match node.codex.of(node, &about) {
                     Ok(codex) => codex.unarchive(thread).await.map_err(Failure::new),
                     Err(failure) => Err(failure),
                 },
@@ -212,11 +212,11 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                 );
             } else if let Some(session) = &about.session {
                 let effect: Result<bool, Failure> = match (about.host.agent.as_str(), sleeping) {
-                    ("codex", true) => match node.codex.of(&about) {
+                    ("codex", true) => match node.codex.of(node, &about) {
                         Ok(codex) => codex.sleep(session).await.map_err(Failure::new),
                         Err(failure) => Err(failure),
                     },
-                    ("codex", false) => match node.codex.of(&about)?.prepare(session).await {
+                    ("codex", false) => match node.codex.of(node, &about)?.prepare(session).await {
                         Ok(missing) => {
                             if let Some(why) = missing {
                                 step(&mut result, "tools", Outcome::Failed, why);
@@ -307,7 +307,7 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                 )
                 .await
                 {
-                    Ok((spec, _)) => match node.codex.of(&about) {
+                    Ok((spec, _)) => match node.codex.of(node, &about) {
                         Ok(codex) => codex.adopt(thread, spec),
                         Err(failure) => step(&mut result, "host", Outcome::Failed, failure.message),
                     },
