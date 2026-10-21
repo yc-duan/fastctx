@@ -256,8 +256,8 @@ fn claude_native_deny_ownership_is_per_rule() {
     use fastctx_install::claude::tools;
     let original = br#"{"permissions":{"deny":["Bash"],"allow":["Edit","Write"]},"user":true}"#;
     let file = File { path: "settings.json", bytes: Some(original) };
-    let applied = tools::apply(file, None).unwrap();
-    let deleted = tools::apply(File { bytes: None, ..file }, Some(&applied.receipt)).unwrap();
+    let applied = tools::apply(file, None, false).unwrap();
+    let deleted = tools::apply(File { bytes: None, ..file }, Some(&applied.receipt), false).unwrap();
     assert!(deleted.bytes.is_none());
     assert_eq!(deleted.notices.len(), 3);
     let value: serde_json::Value = serde_json::from_slice(applied.bytes.as_ref().unwrap()).unwrap();
@@ -266,7 +266,7 @@ fn claude_native_deny_ownership_is_per_rule() {
     assert_eq!(restored.bytes.as_deref(), Some(original.as_slice()));
 
     let edited = String::from_utf8(applied.bytes.unwrap()).unwrap().replace("\"Grep\"", "\"Grep(project)\"");
-    let repeated = tools::apply(File { bytes: Some(edited.as_bytes()), ..file }, Some(&applied.receipt)).unwrap();
+    let repeated = tools::apply(File { bytes: Some(edited.as_bytes()), ..file }, Some(&applied.receipt), false).unwrap();
     assert_eq!(repeated.bytes.as_deref(), Some(edited.as_bytes()));
     assert_eq!(repeated.notices.len(), 1);
     let taken = tools::unapply(File { bytes: repeated.bytes.as_deref(), ..file }, &repeated.receipt).unwrap();

@@ -202,8 +202,8 @@ function assistedTag(mine: { assist: AssistSeen; owner: string | null }, now: Da
   return `<span class="tag logins-assisted" title="${escape(said)}">${escape(words.assistedFrom(owner ?? "–"))}${until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : ""}</span>`;
 }
 
-/** The World's tools in it wait for the user: what for on hover, and
- *  pressed, the card that puts them in again. */
+/** The World's tools in it could not be brought up to date by themselves:
+ *  why on hover, and pressed, the card that puts them in again. */
 function driftTag(machine: string, login: Login, words: AgentLoginsWords): string {
   const drift = login.drift!;
   const said = drift.kind === "changed" ? words.driftChanged : words.driftAsks;

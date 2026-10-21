@@ -48,6 +48,9 @@ pub const MARKETPLACE: &str = "fastctx";
 /// The plugin's name.
 pub const PLUGIN: &str = "fastctx-world";
 
+/// The version the World's plugin is written as: this fastctx's.
+pub const PLUGIN_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// The permission rule allowing every tool of the plugin's `fastctx` server:
 /// Claude Code names a plugin's MCP tools `mcp__plugin_<plugin>_<server>__…`.
 /// Only this form matches a server's tools; `mcp__*` does not.
@@ -131,7 +134,7 @@ pub fn write_plugin(world: &Path) -> io::Result<PathBuf> {
     let command = format!("{root}/bin/fastctx{}", if cfg!(windows) { ".exe" } else { "" });
     let market = marketplace(world);
     let plugin = plugin_dir(world);
-    let version = env!("CARGO_PKG_VERSION");
+    let version = PLUGIN_VERSION;
     let description = "The World: its tools, and word of what happens in it, for every Claude Code session";
     // The plugin belongs to this World, and its server says so itself: a
     // background session's environment is the Claude Code daemon's, set by

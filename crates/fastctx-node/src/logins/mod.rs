@@ -23,6 +23,7 @@ mod program;
 pub(crate) mod refresh;
 pub(crate) mod remote;
 pub(crate) mod scan;
+pub(crate) mod watch;
 mod sign_in;
 
 use fastctx_types::access::Written;

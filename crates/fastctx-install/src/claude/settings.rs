@@ -76,15 +76,19 @@ pub fn apply(
     original: Option<&[u8]>,
     plan: &ClaudePlan,
     previous: Option<&SettingsReceipt>,
+    take_back: bool,
 ) -> Result<SettingsEdit, String> {
-    apply_limit(original, Limit::output(plan), previous)
+    apply_limit(original, Limit::output(plan), previous, take_back)
 }
 
-/// Raises `limit` only when necessary, as `apply` does the answer's.
+/// Raises `limit` only when necessary, as `apply` does the answer's. With
+/// `take_back`, a value the user changed or removed since is written again
+/// where it no longer allows as much.
 pub fn apply_limit(
     original: Option<&[u8]>,
     limit: Limit,
     previous: Option<&SettingsReceipt>,
+    take_back: bool,
 ) -> Result<SettingsEdit, String> {
     let key = limit.key;
     let document = Document::parse(original.unwrap_or_default())?;
@@ -92,6 +96,7 @@ pub fn apply_limit(
     if let Some(previous) = previous
         && (!matches_written(&document, current, previous)
             || previous.written.parse::<u64>().map_err(|_| "Invalid Claude settings receipt")? >= limit.wanted)
+        && !(take_back && !matches_written(&document, current, previous))
     {
         return Ok(SettingsEdit {
             bytes: original.map(<[u8]>::to_vec),

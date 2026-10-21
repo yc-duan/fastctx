@@ -56,8 +56,10 @@ pub struct Unapplied {
 }
 
 /// Add missing bare deny rules on first install. A receipt, including an empty
-/// one, prevents subsequent apply calls from reclaiming user edits or deletions.
-pub fn apply(file: File<'_>, previous: Option<&Receipt>) -> Result<Applied, String> {
+/// one, prevents subsequent apply calls from reclaiming user edits or deletions,
+/// unless they `take_back`: a rule removed since is added again, one the user
+/// rewrote that still denies the tool stays theirs.
+pub fn apply(file: File<'_>, previous: Option<&Receipt>, take_back: bool) -> Result<Applied, String> {
     if let Some(previous) = previous {
         crate::check_path(file.path, &previous.path).map_err(|error| error.to_string())?;
     }
@@ -96,10 +98,14 @@ pub fn apply(file: File<'_>, previous: Option<&Receipt>) -> Result<Applied, Stri
             };
             if !intact {
                 receipt.rules[index] = None;
-                notices.push(notice(file.path, rule, "changed since apply; left untouched"));
+                if !take_back || !matches.is_empty() {
+                    notices.push(notice(file.path, rule, "changed since apply; left untouched"));
+                }
             }
         }
-        return Ok(Applied { bytes: file.bytes.map(<[u8]>::to_vec), receipt, notices });
+        if !take_back {
+            return Ok(Applied { bytes: file.bytes.map(<[u8]>::to_vec), receipt, notices });
+        }
     }
     if Document::parse(&bytes)?.root.is_none() {
         let document = Document::parse(&bytes)?;

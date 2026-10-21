@@ -42,6 +42,8 @@ pub struct ClaudePlan {
     pub marketplace: PathBuf,
     pub marketplace_name: &'static str,
     pub plugin: &'static str,
+    /// The version the plugin in the marketplace is written as.
+    pub plugin_version: &'static str,
     /// `env.MAX_MCP_OUTPUT_TOKENS` in the user's settings.
     pub max_mcp_output_tokens: u64,
     /// `env.CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH` in the user's settings.
@@ -54,6 +56,7 @@ impl ClaudePlan {
             marketplace: claude::marketplace(world),
             marketplace_name: claude::MARKETPLACE,
             plugin: claude::PLUGIN,
+            plugin_version: claude::PLUGIN_VERSION,
             max_mcp_output_tokens: claude::MAX_MCP_OUTPUT_TOKENS,
             max_mcp_description_length: claude::MAX_MCP_DESCRIPTION_LENGTH,
         }

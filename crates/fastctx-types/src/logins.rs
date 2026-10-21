@@ -153,11 +153,11 @@ pub struct Login {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Drift {
-    /// Something the World put in was changed since, and is left as it is:
-    /// where, and how.
+    /// The World's tools could not be brought up to date by themselves:
+    /// where, and why. An older fastctx said so of what the user changed.
     Changed { location: String, reason: String },
-    /// Bringing them up to date raises Codex's shared output limit, which
-    /// only the user may.
+    /// Said by an older fastctx: bringing them up to date raises Codex's
+    /// shared output limit, which it left to the user.
     Asks { limit: OutputLimit },
 }
 

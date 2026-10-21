@@ -74,7 +74,7 @@ fn claude_2_1_287_effective_output_limit() {
         ("{}", false),
     ] {
         let original = format!("{{\"env\":{{\"MAX_MCP_OUTPUT_TOKENS\":{raw}}}}}");
-        let edit = settings::apply(Some(original.as_bytes()), &plan, None).unwrap();
+        let edit = settings::apply(Some(original.as_bytes()), &plan, None, false).unwrap();
         assert_eq!(edit.outcome == SettingsOutcome::Sufficient, sufficient, "{raw}");
         let restored = settings::unapply(edit.bytes.as_deref(), edit.receipt.as_ref()).unwrap();
         assert_eq!(restored.bytes.as_deref(), Some(original.as_bytes()), "{raw}");

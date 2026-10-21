@@ -153,6 +153,11 @@ impl Target {
         if let Some(market) = self.market(state) {
             self.check_market(market)?;
         }
+        self.plugins_preflight(state)
+    }
+    /// The checks of `preflight` but the marketplace's source, which an
+    /// apply sets right.
+    fn plugins_preflight(&self, state: &PluginState) -> Result<(), String> {
         for p in &state.installations {
             if p.id.split('@').next() == Some(&self.plugin) && (p.id != self.id() || p.scope != "user") {
                 return Err(format!("Claude already has {} in {} scope; it was left unchanged", p.id, p.scope));
@@ -181,6 +186,7 @@ impl Target {
             }
             Mutation::EnablePlugin => PluginCommand::new(&["plugin", "enable", &self.id(), "--scope", "user"]),
             Mutation::DisablePlugin => PluginCommand::new(&["plugin", "disable", &self.id(), "--scope", "user"]),
+            Mutation::UpdatePlugin => PluginCommand::new(&["plugin", "update", &self.id(), "--scope", "user"]),
             Mutation::RemoveMarketplace => {
                 PluginCommand::new(&["plugin", "marketplace", "remove", &self.name, "--scope", "user"])
             }
@@ -196,6 +202,8 @@ pub enum Mutation {
     RemoveMarketplace,
     EnablePlugin,
     DisablePlugin,
+    /// Claude Code's record of the plugin brought to the marketplace's version.
+    UpdatePlugin,
 }
 
 /// Progress for fastctx's reserved marketplace and user installation. Their
@@ -215,6 +223,10 @@ pub struct PluginReceipt {
     /// A post-command public snapshot was obtained in the executing process.
     /// This distinguishes a completed observation from an interrupted query.
     pub pending_observed: bool,
+    /// The version Claude Code's record of the plugin was last brought to,
+    /// so a record its update leaves as it was is not updated again.
+    #[serde(default)]
+    pub updated: Option<String>,
 }
 
 impl PluginReceipt {
@@ -228,6 +240,7 @@ impl PluginReceipt {
             unconfirmed_install: false,
             pending: None,
             pending_observed: false,
+            updated: None,
         }
     }
     pub fn has_work(&self) -> bool {
@@ -262,31 +275,48 @@ pub struct PluginApply {
     before: PluginState,
     original_receipt: PluginReceipt,
     actions: Vec<Mutation>,
+    /// The version the plugin in the marketplace is written as.
+    #[serde(default)]
+    version: Option<String>,
 }
 
 impl PluginApply {
     pub fn prepare(plan: &ClaudePlan, before: PluginState, previous: Option<&PluginReceipt>) -> Result<Self, String> {
         let target = Target::new(plan)?;
-        target.preflight(&before)?;
+        target.plugins_preflight(&before)?;
         if previous.is_some_and(|receipt| receipt.target != target) {
             return Err("Claude receipt belongs to a different marketplace".into());
         }
         let mut receipt = PluginReceipt::empty(target.clone());
         capture_current(&mut receipt, &before);
+        receipt.updated = previous.and_then(|previous| previous.updated.clone());
         let mut actions = Vec::new();
-        if target.market(&before).is_none() {
+        // The marketplace of the World's name is the World's: pointed at
+        // another source, it is pointed at the World's again.
+        let moved = target.market(&before).is_some_and(|market| target.check_market(market).is_err());
+        if moved {
+            actions.push(Mutation::RemoveMarketplace);
+        }
+        if moved || target.market(&before).is_none() {
             actions.push(Mutation::AddMarketplace);
         }
         match target.installation(&before) {
             None => actions.push(Mutation::InstallPlugin),
+            Some(_) if moved => actions.push(Mutation::InstallPlugin),
             Some(plugin) if !plugin.errors.is_empty() => {
                 actions.push(Mutation::UninstallPlugin);
                 actions.push(Mutation::InstallPlugin);
             }
-            Some(plugin) if !plugin.enabled => actions.push(Mutation::EnablePlugin),
-            _ => {}
+            Some(plugin) => {
+                if !plugin.enabled {
+                    actions.push(Mutation::EnablePlugin);
+                }
+                if stale(plugin, &receipt, plan.plugin_version) {
+                    actions.push(Mutation::UpdatePlugin);
+                }
+            }
         }
-        Ok(Self { before, original_receipt: receipt, actions })
+        Ok(Self { before, original_receipt: receipt, actions, version: Some(plan.plugin_version.into()) })
     }
 
     pub fn commands(&self) -> Vec<PluginCommand> {
@@ -295,7 +325,7 @@ impl PluginApply {
 
     pub fn execute(&self, host: &mut impl PluginHost) -> Result<PluginReceipt, PluginFailure> {
         let mut receipt = self.original_receipt.clone();
-        if let Err(message) = present(host, &mut receipt) {
+        if let Err(message) = present(host, &mut receipt, self.version.as_deref()) {
             let rollback_error = baseline(host, &mut receipt, &self.before).err();
             return Err(PluginFailure { message, receipt: Box::new(receipt), rollback_error });
         }
@@ -403,9 +433,18 @@ fn mutate(host: &mut impl PluginHost, receipt: &mut PluginReceipt, action: Mutat
     Ok(state)
 }
 
-fn present(host: &mut impl PluginHost, receipt: &mut PluginReceipt) -> Result<(), String> {
+fn present(host: &mut impl PluginHost, receipt: &mut PluginReceipt, version: Option<&str>) -> Result<(), String> {
     let mut state = snapshot(host)?;
-    receipt.target.preflight(&state)?;
+    receipt.target.plugins_preflight(&state)?;
+    if receipt.target.market(&state).is_some_and(|market| receipt.target.check_market(market).is_err()) {
+        if receipt.target.members(&state).any(|plugin| plugin.id != receipt.target.id()) {
+            return Err("The fastctx marketplace points at another source and holds another plugin; it was left unchanged".into());
+        }
+        state = mutate(host, receipt, Mutation::RemoveMarketplace)?;
+        if receipt.target.market(&state).is_some() {
+            return Err("Claude marketplace remains after removal (another scope may still declare it)".into());
+        }
+    }
     if receipt.target.market(&state).is_none() {
         state = mutate(host, receipt, Mutation::AddMarketplace)?;
         receipt.target.check_market(receipt.target.market(&state).ok_or("Claude did not add the marketplace")?)?;
@@ -424,6 +463,14 @@ fn present(host: &mut impl PluginHost, receipt: &mut PluginReceipt) -> Result<()
     }
     if receipt.target.installation(&state).is_some_and(|plugin| !plugin.enabled) {
         state = mutate(host, receipt, Mutation::EnablePlugin)?;
+    }
+    // Sessions read the marketplace's plugin in place; Claude Code's record
+    // of it is brought along, once for each version.
+    if let Some(version) = version
+        && receipt.target.installation(&state).is_some_and(|plugin| stale(plugin, receipt, version))
+    {
+        state = mutate(host, receipt, Mutation::UpdatePlugin)?;
+        receipt.updated = Some(version.into());
     }
     receipt.target.check_plugin(receipt.target.installation(&state).ok_or("Claude plugin is missing")?)?;
     capture_current(receipt, &state);
@@ -484,6 +531,12 @@ fn baseline(host: &mut impl PluginHost, receipt: &mut PluginReceipt, before: &Pl
     receipt.pending_observed = false;
     receipt.unconfirmed_install = false;
     host.checkpoint(receipt)
+}
+
+/// Whether Claude Code records `plugin` at another version than `version`,
+/// and was not already brought to it.
+fn stale(plugin: &Installation, receipt: &PluginReceipt, version: &str) -> bool {
+    plugin.version != version && receipt.updated.as_deref() != Some(version)
 }
 
 fn paths_match(a: &Path, b: &Path) -> bool {

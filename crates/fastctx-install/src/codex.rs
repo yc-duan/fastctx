@@ -150,6 +150,15 @@ pub fn apply(
                     });
                 } else if !take_back {
                     check_server(&source, server)?;
+                } else if let Some(command) = foreign(&source, plan) {
+                    // Rewriting it here would be synced back and break the
+                    // computer it came from, which would rewrite it again.
+                    return Err(Error::at(
+                        format!("{}: mcp_servers.fastctx", config.path),
+                        shared::conflict(&format!(
+                            "its command {command} is not on this computer, as in a configuration synced from another"
+                        )),
+                    ));
                 }
             }
         }
@@ -233,7 +242,8 @@ pub fn apply(
         applied.receipt.original_existed = existed;
     }
     receipt.guidance = Some(applied.receipt);
-    let (config, tools, tool_notices) = tools::apply(&bytes, config.path, receipt.tools.as_ref(), reinstall)?;
+    let (config, tools, tool_notices) =
+        tools::apply(&bytes, config.path, receipt.tools.as_ref(), reinstall || take_back)?;
     bytes = config;
     receipt.tools = Some(tools);
     notices.extend(tool_notices);
@@ -475,6 +485,14 @@ fn check_server(source: &Source<'_>, server: &Server) -> Result<(), Error> {
             shared::conflict("the server's keys or values differ from the recorded values; left it in place"),
         ))
     }
+}
+
+/// The command of the server in `source` when it names a fastctx this
+/// computer does not have: another computer's, in a configuration synced here.
+fn foreign(source: &Source, plan: &CodexPlan) -> Option<String> {
+    let command = source.item(&["mcp_servers", "fastctx", "command"])?.as_str()?;
+    let path = Path::new(command);
+    (path.is_absolute() && path != plan.command && !path.exists()).then(|| command.to_string())
 }
 
 pub(crate) fn portable_on_path(home: &Path) -> Result<bool, String> {

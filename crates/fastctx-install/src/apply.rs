@@ -489,13 +489,14 @@ pub fn apply_reporting(
         let previous = read_plugin_record(&plugin_record, initial_settings.path(), &record)?;
         fastctx_hosts::claude::write_plugin(&places.world).map_err(io("writing the World's plugin"))?;
         let plan = ClaudePlan::new(&places.world);
-        settings::apply(initial_settings.bytes(), &plan, record.settings.as_ref()).map_err(Error::Claude)?;
-        settings::apply_limit(initial_settings.bytes(), Limit::description(&plan), record.description.as_ref())
+        settings::apply(initial_settings.bytes(), &plan, record.settings.as_ref(), edits == Edits::TakeBack).map_err(Error::Claude)?;
+        settings::apply_limit(initial_settings.bytes(), Limit::description(&plan), record.description.as_ref(), edits == Edits::TakeBack)
             .map_err(Error::Claude)?;
         let settings_path = text(initial_settings.path());
         crate::claude::tools::apply(
             File { path: &settings_path, bytes: initial_settings.bytes() },
             record.claude_tools.as_ref(),
+            edits == Edits::TakeBack,
         )
         .map_err(Error::Claude)?;
         let settings_created = record.settings_created
@@ -527,16 +528,17 @@ pub fn apply_reporting(
         let edit = (|| {
             let settings_file = Snapshot::read(places.claude_home.join("settings.json"))?;
             let edit =
-                settings::apply(settings_file.bytes(), &plan, record.settings.as_ref()).map_err(Error::Claude)?;
+                settings::apply(settings_file.bytes(), &plan, record.settings.as_ref(), edits == Edits::TakeBack).map_err(Error::Claude)?;
             settings_notice(&mut report, settings_file.path(), Limit::output(&plan).key, &edit);
             let described =
-                settings::apply_limit(edit.bytes.as_deref(), Limit::description(&plan), record.description.as_ref())
+                settings::apply_limit(edit.bytes.as_deref(), Limit::description(&plan), record.description.as_ref(), edits == Edits::TakeBack)
                     .map_err(Error::Claude)?;
             settings_notice(&mut report, settings_file.path(), Limit::description(&plan).key, &described);
             let path = text(settings_file.path());
             let tools = crate::claude::tools::apply(
                 File { path: &path, bytes: described.bytes.as_deref() },
                 record.claude_tools.as_ref(),
+                edits == Edits::TakeBack,
             )
             .map_err(Error::Claude)?;
             report.notices.extend(tools.notices);

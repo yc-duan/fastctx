@@ -113,14 +113,15 @@ fn claude(
             PluginApply::prepare(&plan, state, previous.as_ref().map(|r| &r.receipt)).map_err(Error::Claude)?;
         preview.commands =
             planned.commands().iter().map(|command| format!("claude {}", command.args.join(" "))).collect();
-        let edit = settings::apply(settings_file.bytes(), &plan, record.settings.as_ref()).map_err(Error::Claude)?;
+        let edit = settings::apply(settings_file.bytes(), &plan, record.settings.as_ref(), edits == Edits::TakeBack).map_err(Error::Claude)?;
         kept_limit(preview, settings_file.path(), Limit::output(&plan).key, &edit);
-        let edit = settings::apply_limit(edit.bytes.as_deref(), Limit::description(&plan), record.description.as_ref())
+        let edit = settings::apply_limit(edit.bytes.as_deref(), Limit::description(&plan), record.description.as_ref(), edits == Edits::TakeBack)
             .map_err(Error::Claude)?;
         kept_limit(preview, settings_file.path(), Limit::description(&plan).key, &edit);
         let tools = crate::claude::tools::apply(
             File { path: &settings_path, bytes: edit.bytes.as_deref() },
             record.claude_tools.as_ref(),
+            edits == Edits::TakeBack,
         )
         .map_err(Error::Claude)?;
         preview.kept.extend(tools.notices.into_iter().map(kept));

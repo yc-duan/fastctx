@@ -23,9 +23,10 @@ pub struct ApplyArgs {
     /// without this.
     #[arg(long)]
     raise_output_limit: bool,
-    /// Rewrite what the World put in that was changed since: Codex's
-    /// mcp_servers.fastctx entry and the fastctx block in AGENTS.md or
-    /// CLAUDE.md; the rest of each file stays as it is.
+    /// Rewrite what the World put in that was changed since as this fastctx
+    /// writes it: Codex's mcp_servers.fastctx entry and native tool settings,
+    /// Claude Code's limits and denied tools, and the fastctx block in
+    /// AGENTS.md or CLAUDE.md; the rest of each file stays as it is.
     #[arg(long)]
     take_back: bool,
 }

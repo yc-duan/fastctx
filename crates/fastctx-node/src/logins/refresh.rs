@@ -1,7 +1,8 @@
 //! Keeping the World's tools in this machine's logins as its fastctx writes
 //! them (`world-agent-logins.md`, 接入跟着版本走): each login they are in is
-//! brought up to date when the node starts and after a scan, one change at
-//! a time with the user's own; what waits for the user stays in the record
+//! brought up to date by itself when the node starts, after a scan and when
+//! one of the files the World writes in it changes (`watch`), one change at
+//! a time with the user's own; what could not be done stays in the record
 //! until a change of that login settles it.
 
 use std::path::{Path, PathBuf};
@@ -57,27 +58,26 @@ fn every(node: &Node) -> Option<Vec<(AgentName, PathBuf, Drift)>> {
         let shown = dir.display();
         match refreshed {
             Ok(Refresh::Out | Refresh::Current) => {}
-            Ok(Refresh::Refreshed(files)) => {
-                let files = files.iter().map(|file| file.display().to_string()).collect::<Vec<_>>().join(", ");
-                node.log
-                    .line(format_args!("brought the World's tools in the {agent} login {shown} up to date: {files}"));
+            Ok(Refresh::Refreshed { files, commands, kept }) => {
+                let done = files.iter().map(|file| file.display().to_string()).chain(commands).collect::<Vec<_>>().join(", ");
+                let kept = kept.map(|kept| format!("; what was taken back is kept in {}", kept.display())).unwrap_or_default();
+                node.log.line(format_args!(
+                    "brought the World's tools in the {agent} login {shown} up to date: {done}{kept}"
+                ));
             }
             Ok(Refresh::Changed { location, reason }) => {
                 node.log.line(format_args!(
-                    "left the World's tools in the {agent} login {shown} as they are: {location}: {reason}"
+                    "could not bring the World's tools in the {agent} login {shown} up to date: {location}: {reason}"
                 ));
                 waiting.push((agent, dir, Drift::Changed { location, reason }));
             }
-            Ok(Refresh::Asks(limit)) => {
+            Err(error) => {
                 node.log.line(format_args!(
-                    "the World's tools in the {agent} login {shown} wait for the user to raise {} from {} to {}",
-                    limit.location, limit.current, limit.requested
+                    "could not bring the World's tools in the {agent} login {shown} up to date: {error}"
                 ));
-                waiting.push((agent, dir, Drift::Asks { limit }));
+                let location = shown.to_string();
+                waiting.push((agent, dir, Drift::Changed { location, reason: error.to_string() }));
             }
-            Err(error) => node.log.line(format_args!(
-                "could not bring the World's tools in the {agent} login {shown} up to date: {error}"
-            )),
         }
     }
     Some(waiting)

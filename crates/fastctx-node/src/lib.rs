@@ -671,6 +671,7 @@ pub async fn run_prepared(
             integrating.log.line(format_args!("settling the World's tools in the logins: {error}"));
         }
         logins::refresh::all(&integrating).await;
+        logins::watch::start(&integrating);
     });
 
     if let Some(supervision) = supervision {
