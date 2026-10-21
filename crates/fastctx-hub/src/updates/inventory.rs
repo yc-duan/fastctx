@@ -67,27 +67,28 @@ pub(super) fn offer_to(hub: &Hub, name: &MachineName, network: &mut Network) {
         (updates.cache.clone(), updates.manifests().collect::<Vec<_>>())
     };
     let held = held(hub, &cache);
+    network.stable = network.stable.take().and_then(|newest| standing(&known, &newest, &targets, &held));
+    network.beta = network.beta.take().and_then(|newest| standing(&known, &newest, &targets, &held));
+}
+
+/// The release of `newest`'s line a machine updating through the network is
+/// offered: `newest` once the hub holds its packages for `targets` whole, and
+/// until then, or if one of them never comes, the newest it does hold whole.
+fn standing(known: &[Manifest], newest: &Manifest, targets: &PackageTargets, held: &BTreeSet<Held>) -> Option<Manifest> {
     let ready = |m: &Manifest| {
-        let wanted = for_targets(m, &targets);
+        let wanted = for_targets(m, targets);
         !wanted.is_empty() && wanted.iter().all(|p| held.contains(p))
     };
-    // While a newer release is still coming in, or one of its packages never
-    // comes, the newest of the same line held whole for this machine stands.
-    let standing = |newest: Option<Manifest>| -> Option<Manifest> {
-        let newest = newest?;
-        if ready(&newest) {
-            return Some(newest);
-        }
-        let ceiling = newest.semver()?;
-        known
-            .iter()
-            .filter(|m| m.semver().is_some_and(|v| v.pre.is_empty() == ceiling.pre.is_empty() && v < ceiling))
-            .filter(|m| ready(m))
-            .max_by_key(|m| m.semver())
-            .cloned()
-    };
-    network.stable = standing(network.stable.take());
-    network.beta = standing(network.beta.take());
+    if ready(newest) {
+        return Some(newest.clone());
+    }
+    let ceiling = newest.semver()?;
+    known
+        .iter()
+        .filter(|m| m.semver().is_some_and(|v| v.pre.is_empty() == ceiling.pre.is_empty() && v < ceiling))
+        .filter(|m| ready(m))
+        .max_by_key(|m| m.semver())
+        .cloned()
 }
 
 /// The packages of `manifest` the network's machines need, and how many
@@ -150,19 +151,33 @@ pub(super) fn ready_network(hub: &Hub, mut network: Network) -> Network {
 
 /// Only live demand retains an older version; time is never a reason to delete it.
 pub(crate) fn prune(hub: &Hub) {
-    let (cache, manifests) = {
+    let (cache, manifests, through_network) = {
         let updates = hub.updates.lock().expect("never poisoned");
-        (updates.cache.clone(), updates.manifests().collect::<Vec<_>>())
+        let through: Vec<_> =
+            updates.last.iter().filter(|(_, last)| last.report.needs_network()).map(|(key, _)| *key).collect();
+        (updates.cache.clone(), updates.manifests().collect::<Vec<_>>(), through)
     };
+    let held = held(hub, &cache);
     let versions = cache.versions();
     let mut newest = std::collections::BTreeMap::<_, Manifest>::new();
-    for manifest in manifests {
+    for manifest in &manifests {
         let channel = fastctx_types::update::Channel::of(&manifest.version);
         if newest.get(&channel).is_none_or(|old| manifest.semver() > old.semver()) {
-            newest.insert(channel, manifest);
+            newest.insert(channel, manifest.clone());
         }
     }
-    let mut keep: BTreeSet<String> = newest.into_values().map(|m| m.version).collect();
+    let mut keep: BTreeSet<String> = newest.values().map(|m| m.version.clone()).collect();
+    // What a machine updating through the network is offered while a newer
+    // release comes in stays until the newer one is whole for it.
+    {
+        let store = hub.store();
+        for key in &through_network {
+            let targets = store.hub.package_targets.get(key).cloned().unwrap_or_default();
+            for top in newest.values() {
+                keep.extend(standing(&manifests, top, &targets, &held).map(|m| m.version));
+            }
+        }
+    }
     // A queued demand and a new owner cannot enter between the decision and
     // the rename. Deleting the retired directory needs neither shared lock.
     let store = hub.store();
