@@ -132,6 +132,9 @@ pub async fn wake(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Resul
     if super::running(node, home, session).await? {
         return Ok(());
     }
+    // A Claude Code older than the World takes is not started, as on every
+    // other way a session starts.
+    super::oldest::check(node, &super::command(node, home)?).await?;
     let output = run(node, home, vec!["--resume".into(), session.into(), "--bg".into()]).await?;
     let started = background::started(&output).ok_or_else(|| {
         Failure::new(format!("Claude Code did not identify the resumed background session: {output}"))

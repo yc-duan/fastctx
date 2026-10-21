@@ -41,7 +41,8 @@ pub(crate) async fn relay(
             .filter(|_| held.app.as_ref().is_some_and(|app| app.version == fetch.version))
             .map(|dir| dir.join(format!("{}.tar.gz", fetch.target)))
             .filter(|path| path.is_file());
-        (held.settings.relays, carried)
+        // Its owner's choice is known only once its settings are read.
+        (held.settings.relays && held.started, carried)
     };
     if !relays {
         return Err("this machine neither holds the package nor fetches for others".into());

@@ -319,7 +319,8 @@ pub(crate) fn report(node: &Node) {
         app: held.app.clone(),
         github: held.looked.github,
         found,
-        relays: held.settings.relays,
+        // Its owner's choice is known only once its settings are read.
+        relays: held.settings.relays && held.started,
         holds,
         asked: None,
         hub_here: false,

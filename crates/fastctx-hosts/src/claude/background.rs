@@ -103,9 +103,10 @@ pub fn started(printed: &str) -> Option<String> {
 /// How Claude Code refuses to start a session in a directory not trusted.
 pub const UNTRUSTED: &str = "Workspace not trusted";
 
-/// The one way to wake a stopped session as it was.
+/// The one way to wake a stopped session as it was. The words follow `--`,
+/// as when a session starts: words that begin with `-` are not options.
 pub fn wake_args(session: &str, words: &str) -> Vec<OsString> {
-    vec!["--resume".into(), session.into(), "--bg".into(), words.into()]
+    vec!["--resume".into(), session.into(), "--bg".into(), "--".into(), words.into()]
 }
 
 /// Runs `claude` with `args` in `cwd` and the environment `env`, and
