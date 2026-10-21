@@ -763,7 +763,6 @@ const projectActs = new ProjectActs({
     const world = store.world.peek();
     return [...residentsOf(world, true), ...unreachedOf(world, true)].filter((r) => r.town === town);
   },
-  forget: (r) => talkActs.delete(r),
   deleted: (town) => {
     // A page of the project deleted is left for the front page.
     const at = placeOf(location.hash);

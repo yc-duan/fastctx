@@ -29,6 +29,8 @@ export interface TalkRowWords {
   span(ms: number): string;
   /** The kind of device, for a screen reader: "laptop". */
   device(form: "desktop" | "laptop" | "server"): string;
+  /** It was forked from another conversation. */
+  forked: string;
 }
 
 /** What a row says of the user's own acts on it. */
@@ -92,12 +94,16 @@ export function talkRow(r: ResidentNow, place: Place, now: Date, facts: Map<stri
     acts?.renaming !== null && acts?.renaming !== undefined
       ? `<input class="talk-rename" value="${escape(acts.renaming)}" aria-label="${escape(name)}" spellcheck="false" autocomplete="off">`
       : `<span class="talk-name" title="${escape([name, name === someone ? "" : someone].filter(Boolean).join("\n"))}">${escape(name)}</span>`;
+  // A fork says so beside its name, quietly.
+  const titled = r.about.forked_from && !acts?.renaming
+    ? `<span class="talk-named">${named}<span class="talk-forked" title="${escape(words.forked)}" aria-label="${escape(words.forked)}">${glyph("fork", 13)}</span></span>`
+    : named;
   const stateCell = deleting
     ? `<span class="talk-state">${escape(state)}</span>`
     : `<span class="talk-state" title="${escape(state)}"><span class="mark${kind ? ` ${kind}` : ""}" aria-hidden="true"></span><span class="spoken">${escape(state)}</span></span>`;
   return `<li class="talk-item"${acts ? ` data-own-press data-machine="${escape(address.machine)}" data-resident="${escape(address.resident)}"` : ""}><a class="talk-row${kind ? ` ${kind}` : ""}${archived ? " archived" : ""}${current ? " current" : ""}" href="${link({ kind: "talk", address })}"${current ? ' aria-current="page"' : ""}>
     <span class="talk-host" title="${escape(agent)}">${host}</span>
-    ${named}
+    ${titled}
     ${stateCell}
     <span class="talk-device" title="${escape(device)}" aria-label="${escape(assisting !== null ? device : `${words.device(form)} ${r.about.machine}`)}">${glyph(assisting !== null ? "colleague" : form, 16)}</span>
   </a>${acts && !deleting ? quick(acts, archived, name) : ""}</li>`;

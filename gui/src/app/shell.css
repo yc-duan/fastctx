@@ -492,6 +492,20 @@ body {
   white-space: nowrap;
 }
 
+/* A fork: its name, and beside it a quiet mark. */
+.talk-named {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.talk-forked {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-3);
+}
+
 .talk-row.mark-ask .talk-name {
   color: var(--text-strong);
 }

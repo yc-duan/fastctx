@@ -17,6 +17,8 @@ import { en as conversationEn, zh as conversationZh } from "../words";
 export interface ShellWords {
   /** An agent assisting the user, as whose it is, never its machine. */
   someoneAssisting(agent: string, owner: string): string;
+  /** A conversation forked from another. */
+  forked: string;
   app: string;
   world: string;
   projects: string;
@@ -1638,6 +1640,7 @@ export const zhShell: ShellWords = {
   backTo: (page) => `返回${page}`,
   someone: (agent, machine) => `${machine} 上的 ${agent}`,
   someoneAssisting: (agent, owner) => `${owner} 的 ${agent}`,
+  forked: "分叉出来的对话",
   colleagueFor: (asker) => `${asker} 调用的模型`,
   busy: (lasted) => `工作中　${lasted}`,
   idle: "空闲",
@@ -1690,6 +1693,7 @@ export const enShell: ShellWords = {
   backTo: (page) => `Back to ${page}`,
   someone: (agent, machine) => `${agent} on ${machine}`,
   someoneAssisting: (agent, owner) => `${owner}'s ${agent}`,
+  forked: "Forked from another conversation",
   colleagueFor: (asker) => `called by ${asker}`,
   busy: (lasted) => `working, ${lasted}`,
   idle: "idle",

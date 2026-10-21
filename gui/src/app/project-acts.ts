@@ -87,8 +87,6 @@ export interface ProjectActsOptions {
   change(login: Login, change: AccountChange): Promise<void>;
   /** The reader's conversations in the project `town`, archived ones too. */
   conversations(town: string): ResidentNow[];
-  /** Deletes a conversation everywhere, as its own "⋯" does. */
-  forget(r: ResidentNow): void;
   /** `town` was deleted: a page of it is left. */
   deleted(town: string): void;
 }
@@ -139,24 +137,21 @@ export class ProjectActs {
     else if (act === "delete") this.remove(town, name);
   }
 
-  /** Deletes the project after a red card says what goes: the project and
-   *  its records first, then the reader's conversations that were in it, as
-   *  each one's own deletion does. A project the server keeps leaves every
-   *  conversation as it was. */
+  /** Deletes the project after a red card says what goes. The hub deletes
+   *  it whole: each machine deletes the owner's conversations that were in
+   *  it and moves the others' out, a machine away doing so when it is back.
+   *  A project the hub keeps leaves every conversation as it was. */
   private remove(town: string, name: string): void {
     const hold = this.hold(town);
     if (!hold?.mine) return;
-    const { words, change, store, confirm, conversations, forget, deleted } = this.options;
+    const { words, change, store, confirm, conversations, deleted } = this.options;
     const talks = conversations(town);
     const shared = hold.project.granted.length > 0;
     confirm.ask({
       title: words.removeTitle(name),
       what: shared ? `${words.removeWhat(talks.length)}${words.removeShared}` : words.removeWhat(talks.length),
       go: words.removeGo,
-      act: async () => {
-        await change(hold.login, { change: "delete_project", town });
-        for (const r of talks) forget(r);
-      },
+      act: () => change(hold.login, { change: "delete_project", town }),
       done: () => {
         deleted(town);
         void store.refresh();

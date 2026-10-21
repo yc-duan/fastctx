@@ -35,6 +35,8 @@ export interface About {
   /** The agent's home it works in, as its machine writes it, when not the
    *  default one there: which of that machine's logins it uses. */
   home?: string;
+  /** The conversation it was forked from, even after that one is deleted. */
+  forked_from?: Address;
 }
 
 export type Activity = "busy" | "idle" | "asleep";
