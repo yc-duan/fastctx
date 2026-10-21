@@ -967,7 +967,7 @@ const updateCard = new UpdateCard(appUpdates, updateWords, live ? !onComputer() 
   count: async () => {
     const world = store.world.peek();
     for (const login of loginsOf(world?.accounts)) {
-      const reply = await askUpdatesView(login.hub, login.account, { do: "view" }).catch(() => null);
+      const reply = await askUpdatesView(login.hubName, login.account, { do: "view" }).catch(() => null);
       if (reply?.kind === "view") return reply.view.machines.filter((one) => one.machine !== world?.here && one.offer && one.actions.update.allowed).length;
     }
     return 0;

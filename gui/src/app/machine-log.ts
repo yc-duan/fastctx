@@ -90,7 +90,7 @@ export class MachineLog {
     this.state = "loading";
     this.draw();
     try {
-      const page = await this.read(login.hub, login.account, this.records.length ? this.next : null);
+      const page = await this.read(login.hubName, login.account, this.records.length ? this.next : null);
       this.records.push(...page.records);
       this.next = page.next_before;
       this.state = "idle";

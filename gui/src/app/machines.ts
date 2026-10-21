@@ -746,7 +746,7 @@ export class MachinesPage implements Page {
     const world = this.options.store.world.peek();
     if (!updates || !world) return;
     const logins = loginsOf(world.accounts);
-    const answers = await Promise.allSettled(logins.map((login) => updates.ask(login.hub, login.account, { do: "view" })));
+    const answers = await Promise.allSettled(logins.map((login) => updates.ask(login.hubName, login.account, { do: "view" })));
     const views = new Map<string, UpdatesView>();
     const byName = new Map<string, MachineUpdate>();
     const from = new Map<string, Login>();
@@ -863,7 +863,7 @@ export class MachinesPage implements Page {
     }
     for (const { login, names } of byLogin.values()) {
       try {
-        const reply = await updates.ask(login.hub, login.account, { do: "schedule", machines: names, version });
+        const reply = await updates.ask(login.hubName, login.account, { do: "schedule", machines: names, version });
         if (reply.kind !== "scheduled") continue;
         for (const result of reply.results) {
           if (result.done) this.updatesSaid.delete(result.machine);
@@ -905,10 +905,10 @@ export class MachinesPage implements Page {
     const updates = this.options.updates;
     if (!updates) return;
     const entry = [...this.updateViews.entries()].find(([, view]) => view.policy);
-    if (!entry) return;
-    const [hub, account] = entry[0].split("\n") as [string, string];
+    const login = entry && loginsOf(this.options.store.world.peek()?.accounts).find((one) => `${one.hub}\n${one.account}` === entry[0]);
+    if (!login) return;
     try {
-      await updates.ask(hub, account, { do: "policy", minimum, managed_auto: managedAuto });
+      await updates.ask(login.hubName, login.account, { do: "policy", minimum, managed_auto: managedAuto });
     } catch (error) {
       this.note = { machine: "", text: error instanceof Error ? error.message : String(error) };
     }
