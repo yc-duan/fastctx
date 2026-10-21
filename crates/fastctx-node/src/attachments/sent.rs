@@ -143,11 +143,11 @@ async fn commit_held(
     {
         return Err(failure("the uploaded receipt differs from its reservation"));
     }
+    // A remote image comes with its small picture for history, unless it is
+    // of a kind the thumbnails cannot read, and history has none of it.
     if let Some(preview) = &preview {
         validate_preview(preview, &attachment)?;
         put(&directory.join("preview.json"), preview)?;
-    } else if attachment.is_image() && !node.is_me(&attachment.owner.machine) {
-        return Err(failure("a remote image needs its small history preview"));
     }
     if !node.is_me(&attachment.owner.machine) {
         put(&directory.join("reference.json"), &attachment)?;
@@ -238,8 +238,15 @@ async fn complete_sent(node: &Arc<Node>, from: &MachineName, prepared: Prepared)
         None => prepared.attachment,
     };
     let home = &attachment.conversation().machine;
+    // A picture of a kind the thumbnails cannot read still goes, without one.
     let preview = if attachment.is_image() && !node.is_me(home) {
-        Some(crate::thumbnail::history(node, attachment.clone()).await?)
+        match crate::thumbnail::history(node, attachment.clone()).await {
+            Ok(preview) => Some(preview),
+            Err(error) => {
+                node.log.line(format_args!("no small picture of an attachment kept elsewhere: {error}"));
+                None
+            }
+        }
     } else {
         None
     };
