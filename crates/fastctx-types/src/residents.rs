@@ -47,6 +47,9 @@ pub struct About {
     pub machine: MachineName,
     pub born_at: Timestamp,
     pub origin: Origin,
+    /// The conversation this one was forked from, even after its source is deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<Address>,
     /// The session or thread id on the host's side, when there is one.
     pub session: Option<String>,
     /// The World started the session and reaches it itself: a thread of

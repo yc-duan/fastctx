@@ -61,7 +61,9 @@ pub(crate) fn ask(
     let conversation = {
         let store = hub.store();
         let directory = &store.book.directory;
-        if !directory.logged_in(asker, &account) {
+        if !(directory.logged_in(asker, &account)
+            || directory.same(asker, &conversation.machine) && directory.may_act_for(&account, asker))
+        {
             return Err(format!("{asker} is not logged in to the account {account}"));
         }
         let home = directory

@@ -17,6 +17,10 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     if let Some(why) = super::fork_ready::pending(node, resident)? {
         return Err(Failure::new(why));
     }
+    let birth = node.claude.births.read().await;
+    let gate = node.residents.management(resident)?;
+    let source_guard = crate::gate_waits::shared(node, resident, &gate).await?;
+    node.residents.active(resident)?;
     let (source, town) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
     let session =
         source.session.ok_or_else(|| Failure::new("Claude has not identified the source conversation yet"))?;
@@ -69,13 +73,14 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     let (words, heard) =
         crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &source.acting, false).await?;
     let directory = node.world.conversation(&id);
-    fastctx_platform::ensure_private_dir(directory.path()).map_err(failure)?;
+    crate::focus::open(node, &directory, &source.acting, &source.focus).await?;
     super::fork_ready::begin(node, &id)?;
     let cwd = crate::colleagues::standing(node, town.as_ref())?;
     crate::profile::session::ready(node, &source.acting).await?;
     let assisting = node.works_here(&source.acting).is_err();
     let at = Timestamp::now();
     let about = About {
+        forked_from: Some(Address { machine: node.machine(), resident: resident.clone() }),
         mcp_off: source.mcp_off.clone(),
         id: id.clone(),
         host: Host { agent: source.host.agent, client: "claude-code".into(), version: source.host.version },
@@ -126,7 +131,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         let expected_attachments = super::fork_attachments::expected(node, &session, snapshot.as_deref()).await?;
         let selected_model = model.clone();
         let selected_effort = effort.clone();
-        let _birth = node.claude.births.read().await;
+
         let printed = tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
             let start = background::Start {
                 plugin: &plugin,
@@ -153,7 +158,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         node.residents.set_session(&node.world, &id, &short, model, None).map_err(failure)?;
 
         let finishing = async {
-            drop(_birth);
+            drop(birth);
             super::fork_ready::wait(node, &id, false).await?;
             super::control::invoke(node, &id, json!({"do":"fork_prepare"})).await?;
             super::fork_ready::wait(node, &id, true).await?;
@@ -196,7 +201,9 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
                 why: error.message,
             });
         }
+        drop(source_guard);
         super::fork_ready::finish(node, &id).await?;
+        crate::focus::forked(node, &id).await?;
         Ok(Controlled::Forked { resident: Address { machine: node.machine(), resident: id.clone() } })
     }
     .await;

@@ -119,6 +119,8 @@ pub struct Book {
     /// administrator to hand to another account.
     #[serde(default)]
     pub archived: Vec<Project>,
+    #[serde(default)]
+    pub(crate) project_deletions: Vec<crate::project_deletions::Pending>,
     /// Conversations being deleted from the members keeping something of
     /// them (`crate::forget`).
     #[serde(default)]
@@ -319,6 +321,8 @@ pub struct Letters {
     /// deleted.
     #[serde(default)]
     pub project_deletes: bool,
+    #[serde(default)]
+    pub conversation_deletions: bool,
     /// The member's last session said it reads the records of profiles
     /// written.
     #[serde(default)]
@@ -352,6 +356,7 @@ impl Letters {
             versions: false,
             due: false,
             project_deletes: false,
+            conversation_deletions: false,
             profiles: false,
             refused,
         })

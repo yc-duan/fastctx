@@ -198,7 +198,14 @@ fn measure_conversations(node: &Node, wanted: Option<&str>) -> io::Result<BTreeM
                 one.records.add(tally(exchange)?);
             }
         }
-        let Ok(about) = crate::residents::read_about(&directory) else { continue };
+        let about = match crate::residents::read_about(&directory) {
+            Ok(about) => about,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => match crate::forks::retained(&directory)? {
+                Some(about) => about,
+                None => continue,
+            },
+            Err(_) => continue,
+        };
         let mut host_record = HostRecord::None;
         let mut keeping_days = None;
         let mut transcript_present = false;

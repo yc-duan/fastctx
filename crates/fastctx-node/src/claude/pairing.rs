@@ -230,6 +230,7 @@ pub(super) fn resident(node: &Node, registration: &Registration) -> io::Result<R
             let id = node.residents.new_id(&agent).map_err(io::Error::other)?;
             let at = first.at.unwrap_or_else(Timestamp::now);
             let about = About {
+                forked_from: None,
                 mcp_off: Default::default(),
                 id: id.clone(),
                 host: Host {

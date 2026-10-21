@@ -102,6 +102,11 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
         return Err(refuse("the attachment names a different holding machine".into()));
     }
     let view = link.view();
+    if let RemoteCall::AttachmentReferences { attachments, .. } = call
+        && attachments.iter().any(|file| !view.same(&file.owner.machine, &caller.machine))
+    {
+        return Err(refuse("only the original holder may query its attachment references".into()));
+    }
     view.admits(&caller.machine, &caller.account, &here, call.purpose()).map_err(refuse)?;
     let agents_here = matches!(
         call,
@@ -149,7 +154,19 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
     // A conversation's attachments are seen by the accounts it works for
     // alone (`seen`); a draft's, which no conversation holds yet, by whoever
     // may work here.
-    let resident = resident_of(call).or_else(|| {
+    let inheriting = match call {
+        RemoteCall::ReadAttachment {
+            attachment: fastctx_types::attachments::AttachmentSource::Upload(file), ..
+        }
+        | RemoteCall::AttachmentThumbnail {
+            attachment: fastctx_types::attachments::AttachmentSource::Upload(file),
+            ..
+        } if node.is_me(&file.conversation().machine) && !node.residents.knows(&file.conversation().resident) => {
+            crate::attachments::lifetime::reader(node, file)?
+        }
+        _ => None,
+    };
+    let resident = inheriting.as_ref().or_else(|| resident_of(call)).or_else(|| {
         reached.filter(|owner| !hands || node.residents.knows(&owner.resident)).map(|owner| &owner.resident)
     });
     if let Some(resident) = resident {

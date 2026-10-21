@@ -43,6 +43,9 @@ pub struct MachineFacts {
     /// up again from there (`RemoteCall::Upload::resumes`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub upload_resumes: bool,
+    /// Retains attachment originals while surviving forks reference them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub attachment_references: bool,
     /// Answers `RemoteCall::Stats`: its details page shows what it says of
     /// itself.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

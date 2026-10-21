@@ -42,6 +42,10 @@ pub(crate) fn start(node: &Arc<Node>, jobs_reconciled: bool) {
     tokio::spawn(async move {
         loop {
             crate::data::delete::finish_interrupted(&deleting).await;
+            crate::attachments::lifetime::collect(&deleting).await;
+            for link in deleting.links() {
+                crate::ledger::letgo::let_go(&deleting, &link).await;
+            }
             tokio::time::sleep(RETRY).await;
         }
     });

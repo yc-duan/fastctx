@@ -333,6 +333,11 @@ impl Residents {
     /// `town` record changes, in one write: the move is done or not done.
     pub fn relocate(&self, world: &WorldDir, id: &ResidentId, town: Option<&TownName>) -> io::Result<bool> {
         self.active(id).map_err(io::Error::other)?;
+        self.relocate_kept(world, id, town)
+    }
+
+    /// Changes only project membership, including that of an archived conversation.
+    pub(crate) fn relocate_kept(&self, world: &WorldDir, id: &ResidentId, town: Option<&TownName>) -> io::Result<bool> {
         let mut state = self.lock();
         let Some(live) = state.live.get_mut(id) else {
             return Err(io::Error::new(io::ErrorKind::NotFound, format!("no resident {id} lives here")));
@@ -463,6 +468,7 @@ impl Residents {
         }
         let resident = new_id(&host.agent, &state)?;
         let about = About {
+            forked_from: None,
             mcp_off: Default::default(),
             id: resident.clone(),
             host,

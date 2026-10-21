@@ -35,6 +35,7 @@ use jiff::Timestamp;
 use crate::Node;
 use names::Place;
 
+pub(crate) mod deletion;
 pub(crate) mod letgo;
 pub(crate) mod names;
 pub(crate) mod query;

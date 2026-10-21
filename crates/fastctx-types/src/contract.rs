@@ -184,7 +184,7 @@ impl RemoteCall {
             | Self::ReadLineNotes { .. }
             | Self::CopyFetch { .. } => Contract::READ,
             Self::Place { .. } | Self::Upload { .. } | Self::CopyReceive { .. } => Contract::TRANSFER,
-            Self::Facts => Contract { cancellable: true, ..Contract::CONTROL },
+            Self::AttachmentReferences { .. } | Self::Facts => Contract { cancellable: true, ..Contract::CONTROL },
             Self::StopJob { .. }
             | Self::StopOn { .. }
             | Self::Stop { .. }

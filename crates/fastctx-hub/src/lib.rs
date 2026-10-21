@@ -39,6 +39,7 @@ mod mailbox;
 mod manage;
 mod moving;
 mod outq;
+mod project_deletions;
 mod records;
 mod releases;
 mod store;
@@ -755,6 +756,7 @@ async fn intended(
                 versions,
                 due,
                 project_deletes,
+                conversation_deletions,
                 profiles,
                 left,
                 cancels,
@@ -775,6 +777,7 @@ async fn intended(
                 versions,
                 due,
                 project_deletes,
+                conversation_deletions,
                 profiles,
                 left,
                 cancels,

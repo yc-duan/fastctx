@@ -1386,6 +1386,7 @@ pub async fn open_here(
     crate::focus::open(node, &node.world.conversation(&id), &opened.acting, &opened.focus).await?;
     let born_at = Timestamp::now();
     let about = About {
+        forked_from: None,
         mcp_off: options.mcp_off.clone(),
         id: id.clone(),
         host: Host { agent, client: "claude-code".to_string(), version: String::new() },

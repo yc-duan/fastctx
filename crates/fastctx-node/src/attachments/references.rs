@@ -89,6 +89,12 @@ fn keep_inherited(
     child: &ResidentId,
     retained: &[Attachment],
 ) -> Result<(), Failure> {
+    let _transaction = crate::resident_storage::lock();
+    if node.world.deleted().join(format!("{parent}.json")).try_exists().map_err(failure)?
+        || node.world.deleted().join(format!("{child}.json")).try_exists().map_err(failure)?
+    {
+        return Err(failure("the source conversation was deleted before its attachments were inherited"));
+    }
     let files: Vec<_> = listed(node, parent)?.into_iter().filter(|file| retained.contains(file)).collect();
     if files.is_empty() {
         return Ok(());
@@ -103,7 +109,7 @@ fn keep_inherited(
     .map_err(failure)
 }
 
-fn optional<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, Failure> {
+pub(super) fn optional<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, Failure> {
     match std::fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(failure),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),

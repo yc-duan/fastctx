@@ -78,6 +78,7 @@ fn residents() -> Vec<ResidentNow> {
                 detail: "cargo test".into(),
             }],
             about: About {
+                forked_from: None,
                 mcp_off: Default::default(),
                 id: format!("codex-ab1{i}").parse().unwrap(),
                 host: host(),
@@ -298,6 +299,7 @@ fn nodes() -> Vec<NodesReply> {
         mcp: true,
         completion_receipts: false,
         upload_resumes: false,
+        attachment_references: false,
         stats: lifetime,
         shell: String::new(),
         form: None,

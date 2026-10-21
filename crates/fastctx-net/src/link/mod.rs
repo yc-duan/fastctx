@@ -751,6 +751,14 @@ impl Link {
         Ok(told)
     }
 
+    /// Acknowledges a project deletion after this member finished its local work.
+    pub async fn project_deleted(&self, town: &fastctx_types::access::TownId) -> Result<(), String> {
+        match self.inner.ask(Question::ProjectDeleted { town: town.clone() }).await? {
+            Told::Done => Ok(()),
+            _ => Err("the hub did not acknowledge the project deletion".into()),
+        }
+    }
+
     /// The account of this member's logins the conversation of `resident`
     /// on `machine` works for, as the hub last told what is afoot there.
     pub fn account_of(

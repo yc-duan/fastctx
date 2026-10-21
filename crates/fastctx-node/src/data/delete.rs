@@ -74,6 +74,37 @@ const INTENT: &str = "deleting";
 /// Deletes everything of the conversation kept here under the name `name`,
 /// as the listing gives it; says how many bytes went.
 pub(crate) async fn delete_one(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
+    let mut releases = match Kind::of(name) {
+        Some(Kind::Home(id)) => crate::forget::release_attachments(node, &id).await.map_err(Stop::Failed)?,
+        _ => Vec::new(),
+    };
+    if let Some(Kind::Home(id)) = Kind::of(name)
+        && let Some(parent) = crate::forks::parent(node, &id).map_err(|error| Stop::Failed(error.to_string()))?
+    {
+        releases.push(parent);
+    }
+    let mut bytes = delete_inner(node, name).await?;
+    let mut seen = std::collections::HashSet::new();
+    while let Some(owner) = releases.pop() {
+        if !seen.insert(owner.clone()) {
+            continue;
+        }
+        if let Some(parent) =
+            crate::forks::parent(node, &owner.resident).map_err(|error| Stop::Failed(error.to_string()))?
+        {
+            releases.push(parent);
+        }
+        match delete_inner(node, owner.resident.as_str()).await {
+            Ok(freed) => bytes += freed,
+            Err(Stop::Nothing(_)) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    crate::forget::wake(node);
+    Ok(bytes)
+}
+
+async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
     let _doing = fastctx_platform::doing::doing(format!("deleting {name}"));
     let kind = Kind::of(name).ok_or_else(|| Stop::Refused(format!("{name} is not the name of a conversation")))?;
     // Its place alone: no command starts for it, no output of it is read
@@ -94,8 +125,8 @@ pub(crate) async fn delete_one(node: &Arc<Node>, name: &str) -> Result<u64, Stop
     }
     let bytes = measured.records.bytes + measured.output.bytes + measured.host.bytes;
     let Kind::Home(id) = &kind else {
-        remove_places(node, &measured).await?;
-        return Ok(bytes);
+        let retained = remove_places(node, &measured).await?;
+        return Ok(bytes.saturating_sub(retained));
     };
     let directory = node.world.conversation(id);
     let _draft = if directory.draft().try_exists().map_err(|error| Stop::Failed(error.to_string()))?
@@ -118,9 +149,18 @@ pub(crate) async fn delete_one(node: &Arc<Node>, name: &str) -> Result<u64, Stop
                 "its identity record cannot be read; its host record cannot be identified".into(),
             ));
         }
-        // Files attached for a conversation never opened.
-        remove_places(node, &measured).await?;
-        return Ok(bytes);
+        let mut host_kept = 0;
+        if let Some(about) = crate::forks::retained(&directory).map_err(|error| Stop::Failed(error.to_string()))? {
+            if crate::forks::has_dependents(node, id).map_err(|error| Stop::Failed(error.to_string()))? {
+                host_kept = measured.host.bytes;
+            } else {
+                host(node, &about, &measured).await?;
+                fastctx_platform::owned_directory::delete(&directory.path().join(crate::forks::RETAINED_HOST))
+                    .map_err(|error| Stop::Failed(error.to_string()))?;
+            }
+        }
+        let retained = remove_places(node, &measured).await?;
+        return Ok(bytes.saturating_sub(retained + host_kept));
     };
     let gate = node.residents.management(id).map_err(|failure| Stop::Failed(failure.message))?;
     let _exclusive = tokio::time::timeout(GATE_WAITS, gate.write())
@@ -159,6 +199,7 @@ pub(crate) async fn delete_one(node: &Arc<Node>, name: &str) -> Result<u64, Stop
     {
         return Err(Stop::Refused("its command output is being read; close that reader first".into()));
     }
+    crate::attachments::lifetime::ensure_holders(node, id).await.map_err(|error| Stop::Failed(error.message))?;
     // The intent: a node stopped from here on finishes the deletion when it
     // starts again (`finish_interrupted`).
     fastctx_platform::publish(
@@ -168,10 +209,28 @@ pub(crate) async fn delete_one(node: &Arc<Node>, name: &str) -> Result<u64, Stop
     )
     .map_err(|error| Stop::Failed(format!("recording that it is being deleted: {error}")))?;
     let completed = node.world.conversation(id).path().join("host-deleted");
+    let mut host_kept = 0;
     if !completed.try_exists().map_err(|error| Stop::Failed(error.to_string()))? {
-        host(node, &resident.about, &measured).await?;
-        fastctx_platform::publish(&completed, b"", fastctx_platform::Permissions::Private)
-            .map_err(|error| Stop::Failed(format!("recording host deletion: {error}")))?;
+        if resident.about.host.agent.as_str() == "codex"
+            && crate::forks::has_dependents(node, id).map_err(|error| Stop::Failed(error.to_string()))?
+        {
+            crate::forks::keep(node, &resident.about).map_err(|error| Stop::Failed(error.to_string()))?;
+            if let Some(session) = &resident.about.session {
+                node.codex
+                    .of(&resident.about)
+                    .map_err(|error| Stop::Failed(error.message))?
+                    .archive(session)
+                    .await
+                    .map_err(Stop::Failed)?;
+            }
+            host_kept = measured.host.bytes;
+        } else {
+            host(node, &resident.about, &measured).await?;
+            fastctx_platform::owned_directory::delete(&directory.path().join(crate::forks::RETAINED_HOST))
+                .map_err(|error| Stop::Failed(error.to_string()))?;
+            fastctx_platform::publish(&completed, b"", fastctx_platform::Permissions::Private)
+                .map_err(|error| Stop::Failed(format!("recording host deletion: {error}")))?;
+        }
     }
     node.residents
         .remove(&node.world, id)
@@ -219,9 +278,9 @@ pub(crate) async fn delete_one(node: &Arc<Node>, name: &str) -> Result<u64, Stop
     for session in &measured.sessions {
         crate::codex::deleted(node, session);
     }
-    remove_places(node, &measured).await?;
+    let retained = remove_places(node, &measured).await?;
     node.tools_changed(Some(id));
-    Ok(bytes)
+    Ok(bytes.saturating_sub(retained + host_kept))
 }
 
 /// Finishes the deletions a node stopped halfway: what is left of a
@@ -449,9 +508,12 @@ async fn claude_temp(node: &Arc<Node>, measured: &Measured) -> Result<(), Stop> 
 }
 
 /// Deletes every place that holds something of the conversation here.
-async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<(), Stop> {
+async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<u64, Stop> {
+    let remote = crate::attachments::lifetime::remote_retained(node, &measured.places)
+        .await
+        .map_err(|error| Stop::Failed(format!("checking attachment references: {}", error.message)))?;
     let (node, places) = (node.clone(), measured.places.clone());
-    tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+    tokio::task::spawn_blocking(move || -> std::io::Result<u64> {
         let _collecting = node.disk.lock();
         let _transaction = crate::resident_storage::lock();
         if places
@@ -460,35 +522,61 @@ async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<(), Stop
         {
             return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "its command output is being read"));
         }
-        // Remove aliases before their targets, so a partial deletion never
-        // leaves a path pointing at a different conversation later.
-        for place in &places {
-            match std::fs::symlink_metadata(place) {
-                Ok(metadata) if fastctx_platform::owned_directory::is_link(&metadata) => {
-                    fastctx_platform::owned_directory::delete(place)?;
+        let mut aliases = Vec::new();
+        let mut directories = Vec::new();
+        for place in places {
+            match std::fs::symlink_metadata(&place) {
+                Ok(metadata) if fastctx_platform::owned_directory::is_link(&metadata) => aliases.push(place),
+                Ok(_) => {
+                    let retained = crate::attachments::lifetime::remove(&node, &place, &remote)
+                        .map_err(std::io::Error::other)?
+                        || place.join(crate::forks::RETAINED_HOST).try_exists()?;
+                    directories.push((place, retained));
                 }
-                Ok(_) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error),
             }
         }
-        for place in places {
-            if place.join("host-deleted").try_exists()? || place.join(INTENT).try_exists()? {
-                let last = ["now", "town", "removed", "about", "host-deleted", INTENT];
-                for entry in super::space::entries(&place)? {
-                    if !entry.file_name().is_some_and(|name| last.iter().any(|last| name == *last)) {
-                        fastctx_platform::owned_directory::delete(&entry)?;
-                    }
-                }
-                for name in last {
-                    fastctx_platform::owned_directory::delete(&place.join(name))?;
-                }
-                std::fs::remove_dir(&place)?;
-            } else {
-                fastctx_platform::owned_directory::delete(&place)?;
+        // Inherited messages can name paths from before a layout migration.
+        // Keep their aliases and the alias manifest until their targets can go.
+        let retained = directories.iter().any(|(_, retained)| *retained);
+        if !retained {
+            for alias in &aliases {
+                fastctx_platform::owned_directory::delete(alias)?;
             }
         }
-        Ok(())
+        let mut retained_bytes = 0;
+        for (place, retained) in directories {
+            let last = ["now", "town", "removed", "about", "host-deleted", INTENT];
+            for entry in super::space::entries(&place)? {
+                let name = entry.file_name();
+                let last = name.is_some_and(|name| last.iter().any(|last| name == *last));
+                let keep = retained
+                    && name.is_some_and(|name| {
+                        name == "attachments"
+                            || name == "aliases.json"
+                            || name == crate::attachments::lifetime::RETAINED
+                            || name == crate::forks::RETAINED_HOST
+                    });
+                if !last && !keep {
+                    fastctx_platform::owned_directory::delete(&entry)?;
+                }
+            }
+            for name in last {
+                fastctx_platform::owned_directory::delete(&place.join(name))?;
+            }
+            if retained {
+                retained_bytes += super::space::tally(&place)?.bytes;
+            } else {
+                std::fs::remove_dir(&place)?;
+            }
+        }
+        if retained {
+            for alias in aliases {
+                retained_bytes += super::space::tally(&alias)?.bytes;
+            }
+        }
+        Ok(retained_bytes)
     })
     .await
     .map_err(|error| Stop::Failed(error.to_string()))?

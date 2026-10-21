@@ -63,6 +63,7 @@ fn resident(
     ResidentNow {
         source: None,
         about: About {
+            forked_from: None,
             id: id(who),
             host: Host {
                 agent: AgentName::try_from(agent).expect("an agent"),
@@ -374,6 +375,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         mcp: false,
         completion_receipts: false,
         upload_resumes: false,
+        attachment_references: false,
         shell: String::new(),
         form: None,
         node_lifetime: None,

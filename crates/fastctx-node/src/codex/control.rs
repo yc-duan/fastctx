@@ -160,7 +160,10 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
             codex.rename(&thread, &name).await.map_err(Failure::new)?;
             Ok(Controlled::Done { said: None })
         }
-        Control::Fork { through } => fork(node, resident, &codex, &thread, through).await,
+        Control::Fork { through } => {
+            drop(speaking);
+            fork(node, resident, &codex, &thread, through).await
+        }
         Control::Rewind { from } => {
             codex.rewind(&thread, &from).await.map_err(Failure::new)?;
             drop(speaking);
@@ -234,9 +237,13 @@ async fn fork(
     thread: &str,
     through: Option<String>,
 ) -> Result<Controlled, Failure> {
+    let gate = node.residents.management(parent)?;
+    let source_guard = crate::gate_waits::shared(node, parent, &gate).await?;
+    node.residents.active(parent)?;
     let (source, town) = node.residents.about(parent).ok_or_else(|| Failure::new("unknown source resident"))?;
     let id = node.residents.new_id(&source.host.agent)?;
     crate::session_options::keep(node, &id, &crate::session_options::read(node, parent)?)?;
+    crate::focus::open(node, &node.world.conversation(&id), &source.acting, &source.focus).await?;
     let (spec, heard) =
         crate::colleagues::thread_spec(node, &id, &Origin::User, town.as_ref(), &source.acting, source.home.as_deref())
             .await?;
@@ -245,6 +252,7 @@ async fn fork(
     let (fork, model) = codex.fork(thread, through.as_deref(), spec).await.map_err(Failure::new)?;
     let at = Timestamp::now();
     let about = About {
+        forked_from: Some(Address { machine: node.machine(), resident: parent.clone() }),
         mcp_off: source.mcp_off.clone(),
         id: id.clone(),
         host: source.host,
@@ -282,6 +290,7 @@ async fn fork(
     let inherited =
         codex.history(&fork, &Address { machine: node.machine(), resident: id.clone() }).await.map_err(Failure::new)?;
     crate::attachments::inherit(node, parent, &id, &inherited)?;
+    drop(source_guard);
     node.residents.set_instructed(&id, heard);
     let event = SessionEvent {
         at,
@@ -296,6 +305,7 @@ async fn fork(
     };
     crate::turns::apply(node, &id, event).await.map_err(|error| Failure::new(error.to_string()))?;
     crate::codex::claim(node, &fork, &id).await;
+    crate::focus::forked(node, &id).await?;
     Ok(Controlled::Forked { resident: Address { machine: node.machine(), resident: id } })
 }
 

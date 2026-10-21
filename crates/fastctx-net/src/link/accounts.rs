@@ -42,7 +42,11 @@ impl Link {
             AccountChange::Share { machine, to, shared } => Change::Share { machine, to, shared },
             AccountChange::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour } => {
                 return self
-                    .assist(account, Assist { machine, account: to, agent, home, until, weekly, daily, five_hour }, assisting)
+                    .assist(
+                        account,
+                        Assist { machine, account: to, agent, home, until, weekly, daily, five_hour },
+                        assisting,
+                    )
                     .await
                     .map(|()| None);
             }
@@ -118,7 +122,10 @@ impl Link {
             }
             AccountChange::Updates { policy } => Change::Updates { policy },
             AccountChange::Intake { .. } if !self.view().paced_intake => {
-                return Err(format!("the hub {} runs an older fastctx that sets no ceiling on its intake", self.hub_name()));
+                return Err(format!(
+                    "the hub {} runs an older fastctx that sets no ceiling on its intake",
+                    self.hub_name()
+                ));
             }
             AccountChange::Intake { rate } => Change::Intake { rate },
             AccountChange::UpdateDue { .. } if !self.view().due => {
@@ -142,8 +149,11 @@ impl Link {
                 Change::ShareProject { town: town_id(&town)?, with, shared }
             }
             AccountChange::MoveProject { town, to } => Change::MoveProject { town: town_id(&town)?, to },
-            AccountChange::DeleteProject { .. } if !self.view().deletes_projects => {
-                return Err(format!("the hub {} runs an older fastctx that deletes no project", self.hub_name()));
+            AccountChange::DeleteProject { .. } if !self.view().deletes_project_conversations => {
+                return Err(format!(
+                    "the hub {} must be updated before deleting a project and its conversations",
+                    self.hub_name()
+                ));
             }
             AccountChange::DeleteProject { town } => Change::DeleteProject { town: town_id(&town)? },
             AccountChange::Relay { .. } if !self.view().lan_relays => {
@@ -340,7 +350,8 @@ impl Link {
                 .iter()
                 .filter(|project| {
                     view.me().is_some_and(|me| {
-                        me.logins.contains(&project.owner) || project.granted.iter().any(|account| me.logins.contains(account))
+                        me.logins.contains(&project.owner)
+                            || project.granted.iter().any(|account| me.logins.contains(account))
                     })
                 })
                 .map(|project| ProjectSeen {

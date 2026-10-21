@@ -187,6 +187,9 @@ pub enum Intent {
         /// page with one.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         project_deletes: bool,
+        /// Understands shared attachment lifetimes and account-scoped project deletion.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        conversation_deletions: bool,
         /// The member reads the records of profiles written. Earlier
         /// releases do not say so, and could read nothing of a machine log
         /// page with one.
@@ -570,6 +573,10 @@ pub enum Question {
     /// Every project this member may use, each with the number of its
     /// latest entry. This does not subscribe the asker to replication.
     LedgerCatalog,
+    /// This member finished the project deletion delivered in its view.
+    ProjectDeleted {
+        town: TownId,
+    },
     /// A project's entries after the one numbered `after`, as many as fit
     /// in one frame.
     LedgerRead {

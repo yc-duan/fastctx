@@ -302,6 +302,11 @@ pub enum RemoteCall {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Whether each stored attachment still has a live conversation reference at its home.
+    AttachmentReferences {
+        conversation: crate::Address,
+        attachments: Vec<crate::attachments::Attachment>,
+    },
     /// Reserve metadata at the conversation's home; bytes stay with the caller.
     ReserveAttachment {
         target: crate::attachments::UploadTarget,
@@ -538,6 +543,7 @@ impl RemoteCall {
             | RemoteCall::Who { .. }
             | RemoteCall::Since { .. }
             | RemoteCall::Facts
+            | RemoteCall::AttachmentReferences { .. }
             | RemoteCall::Interfaces
             | RemoteCall::Relay { .. } => Purpose::Look,
         }
@@ -630,6 +636,9 @@ pub enum RemoteReply {
     /// A conversation's setting there changed as asked.
     Set,
     Facts(MachineFacts),
+    AttachmentReferences {
+        used: Vec<bool>,
+    },
     Stats(Box<crate::stats::MachineStats>),
     /// How updates stand on that machine after it was asked to update.
     Update(Box<crate::update::State>),

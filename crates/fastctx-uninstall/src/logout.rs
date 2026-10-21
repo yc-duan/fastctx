@@ -83,6 +83,7 @@ async fn open_saying(
         versions: false,
         due: false,
         project_deletes: false,
+        conversation_deletions: false,
         profiles: false,
         left: left.map(str::to_string),
         dialed: Some(connection.address),

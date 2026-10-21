@@ -580,6 +580,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         version: env!("CARGO_PKG_VERSION").to_string(),
         completion_receipts: true,
         upload_resumes: true,
+        attachment_references: true,
         stats: true,
         mcp: true,
         shell: shell(),
@@ -988,6 +989,17 @@ impl fastctx_net::link::Node for Handler {
                         .map_err(|error| Failure::new(format!("reading the canon on {machine}: {error}")))
                 }
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&node))),
+                RemoteCall::AttachmentReferences { conversation, attachments } => {
+                    if !node.is_me(&conversation.machine)
+                        || attachments.iter().any(|file| file.conversation().resident != conversation.resident)
+                    {
+                        return Err(Failure::not_run("the attachments name another conversation home"));
+                    }
+                    tokio::task::spawn_blocking(move || crate::attachments::lifetime::referenced(&node, &attachments))
+                        .await
+                        .map_err(|error| Failure::new(error.to_string()))?
+                        .map(|used| RemoteReply::AttachmentReferences { used })
+                }
                 RemoteCall::UpdateWorld | RemoteCall::Updates { .. } => {
                     let update = match call {
                         RemoteCall::Updates { update } => Some(update),
