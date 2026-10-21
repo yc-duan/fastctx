@@ -88,6 +88,11 @@ class Lab:
                       FASTCTX_UPDATE_RELEASES="http://127.0.0.1:9/releases", PATH=self.path())
         return values
 
+    def on(self, command):
+        """`command` as a script may be: one `on` naming this node's machine."""
+        name = json.loads((self.home / "machine.json").read_text(encoding="utf-8"))["name"]
+        return f"on {name} <<'RUN'\n{command}\nRUN"
+
     def path(self):
         keep = [str(self.codex_dir)]
         for entry in os.environ.get("PATH", "").split(os.pathsep):
@@ -420,14 +425,16 @@ class Drill:
             if roll < 0.3:
                 self.speak(talk, "hello again")
             elif roll < 0.5:
-                self.speak(talk, f"[[run: echo w{index}; sleep {self.rng.choice(['0.2', '1', '2'])}]]")
+                pause = self.rng.choice(["0.2", "1", "2"])
+                self.speak(talk, "[[run: " + self.lab.on(f"echo w{index}; sleep {pause}") + "]]")
             elif roll < 0.6:
                 # Left running: its end comes back through the conversation's
                 # inbox while others' commands start (`world-concurrency.md`,
                 # 记录的锁).
-                self.speak(talk, f"[[later: echo l{index}; sleep {self.rng.choice(['2', '4'])}]]")
+                pause = self.rng.choice(["2", "4"])
+                self.speak(talk, "[[later: " + self.lab.on(f"echo l{index}; sleep {pause}") + "]]")
             elif roll < 0.7:
-                self.speak(talk, "[[run: sleep 25]]", timeout=300)
+                self.speak(talk, "[[run: " + self.lab.on("sleep 25") + "]]", timeout=300)
             elif roll < 0.78:
                 self.speak(talk, f"[[slow: {self.rng.choice(['1', '3'])}]]")
             elif roll < 0.83:
@@ -436,7 +443,7 @@ class Drill:
                 # Deleted while it works: refused while a turn or a command
                 # of it runs, as a user would, its command is stopped and the
                 # deletion asked again until it goes.
-                words = self.rng.choice(["[[run: sleep 8]]", "[[slow: 3]]", "hello"])
+                words = self.rng.choice(["[[run: " + self.lab.on("sleep 8") + "]]", "[[slow: 3]]", "hello"])
                 speaking = threading.Thread(target=self.guarded, args=(f"speaking to {talk}", self.speak, talk, words, 240, True),
                                             daemon=True)
                 with self.lock:
