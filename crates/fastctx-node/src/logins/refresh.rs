@@ -3,10 +3,12 @@
 //! brought up to date by itself when the node starts, after a scan and when
 //! one of the files the World writes in it changes (`watch`), one change at
 //! a time with the user's own; what could not be done stays in the record
-//! until a change of that login settles it.
+//! until a change of that login settles it. While the World program is being
+//! replaced nothing is counted against a login: it is tried again shortly.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
+use std::time::Duration;
 
 use fastctx_install::apply::{self, Host, Refresh};
 use fastctx_types::AgentName;
@@ -15,20 +17,52 @@ use fastctx_types::logins::Drift;
 use super::Context;
 use crate::Node;
 
+/// Each login waiting for the user, and what it waits for.
+type Waiting = Vec<(AgentName, PathBuf, Drift)>;
+
+/// How soon a login is tried again when the World program was being
+/// replaced.
+const AGAIN: Duration = Duration::from_secs(30);
+
 /// Brings every login the World's tools are in up to date.
 pub(crate) async fn all(node: &Arc<Node>) {
     let _changing = node.logins.changing.lock().await;
     let refreshing = node.clone();
     match tokio::task::spawn_blocking(move || every(&refreshing)).await {
-        Ok(Some(waiting)) => *node.logins.drift.lock().expect("never poisoned") = waiting,
+        Ok(Some((waiting, again))) => {
+            *node.logins.drift.lock().expect("never poisoned") = waiting;
+            if again {
+                later(Arc::downgrade(node));
+            }
+        }
         Ok(None) => {}
         Err(error) => node.log.line(format_args!("bringing the World's tools up to date: {error}")),
     }
 }
 
-/// The logins left waiting for the user, or none when they could not be
-/// read.
-fn every(node: &Node) -> Option<Vec<(AgentName, PathBuf, Drift)>> {
+/// Tries again once the World program is likely in place.
+fn later(node: Weak<Node>) {
+    tokio::spawn(async move {
+        tokio::time::sleep(AGAIN).await;
+        if let Some(node) = node.upgrade() {
+            all(&node).await;
+        }
+    });
+}
+
+/// Whether a replacement of the World program is under way: what places it
+/// waits for that, and is no fault of the login's.
+fn replacing(node: &Node) -> bool {
+    use fastctx_types::renewal::Phase;
+    fastctx_install::renewal::read(&node.root)
+        .ok()
+        .flatten()
+        .is_some_and(|plan| !matches!(plan.phase, Phase::Complete | Phase::Failed))
+}
+
+/// The logins left waiting for the user, and whether to try again shortly;
+/// none when they could not be read.
+fn every(node: &Node) -> Option<(Waiting, bool)> {
     let context = match Context::of(node) {
         Ok(context) => context,
         Err(failure) => {
@@ -44,6 +78,7 @@ fn every(node: &Node) -> Option<Vec<(AgentName, PathBuf, Drift)>> {
         }
     };
     let mut waiting = Vec::new();
+    let mut again = false;
     for integration in integrations {
         let agent = AgentName::try_from(match integration.host {
             Host::Codex => "codex",
@@ -71,6 +106,15 @@ fn every(node: &Node) -> Option<Vec<(AgentName, PathBuf, Drift)>> {
                 ));
                 waiting.push((agent, dir, Drift::Changed { location, reason }));
             }
+            Err(error) if replacing(node) => {
+                node.log.line(format_args!(
+                    "the World program is being replaced: the World's tools in the {agent} login {shown} are brought up to date once it is ({error})"
+                ));
+                if let Some(drift) = of(node, agent.as_str(), &dir) {
+                    waiting.push((agent, dir, drift));
+                }
+                again = true;
+            }
             Err(error) => {
                 node.log.line(format_args!(
                     "could not bring the World's tools in the {agent} login {shown} up to date: {error}"
@@ -80,7 +124,7 @@ fn every(node: &Node) -> Option<Vec<(AgentName, PathBuf, Drift)>> {
             }
         }
     }
-    Some(waiting)
+    Some((waiting, again))
 }
 
 /// What the login `dir` of `agent` waits for, if anything.

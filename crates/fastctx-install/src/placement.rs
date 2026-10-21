@@ -14,6 +14,14 @@ pub fn ensure(root: &Path, source: &Path) -> anyhow::Result<PathBuf> {
     let mut source = source;
     if installed.is_file() {
         let current = crate::program::inspect(&installed)?;
+        // This very program is in place already, and no replacement by it is
+        // still under way: there is nothing to place, nor to wait for.
+        if current == candidate
+            && crate::renewal::read(root)?
+                .is_none_or(|plan| plan.phase == Phase::Complete || plan.candidate.build != candidate)
+        {
+            return Ok(installed);
+        }
         if current != candidate && !crate::program::newer(&candidate, &current)? {
             source = &installed;
         }
