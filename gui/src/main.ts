@@ -981,11 +981,14 @@ const updateCard = new UpdateCard(appUpdates, updateWords, live ? !onComputer() 
   // for may update, that can take a newer version.
   count: async () => {
     const world = store.world.peek();
+    // Every login's view, each machine counted once.
+    const able = new Set<string>();
     for (const login of loginsOf(world?.accounts)) {
       const reply = await askUpdatesView(login.hubName, login.account, { do: "view" }).catch(() => null);
-      if (reply?.kind === "view") return reply.view.machines.filter((one) => one.machine !== world?.here && one.offer && one.actions.schedule.allowed).length;
+      if (reply?.kind !== "view") continue;
+      for (const one of reply.view.machines) if (one.machine !== world?.here && one.offer && one.actions.schedule.allowed) able.add(one.machine);
     }
-    return 0;
+    return able.size;
   },
   open: () => {
     showUpdatesNext();
