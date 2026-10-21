@@ -23,10 +23,15 @@ export interface CallsWords {
   /** The days rows are grouped by. */
   today: string;
   yesterday: string;
-  /** Under the last row, where the list ends. */
+  /** How long requests are kept, behind the title; an empty list. */
   kept: string;
   none: string;
   noneFiltered: string;
+  /** The pager under the rows. */
+  page(page: number): string;
+  newer: string;
+  older: string;
+  newest: string;
   /** What a row says while the pointer rests on it. */
   at(at: Date): string;
   backgroundSaid: string;
@@ -76,6 +81,10 @@ export const zhCalls: CallsWords = {
   kept: "逐个请求只留最近 30 天",
   none: "最近 30 天没有请求",
   noneFiltered: "没有这样的请求",
+  page: (page) => `第 ${page} 页`,
+  newer: "上一页",
+  older: "下一页",
+  newest: "回到最新",
   at: (at) => `${at.getMonth() + 1}月${at.getDate()}日 ${zhWeekday[(at.getDay() + 6) % 7]} ${at.getHours()}:${two(at.getMinutes())}:${two(at.getSeconds())}`,
   backgroundSaid: "Claude Code 自己的后台请求（压缩、起标题、处理网页），看不到 token 与型号",
   agentSaid: "子代理的请求",
@@ -111,6 +120,10 @@ export const enCalls: CallsWords = {
   kept: "Requests are kept one by one for 30 days",
   none: "No requests in the last 30 days",
   noneFiltered: "No such requests",
+  page: (page) => `Page ${page}`,
+  newer: "Previous page",
+  older: "Next page",
+  newest: "Back to newest",
   at: (at) => `${enWeekday[(at.getDay() + 6) % 7]} ${enMonth[at.getMonth()]} ${at.getDate()}, ${at.getHours()}:${two(at.getMinutes())}:${two(at.getSeconds())}`,
   backgroundSaid: "Claude Code's own background request (compacting, titles, web pages); its tokens and model aren't visible",
   agentSaid: "A subagent's request",

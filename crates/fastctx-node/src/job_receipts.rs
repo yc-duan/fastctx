@@ -67,9 +67,9 @@ pub(crate) fn confirmed(
     delivery: JobDelivery,
     acting: Option<&Acting>,
 ) -> io::Result<()> {
-    let acting = acting.cloned().unwrap_or_else(|| {
-        node.residents.about(&owner.resident).map(|(about, _)| about.acting).unwrap_or_default()
-    });
+    let acting = acting
+        .cloned()
+        .unwrap_or_else(|| node.residents.about(&owner.resident).map(|(about, _)| about.acting).unwrap_or_default());
     let gate = node.disk.lock();
     confirmed_under(&gate, node, owner, machine, delivery, Some(&acting))
 }

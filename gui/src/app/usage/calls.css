@@ -266,20 +266,96 @@
   padding: var(--space-4) 0;
 }
 
-.uc-kept {
-  margin: var(--space-3) 0 0;
-  color: var(--text-3);
-  font-size: var(--size-fine);
+/* The pager under the rows, on the panel's own ground: it stays at the
+   foot of the screen where the page, not the panel, scrolls the rows,
+   past the page's own room under its end. */
+.uc-foot {
+  position: sticky;
+  bottom: calc(-1 * var(--ledger-foot, 0px));
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  background: linear-gradient(var(--fill), var(--fill)) var(--bg);
 }
 
-.uc-end {
-  height: 1px;
+.uc-foot[hidden] {
+  display: none;
+}
+
+.uc-slip {
+  color: var(--text-3);
+}
+
+.uc-slip.wrong {
+  color: var(--wrong);
+}
+
+/* Back to the newest: a solid pill, as the filters are. */
+.uc-newest {
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  color: var(--text-2);
+  white-space: nowrap;
+  transition: color var(--hover) ease;
+}
+
+.uc-newest:hover {
+  color: var(--text);
+}
+
+.uc-newest[hidden] {
+  display: none;
+}
+
+/* Which page, between a step each way, in one pill. */
+.uc-pager {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+}
+
+.uc-pager .uc-step {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+}
+
+.uc-older .glyph {
+  rotate: 180deg;
+}
+
+.uc-step:disabled {
+  cursor: default;
+  color: var(--text-3);
+}
+
+.uc-step:disabled:hover {
+  background: none;
+}
+
+.uc-step:disabled .glyph {
+  opacity: 0.45;
+}
+
+.uc-page {
+  min-width: 4.5em;
+  color: var(--text-2);
+  text-align: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Narrower, the seconds and the open mark go; a phone reads one line a
    request: when, whose ink, the model, its bar, and what it cost, or its
    tokens where nothing is costed; the rest a long press away. The page
-   scrolls the rows itself. */
+   scrolls the rows itself, the pager kept at the screen's foot over them,
+   clear of where the phone draws its navigation. */
 @container ledger-page (max-width: 600px) {
   .uc-head .uc-legend {
     display: none;
@@ -339,6 +415,22 @@
   }
 
   .uc-day {
-    top: 0;
+    top: calc(-1 * var(--ledger-top, 0px));
+  }
+
+  .uc-foot {
+    margin: 0 calc(-1 * var(--space-3)) calc(-1 * var(--space-3));
+    padding: var(--space-2) var(--space-3) calc(var(--space-2) + var(--safe-bottom));
+    border-radius: 0 0 var(--radius-l) var(--radius-l);
+  }
+
+  .uc-newest {
+    min-height: 44px;
+    padding: 0 var(--space-4);
+  }
+
+  .uc-pager .uc-step {
+    width: 44px;
+    height: 44px;
   }
 }

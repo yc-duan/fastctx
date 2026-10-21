@@ -67,12 +67,7 @@ fn project_notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Optio
     Ok((notes, Some(now)))
 }
 
-fn introduction(
-    world: &WorldDir,
-    id: &ResidentId,
-    here: &MachineName,
-    town: Option<&TownName>,
-) -> io::Result<String> {
+fn introduction(world: &WorldDir, id: &ResidentId, here: &MachineName, town: Option<&TownName>) -> io::Result<String> {
     let on = format!(" on {here}");
     Ok(match town {
         Some(town) => match super::instructions::text(world, town)? {

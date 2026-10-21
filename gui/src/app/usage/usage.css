@@ -65,7 +65,10 @@
 /* The page lays itself out by the room it has, the sidebar's taken. */
 .ledger-body {
   flex: 1;
-  padding: var(--space-2) var(--gutter) var(--space-10);
+  /* What stays put as the page scrolls reaches past these to its edges. */
+  --ledger-top: var(--space-2);
+  --ledger-foot: var(--space-10);
+  padding: var(--ledger-top) var(--gutter) var(--ledger-foot);
   scrollbar-gutter: stable;
   container: ledger-page / inline-size;
 }

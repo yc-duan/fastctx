@@ -41,9 +41,16 @@ pub(crate) fn calls(
 ) -> io::Result<UsageCallsPage> {
     let path = super::ledger(node, agent, dir);
     let since = Timestamp::now() - SignedDuration::from_hours(24 * DETAIL_DAYS);
+    // An entry is filed under its own day, so a later page skips the days after its cursor.
+    let last = query.before.as_ref().map(|before| before.at.strftime("%Y-%m-%d").to_string());
     super::with_book(node, &path, |_| {
         let mut rows = Vec::new();
         for file in ledger::days(&path, since)?.into_iter().rev() {
+            if let Some(last) = &last
+                && file.file_stem().and_then(|s| s.to_str()).is_some_and(|day| day > last.as_str())
+            {
+                continue;
+            }
             for entry in ledger::read(&file)? {
                 if entry.at() < since {
                     continue;

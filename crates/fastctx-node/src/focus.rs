@@ -179,7 +179,6 @@ async fn read(node: &Arc<Node>, acting: &Acting, machine: &FocusedMachine) -> Re
     }
 }
 
-
 /// What a conversation opened with `focus` is told of it from its first
 /// turn on, kept with it: for Codex in the instructions its thread starts
 /// with, for Claude in its plugin's block of context.
