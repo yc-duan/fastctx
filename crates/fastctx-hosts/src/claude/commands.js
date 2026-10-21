@@ -97,11 +97,13 @@ const promptCommands = new Map([
 ])
 
 async function controlCatalog($, state) {
+  const assisting = await assistedSession($)
   const commands = await $.command.list()
   const counts = new Map()
   for (const command of commands) counts.set(command.name, (counts.get(command.name) ?? 0) + 1)
   const offered = []
   for (const command of commands) {
+    if (assisting && (command.source !== 'builtin' || !assistedCommands.has(command.name))) continue
     // No public path executor exists. Ambiguous names cannot be advertised
     // with a fabricated identity that $.command.run cannot honor.
     if (counts.get(command.name) !== 1) continue
@@ -184,6 +186,7 @@ async function controlConfig($, args) {
 }
 
 async function controlCommand($, state, control) {
+  if (await assistedCommand($, control.name)) throw new Error(assistedCommandReason)
   if (control.path !== undefined && control.path !== null) {
     throw new Error('Claude Code does not expose skill paths or a path-selecting command API')
   }

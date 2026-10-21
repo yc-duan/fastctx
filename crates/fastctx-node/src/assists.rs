@@ -14,6 +14,8 @@ use fastctx_types::residents::About;
 
 use crate::Node;
 
+pub(crate) mod host;
+
 /// Whether a session here working for `acting` assists another account
 /// with one of this computer's logins: the accounts it works for may not
 /// work here themselves.
@@ -40,6 +42,9 @@ pub(crate) fn may_turn(node: &Node, id: &fastctx_types::ResidentId, about: &Abou
             return Ok(());
         }
         if view.may_use_login(&account.account, &here, &about.host.agent, about.home.as_deref()) {
+            if assisting(node, &about.acting) {
+                host::require(node, id)?;
+            }
             match crate::usage::used_up(node, about, account, model) {
                 None => return Ok(()),
                 Some(used) => {

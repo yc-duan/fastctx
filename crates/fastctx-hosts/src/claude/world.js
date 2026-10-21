@@ -72,6 +72,7 @@ async function removed($, fresh = false) {
 
 __FASTCTX_CONTROLS__
 __FASTCTX_COMMANDS__
+__FASTCTX_ASSISTED__
 __FASTCTX_SELECTION__
 __FASTCTX_REWIND__
 __FASTCTX_OBSERVATIONS__
@@ -1037,6 +1038,12 @@ export function register(on) {
     return yield* measuredStep($, context, shown, reported, input, held ?? next, held !== null)
   }).catch(async function* ($, e, next) { return yield* streamWithoutWorld($, 'turn.step', e, next) })
   on('tool.call', async ($, e, next) => {
+    try {
+      const refused = await assistedTool($, e)
+      if (refused !== null) return refused
+    } catch (_) {
+      return { deny: 'Fastctx could not verify the assisted conversation policy for this tool call.' }
+    }
     if (await removed($)) return next(e)
     registry.provedCalls.delete(e.tool_use_id)
     const context = await route($, registry, 'tool.call', e)
@@ -1130,8 +1137,17 @@ export function register(on) {
     // hook under next publishes the answerable request with that contract.
     return next(e)
   }).catch(($, e, next) => continueWithoutWorld($, 'classic.Elicitation', e, next))
+  on('command.run', async ($, e, next) => {
+    if (await assistedCommand($, e.command)) return { text: assistedCommandReason, exitCode: 1 }
+    if (e.command === 'model' && await assistedSession($)) {
+      const result = await controlSelection($, await controlBegin($, sessions), e.args.trim(), null)
+      return { text: result.said ?? '', exitCode: result.kind === 'refused' ? 1 : 0 }
+    }
+    return next(e)
+  }).catch(() => ({ text: 'Fastctx could not verify the assisted conversation command policy.', exitCode: 1 }))
   on('command.describe', async ($, e, next) => {
     const result = await next(e)
+    if (await assistedCommand($, e.command)) return { ...result, isHidden: true }
     if (await removed($)) return result
     const id = await $.session.id()
     if (!commandDescriptions.has(id)) commandDescriptions.set(id, new Map())

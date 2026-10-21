@@ -1372,7 +1372,7 @@ pub async fn open_here(
     // A login assisting another account starts without the browser of this
     // machine (`background::Start::assisting`).
     crate::profile::session::ready(node, &opened.acting).await?;
-    let assisting = node.works_here(&opened.acting).is_err();
+    let assisting = crate::assists::host::starting(node, &id, &opened.acting)?;
     let (words, heard) =
         crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &opened.acting, false).await?;
     // What it is told of its machines and folders its plugin adds to the

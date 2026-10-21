@@ -13,6 +13,7 @@
 //! knowledge pinned to the statically inspected 2.1.294 program.
 
 pub mod agents;
+pub mod assisted;
 pub mod background;
 pub mod calls;
 mod content;
@@ -183,6 +184,7 @@ pub fn write_plugin(world: &Path) -> io::Result<PathBuf> {
     let module = MOD
         .replace("__FASTCTX_CONTROLS__", include_str!("control.js"))
         .replace("__FASTCTX_COMMANDS__", include_str!("commands.js"))
+        .replace("__FASTCTX_ASSISTED__", include_str!("assisted.js"))
         .replace("__FASTCTX_SELECTION__", include_str!("selection.js"))
         .replace("__FASTCTX_REWIND__", include_str!("rewind.js"))
         .replace("__FASTCTX_OBSERVATIONS__", include_str!("observations.js"))
