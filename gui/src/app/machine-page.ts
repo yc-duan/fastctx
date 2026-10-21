@@ -962,10 +962,18 @@ export class MachinePage implements Page {
     const busy = answered?.kind === "answered" ? (answered.reply.busy ?? 0) : 0;
     const others = Math.max(0, busy - residents.length);
     const stuck = stats?.node.stuck ?? [];
-    this.presentBox.hidden = !residents.length && !jobs.length && !others && !stuck.length;
-    const stuckSaid = stuck.length
-      ? `<ul class="mp-stuck">${stuck.map((one) => `<li title="${escape(one.what)}">${escape(words.stuck(one.doing, one.what, words.span(one.seconds * 1000)))}</li>`).join("")}</ul>`
-      : "";
+    const health = stats?.node.health ?? [];
+    this.presentBox.hidden = !residents.length && !jobs.length && !others && !stuck.length && !health.length;
+    // Its own warnings in plain words, as it said them a hover away.
+    const healthSaid = (text: string) => {
+      const rows = /has (\d+) unreadable rows/.exec(text);
+      return rows ? words.ledgerRows(Number(rows[1])) : /cannot be read or written/.test(text) ? words.ledgerBroken : words.healthOther;
+    };
+    const warned = [
+      ...stuck.map((one) => `<li title="${escape(one.what)}">${escape(words.stuck(one.doing, one.what, words.span(one.seconds * 1000)))}</li>`),
+      ...health.map((one) => `<li title="${escape(one.text)}">${escape(healthSaid(one.text))}</li>`),
+    ];
+    const stuckSaid = warned.length ? `<ul class="mp-stuck">${warned.join("")}</ul>` : "";
     const agents = residents
       .map(
         (r) =>

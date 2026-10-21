@@ -101,6 +101,13 @@ export interface MachinePageWords {
   fastctxBehind(newer: string): string;
   /** Work of its own that is stuck, as it says, and for how long. */
   stuck(doing: string, what: string, span: string): string;
+  /** Its usage ledger keeps rows it could not read aside; its totals go
+   *  without them. */
+  ledgerRows(rows: number): string;
+  /** Its usage ledger cannot be read or written now. */
+  ledgerBroken: string;
+  /** Another of its own warnings, its words a hover away. */
+  healthOther: string;
   /** A place macOS kept private from it: on that Mac with the way to allow
    *  Fastctx in, elsewhere where it is allowed. */
   privacyHere(path: string): string;
@@ -206,6 +213,9 @@ export const zhMachinePage: MachinePageWords = {
   fastctxLatest: "已是最新",
   fastctxBehind: (newer) => `可更新到 ${newer}`,
   stuck: (doing, what, span) => `卡住 ${span}：${doing} 在等 ${what}`,
+  ledgerRows: (rows) => `用量账本有 ${rows} 行读不了，已另存，统计不含它们`,
+  ledgerBroken: "用量账本现在读写不了，受协助的用量暂停到它恢复",
+  healthOther: "这台有一条提醒",
   privacyHere: (path) => `macOS 没让 Fastctx 进 ${path}：在「完全磁盘访问权限」里打开 Fastctx，授权一次，换版也有效`,
   privacyThere: (path) => `macOS 没让 Fastctx 进 ${path}：在那台 mac 的「系统设置 › 隐私与安全性 › 完全磁盘访问权限」里打开 Fastctx`,
   privacyGo: "去授权",
@@ -302,6 +312,9 @@ export const enMachinePage: MachinePageWords = {
   fastctxLatest: "Up to date",
   fastctxBehind: (newer) => `${newer} available`,
   stuck: (doing, what, span) => `Stuck ${span}: ${doing} waits for ${what}`,
+  ledgerRows: (rows) => `${rows} usage ledger row${rows === 1 ? "" : "s"} could not be read and were set aside; totals leave them out`,
+  ledgerBroken: "Its usage ledger cannot be read or written now; assisted use waits until it can",
+  healthOther: "This machine has a warning",
   privacyHere: (path) => `macOS keeps ${path} from Fastctx: turn Fastctx on in Full Disk Access; once is enough, across versions`,
   privacyThere: (path) => `macOS keeps ${path} from Fastctx: turn Fastctx on in System Settings › Privacy & Security › Full Disk Access on that Mac`,
   privacyGo: "Allow",

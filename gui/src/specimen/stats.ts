@@ -240,6 +240,11 @@ export async function specimenStats(machine: string | null, after: string | null
       service: profile.service,
       // `?refused=1`: macOS kept a folder of this computer's from its node.
       ...(name === "desktop" && new URLSearchParams(location.search).has("refused") ? { refused: { path: "/Users/me/Desktop", at: iso(now - 60_000) } } : {}),
+
+      // `?ledger=1`: its usage ledger set rows aside.
+      ...(name === "desktop" && new URLSearchParams(location.search).has("ledger")
+        ? { health: [{ kind: "warning", text: "usage ledger /home/me/.fastctx/world/usage/claude-1 has 3 unreadable rows preserved in quarantine; totals omit these rows" }] }
+        : {}),
     },
   };
 }

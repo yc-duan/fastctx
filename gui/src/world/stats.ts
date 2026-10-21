@@ -117,6 +117,9 @@ export interface NodeSeen {
   service: boolean;
   /** What of its work has gone on too long, as it last looked at itself. */
   stuck?: StuckWork[];
+  /** What of its records needs attention, as its own words say it: a
+   *  usage ledger with rows it set aside, or one it cannot read now. */
+  health?: { kind: string; text: string }[];
   /** The last place macOS kept private from it while it runs, and when. */
   refused?: { path: string; at: Timestamp };
 }
