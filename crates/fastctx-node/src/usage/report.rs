@@ -36,13 +36,9 @@ pub(crate) fn report(node: &Node, agent: &str, dir: &Path, only: Option<&HubAcco
     let oldest = now - SignedDuration::from_hours(24 * super::KEPT_DAYS);
     let since = Timestamp::from_second(oldest.as_second().div_euclid(86400) * 86400).expect("retained day");
     super::with_book(node, &ledger, |book| {
-        summarize(
-            agent,
-            only,
-            now,
-            book.reading.as_ref(),
-            book.history.entries(&ledger, since, now, book.reading.as_ref())?,
-        )
+        let mut entries = book.history.entries(&ledger, since, now, book.reading.as_ref())?;
+        entries.extend(book.balances().into_iter().filter(|row| row.at() >= since));
+        summarize(agent, only, now, book.reading.as_ref(), entries)
     })
 }
 
@@ -56,6 +52,25 @@ pub(super) fn summarize(
     let day = now - SignedDuration::from_hours(24);
     let week = super::readings::week(reading, now);
     let in_week = |at: Timestamp| at >= week.start && at < week.end.max(now);
+    let owners: Vec<_> = entries
+        .iter()
+        .filter_map(|row| match row {
+            Entry::Account { at, account } => Some((*at, account.clone())),
+            _ => None,
+        })
+        .collect();
+    let current_owner = owners.iter().max_by_key(|(at, _)| *at).map(|(_, key)| key.clone());
+    let owner_of = |row: &Entry| match row {
+        Entry::Reading { at, account, .. } => account.clone().or_else(|| {
+            owners
+                .iter()
+                .filter(|(since, _)| since <= at)
+                .max_by_key(|(since, _)| *since)
+                .or_else(|| owners.iter().min_by_key(|(since, _)| *since))
+                .map(|(_, key)| key.clone())
+        }),
+        _ => None,
+    };
     let spans = spans(&entries, week);
     let span_of = |at: Timestamp| {
         let index = spans.partition_point(|span| span.start <= at).checked_sub(1)?;
@@ -90,6 +105,7 @@ pub(super) fn summarize(
                 continue;
             }
             if let Some(span) = span_of(at)
+                && owner_of(&entry) == spans[span].account
                 && let Some(window) = windows.iter().find(|window| {
                     window.minutes == Some(10_080)
                         && window.resets_at.is_some_and(|reset| same(reset, spans[span].reset))
@@ -97,7 +113,7 @@ pub(super) fn summarize(
             {
                 reached[span] = Some(reached[span].unwrap_or(0).max(window.used_tenths));
             }
-            if in_week(at) {
+            if in_week(at) && owner_of(&entry) == current_owner {
                 readings.push(UsageReading { at, windows: windows.clone() });
             }
             continue;
@@ -108,7 +124,8 @@ pub(super) fn summarize(
             }
             let index = person(&who);
             let count = usage.tokens.total();
-            hours.entry((bucket(at, &boundaries), index)).or_default().add(count, usage.usd);
+            let hour = if matches!(entry, Entry::Summary { .. }) { at } else { bucket(at, &boundaries) };
+            hours.entry((hour, index)).or_default().add(count, usage.usd);
             if let Some(span) = span_of(at) {
                 used.entry((span, index)).or_default().add(count, usage.usd);
                 *weights.entry((span, index)).or_default() += weight(agent, Some(&usage.tokens), usage.usd);
@@ -118,7 +135,9 @@ pub(super) fn summarize(
             }
             if in_week(at) {
                 weekly.entry(index).or_default().add(count, usage.usd);
-                if fastctx_hosts::claude::pricing::is_fable(&usage.model) {
+                if fastctx_hosts::claude::pricing::is_fable(&usage.model)
+                    && usage.call.as_ref().is_none_or(|call| call.observed)
+                {
                     fable.entry(index).or_default().add(count, usage.usd);
                 }
                 went.entry(index).or_default().add(&usage);
@@ -178,6 +197,7 @@ pub(super) struct Span {
     pub start: Timestamp,
     pub end: Timestamp,
     pub reset: Timestamp,
+    pub account: Option<String>,
 }
 
 fn same(a: Timestamp, b: Timestamp) -> bool {
@@ -205,22 +225,47 @@ pub(super) fn spans(entries: &[Entry], current: Week) -> Vec<Span> {
     if !current.window {
         return Vec::new();
     }
-    let mut resets: Vec<Timestamp> = entries
+    let mut owners: Vec<_> = entries
+        .iter()
+        .filter_map(|row| match row {
+            Entry::Account { at, account } => Some((*at, account.clone())),
+            _ => None,
+        })
+        .collect();
+    owners.sort_by_key(|(at, _)| *at);
+    let mut resets: Vec<(Timestamp, Option<String>, Timestamp)> = entries
         .iter()
         .filter_map(|entry| match entry {
-            Entry::Reading { windows, .. } => {
-                windows.iter().find(|window| window.minutes == Some(10_080)).and_then(|window| window.resets_at)
+            Entry::Reading { at, windows, account } => {
+                let reset = windows.iter().find(|window| window.minutes == Some(10_080))?.resets_at?;
+                let account = account.clone().or_else(|| {
+                    owners
+                        .iter()
+                        .rev()
+                        .find(|(since, _)| since <= at)
+                        .or_else(|| owners.first())
+                        .map(|(_, key)| key.clone())
+                });
+                Some((reset, account, *at))
             }
             _ => None,
         })
-        .filter(|reset| *reset < current.end && !same(*reset, current.end))
+        .filter(|(reset, _, _)| *reset < current.end && !same(*reset, current.end))
         .collect();
-    resets.sort();
-    resets.dedup_by(|later, earlier| same(*later, *earlier));
+    resets.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+    resets.dedup_by(|later, earlier| later.1 == earlier.1 && same(later.0, earlier.0));
+    resets.sort_by_key(|(reset, _, seen)| (*reset, *seen));
     let week = SignedDuration::from_secs(WEEK_SECONDS);
-    let mut spans: Vec<Span> =
-        resets.into_iter().map(|reset| Span { start: reset - week, end: reset, reset }).collect();
-    spans.push(Span { start: current.start, end: current.end, reset: current.end });
+    let mut spans: Vec<Span> = resets
+        .into_iter()
+        .map(|(reset, account, _)| Span { start: reset - week, end: reset, reset, account })
+        .collect();
+    spans.push(Span {
+        start: current.start,
+        end: current.end,
+        reset: current.end,
+        account: owners.last().map(|(_, key)| key.clone()),
+    });
     for index in 1..spans.len() {
         let next = spans[index].start;
         if spans[index - 1].end > next {
@@ -285,5 +330,15 @@ pub(super) fn boundaries(spans: &[Span], week: Week) -> Vec<Timestamp> {
 /// Hour buckets are split at every recorded weekly boundary.
 pub(super) fn bucket(at: Timestamp, boundaries: &[Timestamp]) -> Timestamp {
     let hour = Timestamp::from_second(at.as_second().div_euclid(3600) * 3600).expect("existing hour");
-    boundaries.iter().rev().find(|cut| **cut <= at && **cut > hour).copied().unwrap_or(hour)
+    // A known reset establishes the cut even in weeks with no sample. It does
+    // not create a historical week in the report's list of observed periods.
+    boundaries
+        .iter()
+        .map(|cut| {
+            let weeks = at.duration_since(*cut).as_secs().div_euclid(WEEK_SECONDS);
+            *cut + SignedDuration::from_secs(weeks * WEEK_SECONDS)
+        })
+        .filter(|cut| *cut <= at && *cut > hour)
+        .max()
+        .unwrap_or(hour)
 }

@@ -26,6 +26,10 @@ pub(super) struct Use {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(super) enum Entry {
+    Meter {
+        #[serde(flatten)]
+        meter: Box<super::meter::Meter>,
+    },
     Cost {
         at: Timestamp,
         who: Option<HubAccount>,
@@ -53,6 +57,12 @@ pub(super) enum Entry {
     Reading {
         at: Timestamp,
         windows: Vec<LimitWindow>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account: Option<String>,
+    },
+    Account {
+        at: Timestamp,
+        account: String,
     },
     Summary {
         at: Timestamp,
@@ -77,17 +87,27 @@ pub(super) enum Entry {
 impl Entry {
     pub fn at(&self) -> Timestamp {
         match self {
+            Self::Meter { meter } => meter.at,
             Self::Cost { at, .. }
             | Self::Tokens { at, .. }
             | Self::Spent { at, .. }
             | Self::Reading { at, .. }
+            | Self::Account { at, .. }
             | Self::Summary { at, .. }
             | Self::Checkpoint { at, .. }
             | Self::Receipts { at, .. } => *at,
         }
     }
-    pub fn uses(&self) -> Vec<(Option<HubAccount>, Use)> {
+    pub fn usage_at(&self) -> Timestamp {
         match self {
+            Self::Meter { meter } => {
+                meter.usage.as_ref().and_then(|usage| usage.call.as_ref()).map_or(meter.at, |call| call.timing.ended_at)
+            }
+            _ => self.at(),
+        }
+    }
+    pub fn uses(&self) -> Vec<(Option<HubAccount>, Use)> {
+        let mut uses: Vec<_> = match self {
             Self::Cost { who, model, usd, .. } => vec![(
                 who.clone(),
                 Use { model: model.clone(), usd: Some(*usd), tokens: Tokens::default(), kinds: None, call: None },
@@ -100,8 +120,19 @@ impl Entry {
             }
             Self::Spent { who, uses, .. } => uses.iter().map(|usage| (who.clone(), usage.clone())).collect(),
             Self::Summary { who, usage, .. } => vec![(who.clone(), usage.clone())],
+            Self::Meter { meter } => meter.usage.iter().map(|usage| (meter.who.clone(), usage.clone())).collect(),
             _ => Vec::new(),
+        };
+        for (_, usage) in &mut uses {
+            if usage
+                .call
+                .as_ref()
+                .is_some_and(|call| call.source == fastctx_types::usage_calls::CallSource::Background && !call.observed)
+            {
+                usage.model.clear();
+            }
         }
+        uses
     }
 }
 
@@ -109,10 +140,13 @@ impl Entry {
 pub(super) struct Book {
     valid: bool,
     pub totals: HashMap<Identity, (Timestamp, Usd)>,
+    pub meters: HashMap<Identity, super::meter::Meter>,
     pub seen: HashSet<(Identity, Timestamp)>,
     pub modern: HashSet<String>,
     pub keys: HashSet<String>,
     pub reading: Option<Reading>,
+    pub readings: HashMap<Option<String>, Reading>,
+    pub accounts: Vec<(Timestamp, String)>,
     pub recent: Vec<Charge>,
     pub history: super::history::History,
 }
@@ -137,6 +171,16 @@ impl Book {
         let recent = now - SignedDuration::from_hours(8 * 24);
         let month = now - SignedDuration::from_hours(31 * 24);
         match row {
+            Entry::Meter { meter } => {
+                let identity = (meter.session.clone(), Some(meter.process.clone()));
+                if let Some(key) = &meter.key {
+                    self.keys.insert(key.clone());
+                }
+                self.modern.insert(meter.session.clone());
+                if self.meters.get(&identity).is_none_or(|old| old.at <= meter.at) {
+                    self.meters.insert(identity, *meter.clone());
+                }
+            }
             Entry::Spent { at, session, process, total, .. }
             | Entry::Checkpoint { at, session, process, total, .. }
                 if *at >= month =>
@@ -160,28 +204,54 @@ impl Book {
             Entry::Receipts { at, keys } if *at >= month => {
                 self.keys.extend(keys.iter().cloned());
             }
-            Entry::Reading { at, windows } => {
-                let mut merged = self.reading.as_ref().map_or_else(Vec::new, |(_, windows)| windows.clone());
-                super::readings::merge(&mut merged, windows.clone());
-                if self.reading.as_ref().is_none_or(|(_, old)| *old != merged) {
-                    self.reading = Some((*at, merged));
+            Entry::Account { at, account } => {
+                if self.accounts.is_empty() {
+                    // The first known owner claims legacy readings once, durably.
+                    if let Some(legacy) = self.readings.remove(&None) {
+                        self.readings.insert(Some(account.clone()), legacy);
+                    }
                 }
+                self.accounts.push((*at, account.clone()));
+                self.accounts.sort_by_key(|(at, _)| *at);
+                self.reading = self.readings.get(&self.account_at(Timestamp::MAX)).cloned();
+            }
+            Entry::Reading { at, windows, account } => {
+                let account = account.clone().or_else(|| self.account_at(*at));
+                let old = self.readings.get(&account);
+                let mut merged = old.map_or_else(Vec::new, |(_, windows)| windows.clone());
+                if old.is_none_or(|(seen, _)| *seen <= *at) {
+                    super::readings::merge(&mut merged, windows.clone());
+                    self.readings.insert(account, (*at, merged));
+                }
+                self.reading = self.readings.get(&self.account_at(Timestamp::MAX)).cloned();
             }
             _ => {}
         }
-        if row.at() >= recent {
+        if row.usage_at() >= recent {
             for (who, usage) in row.uses() {
                 if let Some(usd) = usage.usd {
                     self.recent.push(Charge {
-                        at: row.at(),
+                        at: row.usage_at(),
                         who,
-                        fable: fastctx_hosts::claude::pricing::is_fable(&usage.model),
+                        fable: fastctx_hosts::claude::pricing::is_fable(&usage.model)
+                            && usage.call.as_ref().is_none_or(|call| call.observed),
                         usd,
                     });
                 }
             }
         }
         self.recent.retain(|charge| charge.at >= recent);
+    }
+    pub fn balances(&self) -> Vec<Entry> {
+        self.meters.values().flat_map(super::meter::Meter::balances).collect()
+    }
+    pub fn account_at(&self, at: Timestamp) -> Option<String> {
+        self.accounts
+            .iter()
+            .rev()
+            .find(|(since, _)| *since <= at)
+            .or_else(|| self.accounts.first())
+            .map(|(_, account)| account.clone())
     }
     pub fn commit(&mut self, path: &Path, row: Entry) -> io::Result<()> {
         if let Entry::Tokens { key: Some(key), .. } = &row
@@ -193,7 +263,7 @@ impl Book {
         self.valid = false;
         append(path, &row)?;
         self.apply(&row);
-        self.history.invalidate(&day_file(path, row.at()));
+        self.history.invalidate(&day_file(path, row.usage_at()));
         self.valid = true;
         Ok(())
     }
@@ -213,7 +283,7 @@ fn append(path: &Path, row: &Entry) -> io::Result<()> {
         .truncate(false)
         .read(true)
         .write(true)
-        .open(day_file(path, row.at()))?;
+        .open(day_file(path, row.usage_at()))?;
     let len = file.metadata()?.len();
     if len > 0 {
         let mut end = len;
@@ -263,19 +333,7 @@ pub(super) fn days(path: &Path, since: Timestamp) -> io::Result<Vec<PathBuf>> {
 }
 
 pub(super) fn read(path: &Path) -> io::Result<Vec<Entry>> {
-    let bytes = std::fs::read(path)?;
-    let end = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
-    let mut rows = Vec::new();
-    for (line, bytes) in bytes[..end].split(|b| *b == b'\n').enumerate() {
-        if bytes.is_empty() {
-            continue;
-        }
-        rows.push(
-            serde_json::from_slice(bytes)
-                .map_err(|e| io::Error::other(format!("{} line {}: {e}", path.display(), line + 1)))?,
-        );
-    }
-    Ok(rows)
+    super::quarantine::read(path)
 }
 
 pub(super) fn entries(path: &Path, since: Timestamp) -> io::Result<Vec<Entry>> {

@@ -24,6 +24,11 @@ pub(crate) fn collect(node: &Node) -> io::Result<()> {
             continue;
         }
         super::with_book(node, &path, |book| {
+            if let Some((since, account)) = book.accounts.last().cloned()
+                && since.strftime("%Y-%m-%d").to_string() < oldest
+            {
+                book.commit(&path, Entry::Account { at: now, account })?;
+            }
             let all = ledger::entries(&path, Timestamp::MIN)?;
             let week = super::readings::week(book.reading.as_ref(), now);
             let boundaries = super::report::boundaries(&super::report::spans(&all, week), week);
@@ -60,13 +65,19 @@ pub(super) fn fold(rows: &[Entry], boundaries: &[Timestamp], now: Timestamp) -> 
     let mut checkpoints: BTreeMap<Identity, (Timestamp, fastctx_types::usage::Usd, Vec<Timestamp>)> = BTreeMap::new();
     let mut readings: BTreeMap<String, Entry> = BTreeMap::new();
     let mut periods: Vec<Timestamp> = Vec::new();
-    let mut last = None;
+    let mut last = BTreeMap::new();
+    let mut accounts = Vec::new();
+    let mut meters = BTreeMap::new();
     let mut receipts = Vec::new();
     let mut receipts_at = Timestamp::MIN;
     let month = now - SignedDuration::from_hours(31 * 24);
     for row in rows {
         for (who, usage) in row.uses() {
-            let bucket = super::report::bucket(row.at(), boundaries);
+            let bucket = if matches!(row, Entry::Summary { .. }) {
+                row.usage_at()
+            } else {
+                super::report::bucket(row.usage_at(), boundaries)
+            };
             let key = (
                 bucket,
                 serde_json::to_string(&who).expect("account serializes"),
@@ -85,6 +96,20 @@ pub(super) fn fold(rows: &[Entry], boundaries: &[Timestamp], now: Timestamp) -> 
             }
         }
         match row {
+            Entry::Account { .. } => accounts.push(row.clone()),
+            Entry::Meter { meter } => {
+                let key = (meter.session.clone(), meter.process.clone());
+                if let Some(receipt) = &meter.key {
+                    receipts.push(receipt.clone());
+                    receipts_at = receipts_at.max(meter.at);
+                }
+                if meters.get(&key).is_none_or(|old: &super::meter::Meter| old.at <= meter.at) {
+                    let mut checkpoint = *meter.clone();
+                    checkpoint.usage = None;
+                    checkpoint.key = None;
+                    meters.insert(key, checkpoint);
+                }
+            }
             Entry::Tokens { at, key: Some(key), .. } if *at >= month => {
                 receipts.push(key.clone());
                 receipts_at = receipts_at.max(*at);
@@ -107,7 +132,7 @@ pub(super) fn fold(rows: &[Entry], boundaries: &[Timestamp], now: Timestamp) -> 
                     kept.2.extend(reports);
                 }
             }
-            Entry::Reading { windows, .. } => {
+            Entry::Reading { windows, account, .. } => {
                 for window in windows.iter().filter(|w| w.minutes == Some(10_080)) {
                     let reset = window
                         .resets_at
@@ -120,6 +145,7 @@ pub(super) fn fold(rows: &[Entry], boundaries: &[Timestamp], now: Timestamp) -> 
                             canonical.to_string()
                         })
                         .unwrap_or_default();
+                    let reset = format!("{}:{reset}", account.as_deref().unwrap_or("legacy"));
                     // The first sample fixes the reset's spelling within the two-minute
                     // tolerance. Dropping it would move historical weekly boundaries.
                     readings.entry(format!("first:{reset}")).or_insert_with(|| row.clone());
@@ -139,7 +165,7 @@ pub(super) fn fold(rows: &[Entry], boundaries: &[Timestamp], now: Timestamp) -> 
                         readings.insert(reset, row.clone());
                     }
                 }
-                last = Some(row.clone());
+                last.insert(account.clone(), row.clone());
             }
             _ => {}
         }
@@ -156,9 +182,11 @@ pub(super) fn fold(rows: &[Entry], boundaries: &[Timestamp], now: Timestamp) -> 
         receipts.dedup();
         folded.push(Entry::Receipts { at: receipts_at, keys: receipts });
     }
-    if let Some(last) = last {
-        readings.insert("last".to_string(), last);
+    for (account, row) in last {
+        readings.insert(format!("last:{}", account.as_deref().unwrap_or("legacy")), row);
     }
+    folded.extend(accounts);
+    folded.extend(meters.into_values().map(|meter| Entry::Meter { meter: Box::new(meter) }));
     let mut kept: Vec<_> = readings.into_values().collect();
     kept.sort_by_key(Entry::at);
     kept.dedup_by_key(|row| row.at());

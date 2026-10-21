@@ -88,6 +88,7 @@ pub fn fixtures() -> Fixtures {
             started: at("2026-10-12T22:01:00Z"),
             service: true,
             stuck: Vec::new(),
+            health: Vec::new(),
             refused: None,
         },
     };
@@ -123,6 +124,7 @@ pub fn fixtures() -> Fixtures {
             started: at("2026-10-01T00:00:00Z"),
             service: false,
             stuck: Vec::new(),
+            health: Vec::new(),
             refused: Some(fastctx_types::stats::Refused {
                 path: "/Users/me/Desktop".into(),
                 at: at("2026-10-01T08:00:00Z"),

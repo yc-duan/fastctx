@@ -76,9 +76,23 @@ impl CodexHost {
     pub(super) fn tell_said(&self, server: Arc<AppServer>, launch: Launch, version: Option<String>) {
         let Some(sink) = self.said.lock().expect("never poisoned").clone() else { return };
         let home = self.codex_home.clone();
+        let owner = self.limits_owner.clone();
+        let generation = {
+            let mut owner = owner.lock().expect("never poisoned");
+            owner.generation += 1;
+            owner.identity = None;
+            owner.generation
+        };
         tokio::spawn(async move {
             let at = Timestamp::now();
             let said = ask(&server, version, false).await;
+            if let Fact::Known { value } = &said.who {
+                let mut owner = owner.lock().expect("never poisoned");
+                if owner.generation != generation {
+                    return;
+                }
+                owner.identity = Some((at, value.clone()));
+            }
             let _ = sink.send(SaidReport { home, launch, at, said });
         });
     }

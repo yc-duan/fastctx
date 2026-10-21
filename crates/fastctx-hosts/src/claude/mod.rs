@@ -12,6 +12,7 @@
 //! Uses Claude Code's public mod and plugin hook contracts, with command
 //! knowledge pinned to the statically inspected 2.1.294 program.
 
+mod accounting;
 pub mod agents;
 pub mod background;
 pub mod calls;

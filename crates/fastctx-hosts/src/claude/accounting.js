@@ -1,51 +1,141 @@
-// Process-local origins survive failed World registration and context replacement.
+// The first sample is taken before this process can make a model request.
 const usageOrigins = new Map()
 
 async function usageOrigin($, id) {
   if (!usageOrigins.has(id)) {
-    usageOrigins.set(id, sessionUsage($).then((usage) => usage?.cost?.usd))
+    usageOrigins.set(id, { at: new Date().toISOString(), value: sessionUsage($).then((usage) => usage?.cost?.usd) })
   }
-  const since = await usageOrigins.get(id)
+  const since = await usageOrigins.get(id).value
   if (typeof since !== 'number' || !Number.isFinite(since) || since < 0) usageOrigins.delete(id)
   return since
 }
 
-// All reporting paths share one queue: take finished requests before sampling
-// the cost, then persist that sample before another path can sample it again.
-async function stepMeasured($, context, step = null, force = false) {
-  context.usageSteps ??= []
-  if (step !== null) context.usageSteps.push(step)
-  const pending = (context.usageQueue ?? Promise.resolve()).then(async () => {
-    const steps = context.usageSteps.splice(0)
-    const usage = await sessionUsage($)
-    const total = usage?.cost?.usd
+async function initializeAccounting($, context) {
+  const process = JSON.stringify([context.hostProcess.pid, context.hostProcess.token])
+  const names = (await $.fs.list(context.dir)).map((entry) => entry.name)
+  let origin = null
+  if (names.includes('accounting-origin.json')) {
+    const kept = JSON.parse(await $.fs.read(context.dir + '/accounting-origin.json'))
+    if (kept.process === process) origin = kept
+  }
+  if (origin === null) {
     const since = await usageOrigin($, context.sessionId)
-    if (typeof total !== 'number' || typeof since !== 'number' || context.hostProcess === null) {
-      context.usageSteps.unshift(...steps)
-      return usage
+    if (typeof since !== 'number') {
+      context.accountingOrigin = null
+      worldFailure($, 'accounting', new Error('Claude did not provide its accounting baseline'))
+      return
     }
-    if (!force && total === context.measuredUsd && steps.length === 0) return usage
-    const process = JSON.stringify([context.hostProcess.pid, context.hostProcess.token])
-    const counted = { ...usage, counted: { process, since, steps } }
-    // event() owns retry after accepting a report, including its request list.
-    await reports($, context).event('session', { happened: { event: 'changed', turn: null, change: { kind: 'usage', usage: counted } } })
-    context.measuredUsd = total
+    origin = { process, since, account_at: usageOrigins.get(context.sessionId).at }
+    await $.fs.write(context.dir + '/accounting-origin.json', JSON.stringify(origin))
+  }
+  context.accountingOrigin = origin
+  const receipts = await $.fs.list(context.dir + '/accounting')
+  const ready = new Set(receipts.map((entry) => entry.name))
+  for (const entry of receipts) {
+    if (!entry.name.endsWith('.json') || ready.has(entry.name.slice(0, -5) + '.ready')) continue
+    const path = context.dir + '/accounting/' + entry.name.slice(0, -5)
+    await readReport($, path)
+    await $.fs.write(path + '.ready', '')
+  }
+  // A complete usage body written before a crash still needs its commit marker.
+  const events = await $.fs.list(context.dir + '/events')
+  const committed = new Set(events.map((entry) => entry.name))
+  for (const entry of events) {
+    if (!entry.name.endsWith('.json') || committed.has(entry.name.slice(0, -5) + '.done')) continue
+    const path = context.dir + '/events/' + entry.name.slice(0, -5)
+    const report = await readReport($, path)
+    if (report.kind === 'session' && report.happened?.change?.kind === 'usage' && report.happened.change.usage?.counted) {
+      await $.fs.write(path + '.done', '')
+    }
+  }
+}
+
+async function flushAccounting($, context) {
+  context.accountingReports ??= new Map()
+  for (const [name, body] of context.accountingReports) {
+    const path = context.dir + '/accounting/' + name
+    await writeReport($, path, body)
+    await $.fs.write(path + '.ready', '')
+    context.accountingReports.delete(name)
+  }
+}
+
+function recoverAccounting($, context) {
+  const pending = (context.accountingQueue ?? Promise.resolve()).then(() => flushAccounting($, context))
+  context.accountingQueue = pending.catch((error) => {
+    worldFailure($, 'accounting', error)
+    retry($, context)
+  })
+  return pending
+}
+
+function accountingReport($, context, usage, fields = {}) {
+  if (context.accountingOrigin === null) return Promise.resolve()
+  const counted = { ...usage, counted: { ...context.accountingOrigin, meter: true, ...fields } }
+  const stamp = reserved(context)
+  const body = JSON.stringify({ kind: 'session', at: stamp.at,
+    happened: { event: 'changed', turn: null, change: { kind: 'usage', usage: counted } } })
+  context.accountingReports ??= new Map()
+  context.accountingReports.set(stamp.id, body)
+  // Each session owns these immutable files. The node publishes and acknowledges
+  // them, so a plugin reload or a failed event write cannot discard a receipt.
+  const path = context.dir + '/accounting/' + stamp.id
+  const written = writeReport($, path, body).then(() => $.fs.write(path + '.ready', '')).then(() => {
+    context.accountingReports.delete(stamp.id)
+  })
+  return written.catch((error) => {
+    retry($, context)
+    throw error
+  })
+}
+
+// Official collector records carry the host's own request price. Never infer a
+// request's dollars from a concurrent session-wide sample or from copied prices.
+async function pricedRequest($, context, e) {
+  const a = e.attributes
+  if (typeof a.model !== 'string' || !Number.isFinite(a.cost_usd) || a.cost_usd < 0) {
+    throw new Error('Claude reported an invalid request price')
+  }
+  const ended = Date.parse(e.loggedAt)
+  const duration = Number(a.duration_ms)
+  const first = Number(a.ttft_ms)
+  const timing = { ended_at: e.loggedAt, approximate: false,
+    started_at: Number.isFinite(duration) ? new Date(ended - duration).toISOString() : null,
+    first_at: Number.isFinite(duration) && Number.isFinite(first) ? new Date(ended - duration + first).toISOString() : null }
+  const source = typeof a.query_source === 'string' && a.query_source.startsWith('agent:') ? 'agent'
+    : ['sdk', 'repl_main'].includes(a.query_source) ? 'main' : 'background'
+  const priced = { key: String(a['event.sequence']), usd: a.cost_usd, model: a.model, timing, source,
+    turn: null, agent: null, tokens: { input: Number(a.input_tokens ?? 0), output: Number(a.output_tokens ?? 0),
+      cache_read: Number(a.cache_read_tokens ?? 0), cache_write: Number(a.cache_creation_tokens ?? 0), reasoning: 0 } }
+  if (a['event.sequence'] === undefined) throw new Error('Claude request has no accounting sequence')
+  await accountingReport($, context, {}, { priced })
+}
+
+async function stepMeasured($, context, step = null, force = false) {
+  try {
+    // Failed and held steps have no priced success event, but still have a call row.
+    if (step !== null && step.usage === null) {
+      const key = JSON.stringify([step.turn, step.agent, step.index])
+      await accountingReport($, context, {}, { steps: [step], detail_key: key })
+    }
+    const usage = await sessionUsage($)
+    if (usage === null) throw new Error('Claude did not provide its usage sample')
+    await accountingReport($, context, usage)
     if (force && usage.context?.tokens !== undefined) {
       await reports($, context).event('session', { happened: { event: 'context', used: usage.context.tokens, window: usage.context.window } })
     }
     return usage
-  })
-  context.usageQueue = pending.catch((error) => {
-    $.ui.log('World step usage: ' + String(error), { to: 'debug' })
-  })
-  // 2026-10-20: reporting must not fail or replay a model request that already ended.
-  return pending.catch(() => null)
+  } catch (error) {
+    worldFailure($, 'accounting', error)
+    return null
+  }
 }
 
 async function heldStep($, context, input) {
   try {
     const hold = JSON.parse(await $.fs.read(context.dir + '/hold.json'))
-    if (typeof hold.said !== 'string' || !Number.isFinite(Date.parse(hold.until)) || Date.parse(hold.until) <= Date.now()) return null
+    if (typeof hold.said !== 'string') return null
+    if (hold.until !== null && (!Number.isFinite(Date.parse(hold.until)) || Date.parse(hold.until) <= Date.now())) return null
     if (hold.models !== null && (!Array.isArray(hold.models) || !hold.models.includes('fable') || !/fable|mythos/i.test(input.model))) return null
     return () => {
       const result = { turnId: input.turnId, index: input.index, answer: hold.said, toolUses: [], stopReason: 'end_turn', usage: null }
@@ -89,6 +179,6 @@ async function* measuredStep($, context, shown, reported, input, next, held) {
     try { await stream.return() } catch { /* The original stream error remains authoritative. */ }
     timing.ended_at = new Date().toISOString()
     await stepMeasured($, context, { usage: result?.usage ?? null, model: input.model,
-      turn: input.turnId, agent: input.agentId ?? null, timing, outcome, phase })
+      turn: input.turnId, index: input.index, agent: input.agentId ?? null, timing, outcome, phase })
   }
 }

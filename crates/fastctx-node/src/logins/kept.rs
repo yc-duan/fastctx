@@ -128,6 +128,8 @@ pub(super) struct KeptLimits {
     pub dir: PathBuf,
     pub at: Timestamp,
     pub buckets: BTreeMap<String, serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
 }
 
 fn path(node: &Node) -> PathBuf {
@@ -153,6 +155,40 @@ pub(super) fn read(node: &Node) -> io::Result<Kept> {
 
 pub(super) fn write(node: &Node, kept: &Kept) -> io::Result<()> {
     let mut kept = kept.clone();
+    let prior = read(node)?;
+    for (agent, record) in [("codex", &prior.codex), ("claude", &prior.claude)] {
+        for login in &record.logins {
+            if crate::usage::accounts::first(node, agent, &login.dir)?.is_none()
+                && let fastctx_types::agents::Fact::Known { value } = &login.identified.who
+            {
+                crate::usage::accounts::select(
+                    node,
+                    agent,
+                    &login.dir,
+                    crate::usage::accounts::key(value, &login.signed),
+                    login.identified.at,
+                )?;
+            }
+        }
+    }
+    for limits in &mut kept.codex.limits {
+        if limits.account.is_none() {
+            limits.account = crate::usage::accounts::first(node, "codex", &limits.dir)?;
+        }
+    }
+    for (agent, record) in [("codex", &kept.codex), ("claude", &kept.claude)] {
+        for login in &record.logins {
+            if let fastctx_types::agents::Fact::Known { value } = &login.identified.who {
+                crate::usage::accounts::select(
+                    node,
+                    agent,
+                    &login.dir,
+                    crate::usage::accounts::key(value, &login.signed),
+                    login.identified.at,
+                )?;
+            }
+        }
+    }
     kept.version = VERSION;
     let mut bytes = serde_json::to_vec_pretty(&kept).map_err(io::Error::other)?;
     bytes.push(b'\n');

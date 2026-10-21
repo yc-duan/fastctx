@@ -234,6 +234,7 @@ pub(crate) async fn here(node: &Arc<Node>, after: Option<Timestamp>) -> Result<M
             version: env!("CARGO_PKG_VERSION").to_string(),
             started: node.started,
             service: node.lifetime.supervised,
+            health: crate::usage::health(node),
             stuck: node
                 .stuck
                 .now()

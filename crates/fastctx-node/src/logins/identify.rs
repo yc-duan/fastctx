@@ -30,13 +30,8 @@ pub(super) struct Asked {
 /// (`world-agent-logins.md`, 额度).
 pub(super) async fn codex(node: &Arc<Node>, dir: &Path, limits: bool) -> Asked {
     let at = Timestamp::now();
-    if let Some(host) = node.codex.existing(dir)
-        && let Some((launch, said)) = host.ask_running(limits).await
-    {
-        let launcher =
-            Launcher { path: launch.binary, version: None, desktop_app: launch.source == ProgramSource::DesktopApp };
-        return asked_codex(at, said, Some(launcher));
-    }
+    // A running app-server can retain the previous directory login. Identification
+    // uses a short-lived official process so a rescan cannot restore that owner.
     let launch = match node.codex.launch(dir) {
         Ok(Some(launch)) => launch,
         Ok(None) => {
@@ -127,6 +122,15 @@ pub(super) fn claude(dir: &Path, default: bool, programs: &[FoundProgram]) -> Re
 }
 
 /// The limits a Codex read gave, as the node records them.
-pub(super) fn limits_read(dir: &Path, at: Timestamp, answer: serde_json::Value) -> fastctx_hosts::codex::LimitsReport {
-    fastctx_hosts::codex::LimitsReport { home: dir.to_path_buf(), at, how: LimitsHow::Read(answer) }
+pub(super) fn limits_read(
+    dir: &Path,
+    at: Timestamp,
+    answer: serde_json::Value,
+    who: &Fact<fastctx_types::logins::Identity>,
+) -> fastctx_hosts::codex::LimitsReport {
+    let owner = match who {
+        Fact::Known { value } => Some((at, value.clone())),
+        _ => None,
+    };
+    fastctx_hosts::codex::LimitsReport { home: dir.to_path_buf(), at, how: LimitsHow::Read(answer), owner }
 }

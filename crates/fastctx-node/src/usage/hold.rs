@@ -23,7 +23,7 @@ fn publish(
         return Ok(());
     }
     let path = directory.join("hold.json");
-    let desired = restriction.map(|(account, used)| json!({"until": used.until(), "said": used.said(account), "models": if used.fable() { Some(["fable"]) } else { None }}));
+    let desired = restriction.map(|(account, used)| json!({"until": used.expires(), "said": used.said(account), "models": if used.fable() { Some(["fable"]) } else { None }}));
     match desired {
         Some(value) => {
             let bytes = serde_json::to_vec(&value).map_err(std::io::Error::other)?;

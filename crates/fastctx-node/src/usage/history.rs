@@ -18,6 +18,7 @@ struct Group {
 pub(super) struct Day {
     readings: Vec<Entry>,
     groups: Vec<Group>,
+    folded: Vec<Timestamp>,
 }
 impl Day {
     pub fn new(rows: &[Entry]) -> Self {
@@ -27,7 +28,11 @@ impl Day {
                 usage.call = None;
                 let key = serde_json::to_string(&(&who, &usage.model, usage.usd.is_some(), usage.kinds.is_some()))
                     .expect("usage key serializes");
-                groups.entry(key).or_insert_with(|| Group { who, points: Vec::new() }).points.push((row.at(), usage));
+                groups
+                    .entry(key)
+                    .or_insert_with(|| Group { who, points: Vec::new() })
+                    .points
+                    .push((row.usage_at(), usage));
             }
         }
         for group in groups.values_mut() {
@@ -47,11 +52,16 @@ impl Day {
             }
         }
         Self {
-            readings: rows.iter().filter(|r| matches!(r, Entry::Reading { .. })).cloned().collect(),
+            readings: rows
+                .iter()
+                .filter(|r| matches!(r, Entry::Reading { .. } | Entry::Account { .. }))
+                .cloned()
+                .collect(),
             groups: groups.into_values().collect(),
+            folded: rows.iter().filter(|row| matches!(row, Entry::Summary { .. })).map(Entry::at).collect(),
         }
     }
-    fn summaries(&self, cuts: &[Timestamp], into: &mut Vec<Entry>) {
+    fn summaries(&self, cuts: &[Timestamp], periods: &[Timestamp], into: &mut Vec<Entry>) {
         for group in &self.groups {
             let Some((first, _)) = group.points.first() else { continue };
             let last = group.points.last().expect("nonempty").0;
@@ -60,6 +70,14 @@ impl Day {
             let mut edges: Vec<Timestamp> =
                 (hour..=end).step_by(3600).map(|s| Timestamp::from_second(s).expect("existing day")).collect();
             edges.extend(cuts.iter().copied().filter(|at| at.as_second() > hour && at.as_second() < end));
+            edges.extend(self.folded.iter().copied().filter(|at| at.as_second() >= hour && at.as_second() < end));
+            for second in (hour..end).step_by(3600) {
+                let end_of_hour = Timestamp::from_second(second + 3599).expect("existing hour");
+                let cut = super::report::bucket(end_of_hour, periods);
+                if cut.as_second() > second {
+                    edges.push(cut);
+                }
+            }
             edges.sort();
             edges.dedup();
             for edge in edges.windows(2) {
@@ -130,10 +148,11 @@ impl History {
             .collect();
         let mut entries: Vec<Entry> = days.iter().flat_map(|day| day.readings.iter().cloned()).collect();
         let week = super::readings::week(reading, now);
-        let mut cuts = super::report::boundaries(&super::report::spans(&entries, week), week);
+        let periods = super::report::boundaries(&super::report::spans(&entries, week), week);
+        let mut cuts = periods.clone();
         cuts.extend([now - SignedDuration::from_hours(24), week.start, week.end.max(now)]);
         for day in days {
-            day.summaries(&cuts, &mut entries);
+            day.summaries(&cuts, &periods, &mut entries);
         }
         entries.sort_by_key(Entry::at);
         Ok(entries)

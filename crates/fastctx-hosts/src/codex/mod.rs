@@ -303,6 +303,7 @@ pub struct CodexHost {
     tools_changed: Notify,
     /// Where what the app-server reads or pushes of the login's limits goes.
     limits: Mutex<Option<mpsc::UnboundedSender<account::LimitsReport>>>,
+    limits_owner: Arc<Mutex<account::Owner>>,
     /// Where what each app-server says of the login on starting goes.
     said: Mutex<Option<mpsc::UnboundedSender<identify::SaidReport>>>,
 }
@@ -449,6 +450,7 @@ impl CodexHost {
             ),
             tools_changed: Notify::new(),
             limits: Mutex::new(None),
+            limits_owner: Arc::new(Mutex::new(account::Owner::default())),
             said: Mutex::new(None),
         });
         (host, receiver)

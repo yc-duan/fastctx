@@ -13,17 +13,20 @@ const DAY: SignedDuration = SignedDuration::from_hours(24);
 pub(crate) enum UsedUp {
     Weekly { allowance: Usd, until: Timestamp },
     Daily { allowance: Usd, until: Timestamp },
-    FiveHour { share: u8, until: Timestamp },
+    FiveHour { share: u8, until: Option<Timestamp> },
+    Unavailable,
     Fable { allowance: Usd, until: Timestamp },
 }
 impl UsedUp {
     pub(super) fn until(&self) -> Timestamp {
         match self {
-            Self::Weekly { until, .. }
-            | Self::Daily { until, .. }
-            | Self::FiveHour { until, .. }
-            | Self::Fable { until, .. } => *until,
+            Self::Weekly { until, .. } | Self::Daily { until, .. } | Self::Fable { until, .. } => *until,
+            Self::FiveHour { until, .. } => until.unwrap_or(Timestamp::MAX),
+            Self::Unavailable => Timestamp::MAX,
         }
+    }
+    pub(super) fn expires(&self) -> Option<Timestamp> {
+        (self.until() != Timestamp::MAX).then(|| self.until())
     }
     pub(super) fn fable(&self) -> bool {
         matches!(self, Self::Fable { .. })
@@ -32,6 +35,15 @@ impl UsedUp {
         !self.fable() || model.is_some_and(fastctx_hosts::claude::pricing::is_fable)
     }
     pub(crate) fn said(&self, account: &HubAccount) -> String {
+        if matches!(self, Self::Unavailable) {
+            return "this login's usage ledger cannot be checked; assistance is paused until accounting recovers"
+                .into();
+        }
+        if let Self::FiveHour { share, until: None } = self {
+            return format!(
+                "this login's five-hour window is past the {share}% assistance limit; assistance waits for a new reading because its reset time is unknown"
+            );
+        }
         let dollars = |usd: &Usd| usd.0 as f64 / 1_000_000.0;
         if let Self::Fable { allowance, until } = self {
             return format!(
@@ -55,7 +67,7 @@ impl UsedUp {
             Self::FiveHour { share, .. } => {
                 format!("this login's five-hour window is past the {share}% it assists {} up to", account.account)
             }
-            Self::Fable { .. } => unreachable!(),
+            Self::Fable { .. } | Self::Unavailable => unreachable!(),
         };
         format!("{what} until {}; what is for it waits until then", self.until().strftime("%Y-%m-%d %H:%M UTC"))
     }
@@ -84,16 +96,19 @@ pub(super) fn login(node: &Node, about: &About) -> Option<PathBuf> {
 pub(crate) fn used_up(node: &Node, about: &About, account: &HubAccount, model: Option<&str>) -> Option<UsedUp> {
     let assist = assistance(node, about, account)?;
     let agent = about.host.agent.as_str();
+    if assist.five_hour.is_none() && (agent != "claude" || (assist.weekly.is_none() && assist.daily.is_none())) {
+        return None;
+    }
     let path = super::ledger(node, agent, &login(node, about)?);
     let now = Timestamp::now();
     let mut reached = super::with_book(node, &path, |book| {
         let mut reached = Vec::new();
         if let Some(share) = assist.five_hour
-            && let Some((read, windows)) = &book.reading
+            && let Some((_, windows)) = &book.reading
             && let Some(window) = windows.iter().find(|w| w.minutes == Some(300))
         {
-            let until = window.resets_at.unwrap_or(*read + SignedDuration::from_hours(5));
-            if until > now && window.used_tenths >= u32::from(share) * 10 {
+            let until = window.resets_at;
+            if until.is_none_or(|until| until > now) && window.used_tenths >= u32::from(share) * 10 {
                 reached.push(UsedUp::FiveHour { share, until });
             }
         }
@@ -101,8 +116,22 @@ pub(crate) fn used_up(node: &Node, about: &About, account: &HubAccount, model: O
             return Ok(reached);
         }
         let week = super::readings::week(book.reading.as_ref(), now);
-        let mut costs: Vec<_> =
-            book.recent.iter().filter(|charge| charge.who.as_ref() == Some(account) && charge.at <= now).collect();
+        let balances: Vec<_> = book
+            .balances()
+            .into_iter()
+            .flat_map(|row| {
+                let at = row.at();
+                row.uses().into_iter().filter_map(move |(who, usage)| {
+                    Some(super::recent::Charge { at, who, fable: false, usd: usage.usd? })
+                })
+            })
+            .collect();
+        let mut costs: Vec<_> = book
+            .recent
+            .iter()
+            .chain(&balances)
+            .filter(|charge| charge.who.as_ref() == Some(account) && charge.at <= now)
+            .collect();
         costs.sort_by_key(|charge| charge.at);
         let all: Vec<_> = costs.iter().map(|charge| (charge.at, charge.usd)).collect();
         if let Some(allowance) = assist.weekly {
@@ -136,7 +165,7 @@ pub(crate) fn used_up(node: &Node, about: &About, account: &HubAccount, model: O
     })
     .unwrap_or_else(|error| {
         node.log.line(format_args!("reading what {} spent of a Claude login: {error}", account.account));
-        Vec::new()
+        vec![UsedUp::Unavailable]
     });
     if model.is_some() {
         reached.retain(|used| used.applies(model));

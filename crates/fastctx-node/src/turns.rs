@@ -55,11 +55,12 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
     if about.host.agent.as_str() == "claude" {
         crate::claude::turn_facts::observe(&directory, &event.happened)?;
     }
-    // A ledger that cannot take this report never holds up the conversation:
-    // totals are cumulative, so the next report carries what this one did,
-    // and only this report's request detail is lost.
+    // Claude's durable event remains pending until its accounting row is committed.
     if let Err(error) = crate::usage::measurement(node, id, &about, &event).await {
         node.log.line(format_args!("recording {id}'s usage: {error}"));
+        if about.host.agent.as_str() == "claude" {
+            return Err(error);
+        }
     }
     // 2026-10-20: hidden title threads feed only the ledger; publishing their
     // internal-only usage would replace the main conversation's usage display.

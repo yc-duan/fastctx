@@ -198,6 +198,9 @@ pub struct NodeSeen {
     /// (`world-concurrency.md`, 节点看着自己).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stuck: Vec<StuckWork>,
+    /// Persistent data damage and current failures requiring attention.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub health: Vec<crate::session::Health>,
     /// The last place macOS kept private from it while it runs, and when
     /// (`world-gui.md`, 设置).
     #[serde(default, skip_serializing_if = "Option::is_none")]

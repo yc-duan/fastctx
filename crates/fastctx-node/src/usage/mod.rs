@@ -1,13 +1,17 @@
 //! Per-login usage, measured locally by the hosts and committed as complete ledger entries.
+pub(crate) mod accounts;
 mod allowance;
 mod calls;
 pub(crate) use calls::calls;
 mod claude;
 mod codex;
 mod compact;
+mod health;
 mod history;
 mod hold;
 mod ledger;
+mod meter;
+mod quarantine;
 mod readings;
 mod recent;
 mod report;
@@ -21,6 +25,7 @@ use fastctx_types::agents::AgentLimits;
 use fastctx_types::residents::About;
 use fastctx_types::session::{Happened, SessionChange, SessionEvent, TurnEnd, TurnTokens};
 use fastctx_types::usage::Tokens;
+pub(crate) use health::health;
 pub(crate) use hold::watch;
 use jiff::Timestamp;
 use ledger::{Book, Entry};
@@ -37,6 +42,7 @@ const WEEK_SECONDS: i64 = 7 * 24 * 60 * 60;
 #[derive(Default)]
 pub(crate) struct Usage {
     books: Mutex<HashMap<PathBuf, Arc<Mutex<Book>>>>,
+    failures: Mutex<HashMap<PathBuf, String>>,
     enforcing: Mutex<()>,
     stopping: Mutex<std::collections::HashSet<(ResidentId, String)>>,
     logins: Mutex<HashMap<ResidentId, PathBuf>>,
@@ -53,8 +59,17 @@ fn ledger(node: &Node, agent: &str, dir: &Path) -> PathBuf {
 fn with_book<T>(node: &Node, path: &Path, f: impl FnOnce(&mut Book) -> io::Result<T>) -> io::Result<T> {
     let book = node.usage.books.lock().expect("never poisoned").entry(path.to_path_buf()).or_default().clone();
     let mut book = book.lock().expect("never poisoned");
-    book.load(path)?;
-    f(&mut book)
+    let result = book.load(path).and_then(|()| f(&mut book));
+    let mut failures = node.usage.failures.lock().expect("never poisoned");
+    match &result {
+        Ok(_) => {
+            failures.remove(path);
+        }
+        Err(error) => {
+            failures.insert(path.to_path_buf(), error.to_string());
+        }
+    }
+    result
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -74,7 +89,13 @@ pub(crate) async fn measurement(
     let path = ledger(node, about.host.agent.as_str(), &dir);
     let changed = if about.host.agent.as_str() == "claude" {
         let Happened::Changed { change: SessionChange::Usage { usage }, .. } = &event.happened else { return Ok(()) };
-        claude::measured(node, &path, id, about, usage, event.at)?
+        match claude::measured(node, &path, id, about, usage, event.at) {
+            Ok(changed) => changed,
+            Err(error) => {
+                after_reading(node, about.host.agent.as_str(), &dir).await;
+                return Err(error);
+            }
+        }
     } else if about.host.agent.as_str() == "codex" {
         codex::measured(node, &path, id, about, event)?
     } else {

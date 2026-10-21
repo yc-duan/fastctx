@@ -508,6 +508,7 @@ async function look($, context) {
       context.writing = written.catch(() => {})
       try {
         await written
+        await recoverAccounting($, context)
         if (!context.closed && current) await looked($, context)
       } catch (error) {
         context.unsettled = true
@@ -685,7 +686,7 @@ async function startSession($, context) {
   context.dir = await reserving
   // A reload can happen in the same clock tick, with old reports still
   // pending. Their reserved names survive in events or applied.
-  for (const sub of ['events', 'applied']) {
+  for (const sub of ['events', 'applied', 'accounting']) {
     await $.fs.write(context.dir + '/' + sub + '/.created', '')
     const names = await listing($, context, sub)
     if (names === null) throw new Error('cannot recover the report sequence')
@@ -706,6 +707,7 @@ async function startSession($, context) {
   if (parent.exitCode !== 0) throw new Error('identifying the Claude host: ' + parent.stderr)
   registration.process = JSON.parse(parent.stdout)
   context.hostProcess = registration.process
+  await initializeAccounting($, context)
   const files = (await $.fs.list(context.dir)).map((entry) => entry.name)
   if (files.includes('activity.json')) {
     const previous = JSON.parse(await $.fs.read(context.dir + '/activity.json'))
@@ -1003,6 +1005,18 @@ export function register(on) {
   const registry = { sessions: new Map(), turns: new Map(), toolOwners: new Map(), cleared: null, worldTools: new Set(), provedCalls: new Set() }
   // Every handler first steps aside once fastctx is being removed. Each keeps
   // its literal on('…') call, the shape the official loader reads.
+  on('telemetry.log', { to: 'collector' }, async ($, e, next) => {
+    if (e.event === 'api_request' && !await removed($)) {
+      try {
+        const id = e.attributes['session.id'] ?? await $.session.id()
+        const context = await session($, registry, id)
+        await pricedRequest($, context, e)
+      } catch (error) {
+        worldFailure($, 'request accounting', error)
+      }
+    }
+    return next(e)
+  }).catch(($, e, next) => continueWithoutWorld($, 'telemetry.log', e, next))
   on('session.start', async ($, e, next) => {
     await usageOrigin($, await $.session.id())
     if (await removed($)) return next(e)

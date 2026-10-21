@@ -39,13 +39,24 @@ pub(super) fn keep(node: &Node, report: LimitsReport) -> std::io::Result<bool> {
     let (home, at) = (report.home.clone(), report.at);
     let _keeping = node.logins.keeping.lock().expect("never poisoned");
     let mut kept = kept::read(node)?;
+    let Some((observed, identity)) = &report.owner else { return Ok(false) };
+    let account = if identity.email.is_some() || identity.organization.is_some() {
+        Some(crate::usage::accounts::key(identity, &()))
+    } else {
+        crate::usage::accounts::at(node, "codex", &home, *observed)?
+    };
     {
         let limits = &mut kept.codex.limits;
-        let index = limits.iter().position(|known| crate::homes::same_dir(&known.dir, &report.home));
+        let index = limits
+            .iter()
+            .position(|known| crate::homes::same_dir(&known.dir, &report.home) && known.account == account);
+        if index.is_some_and(|index| limits[index].at > at) {
+            return Ok(false);
+        }
         match report.how {
             LimitsHow::Read(answer) => {
                 let buckets = fastctx_hosts::codex::buckets(&answer);
-                let fresh = KeptLimits { dir: report.home.clone(), at: report.at, buckets };
+                let fresh = KeptLimits { dir: report.home.clone(), at: report.at, buckets, account: account.clone() };
                 match index {
                     Some(index) => limits[index] = fresh,
                     None => limits.push(fresh),
@@ -59,6 +70,7 @@ pub(super) fn keep(node: &Node, report: LimitsReport) -> std::io::Result<bool> {
                             dir: report.home.clone(),
                             at: report.at,
                             buckets: Default::default(),
+                            account: account.clone(),
                         });
                         limits.last_mut().expect("just pushed")
                     }
@@ -70,8 +82,8 @@ pub(super) fn keep(node: &Node, report: LimitsReport) -> std::io::Result<bool> {
     }
     // 2026-10-20: publish credits only after the matching windows are committed,
     // so a reader of the new snapshot cannot see the previous quota period.
-    let changed = match raw_of(&kept, &home) {
-        Fact::Known { value } => crate::usage::codex_reading(node, &home, value.windows, at)?,
+    let changed = match raw_for(&kept, &home, &account) {
+        Fact::Known { value } => crate::usage::codex_reading(node, &home, value.windows, at, account)?,
         _ => false,
     };
     kept::write(node, &kept)?;
@@ -94,7 +106,22 @@ pub(super) fn of(node: &Node, kept: &kept::Kept, dir: &Path) -> Fact<AgentLimits
 }
 
 fn raw_of(kept: &kept::Kept, dir: &Path) -> Fact<AgentLimits> {
-    match kept.codex.limits.iter().find(|known| crate::homes::same_dir(&known.dir, dir)) {
+    let account = kept.codex.logins.iter().find(|login| crate::homes::same_dir(&login.dir, dir)).and_then(|login| {
+        match &login.identified.who {
+            Fact::Known { value } => Some(crate::usage::accounts::key(value, &login.signed)),
+            _ => None,
+        }
+    });
+    let current = raw_for(kept, dir, &account);
+    if matches!(current, Fact::Unavailable { .. })
+        && !kept.codex.limits.iter().any(|known| crate::homes::same_dir(&known.dir, dir) && known.account.is_some())
+    {
+        return raw_for(kept, dir, &None);
+    }
+    current
+}
+fn raw_for(kept: &kept::Kept, dir: &Path, account: &Option<String>) -> Fact<AgentLimits> {
+    match kept.codex.limits.iter().find(|known| crate::homes::same_dir(&known.dir, dir) && &known.account == account) {
         Some(known) => fastctx_hosts::codex::limits_of(&known.buckets, known.at),
         None => Fact::unavailable("not read yet"),
     }
@@ -124,10 +151,20 @@ pub(crate) async fn read(node: &Arc<Node>, agent: &AgentName, dir: &Path) -> Res
         }));
     };
     let (keeping, home) = (node.clone(), dir.to_path_buf());
-    let changed = tokio::task::spawn_blocking(move || keep(&keeping, super::identify::limits_read(&home, at, answer)))
-        .await
-        .map_err(|error| Failure::new(error.to_string()))?
-        .map_err(|error| Failure::new(format!("keeping Codex's limits: {error}")))?;
+    let changed = tokio::task::spawn_blocking(move || {
+        let context = super::Context::of(&keeping).map_err(|error| std::io::Error::other(error.message))?;
+        kept::change(&keeping, |record| {
+            if let Some(login) = record.codex.logins.iter_mut().find(|login| crate::homes::same_dir(&login.dir, &home))
+            {
+                login.identified = asked.identified.clone();
+                login.signed = Some(super::sign_in::now(&context, "codex", &home));
+            }
+        })?;
+        keep(&keeping, super::identify::limits_read(&home, at, answer, &asked.identified.who))
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
+    .map_err(|error| Failure::new(format!("keeping Codex's limits: {error}")))?;
     if changed {
         crate::usage::after_reading(node, "codex", dir).await;
     }

@@ -21,7 +21,16 @@ pub(super) struct Legacy {
 struct Counted {
     process: String,
     since: f64,
+    #[serde(default)]
     steps: Vec<Step>,
+    #[serde(default)]
+    meter: bool,
+    #[serde(default)]
+    priced: Option<super::meter::Priced>,
+    #[serde(default)]
+    detail_key: Option<String>,
+    #[serde(default)]
+    account_at: Option<Timestamp>,
 }
 
 #[derive(Deserialize)]
@@ -77,7 +86,44 @@ pub(super) fn measured(
     super::with_book(node, path, |book| {
         let mut changed = false;
         if let Some(windows) = windows {
-            changed |= super::readings::record(book, path, windows, at)?;
+            let account = book.account_at(counted.as_ref().and_then(|c| c.account_at).unwrap_or(about.born_at));
+            changed |= super::readings::record(book, path, windows, at, account)?;
+        }
+        if counted.as_ref().is_some_and(|c| c.meter) {
+            let c = counted.expect("meter report");
+            let since = Usd::from_dollars(c.since).ok_or_else(|| io::Error::other("invalid process baseline"))?;
+            changed |= super::meter::record(
+                book,
+                path,
+                id,
+                about,
+                at,
+                c.process.clone(),
+                since,
+                total.unwrap_or(since),
+                c.priced,
+            )?;
+            if let Some(key) = c.detail_key {
+                for usage in divide(Usd::ZERO, &c.steps, id, about, at) {
+                    book.commit(
+                        path,
+                        Entry::Tokens {
+                            at,
+                            who: super::who(about),
+                            model: usage.model,
+                            tokens: usage.tokens,
+                            call: usage.call,
+                            key: Some(format!(
+                                "claude-step:{}:{}:{key}",
+                                about.session.as_deref().unwrap_or_default(),
+                                c.process
+                            )),
+                        },
+                    )?;
+                    changed = true;
+                }
+            }
+            return Ok(changed);
         }
         let (Some(session), Some(total)) = (&about.session, total) else {
             return Ok(changed);
@@ -149,7 +195,6 @@ pub(super) fn kinds(model: &str, tokens: &Tokens, usd: Usd) -> KindsUsd {
 }
 
 fn divide(total: Usd, steps: &[Step], id: &ResidentId, about: &About, at: Timestamp) -> Vec<Use> {
-    let fallback = about.model.as_deref().unwrap_or_default();
     let tokens: Vec<Tokens> = steps
         .iter()
         .map(|s| {
@@ -200,7 +245,7 @@ fn divide(total: Usd, steps: &[Step], id: &ResidentId, about: &About, at: Timest
     }
     if !observed && (total != Usd::ZERO || steps.is_empty()) {
         uses.push(Use {
-            model: fallback.to_string(),
+            model: String::new(),
             usd: Some(total),
             tokens: Tokens::default(),
             kinds: Some(KindsUsd { input: total, ..Default::default() }),
