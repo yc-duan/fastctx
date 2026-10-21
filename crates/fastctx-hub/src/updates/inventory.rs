@@ -62,11 +62,32 @@ pub(super) fn offer_to(hub: &Hub, name: &MachineName, network: &mut Network) {
             .cloned()
             .unwrap_or_default()
     };
-    let cache = hub.updates.lock().expect("never poisoned").cache.clone();
+    let (cache, known) = {
+        let updates = hub.updates.lock().expect("never poisoned");
+        (updates.cache.clone(), updates.manifests().collect::<Vec<_>>())
+    };
     let held = held(hub, &cache);
-    let ready = |m: &Manifest| for_targets(m, &targets).iter().all(|p| held.contains(p));
-    network.stable = network.stable.take().filter(ready);
-    network.beta = network.beta.take().filter(ready);
+    let ready = |m: &Manifest| {
+        let wanted = for_targets(m, &targets);
+        !wanted.is_empty() && wanted.iter().all(|p| held.contains(p))
+    };
+    // While a newer release is still coming in, or one of its packages never
+    // comes, the newest of the same line held whole for this machine stands.
+    let standing = |newest: Option<Manifest>| -> Option<Manifest> {
+        let newest = newest?;
+        if ready(&newest) {
+            return Some(newest);
+        }
+        let ceiling = newest.semver()?;
+        known
+            .iter()
+            .filter(|m| m.semver().is_some_and(|v| v.pre.is_empty() == ceiling.pre.is_empty() && v < ceiling))
+            .filter(|m| ready(m))
+            .max_by_key(|m| m.semver())
+            .cloned()
+    };
+    network.stable = standing(network.stable.take());
+    network.beta = standing(network.beta.take());
 }
 
 /// The packages of `manifest` the network's machines need, and how many
