@@ -121,7 +121,9 @@ async fn receive(
                     n += 1;
                     let part = match piece.part {
                         Content::Opened { info } => {
-                            if info.machine != from || path.as_ref().is_some_and(|path| info.path != *path) {
+                            if !receiving.view().same(&info.machine, &from)
+                                || path.as_ref().is_some_and(|path| info.path != *path)
+                            {
                                 return Err(Ended::Wrong(format!(
                                     "{from} named a different machine or path in the file read"
                                 )));
