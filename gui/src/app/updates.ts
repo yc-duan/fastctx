@@ -35,7 +35,8 @@ export class Updates {
   readonly offered: Signal<Offered | null> = signal<Offered | null>(null, (a, b) => JSON.stringify(a) === JSON.stringify(b));
   private installing = false;
   private permission = false;
-  private failed: string | null = null;
+  /** What failed here, of which release: bringing it, or installing it. */
+  private failed: { version: string; step: "fetch" | "install"; why: string } | null = null;
   /** A failed release tried again by itself: which, since when, how often. */
   private retried = { version: "", at: 0, count: 0 };
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -85,16 +86,19 @@ export class Updates {
   go(): void {
     const offered = this.offered.peek();
     if (!offered || this.installing) return;
+    const version = offered.manifest.version;
+    // What failed installing here is here already: it is installed again.
+    const installed = this.failed?.version === version && this.failed.step === "install";
     this.failed = null;
     this.permission = false;
-    if (offered.stage.kind === "ready" || offered.stage.kind === "waiting" || offered.stage.kind === "permission") {
-      this.install(offered.manifest.version);
+    if (installed || offered.stage.kind === "ready" || offered.stage.kind === "waiting" || offered.stage.kind === "permission") {
+      this.install(version);
       return;
     }
-    void this.seam.fetch(offered.manifest.version).then(
+    void this.seam.fetch(version).then(
       (state) => this.take(state),
       (error: unknown) => {
-        this.failed = String(error);
+        this.failed = { version, step: "fetch", why: String(error) };
         this.refresh();
       },
     );
@@ -113,7 +117,7 @@ export class Updates {
       },
       (error: unknown) => {
         this.installing = false;
-        this.failed = String(error);
+        this.failed = { version, step: "install", why: String(error) };
         this.refresh();
       },
     );
@@ -177,7 +181,7 @@ export class Updates {
     if (this.retried.version !== version) this.retried = { version, at: now, count: 0 };
     // Never more than once an hour from here, whatever the node says.
     const since = this.retried.count ? now - this.retried.at : Infinity;
-    if (!this.failed && state.retry_at) return Date.parse(state.retry_at) <= now && since >= HOUR;
+    if (this.failed?.version !== version && state.retry_at) return Date.parse(state.retry_at) <= now && since >= HOUR;
     return now >= this.retried.at + Math.min(HOUR * 2 ** this.retried.count, DAY);
   }
 
@@ -209,7 +213,8 @@ export class Updates {
     const below = minimum && compareVersions(this.version, minimum) < 0 ? minimum : null;
     const base = { manifest, size: pack.size ?? null, minimum: below };
     if (this.installing) return { ...base, stage: { kind: "installing" } };
-    if (this.failed) return { ...base, stage: { kind: "failed", why: this.failed } };
+    // A failure here is of its release alone: a newer one is offered afresh.
+    if (this.failed?.version === manifest.version) return { ...base, stage: { kind: "failed", why: this.failed.why } };
     const fetching = state.fetching;
     if (fetching && fetching.version === manifest.version && fetching.target === target) {
       return {
