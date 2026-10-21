@@ -43,16 +43,19 @@ pub(crate) fn calls(
     let since = Timestamp::now() - SignedDuration::from_hours(24 * DETAIL_DAYS);
     // An entry is filed under its own day, so a later page skips the days after its cursor.
     let last = query.before.as_ref().map(|before| before.at.strftime("%Y-%m-%d").to_string());
-    super::with_book(node, &path, |_| {
+    super::with_book(node, &path, |book| {
         let mut rows = Vec::new();
+        let balances = book.balances();
         for file in ledger::days(&path, since)?.into_iter().rev() {
             if let Some(last) = &last
                 && file.file_stem().and_then(|s| s.to_str()).is_some_and(|day| day > last.as_str())
             {
                 continue;
             }
-            for entry in ledger::read(&file)? {
-                if entry.at() < since {
+            let mut entries = ledger::read(&file)?;
+            entries.extend(balances.iter().filter(|row| ledger::day_file(&path, row.at()) == file).cloned());
+            for entry in entries {
+                if entry.usage_at() < since {
                     continue;
                 }
                 // Row contents remain stable when expired neighbors are folded away.
@@ -66,7 +69,7 @@ pub(crate) fn calls(
                     let mut key = Sha256::new();
                     key.update(identity);
                     key.update((item as u64).to_be_bytes());
-                    let cursor = CallCursor { at: entry.at(), key: format!("{:x}", key.finalize()) };
+                    let cursor = CallCursor { at: entry.usage_at(), key: format!("{:x}", key.finalize()) };
                     let row = UsageCall {
                         cursor,
                         who,

@@ -32,7 +32,7 @@ impl Day {
                     .entry(key)
                     .or_insert_with(|| Group { who, points: Vec::new() })
                     .points
-                    .push((row.at(), usage));
+                    .push((row.usage_at(), usage));
             }
         }
         for group in groups.values_mut() {

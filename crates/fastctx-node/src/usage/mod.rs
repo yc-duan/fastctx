@@ -10,6 +10,7 @@ mod health;
 mod history;
 mod hold;
 mod ledger;
+mod meter;
 mod quarantine;
 mod readings;
 mod recent;

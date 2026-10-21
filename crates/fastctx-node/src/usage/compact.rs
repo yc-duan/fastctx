@@ -67,15 +67,16 @@ pub(super) fn fold(rows: &[Entry], boundaries: &[Timestamp], now: Timestamp) -> 
     let mut periods: Vec<Timestamp> = Vec::new();
     let mut last = BTreeMap::new();
     let mut accounts = Vec::new();
+    let mut meters = BTreeMap::new();
     let mut receipts = Vec::new();
     let mut receipts_at = Timestamp::MIN;
     let month = now - SignedDuration::from_hours(31 * 24);
     for row in rows {
         for (who, usage) in row.uses() {
             let bucket = if matches!(row, Entry::Summary { .. }) {
-                row.at()
+                row.usage_at()
             } else {
-                super::report::bucket(row.at(), boundaries)
+                super::report::bucket(row.usage_at(), boundaries)
             };
             let key = (
                 bucket,
@@ -96,6 +97,19 @@ pub(super) fn fold(rows: &[Entry], boundaries: &[Timestamp], now: Timestamp) -> 
         }
         match row {
             Entry::Account { .. } => accounts.push(row.clone()),
+            Entry::Meter { meter } => {
+                let key = (meter.session.clone(), meter.process.clone());
+                if let Some(receipt) = &meter.key {
+                    receipts.push(receipt.clone());
+                    receipts_at = receipts_at.max(meter.at);
+                }
+                if meters.get(&key).is_none_or(|old: &super::meter::Meter| old.at <= meter.at) {
+                    let mut checkpoint = *meter.clone();
+                    checkpoint.usage = None;
+                    checkpoint.key = None;
+                    meters.insert(key, checkpoint);
+                }
+            }
             Entry::Tokens { at, key: Some(key), .. } if *at >= month => {
                 receipts.push(key.clone());
                 receipts_at = receipts_at.max(*at);
@@ -172,6 +186,7 @@ pub(super) fn fold(rows: &[Entry], boundaries: &[Timestamp], now: Timestamp) -> 
         readings.insert(format!("last:{}", account.as_deref().unwrap_or("legacy")), row);
     }
     folded.extend(accounts);
+    folded.extend(meters.into_values().map(|meter| Entry::Meter { meter: Box::new(meter) }));
     let mut kept: Vec<_> = readings.into_values().collect();
     kept.sort_by_key(Entry::at);
     kept.dedup_by_key(|row| row.at());

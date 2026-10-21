@@ -26,6 +26,10 @@ pub(super) struct Use {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(super) enum Entry {
+    Meter {
+        #[serde(flatten)]
+        meter: Box<super::meter::Meter>,
+    },
     Cost {
         at: Timestamp,
         who: Option<HubAccount>,
@@ -83,6 +87,7 @@ pub(super) enum Entry {
 impl Entry {
     pub fn at(&self) -> Timestamp {
         match self {
+            Self::Meter { meter } => meter.at,
             Self::Cost { at, .. }
             | Self::Tokens { at, .. }
             | Self::Spent { at, .. }
@@ -93,8 +98,16 @@ impl Entry {
             | Self::Receipts { at, .. } => *at,
         }
     }
-    pub fn uses(&self) -> Vec<(Option<HubAccount>, Use)> {
+    pub fn usage_at(&self) -> Timestamp {
         match self {
+            Self::Meter { meter } => {
+                meter.usage.as_ref().and_then(|usage| usage.call.as_ref()).map_or(meter.at, |call| call.timing.ended_at)
+            }
+            _ => self.at(),
+        }
+    }
+    pub fn uses(&self) -> Vec<(Option<HubAccount>, Use)> {
+        let mut uses: Vec<_> = match self {
             Self::Cost { who, model, usd, .. } => vec![(
                 who.clone(),
                 Use { model: model.clone(), usd: Some(*usd), tokens: Tokens::default(), kinds: None, call: None },
@@ -107,8 +120,19 @@ impl Entry {
             }
             Self::Spent { who, uses, .. } => uses.iter().map(|usage| (who.clone(), usage.clone())).collect(),
             Self::Summary { who, usage, .. } => vec![(who.clone(), usage.clone())],
+            Self::Meter { meter } => meter.usage.iter().map(|usage| (meter.who.clone(), usage.clone())).collect(),
             _ => Vec::new(),
+        };
+        for (_, usage) in &mut uses {
+            if usage
+                .call
+                .as_ref()
+                .is_some_and(|call| call.source == fastctx_types::usage_calls::CallSource::Background && !call.observed)
+            {
+                usage.model.clear();
+            }
         }
+        uses
     }
 }
 
@@ -116,6 +140,7 @@ impl Entry {
 pub(super) struct Book {
     valid: bool,
     pub totals: HashMap<Identity, (Timestamp, Usd)>,
+    pub meters: HashMap<Identity, super::meter::Meter>,
     pub seen: HashSet<(Identity, Timestamp)>,
     pub modern: HashSet<String>,
     pub keys: HashSet<String>,
@@ -146,6 +171,16 @@ impl Book {
         let recent = now - SignedDuration::from_hours(8 * 24);
         let month = now - SignedDuration::from_hours(31 * 24);
         match row {
+            Entry::Meter { meter } => {
+                let identity = (meter.session.clone(), Some(meter.process.clone()));
+                if let Some(key) = &meter.key {
+                    self.keys.insert(key.clone());
+                }
+                self.modern.insert(meter.session.clone());
+                if self.meters.get(&identity).is_none_or(|old| old.at <= meter.at) {
+                    self.meters.insert(identity, *meter.clone());
+                }
+            }
             Entry::Spent { at, session, process, total, .. }
             | Entry::Checkpoint { at, session, process, total, .. }
                 if *at >= month =>
@@ -192,11 +227,11 @@ impl Book {
             }
             _ => {}
         }
-        if row.at() >= recent {
+        if row.usage_at() >= recent {
             for (who, usage) in row.uses() {
                 if let Some(usd) = usage.usd {
                     self.recent.push(Charge {
-                        at: row.at(),
+                        at: row.usage_at(),
                         who,
                         fable: fastctx_hosts::claude::pricing::is_fable(&usage.model)
                             && usage.call.as_ref().is_none_or(|call| call.observed),
@@ -206,6 +241,9 @@ impl Book {
             }
         }
         self.recent.retain(|charge| charge.at >= recent);
+    }
+    pub fn balances(&self) -> Vec<Entry> {
+        self.meters.values().flat_map(super::meter::Meter::balances).collect()
     }
     pub fn account_at(&self, at: Timestamp) -> Option<String> {
         self.accounts
@@ -225,7 +263,7 @@ impl Book {
         self.valid = false;
         append(path, &row)?;
         self.apply(&row);
-        self.history.invalidate(&day_file(path, row.at()));
+        self.history.invalidate(&day_file(path, row.usage_at()));
         self.valid = true;
         Ok(())
     }
@@ -245,7 +283,7 @@ fn append(path: &Path, row: &Entry) -> io::Result<()> {
         .truncate(false)
         .read(true)
         .write(true)
-        .open(day_file(path, row.at()))?;
+        .open(day_file(path, row.usage_at()))?;
     let len = file.metadata()?.len();
     if len > 0 {
         let mut end = len;

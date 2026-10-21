@@ -116,7 +116,22 @@ pub(crate) fn used_up(node: &Node, about: &About, account: &HubAccount, model: O
             return Ok(reached);
         }
         let week = super::readings::week(book.reading.as_ref(), now);
-        let mut costs: Vec<_> = book.recent.iter().filter(|charge| charge.who.as_ref() == Some(account) && charge.at <= now).collect();
+        let balances: Vec<_> = book
+            .balances()
+            .into_iter()
+            .flat_map(|row| {
+                let at = row.at();
+                row.uses().into_iter().filter_map(move |(who, usage)| {
+                    Some(super::recent::Charge { at, who, fable: false, usd: usage.usd? })
+                })
+            })
+            .collect();
+        let mut costs: Vec<_> = book
+            .recent
+            .iter()
+            .chain(&balances)
+            .filter(|charge| charge.who.as_ref() == Some(account) && charge.at <= now)
+            .collect();
         costs.sort_by_key(|charge| charge.at);
         let all: Vec<_> = costs.iter().map(|charge| (charge.at, charge.usd)).collect();
         if let Some(allowance) = assist.weekly {

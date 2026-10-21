@@ -313,6 +313,7 @@ pub fn acknowledge(directory: &Path, name: &str) -> io::Result<()> {
         Err(error) if error.kind() != io::ErrorKind::AlreadyExists => return Err(error),
         _ => {}
     }
+    super::accounting::clean(directory, name.as_ref())?;
     let path = directory.join("events").join(name);
     remove(&path)?;
     remove(&path.with_extension("done"))?;
@@ -326,20 +327,20 @@ pub fn acknowledge(directory: &Path, name: &str) -> io::Result<()> {
 /// cannot be read is moved to `damaged/` and said in the problems; the
 /// first without its marker blocks later reports until its write completes.
 pub fn harvest(directory: &Path) -> io::Result<(Vec<Report>, Vec<String>)> {
+    let mut problems = super::accounting::promote(directory, false)?;
     let events = directory.join("events");
     let mut names: Vec<String> = match std::fs::read_dir(&events) {
         Ok(entries) => entries
             .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
             .filter(|name| name.ends_with(".json"))
             .collect(),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok((Vec::new(), Vec::new())),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok((Vec::new(), problems)),
         Err(error) => return Err(error),
     };
     // Names start with the time and a count, padded: their order is the
     // order the mod wrote them in.
     names.sort();
     let mut reported = Vec::new();
-    let mut problems = Vec::new();
     for name in &names {
         if directory.join("applied").join(name).exists() {
             acknowledge(directory, name)?;
@@ -382,12 +383,12 @@ pub fn harvest(directory: &Path) -> io::Result<(Vec<Report>, Vec<String>)> {
 /// The writer is known dead: a complete JSON report no longer needs its
 /// final marker to distinguish it from an in-progress write.
 pub fn recover_reports(directory: &Path) -> io::Result<Vec<String>> {
+    let mut problems = super::accounting::promote(directory, true)?;
     let entries = match std::fs::read_dir(directory.join("events")) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(problems),
         Err(error) => return Err(error),
     };
-    let mut problems = Vec::new();
     for entry in entries {
         let path = entry?.path();
         if path.extension().is_none_or(|extension| extension != "json") || path.with_extension("done").exists() {
@@ -401,6 +402,12 @@ pub fn recover_reports(directory: &Path) -> io::Result<Vec<String>> {
         }
     }
     Ok(problems)
+}
+
+pub(super) fn checked_report(path: &Path) -> io::Result<Vec<u8>> {
+    let bytes = read_report(path)?;
+    serde_json::from_slice::<ModEvent>(&bytes).map_err(io::Error::other)?;
+    Ok(bytes)
 }
 
 fn read_report(path: &Path) -> io::Result<Vec<u8>> {
@@ -531,7 +538,9 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
                 None => reason,
             };
             // The rest of what the turn took the node has from each request.
-            let facts = spent.and_then(Usd::from_dollars).map(|cost| Box::new(TurnFacts { cost: Some(cost), ..TurnFacts::default() }));
+            let facts = spent
+                .and_then(Usd::from_dollars)
+                .map(|cost| Box::new(TurnFacts { cost: Some(cost), ..TurnFacts::default() }));
             let end = TurnEnd { facts, error: None, how, reason, duration_ms: ms, last_message: answer };
             reported.push(happened(at, Happened::TurnEnded { turn, end }));
             reported

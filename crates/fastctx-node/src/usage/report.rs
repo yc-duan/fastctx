@@ -36,7 +36,8 @@ pub(crate) fn report(node: &Node, agent: &str, dir: &Path, only: Option<&HubAcco
     let oldest = now - SignedDuration::from_hours(24 * super::KEPT_DAYS);
     let since = Timestamp::from_second(oldest.as_second().div_euclid(86400) * 86400).expect("retained day");
     super::with_book(node, &ledger, |book| {
-        let entries = book.history.entries(&ledger, since, now, book.reading.as_ref())?;
+        let mut entries = book.history.entries(&ledger, since, now, book.reading.as_ref())?;
+        entries.extend(book.balances().into_iter().filter(|row| row.at() >= since));
         summarize(agent, only, now, book.reading.as_ref(), entries)
     })
 }
