@@ -66,7 +66,7 @@ pub(super) fn fold(rows: &[Entry], boundaries: &[Timestamp], now: Timestamp) -> 
     let month = now - SignedDuration::from_hours(31 * 24);
     for row in rows {
         for (who, usage) in row.uses() {
-            let bucket = super::report::bucket(row.at(), boundaries);
+            let bucket = if matches!(row, Entry::Summary { .. }) { row.at() } else { super::report::bucket(row.at(), boundaries) };
             let key = (
                 bucket,
                 serde_json::to_string(&who).expect("account serializes"),

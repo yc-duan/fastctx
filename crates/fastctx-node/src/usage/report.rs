@@ -108,7 +108,8 @@ pub(super) fn summarize(
             }
             let index = person(&who);
             let count = usage.tokens.total();
-            hours.entry((bucket(at, &boundaries), index)).or_default().add(count, usage.usd);
+            let hour = if matches!(entry, Entry::Summary { .. }) { at } else { bucket(at, &boundaries) };
+            hours.entry((hour, index)).or_default().add(count, usage.usd);
             if let Some(span) = span_of(at) {
                 used.entry((span, index)).or_default().add(count, usage.usd);
                 *weights.entry((span, index)).or_default() += weight(agent, Some(&usage.tokens), usage.usd);
@@ -285,5 +286,15 @@ pub(super) fn boundaries(spans: &[Span], week: Week) -> Vec<Timestamp> {
 /// Hour buckets are split at every recorded weekly boundary.
 pub(super) fn bucket(at: Timestamp, boundaries: &[Timestamp]) -> Timestamp {
     let hour = Timestamp::from_second(at.as_second().div_euclid(3600) * 3600).expect("existing hour");
-    boundaries.iter().rev().find(|cut| **cut <= at && **cut > hour).copied().unwrap_or(hour)
+    // A known reset establishes the cut even in weeks with no sample. It does
+    // not create a historical week in the report's list of observed periods.
+    boundaries
+        .iter()
+        .map(|cut| {
+            let weeks = at.duration_since(*cut).as_secs().div_euclid(WEEK_SECONDS);
+            *cut + SignedDuration::from_secs(weeks * WEEK_SECONDS)
+        })
+        .filter(|cut| *cut <= at && *cut > hour)
+        .max()
+        .unwrap_or(hour)
 }
