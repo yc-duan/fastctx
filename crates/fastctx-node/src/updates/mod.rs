@@ -472,13 +472,11 @@ async fn bring(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<Pa
     let log: fastctx_update::pool::Log = Arc::new(move |message| logging.log.line(format_args!("{message}")));
     let carried = {
         let held = node.updates.held.lock().expect("never poisoned");
-        let carried = held
-            .carried
+        held.carried
             .as_ref()
             .filter(|_| held.app.as_ref().is_some_and(|app| app.version == manifest.version))
             .map(|dir| dir.join(format!("{target}.tar.gz")))
-            .filter(|path| path.is_file());
-        carried
+            .filter(|path| path.is_file())
     };
     let brought = node.updates.packages.obtain(&cache, manifest, target, &sources, carried, &mut progress, log).await?;
     if let Some(at) = brought.github_at {

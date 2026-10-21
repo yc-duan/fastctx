@@ -91,7 +91,7 @@ pub(crate) async fn run(
                 Ok(()) => return Ok(()),
                 Err(why) => {
                     log(format!("bringing {target} of {version} through {}: {why}", link.hub_name()));
-                    failures.push(format!("{}: {why}", link.hub_name()));
+                    failures.push(Problem::new(why.reason, format!("{}: {}", link.hub_name(), why.why)));
                     match tokio::fs::remove_file(hub_file).await {
                         Ok(()) => {}
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -100,7 +100,14 @@ pub(crate) async fn run(
                 }
             }
         }
-        Err(Problem::new(FailureReason::Other, failures.join("; ")))
+        let reason = if failures.iter().any(|problem| problem.reason == FailureReason::Signature) {
+            FailureReason::Signature
+        } else if failures.iter().any(|problem| problem.reason == FailureReason::Disk) {
+            FailureReason::Disk
+        } else {
+            FailureReason::Other
+        };
+        Err(Problem::new(reason, failures.iter().map(|problem| problem.why.as_str()).collect::<Vec<_>>().join("; ")))
     };
     let local_source = local.clone();
     let github = async {
