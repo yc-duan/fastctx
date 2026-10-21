@@ -327,6 +327,7 @@ pub(crate) fn action(change: &Change, book: &Book, policy: &fastctx_types::updat
     match change {
         Change::Collab { collab } => Action::Collab { version: collab.version },
         Change::Profile { profile } => Action::Profile { version: profile.version },
+        Change::Subagents { version, .. } => Action::Profile { version: *version },
         Change::Share { machine, to, shared } => {
             Action::Share { machine: machine.clone(), to: to.clone(), shared: *shared }
         }

@@ -43,3 +43,15 @@ pub(crate) async fn mcp(
     let (hub, account) = named(hub, account)?;
     shell.world().mcp(hub, account, mcp).await.map_err(|e| e.to_string())
 }
+
+/// Reads or changes only this account's Claude subagents over a profile version.
+#[fastctx_gui_command::command]
+pub(crate) async fn profile_subagents(
+    shell: tauri::State<'_, Shell>,
+    hub: Option<String>,
+    account: Option<String>,
+    operation: fastctx_types::profile::SubagentOperation,
+) -> Result<fastctx_types::profile::SubagentView, String> {
+    let (hub, account) = named(hub, account)?;
+    shell.world().profile_subagents(hub, account, operation).await.map_err(|e| e.to_string())
+}

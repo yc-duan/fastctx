@@ -73,6 +73,7 @@ async function removed($, fresh = false) {
 __FASTCTX_CONTROLS__
 __FASTCTX_COMMANDS__
 __FASTCTX_ASSISTED__
+__FASTCTX_ACCOUNT_AGENTS__
 __FASTCTX_SELECTION__
 __FASTCTX_REWIND__
 __FASTCTX_OBSERVATIONS__
@@ -315,6 +316,14 @@ async function submit($, context, deliveries, prompt) {
     }
     // What rides with the next turn goes in just before the prompt that
     // starts it: this plugin's own prompt reaches none of its own hooks.
+    try {
+      await accountAgentsBeforeSubmit($, context)
+    } catch (error) {
+      for (const delivery of deliveries) await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ state: 'refused' }))
+      context.unsettled = true
+      await trouble($, context, deliveries[0].id, 'the account subagents could not be refreshed: ' + String(error))
+      return false
+    }
     await alongBefore($, context)
     // Its row and turn can come before the call answers.
     context.accepted.push(deliveries)
@@ -424,6 +433,11 @@ async function alongBefore($, context) {
 // that starts it; the turn it starts takes it (`startTurn`).
 async function alongPrompt($, context, e, next) {
   if (e.turnId !== undefined || e.command !== undefined || context.closed) return next(e)
+  try {
+    await refreshAccountAgents($, context)
+  } catch (error) {
+    return { drop: 'The account subagents could not be refreshed: ' + String(error) }
+  }
   const { along, texts, keep } = alongNext(context)
   if (texts.length === 0) return next(e)
   let result
@@ -782,6 +796,7 @@ async function startTurn($, context, e, next) {
   // state and what it takes are untouched (Claude Code reports one since
   // 2.1.300; its end is `completeTurn`'s agent branch).
   if (e.agentId !== undefined) return next(e)
+  await refreshAccountAgents($, context)
   await startControlTurn($, e)
   context.busy = true
   context.turn = e.turnId
@@ -970,6 +985,7 @@ async function session($, registry, id, renew = false) {
   const retried = context !== undefined && context.failedAt !== undefined && Date.now() - context.failedAt >= START_AGAIN_MS
   if (!context || (renew && context.closed) || retried) {
     context = conversation(id, retried ? context.previous : registry.cleared)
+    context.registeredAgents = registry.registeredAccountAgents
     // Session switches keep their order even within one clock tick or when
     // the wall clock moves backwards. The node uses registration time to
     // keep late reports from moving the resident's delivery address back.
@@ -1003,7 +1019,7 @@ async function route($, registry, name, e) {
 }
 
 export function register(on) {
-  const registry = { sessions: new Map(), turns: new Map(), toolOwners: new Map(), cleared: null, worldTools: new Set(), provedCalls: new Set() }
+  const registry = { registeredAccountAgents: new Set(), sessions: new Map(), turns: new Map(), toolOwners: new Map(), cleared: null, worldTools: new Set(), provedCalls: new Set() }
   // Every handler first steps aside once fastctx is being removed. Each keeps
   // its literal on('…') call, the shape the official loader reads.
   on('telemetry.log', { to: 'collector' }, async ($, e, next) => {
@@ -1024,10 +1040,18 @@ export function register(on) {
     await worldTools($, registry)
     // The session's directory is reserved before its controls make or
     // watch anything in it (`reservations`).
-    await session($, registry, await $.session.id(), true)
+    const context = await session($, registry, await $.session.id(), true)
+    await refreshAccountAgents($, context)
     await startControls($)
     return next(e)
   }).catch(($, e, next) => continueWithoutWorld($, 'session.start', e, next))
+  on('agent.offer', async ($, e, next) => {
+    if (await removed($)) return next(e)
+    const context = registry.sessions.get(await $.session.id())
+    if (!context) return next(e)
+    const offered = offerAccountAgent(context, e)
+    return offered === null ? next(e) : { isOffered: offered }
+  }).catch(($, e) => { worldFailure($, 'account subagents', new Error('could not determine the account subagent offer')); return { isOffered: false } })
   on('turn.start', async ($, e, next) => {
     if (await removed($)) return next(e)
     return startTurn($, await route($, registry, 'turn.start', e), e, next)
@@ -1125,9 +1149,12 @@ export function register(on) {
     if (await removed($)) return next(e)
     const result = await next(e)
     const context = await session($, registry, await $.session.id())
+    await refreshAccountAgents($, context)
+    context.heardAccountAgents = context.accountAgentRevision
     const added = [
       { name: FOCUS_BLOCK, text: await focus($, context) },
       { name: USER_BLOCK, text: await blockText($, context, 'user.md') },
+      { name: 'subagentInstructions', text: context.subagentInstructions || null },
       { name: PROJECT_BLOCK, text: await blockText($, context, 'project.md') },
     ].filter((block) => block.text !== null)
     if (!added.length) return result

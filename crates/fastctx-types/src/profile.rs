@@ -12,6 +12,11 @@ use serde_json::{Map, Value};
 
 use crate::MachineName;
 
+mod subagents;
+pub use subagents::{
+    CLAUDE_SUBAGENT_COLORS, CLAUDE_SUBAGENT_FIELDS, SubagentOperation, SubagentView, Subagents, validate_subagent,
+};
+
 /// The account's own layer, versioned so two devices' edits never cross.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
@@ -28,6 +33,9 @@ pub struct Profile {
     /// Its MCP servers, by the name its sessions list them under.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub servers: BTreeMap<String, Entry>,
+    /// None follows this version's defaults; Some may deliberately contain no agents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagents: Option<Subagents>,
 }
 
 /// One server in the account's list.
@@ -133,6 +141,9 @@ impl Profile {
     pub fn validate(&self) -> Result<(), String> {
         if self.prompt.len() > PROMPT_MOST {
             return Err(format!("the prompt is {} bytes; at most {PROMPT_MOST}", self.prompt.len()));
+        }
+        if let Some(subagents) = &self.subagents {
+            subagents.validate()?;
         }
         settings(&self.claude, CLAUDE_SETTINGS, "Claude Code")?;
         claude_env(&self.claude)?;

@@ -6,6 +6,7 @@ use fastctx_types::access::Acting;
 use fastctx_types::ipc::Failure;
 use fastctx_types::{AccountName, HubName};
 pub(crate) mod session;
+pub(crate) mod subagents;
 
 use std::sync::Arc;
 

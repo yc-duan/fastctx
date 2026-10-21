@@ -1261,6 +1261,22 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             }
         }
         Call::McpRelay { .. } => Err(Failure::not_run("MCP relay requires a dedicated connection")),
+        Call::ProfileSubagents { hub, account, operation } => {
+            let (link, account) =
+                crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
+            link.profile_subagents(&account, operation)
+                .await
+                .map(|view| Reply::ProfileSubagents(Box::new(view)))
+                .map_err(Failure::new)
+        }
+        Call::ClaudeSubagents { session } => {
+            if !matches!(peer, Peer::Session { host } if host.agent.as_str() == "claude") {
+                users_voice(node, peer)?;
+            }
+            crate::profile::subagents::for_session(node, &session)
+                .await
+                .map(|configuration| Reply::ClaudeSubagents { configuration })
+        }
         Call::ProfileRead { hub, account } => {
             let (link, account) =
                 crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;

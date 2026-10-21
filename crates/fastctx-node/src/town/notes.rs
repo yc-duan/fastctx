@@ -18,26 +18,37 @@ pub fn notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Option<He
     let Some((about, town)) = node.residents.about(id) else {
         return Ok((notes, heard));
     };
+    let previous = node.residents.heard(id);
+    let subagents = crate::profile::subagents::configuration(node, &about).map_err(|e| io::Error::other(e.message))?;
+    let subagent_prompt = subagents.as_ref().map(|v| v.instructions.as_str()).unwrap_or("");
+    let subagent_hash = crate::profile::session::hash(subagent_prompt);
+    let subagent_changed = about.host.agent.as_str() == "claude"
+        && previous.as_ref().and_then(|h| h.subagent_prompt.as_ref()) != Some(&subagent_hash);
+    if subagent_changed
+        && (!subagent_prompt.is_empty() || previous.as_ref().is_some_and(|h| h.subagent_prompt.is_some()))
+    {
+        notes.insert(0, format!("{}\n{}", crate::profile::subagents::CHANGED, subagent_prompt));
+    }
     let prompt = crate::profile::session::prompt(node, &about.acting);
     let hash = crate::profile::session::hash(&prompt);
-    let previous = node.residents.heard(id);
-    if previous.as_ref().and_then(|h| h.user_prompt.as_ref()) != Some(&hash) {
-        if !prompt.is_empty() || previous.as_ref().is_some_and(|h| h.user_prompt.is_some()) {
-            notes.insert(0, format!("{}\n{}", crate::profile::session::CHANGED, prompt));
-        }
-        if heard.is_none() {
-            heard = Some(Heard {
-                town: town.clone(),
-                ledger: match town {
-                    Some(town) => crate::ledger::seq(&node.world, &town)?,
-                    None => 0,
-                },
-                user_prompt: None,
-            });
-        }
+    let user_changed = previous.as_ref().and_then(|h| h.user_prompt.as_ref()) != Some(&hash);
+    if user_changed && (!prompt.is_empty() || previous.as_ref().is_some_and(|h| h.user_prompt.is_some())) {
+        notes.insert(0, format!("{}\n{}", crate::profile::session::CHANGED, prompt));
+    }
+    if (subagent_changed || user_changed) && heard.is_none() {
+        heard = Some(Heard {
+            town: town.clone(),
+            ledger: match town {
+                Some(town) => crate::ledger::seq(&node.world, &town)?,
+                None => 0,
+            },
+            user_prompt: None,
+            subagent_prompt: None,
+        });
     }
     if let Some(heard) = &mut heard {
         heard.user_prompt = Some(hash);
+        heard.subagent_prompt = (about.host.agent.as_str() == "claude").then_some(subagent_hash);
     }
     Ok((notes, heard))
 }
@@ -49,7 +60,7 @@ fn project_notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Optio
         Some(town) => crate::ledger::seq(&node.world, town)?,
         None => 0,
     };
-    let now = Heard { user_prompt: None, town: town.clone(), ledger };
+    let now = Heard { subagent_prompt: None, user_prompt: None, town: town.clone(), ledger };
     let notes = match node.residents.heard(id) {
         None => vec![introduction(node, id, town.as_ref())?],
         // It moved: entering gave it the new town's record.

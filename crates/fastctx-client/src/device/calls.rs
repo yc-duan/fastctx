@@ -106,6 +106,12 @@ impl Device {
                 let account = profile_account(&session, account)?;
                 return Ok((Reply::Mcp { result: super::mcp::call(&session.link, &account, mcp).await? }, here()));
             }
+            Call::ProfileSubagents { hub, account, operation } => {
+                let session = self.on_hub(hub.as_ref())?;
+                let account = profile_account(&session, account)?;
+                let view = session.link.profile_subagents(&account, operation).await.map_err(failed)?;
+                return Ok((Reply::ProfileSubagents(Box::new(view)), here()));
+            }
             Call::ProfileRead { hub, account } => {
                 let session = self.on_hub(hub.as_ref())?;
                 let account = profile_account(&session, account)?;

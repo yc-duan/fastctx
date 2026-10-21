@@ -663,6 +663,11 @@ pub enum Change {
     Profile {
         profile: fastctx_types::profile::Profile,
     },
+    /// Changes only the fourth profile component, over the shared profile version.
+    Subagents {
+        version: u64,
+        subagents: Option<fastctx_types::profile::Subagents>,
+    },
     /// Shares `machine`, one of the account's own, with `to`, or no longer.
     Share {
         machine: MachineName,

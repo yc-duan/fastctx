@@ -22,18 +22,24 @@ impl Link {
         })
     }
 
-    pub async fn profile_write(&self, account: &AccountName, profile: Profile) -> Result<u64, String> {
+    pub async fn profile_write(&self, account: &AccountName, mut profile: Profile) -> Result<u64, String> {
         let current = self.profile_read(account)?;
         if !current.kept {
             return Err(format!("upgrade hub {} to use user-level configuration", self.hub_name()));
         }
+        profile.subagents = current.profile.subagents;
         profile.validate()?;
-        let mut confirmed = profile.clone();
+        let confirmed = profile.clone();
         let told =
             self.inner.ask(Question::Manage { account: account.clone(), change: Change::Profile { profile } }).await?;
         let Told::ProfileWritten { version } = told else {
             return Err("the hub answered the profile write with something else".into());
         };
+        self.confirm_profile(account, confirmed, version).await?;
+        Ok(version)
+    }
+
+    async fn confirm_profile(&self, account: &AccountName, mut confirmed: Profile, version: u64) -> Result<(), String> {
         confirmed.version = version;
         {
             let _one = self.inner.refreshing.lock().await;
@@ -56,6 +62,50 @@ impl Link {
             }
         }
         self.inner.node.directory_changed();
-        Ok(version)
+        Ok(())
+    }
+    pub async fn profile_subagents(
+        &self,
+        account: &AccountName,
+        operation: fastctx_types::profile::SubagentOperation,
+    ) -> Result<fastctx_types::profile::SubagentView, String> {
+        use fastctx_types::profile::{SubagentOperation, SubagentView};
+        let current = self.profile_read(account)?;
+        let mut configuration = current.profile.subagents.clone().unwrap_or_default();
+        if let Some(version) = operation.version() {
+            if !self.view().subagents {
+                return Err(format!("upgrade hub {} to configure Claude subagents", self.hub_name()));
+            }
+            if version != current.profile.version {
+                return Err(format!(
+                    "the profile changed: version {version} was read, current version is {}",
+                    current.profile.version
+                ));
+            }
+            configuration.change(&operation)?;
+            let subagents = (!matches!(operation, SubagentOperation::Reset { .. })).then_some(configuration);
+            let told = self
+                .inner
+                .ask(Question::Manage {
+                    account: account.clone(),
+                    change: Change::Subagents { version, subagents: subagents.clone() },
+                })
+                .await?;
+            let Told::ProfileWritten { version } = told else {
+                return Err("the hub did not confirm the subagent change".into());
+            };
+            let mut profile = current.profile;
+            profile.subagents = subagents;
+            self.confirm_profile(account, profile, version).await?;
+        }
+        let current = self.profile_read(account)?;
+        Ok(SubagentView {
+            hub: current.hub,
+            account: current.account,
+            supported: self.view().subagents,
+            version: current.profile.version,
+            configured: current.profile.subagents.is_some(),
+            configuration: current.profile.subagents.unwrap_or_default(),
+        })
     }
 }

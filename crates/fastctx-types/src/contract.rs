@@ -289,6 +289,8 @@ impl Call {
             }
             | Self::CollabWrite { .. }
             | Self::ProfileWrite { .. }
+            | Self::ProfileSubagents { .. }
+            | Self::ClaudeSubagents { .. }
             | Self::Mcp { mcp: McpCall::Keep { .. } | McpCall::Remove { .. } | McpCall::Import { .. }, .. }
             | Self::SetFeature { .. }
             | Self::SetLanguage { .. }

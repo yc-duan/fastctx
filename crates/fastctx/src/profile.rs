@@ -1,6 +1,13 @@
 //! Read and edit an account's prompt and supported host settings.
 
-use clap::Args;
+use clap::{Args, Subcommand};
+
+mod subagents;
+
+#[derive(Subcommand)]
+enum ProfileCommand {
+    Subagents(subagents::SubagentsArgs),
+}
 use fastctx_types::{AccountName, Call, HubName, Reply};
 
 #[derive(Args)]
@@ -20,8 +27,16 @@ pub(crate) struct ProfileArgs {
     /// Replace the allowed Codex settings with this JSON object.
     #[arg(long)]
     codex: Option<String>,
+    #[command(subcommand)]
+    command: Option<ProfileCommand>,
 }
 pub(crate) fn run(args: ProfileArgs) -> anyhow::Result<()> {
+    if let Some(ProfileCommand::Subagents(command)) = args.command {
+        if args.prompt.is_some() || args.prompt_file.is_some() || args.claude.is_some() || args.codex.is_some() {
+            anyhow::bail!("edit subagents separately from the prompt and host settings");
+        }
+        return subagents::run(args.hub, args.account, command);
+    }
     let (reply, _) = crate::ask::call(Call::ProfileRead { hub: args.hub.clone(), account: args.account.clone() })?;
     let Reply::Profile(mut view) = reply else {
         anyhow::bail!("the node did not answer the profile");

@@ -52,6 +52,11 @@ pub enum Call {
     McpRelay {
         name: String,
     },
+    ProfileSubagents {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        operation: crate::profile::SubagentOperation,
+    },
     ProfileRead {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         hub: Option<crate::HubName>,
@@ -118,6 +123,9 @@ pub enum Call {
         hints: Hints,
     },
     /// Reserves a Claude exchange directory before the mod writes through it.
+    ClaudeSubagents {
+        session: String,
+    },
     ClaudeSessionDirectory {
         session: String,
         previous: Option<String>,
@@ -705,6 +713,10 @@ pub enum Reply {
         version: u64,
     },
     Profile(Box<crate::mcp::ProfileView>),
+    ProfileSubagents(Box<crate::profile::SubagentView>),
+    ClaudeSubagents {
+        configuration: Option<crate::profile::Subagents>,
+    },
     ProfileWritten {
         version: u64,
     },

@@ -198,9 +198,10 @@ fn apply(
             Ok(Told::CollabWritten { version })
         }
         Change::Profile { mut profile } => {
-            profile.validate()?;
             let directory = &store.book.directory;
             let current = directory.account(account).expect("checked").profile.clone().unwrap_or_default();
+            profile.subagents = current.subagents.clone();
+            profile.validate()?;
             // A server a command starts is kept on a machine the account may
             // run commands on; one it was given before stays until removed.
             for (name, entry) in &mut profile.servers {
@@ -226,6 +227,24 @@ fn apply(
             profile.version = current.version.checked_add(1).ok_or("the profile version cannot be incremented")?;
             let version = profile.version;
             let found = store.book.directory.accounts.iter_mut().find(|found| found.name == *account).expect("checked");
+            found.profile = Some(profile);
+            Ok(Told::ProfileWritten { version })
+        }
+        Change::Subagents { version, subagents } => {
+            if let Some(config) = &subagents {
+                config.validate()?;
+            }
+            let found = store.book.directory.accounts.iter_mut().find(|found| found.name == *account).expect("checked");
+            let mut profile = found.profile.clone().unwrap_or_default();
+            if version != profile.version {
+                return Err(format!(
+                    "the profile changed: version {version} was read, current version is {}",
+                    profile.version
+                ));
+            }
+            profile.subagents = subagents;
+            profile.version = version.checked_add(1).ok_or("the profile version cannot be incremented")?;
+            let version = profile.version;
             found.profile = Some(profile);
             Ok(Told::ProfileWritten { version })
         }
@@ -752,7 +771,9 @@ fn may_change(
     account: &AccountName,
 ) -> bool {
     match change {
-        Change::OpenProject { .. } | Change::Profile { .. } => directory.may_act_for(account, asker),
+        Change::OpenProject { .. } | Change::Profile { .. } | Change::Subagents { .. } => {
+            directory.may_act_for(account, asker)
+        }
         _ => directory.logged_in(asker, account),
     }
 }

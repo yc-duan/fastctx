@@ -10,3 +10,5 @@ gui/fixtures/wire.json text eol=lf
 /licenses/** text eol=lf
 /gui/licenses/** text eol=lf
 /gui/licenses/linux-runtime/*.gz binary
+# Embedded agent defaults retain the supplied bytes on every checkout.
+/crates/fastctx-types/src/profile/agent-defaults/*.md text eol=lf

@@ -1200,6 +1200,7 @@ pub fn run() {
             accounts::seen_dissolved,
             accounts::machine_log,
             profile::profile_read,
+            profile::profile_subagents,
             profile::profile_write,
             profile::mcp,
             collab::collab_read,

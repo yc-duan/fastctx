@@ -22,6 +22,7 @@ pub fn fixtures() -> Fixtures {
     };
     let profile = Profile {
         version: 4,
+        subagents: None,
         prompt: "Use concise answers.".into(),
         claude: serde_json::json!({"language":"English"}).as_object().unwrap().clone(),
         codex: serde_json::json!({"model_verbosity":"low"}).as_object().unwrap().clone(),
