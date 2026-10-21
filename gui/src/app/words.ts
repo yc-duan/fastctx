@@ -1080,6 +1080,8 @@ export interface ComposerWords {
   forkGo: string;
   never: string;
   unknown(name: string): string;
+  /** A command that waits for the turn under way to end. */
+  afterTurn(name: string): string;
   running(name: string): string;
   done(name: string): string;
   /** Carried out, with no word from the host on whether it took. */
@@ -1300,6 +1302,7 @@ export const zhComposer: ComposerWords = {
   forkGo: "分叉",
   never: "取消",
   unknown: (name) => `未知命令 /${name}`,
+  afterTurn: (name) => `这一轮结束后才能 /${name}`,
   running: (name) => `正在执行 /${name}…`,
   done: (name) => `/${name} 已完成`,
   reported: (name) => `/${name} 已执行`,
@@ -1513,6 +1516,7 @@ export const enComposer: ComposerWords = {
   forkGo: "Fork",
   never: "Cancel",
   unknown: (name) => `Unknown command /${name}`,
+  afterTurn: (name) => `/${name} can run once this turn ends`,
   running: (name) => `Running /${name}…`,
   done: (name) => `/${name} done`,
   reported: (name) => `/${name} ran`,

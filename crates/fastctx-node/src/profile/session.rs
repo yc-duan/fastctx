@@ -176,9 +176,12 @@ pub(crate) fn claude(node: &Node, id: &ResidentId, creating: bool) -> Result<std
         )
         .map_err(|e| Failure::new(e.to_string()))?;
     }
+    // A session Claude Code never paired has no directory to bring up to date.
     if let Some(session) = &about.session {
         let directory = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session);
-        hand_to_session(node, id, &directory).map_err(|e| Failure::new(e.to_string()))?;
+        if directory.is_dir() {
+            hand_to_session(node, id, &directory).map_err(|e| Failure::new(e.to_string()))?;
+        }
     }
     Ok(mcp)
 }

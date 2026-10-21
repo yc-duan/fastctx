@@ -1162,7 +1162,9 @@ export class ConversationPage {
         return;
       }
       if (this.offered) {
-        this.say(this.options.controls.words.unknown(name));
+        // One that waits for the turn is named as waiting, not unknown.
+        const waiting = this.options.conversation.moving() && commandFor(commandsOf(this.offered, this.options.controls.words.commands, false), name, args);
+        this.say(waiting ? this.options.controls.words.afterTurn(name) : this.options.controls.words.unknown(name));
         return;
       }
     }

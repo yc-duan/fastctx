@@ -199,6 +199,11 @@ fn daemon_said(command: &super::Command, short: &str) -> Option<String> {
     Some(line.chars().take(400).collect())
 }
 
+/// Whether Claude Code's daemon logged that it settled the session `short`.
+fn settled(command: &super::Command, short: &str) -> bool {
+    daemon_said(command, short).is_some_and(|line| line.contains(&format!("bg settled {short}")))
+}
+
 /// How much of the end of Claude Code's daemon log is read for a session.
 const DAEMON_TAIL: u64 = 256 * 1024;
 
@@ -319,7 +324,9 @@ async fn watch(
                     if !pending(node, resident, id, waking)? {
                         return Ok(());
                     }
-                    if job.ended() {
+                    // Claude Code may go on listing a session its daemon
+                    // settled long ago as blocked: that one has ended.
+                    if job.ended() || settled(command, &short) {
                         if node.residents.about(resident).is_none() {
                             return Ok(());
                         }
