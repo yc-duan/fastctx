@@ -66,6 +66,38 @@ pub async fn offers(
 /// the World does not hold (the user's own Codex in an app) take nothing.
 pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
     let host = host_of(node, resident)?;
+    let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
+    if crate::assists::assisting(node, &about.acting) {
+        crate::assists::host::require(node, resident)?;
+        if let Control::Command { name, path, .. } = &control {
+            let allowed = match host {
+                "Claude" => fastctx_hosts::claude::assisted::command_allowed(name),
+                "Codex" => fastctx_hosts::codex::assisted::command_allowed(name),
+                _ => false,
+            };
+            if path.is_some() || !allowed {
+                return Err(Failure::not_run("This command is unavailable in an assisted conversation."));
+            }
+        }
+    }
+    if let Control::CancelControl { id } = &control {
+        return crate::control_queue::cancel(node, resident, id);
+    }
+    if matches!(control, Control::Answer { .. }) {
+        return execute(node, resident, control).await;
+    }
+    let gate = crate::control_queue::gate(node, resident);
+    let _action = gate.lock().await;
+    node.residents.active(resident)?;
+    crate::control_queue::drain(node, resident).await?;
+    if let Some(queued) = crate::control_queue::enqueue_if_busy(node, resident, &control)? {
+        return Ok(queued);
+    }
+    execute(node, resident, control).await
+}
+
+pub(crate) async fn execute(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
+    let host = host_of(node, resident)?;
     let gate = node.residents.management(resident)?;
     // Claude commands may wait for user interaction. Stopping their host
     // must remain possible; its bridge reports the interrupted invocation.
@@ -87,11 +119,14 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
 
 /// What a resident of this machine offers now, as its host says.
 pub async fn offers_here(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, Failure> {
-    match host_of(node, resident)? {
-        "Codex" => crate::codex::control::offers(node, resident).await,
-        "Claude" => crate::claude::control::offers(node, resident).await,
-        _ => Ok(Offers::default()),
-    }
+    let mut offers = match host_of(node, resident)? {
+        "Codex" => crate::codex::control::offers(node, resident).await?,
+        "Claude" => crate::claude::control::offers(node, resident).await?,
+        _ => Offers::default(),
+    };
+    offers.pending_controls = crate::control_queue::pending(node, resident)?;
+    offers.control_queue = true;
+    Ok(offers)
 }
 
 /// The host a resident of this machine is held through, by name.

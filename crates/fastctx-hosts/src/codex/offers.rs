@@ -172,7 +172,8 @@ impl CodexHost {
         // it keeps its history, which decides whether it can go back; Codex
         // says it without loading the thread.
         let unknown = self.lock().threads.get(thread).is_some_and(|entry| entry.metadata["historyMode"].is_null());
-        if unknown && let Ok(answer) = server.ask("thread/read", json!({"threadId": thread, "includeTurns": false})).await
+        if unknown
+            && let Ok(answer) = server.ask("thread/read", json!({"threadId": thread, "includeTurns": false})).await
         {
             let mut state = self.lock();
             if let Some(entry) = state.threads.get_mut(thread).filter(|entry| entry.metadata["historyMode"].is_null()) {
@@ -235,6 +236,8 @@ impl CodexHost {
         // credits/USD-micros contract instead of calling it a final cost.
         usage.raw = json!({"tokenUsage":entry.usage});
         Ok(Offers {
+            pending_controls: Vec::new(),
+            control_queue: false,
             checkpoints: None,
             history_limits: None,
             automatic_model: None,
@@ -306,13 +309,12 @@ impl CodexHost {
         if self.running_turn(thread).is_some() {
             return Err("start a review between turns".into());
         }
-        let server = self.server().await?;
         let target = if args.is_empty() {
             json!({"type":"uncommittedChanges"})
         } else {
             json!({"type":"custom","instructions":args})
         };
-        server.request("review/start", json!({"threadId":thread,"target":target,"delivery":"inline"})).await
+        self.start_control(thread, "review/start", json!({"threadId":thread,"target":target,"delivery":"inline"})).await
     }
 }
 

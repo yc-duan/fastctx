@@ -8,7 +8,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 async fn run(node: &Arc<Node>, home: Option<&Path>, args: Vec<OsString>) -> Result<String, Failure> {
-    let super::Command { program, cwd, env } = super::command(node, home)?;
+    run_command(super::command(node, home)?, args).await
+}
+
+async fn run_command(command: super::Command, args: Vec<OsString>) -> Result<String, Failure> {
+    let super::Command { program, cwd, env } = command;
     tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         background::claude(&program, &args, &cwd, &env)
     }))
@@ -123,19 +127,29 @@ pub async fn retire(
 }
 
 pub async fn wake(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Result<(), Failure> {
-    let record = background_session(node, home, session)
-        .await?
-        .ok_or_else(|| Failure::new("Claude Code no longer identifies a background session for this resident"))?;
-    let session = record["sessionId"]
-        .as_str()
-        .ok_or_else(|| Failure::new("Claude Code did not provide the background session's full conversation ID"))?;
+    let record = background_session(node, home, session).await?;
+    let session = match record.as_ref() {
+        Some(record) => record["sessionId"]
+            .as_str()
+            .ok_or_else(|| Failure::new("Claude Code did not provide the background session's full conversation ID"))?,
+        // A closed foreground conversation has a transcript but no supervisor record.
+        None => session,
+    };
     if super::running(node, home, session).await? {
         return Ok(());
     }
     // A Claude Code older than the World takes is not started, as on every
     // other way a session starts.
     super::oldest::check(node, &super::command(node, home)?).await?;
-    let output = run(node, home, vec!["--resume".into(), session.into(), "--bg".into()]).await?;
+    if let Some(resident) = node.residents.resident_of_thread(session) {
+        crate::profile::session::claude(node, &resident, false)?;
+    }
+    let mut command = super::command(node, home)?;
+    // A foreground history has no saved supervisor cwd. The home directory
+    // cannot receive persistent CLI trust, so launch from the World's directory.
+    command.cwd = node.world.path().to_path_buf();
+    super::trust(&[command.cwd.as_path()], &command.env).map_err(Failure::new)?;
+    let output = run_command(command, vec!["--resume".into(), session.into(), "--bg".into()]).await?;
     let started = background::started(&output).ok_or_else(|| {
         Failure::new(format!("Claude Code did not identify the resumed background session: {output}"))
     })?;

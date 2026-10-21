@@ -107,6 +107,20 @@ pub(crate) async fn delete_one(node: &Arc<Node>, name: &str) -> Result<u64, Stop
 async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
     let _doing = fastctx_platform::doing::doing(format!("deleting {name}"));
     let kind = Kind::of(name).ok_or_else(|| Stop::Refused(format!("{name} is not the name of a conversation")))?;
+    let actions = match &kind {
+        Kind::Home(id) => Some(crate::control_queue::gate(node, id)),
+        _ => None,
+    };
+    let _action = match &actions {
+        Some(gate) => {
+            Some(tokio::time::timeout(std::time::Duration::from_secs(30), gate.lock()).await.map_err(|_| {
+                Stop::Refused(
+                    "a conversation control is still running; stop it before deleting the conversation".into(),
+                )
+            })?)
+        }
+        None => None,
+    };
     // Its place alone: no command starts for it, no output of it is read
     // and no file arrives for it until this is done; other places go on.
     let _place = node.places.deleting(name).await.ok_or_else(|| {

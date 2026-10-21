@@ -18,6 +18,7 @@
 //! Run with Claude Code 2.1.289.
 
 pub(crate) mod calls;
+mod catalog;
 pub(crate) mod control;
 mod fork;
 mod fork_attachments;
@@ -27,6 +28,7 @@ mod fork_source;
 pub(crate) mod garbage;
 pub(crate) mod history;
 mod image_records;
+mod resume;
 pub(crate) use image_records::paths as image_records;
 mod image_flush;
 pub(crate) use image_flush::wait_for_image;
@@ -1088,8 +1090,11 @@ pub async fn deliver(
     if let Err(error) = crate::inbox::target(directory, &pending.delivery.id, &session) {
         return Some(Err(Failure::new(error.to_string())));
     }
-    let asleep = node.residents.now(to).is_some_and(|now| now.activity == Activity::Asleep);
-    let stopped_background = if !about.world_started && asleep {
+    let alive = match alive(node, about.home.as_deref(), &session).await {
+        Ok(alive) => alive,
+        Err(error) => return Some(Err(error)),
+    };
+    let stopped_background = if !about.world_started && !alive {
         match management::background_session(node, about.home.as_deref(), &session).await {
             Ok(found) => found.is_some(),
             Err(error) => return Some(Err(error)),
@@ -1097,19 +1102,20 @@ pub async fn deliver(
     } else {
         false
     };
-    if !about.world_started && !stopped_background {
-        // The user's own session: whatever its state, its mod hands this over
-        // when the session runs, and when the user opens it again.
+    let user_action =
+        matches!(pending.delivery.notice, Notice::Words { from: Speaker::User { .. }, .. } | Notice::Attached { .. });
+    if !about.world_started && !stopped_background && !user_action {
+        // Facts wait for a closed foreground session; only the user resumes it.
         return Some(into_inbox(node, to, &session, directory, pending));
     }
-    Some(match alive(node, about.home.as_deref(), &session).await {
-        Ok(true) => into_inbox(node, to, &session, directory, pending),
+    Some(match alive {
+        true => into_inbox(node, to, &session, directory, pending),
         // What rides with the next turn wakes nobody: it waits for the turn
         // that wakes it, and goes in then (`speech::along`).
-        Ok(false) if pending.delivery.notice.along().is_some() => Ok(Landed::Waiting { why: None, answered: true }),
+        false if pending.delivery.notice.along().is_some() => Ok(Landed::Waiting { why: None, answered: true }),
         // Its supervisor stopped it: the words wake it, as they are, and its
         // next turn takes them.
-        Ok(false) => {
+        false => {
             let (text, as_user) = words(&pending.delivery.notice);
             if as_user {
                 node.claude.handing(to, &text);
@@ -1151,7 +1157,6 @@ pub async fn deliver(
                 Err(error) => Err(Failure::new(format!("keeping what wakes {to}: {error}"))),
             }
         }
-        Err(failure) => Err(failure),
     })
 }
 
@@ -1289,7 +1294,8 @@ async fn wake(
     words: String,
     id: fastctx_types::NoticeId,
 ) -> Result<Landed, Failure> {
-    let launching = command(node, home)?;
+    let mut launching = command(node, home)?;
+    launching.cwd = node.world.path().to_path_buf();
     oldest::check(node, &launching).await?;
     let observing = launching.clone();
     let Command { program, cwd, env } = launching;

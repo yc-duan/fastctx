@@ -24,6 +24,7 @@ mod cache;
 mod commands;
 #[cfg(test)]
 mod contract;
+mod control_start;
 mod controls;
 mod history;
 pub mod identify;
@@ -373,6 +374,8 @@ struct Thread {
     /// The turn running now: reported started, or named in the answer to
     /// the words that started it.
     turn: Option<String>,
+    #[serde(skip)]
+    start_revision: u64,
     submitted: bool,
     observed_submission: Option<String>,
     /// A stop asked for while words were on their way into a turn whose id
@@ -1227,6 +1230,7 @@ impl CodexHost {
                         entry.turn = Some(turn.clone());
                         entry.last_message = None;
                     }
+                    entry.start_revision = entry.start_revision.wrapping_add(1);
                     entry.started.insert(turn.clone());
                     entry.submissions.started(&turn, entry.loaded && entry.subscribed);
                     entry.accounting.started(&turn);

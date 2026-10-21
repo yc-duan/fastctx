@@ -46,6 +46,9 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
     {
         return Err(Failure::not_run(fastctx_hosts::claude::assisted::COMMAND_REFUSED));
     }
+    if !matches!(control, Control::Answer { .. }) {
+        super::resume::ready(node, resident).await?;
+    }
     match control {
         Control::Fork { through } => super::fork::fork(node, resident, through).await,
         Control::Answer { request, answer } => answer_request(node, resident, request, answer).await,
@@ -63,28 +66,15 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
             )
             .await
             .map_err(Failure::new)?;
-            let result = invoke(node, resident, json!({"do":"rewind", "from":from})).await?;
+            let result = invoke_action(node, resident, json!({"do":"rewind", "from":from})).await?;
             if result["kind"] == "rewound" {
                 super::rewind::finish(node, resident, &result, Some(&from)).await?
             }
             serde_json::from_value(result).map_err(|error| Failure::new(format!("Claude control reply: {error}")))
         }
-        // A choice for a session that is not running now is kept where its
-        // mod reads it when the session runs again: the session is not woken
-        // for it. One made while Claude Code starts the session waits the
-        // few seconds until it names it, where the choice is kept.
-        Control::Model { model, effort } if !running(node, resident)? => {
-            named(node, resident).await?;
-            if running(node, resident)? {
-                let control = Control::Model { model, effort };
-                let result = invoke(node, resident, serde_json::to_value(control).expect("control serializes")).await?;
-                return serde_json::from_value(result)
-                    .map_err(|error| Failure::new(format!("Claude control reply: {error}")));
-            }
-            keep_selection(node, resident, model, effort)
-        }
         control => {
-            let result = invoke(node, resident, serde_json::to_value(control).expect("control serializes")).await?;
+            let result =
+                invoke_action(node, resident, serde_json::to_value(control).expect("control serializes")).await?;
             serde_json::from_value(result).map_err(|error| Failure::new(format!("Claude control reply: {error}")))
         }
     }
@@ -93,28 +83,9 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
 /// How long a running session's mod is given to say what it offers.
 const OFFERS_WITHIN: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// How long a choice made while Claude Code starts a session waits for it
-/// to name the session.
-const NAMING: std::time::Duration = std::time::Duration::from_secs(20);
-
-/// Waits until Claude Code has named the resident's session.
-async fn named(node: &Node, resident: &ResidentId) -> Result<(), Failure> {
-    let deadline = tokio::time::Instant::now() + NAMING;
-    loop {
-        let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
-        if about.session.is_some() {
-            return Ok(());
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return Err(Failure::new("Claude Code has not started this conversation yet; choose again in a moment"));
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    }
-}
-
 /// Whether the session's mod runs now with the control contract this node
 /// speaks.
-fn running(node: &Node, resident: &ResidentId) -> Result<bool, Failure> {
+pub(super) fn running(node: &Node, resident: &ResidentId) -> Result<bool, Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
     let Some(session) = &about.session else { return Ok(false) };
     let directory = files::directory(node.world.path(), session);
@@ -123,59 +94,6 @@ fn running(node: &Node, resident: &ResidentId) -> Result<bool, Failure> {
             && host.command_contract == Some(files::COMMAND_CONTRACT)),
         None => Ok(false),
     }
-}
-
-/// The reasoning efforts Claude Code takes, as its mod checks them.
-const EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
-
-fn keep_selection(
-    node: &Node,
-    resident: &ResidentId,
-    model: Option<String>,
-    effort: Option<String>,
-) -> Result<Controlled, Failure> {
-    if model.as_deref().is_some_and(|model| model.trim().is_empty()) {
-        return Err(Failure::new("a model cannot be empty"));
-    }
-    if let Some(effort) = &effort
-        && !EFFORTS.contains(&effort.as_str())
-    {
-        return Err(Failure::new(format!("unknown Claude reasoning effort: {effort}")));
-    }
-    let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
-    let session = about.session.ok_or_else(|| Failure::new("Claude has not identified this conversation yet"))?;
-    let directory = files::directory(node.world.path(), &session);
-    let mut selection = files::read::<Value>(&directory.join("selection.json")).map_err(failure)?.unwrap_or(json!({}));
-    if !selection.is_object() {
-        selection = json!({});
-    }
-    if let Some(model) = &model {
-        selection["model"] = json!(model);
-    }
-    if let Some(effort) = &effort {
-        selection["effort"] = json!(effort);
-    }
-    let write = |name: &str, value: &Value| {
-        fastctx_platform::ensure_private_dir(&directory)
-            .and_then(|()| {
-                fastctx_platform::publish(
-                    &directory.join(name),
-                    &serde_json::to_vec(value).map_err(std::io::Error::other)?,
-                    fastctx_platform::Permissions::Private,
-                )
-            })
-            .map_err(failure)
-    };
-    write("selection.json", &selection)?;
-    // A model chosen by the user stops following the engine's own routing,
-    // as the mod does when it takes the choice itself.
-    if model.is_some() {
-        write("routing.json", &Value::Null)?;
-    }
-    Ok(Controlled::Selected {
-        model: selection["model"].as_str().map(str::to_owned),
-        effort: selection["effort"].as_str().map(str::to_owned),
-    })
 }
 
 pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, Failure> {
@@ -205,6 +123,7 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
         Err(Failure::new("not running"))
     };
     let mut offers = if let Ok(mut offers) = asked {
+        super::catalog::keep(node, resident, &offers)?;
         // The mod lists the aliases this login's Claude Code offers; the
         // World offers its own table's rows of those families.
         let aliases: Vec<String> = offers.models.drain(..).map(|model| model.id).collect();
@@ -247,8 +166,10 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
             .transpose()
             .map_err(failure)?
             .flatten();
+        let catalog = super::catalog::get(node, resident, about.session.as_deref())?;
         Offers {
-            controls: vec![ControlKind::Model],
+            controls: catalog.controls,
+            commands: catalog.commands,
             checkpoints: checkpoints.as_ref().map(|value| {
                 value["turns"]
                     .as_object()
@@ -331,7 +252,7 @@ fn live_host(node: &Node, resident: &ResidentId) -> Result<(PathBuf, Host), Fail
         Failure::new("this Claude session has no active World control bridge; reopen it with the current plugin")
     })?;
     if !files::active(&directory, &host).map_err(failure)? {
-        return Err(Failure::new("this Claude session is not running; reopen it before controlling it"));
+        return Err(Failure::not_run("this Claude session retired before the control was submitted"));
     }
     if host.command_contract != Some(files::COMMAND_CONTRACT) {
         return Err(Failure::new(
@@ -370,6 +291,16 @@ pub(super) async fn selection(
     })
 }
 
+async fn invoke_action(node: &Arc<Node>, resident: &ResidentId, control: Value) -> Result<Value, Failure> {
+    match invoke(node, resident, control.clone()).await {
+        Err(error) if error.not_run => {
+            super::resume::ready(node, resident).await?;
+            invoke(node, resident, control).await
+        }
+        result => result,
+    }
+}
+
 pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Value) -> Result<Value, Failure> {
     let (directory, host) = live_host(node, resident)?;
     let key = crate::speech::new_id("control").to_string();
@@ -404,7 +335,9 @@ pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Val
     }
     // The activation's process stream also ends when its plugin unloads.
     // Its exit, a clear or reload, or the reply settles this one-shot.
-    let reply = receiver.await.map_err(|_| Failure::new("the Claude control bridge stopped"))?;
+    let reply = receiver.await.map_err(|_| {
+        Failure::new("the Claude control bridge stopped before confirming this control; its outcome is unknown")
+    })?;
     collect_invocation(&directory, &key).map_err(failure)?;
     reply.map_err(Failure::new)
 }

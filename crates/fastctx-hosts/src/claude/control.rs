@@ -23,6 +23,9 @@ pub struct Host {
     /// hot reload. They remain request bridges, but do not offer controls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command_contract: Option<u32>,
+    /// The settings flag observed by this activation, retained across cold resume.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assisted: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

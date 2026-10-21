@@ -18866,6 +18866,10 @@
         "do": "compact"
       },
       {
+        "do": "cancel_control",
+        "id": "control-1"
+      },
+      {
         "do": "model",
         "model": "example-model",
         "effort": "custom-effort"
@@ -18923,6 +18927,11 @@
         "said": "Host output without a success flag"
       },
       {
+        "kind": "reported",
+        "said": "Waiting for the current turn to end.",
+        "queued": "control-1"
+      },
+      {
         "kind": "refused",
         "said": "The host refused this change",
         "current_model": "model"
@@ -18946,6 +18955,17 @@
         "usage": null
       },
       {
+        "control_queue": true,
+        "pending_controls": [
+          {
+            "id": "control-1",
+            "control": {
+              "do": "compact"
+            },
+            "at": "2026-10-21T00:00:00Z",
+            "state": "waiting"
+          }
+        ],
         "controls": [
           "command",
           "compact",

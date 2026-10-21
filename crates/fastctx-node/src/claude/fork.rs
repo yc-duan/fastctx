@@ -17,9 +17,8 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     if let Some(why) = super::fork_ready::pending(node, resident)? {
         return Err(Failure::new(why));
     }
-    let birth = node.claude.births.read().await;
-    let gate = node.residents.management(resident)?;
-    let source_guard = crate::gate_waits::shared(node, resident, &gate).await?;
+    // The action gate keeps source mutations ordered. Host replies must be
+    // consumed before taking the birth gate: their reader also registers sessions.
     node.residents.active(resident)?;
     let (source, town) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
     let session =
@@ -27,8 +26,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     super::history::wait_stored(node, &session).await.map_err(Failure::new)?;
     // Saved request choices, rather than a fallback's resolved model, belong
     // to the fork. The same selection is passed through the official CLI.
-    let offers = super::control::offers(node, resident).await?;
-    let running = offers.controls.contains(&fastctx_types::session::control::ControlKind::Agents);
+    let running = super::control::running(node, resident)?;
     let selection = super::control::selection(node, resident, running).await?;
     let model = selection.model;
     let effort = selection.reasoning_effort;
@@ -132,6 +130,10 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         let selected_model = model.clone();
         let selected_effort = effort.clone();
 
+        let birth = node.claude.births.read().await;
+        let gate = node.residents.management(resident)?;
+        let source_guard = crate::gate_waits::shared(node, resident, &gate).await?;
+        node.residents.active(resident)?;
         let printed = tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
             let start = background::Start {
                 plugin: &plugin,

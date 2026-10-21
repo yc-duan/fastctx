@@ -245,6 +245,7 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
             done(&format!("Skill input {} turn {}", if sent.joined { "joined" } else { "started" }, sent.turn))
         }
         Control::Answer { .. } => unreachable!("answers do not acquire the speech lock"),
+        Control::CancelControl { .. } => unreachable!("queued controls are cancelled by the node"),
         Control::Agents | Control::AgentMessages { .. } => {
             Err(Failure::new("this host does not offer native agent controls"))
         }

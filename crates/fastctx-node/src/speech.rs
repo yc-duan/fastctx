@@ -93,6 +93,11 @@ pub(crate) async fn tell_at(
 /// Tells a resident of this machine something: kept first, then handed over
 /// the way its host lets the World in.
 pub async fn tell_here(node: &Arc<Node>, to: &ResidentId, delivery: Delivery, owed: Owed) -> Result<Landed, Failure> {
+    let actions = crate::control_queue::gate(node, to);
+    let _action = if delivery.notice.along().is_none() { Some(actions.lock().await) } else { None };
+    if _action.is_some() && node.residents.active(to).is_ok() {
+        crate::control_queue::drain(node, to).await?;
+    }
     let gate = node.residents.management(to)?;
     // Someone's words are asked from outside: one being deleted refuses
     // them at once, and they wait for what changes its life no longer than
@@ -239,6 +244,9 @@ pub async fn hand_over(
     // Startup's recovery may need the gate alone, as to finish a deletion:
     // nothing waits for it holding the gate.
     node.ready().await;
+    let actions = crate::control_queue::gate(node, to);
+    let _action = actions.lock().await;
+    crate::control_queue::drain(node, to).await?;
     let gate = node.residents.management(to)?;
     let _reading = gate.read().await;
     hand_over_locked(node, to, about, directory, pending).await
@@ -314,6 +322,9 @@ pub async fn send_composer(
     idle_only: bool,
 ) -> Result<Option<Landed>, Failure> {
     node.ready().await;
+    let actions = crate::control_queue::gate(node, id);
+    let _action = actions.lock().await;
+    crate::control_queue::drain(node, id).await?;
     let gate = node.residents.management(id)?;
     let _reading = gate.read().await;
     node.residents.active(id)?;

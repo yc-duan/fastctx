@@ -353,6 +353,7 @@ async fn finish_at(
         }
         node.watchers.publish(id, &event);
     }
+    crate::control_queue::schedule(node, id);
     crate::composer::turn_ended(node, id, turn, &finished.end.how, finished.settles_queue, finished.queue_order)
         .await
         .map_err(std::io::Error::other)?;

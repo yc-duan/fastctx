@@ -153,6 +153,14 @@ async function controlRewind($, state, control) {
   } finally { state.rewind = null; state.compacting = false }
 }
 
+async function compactedCheckpoint($, state, messages, parent) {
+  state.checkpoints = { messages: await messageFingerprints(messages), turns: {}, full: true,
+    uuids: messages.map(() => null), compacted_parent: parent }
+  state.lastUuid = undefined
+  state.lastRawUuid = undefined
+  await saveCheckpoints($, state)
+}
+
 async function controlCompaction($, e, next) {
   if (e.agentId !== undefined) return next(e)
   const state = await controlBegin($, sessions)
@@ -161,10 +169,7 @@ async function controlCompaction($, e, next) {
     const parent = state.lastRawUuid
     const result = await next(e)
     if (e.trigger !== 'precompute' && result.skip === undefined) {
-      state.checkpoints = { messages: await messageFingerprints(result.messages), turns: {}, full: true, uuids: result.messages.map(() => null), compacted_parent: parent }
-      state.lastUuid = undefined
-      state.lastRawUuid = undefined
-      await saveCheckpoints($, state)
+      await compactedCheckpoint($, state, result.messages, parent)
     }
     return result
   }

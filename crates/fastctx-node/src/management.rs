@@ -49,6 +49,9 @@ pub async fn manage(
 
 pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Result<Managed, Failure> {
     let _doing = fastctx_platform::doing::doing(format!("{action:?} of {id}"));
+    let actions = crate::control_queue::gate(node, id);
+    let _action =
+        if matches!(action, Management::Sleep | Management::Archive) { None } else { Some(actions.lock().await) };
     let gate = node.residents.management(id)?;
     if matches!(action, Management::Sleep) {
         node.residents.active(id)?;

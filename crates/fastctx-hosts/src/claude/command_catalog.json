@@ -1,0 +1,284 @@
+{
+  "policies": {
+    "rename": {
+      "arguments": "optional",
+      "args": "[name]",
+      "route": "native"
+    },
+    "model": {
+      "arguments": "required",
+      "args": "<model>",
+      "route": "model"
+    },
+    "config": {
+      "arguments": "optional",
+      "args": "[<key>=<value>]",
+      "route": "config"
+    },
+    "goal": {
+      "arguments": "required",
+      "args": "<condition> | clear",
+      "route": "native"
+    },
+    "autocompact": {
+      "arguments": "required",
+      "args": "auto | <100k–1M tokens>",
+      "route": "native"
+    },
+    "effort": {
+      "arguments": "required",
+      "args": "status | current | help | ultracode [on|off]",
+      "route": "effort"
+    },
+    "context": {
+      "arguments": "optional",
+      "args": "[all]",
+      "route": "native"
+    },
+    "reload-skills": {
+      "arguments": "none",
+      "args": null,
+      "route": "native"
+    },
+    "compact": {
+      "arguments": "optional",
+      "args": "[instructions]",
+      "route": "compact"
+    },
+    "advisor": {
+      "arguments": "required",
+      "args": "<model> | off | unset",
+      "route": "native"
+    },
+    "fast": {
+      "arguments": "required",
+      "args": "on | off",
+      "route": "fast"
+    },
+    "mcp": {
+      "arguments": "required",
+      "args": "enable | disable | reconnect <server>",
+      "route": "mcp"
+    },
+    "import": {
+      "arguments": "required",
+      "args": "<source> --yes",
+      "route": "import"
+    },
+    "export": {
+      "arguments": "required",
+      "args": "<filename>",
+      "route": "native"
+    },
+    "plugin": {
+      "arguments": "required",
+      "args": "help | list | validate <directory>",
+      "route": "plugin"
+    },
+    "plugins": {
+      "arguments": "required",
+      "args": "help | list | validate <directory>",
+      "route": "plugin"
+    },
+    "marketplace": {
+      "arguments": "required",
+      "args": "help | list | validate <directory>",
+      "route": "plugin"
+    },
+    "design": {
+      "arguments": "optional",
+      "args": "<brief> | types | hub",
+      "route": "design"
+    },
+    "vim": {
+      "arguments": "optional",
+      "args": null,
+      "route": "editor"
+    },
+    "output-style": {
+      "arguments": "required",
+      "args": "<style>",
+      "route": "output_style"
+    },
+    "plan": {
+      "arguments": "required",
+      "args": "<description>",
+      "route": "plan"
+    },
+    "btw": {
+      "arguments": "required",
+      "args": "<question>",
+      "route": "side_answer"
+    },
+    "ultraplan": {
+      "arguments": "none",
+      "args": null,
+      "route": "native"
+    },
+    "code-review": {
+      "arguments": "optional",
+      "args": "[target] [effort]",
+      "route": "review"
+    },
+    "review": {
+      "arguments": "optional",
+      "args": "[target] [effort]",
+      "route": "review"
+    },
+    "color": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "design-consent": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "design-revoke": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "install-slack-app": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "voice": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "terminal-setup": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "tui": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "agents": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "reload-plugins": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "heapdump": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "exit": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "quit": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "list-agents": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "peers": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "brief": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "low-priority": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "focus": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "claim-credit": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "background": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "bg": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "stop": {
+      "arguments": "optional",
+      "args": null,
+      "route": "native"
+    },
+    "subtask": {
+      "arguments": "required",
+      "args": "<task>",
+      "route": "native"
+    }
+  },
+  "prompts": {
+    "design-sync": "[<project hint, e.g. \"Acme DS\">]",
+    "dataviz": null,
+    "artifact-diagramming": null,
+    "workshop": null,
+    "prototype": null,
+    "whiteboard": null,
+    "artifact-report": null,
+    "artifact-data-table": null,
+    "artifact-explainer": null,
+    "artifact-components": null,
+    "doc": null,
+    "artifact-pr-review": "[pr number or url]",
+    "artifact-capabilities": null,
+    "update-config": null,
+    "verify": null,
+    "debug": "[issue description]",
+    "commit": "[guidance]",
+    "pr": "[guidance]",
+    "simplify": "[<target>]",
+    "batch": "<instruction>",
+    "fewer-permission-prompts": null,
+    "doctor": "[prompt-audit [<path>]]",
+    "checkup": "[prompt-audit [<path>]]",
+    "explain-usage": null,
+    "slides": "[what the deck is about]",
+    "setup-claude": null,
+    "setup-cowork": null,
+    "loop": "[interval] [prompt]",
+    "proactive": "[interval] [prompt]",
+    "schedule": null,
+    "routines": null,
+    "claude-api": null,
+    "claude-code-docs": "[question]",
+    "workflow-authoring": null,
+    "run": null,
+    "run-skill-generator": null,
+    "init": null,
+    "commit-push-pr": null,
+    "team-onboarding": null,
+    "security-review": null,
+    "statusline": null,
+    "insights": null,
+    "plugin-authoring": null
+  }
+}

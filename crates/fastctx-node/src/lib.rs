@@ -32,6 +32,7 @@ mod colleagues;
 mod composer;
 mod consent;
 mod control;
+mod control_queue;
 mod copy;
 mod data;
 mod delivery;
@@ -178,6 +179,7 @@ pub(crate) struct Node {
     desk: desk::Desk,
     watchers: watch::Watchers,
     composers: composer::Composers,
+    actions: control_queue::Actions,
     file_searches: file_search::Searches,
     line_sources: lines::Sources,
     log: Arc<log::Log>,
@@ -556,6 +558,7 @@ pub async fn run_prepared(
         desk: desk::Desk::default(),
         watchers: watch::Watchers::default(),
         composers: composer::Composers::default(),
+        actions: Default::default(),
         file_searches: file_search::Searches::default(),
         line_sources: lines::Sources::default(),
         log,
@@ -637,6 +640,7 @@ pub async fn run_prepared(
     turns::recover(&node, unfinished.into_iter().collect()).await;
     composer::recover(&node).await;
     speech::recover(&node).await;
+    control_queue::recover(&node);
     node.effects_ready.store(true, std::sync::atomic::Ordering::Release);
     node.effects_changed.notify_waiters();
     composer::resume(&node);

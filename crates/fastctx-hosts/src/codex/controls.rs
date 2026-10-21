@@ -111,8 +111,7 @@ impl CodexHost {
         if self.running_turn(thread).is_some() {
             return Err("Codex can be compacted only between turns".into());
         }
-        let server = self.server().await?;
-        server.request("thread/compact/start", json!({"threadId":thread})).await?;
+        self.start_control(thread, "thread/compact/start", json!({"threadId":thread})).await?;
         Ok(())
     }
 

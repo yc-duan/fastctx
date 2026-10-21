@@ -27,6 +27,8 @@ pub enum Control {
     },
     /// Compacts the conversation now. Between turns only.
     Compact,
+    /// Withdraws a control that is still waiting for the current turn to end.
+    CancelControl { id: String },
     /// The next eligible request's model and effort; what is `None` stays as
     /// it is. Codex applies this when a new turn starts.
     Model { model: Option<String>, effort: Option<String> },
@@ -101,6 +103,9 @@ pub enum Controlled {
     /// contract. Its words must be shown without a success assertion.
     Reported {
         said: Option<String>,
+        /// An accepted deferred control. Progress is in metadata.fastctx_control.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        queued: Option<String>,
     },
     /// A structured host refusal, with the host's words unchanged.
     Refused {
@@ -129,9 +134,39 @@ pub enum Controlled {
     },
 }
 
+/// One accepted control and its durable progress. Terminal states also appear in history.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingControl {
+    pub id: String,
+    pub control: Control,
+    pub at: Timestamp,
+    pub state: ControlState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<Box<Controlled>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlState {
+    Waiting,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+    Uncertain,
+}
+
 /// What a conversation offers now, asked before its menus are shown.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Offers {
+    /// This node accepts CancelControl and reports pending_controls.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub control_queue: bool,
+    /// Controls accepted for later execution, including one currently executing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_controls: Vec<PendingControl>,
     /// Exact turn boundaries observed by hosts that need a message checkpoint.
     /// None means this host uses its own turn addressing rather than checkpoints.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -61,6 +61,8 @@ impl Rank {
     /// command for it, reading a command's output there, receiving a file
     /// for it and a session claiming its directory share it.
     pub const PLACE: Rank = Rank(90);
+    /// User actions enter one conversation in order, before lifecycle or host locks.
+    pub const ACTION: Rank = Rank(85);
     /// Its management gate: what changes its life holds it alone, what
     /// uses it shares it.
     pub const LIFECYCLE: Rank = Rank(100);

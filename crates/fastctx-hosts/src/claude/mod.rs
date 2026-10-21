@@ -17,6 +17,7 @@ pub mod agents;
 pub mod assisted;
 pub mod background;
 pub mod calls;
+pub mod catalog;
 mod content;
 mod context;
 pub mod control;
@@ -188,6 +189,7 @@ pub fn write_plugin(world: &Path) -> io::Result<PathBuf> {
     let module = MOD
         .replace("__FASTCTX_CONTROLS__", include_str!("control.js"))
         .replace("__FASTCTX_COMMANDS__", include_str!("commands.js"))
+        .replace("__FASTCTX_COMMAND_CATALOG__", include_str!("command_catalog.json"))
         .replace("__FASTCTX_ASSISTED__", include_str!("assisted.js"))
         .replace("__FASTCTX_ACCOUNT_AGENTS__", include_str!("agent_config.js"))
         .replace("__FASTCTX_SELECTION__", include_str!("selection.js"))
