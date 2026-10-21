@@ -653,6 +653,17 @@ async function startedFor($) {
   return typeof named === 'string' && named !== '' ? named : null
 }
 
+// A background session is told to keep scratch files in its job's directory,
+// which exists only on the machine it lives on and only for its owner. The
+// World's `run` keeps them in `$FASTCTX_SCRATCH` on whichever machine a script
+// runs, so the paragraph naming the job's directory goes and one way remains.
+function withoutJobScratch(result) {
+  if (typeof result.text !== 'string') return result
+  const paragraphs = result.text.split('\n\n')
+  const kept = paragraphs.filter((paragraph) => !paragraph.includes('CLAUDE_JOB_DIR'))
+  return kept.length === paragraphs.length ? result : { ...result, text: kept.join('\n\n') }
+}
+
 // The session's directory, reserved by the node, which moves it into its
 // conversation then; the controls wait for it (`reservations`).
 async function reserveDirectory($, context) {
@@ -1099,7 +1110,10 @@ export function register(on) {
   }).catch(($, e, next) => continueWithoutWorld($, 'prompt.context', e, next))
   on('prompt.section', async ($, e, next) => {
     if (await removed($)) return next(e)
-    if (!['env_info_simple', 'env_info_static'].includes(e.name)) return next(e)
+    // A section's name may carry a variant after a colon; its base names it.
+    const name = e.name.split(':')[0]
+    if (name === 'bg-session') return await startedFor($) === null ? next(e) : withoutJobScratch(await next(e))
+    if (!['env_info_simple', 'env_info_static'].includes(name)) return next(e)
     const context = await session($, registry, await $.session.id())
     return (await sessionPolicy($, context)).assisting ? { text: null } : next(e)
   }).catch(($, e, next) => continueWithoutWorld($, 'prompt.section', e, next))

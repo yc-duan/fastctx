@@ -1537,10 +1537,11 @@ pub(crate) fn untrust(directory: &Path, home: Option<&Path>) -> Result<(), Strin
 /// `id`: the host's limit on a tool answer opened past the World's own
 /// (`world-view.md`, 一次给多少), its limit on a tool's description opened so
 /// the whole of `run` reaches the model, the host's own shell, file and search tools
-/// turned off, since the World's take their place, and the conversation,
-/// which its plugin reads back from them when it starts. The session runs
-/// without approvals (`background::settings_args`), so nothing else needs
-/// allowing.
+/// turned off, since the World's take their place, the session working in
+/// place rather than in a worktree of its own directory, which no repository
+/// it edits on any machine lives in, and the conversation, which its plugin
+/// reads back from them when it starts. The session runs without approvals
+/// (`background::settings_args`), so nothing else needs allowing.
 pub(crate) fn settings_json(id: &ResidentId) -> String {
     let mut settings = serde_json::json!({
         "env": {
@@ -1551,6 +1552,7 @@ pub(crate) fn settings_json(id: &ResidentId) -> String {
         "permissions": {
             "deny": ["Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob"],
         },
+        "worktree": { "bgIsolation": "none" },
     });
     // Claude Code lets root skip approvals only in a sandbox declared as
     // one: where the World's conversations run as root, they are declared
