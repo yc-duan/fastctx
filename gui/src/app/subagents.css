@@ -1,0 +1,152 @@
+/* The account's Claude subagents (`subagents-tab.ts`): a solid row for each,
+   its name, when it is handed work, and what it runs on; 「添加」 at the end
+   of the list's rule. Under them the instructions on a short sheet of the
+   prompt's writing paper, and, where the account changed them, the way
+   back to the defaults. */
+
+.sa-title::after {
+  order: 1;
+}
+
+.sa-title .tag {
+  letter-spacing: 0;
+}
+
+.sa-title .sa-add {
+  order: 2;
+  height: 28px;
+  margin-right: calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
+  letter-spacing: 0;
+}
+
+.sa-rows {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sa-row {
+  display: grid;
+  grid-template-columns: minmax(6em, max-content) minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-4);
+  width: 100%;
+  min-height: 52px;
+  padding: 6px var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  color: var(--text);
+  text-align: left;
+  transition: background-color var(--hover) ease;
+}
+
+.sa-row:hover,
+.sa-row:focus-visible {
+  outline: 0;
+  background: var(--fill-strong);
+}
+
+.sa-name {
+  font-family: var(--font-emphasis);
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+
+.sa-use {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+
+.sa-runs {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.sa-none {
+  padding: var(--space-3) 0;
+}
+
+/* The instructions: the prompt's paper, as tall as a few paragraphs. */
+.sa-paper.prompt-paper {
+  flex: none;
+  height: clamp(200px, 34vh, 340px);
+}
+
+.sa-foot {
+  margin-top: var(--space-3);
+}
+
+.sa-end {
+  margin-top: var(--space-8);
+}
+
+.sa-end .sa-reset {
+  margin-left: calc(-1 * var(--space-3));
+}
+
+/* The sheet: its prompt grows only so far, then scrolls in its place. */
+.sa-sheet .sa-prompt {
+  max-height: 32vh;
+  font-family: var(--font-reading);
+}
+
+.sa-more {
+  margin-top: var(--space-2);
+}
+
+.sa-more > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  margin-top: var(--space-2);
+  color: var(--text-2);
+  list-style: none;
+  cursor: pointer;
+}
+
+.sa-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.sa-more > summary .glyph {
+  rotate: -90deg;
+  color: var(--text-3);
+  transition: rotate var(--hover) ease;
+}
+
+.sa-more[open] > summary .glyph {
+  rotate: 0deg;
+}
+
+.sa-more > .field:first-of-type {
+  margin-top: var(--space-1);
+}
+
+/* A phone: the name and what it runs on, then when it is handed work. */
+@media (max-width: 600px) {
+  .sa-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 2px;
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .sa-use {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  .sa-paper.prompt-paper {
+    height: clamp(220px, 40vh, 360px);
+  }
+}

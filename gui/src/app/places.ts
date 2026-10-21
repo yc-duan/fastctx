@@ -72,6 +72,7 @@ export function link(place: Place): string {
       return `#/machine/${part(place.name)}`;
     case "agents":
       if (place.tab === "prefs") return place.section === "claude" || place.section === "codex" ? `#/agents/prefs/${place.section}` : "#/agents/prefs";
+      if (place.tab === "subagents") return "#/agents/subagents";
       if (place.section) return `#/agents/${place.section}${place.machine === null ? "" : `/${part(place.machine)}`}`;
       return place.machine === null ? "#/agents" : `#/agents/${part(place.machine)}`;
     case "usage":
@@ -136,6 +137,7 @@ export function placeOf(hash: string): Place {
       // A host's preferences; `#/agents/prefs` alone was the preferences'
       // own section, now the last host's.
       if (parts[1] === "prefs") return { kind: "agents", machine: null, tab: "prefs", ...(parts[2] === "claude" || parts[2] === "codex" ? { section: parts[2] } : {}) };
+      if (parts[1] === "subagents") return { kind: "agents", machine: null, tab: "subagents", section: "claude" };
       if (sections.includes(parts[1] as AgentSection)) return { kind: "agents", section: parts[1] as AgentSection, machine: parts[2] || null };
       return { kind: "agents", machine: parts[1] || null };
     case "features":

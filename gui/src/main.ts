@@ -71,11 +71,15 @@ import { isHost, keepSection, sectionOf, tabOf } from "./app/agent-sections";
 import "./app/agent-sections.css";
 import { PromptPage } from "./app/prompt-page";
 import { HostPrefs } from "./app/host-prefs";
+import { SubagentsTab } from "./app/subagents-tab";
+import { profileSubagents } from "./world/subagents";
+import { specimenSubagents } from "./specimen/subagents";
 import { ProfileDefaults } from "./app/profile-defaults";
 import { McpPage } from "./app/mcp-page";
 import type { ProfileCalls } from "./app/profile-account";
 import "./app/profile.css";
 import "./app/host-prefs.css";
+import "./app/subagents.css";
 import { mcp as mcpCall, readProfile, writeProfile } from "./world/profile";
 import { specimenProfileCalls } from "./specimen/profile";
 import { ServerLists } from "./app/mcp-switches";
@@ -379,6 +383,8 @@ const profileCalls: ProfileCalls = {
   },
 };
 const serverLists = new ServerLists(profileCalls, store, english ? enProfile : zhProfile);
+/** The account's Claude subagents: the World's, or the specimen's. */
+const subagentCalls = live ? profileSubagents : specimenSubagents(params.get("subagents") === "older");
 
 /** The models an agent's logins offer across the machines this computer
  *  reaches, each once, in the order the first machine to list it gave. */
@@ -2210,8 +2216,19 @@ function show(next: Place): void {
           words: profile,
           make: (agent) => new HostPrefs({ agent, words: profile, english, calls: profileCalls, models: agentModels }),
         },
+        subagents: {
+          make: () =>
+            new SubagentsTab({
+              words: profile,
+              english,
+              call: subagentCalls,
+              models: () => agentModels("claude"),
+              confirm: accountConfirm,
+              close: pageWords.close,
+            }),
+        },
         tabbed: (tab, agent) => {
-          place = tab === "prefs" ? { kind: "agents", machine: null, section: agent, tab } : { kind: "agents", machine: null, section: agent };
+          place = tab === "logins" ? { kind: "agents", machine: null, section: agent } : { kind: "agents", machine: null, section: agent, tab };
           history.replaceState(history.state, "", link(place));
           shell.mark(place);
         },

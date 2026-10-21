@@ -61,7 +61,8 @@ export function keepSection(section: AgentSection): void {
 /** The tab of a host's page last shown. */
 export function keptTab(): AgentTab {
   try {
-    return localStorage.getItem(VIEW) === "prefs" ? "prefs" : "logins";
+    const kept = localStorage.getItem(VIEW);
+    return kept === "prefs" || kept === "subagents" ? kept : "logins";
   } catch {
     return "logins";
   }
@@ -112,11 +113,13 @@ export function sectionMark(section: AgentSection, size = 16): string {
  *  opens the tab last shown. */
 export function sectionRows(current: AgentSection | null, own: boolean, words: ProfileWords): string {
   const shown: AgentSection[] = own ? [...HOSTS, ...OWN] : [...HOSTS];
-  const prefs = own && keptTab() === "prefs";
+  const tab = own ? keptTab() : "logins";
   return `<ul class="asec-list">${shown
     .map((section) => {
       const on = section === current;
-      const place: Place = isHost(section) && prefs ? { kind: "agents", machine: null, section, tab: "prefs" } : { kind: "agents", machine: null, section };
+      // The subagents are Claude Code's alone: Codex opens on its preferences.
+      const kept: AgentTab = tab === "subagents" && section !== "claude" ? "prefs" : tab;
+      const place: Place = isHost(section) && kept !== "logins" ? { kind: "agents", machine: null, section, tab: kept } : { kind: "agents", machine: null, section };
       return `<li><a class="place asec-row${on ? " current" : ""}" href="${link(place)}"${on ? ' aria-current="page"' : ""}><span class="place-mark">${sectionMark(section)}</span><span class="place-name">${escape(words.sections[section])}</span></a></li>`;
     })
     .join("")}</ul>`;

@@ -6,9 +6,9 @@
 
 export type AgentSection = "claude" | "codex" | "prompt" | "mcp";
 
-/** What an agent's page shows: its logins, or the account's preferences
- *  for it. */
-export type AgentTab = "logins" | "prefs";
+/** What an agent's page shows: its logins, the account's preferences for
+ *  it, or, for Claude Code, the account's subagents. */
+export type AgentTab = "logins" | "prefs" | "subagents";
 
 export interface ProfileWords {
   sections: Record<AgentSection, string>;
@@ -155,6 +155,50 @@ export interface ProfileWords {
     hideReasoning: string;
     rawReasoning: string;
   };
+  subagents: {
+    /** The list, and the tag beside it while it is the defaults. */
+    agents: string;
+    defaults: string;
+    /** Said on hover over that tag. */
+    defaultsTip: string;
+    add: string;
+    /** The account took every one of them out. */
+    none: string;
+    /** A model left to the conversation's. */
+    inherit: string;
+    /** How the main agent should use them, and its paper's words. */
+    instructions: string;
+    instructionsPlaceholder: string;
+    save: string;
+    reset: string;
+    resetTitle: string;
+    resetWhat: string;
+    /** The hub keeps no subagents: it runs an earlier Fastctx. */
+    olderHub: string;
+    /** When a change reaches the conversations, said on hover. */
+    takesEffect: string;
+    newTitle: string;
+    editTitle(name: string): string;
+    name: string;
+    nameRule: string;
+    taken: string;
+    description: string;
+    descriptionNeeded: string;
+    prompt: string;
+    model: string;
+    effort: string;
+    more: string;
+    tools: string;
+    disallowed: string;
+    toolsPlaceholder: string;
+    maxTurns: string;
+    maxTurnsRule: string;
+    background: string;
+    claudeMd: string;
+    remove: string;
+    removeTitle(name: string): string;
+    removeWhat: string;
+  };
   focus: {
     /** The group of the account's servers in 「机器与文件夹」. */
     title: string;
@@ -165,7 +209,7 @@ export interface ProfileWords {
 
 export const zhProfile: ProfileWords = {
   sections: { claude: "Claude Code", codex: "Codex", prompt: "提示词", mcp: "MCP" },
-  tabs: { logins: "登录", prefs: "偏好" },
+  tabs: { logins: "登录", prefs: "偏好", subagents: "子代理" },
   account: "账号",
   olderHub: "这个网络的中枢服务器要先升级",
   reading: "正在读取",
@@ -291,12 +335,49 @@ export const zhProfile: ProfileWords = {
     hideReasoning: "隐藏推理过程",
     rawReasoning: "原始推理内容",
   },
+  subagents: {
+    agents: "子代理",
+    defaults: "默认",
+    defaultsTip: "Fastctx 自带的一套，随版本更新；改动任何一处，就成了你自己的",
+    add: "添加",
+    none: "还没有子代理",
+    inherit: "跟随对话",
+    instructions: "须知",
+    instructionsPlaceholder: "写给主代理：什么时候派子代理，怎样分工",
+    save: "保存",
+    reset: "恢复默认",
+    resetTitle: "恢复默认？",
+    resetWhat: "子代理和须知换回 Fastctx 自带的那一套，你改过的不再保留。",
+    olderHub: "这个网络的中枢服务器要先升级，才能设置子代理",
+    takesEffect: "从下一轮起生效；已经在跑的子代理照旧",
+    newTitle: "新的子代理",
+    editTitle: (name) => `编辑 ${name}`,
+    name: "名字",
+    nameRule: "只用英文字母、数字、下划线和连字符，最多 64 个，不以连字符开头",
+    taken: "已经有叫这个名字的了",
+    description: "用途",
+    descriptionNeeded: "写一句什么时候派它",
+    prompt: "提示词",
+    model: "模型",
+    effort: "强度",
+    more: "更多",
+    tools: "只用这些工具（可选）",
+    disallowed: "不用这些工具（可选）",
+    toolsPlaceholder: "Read, Grep, Bash",
+    maxTurns: "最多轮数（可选）",
+    maxTurnsRule: "填一个正整数",
+    background: "在后台跑",
+    claudeMd: "读 CLAUDE.md",
+    remove: "删除",
+    removeTitle: (name) => `删除 ${name}？`,
+    removeWhat: "之后的对话不再派它，已经在跑的照旧跑完。",
+  },
   focus: { title: "MCP", when: "开关在这段对话下次被唤醒时生效" },
 };
 
 export const enProfile: ProfileWords = {
   sections: { claude: "Claude Code", codex: "Codex", prompt: "Prompt", mcp: "MCP" },
-  tabs: { logins: "Logins", prefs: "Preferences" },
+  tabs: { logins: "Logins", prefs: "Preferences", subagents: "Subagents" },
   account: "Account",
   olderHub: "This network's server needs updating first",
   reading: "Reading",
@@ -421,6 +502,43 @@ export const enProfile: ProfileWords = {
     verbosityKinds: { low: "Low", medium: "Medium", high: "High" },
     hideReasoning: "Hide reasoning",
     rawReasoning: "Raw reasoning",
+  },
+  subagents: {
+    agents: "Subagents",
+    defaults: "Default",
+    defaultsTip: "The set Fastctx comes with, updated with it; change any of it and it becomes your own",
+    add: "Add",
+    none: "No subagents yet",
+    inherit: "As the conversation",
+    instructions: "Instructions",
+    instructionsPlaceholder: "For the main agent: when to hand work to subagents, and how to split it",
+    save: "Save",
+    reset: "Restore defaults",
+    resetTitle: "Restore the defaults?",
+    resetWhat: "Your subagents and instructions are replaced by the set Fastctx comes with.",
+    olderHub: "This network's hub server needs an update before subagents can be set",
+    takesEffect: "Takes effect from the next turn; subagents already running carry on",
+    newTitle: "New subagent",
+    editTitle: (name) => `Edit ${name}`,
+    name: "Name",
+    nameRule: "Letters, digits, underscores and hyphens, up to 64, not starting with a hyphen",
+    taken: "There's already one by that name",
+    description: "Use",
+    descriptionNeeded: "Say when to hand it work",
+    prompt: "Prompt",
+    model: "Model",
+    effort: "Effort",
+    more: "More",
+    tools: "Only these tools (optional)",
+    disallowed: "Not these tools (optional)",
+    toolsPlaceholder: "Read, Grep, Bash",
+    maxTurns: "Most turns (optional)",
+    maxTurnsRule: "A whole number above zero",
+    background: "Runs in the background",
+    claudeMd: "Reads CLAUDE.md",
+    remove: "Delete",
+    removeTitle: (name) => `Delete ${name}?`,
+    removeWhat: "Conversations stop handing it work; one already running finishes.",
   },
   focus: { title: "MCP", when: "Switches take effect at this conversation's next wake" },
 };
