@@ -186,7 +186,8 @@ export function keptClear(): Promise<void> {
 /** Lets go of one conversation this device keeps, and of the pictures only
  *  it showed. */
 export function keptForget(address: Address): Promise<void> {
-  return invoke("kept_forget", { address });
+  // The cache knows a conversation by the name its machine has on its hub.
+  return invoke("kept_forget", { address: { ...address, machine: address.machine.split(".")[0] } });
 }
 
 /** Why words were not said: `again` when no answer came, so saying them

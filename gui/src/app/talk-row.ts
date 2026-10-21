@@ -66,7 +66,7 @@ export function byRecent(residents: ResidentNow[]): ResidentNow[] {
 /** Each machine's facts by name, for the device marks. */
 export function factsByMachine(world: WorldNow | null): Map<string, MachineFacts> {
   const facts = new Map<string, MachineFacts>();
-  for (const machine of machinesOf(world)) if ("Ok" in machine.facts) facts.set(machine.name, machine.facts.Ok);
+  for (const machine of machinesOf(world)) if ("Ok" in machine.facts) facts.set(machine.written, machine.facts.Ok);
   return facts;
 }
 

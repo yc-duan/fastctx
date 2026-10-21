@@ -954,9 +954,9 @@ export class MachinePage implements Page {
     const viewer = loginsOf(world.accounts).find((login) => machine.on.some((on) => on.hub === login.hub)) ?? null;
     const group = viewer ? (groupsOf(world).find((one) => sameLogin(one.login, viewer)) ?? null) : null;
     const residents = residentsOf(world).filter(
-      (r) => r.about.machine === machine.name && (r.now?.activity === "busy" || r.now?.waiting_for_user || !!r.now?.asked) && (!group || residentIn(world, group, r)),
+      (r) => r.about.machine === machine.written && (r.now?.activity === "busy" || r.now?.waiting_for_user || !!r.now?.asked) && (!group || residentIn(world, group, r)),
     );
-    const jobs = jobsOf(world).filter((job) => job.machine === machine.name);
+    const jobs = jobsOf(world).filter((job) => job.machine === machine.written);
     // Its owner is told how many are at work or waiting there, whosever
     // they are; those of other accounts go without their names.
     const answered = world.who.machines.find((one) => one.kind === "answered" && one.reply.machine === machine.name);

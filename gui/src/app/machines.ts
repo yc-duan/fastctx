@@ -2446,7 +2446,7 @@ export class MachinesPage implements Page {
       ${direct}
       ${sharing}
       ${assisting}
-      ${this.present(machine.name, world, viewer)}
+      ${this.present(machine.written, world, viewer)}
       ${this.agentsLink(machine.written)}
       ${note}
       ${own}

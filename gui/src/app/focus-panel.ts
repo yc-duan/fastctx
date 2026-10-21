@@ -209,7 +209,7 @@ export class FocusPanel {
     const kept = (chosen?.folders ?? []).filter((path) => !named.some((mark) => mark.path === path)).map((path) => ({ name: folderName(path), path }));
     this.picker.open({
       machine: place.written,
-      folders: (path) => this.options.folders(place.name, path),
+      folders: (path) => this.options.folders(place.written, path),
       marks: [...named, ...kept],
       start: chosen?.folders.at(-1) ?? null,
       ...(place.here ? { allow: () => void allowPrivacy() } : {}),

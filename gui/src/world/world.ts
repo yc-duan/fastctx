@@ -103,6 +103,16 @@ export interface ResidentNow {
   last_action: Action | null;
   tools?: { turn: string; id: string; started_at: Timestamp | null; name: string; machine: MachineName | null; detail: string }[];
   moved: Moved | null;
+  /** Which computer of which hub answered for it, as `fastctx_types::observation::MachineSource`. */
+  source?: MachineSource | null;
+}
+
+/** A machine in one network, and how this computer writes it: `name.hub`
+ *  where another of its hubs has a different computer of that name. */
+export interface MachineSource {
+  hub: string;
+  key: string;
+  written: string;
 }
 
 export interface Moved {
@@ -122,6 +132,7 @@ export interface RunningJob {
   stderr?: string;
   /** The account it runs for, when another machine sent it. */
   account?: { hub: string; account: string };
+  source?: MachineSource | null;
 }
 
 export interface WhoReply {
@@ -134,11 +145,12 @@ export interface WhoReply {
   busy?: number;
 }
 
-export type MachineWho =
+export type MachineWho = (
   | { kind: "answered"; reply: WhoReply }
   /** `last`: what was afoot on it as it last told, when that is known. */
   | { kind: "offline"; machine: MachineName; since: Timestamp | null; last?: WhoReply }
-  | { kind: "no_answer"; machine: MachineName; reason: string };
+  | { kind: "no_answer"; machine: MachineName; reason: string }
+) & { observation?: { source: MachineSource } | null };
 
 export type WhoScope =
   | { kind: "town"; town: TownName; record: ProjectRecord | null }

@@ -8,7 +8,7 @@
 import { loginsOf } from "../world/accounts";
 import { inShell, watchWorld, worldNow, type WorldNow } from "../world/bridge";
 import type { Address } from "../world/events";
-import type { ResidentNow, RunningJob, WhoFor } from "../world/world";
+import type { ResidentNow, RunningJob, WhoFor, WhoReply } from "../world/world";
 import { keepNetwork, shownNetwork, viewOf } from "./network";
 import { signal, type Signal } from "./signals";
 
@@ -47,6 +47,7 @@ export function createStore(specimen: () => { world: WorldNow; now: Date }): Sto
   const world = signal<WorldNow | null>(null);
   const whole = signal<WorldNow | null>(null);
   const read = (now: WorldNow) => {
+    written(now);
     whole.set(now);
     world.set(viewOf(now, shownNetwork(now)));
   };
@@ -190,7 +191,7 @@ export function unreachedOf(world: WorldNow | null, archived = false): ResidentN
   if (!world) return [];
   const ours = loginsOf(world.accounts);
   const theirs = (machine: string): { hub: string; account: string }[] =>
-    world.accounts.hubs.flatMap((hub) => (hub.members.find((member) => member.name === machine)?.logins ?? []).map((account) => ({ hub: hub.hub, account })));
+    world.accounts.hubs.flatMap((hub) => (hub.members.find((member) => member.name === bareName(machine))?.logins ?? []).map((account) => ({ hub: hub.hub, account })));
   const worksForUs = (resident: ResidentNow): boolean => {
     const acting = resident.about.acting;
     const accounts = !acting || acting.kind === "here" ? theirs(resident.about.machine) : acting.accounts;
@@ -247,3 +248,33 @@ export function worksFor(others: WhoFor[] | undefined, machine: string, id: stri
 export const sameAddress = (a: Address, b: Address) => a.resident === b.resident && a.machine === b.machine;
 
 export const addressOf = (r: ResidentNow): Address => ({ resident: r.about.id, machine: r.about.machine });
+
+/** A machine's name without the hub it is written with: what a hub's
+ *  directory knows it by. */
+export const bareName = (written: string): string => written.split(".")[0]!;
+
+/** Each machine of `now` as this computer writes it, `name.hub` where two
+ *  of its hubs each have a different computer of that name, as the node
+ *  says (`Node.written`); and so the machine of each conversation and
+ *  command shown, so that every call made of them names the one meant. */
+function written(now: WorldNow): void {
+  const answer = (reply: WhoReply, as: string | undefined) => {
+    if (as) reply.machine = as;
+    for (const r of reply.residents) {
+      const machine = r.source?.written ?? as;
+      if (machine) r.about.machine = machine;
+    }
+    for (const job of reply.jobs) {
+      const machine = job.source?.written ?? as;
+      if (machine) job.machine = machine;
+    }
+  };
+  for (const machine of now.who?.machines ?? []) {
+    const as = machine.observation?.source.written;
+    if (machine.kind === "answered") answer(machine.reply, as);
+    else {
+      if (as) machine.machine = as;
+      if (machine.kind === "offline" && machine.last) answer(machine.last, as);
+    }
+  }
+}

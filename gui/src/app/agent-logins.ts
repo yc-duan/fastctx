@@ -161,7 +161,28 @@ export class AgentLoginsPage implements Page {
   private tab: AgentTab;
   private tabsDrawn = "";
 
+  /** The calls that name a machine, as `options` makes them. */
+  private readonly calls: Pick<AgentLoginsOptions, "read" | "scan" | "add" | "folder" | "folders" | "preview" | "change" | "limits" | "setTitle" | "usageOf">;
+
   constructor(private readonly options: AgentLoginsOptions) {
+    // Every call names the machine shown as this computer writes it, its
+    // hub with it where another hub has a different computer of that name.
+    const as = (machine: string) => {
+      const shown = this.current(this.options.store.world.peek()).machine;
+      return shown?.name === machine ? shown.written : machine;
+    };
+    this.calls = {
+      read: (machine) => options.read(machine === null ? null : as(machine)),
+      scan: (machine, stop) => options.scan(as(machine), stop),
+      add: (machine, agent, dir) => options.add(as(machine), agent, dir),
+      folder: (machine, dir, change) => options.folder(as(machine), dir, change),
+      folders: (machine, path) => options.folders(as(machine), path),
+      preview: (machine, agent, dir, into, takeBack) => options.preview(as(machine), agent, dir, into, takeBack),
+      change: (machine, agent, dir, into, raise, takeBack) => options.change(as(machine), agent, dir, into, raise, takeBack),
+      limits: (machine, agent, dir) => options.limits(as(machine), agent, dir),
+      setTitle: (machine, agent, dir, on) => options.setTitle(as(machine), agent, dir, on),
+      usageOf: (machine, agent, dir) => options.usageOf(as(machine), agent, dir),
+    };
     const { words } = options;
     this.agent = options.agent;
     this.title = options.agent === "claude" ? words.claude : words.codex;
@@ -187,10 +208,10 @@ export class AgentLoginsPage implements Page {
     });
     this.assistSheet = new AssistSheet(options.access);
     this.sheet = new AgentChangeSheet(options.changeWords, {
-      preview: (target) => options.preview(target.machine, target.agent, target.dir, target.into, !!target.takeBack),
-      change: (target, raise) => options.change(target.machine, target.agent, target.dir, target.into, raise, !!target.takeBack),
+      preview: (target) => this.calls.preview(target.machine, target.agent, target.dir, target.into, !!target.takeBack),
+      change: (target, raise) => this.calls.change(target.machine, target.agent, target.dir, target.into, raise, !!target.takeBack),
       progress: async (target) => {
-        const record = await options.read(target.machine);
+        const record = await this.calls.read(target.machine);
         const machine = record.machines.find((one) => one.kind === "answered" && one.logins.machine === target.machine);
         if (machine?.kind !== "answered") return null;
         const agent = machine.logins[target.agent];
@@ -321,7 +342,7 @@ export class AgentLoginsPage implements Page {
     const name = machine.name;
     this.reading = name;
     try {
-      const world = await this.options.read(name);
+      const world = await this.calls.read(name);
       const heard = world.machines.find((one) => (one.kind === "answered" ? one.logins.machine : one.machine) === name) ?? world.machines[0];
       if (this.reading !== name) return;
       if (heard?.kind === "answered") {
@@ -355,7 +376,7 @@ export class AgentLoginsPage implements Page {
         const key = reportKey(record.machine, agent, login.dir);
         const kept = keptReport(key);
         if (kept && Date.now() - kept.at < USAGE_STALE_MS) return;
-        await readReport(key, () => this.options.usageOf(record.machine, agent, login.dir));
+        await readReport(key, () => this.calls.usageOf(record.machine, agent, login.dir));
         this.draw();
       }),
     );
@@ -640,7 +661,7 @@ export class AgentLoginsPage implements Page {
     const dir = button.dataset.dir ?? "";
     switch (button.dataset.act) {
       case "scan":
-        await this.quietly(button, `m:${machine}`, () => this.options.scan(machine, false));
+        await this.quietly(button, `m:${machine}`, () => this.calls.scan(machine, false));
         return;
       case "apply": {
         const target = this.target(machine, dir, true) ?? { agent: this.agent, machine, dir, who: dirName(dir), programs: [], here: this.shown(this.options.store.world.peek())?.here ?? false, into: true };
@@ -658,10 +679,10 @@ export class AgentLoginsPage implements Page {
         this.chooseFolder(machine);
         return;
       case "stop-search":
-        await this.quietly(button, `f:${machine}:${dir}`, () => this.options.folder(machine, dir, { change: "stop" }));
+        await this.quietly(button, `f:${machine}:${dir}`, () => this.calls.folder(machine, dir, { change: "stop" }));
         return;
       case "forget":
-        await this.quietly(button, `f:${machine}:${dir}`, () => this.options.folder(machine, dir, { change: "forget" }));
+        await this.quietly(button, `f:${machine}:${dir}`, () => this.calls.folder(machine, dir, { change: "forget" }));
         return;
       case "more":
         this.openFolders.add(`${machine}:${dir}`);
@@ -732,10 +753,10 @@ export class AgentLoginsPage implements Page {
         this.openAssist(machineName, dir, null);
         return;
       case "limits":
-        await this.quietly(null, key, () => options.limits(machineName, this.agent, dir));
+        await this.quietly(null, key, () => this.calls.limits(machineName, this.agent, dir));
         return;
       case "title":
-        await this.quietly(null, key, () => options.setTitle(machineName, this.agent, dir, !found.login!.auto_title));
+        await this.quietly(null, key, () => this.calls.setTitle(machineName, this.agent, dir, !found.login!.auto_title));
         return;
       case "copy":
         await navigator.clipboard.writeText(dir).catch(() => {});
@@ -762,7 +783,7 @@ export class AgentLoginsPage implements Page {
    *  the machine's folders walked by its node anywhere else. */
   private chooseFolder(machine: string): void {
     const here = this.shown(this.options.store.world.peek())?.here ?? false;
-    const walk = () => this.choosing.open({ machine, folders: (path) => this.options.folders(machine, path), chosen: (dir) => void this.choose(machine, dir) });
+    const walk = () => this.choosing.open({ machine, folders: (path) => this.calls.folders(machine, path), chosen: (dir) => void this.choose(machine, dir) });
     const pick = this.options.pick;
     if (!here || !pick) {
       walk();
@@ -795,7 +816,7 @@ export class AgentLoginsPage implements Page {
     this.notes.delete(`m:${machine}`);
     this.draw();
     try {
-      const after = await this.options.folder(machine, dir, { change: "choose" });
+      const after = await this.calls.folder(machine, dir, { change: "choose" });
       const marked = this.became(before, after, dir);
       if (marked.agent && marked.agent !== this.agent) {
         this.agent = marked.agent;
@@ -836,7 +857,7 @@ export class AgentLoginsPage implements Page {
     this.notes.delete(`f:${machine}:${folder}`);
     this.draw();
     try {
-      await this.options.add(machine, agent, dir);
+      await this.calls.add(machine, agent, dir);
       await this.read();
       const target = this.agent === agent ? this.target(machine, dir, true) : null;
       if (target) this.sheet.open(target);

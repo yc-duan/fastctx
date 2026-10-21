@@ -468,7 +468,7 @@ export class NewTalk {
             this.draft?.for === chosen
               ? { kind: "draft", resident: this.draft.resident, town: this.town }
               : { kind: "new", agent: option.agent, town: this.town };
-          const done = await attach.upload(option.machine, target, source, progress);
+          const done = await attach.upload(option.written, target, source, progress);
           this.draft = { resident: done.owner.resident, for: chosen };
           return done;
         },
@@ -1179,7 +1179,7 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
     const world = this.options.store.world.peek();
     const option = this.chosenOption();
     const here = machinesOf(world).find((machine) => machine.here)?.written ?? null;
-    this.filesOn = option ? (here ?? (option.assistant ? fileHome(world, option.assistant.login) : option.machine)) : null;
+    this.filesOn = option ? (here ?? (option.assistant ? fileHome(world, option.assistant.login) : option.written)) : null;
   }
 
   private drawStart(): void {
@@ -1255,7 +1255,7 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
       if (!this.starting) this.note.textContent = words.starting;
       const address = await this.options.begin({
         agent: option.agent,
-        machine: option.machine,
+        machine: option.written,
         town: this.town,
         text,
         model: this.model,
