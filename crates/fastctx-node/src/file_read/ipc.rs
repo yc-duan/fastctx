@@ -1,11 +1,12 @@
 //! Headers and original binary payloads on one exclusive local connection.
 
+use fastctx_types::access::Written;
 use std::sync::Arc;
 
 use fastctx_platform::ipc::{FrameReader, FrameWriter};
+use fastctx_types::Reply;
 use fastctx_types::file_read::{FileReadPart, ReadFileRequest};
 use fastctx_types::ipc::{Failure, NodeFrame};
-use fastctx_types::{MachineName, Reply};
 
 use super::Part;
 use crate::Node;
@@ -13,7 +14,7 @@ use crate::Node;
 pub(crate) async fn serve(
     node: &Arc<Node>,
     acting: fastctx_types::access::Acting,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     request: ReadFileRequest,
     id: u64,
     reader: &mut FrameReader,

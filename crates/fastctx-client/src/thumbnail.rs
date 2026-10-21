@@ -1,6 +1,7 @@
+use fastctx_types::access::Written;
 use fastctx_types::attachments::AttachmentSource;
 use fastctx_types::thumbnail::{Thumbnail, ThumbnailRequest};
-use fastctx_types::{Call, MachineName, Reply};
+use fastctx_types::{Call, Reply};
 
 use crate::cache::pictures;
 use crate::{Error, World};
@@ -79,7 +80,7 @@ impl World {
         Ok(thumbnail)
     }
 
-    pub async fn thumbnail(&self, machine: Option<MachineName>, request: ThumbnailRequest) -> Result<Thumbnail, Error> {
+    pub async fn thumbnail(&self, machine: Option<Written>, request: ThumbnailRequest) -> Result<Thumbnail, Error> {
         match self.call(Call::Thumbnail { machine, request }).await? {
             (Reply::Thumbnail(thumbnail), _) => Ok(thumbnail),
             _ => Err(Error::Unexpected("thumbnail".into())),

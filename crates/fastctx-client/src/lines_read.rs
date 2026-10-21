@@ -2,14 +2,15 @@
 
 use crate::line_rows::{Rows, Sink};
 use crate::{CallError, Error, World};
+use fastctx_types::access::Written;
 use fastctx_types::ipc::{ClientFrame, NodeFrame};
 use fastctx_types::lines::Reply as LinesReply;
-use fastctx_types::{Call, MachineName, Reply};
+use fastctx_types::{Call, Reply};
 
 impl World {
     pub(crate) async fn read_lines(
         &self,
-        machine: MachineName,
+        machine: Written,
         source: String,
         start: u64,
         count: u64,
@@ -21,7 +22,7 @@ impl World {
 
     pub(crate) async fn visit_lines(
         &self,
-        machine: MachineName,
+        machine: Written,
         source: String,
         start: u64,
         count: u64,
@@ -32,7 +33,7 @@ impl World {
 
     pub(crate) async fn visit_line_notes(
         &self,
-        machine: MachineName,
+        machine: Written,
         source: String,
         count: u64,
         receive: &mut (impl Sink + Send),
@@ -42,7 +43,7 @@ impl World {
 
     async fn visit_line_parts(
         &self,
-        machine: MachineName,
+        machine: Written,
         source: String,
         start: u64,
         count: u64,

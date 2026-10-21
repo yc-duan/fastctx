@@ -1,5 +1,7 @@
 //! Everything a local client can ask the node, and the answers.
 
+use crate::access::Written;
+
 use crate::agents::WorldAgents;
 use crate::management::{Managed, Management};
 use jiff::Timestamp;
@@ -102,12 +104,12 @@ pub enum Call {
     /// waits to open again what broke asks it, and leaves once its wait is
     /// over (`world-network.md`, 断开不是结束).
     Reopened {
-        machine: MachineName,
+        machine: Written,
     },
     /// Reads or changes the shared composer on the resident's machine.
     Composer {
         resident: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         request: crate::composer::Request,
     },
     /// A session says who it is; the node finds or makes its resident.
@@ -133,7 +135,7 @@ pub enum Call {
         call_id: Option<String>,
         resident: ResidentId,
         request: RunRequest,
-        node: Option<MachineName>,
+        node: Option<Written>,
     },
     StoreRunFacts {
         resident: ResidentId,
@@ -161,7 +163,7 @@ pub enum Call {
         job: Option<crate::JobId>,
         resident: Option<ResidentId>,
         op: WriteOp,
-        node: Option<MachineName>,
+        node: Option<Written>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         town: Option<TownName>,
     },
@@ -192,11 +194,11 @@ pub enum Call {
     /// Reads a file's original bytes for the user, here or on `machine`.
     /// The connection carries `NodeFrame::FileRead` pieces until its reply.
     ReadFile {
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         request: crate::file_read::ReadFileRequest,
     },
     Thumbnail {
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         request: crate::thumbnail::ThumbnailRequest,
     },
     AttachmentThumbnail {
@@ -211,20 +213,20 @@ pub enum Call {
         range: crate::file_read::FileRange,
     },
     Lines {
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         request: crate::lines::Request,
     },
     ReadLines {
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         request: crate::lines::ReadRequest,
     },
     ReadLineNotes {
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         request: crate::lines::ReadRequest,
     },
     /// File-name completion, with scope checked on the machine holding it.
     FindFiles {
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         request: crate::file_search::FileSearchRequest,
     },
     /// Asks for a colleague for a resident of this machine
@@ -243,13 +245,13 @@ pub enum Call {
     /// The folders in a folder of a machine, for the user to choose one;
     /// with no `path`, the places a choice starts from.
     Folders {
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         path: Option<String>,
     },
     /// How a machine, or this computer, is doing, for its details page;
     /// with `after`, its lines bring only what came since then.
     Stats {
-        machine: Option<MachineName>,
+        machine: Option<crate::access::Written>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         after: Option<jiff::Timestamp>,
     },
@@ -266,7 +268,7 @@ pub enum Call {
     Message {
         resident: ResidentId,
         to: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         login: Option<crate::collab::Caller>,
@@ -295,13 +297,13 @@ pub enum Call {
     },
     /// Agent programs on one machine, or every online machine in the World.
     Agents {
-        machine: Option<MachineName>,
+        machine: Option<Written>,
     },
     /// The user's word, from one of the user's devices, on whether Claude
     /// Code on `machine` may run the World's sessions without approvals: its
     /// record that the user accepted the bypass-permissions dialog.
     ClaudeConsent {
-        machine: MachineName,
+        machine: Written,
         accept: bool,
         /// The Claude Code home there it is for, when not the default one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -310,34 +312,34 @@ pub enum Call {
     /// The user adds an agent's home on `machine`, or hides one the World
     /// found there or shows it again.
     Homes {
-        machine: MachineName,
+        machine: Written,
         change: crate::agents::HomeChange,
     },
     /// What the nodes of one machine, or of every machine the asker may
     /// use, keep of their agents' logins (`logins`); no process starts but
     /// to ask again a login whose sign-in changed since it was asked.
     AgentLogins {
-        machine: Option<MachineName>,
+        machine: Option<Written>,
     },
     /// Scans `machine`, one of the user's own, for its agents: answered
     /// once the usual places are done, while the folders the user chose are
     /// searched again; or, with `stop`, stops those searches.
     ScanAgents {
-        machine: MachineName,
+        machine: Written,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         stop: bool,
     },
     /// Takes up a directory on `machine` as a candidate login of `agent`,
     /// asking the agent who is logged in there: one a folder's search found.
     AddAgentLogin {
-        machine: MachineName,
+        machine: Written,
         agent: AgentName,
         dir: std::path::PathBuf,
     },
     /// A folder on `machine` the user chooses for logins, whose search
     /// stops, or which is no longer searched (`logins::FolderChange`).
     AgentFolder {
-        machine: MachineName,
+        machine: Written,
         dir: std::path::PathBuf,
         change: crate::logins::FolderChange,
     },
@@ -345,7 +347,7 @@ pub enum Call {
     /// on `machine` the way the official client does; off by default, set by
     /// whoever may manage the login (`world-agent-logins.md`, 在哪个登录里干活).
     SetAgentTitle {
-        machine: MachineName,
+        machine: Written,
         agent: AgentName,
         dir: std::path::PathBuf,
         on: bool,
@@ -354,7 +356,7 @@ pub enum Call {
     /// or taking them out, would change, with nothing written; with
     /// `take_back`, what the user changed of them is rewritten too.
     PreviewAgentChange {
-        machine: MachineName,
+        machine: Written,
         agent: AgentName,
         dir: std::path::PathBuf,
         into: bool,
@@ -367,7 +369,7 @@ pub enum Call {
     /// `raise_output_limit`; what the user changed of the World's tools is
     /// rewritten only with `take_back`.
     ChangeAgentLogin {
-        machine: MachineName,
+        machine: Written,
         agent: AgentName,
         dir: std::path::PathBuf,
         into: bool,
@@ -378,19 +380,19 @@ pub enum Call {
     },
     /// Reads a login's usage limits afresh on its machine.
     ReadAgentLimits {
-        machine: MachineName,
+        machine: Written,
         agent: AgentName,
         dir: std::path::PathBuf,
     },
     /// What a login on a machine was used for, as the user may see it.
     AgentUsage {
-        machine: MachineName,
+        machine: Written,
         agent: AgentName,
         dir: std::path::PathBuf,
     },
     /// Up to one hundred request records, newest first, redacted for this reader.
     AgentCalls {
-        machine: MachineName,
+        machine: Written,
         agent: AgentName,
         dir: std::path::PathBuf,
         query: crate::usage_calls::UsageCallsQuery,
@@ -404,7 +406,7 @@ pub enum Call {
     /// `machine` is where it lives, when the user said.
     Talk {
         to: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         text: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attachments: Vec<crate::attachments::Attachment>,
@@ -421,7 +423,7 @@ pub enum Call {
     /// connection. The final Uploaded reply is sent only after verification.
     Upload {
         target: crate::attachments::UploadTarget,
-        node: Option<MachineName>,
+        node: Option<Written>,
         file: crate::attachments::UploadFile,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         composer: Option<crate::composer::UploadScope>,
@@ -431,7 +433,7 @@ pub enum Call {
     /// stays open.
     Watch {
         resident: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         composer: Option<String>,
         /// What this viewer keeps of the history (`session::held`): the
@@ -447,7 +449,7 @@ pub enum Call {
     Open {
         agent: AgentName,
         town: Option<TownName>,
-        node: Option<MachineName>,
+        node: Option<Written>,
         text: String,
         model: Option<String>,
         reasoning_effort: Option<String>,
@@ -459,13 +461,13 @@ pub enum Call {
     /// Stops the turn a resident on any machine is running, for the user.
     Stop {
         resident: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
     },
     /// Does something to a resident's conversation on any machine for the
     /// user, besides speaking into it (`session::control`).
     Control {
         resident: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         control: Control,
     },
     /// What the World keeps on this machine, and deleting it. Answered here,
@@ -483,19 +485,19 @@ pub enum Call {
     /// line; answered with how updates stand there. What interfaces before
     /// 1.0.1 beta 3 ask; later ones ask `MachineUpdates`.
     UpdateMachine {
-        machine: MachineName,
+        machine: crate::access::Written,
     },
     /// New versions of Fastctx on `machine`, this one or another of the
     /// network's (`crate::update::UpdateCall`); answered with how updates
     /// stand there.
     MachineUpdates {
-        machine: MachineName,
+        machine: crate::access::Written,
         update: crate::update::UpdateCall,
     },
     /// Manage this resident as the user, on its own machine.
     Manage {
         resident: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         action: Management,
     },
     /// Deletes this resident's conversation from every machine and device
@@ -503,13 +505,13 @@ pub enum Call {
     /// (`world-colleagues.md`, 用户在任何地方和居民说话).
     Forget {
         resident: ResidentId,
-        machine: MachineName,
+        machine: Written,
     },
     /// What a resident's conversation on any machine offers now: the
     /// controls it takes, its commands and models, its usage.
     Offers {
         resident: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
     },
     /// The host's own record of one item of a resident's conversation, as
     /// its host keeps it: what a slimmed history leaves out
@@ -517,7 +519,7 @@ pub enum Call {
     /// words are named by their message id, with no turn.
     ItemDetail {
         resident: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         turn: Option<String>,
         item: String,
     },
@@ -526,7 +528,7 @@ pub enum Call {
     /// own record, which a conversation's history leaves out.
     AgentActivity {
         resident: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         agent: String,
     },
     /// How to open a resident of this machine in its host's own interface,
@@ -1005,7 +1007,7 @@ impl JournalCall {
 /// `machine`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Attach {
-    pub machine: Option<MachineName>,
+    pub machine: Option<Written>,
     pub path: String,
 }
 

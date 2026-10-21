@@ -16,7 +16,7 @@ use fastctx_client::{Conversation, Next, Said, World};
 use fastctx_hands::told::turn_end;
 use fastctx_types::residents::Landed;
 use fastctx_types::session::{Happened, Part, SessionChange, SessionEvent, Speaker, StepStatus, ToolStatus, What};
-use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
+use fastctx_types::{AgentName, ResidentId, TownName};
 
 /// Talk to a resident on any machine, or open a session to talk to.
 #[derive(Args)]
@@ -54,13 +54,23 @@ pub fn run(args: TalkArgs) -> anyhow::Result<()> {
                 .open(
                     AgentName::try_from(agent.as_str())?,
                     args.town.as_deref().map(TownName::try_from).transpose()?,
-                    args.node.as_deref().map(MachineName::try_from).transpose()?,
+                    args.node.as_deref().map(fastctx_types::access::Written::parse).transpose()?,
                     text.clone(),
                 )
                 .await?;
             println!("=== opened {} on {} ===", said.to.resident, said.to.machine);
-            let (mut conversation, history) =
-                Conversation::watch(&world, said.to.resident.clone(), Some(said.to.machine.clone())).await?;
+            let (mut conversation, history) = Conversation::watch(
+                &world,
+                said.to.resident.clone(),
+                Some(
+                    args.node
+                        .as_deref()
+                        .map(fastctx_types::access::Written::parse)
+                        .transpose()?
+                        .unwrap_or_else(|| said.to.machine.clone().into()),
+                ),
+            )
+            .await?;
             printer.events(&history);
             if !conversation.said(&said, &text) {
                 printer.note(&gone(&said));
@@ -72,9 +82,9 @@ pub fn run(args: TalkArgs) -> anyhow::Result<()> {
             return follow(&mut conversation, &mut printer).await;
         }
         let (target, words) = args.args.split_first().context("name the resident to talk to")?;
-        let (resident, machine) = match target.parse::<Address>() {
-            Ok(address) => (address.resident, Some(address.machine)),
-            Err(_) => (ResidentId::try_from(target.as_str())?, None),
+        let (resident, machine) = match target.split_once('@') {
+            Some((resident, machine)) => (resident.parse()?, Some(fastctx_types::access::Written::parse(machine)?)),
+            None => (ResidentId::try_from(target.as_str())?, None),
         };
         let (mut conversation, history) = Conversation::watch(&world, resident.clone(), machine.clone()).await?;
         printer.events(&history);

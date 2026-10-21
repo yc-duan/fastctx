@@ -177,6 +177,7 @@ fn validate_preview(preview: &Thumbnail, attachment: &Attachment) -> Result<(), 
 }
 
 struct Prepared {
+    home: Written,
     attachment: Attachment,
     arriving: Option<Arriving>,
     _lock: FileLock,
@@ -186,19 +187,23 @@ struct Prepared {
 async fn prepare_sent(
     node: &Arc<Node>,
     from: &MachineName,
-    machine: &MachineName,
+    machine: &Written,
     target: UploadTarget,
     file: UploadFile,
     operation: String,
     composer: Option<UploadScope>,
 ) -> Result<Prepared, Failure> {
-    let attachment = if node.is_me(machine) {
+    let attachment = if node.is_here(machine) {
         reserve(node, from, &node.machine(), target, file, operation, composer).await?
     } else {
         let call = RemoteCall::ReserveAttachment { target, file, operation, composer };
-        match node.call(&Acting::Here, &machine.into(), Purpose::Agents, call).await.map_err(broke)?? {
+        match node.call(&Acting::Here, machine, Purpose::Agents, call).await.map_err(broke)?? {
             RemoteReply::Uploaded(attachment)
-                if attachment.owner.machine == node.machine() && attachment.conversation().machine == *machine =>
+                if attachment.owner.machine == node.machine()
+                    && node
+                        .locate(machine)?
+                        .iter()
+                        .any(|link| link.view().same(&attachment.conversation().machine, &machine.name)) =>
             {
                 attachment
             }
@@ -229,7 +234,7 @@ async fn prepare_sent(
         arriving.keep = true;
         (arriving.attachment.clone(), Some(arriving))
     };
-    Ok(Prepared { attachment, arriving, _lock: lock, _place: place })
+    Ok(Prepared { home: machine.clone(), attachment, arriving, _lock: lock, _place: place })
 }
 
 async fn complete_sent(node: &Arc<Node>, from: &MachineName, prepared: Prepared) -> Result<Uploaded, Failure> {
@@ -237,9 +242,9 @@ async fn complete_sent(node: &Arc<Node>, from: &MachineName, prepared: Prepared)
         Some(arriving) => arriving.finish()?,
         None => prepared.attachment,
     };
-    let home = &attachment.conversation().machine;
+    let home = &prepared.home;
     // A picture of a kind the thumbnails cannot read still goes, without one.
-    let preview = if attachment.is_image() && !node.is_me(home) {
+    let preview = if attachment.is_image() && !node.is_here(home) {
         match crate::thumbnail::history(node, attachment.clone()).await {
             Ok(preview) => Some(preview),
             Err(error) => {
@@ -250,11 +255,11 @@ async fn complete_sent(node: &Arc<Node>, from: &MachineName, prepared: Prepared)
     } else {
         None
     };
-    if node.is_me(home) {
+    if node.is_here(home) {
         return commit_held(node, from, attachment, preview).await;
     }
     let call = RemoteCall::CommitAttachment { attachment: attachment.clone(), preview };
-    match node.call(&Acting::Here, &home.into(), Purpose::Agents, call).await.map_err(broke)?? {
+    match node.call(&Acting::Here, home, Purpose::Agents, call).await.map_err(broke)?? {
         RemoteReply::Uploaded(attachment) => Ok(Uploaded { attachment, composer: None }),
         RemoteReply::ComposerUploaded(result) => {
             Ok(Uploaded { attachment: result.attachment, composer: Some(result.updated) })
@@ -265,7 +270,7 @@ async fn complete_sent(node: &Arc<Node>, from: &MachineName, prepared: Prepared)
 
 pub(super) async fn upload(
     node: &Arc<Node>,
-    machine: MachineName,
+    machine: Written,
     target: UploadTarget,
     operation: String,
     file: UploadFile,
@@ -305,7 +310,7 @@ pub(super) async fn upload(
 pub(super) async fn receive(
     node: &Arc<Node>,
     from: &MachineName,
-    machine: MachineName,
+    machine: Written,
     target: UploadTarget,
     operation: String,
     file: UploadFile,
@@ -313,7 +318,7 @@ pub(super) async fn receive(
     resumes: bool,
     mut stream: Stream,
 ) -> Result<Uploaded, Failure> {
-    if !node.is_me(&machine) {
+    if !node.is_here(&machine) {
         return Err(failure("a device uploads to the conversation's machine"));
     }
     let mut prepared = prepare_sent(node, from, &machine, target, file.clone(), operation, composer).await?;

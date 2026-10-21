@@ -1,6 +1,6 @@
 use crate::Error;
+use fastctx_types::access::Written;
 use fastctx_types::{
-    MachineName,
     access::Purpose,
     lines::{Decoding, Reply},
 };
@@ -8,13 +8,14 @@ use fastctx_types::{
 impl super::Device {
     pub(crate) fn read_lines(
         &self,
-        machine: MachineName,
+        machine: Written,
         source: String,
         start: u64,
         count: u64,
         only_notes: bool,
     ) -> Result<Reading, Error> {
         let session = self.reaching(&machine)?;
+        let machine = machine.name;
         let account = session.account_for(&machine, Purpose::Hands)?;
         let (sender, parts) = tokio::sync::mpsc::channel(1);
         let task = tokio::spawn(async move {
@@ -29,11 +30,12 @@ impl super::Device {
     }
     pub(crate) async fn open_lines(
         &self,
-        machine: MachineName,
+        machine: Written,
         path: String,
         decoding: Decoding,
     ) -> Result<(Reply, fastctx_net::lines::Lease), Error> {
         let session = self.reaching(&machine)?;
+        let machine = machine.name;
         let account = session.account_for(&machine, Purpose::Hands)?;
         fastctx_net::lines::open(session.link.clone(), machine, account, path, decoding)
             .await

@@ -117,7 +117,7 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
 pub async fn relay(node: &Arc<Node>, asker: &Asker, call: serde_json::Value) -> RemoteResult {
     let from = &asker.machine;
     let here = node.machine();
-    let call: Call = serde_json::from_value(call)
+    let mut call: Call = serde_json::from_value(call)
         .map_err(|error| Failure::new(format!("{from} asked an unreadable call: {error}")))?;
     let refuse = |why: String| Failure::not_run(format!("{here} refused {from}: {why}"));
     let link = node.link_of(&asker.hub).ok_or_else(|| Failure::new("the link that brought the call is gone"))?;
@@ -170,23 +170,32 @@ pub async fn relay(node: &Arc<Node>, asker: &Asker, call: serde_json::Value) -> 
             let (target, purpose) = match action {
                 PageInvocation::Run { machine, .. } => (machine, Purpose::Hands),
                 PageInvocation::Say { to, .. } => (&to.machine, Purpose::Words),
-                PageInvocation::Journal { .. } => (&here, Purpose::Look),
+                PageInvocation::Journal { .. } => (&view.me, Purpose::Look),
             };
             view.admits(from, account, target, purpose).map_err(refuse)?;
         }
         Call::Journal(JournalCall::Add { attach, .. }) => {
             for attached in attach {
-                if attached.machine.as_ref().is_some_and(|machine| !node.is_me(machine)) {
+                if attached.machine.as_ref().is_some_and(|machine| {
+                    machine.hub.as_ref().is_some_and(|hub| *hub != view.hub_name) || !view.is_me(&machine.name)
+                }) {
                     return Err(Failure::new(format!(
                         "{from} attached a file of another machine; a device attaches what it uploads to this one"
                     )));
                 }
             }
             if !attach.is_empty() {
-                view.admits(from, account, &here, Purpose::Hands).map_err(refuse)?;
+                view.admits(from, account, &view.me, Purpose::Hands).map_err(refuse)?;
             }
         }
         _ => {}
+    }
+    if let Call::Journal(JournalCall::Add { attach, .. }) = &mut call {
+        for attached in attach {
+            if let Some(machine) = &mut attached.machine {
+                machine.hub = Some(view.hub_name.clone());
+            }
+        }
     }
     let user = Peer::Command { resident: None, session: None };
     let reply = match call {

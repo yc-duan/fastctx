@@ -5,6 +5,7 @@
 //! projects' ledgers know, a project's record or its projects, one machine
 //! that acts for the device's account answers from its own copy.
 
+use fastctx_types::access::Written;
 use std::sync::Arc;
 
 use fastctx_net::around::{self, Heard, Reachable};
@@ -222,11 +223,18 @@ impl Device {
         Ok(looked)
     }
 
-    pub(super) async fn agents(&self, machine: Option<MachineName>) -> Result<WorldAgents, Error> {
+    pub(super) async fn agents(&self, machine: Option<Written>) -> Result<WorldAgents, Error> {
         let reachable = self.reachable_each();
         let asked: Vec<Reachable> = match machine {
             Some(machine) => {
-                let asked: Vec<Reachable> = reachable.into_iter().filter(|one| one.name == machine).collect();
+                let session = self.reaching(&machine)?;
+                let asked: Vec<Reachable> = reachable
+                    .into_iter()
+                    .filter(|one| {
+                        one.link.membership().id == session.link.membership().id
+                            && one.link.view().same(&one.name, &machine.name)
+                    })
+                    .collect();
                 if asked.is_empty() {
                     return Err(failed(format!("{machine} is not a machine this device may use")));
                 }
@@ -239,11 +247,18 @@ impl Device {
         Ok(WorldAgents { machine: self.here(), machines })
     }
 
-    pub(super) async fn agent_logins(&self, machine: Option<MachineName>) -> Result<WorldLogins, Error> {
+    pub(super) async fn agent_logins(&self, machine: Option<Written>) -> Result<WorldLogins, Error> {
         let reachable = self.reachable_each();
         let asked: Vec<Reachable> = match machine {
             Some(machine) => {
-                let asked: Vec<Reachable> = reachable.into_iter().filter(|one| one.name == machine).collect();
+                let session = self.reaching(&machine)?;
+                let asked: Vec<Reachable> = reachable
+                    .into_iter()
+                    .filter(|one| {
+                        one.link.membership().id == session.link.membership().id
+                            && one.link.view().same(&one.name, &machine.name)
+                    })
+                    .collect();
                 if asked.is_empty() {
                     return Err(failed(format!("{machine} is not a machine this device may use")));
                 }

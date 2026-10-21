@@ -4,6 +4,7 @@ use super::{Cancel, Node, failed, observe, refresh};
 use fastctx_net::lines_read::{Content, Piece, Received, Sender};
 use fastctx_platform::ipc::{FrameReader, FrameWriter};
 use fastctx_types::MachineName;
+use fastctx_types::access::Written;
 use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::{Failure, NodeFrame};
 use fastctx_types::lines::{Part, Reply, Result as Answer};
@@ -77,7 +78,7 @@ async fn here(
 fn start(
     node: Arc<Node>,
     from: MachineName,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     source: String,
     start: u64,
     count: u64,
@@ -88,9 +89,9 @@ fn start(
         tokio::select! {
             () = sender.closed() => {},
             result = async {
-                if let Some(machine) = machine.filter(|machine| !node.is_me(machine)) {
-                    let (link, account) = node.speaking(&Acting::Here, &(&machine).into(), Purpose::Hands).map_err(failed)?;
-                    fastctx_net::lines_read::read(&link, machine, account, fastctx_types::lines::ReadRequest { source, start, count }, &sender, only_notes).await
+                if let Some(machine) = machine.filter(|machine| !node.is_here(machine)) {
+                    let (link, account) = node.speaking(&Acting::Here, &machine, Purpose::Hands).map_err(failed)?;
+                    fastctx_net::lines_read::read(&link, machine.name, account, fastctx_types::lines::ReadRequest { source, start, count }, &sender, only_notes).await
                 } else {
                     here(&node, from, source, start, count, &sender, only_notes).await
                 }
@@ -102,7 +103,7 @@ fn start(
 
 pub(crate) async fn local(
     node: &Arc<Node>,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     request: fastctx_types::lines::ReadRequest,
     only_notes: bool,
     id: u64,

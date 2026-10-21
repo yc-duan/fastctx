@@ -4,12 +4,12 @@
 //! far end verifies the size and the digest it is told, so both are taken
 //! first; a file that changes in between fails there, as it should.
 
+use fastctx_types::access::Written;
 use std::path::Path;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use fastctx_client::World;
-use fastctx_types::MachineName;
 use fastctx_types::attachments::{Attachment, UploadFile, UploadTarget};
 use sha2::{Digest, Sha256};
 use tauri::ipc::Channel;
@@ -20,7 +20,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 pub async fn from_path(
     world: &World,
     target: UploadTarget,
-    node: Option<MachineName>,
+    node: Option<Written>,
     path: &Path,
     sent: Channel<u64>,
 ) -> Result<Attachment, String> {
@@ -49,7 +49,7 @@ pub async fn from_path(
 pub async fn from_bytes(
     world: &World,
     target: UploadTarget,
-    node: Option<MachineName>,
+    node: Option<Written>,
     name: String,
     media_type: String,
     bytes: Vec<u8>,
@@ -91,7 +91,7 @@ async fn digest(path: &Path) -> std::io::Result<(u64, String)> {
 pub async fn composer_path(
     world: &World,
     resident: fastctx_types::ResidentId,
-    node: Option<MachineName>,
+    node: Option<Written>,
     scope: fastctx_types::composer::UploadScope,
     path: &Path,
     sent: Channel<u64>,
@@ -110,7 +110,7 @@ pub async fn composer_path(
 pub async fn composer_bytes(
     world: &World,
     resident: fastctx_types::ResidentId,
-    node: Option<MachineName>,
+    node: Option<Written>,
     scope: fastctx_types::composer::UploadScope,
     name: String,
     media_type: String,

@@ -13,7 +13,7 @@ impl super::Device {
         max: u32,
     ) -> Result<Thumbnail, Error> {
         let machine = attachment.thumbnail_owner().machine.clone();
-        let session = self.reaching(&machine)?;
+        let session = self.reaching(&machine.clone().into())?;
         session.account_for(&machine, Purpose::Agents)?;
         let accounts = {
             let view = session.link.view();

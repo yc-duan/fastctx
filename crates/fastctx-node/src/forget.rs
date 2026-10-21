@@ -56,9 +56,13 @@ pub(crate) fn gone(node: &Node, resident: &ResidentId) -> Failure {
 /// The user asks, on this computer, that the conversation of `resident` on
 /// `machine` be deleted from every machine and device keeping something of
 /// it.
-pub(crate) async fn ask(node: &Arc<Node>, resident: ResidentId, machine: MachineName) -> Result<How, Failure> {
+pub(crate) async fn ask(
+    node: &Arc<Node>,
+    resident: ResidentId,
+    machine: fastctx_types::access::Written,
+) -> Result<How, Failure> {
     let _call = handing(node)?;
-    if node.is_me(&machine) {
+    if node.is_here(&machine) {
         // Whom it works for is read before its records go.
         let asks: Vec<Ask> = match node.residents.about(&resident) {
             Some((about, _)) => pairs(node, &about.acting)
@@ -80,12 +84,12 @@ pub(crate) async fn ask(node: &Arc<Node>, resident: ResidentId, machine: Machine
         return Ok(if send_kept(node).await { How::Asked } else { How::Queued });
     }
     let link = node
-        .locate(&crate::reach::Written::from(&machine))?
+        .locate(&machine)?
         .into_iter()
         .next()
         .ok_or_else(|| Failure::new(format!("no hub this computer is on has a machine named {machine}")))?;
-    let account = link.account_of(&machine, &resident).map_err(Failure::new)?;
-    let conversation = Address { machine: machine.clone(), resident: resident.clone() };
+    let account = link.account_of(&machine.name, &resident).map_err(Failure::new)?;
+    let conversation = Address { machine: machine.name.clone(), resident: resident.clone() };
     match link.forget(&account, &conversation).await {
         Ok(true) => Ok(How::Asked),
         Ok(false) => {
@@ -106,7 +110,7 @@ pub(crate) async fn told(node: &Arc<Node>, hub: &HubId, forgetting: Forgetting) 
         return Forgot::Failed { reason: format!("the node on {} is handing over to its successor", node.machine()) };
     };
     let Forgetting { conversation, account, .. } = forgetting;
-    if !node.is_me(&conversation.machine) {
+    if !node.link_of(hub).is_some_and(|link| link.view().is_me(&conversation.machine)) {
         return match elsewhere(node, &conversation).await {
             Ok(()) => Forgot::Done,
             Err(reason) => Forgot::Failed { reason },

@@ -13,6 +13,7 @@
 //! Nothing here stops a conversation from starting or a change from being
 //! made: a machine or folder that cannot be read is told as such.
 
+use fastctx_types::access::Written;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -50,15 +51,15 @@ pub(crate) struct Opening {
 pub(crate) async fn folders(
     node: &Arc<Node>,
     acting: &Acting,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     path: Option<String>,
 ) -> Result<Folders, Failure> {
     let here = node.machine();
-    let Some(target) = machine.filter(|machine| !node.is_me(machine)) else {
+    let Some(target) = machine.filter(|machine| !node.is_here(machine)) else {
         return folders_here(here, path).await;
     };
     match node
-        .call(acting, &(&target).into(), Purpose::Hands, RemoteCall::Folders { path })
+        .call(acting, &target, Purpose::Hands, RemoteCall::Folders { path })
         .await
         .map_err(|failure| Failure::new(failure.to_string()))??
     {

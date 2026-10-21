@@ -13,13 +13,14 @@
 //! is tried again; once it opened, so is a machine that went away or refused
 //! for now, for it may come back.
 
+use fastctx_types::access::Written;
 use std::io;
 
 use fastctx_net::file_read::Part;
 use fastctx_types::attachments::AttachmentSource;
 use fastctx_types::file_read::{FileRange, FileReadComplete, FileReadInfo, FileReadPart, ReadFileRequest};
 use fastctx_types::ipc::{ClientFrame, NodeFrame};
-use fastctx_types::{Call, MachineName, Reply};
+use fastctx_types::{Call, Reply};
 use tokio::sync::watch;
 
 use crate::again::{Again, Interruption};
@@ -37,7 +38,7 @@ impl World {
     /// Nothing is asked until `Reading::next`; consume it through its
     /// terminal result, for bytes handed out before that are provisional if
     /// the read fails.
-    pub fn read_file(&self, machine: Option<MachineName>, request: ReadFileRequest) -> Reading {
+    pub fn read_file(&self, machine: Option<Written>, request: ReadFileRequest) -> Reading {
         Reading::new(self.clone(), Asked::File { machine, request })
     }
 }
@@ -93,7 +94,7 @@ pub struct Reading {
 
 #[derive(Clone)]
 enum Asked {
-    File { machine: Option<MachineName>, request: ReadFileRequest },
+    File { machine: Option<Written>, request: ReadFileRequest },
     Attachment(AttachmentSource),
 }
 
@@ -175,7 +176,7 @@ impl Reading {
             self.progress.send_modify(|progress| progress.interrupted = Some(interruption));
             // Asked for in its own statement: the wait owns all it needs,
             // and the read is held by nothing across it.
-            let pause = self.again.pause(&self.world, self.machine());
+            let pause = self.again.pause(&self.world, self.machine().as_ref());
             pause.await;
         }
     }
@@ -296,10 +297,10 @@ impl Reading {
 
     /// The machine the file is on, whose return ends a wait early; none
     /// for this computer's node.
-    fn machine(&self) -> Option<&MachineName> {
+    fn machine(&self) -> Option<Written> {
         match &self.asked {
-            Asked::File { machine, .. } => machine.as_ref(),
-            Asked::Attachment(attachment) => Some(&attachment.owner().machine),
+            Asked::File { machine, .. } => machine.clone(),
+            Asked::Attachment(attachment) => Some(attachment.owner().machine.clone().into()),
         }
     }
 }

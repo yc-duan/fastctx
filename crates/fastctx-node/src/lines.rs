@@ -3,6 +3,7 @@
 mod projection;
 pub(crate) mod reading;
 
+use fastctx_types::access::Written;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{
@@ -84,13 +85,13 @@ impl Drop for Cancel {
 pub(crate) async fn open(
     node: &Arc<Node>,
     from: MachineName,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     path: String,
     decoding: Decoding,
 ) -> std::result::Result<(Reply, Lease), Failure> {
-    if let Some(machine) = machine.filter(|machine| !node.is_me(machine)) {
-        let (link, account) = node.speaking(&Acting::Here, &(&machine).into(), Purpose::Hands).map_err(failed)?;
-        let (reply, lease) = fastctx_net::lines::open(link, machine, account, path, decoding).await?;
+    if let Some(machine) = machine.filter(|machine| !node.is_here(machine)) {
+        let (link, account) = node.speaking(&Acting::Here, &machine, Purpose::Hands).map_err(failed)?;
+        let (reply, lease) = fastctx_net::lines::open(link, machine.name, account, path, decoding).await?;
         return Ok((reply, Lease::Remote(lease)));
     }
     let initializing = crate::initializing::take()?;
@@ -335,14 +336,14 @@ async fn refresh(
 pub(crate) async fn call(
     node: &Arc<Node>,
     from: MachineName,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     request: Request,
 ) -> std::result::Result<Reply, Failure> {
-    if let Some(machine) = machine.filter(|machine| !node.is_me(machine)) {
+    if let Some(machine) = machine.filter(|machine| !node.is_here(machine)) {
         return match node
             .call_with_stream(
                 &Acting::Here,
-                &(&machine).into(),
+                &machine,
                 Purpose::Hands,
                 RemoteCall::Lines { request },
                 fastctx_net::cancellable::feed,

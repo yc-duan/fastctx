@@ -11,7 +11,7 @@ use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::{Hints, Host, Landed, Whereabouts};
 use fastctx_types::run::RunRequest;
 use fastctx_types::write::{ApplyPatchRequest, EditRequest, WriteOp, WriteRequest};
-use fastctx_types::{Address, AgentName, Call, MachineName, Reply, ResidentId};
+use fastctx_types::{Address, AgentName, Call, Reply, ResidentId};
 use serde_json::Value;
 
 #[cfg(test)]
@@ -314,7 +314,7 @@ impl Session {
         };
         let node = match arguments.get("node") {
             None | Some(Value::Null) => None,
-            Some(Value::String(node)) => match MachineName::try_from(node.as_str()) {
+            Some(Value::String(node)) => match fastctx_types::access::Written::parse(node) {
                 Ok(node) => Some(node),
                 Err(error) => return Answer::error(format!("=== {tool} (not done: {error}) ===")),
             },
@@ -398,9 +398,12 @@ impl Session {
             (Ok(to), Ok(message)) => (to, message),
             (Err(error), _) | (_, Err(error)) => return failed(error),
         };
-        let (to, machine) = match to.parse::<Address>() {
-            Ok(address) => (address.resident, Some(address.machine)),
-            Err(_) => match ResidentId::try_from(to.as_str()) {
+        let (to, machine) = match to.split_once('@') {
+            Some((to, machine)) => match (ResidentId::try_from(to), fastctx_types::access::Written::parse(machine)) {
+                (Ok(to), Ok(machine)) => (to, Some(machine)),
+                (Err(error), _) | (_, Err(error)) => return failed(error.to_string()),
+            },
+            None => match ResidentId::try_from(to.as_str()) {
                 Ok(id) => (id, None),
                 Err(error) => return failed(error.to_string()),
             },

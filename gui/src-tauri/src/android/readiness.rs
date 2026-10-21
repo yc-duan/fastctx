@@ -6,7 +6,7 @@
 use fastctx_client::{World, device::Device};
 use fastctx_net::link::Status;
 use fastctx_types::world::LinkState;
-use fastctx_types::{HubName, MachineName};
+use fastctx_types::{HubName, access::Written};
 use std::sync::Mutex;
 
 /// Each hub's connection as it stood when a resume began asking whether it
@@ -29,7 +29,7 @@ pub(super) fn reconnecting(device: &Device) {
         .collect();
 }
 
-pub(crate) async fn wait(world: &World, machine: Option<&MachineName>) -> Result<(), String> {
+pub(crate) async fn wait(world: &World, machine: Option<&Written>) -> Result<(), String> {
     let mut visible = super::visibility();
     let device = world.device().expect("Android device");
     let (hub, mut connection) = device.machine_changes(machine).map_err(|error| error.to_string())?;

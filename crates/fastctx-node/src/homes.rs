@@ -5,11 +5,11 @@
 //! into (`logins`); a session born in a login that has since been removed,
 //! or whose directory is gone, is refused, never moved to another login.
 
+use fastctx_types::access::Written;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fastctx_types::MachineName;
 use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::agents::{AgentHome, HomeChange};
 use fastctx_types::ipc::Failure;
@@ -102,13 +102,13 @@ pub(crate) fn available(node: &Node, about: &fastctx_types::residents::About) ->
 }
 
 /// What an older interface or node asks of the homes `machine` knows.
-pub(crate) async fn call(node: &Arc<Node>, machine: MachineName, change: HomeChange) -> Result<(), Failure> {
-    if node.is_me(&machine) {
+pub(crate) async fn call(node: &Arc<Node>, machine: Written, change: HomeChange) -> Result<(), Failure> {
+    if node.is_here(&machine) {
         return self::change(node, change).await;
     }
     let call = RemoteCall::Homes { change };
     match node
-        .call(&Acting::Here, &(&machine).into(), Purpose::Agents, call)
+        .call(&Acting::Here, &machine, Purpose::Agents, call)
         .await
         .map_err(|error| Failure::new(error.to_string()))??
     {

@@ -11,7 +11,7 @@ use fastctx_types::logins::{ChangePreview, FolderChange, LoginChange, MachineLog
 
 use crate::Shell;
 
-fn machine(name: String) -> Result<fastctx_types::MachineName, String> {
+fn machine(name: String) -> Result<fastctx_types::access::Written, String> {
     name.parse().map_err(|error| format!("{error}"))
 }
 

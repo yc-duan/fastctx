@@ -5,8 +5,9 @@
 
 use fastctx_client::{Conversation, Update, World};
 use fastctx_net::link::Status;
+use fastctx_types::access::Written;
 use fastctx_types::session::SessionEvent;
-use fastctx_types::{Address, MachineName, ResidentId};
+use fastctx_types::{Address, ResidentId};
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 
@@ -33,13 +34,13 @@ fn deliver(pieces: &Channel<Piece>, piece: Option<Piece>) -> bool {
 pub(crate) async fn open(
     world: &World,
     resident: ResidentId,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     again: bool,
 ) -> Result<(Conversation, Vec<SessionEvent>), NotWatched> {
     if let Some(machine) = &machine
         && let Some(cache) = world.cache().cloned()
     {
-        let address = Address { machine: machine.clone(), resident: resident.clone() };
+        let address = Address { machine: machine.name.clone(), resident: resident.clone() };
         let held = tokio::task::spawn_blocking(move || cache.holds(&address))
             .await
             .map_err(|error| error.to_string())?
@@ -76,12 +77,12 @@ pub(crate) async fn open(
 async fn opening(
     world: &World,
     resident: ResidentId,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     again: bool,
 ) -> Result<(Conversation, Vec<SessionEvent>), fastctx_client::Error> {
     match machine {
-        Some(machine) if again => Conversation::reopen(world, Address { machine, resident }).await,
-        Some(machine) => Conversation::open(world, Address { machine, resident }).await,
+        Some(machine) if again => Conversation::reopen(world, resident, machine).await,
+        Some(machine) => Conversation::open(world, resident, machine).await,
         None => Conversation::watch(world, resident, None).await,
     }
 }
@@ -94,7 +95,7 @@ fn paused() -> Piece {
 pub(crate) async fn stream(
     world: World,
     resident: ResidentId,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     mut initial: Conversation,
     transcript: Arc<Mutex<Transcript>>,
     pieces: Channel<Piece>,

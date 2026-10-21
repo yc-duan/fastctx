@@ -4,24 +4,26 @@
 //! asks the resident's host: a Codex thread of its own app-server through
 //! the app-server, a Claude session through the World's mod.
 
+use fastctx_types::access::Written;
 use std::sync::Arc;
 
 use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::session::control::{Control, Controlled, Offers};
-use fastctx_types::{Address, MachineName, ResidentId};
+use fastctx_types::{Address, ResidentId};
 
 use crate::Node;
 
 pub async fn control(
     node: &Arc<Node>,
     resident: ResidentId,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     control: Control,
 ) -> Result<(Address, Controlled), Failure> {
+    let local = machine.is_none() && node.residents.about(&resident).is_some();
     let machine = machine_of(node, &resident, machine).await?;
-    if machine.hub.is_none() && node.is_me(&machine.name) {
+    if local || node.is_here(&machine) {
         let controlled = control_here(node, &resident, control).await?;
         return Ok((Address { machine: machine.name, resident }, controlled));
     }
@@ -40,10 +42,11 @@ pub async fn control(
 pub async fn offers(
     node: &Arc<Node>,
     resident: ResidentId,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
 ) -> Result<(Address, Offers), Failure> {
+    let local = machine.is_none() && node.residents.about(&resident).is_some();
     let machine = machine_of(node, &resident, machine).await?;
-    if machine.hub.is_none() && node.is_me(&machine.name) {
+    if local || node.is_here(&machine) {
         let offers = offers_here(node, &resident).await?;
         return Ok((Address { machine: machine.name, resident }, offers));
     }
@@ -106,10 +109,10 @@ fn host_of(node: &Node, resident: &ResidentId) -> Result<&'static str, Failure> 
 async fn machine_of(
     node: &Arc<Node>,
     resident: &ResidentId,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
 ) -> Result<fastctx_types::access::Written, Failure> {
     match machine {
-        Some(machine) => Ok(machine.into()),
+        Some(machine) => Ok(machine),
         None if node.residents.about(resident).is_some() => Ok(node.machine().into()),
         None => crate::colleagues::find_for(node, &Acting::Here, resident).await,
     }

@@ -19,8 +19,8 @@ use std::time::Duration;
 use fastctx_install::renewal::{read_json, write_json};
 use fastctx_types::AccountName;
 use fastctx_types::update::{
-    ASKED_SINCE, App, Asked, Failed, Fetching, Kind, Looked, Manifest, Network, Renewing, Report, Settings, Stage,
-    State, UpdateCall,
+    ASKED_SINCE, App, Asked, Failed, Fetching, Kind, Looked, Manifest, Renewing, Report, Settings, Stage, State,
+    UpdateCall,
 };
 use fastctx_update::Cache;
 
@@ -193,13 +193,6 @@ fn look(node: &Arc<Node>) {
         report(&node);
         auto(&node);
     });
-}
-
-/// What the hubs this machine is on tell of versions, as one: the newest
-/// release on each line any of them knows, the policy of the one that asks
-/// most, the oldest hub, and the updates any of them keeps for machines away.
-fn network(node: &Node) -> Option<Network> {
-    fastctx_update::state::merge(node.links().iter().filter_map(|link| link.versions()))
 }
 
 /// What kind of device this machine is for its updates.
@@ -688,12 +681,12 @@ fn stage(root: &Path, program: &Path) -> Result<(), String> {
 pub(crate) async fn machine(
     node: &Arc<Node>,
     acting: &fastctx_types::access::Acting,
-    machine: fastctx_types::MachineName,
+    machine: fastctx_types::access::Written,
     mut update: UpdateCall,
 ) -> Result<State, fastctx_types::ipc::Failure> {
     use fastctx_types::ipc::Failure;
     use fastctx_types::remote::{RemoteCall, RemoteReply};
-    if node.is_me(&machine) {
+    if node.is_here(&machine) {
         return call(node, update).await.map_err(Failure::new);
     }
     if matches!(update, UpdateCall::App { .. } | UpdateCall::Fetch { .. } | UpdateCall::Progress { .. }) {
@@ -710,15 +703,16 @@ pub(crate) async fn machine(
     // What it runs, as its hub last heard; else as it says itself. A machine
     // whose release is not known is not taken for one that knows the newer
     // call.
-    let heard = network(node).and_then(|network| network.machines.get(&machine).map(|running| running.kernel.clone()));
+    let heard = node.locate(&machine)?.iter().find_map(|link| {
+        let view = link.view();
+        link.versions()?.machines.get(view.canonical(&machine.name)).map(|running| running.kernel.clone())
+    });
     let running = match heard {
         Some(kernel) => Some(kernel),
-        None => {
-            match node.call(acting, &(&machine).into(), fastctx_types::access::Purpose::Look, RemoteCall::Facts).await {
-                Ok(Ok(RemoteReply::Facts(facts))) => Some(facts.version),
-                _ => None,
-            }
-        }
+        None => match node.call(acting, &machine, fastctx_types::access::Purpose::Look, RemoteCall::Facts).await {
+            Ok(Ok(RemoteReply::Facts(facts))) => Some(facts.version),
+            _ => None,
+        },
     };
     let older = running
         .as_deref()
@@ -739,7 +733,7 @@ pub(crate) async fn machine(
         }
     };
     match node
-        .call(acting, &(&machine).into(), fastctx_types::access::Purpose::Hands, call)
+        .call(acting, &machine, fastctx_types::access::Purpose::Hands, call)
         .await
         .map_err(|failure| Failure::new(failure.to_string()))??
     {

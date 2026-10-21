@@ -1,8 +1,9 @@
 //! Shared input uses the ordinary user call and resident watch transports.
 
+use fastctx_types::access::Written;
 use fastctx_types::composer::{Composer, Mutation, Request, Updated};
 use fastctx_types::session::{Happened, SessionChange, Watched};
-use fastctx_types::{Call, MachineName, Reply, ResidentId};
+use fastctx_types::{Call, Reply, ResidentId};
 use tokio::sync::mpsc;
 
 use crate::{Error, World};
@@ -18,7 +19,7 @@ impl World {
     pub async fn composer(
         &self,
         resident: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         request: Request,
     ) -> Result<Updated, Error> {
         match self.ask(Call::Composer { resident, machine, request }).await? {
@@ -30,7 +31,7 @@ impl World {
     pub async fn update_composer(
         &self,
         resident: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         mutation: Mutation,
     ) -> Result<Updated, Error> {
         self.composer(resident, machine, Request::Mutate { mutation: Box::new(mutation) }).await
@@ -40,7 +41,7 @@ impl World {
     pub async fn watch_composer(
         &self,
         resident: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         name: String,
     ) -> Result<(Composing, Composer), Error> {
         let mut watching = self.watch_with_composer(resident, machine, Some(name)).await?;

@@ -25,6 +25,7 @@ pub(crate) mod remote;
 pub(crate) mod scan;
 mod sign_in;
 
+use fastctx_types::access::Written;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,10 +33,10 @@ use std::sync::{Arc, Mutex};
 
 use fastctx_hosts::inventory::walk;
 use fastctx_install::apply::{self, Host, Standing};
+use fastctx_types::AgentName;
 use fastctx_types::agents::{AgentHome, AgentLimits, Fact, HomeFound, Integration};
 use fastctx_types::ipc::Failure;
 use fastctx_types::logins::{AgentLogins, Found, Login, LoginChange, MachineLogins, Stage};
-use fastctx_types::{AgentName, MachineName};
 
 use crate::Node;
 
@@ -352,7 +353,7 @@ pub(crate) fn listed(node: &Node, agent: &str, dir: Option<&Path>) -> Result<Opt
 pub(crate) async fn query(
     node: &Arc<Node>,
     acting: &fastctx_types::access::Acting,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
 ) -> Result<fastctx_types::logins::WorldLogins, Failure> {
     remote::query(node, acting, machine).await
 }

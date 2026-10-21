@@ -179,7 +179,9 @@ async fn copy_once(
     let here = node.machine();
     let at = |place: &Place| place.written().unwrap_or_else(|| (&here).into());
     let (from_machine, to_machine) = (at(&from), at(&to));
-    if node.is_here(&from_machine) && node.is_here(&to_machine) {
+    let from_here = from.machine.is_none() || node.is_here(&from_machine);
+    let to_here = to.machine.is_none() || node.is_here(&to_machine);
+    if from_here && to_here {
         let root = fastctx_platform::local_path(&from.path).map_err(|error| Failure::new(error.to_string()))?;
         let target = to.path;
         return tokio::task::spawn_blocking(move || fastctx_hands::copy::local::copy(&root, &target, &here))
@@ -187,14 +189,14 @@ async fn copy_once(
             .map_err(|error| Failure::new(format!("copying {}: {error}", from.path)))?
             .map_err(|error| Failure::new(format!("copying {}: {error}", from.path)));
     }
-    if same_machine(node, &from_machine, &to_machine)? {
+    if !from_here && !to_here && same_machine(node, &from_machine, &to_machine)? {
         let to = Place { machine: Some(to_machine.name.clone()), hub: to_machine.hub.clone(), path: to.path };
         return asked_of(node, acting, &from_machine, from.path, to, began).await;
     }
-    if node.is_here(&from_machine) {
+    if from_here {
         return send(node, acting, &from.path, &to_machine, &to.path, began).await;
     }
-    if node.is_here(&to_machine) {
+    if to_here {
         return fetch(node, acting, &from_machine, &from.path, &to.path, began).await;
     }
     if !trusted(node, acting, &from_machine) {

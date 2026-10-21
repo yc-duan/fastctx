@@ -1,5 +1,6 @@
 //! The existing signed watch stream, subscribed to directly by the device.
 
+use fastctx_types::access::Written;
 use std::sync::Arc;
 
 use fastctx_net::link::{Feed, Link};
@@ -32,13 +33,14 @@ impl Device {
     pub(crate) async fn watch(
         &self,
         resident: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         composer: Option<String>,
         held: Option<fastctx_types::session::held::Held>,
         now: bool,
     ) -> Result<Watching, Error> {
         let machine = self.find(&resident, machine).await?;
         let session = self.reaching(&machine)?;
+        let machine = machine.name;
         let account = session.account_for(&machine, fastctx_types::access::Purpose::Agents)?;
         Watching::start(session, machine, account, resident, composer, held, now)
     }

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
 use fastctx_net::again::{STABLE, backoff};
-use fastctx_types::MachineName;
+use fastctx_types::access::Written;
 
 use crate::World;
 
@@ -54,7 +54,7 @@ impl Again {
     }
 
     /// The wait before the next try, as a future of its own (`pause`).
-    pub fn pause(&self, world: &World, machine: Option<&MachineName>) -> impl Future<Output = ()> + Send + 'static {
+    pub fn pause(&self, world: &World, machine: Option<&Written>) -> impl Future<Output = ()> + Send + 'static {
         pause(world, self.tries, machine)
     }
 }
@@ -62,7 +62,7 @@ impl Again {
 /// The wait before try number `tries` (the first is 1) of what comes from
 /// `machine`, as a future of its own: it ends after the wait, or as soon as
 /// this device is told to try now or a way to `machine` opens.
-pub fn pause(world: &World, tries: u32, machine: Option<&MachineName>) -> impl Future<Output = ()> + Send + 'static {
+pub fn pause(world: &World, tries: u32, machine: Option<&Written>) -> impl Future<Output = ()> + Send + 'static {
     let wait = backoff(tries);
     // Listening from now, not from when the future is first polled.
     let mut now = Box::pin(Arc::clone(&world.retry).notified_owned());
