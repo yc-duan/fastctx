@@ -12,6 +12,8 @@ export interface Layer {
   /** Whether it is still open: one closed some other way is passed over. */
   isOpen(): boolean;
   close(): void;
+  /** Whether `target` is part of it, for a gesture on it that closes it. */
+  holds?(target: Element): boolean;
 }
 
 /** The layers in the order they opened, the last on top. */
@@ -39,6 +41,20 @@ export function closeTopmost(): boolean {
     return true;
   }
   return false;
+}
+
+/** Closes the open layer `target` is part of, and first whatever opened
+ *  over it (a hint, a pop-up of its own); whether it closed. Nothing closes
+ *  when no layer holds it. */
+export function closeLayerOf(target: Element): boolean {
+  let at = stack.length - 1;
+  while (at >= 0 && !(stack[at]!.isOpen() && stack[at]!.holds?.(target))) at -= 1;
+  if (at < 0) return false;
+  const owner = stack[at]!;
+  for (const over of stack.slice(at + 1).reverse()) if (over.isOpen()) over.close();
+  owner.close();
+  for (let i = stack.length - 1; i >= 0; i -= 1) if (!stack[i]!.isOpen()) stack.splice(i, 1);
+  return !owner.isOpen();
 }
 
 /** Says how the page now shown is left by back, or that it has no back. */
@@ -79,7 +95,7 @@ export function installBack(): void {
       if (!(dialog instanceof HTMLDialogElement) || !dialog.open || change.oldValue !== null) continue;
       let layer = layers.get(dialog);
       if (!layer) {
-        layer = { isOpen: () => dialog.open && dialog.isConnected, close: () => cancel(dialog) };
+        layer = { isOpen: () => dialog.open && dialog.isConnected, close: () => cancel(dialog), holds: (target) => dialog.contains(target) };
         layers.set(dialog, layer);
       }
       layerOpened(layer);

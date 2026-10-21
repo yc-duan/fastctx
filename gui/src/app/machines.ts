@@ -268,8 +268,16 @@ export class MachinesPage implements Page {
     isOpen: () => !!this.selected && !this.panel.hidden && this.element.isConnected,
     close: () => this.closeDetails(),
   };
-  private readonly menuLayer: Layer = { isOpen: () => !!this.menuFor && this.element.isConnected, close: () => this.closeMenu() };
-  private readonly cardLayer: Layer = { isOpen: () => !!this.cardFor && this.element.isConnected, close: () => this.closeCard() };
+  private readonly menuLayer: Layer = {
+    isOpen: () => !!this.menuFor && this.element.isConnected,
+    close: () => this.closeMenu(),
+    holds: (target) => this.menu.contains(target),
+  };
+  private readonly cardLayer: Layer = {
+    isOpen: () => !!this.cardFor && this.element.isConnected,
+    close: () => this.closeCard(),
+    holds: (target) => this.card.contains(target),
+  };
   /** Redraws when the page turns narrow or wide: the sheet and what floats
    *  beside the one chosen depend on it. */
   private readonly resized: ResizeObserver;
@@ -909,20 +917,19 @@ export class MachinesPage implements Page {
   private async setWays(machines: MachineUpdate[], auto: boolean | null, relays: boolean | null): Promise<void> {
     const updates = this.options.updates;
     if (!updates) return;
-    await Promise.all(
-      machines.map(async (machine) => {
-        const call: UpdateCall =
-          machine.kernel && compareVersions(machine.kernel, PREFERENCES_SINCE) >= 0
-            ? { do: "preferences", auto, relays }
-            : { do: "set", settings: { auto: auto ?? !!machine.auto, chosen: auto !== null || machine.auto_chosen, relays: relays ?? machine.relays ?? true } };
-        try {
-          await updates.remote(machine.machine, call);
-          this.updatesSaid.delete(machine.machine);
-        } catch (error) {
-          this.sayOnRow(machine.machine, error instanceof Error ? error.message : String(error));
-        }
-      }),
-    );
+    // A room of machines is asked a few at a time, not all at once.
+    await inTurns(machines, WAYS_AT_ONCE, async (machine) => {
+      const call: UpdateCall =
+        machine.kernel && compareVersions(machine.kernel, PREFERENCES_SINCE) >= 0
+          ? { do: "preferences", auto, relays }
+          : { do: "set", settings: { auto: auto ?? !!machine.auto, chosen: auto !== null || machine.auto_chosen, relays: relays ?? machine.relays ?? true } };
+      try {
+        await updates.remote(machine.machine, call);
+        this.updatesSaid.delete(machine.machine);
+      } catch (error) {
+        this.sayOnRow(machine.machine, error instanceof Error ? error.message : String(error));
+      }
+    });
     await this.askUpdates();
   }
 
@@ -2582,4 +2589,16 @@ function directPicture(direct: boolean): string {
   const lines = [bowed(middle, 8), ...sides.map((side) => bowed(side, 6))];
   const straight = direct ? sides.map((side) => ruled([side[0] + (side[0] < 66 ? 8 : -8), side[1] + 1], [middle[0] + (side[0] < 66 ? -10 : 10), middle[1]], 1.1, random)) : [];
   return `<svg class="map-card-picture" viewBox="0 0 132 40" aria-hidden="true"><g class="ink graphite" filter="url(#pen-marker)"><path d="${circle(knot, 3.5, 1.2, random)}"/><path d="${blot(knot, 1.5, random)}"/>${[...rings, ...lines].map((d) => `<path d="${d}"/>`).join("")}</g><g class="ink clay" filter="url(#pen-marker)">${straight.map((d) => `<path d="${d}"/>`).join("")}</g></svg>`;
+}
+
+/** How many machines a change of their ways is sent to at once. */
+const WAYS_AT_ONCE = 6;
+
+/** Runs `each` over `items`, at most `width` at a time. */
+async function inTurns<T>(items: T[], width: number, each: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const lane = async (): Promise<void> => {
+    while (next < items.length) await each(items[next++]!);
+  };
+  await Promise.all(Array.from({ length: Math.min(width, items.length) }, lane));
 }

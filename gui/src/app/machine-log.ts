@@ -70,7 +70,7 @@ export class MachineLog {
 
   private open(): void {
     this.panel.classList.toggle("as-sheet", matchMedia("(max-width: 760px)").matches);
-    layerOpened({ isOpen: () => !this.panel.hidden && this.panel.isConnected, close: () => this.close() });
+    layerOpened({ isOpen: () => !this.panel.hidden && this.panel.isConnected, close: () => this.close(), holds: (target) => this.panel.contains(target) });
     this.panel.hidden = false;
     this.button.setAttribute("aria-expanded", "true");
     this.records = [];

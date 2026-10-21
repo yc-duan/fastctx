@@ -1,11 +1,11 @@
 // On a phone a sheet risen from below goes back down the way it came: a
 // finger that pulls it down from the top of what it holds carries it along,
-// and let go past a quarter of its height, or flicked, it closes as the
-// system back closes it (`back.ts`); short of that it settles back up
+// and let go past a quarter of its height, or flicked, it closes, with
+// whatever opened over it (`back.ts`); short of that it settles back up
 // (`world-gui.md`, 界面的结构). What scrolls inside it scrolls first: the
 // pull begins only where its content is at its top.
 
-import { closeTopmost } from "./back";
+import { closeLayerOf } from "./back";
 
 /** The sheets a phone raises from below: the panel that moves, each. */
 const SHEETS = [
@@ -34,11 +34,13 @@ export function installSheetDrag(): void {
     "touchstart",
     (event) => {
       pull = null;
-      if (!narrow.matches || event.touches.length !== 1) return;
+      if (event.touches.length !== 1) return;
       const target = event.target as HTMLElement;
       if (target.closest(OWN)) return;
       const sheet = target.closest<HTMLElement>(SHEETS);
-      if (!sheet) return;
+      // What shows as a sheet is pulled as one, whatever width made it one;
+      // a dialog is a sheet on a phone.
+      if (!sheet || (!sheet.classList.contains("as-sheet") && !narrow.matches)) return;
       const touch = event.touches[0]!;
       pull = { sheet, scroller: scrollerOf(target, sheet), x: touch.clientX, y: touch.clientY, dy: 0, engaged: false, samples: [[event.timeStamp, touch.clientY]] };
     },
@@ -80,7 +82,7 @@ export function installSheetDrag(): void {
     const [lastAt, lastY] = done.samples[done.samples.length - 1]!;
     const speed = lastAt > firstAt ? (lastY - firstY) / (lastAt - firstAt) : 0;
     const far = done.dy > Math.min(160, done.sheet.offsetHeight * 0.25);
-    if (!cancelled && (far || speed > FLICK) && closeTopmost()) {
+    if (!cancelled && (far || speed > FLICK) && closeLayerOf(done.sheet)) {
       // It goes on down from where the finger left it, as it leaves.
       releaseWhenGone(done.sheet);
       return;

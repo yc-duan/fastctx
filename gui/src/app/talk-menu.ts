@@ -58,6 +58,7 @@ export class TalkMenu {
   private readonly layer: Layer = {
     isOpen: () => !this.element.hidden,
     close: () => this.close(),
+    holds: (target) => this.element.contains(target),
   };
 
   constructor(private readonly options: TalkMenuOptions) {

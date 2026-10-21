@@ -555,12 +555,6 @@ export function serverCommand(hub: string | null, account: string, name: string 
   return invoke("server_command", { hubName: hub, accountName: account, name, expires, managed, uses, label, windows });
 }
 
-/** Turns asking for colleagues on for a conversation, with the machine
- *  they live on and the Codex home they use there, or off with null. */
-export function setColleagues(who: Address, livesOn: string | null, home: string | null = null): Promise<void> {
-  return invoke("colleagues", { residentId: who.resident, machineName: who.machine, livesOn, home });
-}
-
 /** Where this computer stands with the World (`src-tauri/src/setup.rs`). */
 export interface Setup {
   installed: string | null;

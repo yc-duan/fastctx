@@ -83,12 +83,19 @@ export function removeMachines(machines: Machine[], world: WorldNow, title: stri
         left: async () => {
           const left = new Map<string, string>();
           for (const [key, { login, after }] of since) {
-            const page = await log(login.hubName, login.account, null);
-            for (const record of page.records) {
-              if (record.id <= after || record.action.change !== "uninstall_left") continue;
-              const { name, left: said } = record.action;
-              const one = gone.find((one) => one.machine.name === name && hubKey(one.login) === key);
-              if (one && !left.has(one.machine.written)) left.set(one.machine.written, said);
+            // Newest first, page after page, back to where the log stood
+            // when they were taken off.
+            let before: number | null = null;
+            for (let pages = 0; pages < LOG_PAGES; pages += 1) {
+              const page = await log(login.hubName, login.account, before);
+              for (const record of page.records) {
+                if (record.id <= after || record.action.change !== "uninstall_left") continue;
+                const { name, left: said } = record.action;
+                const one = gone.find((one) => one.machine.name === name && hubKey(one.login) === key);
+                if (one && !left.has(one.machine.written)) left.set(one.machine.written, said);
+              }
+              if (page.next_before === null || page.records.some((record) => record.id <= after)) break;
+              before = page.next_before;
             }
           }
           return left;
@@ -98,6 +105,9 @@ export function removeMachines(machines: Machine[], world: WorldNow, title: stri
     },
   });
 }
+
+/** How far back a hub's log is read for what machines said as they left. */
+const LOG_PAGES = 10;
 
 function hubKey(login: Login): string {
   return `${login.hub}\u0000${login.account}`;

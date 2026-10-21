@@ -174,7 +174,7 @@ export class FileLinks {
       document.addEventListener("keydown", escape_, true);
     });
     this.menu = menu;
-    layerOpened({ isOpen: () => menu.isConnected, close: () => this.closeMenu() });
+    layerOpened({ isOpen: () => menu.isConnected, close: () => this.closeMenu(), holds: (target) => menu.contains(target) });
     this.forget = () => {
       document.removeEventListener("pointerdown", away, true);
       document.removeEventListener("keydown", escape_, true);
