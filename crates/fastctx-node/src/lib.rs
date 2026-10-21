@@ -449,6 +449,23 @@ pub async fn run_prepared(
             let lock = world.node_lock();
             tokio::task::spawn_blocking(move || FileLock::acquire(&lock)).await??
         }
+        // A Linux service manager starts its node again the moment one
+        // ends, as when a node hands the World to the newer program it
+        // renewed to: the one it starts waits a while for the World rather
+        // than ending at once, refused, to be started again.
+        false if cfg!(target_os = "linux") && std::env::var_os("INVOCATION_ID").is_some() => {
+            let lock = world.node_lock();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            loop {
+                if let Some(lock) = FileLock::try_acquire(&lock)? {
+                    break lock;
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err(AlreadyServed(world.path().to_path_buf()).into());
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+        }
         false => FileLock::try_acquire(&world.node_lock())?.ok_or_else(|| AlreadyServed(world.path().to_path_buf()))?,
     };
     if renewal.successor
