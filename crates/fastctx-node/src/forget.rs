@@ -103,7 +103,9 @@ pub(crate) async fn ask(node: &Arc<Node>, resident: ResidentId, machine: Machine
     }
 }
 
-pub(crate) fn wake(node: &Node) { node.forget_asks.wake.notify_one(); }
+pub(crate) fn wake(node: &Node) {
+    node.forget_asks.wake.notify_one();
+}
 
 /// Recheck deleted originals after this conversation releases its inherited references.
 pub(crate) async fn release_attachments(node: &Arc<Node>, id: &ResidentId) -> Result<Vec<Address>, String> {
@@ -115,13 +117,20 @@ pub(crate) async fn release_attachments(node: &Arc<Node>, id: &ResidentId) -> Re
             asks.push(Ask { hub, account, conversation: conversation.clone(), after: Some(id.clone()) });
         }
     }
-    if !asks.is_empty() { keep(node, asks).await.map_err(|error| error.to_string())?; }
+    if !asks.is_empty() {
+        keep(node, asks).await.map_err(|error| error.to_string())?;
+    }
     Ok(owners)
 }
 
 /// Deletes an owner's conversation as part of the hub's project deletion.
 /// The cross-machine cleanup is durable before any local data is removed.
-pub(crate) async fn project(node: &Arc<Node>, id: &ResidentId, hub: &HubId, account: &AccountName) -> Result<(), String> {
+pub(crate) async fn project(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    hub: &HubId,
+    account: &AccountName,
+) -> Result<(), String> {
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
     if !node.serves(&about.acting, hub, account) {
         return Err(format!("{id} does not work for the account {account}"));
@@ -130,11 +139,20 @@ pub(crate) async fn project(node: &Arc<Node>, id: &ResidentId, hub: &HubId, acco
     if !accounts.contains(&(hub.clone(), account.clone())) {
         accounts.push((hub.clone(), account.clone()));
     }
-    keep(node, accounts.into_iter().map(|(hub, account)| Ask {
-        hub, account,
-        conversation: Address { machine: node.machine(), resident: id.clone() },
-        after: Some(id.clone()),
-    }).collect()).await.map_err(|error| error.to_string())?;
+    keep(
+        node,
+        accounts
+            .into_iter()
+            .map(|(hub, account)| Ask {
+                hub,
+                account,
+                conversation: Address { machine: node.machine(), resident: id.clone() },
+                after: Some(id.clone()),
+            })
+            .collect(),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
     home(node, id).await?;
     node.forget_asks.wake.notify_one();
     Ok(())
@@ -422,9 +440,13 @@ async fn send_kept(node: &Arc<Node>) -> bool {
             Ok(true) => {}
             Ok(false) => left.push(ask.clone()),
             Err(reason) => {
-                node.log.line(format_args!("the hub did not take the deletion of {} for {}: {reason}", ask.conversation.key(), ask.account));
+                node.log.line(format_args!(
+                    "the hub did not take the deletion of {} for {}: {reason}",
+                    ask.conversation.key(),
+                    ask.account
+                ));
                 left.push(ask.clone());
-            },
+            }
         }
     }
     let done = left.is_empty();

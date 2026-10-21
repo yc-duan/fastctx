@@ -990,11 +990,14 @@ impl fastctx_net::link::Node for Handler {
                 }
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&node))),
                 RemoteCall::AttachmentReferences { conversation, attachments } => {
-                    if !node.is_me(&conversation.machine) || attachments.iter().any(|file| file.conversation().resident != conversation.resident) {
+                    if !node.is_me(&conversation.machine)
+                        || attachments.iter().any(|file| file.conversation().resident != conversation.resident)
+                    {
                         return Err(Failure::not_run("the attachments name another conversation home"));
                     }
                     tokio::task::spawn_blocking(move || crate::attachments::lifetime::referenced(&node, &attachments))
-                        .await.map_err(|error| Failure::new(error.to_string()))?
+                        .await
+                        .map_err(|error| Failure::new(error.to_string()))?
                         .map(|used| RemoteReply::AttachmentReferences { used })
                 }
                 RemoteCall::UpdateWorld | RemoteCall::Updates { .. } => {

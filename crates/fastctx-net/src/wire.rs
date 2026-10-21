@@ -574,7 +574,9 @@ pub enum Question {
     /// latest entry. This does not subscribe the asker to replication.
     LedgerCatalog,
     /// This member finished the project deletion delivered in its view.
-    ProjectDeleted { town: TownId },
+    ProjectDeleted {
+        town: TownId,
+    },
     /// A project's entries after the one numbered `after`, as many as fit
     /// in one frame.
     LedgerRead {

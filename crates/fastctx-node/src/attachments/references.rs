@@ -91,7 +91,8 @@ fn keep_inherited(
 ) -> Result<(), Failure> {
     let _transaction = crate::resident_storage::lock();
     if node.world.deleted().join(format!("{parent}.json")).try_exists().map_err(failure)?
-        || node.world.deleted().join(format!("{child}.json")).try_exists().map_err(failure)? {
+        || node.world.deleted().join(format!("{child}.json")).try_exists().map_err(failure)?
+    {
         return Err(failure("the source conversation was deleted before its attachments were inherited"));
     }
     let files: Vec<_> = listed(node, parent)?.into_iter().filter(|file| retained.contains(file)).collect();

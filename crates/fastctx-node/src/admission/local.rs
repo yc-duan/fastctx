@@ -28,9 +28,11 @@ use crate::town::caller::{self, Caller};
 pub fn admit(node: &Node, peer: &Peer, call: &Call) -> Result<(), Failure> {
     let inheriting = match call {
         Call::ReadAttachment { attachment: fastctx_types::attachments::AttachmentSource::Upload(file), .. }
-        | Call::AttachmentThumbnail { attachment: fastctx_types::attachments::AttachmentSource::Upload(file), .. }
-            if node.is_me(&file.conversation().machine) && !node.residents.knows(&file.conversation().resident) =>
-                crate::attachments::lifetime::reader(node, file)?,
+        | Call::AttachmentThumbnail {
+            attachment: fastctx_types::attachments::AttachmentSource::Upload(file), ..
+        } if node.is_me(&file.conversation().machine) && !node.residents.knows(&file.conversation().resident) => {
+            crate::attachments::lifetime::reader(node, file)?
+        }
         _ => None,
     };
     let Some(resident) = inheriting.as_ref().or_else(|| reached(node, call)) else { return Ok(()) };

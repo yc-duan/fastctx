@@ -12,23 +12,26 @@ pub(crate) async fn finish(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), Str
     for project in link.view().project_deletions.clone() {
         let place = super::names::place(&node.world, &project.name).map_err(|error| error.to_string())?;
         if place.is_some_and(|place| place.hub == hub && place.town == project.town) {
-            let residents: Vec<_> = node.residents.everyone()
-                .filter(|resident| resident.town.as_ref() == Some(&project.name))
-                .collect();
+            let residents: Vec<_> =
+                node.residents.everyone().filter(|resident| resident.town.as_ref() == Some(&project.name)).collect();
             for resident in residents {
                 if node.serves(&resident.about.acting, &hub, &project.owner) {
                     crate::forget::project(node, &resident.id, &hub, &project.owner).await?;
                 } else if resident.removed.is_some() {
                     let gate = node.residents.management(&resident.id).map_err(|error| error.message)?;
-                    let _exclusive = crate::gate_waits::alone(node, &resident.id, &gate).await
-                        .map_err(|error| error.message)?;
-                    node.residents.relocate_kept(&node.world, &resident.id, None)
-                        .map_err(|error| error.to_string())?;
+                    let _exclusive =
+                        crate::gate_waits::alone(node, &resident.id, &gate).await.map_err(|error| error.message)?;
+                    node.residents.relocate_kept(&node.world, &resident.id, None).map_err(|error| error.to_string())?;
                 } else {
-                    let moved = crate::management::here(node, &resident.id, Management::Move { town: None }).await
+                    let moved = crate::management::here(node, &resident.id, Management::Move { town: None })
+                        .await
                         .map_err(|error| error.message)?;
-                    if moved.town.is_some() || moved.steps.iter().any(|step| step.outcome == ManagementOutcome::Failed) {
-                        return Err(format!("moving {} out of deleted project {}: {:?}", resident.id, project.name, moved.steps));
+                    if moved.town.is_some() || moved.steps.iter().any(|step| step.outcome == ManagementOutcome::Failed)
+                    {
+                        return Err(format!(
+                            "moving {} out of deleted project {}: {:?}",
+                            resident.id, project.name, moved.steps
+                        ));
                     }
                 }
             }
