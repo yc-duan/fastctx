@@ -1847,7 +1847,7 @@ checksum = "c6e8948ce679d00a02a94739ea185595dca7118ed04feb991127e443bd3d761f"
 
 [[package]]
 name = "fastctx-client"
-version = "1.0.1-beta.8"
+version = "1.0.1-beta.9"
 dependencies = [
  "base64 0.22.1",
  "fastctx-net",
@@ -1865,7 +1865,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-gui"
-version = "1.0.1-beta.8"
+version = "1.0.1-beta.9"
 dependencies = [
  "ashpd",
  "base64 0.22.1",
@@ -1901,7 +1901,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-gui-command"
-version = "1.0.1-beta.8"
+version = "1.0.1-beta.9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1910,7 +1910,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hands"
-version = "1.0.1-beta.8"
+version = "1.0.1-beta.9"
 dependencies = [
  "aho-corasick",
  "base64 0.22.1",
@@ -1939,7 +1939,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hosts"
-version = "1.0.1-beta.8"
+version = "1.0.1-beta.9"
 dependencies = [
  "base64 0.22.1",
  "fastctx-platform",
@@ -1962,7 +1962,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hub"
-version = "1.0.1-beta.8"
+version = "1.0.1-beta.9"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1992,7 +1992,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-install"
-version = "1.0.1-beta.8"
+version = "1.0.1-beta.9"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2027,7 +2027,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-net"
-version = "1.0.1-beta.8"
+version = "1.0.1-beta.9"
 dependencies = [
  "argon2 0.5.3",
  "base64 0.22.1",
@@ -2065,7 +2065,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-office"
-version = "1.0.1-beta.8"
+version = "1.0.1-beta.9"
 dependencies = [
  "anyhow",
  "num-bigint 0.4.8",
@@ -2077,7 +2077,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-pdf"
-version = "1.0.1-beta.8"
+version = "1.0.1-beta.9"
 dependencies = [
  "fontdb",
  "hayro",
@@ -2093,7 +2093,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-platform"
-version = "1.0.1-beta.8"
+version = "1.0.1-beta.9"
 dependencies = [
  "async-io",
  "fastctx-types",
@@ -2106,7 +2106,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-ripgrep"
-version = "1.0.1-beta.8"
+version = "1.0.1-beta.9"
 dependencies = [
  "fastctx-platform",
  "flate2",
@@ -2116,7 +2116,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-types"
-version = "1.0.1-beta.8"
+version = "1.0.1-beta.9"
 dependencies = [
  "icu_casemap",
  "icu_normalizer",
@@ -2130,7 +2130,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-update"
-version = "1.0.1-beta.8"
+version = "1.0.1-beta.9"
 dependencies = [
  "base64 0.22.1",
  "fastctx-net",
@@ -6818,7 +6818,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-world-pages"
-version = "1.0.1-beta.8"
+version = "1.0.1-beta.9"
 dependencies = [
  "serde",
  "serde_json",

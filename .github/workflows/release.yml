@@ -39,7 +39,7 @@ env:
   TAURI_CLI: '@tauri-apps/cli@2.12.1'
   # The release before this one: the network drill runs its hub with this one's machines, and its
   # node on this one's hub, from its Linux package.
-  EARLIER_RELEASE: 1.0.1-beta.7
+  EARLIER_RELEASE: 1.0.1-beta.8
   # The drills run on a ci/ branch, never for a version tag.
   DRILLS: ${{ github.ref_type == 'branch' }}
 
