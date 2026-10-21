@@ -1509,7 +1509,9 @@ export class MachinesPage implements Page {
    *  another whose agent assists it. A machine come to a hub one was on its
    *  way to is circled as it arrives. */
   private drawMap(world: WorldNow): void {
-    const { hubs, nodes, hubLabels, links, people } = mapOf(world, this.options.words);
+    const made = mapOf(world, this.options.words);
+    const { hubs, nodes, links, people } = made;
+    const hubLabels = new Map(made.hubLabels);
     for (const [hub, before] of this.waiting) {
       const arrived = nodes.filter((node) => node.hubs.includes(hub) && !before.has(node.key));
       if (!arrived.length) continue;

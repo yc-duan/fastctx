@@ -51,7 +51,21 @@ export interface MapNow {
   people: MapPerson[];
 }
 
+/** The map of `world`, made once for each World the store holds: the page
+ *  draws itself every couple of seconds, and a hundred machines are worth
+ *  laying out only when something of them changed. Nothing is changed in
+ *  what it returns; whoever adds to it adds to a copy. */
 export function mapOf(world: WorldNow, words: MapWords): MapNow {
+  const kept = made.get(world);
+  if (kept?.words === words) return kept.map;
+  const map = mapMade(world, words);
+  made.set(world, { words, map });
+  return map;
+}
+
+const made = new WeakMap<WorldNow, { words: MapWords; map: MapNow }>();
+
+function mapMade(world: WorldNow, words: MapWords): MapNow {
   // How many agents are at work or waiting on each machine its owner sees;
   // a machine away has none now.
   const busy = new Map<string, number>();

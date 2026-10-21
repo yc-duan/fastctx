@@ -168,6 +168,8 @@ export class MachineMap {
   private readonly themes: MutationObserver;
   private scene: MachineMapScene | null = null;
   private placement: Placement | null = null;
+  /** What the placement was laid out from, to lay it again only when that changed. */
+  private laidFrom: { from: readonly unknown[]; shape: string } | null = null;
   private level = -1;
   /** Whether the drawing is laid for a narrow screen, as of the last
    *  update. */
@@ -295,7 +297,15 @@ export class MachineMap {
     if (this.options.still) this.placement = this.fill(scene);
     else {
       this.narrow = this.isNarrow();
-      this.placement = this.layout.update(scene.hubs, scene.nodes, { links: scene.links, folded: scene.folded, narrow: this.narrow, people: scene.people ?? [], adding: new Set(scene.adding ?? []) });
+      // Laid out again only when what it is laid from changed: the page
+      // draws itself every couple of seconds with the same machines.
+      const from = [scene.hubs, scene.nodes, scene.links, scene.people ?? null] as const;
+      const shape = JSON.stringify([[...scene.folded ?? []].sort(), [...scene.adding ?? []].sort(), this.narrow]);
+      const laid = this.laidFrom;
+      if (!this.placement || !laid || laid.shape !== shape || laid.from.some((one, at) => one !== from[at])) {
+        this.placement = this.layout.update(scene.hubs, scene.nodes, { links: scene.links, folded: scene.folded, narrow: this.narrow, people: scene.people ?? [], adding: new Set(scene.adding ?? []) });
+        this.laidFrom = { from, shape };
+      }
     }
     this.compose();
     this.place();
@@ -443,6 +453,8 @@ export class MachineMap {
       this.awaitingFaces = true;
       void document.fonts.ready.then(() => {
         this.awaitingFaces = false;
+        // The names measure anew: laid out again whatever else stayed.
+        this.laidFrom = null;
         if (this.scene) this.update(this.scene);
       });
     }
