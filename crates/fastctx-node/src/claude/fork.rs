@@ -69,7 +69,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     let (words, heard) =
         crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &source.acting, false).await?;
     let directory = node.world.conversation(&id);
-    fastctx_platform::ensure_private_dir(directory.path()).map_err(failure)?;
+    crate::focus::open(node, &directory, &source.acting, &source.focus).await?;
     super::fork_ready::begin(node, &id)?;
     let cwd = crate::colleagues::standing(node, town.as_ref())?;
     crate::profile::session::ready(node, &source.acting).await?;
