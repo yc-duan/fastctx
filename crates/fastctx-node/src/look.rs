@@ -40,13 +40,18 @@ pub async fn look(node: &Arc<Node>, acting: &Acting, works_here: bool, ids: Vec<
                 Err(error) => unasked.push(format!("{} ({error})", node.machine())),
             }
         }
-        // Asked as each account whoever asks works for, which a machine
-        // shows its own conversations apart.
-        let machines = crate::around::reachable_each(node, acting, Purpose::Look);
-        let heard = crate::around::ask_each(machines, |_| RemoteCall::Look { id: id.clone() }).await;
-        let mut one = LookedUp { id, found, unasked, jobs };
-        for answers in fastctx_net::around::answers::collect(heard) {
-            answers.look(&mut one);
+        // A command is on one machine alone: found here, no other is asked.
+        // A conversation's commands may have run on others, which are.
+        let here_alone = found.iter().any(|looked| matches!(looked, Looked::Job { .. }));
+        let mut one = LookedUp { id: id.clone(), found, unasked, jobs };
+        if !here_alone {
+            // Asked as each account whoever asks works for, which a machine
+            // shows its own conversations apart.
+            let machines = crate::around::reachable_each(node, acting, Purpose::Look);
+            let heard = crate::around::ask_each(machines, |_| RemoteCall::Look { id: id.clone() }).await;
+            for answers in fastctx_net::around::answers::collect(heard) {
+                answers.look(&mut one);
+            }
         }
         one.attach_jobs();
         looked.push(one);
