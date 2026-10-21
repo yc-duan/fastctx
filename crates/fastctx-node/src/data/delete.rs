@@ -522,26 +522,31 @@ async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<u64, Sto
         {
             return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "its command output is being read"));
         }
-        // Remove aliases before their targets, so a partial deletion never
-        // leaves a path pointing at a different conversation later.
-        for place in &places {
-            match std::fs::symlink_metadata(place) {
-                Ok(metadata) if fastctx_platform::owned_directory::is_link(&metadata) => {
-                    fastctx_platform::owned_directory::delete(place)?;
+        let mut aliases = Vec::new();
+        let mut directories = Vec::new();
+        for place in places {
+            match std::fs::symlink_metadata(&place) {
+                Ok(metadata) if fastctx_platform::owned_directory::is_link(&metadata) => aliases.push(place),
+                Ok(_) => {
+                    let retained = crate::attachments::lifetime::remove(&node, &place, &remote)
+                        .map_err(std::io::Error::other)?
+                        || place.join(crate::forks::RETAINED_HOST).try_exists()?;
+                    directories.push((place, retained));
                 }
-                Ok(_) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error),
             }
         }
-        let mut retained_bytes = 0;
-        for place in places {
-            if !place.try_exists()? {
-                continue;
+        // Inherited messages can name paths from before a layout migration.
+        // Keep their aliases and the alias manifest until their targets can go.
+        let retained = directories.iter().any(|(_, retained)| *retained);
+        if !retained {
+            for alias in &aliases {
+                fastctx_platform::owned_directory::delete(alias)?;
             }
-            let retained = crate::attachments::lifetime::remove(&node, &place, &remote)
-                .map_err(std::io::Error::other)?
-                || place.join(crate::forks::RETAINED_HOST).try_exists()?;
+        }
+        let mut retained_bytes = 0;
+        for (place, retained) in directories {
             let last = ["now", "town", "removed", "about", "host-deleted", INTENT];
             for entry in super::space::entries(&place)? {
                 let name = entry.file_name();
@@ -549,6 +554,7 @@ async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<u64, Sto
                 let keep = retained
                     && name.is_some_and(|name| {
                         name == "attachments"
+                            || name == "aliases.json"
                             || name == crate::attachments::lifetime::RETAINED
                             || name == crate::forks::RETAINED_HOST
                     });
@@ -563,6 +569,11 @@ async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<u64, Sto
                 retained_bytes += super::space::tally(&place)?.bytes;
             } else {
                 std::fs::remove_dir(&place)?;
+            }
+        }
+        if retained {
+            for alias in aliases {
+                retained_bytes += super::space::tally(&alias)?.bytes;
             }
         }
         Ok(retained_bytes)
