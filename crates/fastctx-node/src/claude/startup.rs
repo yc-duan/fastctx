@@ -1,4 +1,5 @@
-//! Observes a background birth until the mod pairs, without timing it out.
+//! Observes a background birth, or a wake that carries words, until the mod
+//! pairs, without timing it out.
 
 use std::ffi::OsString;
 use std::future::Future;
@@ -25,8 +26,10 @@ pub(super) struct Listed {
     answer: Result<String, String>,
 }
 
-pub(super) fn observe(node: &Arc<Node>, resident: &ResidentId, id: NoticeId, command: super::Command) {
-    if super::paired(node, resident) {
+/// `waking`: the session paired before, and these words wake it; it is
+/// settled once the session that came up takes them, not by its pairing.
+pub(super) fn observe(node: &Arc<Node>, resident: &ResidentId, id: NoticeId, command: super::Command, waking: bool) {
+    if !waking && super::paired(node, resident) {
         return;
     }
     if !node.claude.state.lock().expect("never poisoned").starting.insert(resident.clone()) {
@@ -38,7 +41,7 @@ pub(super) fn observe(node: &Arc<Node>, resident: &ResidentId, id: NoticeId, com
         // Tried again after waits that double up to a minute, told once for
         // each new reason.
         let (mut again, mut told) = (crate::again::Again::default(), None);
-        while let Err(error) = watch(&node, &resident, &id, &command).await {
+        while let Err(error) = watch(&node, &resident, &id, &command, waking).await {
             let error = error.to_string();
             if told.as_ref() != Some(&error) {
                 node.log.line(format_args!("observing Claude startup {resident}; will retry: {error}"));
@@ -50,19 +53,18 @@ pub(super) fn observe(node: &Arc<Node>, resident: &ResidentId, id: NoticeId, com
     });
 }
 
-/// A node restart must resume observing births whose first words are still
-/// crossing the host boundary. No prompt is submitted a second time.
+/// A node restart must resume observing births and wakes whose words are
+/// still crossing the host boundary. No prompt is submitted a second time.
 pub(super) fn recover(node: &Arc<Node>) {
     for record in node.residents.everyone() {
         let about = record.about;
+        // A session that registered holds its whole id: its words wake it.
+        let waking = about.session.as_ref().is_some_and(|session| session.len() != 8);
         if record.removed.is_some()
             || !about.world_started
             || about.host.agent.as_str() != "claude"
-            || super::paired(node, &about.id)
+            || (!waking && super::paired(node, &about.id))
         {
-            continue;
-        }
-        if about.session.as_ref().is_some_and(|session| session.len() != 8) {
             continue;
         }
         let directory = node.world.conversation(&about.id);
@@ -99,7 +101,7 @@ pub(super) fn recover(node: &Arc<Node>) {
                 loop {
                     let result = async {
                         let _births = node.claude.births.write().await;
-                        if !pending(&node, &about.id, &first.delivery.id)? {
+                        if !pending(&node, &about.id, &first.delivery.id, false)? {
                             return Ok(());
                         }
                         let why = "the node restarted before recording Claude Code's background session ID; its startup outcome is unknown";
@@ -123,7 +125,7 @@ pub(super) fn recover(node: &Arc<Node>) {
             continue;
         }
         match super::command(node, about.home.as_deref()) {
-            Ok(command) => observe(node, &about.id, first.delivery.id, command),
+            Ok(command) => observe(node, &about.id, first.delivery.id, command, waking),
             Err(error) => {
                 if let Err(error) = report(node, &about.id, error.message) {
                     node.log.line(format_args!("recording Claude startup problem for {}: {error}", about.id));
@@ -200,15 +202,16 @@ fn daemon_said(command: &super::Command, short: &str) -> Option<String> {
 /// How much of the end of Claude Code's daemon log is read for a session.
 const DAEMON_TAIL: u64 = 256 * 1024;
 
-fn pending(node: &Node, resident: &ResidentId, id: &NoticeId) -> std::io::Result<bool> {
-    if super::paired(node, resident) || node.residents.removed(resident).is_some() {
+fn pending(node: &Node, resident: &ResidentId, id: &NoticeId, waking: bool) -> std::io::Result<bool> {
+    if (!waking && super::paired(node, resident)) || node.residents.removed(resident).is_some() {
         return Ok(false);
     }
     if node.residents.about(resident).is_none() {
         return Ok(false);
     }
     let directory = node.world.conversation(resident);
-    crate::inbox::read(&directory, id).map(|pending| pending.is_some())
+    crate::inbox::read(&directory, id)
+        .map(|pending| pending.is_some_and(|pending| !waking || pending.state == PendingState::Waking))
 }
 
 async fn watch(
@@ -216,8 +219,12 @@ async fn watch(
     resident: &ResidentId,
     id: &NoticeId,
     command: &super::Command,
+    waking: bool,
 ) -> std::io::Result<()> {
-    let Some(short) = node.residents.about(resident).and_then(|(about, _)| about.session) else { return Ok(()) };
+    let Some(session) = node.residents.about(resident).and_then(|(about, _)| about.session) else { return Ok(()) };
+    // A background job is named by the first eight characters of its
+    // session's id, which a registered session holds whole.
+    let short: String = session.chars().take(8).collect();
     let home = command
         .env
         .iter()
@@ -243,12 +250,12 @@ async fn watch(
         let changed = node.claude.changed.notified();
         tokio::pin!(changed);
         changed.as_mut().enable();
-        if !pending(node, resident, id)? {
+        if !pending(node, resident, id, waking)? {
             return Ok(());
         }
         let listed = agents(&listing, command, after).await;
         after = None;
-        if !pending(node, resident, id)? {
+        if !pending(node, resident, id, waking)? {
             return Ok(());
         }
         match listed.and_then(|listed| startup::background(&listed, &short)) {
@@ -309,7 +316,7 @@ async fn watch(
                     // including one the filesystem watcher has not seen yet.
                     super::replay(node).await;
                     let _births = node.claude.births.write().await;
-                    if !pending(node, resident, id)? {
+                    if !pending(node, resident, id, waking)? {
                         return Ok(());
                     }
                     if job.ended() {
@@ -338,7 +345,7 @@ async fn watch(
                     let why = diagnosis(command, &short, why).await;
                     super::replay(node).await;
                     let _births = node.claude.births.write().await;
-                    if !pending(node, resident, id)? {
+                    if !pending(node, resident, id, waking)? {
                         return Ok(());
                     }
                     report(node, resident, why)?;
@@ -349,7 +356,7 @@ async fn watch(
             }
             Ok(None) => {
                 let _births = node.claude.births.write().await;
-                if !pending(node, resident, id)? {
+                if !pending(node, resident, id, waking)? {
                     return Ok(());
                 }
                 let why =
@@ -361,7 +368,7 @@ async fn watch(
             }
             Err(error) => {
                 let _births = node.claude.births.write().await;
-                if !pending(node, resident, id)? {
+                if !pending(node, resident, id, waking)? {
                     return Ok(());
                 }
                 if last_problem.as_ref() != Some(&error) {
