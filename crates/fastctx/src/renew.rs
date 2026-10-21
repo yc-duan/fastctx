@@ -279,7 +279,14 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
         // a LaunchDaemon, needs an administrator to start the new program.
         // A Linux node's unit restarts as root or by the rule its install
         // left (`fastctx_install::service::Service::may_restart`).
-        let restart_refusal = if cfg!(target_os = "linux") { service.may_restart().err() } else { None };
+        #[cfg(target_os = "linux")]
+        let restart = {
+            let status = service.status()?;
+            service.main_pid()? == 0 && !status.state.starts_with("activating/")
+        };
+        #[cfg(not(target_os = "linux"))]
+        let restart = true;
+        let restart_refusal = if cfg!(target_os = "linux") && restart { service.may_restart().err() } else { None };
         if let Some(error) = &restart_refusal {
             refused = Some(format!("{error:#}"));
         }
@@ -302,7 +309,9 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
         };
         ensure!(node.bridge && node.build == plan.candidate.build, "the replacement bridge is not serving");
         phase(root, plan, Phase::UpdatingGuardian)?;
-        service.restart_guardian(&plan.candidate.build.digest)?;
+        if restart {
+            service.restart_guardian(&plan.candidate.build.digest)?;
+        }
         plan.keeper_restarted = true;
         store::save(root, plan)?;
     }
@@ -314,6 +323,18 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
             && !node.bridge
             && node.build.digest == plan.candidate.build.digest
         {
+            #[cfg(target_os = "linux")]
+            {
+                let service = fastctx_install::service::Service::new(
+                    fastctx_install::service::Kind::Node,
+                    store::installed(root),
+                    root,
+                );
+                ensure!(
+                    service.main_pid()? == u64::from(node.process.pid),
+                    "the replacement is not the service's node"
+                );
+            }
             phase(root, plan, Phase::Complete)?;
             let (folder, digest) = (root.to_path_buf(), plan.candidate.build.digest.clone());
             let followed = tokio::task::spawn_blocking(move || follow_hubs(&folder, &digest)).await?;
