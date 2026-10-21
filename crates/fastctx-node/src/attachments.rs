@@ -205,7 +205,7 @@ async fn arrival(
         Prior::Again(attachment, mut guard) => {
             let directory = Path::new(&attachment.path).parent().map(Path::to_path_buf);
             let arriving = match directory {
-                Some(directory) => tokio::task::spawn_blocking(move || arriving_in(&directory, attachment, resume))
+                Some(directory) => tokio::task::spawn_blocking(move || arriving_in(&directory, *attachment, resume))
                     .await
                     .map_err(failure)
                     .and_then(|arriving| arriving),

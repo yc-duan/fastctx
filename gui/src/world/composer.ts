@@ -33,10 +33,20 @@ export interface ComposerQueued {
   readonly error: string | null;
 }
 
+/** A command the node took to do once a turn ends, where it stands among
+ *  the words that wait: after `after`, or before them all. It is moved as
+ *  they are, by its id. */
+export interface ComposerCommand {
+  readonly id: NoticeId;
+  readonly after: NoticeId | null;
+}
+
 export interface ComposerSnapshot {
   readonly revision: number;
   readonly draft: ComposerDraft;
   readonly queue: readonly ComposerQueued[];
+  /** Absent where the node keeps no commands among the words. */
+  readonly commands?: readonly ComposerCommand[];
   readonly unobserved: readonly ComposerQueued[];
   readonly held: string | null;
   readonly awaiting_turn: string | null;

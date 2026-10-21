@@ -1,8 +1,9 @@
 // A shared input kept in this page, standing in for the node's
 // (`crates/fastctx-node/src/composer/`) in a specimen: edits by character
 // identity, sending or queueing by whether the agent is busy, the queue's
-// own operations, and files attached at once. One writer, no network; what
-// it is for is seeing the input as a live World would show it.
+// own operations, the places of commands waiting among the words, and files
+// attached at once. One writer, no network; what it is for is seeing the
+// input as a live World would show it.
 
 import type { Attachment } from "../world/attachments";
 import type { Character, ComposerDraft, ComposerMutation, ComposerPiece, ComposerQueued, ComposerSnapshot, ComposerTarget, ComposerUpdated } from "../world/composer";
@@ -15,7 +16,10 @@ function empty(epoch: number): ComposerDraft {
   return { epoch, text: "", characters: [], attachments: [], uploads: [], files_on: null };
 }
 
-export function specimenComposer(who: Address, busy: () => boolean, queued: string[] = []): ComposerTransport {
+/** The input, and the places it keeps for commands waiting among its words. */
+export type SpecimenComposer = ComposerTransport & { place(id: string): void; forget(id: string): void };
+
+export function specimenComposer(who: Address, busy: () => boolean, queued: string[] = []): SpecimenComposer {
   let serial = 0;
   const draftOf = (text: string, epoch: number): ComposerDraft => {
     serial += 1;
@@ -26,14 +30,31 @@ export function specimenComposer(who: Address, busy: () => boolean, queued: stri
   let snapshot: ComposerSnapshot = {
     revision: 1,
     draft: empty(1),
-    queue: queued.map((text, index) => ({ id: `q-${index}`, from: who.machine, draft: draftOf(text, 1), editing: false, sending: false, error: null })),
+    // Ids as the node makes them, with the time each was queued.
+    queue: queued.map((text, index) => ({ id: `queued-${Date.now() - (queued.length - index) * 60_000}-${index}-0`, from: who.machine, draft: draftOf(text, 1), editing: false, sending: false, error: null })),
     unobserved: [],
     held: null,
     awaiting_turn: null,
   };
+  // The one order of words and commands' places, as the node keeps it.
+  let order = snapshot.queue.map((one) => one.id);
+  const commands = new Set<string>();
+  const arranged = (queue: readonly ComposerQueued[]): Pick<ComposerSnapshot, "queue" | "commands"> => {
+    const words = new Map(queue.map((one) => [one.id, one]));
+    order = order.filter((id) => commands.has(id) || words.has(id));
+    for (const one of queue) if (!order.includes(one.id)) order.push(one.id);
+    let after: string | null = null;
+    const places: { id: string; after: string | null }[] = [];
+    for (const id of order) {
+      if (commands.has(id)) places.push({ id, after });
+      else after = id;
+    }
+    return { queue: order.flatMap((id) => words.get(id) ?? []), commands: places };
+  };
   const listeners = new Map<number, (piece: ComposerPiece) => void>();
   const changed = (next: Partial<ComposerSnapshot>, landed: ComposerUpdated["landed"] = null): ComposerUpdated => {
-    snapshot = { ...snapshot, ...next, revision: snapshot.revision + 1 };
+    const merged = { ...snapshot, ...next };
+    snapshot = { ...merged, ...arranged(merged.queue), revision: snapshot.revision + 1 };
     for (const listener of listeners.values()) listener({ kind: "snapshot", watch: "specimen", composer: snapshot });
     return { composer: snapshot, landed };
   };
@@ -55,6 +76,16 @@ export function specimenComposer(who: Address, busy: () => boolean, queued: stri
     return { attachment: one, updated: { Ok: changed(withDraft(target, (draft) => ({ ...draft, attachments: [...draft.attachments, one] }))) } };
   };
   return {
+    place: (id) => {
+      commands.add(id);
+      order.push(id);
+      changed({});
+    },
+    forget: (id) => {
+      commands.delete(id);
+      order = order.filter((one) => one !== id);
+      changed({});
+    },
     read: () => Promise.resolve({ composer: snapshot, landed: null }),
     unwatch: (id) => {
       listeners.delete(id);
@@ -84,7 +115,7 @@ export function specimenComposer(who: Address, busy: () => boolean, queued: stri
           // others are on their way.
           if (busy() || snapshot.awaiting_turn || snapshot.queue.some((one) => one.sending)) {
             serial += 1;
-            const item: ComposerQueued = { id: `q-${serial}`, from: who.machine, draft: snapshot.draft, editing: false, sending: false, error: null };
+            const item: ComposerQueued = { id: `queued-${Date.now()}-${serial}-0`, from: who.machine, draft: snapshot.draft, editing: false, sending: false, error: null };
             return Promise.resolve(changed({ draft: next, queue: [...snapshot.queue, item] }));
           }
           return Promise.resolve(changed({ draft: next }, { kind: "new_turn", turn: "specimen" }));
@@ -94,11 +125,12 @@ export function specimenComposer(who: Address, busy: () => boolean, queued: stri
         case "delete":
           return Promise.resolve(changed({ queue: snapshot.queue.filter((item) => item.id !== mutation.id), unobserved: snapshot.unobserved.filter((item) => item.id !== mutation.id) }));
         case "move": {
-          const item = snapshot.queue.find((one) => one.id === mutation.id);
-          if (!item) return Promise.reject(new Error("that queued message no longer exists"));
-          const rest = snapshot.queue.filter((one) => one.id !== mutation.id);
-          const at = mutation.before ? rest.findIndex((one) => one.id === mutation.before) : rest.length;
-          return Promise.resolve(changed({ queue: [...rest.slice(0, at), item, ...rest.slice(at)] }));
+          if (!order.includes(mutation.id)) return Promise.reject(new Error("that queued message no longer exists"));
+          const rest = order.filter((one) => one !== mutation.id);
+          const found = mutation.before ? rest.indexOf(mutation.before) : -1;
+          const at = found < 0 ? rest.length : found;
+          order = [...rest.slice(0, at), mutation.id, ...rest.slice(at)];
+          return Promise.resolve(changed({}));
         }
         case "send_queued":
           return Promise.resolve(changed({ queue: snapshot.queue.filter((item) => item.id !== mutation.id) }, { kind: "joined_turn", turn: "specimen" }));

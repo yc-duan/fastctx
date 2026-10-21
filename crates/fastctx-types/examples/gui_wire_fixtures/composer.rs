@@ -1,4 +1,4 @@
-use fastctx_types::composer::{Change, Composer, Draft, Mutation, Queued, Target, Updated};
+use fastctx_types::composer::{Change, Composer, Draft, Mutation, Queued, QueuedCommand, Target, Updated};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -21,6 +21,10 @@ pub fn fixtures() -> Fixtures {
             sending: false,
             error: None,
         }],
+        commands: vec![
+            QueuedCommand { id: "control-1792585279907-0-ab12".parse().unwrap(), after: None },
+            QueuedCommand { id: "control-1792585279908-1-cd34".parse().unwrap(), after: Some(id.clone()) },
+        ],
         ..Default::default()
     };
     Fixtures {

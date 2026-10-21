@@ -353,10 +353,13 @@ async fn finish_at(
         }
         node.watchers.publish(id, &event);
     }
+    // The composer learns of the end first: what it holds back and what it
+    // lets go decides whether a waiting control goes before its words.
+    let settled =
+        crate::composer::turn_ended(node, id, turn, &finished.end.how, finished.settles_queue, finished.queue_order)
+            .await;
     crate::control_queue::schedule(node, id);
-    crate::composer::turn_ended(node, id, turn, &finished.end.how, finished.settles_queue, finished.queue_order)
-        .await
-        .map_err(std::io::Error::other)?;
+    settled.map_err(std::io::Error::other)?;
     for handover in &accepted {
         for input in &handover.inputs {
             crate::inbox::settle(node, &directory, &input.delivery.id)?;

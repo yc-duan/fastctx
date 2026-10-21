@@ -33,11 +33,11 @@ pub enum Prior {
     /// None went under it.
     Fresh,
     /// It ended, and this was its answer.
-    Ended(fastctx_types::composer::UploadResult),
+    Ended(Box<fastctx_types::composer::UploadResult>),
     /// It broke while its file is still in the words: it goes on now, as
     /// this attachment, from what arrived of it (`world-network.md`,
     /// 断开不是结束).
-    Again(Attachment, Guard),
+    Again(Box<Attachment>, Guard),
 }
 
 pub async fn prior(
@@ -77,13 +77,13 @@ pub async fn prior(
             next.uploads.insert(scope.operation.clone(), record.clone());
             publish(node, id, &mut cell, next)?;
             let guard = Guard { node: node.clone(), id: id.clone(), scope: scope.clone(), armed: true };
-            return Ok(Prior::Again(record.attachment, guard));
+            return Ok(Prior::Again(Box::new(record.attachment), guard));
         }
         Outcome::Attached => Ok(Updated { composer: state.view(), landed: None }),
         Outcome::Detached { why } => Err(Failure::new(why.clone())),
     };
     crate::attachments::resolve(node, id, std::slice::from_ref(&record.attachment)).await?;
-    Ok(Prior::Ended(fastctx_types::composer::UploadResult { attachment: record.attachment, updated }))
+    Ok(Prior::Ended(Box::new(fastctx_types::composer::UploadResult { attachment: record.attachment, updated })))
 }
 
 pub async fn begin(

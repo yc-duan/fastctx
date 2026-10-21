@@ -66,12 +66,17 @@ fn busy(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
 }
 
 /// Called with the action gate held. No gate is held while waiting for a turn to end.
-pub(crate) fn enqueue_if_busy(
+pub(crate) async fn enqueue_if_busy(
     node: &Arc<Node>,
     id: &ResidentId,
     control: &Control,
 ) -> Result<Option<Controlled>, Failure> {
-    if !between_turns(control) || !busy(node, id)? {
+    if !between_turns(control) {
+        return Ok(None);
+    }
+    // Ones still waiting behind queued words keep their place ahead of it;
+    // words handed over whose turn has not begun yet are a turn under way.
+    if !busy(node, id)? && pending(node, id)?.is_empty() && !words_ahead(node, id, None)? {
         return Ok(None);
     }
     let row = PendingControl {
@@ -88,13 +93,16 @@ pub(crate) fn enqueue_if_busy(
         rows.push(row.clone());
         save(node, id, &rows)?;
     }
+    // Its place among the words that wait: after them, until moved.
+    let key = fastctx_types::NoticeId::try_from(row.id.clone()).map_err(|error| Failure::new(error.to_string()))?;
+    crate::composer::place_command(node, id, &key).await?;
     event(node, id, &row)?;
     schedule(node, id);
     Ok(Some(Controlled::Reported { said: Some("Waiting for the current turn to end.".into()), queued: Some(row.id) }))
 }
 
 /// Cancellation competes with the durable claim, not the long-running host operation.
-pub(crate) fn cancel(node: &Arc<Node>, id: &ResidentId, key: &str) -> Result<Controlled, Failure> {
+pub(crate) async fn cancel(node: &Arc<Node>, id: &ResidentId, key: &str) -> Result<Controlled, Failure> {
     node.residents.active(id)?;
     let row = {
         let _transaction = crate::resident_storage::lock();
@@ -110,6 +118,7 @@ pub(crate) fn cancel(node: &Arc<Node>, id: &ResidentId, key: &str) -> Result<Con
         row
     };
     finish(node, id, &row)?;
+    crate::composer::forget_command(node, id, &row.id).await?;
     schedule(node, id);
     Ok(Controlled::Done { said: Some("The waiting control was withdrawn.".into()) })
 }
@@ -133,36 +142,36 @@ pub(crate) fn drain<'a>(
             if busy(node, id)? {
                 return Ok(());
             }
-            if let Some(first) = pending(node, id)?.first() {
-                let directory = node.world.conversation(id);
-                for words in crate::inbox::pending(&directory).map_err(failure)? {
-                    if words.delivery.notice.along().is_none()
-                        && words.delivery.at < first.at
-                        && crate::delivery::input_turn(&directory, &words.delivery.id).map_err(failure)?.is_none()
-                        && crate::delivery::input_uncertainty(&directory, &words.delivery.id)
-                            .map_err(failure)?
-                            .is_none()
-                    {
-                        return Ok(());
-                    }
+            let rows = pending(node, id)?;
+            // One left from before that is not waiting is settled first.
+            if let Some(row) = rows.iter().find(|row| row.state != ControlState::Waiting) {
+                let mut row = row.clone();
+                if row.state == ControlState::Running {
+                    row.state = ControlState::Uncertain;
+                    row.error = Some("the previous control attempt did not retain its result; its outcome is unknown and it was not repeated".into());
                 }
+                finish(node, id, &row)?;
+                crate::composer::forget_command(node, id, &row.id).await?;
+                continue;
+            }
+            // Words before it in the one order go first; it waits for
+            // their turn to end.
+            let waiting: Vec<String> = rows.iter().map(|row| row.id.clone()).collect();
+            let Some(next) = crate::composer::next_command(node, id, &waiting).await? else {
+                return Ok(());
+            };
+            let Some(first) = rows.iter().find(|row| row.id == next) else {
+                return Ok(());
+            };
+            if words_ahead(node, id, Some(first.at))? {
+                return Ok(());
             }
             let row = {
                 let _transaction = crate::resident_storage::lock();
                 let mut rows = read(node, id)?;
-                let Some(row) = rows.first_mut() else {
-                    return Ok(());
-                };
-                if row.state != ControlState::Waiting {
-                    let mut row = row.clone();
-                    if row.state == ControlState::Running {
-                        row.state = ControlState::Uncertain;
-                        row.error = Some("the previous control attempt did not retain its result; its outcome is unknown and it was not repeated".into());
-                    }
-                    drop(_transaction);
-                    finish(node, id, &row)?;
+                let Some(row) = rows.iter_mut().find(|row| row.id == next && row.state == ControlState::Waiting) else {
                     continue;
-                }
+                };
                 row.state = ControlState::Running;
                 let row = row.clone();
                 save(node, id, &rows)?;
@@ -190,6 +199,7 @@ pub(crate) fn drain<'a>(
                 save(node, id, &rows)?;
             }
             finish(node, id, &row)?;
+            crate::composer::forget_command(node, id, &row.id).await?;
         }
     })
 }
@@ -206,6 +216,29 @@ pub(crate) fn schedule(node: &Arc<Node>, id: &ResidentId) {
             node.log.line(format_args!("executing {id}'s queued controls: {error}"));
         }
     });
+}
+
+/// Whether words handed to the host (before `before`, where given) have not
+/// been taken into a turn yet: a control waits for that turn.
+fn words_ahead(node: &Node, id: &ResidentId, before: Option<jiff::Timestamp>) -> Result<bool, Failure> {
+    let directory = node.world.conversation(id);
+    for words in crate::inbox::pending(&directory).map_err(failure)? {
+        if words.delivery.notice.along().is_none()
+            && before.is_none_or(|before| words.delivery.at < before)
+            && crate::delivery::input_turn(&directory, &words.delivery.id).map_err(failure)?.is_none()
+            && crate::delivery::input_uncertainty(&directory, &words.delivery.id).map_err(failure)?.is_none()
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Drains the controls waiting, if any: what held them back may have gone.
+pub(crate) fn poke(node: &Arc<Node>, id: &ResidentId) {
+    if pending(node, id).is_ok_and(|rows| !rows.is_empty()) {
+        schedule(node, id);
+    }
 }
 
 pub(crate) fn recover(node: &Arc<Node>) {

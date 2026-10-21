@@ -1,5 +1,6 @@
 //! The only writer and release coordinator of each conversation's composer.
 
+mod commands;
 mod receipts;
 mod state;
 mod storage;
@@ -11,6 +12,7 @@ use fastctx_types::access::Written;
 pub use storage::recover;
 use storage::{event, load, publish};
 pub use submissions::resume;
+pub use commands::{forget_command, next_command, place_command};
 pub use submissions::{awaits_turn, bound, turn_ended, uncertain};
 use submissions::{dispatch, schedule};
 pub use watching::{Lease, snapshot, watch};
@@ -147,6 +149,7 @@ pub async fn here(node: &Arc<Node>, from: &MachineName, id: &ResidentId, request
                 editors: HashSet::new(),
                 error: None,
                 submitted: None,
+                command: false,
             });
             let now = node.residents.now(id).ok_or_else(|| failure("unknown resident"))?;
             if now.activity != Activity::Busy

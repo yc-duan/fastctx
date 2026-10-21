@@ -163,7 +163,7 @@ import type { FocusPlace } from "./app/focus-panel";
 import { folders as foldersOf, noFocus, type Focus, type Folders } from "./world/focus";
 import { ComposerSession } from "./conversation/composer";
 import { allowPrivacy, attachmentThumbnail, fetchAttachment, fetchFile, openLocal, reveal, saveAs, thumbnail, thumbnailUrl, type Saved, type Thumbnail } from "./world/files";
-import { specimenComposer } from "./specimen/composer";
+import { specimenComposer, type SpecimenComposer } from "./specimen/composer";
 import { ClaudeConsent } from "./app/claude-consent";
 import { Conversation } from "./conversation/conversation";
 import { LocalTranscript } from "./specimen/transcript";
@@ -1414,6 +1414,10 @@ function home(): Page {
 
 function specimenTalk(address: Address): KeepablePage {
   let queuedHere: PendingControl[] = [];
+  // The shared input kept in the page; `?queued` puts two in its queue.
+  let shared: SpecimenComposer | null = null;
+  const sharedInput = () =>
+    (shared ??= specimenComposer(address, () => conversation.turning(), params.has("queued") ? (english ? ["Then run the overflow test on lab", "And write the result into the journal"] : ["然后在 lab 上跑溢出测试", "再把结果写进手记"]) : []));
   const name = address.resident;
   const sample: Specimen & { later?: SessionEvent[]; rate?: number; timed?: boolean } = name.startsWith("stream")
     ? streamSpecimen(params)
@@ -1479,11 +1483,13 @@ function specimenTalk(address: Address): KeepablePage {
       control: async (what) => {
         if (what.do === "cancel_control") {
           queuedHere = queuedHere.filter((row) => row.id !== what.id);
+          shared?.forget(what.id);
           return { kind: "done", said: null };
         }
         if (what.do === "compact" || (what.do === "command" && what.name === "compact")) {
-          const id = `control-specimen-${queuedHere.length + 1}`;
+          const id = `control-${Date.now()}-${queuedHere.length + 1}-0`;
           queuedHere = [...queuedHere, { id, control: what, at: new Date().toISOString(), state: "waiting" }];
+          shared?.place(id);
           return { kind: "reported", said: "Waiting for the current turn to end.", queued: id };
         }
         return { kind: "done", said: english ? "this is a specimen" : "这是样例，没有连着世界" };
@@ -1511,11 +1517,7 @@ function specimenTalk(address: Address): KeepablePage {
       },
     },
     draftKey: `draft:${address.resident}@${address.machine}`,
-    // The shared input kept in the page; `?queued` puts two in its queue.
-    composer: () =>
-      ComposerSession.open(address, {
-        transport: specimenComposer(address, () => conversation.turning(), params.has("queued") ? (english ? ["Then run the overflow test on lab", "And write the result into the journal"] : ["然后在 lab 上跑溢出测试", "再把结果写进手记"]) : []),
-      }),
+    composer: () => ComposerSession.open(address, { transport: sharedInput() }),
     files: { words: composerWords.files, find: specimenFiles },
     manage: talkManage(address, () => page, exported(conversation, { agent: sample.agent === "claude" ? "Claude" : "Codex", machine: sample.machine, model: sample.model, project: sample.town })),
     send(text, attached) {

@@ -1083,9 +1083,8 @@ export interface ComposerWords {
   /** A command that waits for the turn under way to end. */
   afterTurn(name: string): string;
   /** A command the node took to do once the turn ends: beside it while it
-   *  waits and while it is done; withdrawing one; and one whose host did
-   *  not say what came of it. */
-  waitsTurn: string;
+   *  is done; withdrawing one; and one whose host did not say what came
+   *  of it. */
   nowRunning: string;
   withdraw: string;
   unknownOutcome(name: string): string;
@@ -1313,7 +1312,6 @@ export const zhComposer: ComposerWords = {
   never: "取消",
   unknown: (name) => `未知命令 /${name}`,
   afterTurn: (name) => `这一轮结束后才能 /${name}`,
-  waitsTurn: "这一轮结束后做",
   nowRunning: "正在做",
   withdraw: "撤回",
   unknownOutcome: (name) => `/${name} 不确定做成了没有`,
@@ -1532,7 +1530,6 @@ export const enComposer: ComposerWords = {
   never: "Cancel",
   unknown: (name) => `Unknown command /${name}`,
   afterTurn: (name) => `/${name} can run once this turn ends`,
-  waitsTurn: "Once this turn ends",
   nowRunning: "Running",
   withdraw: "Withdraw",
   unknownOutcome: (name) => `Not sure whether /${name} went through`,

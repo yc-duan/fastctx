@@ -1016,9 +1016,11 @@ button.composer-context[hidden] {
 }
 
 /* A command the node does once the turn ends has no grip to move it by:
-   its words start where a queued line's words do. */
-.control-queue .queue-row {
-  padding-left: var(--space-3);
+   its place is kept, and its words start where a queued line's words do. */
+.queue-spot {
+  flex: none;
+  width: 24px;
+  height: 28px;
 }
 
 .queue-row.unsure .queue-text {
@@ -1061,7 +1063,8 @@ button.composer-context[hidden] {
   }
 
   /* The grip is what a finger moves a line by. */
-  .queue-grip {
+  .queue-row .queue-grip,
+  .queue-row .queue-spot {
     width: 44px;
     height: 44px;
   }
@@ -1124,8 +1127,19 @@ button.composer-context[hidden] {
   font-size: var(--size-text);
 }
 
-.queue-now .glyph {
-  color: var(--accent);
+/* Words sent into the turn under way: as quiet as the rest of the line,
+   its arrow the colour of its word. */
+.queue-acts .queue-now {
+  gap: var(--space-1);
+}
+
+.queue-acts .queue-now:hover {
+  background: none;
+  color: var(--text);
+}
+
+.queue-acts .queue-now .glyph {
+  color: currentColor;
 }
 
 .queue-row.editing {

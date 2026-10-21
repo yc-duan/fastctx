@@ -81,7 +81,7 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
         }
     }
     if let Control::CancelControl { id } = &control {
-        return crate::control_queue::cancel(node, resident, id);
+        return crate::control_queue::cancel(node, resident, id).await;
     }
     if matches!(control, Control::Answer { .. }) {
         return execute(node, resident, control).await;
@@ -90,7 +90,7 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
     let _action = gate.lock().await;
     node.residents.active(resident)?;
     crate::control_queue::drain(node, resident).await?;
-    if let Some(queued) = crate::control_queue::enqueue_if_busy(node, resident, &control)? {
+    if let Some(queued) = crate::control_queue::enqueue_if_busy(node, resident, &control).await? {
         return Ok(queued);
     }
     execute(node, resident, control).await

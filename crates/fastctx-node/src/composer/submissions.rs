@@ -170,7 +170,7 @@ pub async fn turn_ended(
             next.opportunity = Some(turn.into());
         } else {
             next.opportunity = None;
-            if !next.queue.is_empty() {
+            if next.queue.iter().any(|entry| !entry.command) {
                 next.held = Some(format!("turn {how}; queued messages wait for the user"));
             }
         }
@@ -185,6 +185,9 @@ pub(super) fn schedule(node: &Arc<Node>, id: &ResidentId) {
     if !node.effects_ready.load(std::sync::atomic::Ordering::Acquire) {
         return;
     }
+    // A control waiting behind these words may go once they have gone or
+    // are held.
+    crate::control_queue::poke(node, id);
     let (node, id) = (node.clone(), id.clone());
     tokio::spawn(async move {
         if let Err(error) = release(&node, &id).await {
@@ -211,6 +214,12 @@ async fn release(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     let cell = node.composers.cell(id);
     let mut cell = cell.lock().await;
     load(node, id, &mut cell)?;
+    // A command's place whose command is gone goes with it; one still
+    // waiting at the head goes before the words.
+    if commands::settle(node, id, &mut cell)? {
+        crate::control_queue::poke(node, id);
+        return Ok(());
+    }
     let state = cell.as_ref().expect("loaded");
     let now = node.residents.now(id).ok_or_else(|| failure("unknown resident"))?;
     if state.opportunity.is_none()

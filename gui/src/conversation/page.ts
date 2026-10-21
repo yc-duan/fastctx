@@ -976,6 +976,13 @@ export class ConversationPage {
       });
     });
     this.queue.element.replaceWith(this.nodeQueue.element);
+    // From now on the commands the node holds stand among the words.
+    if (this.options.controls) {
+      this.nodeQueue.showControls(this.options.controls.words, (id) => void this.withdraw(id));
+      this.controlQueue?.element.remove();
+      this.controlQueue = null;
+      this.syncControls();
+    }
     if (this.options.attach && this.tray) {
       this.nodeTray = new NodeTray(this.options.attach.words, session, session.draft, say, assistantFiles);
       this.tray.element.replaceWith(this.nodeTray.element);
@@ -2105,7 +2112,8 @@ export class ConversationPage {
     const conversation = this.options.conversation;
     if (snapshot) {
       const held = new Set(snapshot.map((row) => row.id));
-      for (const row of snapshot) if (!this.pendingControls.has(row.id)) this.pendingControls.set(row.id, row);
+      // The node's own rows: its time for each, not this device's.
+      for (const row of snapshot) this.pendingControls.set(row.id, row);
       // One no longer held that no event saw end ended out of sight.
       for (const id of [...this.pendingControls.keys()]) if (!held.has(id) && !conversation.controlState(id)) this.pendingControls.delete(id);
     }
@@ -2118,7 +2126,9 @@ export class ConversationPage {
         this.ended(latest);
       }
     }
-    this.controlQueue?.draw([...this.pendingControls.values()]);
+    const rows = [...this.pendingControls.values()];
+    if (this.nodeQueue) this.nodeQueue.setControls(rows);
+    else this.controlQueue?.draw(rows);
   }
 
   /** Says what came of a control the node did after a turn. */

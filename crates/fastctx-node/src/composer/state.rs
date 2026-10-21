@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use fastctx_types::composer::{Change, Character, CharacterId, Composer, Draft, Mutation, Queued, Target};
+use fastctx_types::composer::{Change, Character, CharacterId, Composer, Draft, Mutation, Queued, QueuedCommand, Target};
 use fastctx_types::ipc::Failure;
 use fastctx_types::residents::{Delivery, Landed};
 use fastctx_types::{MachineName, NoticeId};
@@ -109,6 +109,25 @@ pub struct Entry {
     pub editors: HashSet<String>,
     pub error: Option<String>,
     pub submitted: Option<NoticeId>,
+    /// The place of a command the node took to do once a turn ends
+    /// (`control_queue`), its id the command's: it has no words, and is
+    /// moved among the words but never sent.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub command: bool,
+}
+
+impl Entry {
+    pub fn command(id: NoticeId, from: MachineName) -> Entry {
+        Entry {
+            id,
+            from,
+            document: Document::default(),
+            editors: HashSet::new(),
+            error: None,
+            submitted: None,
+            command: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -179,7 +198,7 @@ impl Stored {
             queue: self
                 .queue
                 .iter()
-                .filter(|entry| !self.going_straight(&entry.id))
+                .filter(|entry| !entry.command && !self.going_straight(&entry.id))
                 .map(|entry| Queued {
                     id: entry.id.clone(),
                     from: entry.from.clone(),
@@ -189,6 +208,7 @@ impl Stored {
                     error: entry.error.clone(),
                 })
                 .collect(),
+            commands: self.commands(),
             unobserved: self
                 .unobserved
                 .iter()
@@ -206,7 +226,31 @@ impl Stored {
         }
     }
 
+    /// Each command's place: after the last of the words shown before it.
+    fn commands(&self) -> Vec<QueuedCommand> {
+        let mut after = None;
+        let mut commands = Vec::new();
+        for entry in &self.queue {
+            if entry.command {
+                commands.push(QueuedCommand { id: entry.id.clone(), after: after.clone() });
+            } else if !self.going_straight(&entry.id) {
+                after = Some(entry.id.clone());
+            }
+        }
+        commands
+    }
+
+    /// Queued words, for what is done to words.
     pub fn entry(&mut self, id: &NoticeId) -> Result<&mut Entry, Failure> {
+        let entry = self.movable(id)?;
+        if entry.command {
+            return Err(Failure::new("that is a waiting command; withdraw it instead"));
+        }
+        Ok(entry)
+    }
+
+    /// Queued words or a command's place, for moving.
+    fn movable(&mut self, id: &NoticeId) -> Result<&mut Entry, Failure> {
         if self.sending.iter().chain(self.pending.iter()).any(|flight| &flight.entry == id) {
             return Err(Failure::new("that queued message is being delivered"));
         }
@@ -258,12 +302,12 @@ impl Stored {
                 Ok(())
             }
             Change::Move { id, before } => {
-                self.entry(id)?;
+                self.movable(id)?;
                 if before.as_ref() == Some(id) {
                     return Ok(());
                 }
                 if let Some(before) = before {
-                    self.entry(before)?;
+                    self.movable(before)?;
                 }
                 let position = self.queue.iter().position(|e| &e.id == id).expect("checked entry");
                 let entry = self.queue.remove(position);

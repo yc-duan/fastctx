@@ -67,11 +67,22 @@ pub struct Queued {
     pub error: Option<String>,
 }
 
+/// A command the node took to do once a turn ends, where it stands among
+/// the words that wait: after `after`, or before them all.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueuedCommand {
+    pub id: NoticeId,
+    pub after: Option<NoticeId>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Composer {
     pub revision: u64,
     pub draft: Draft,
     pub queue: Vec<Queued>,
+    /// Moved like the words, by `Change::Move` with their ids.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<QueuedCommand>,
     /// Submitted messages with no observable outcome; retained separately and never resubmitted.
     pub unobserved: Vec<Queued>,
     /// The reason automatic release has stopped; it is never hidden by reconnecting.
