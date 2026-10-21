@@ -29,6 +29,7 @@ pub async fn here(node: &Node, since: Timestamp, town: Option<TownName>) -> Resu
 pub async fn query(
     node: &Arc<Node>,
     acting: &Acting,
+    works_here: bool,
     since: Timestamp,
     town: Option<TownName>,
 ) -> Result<WorldSince, Failure> {
@@ -56,8 +57,7 @@ pub async fn query(
     let mut answers = Vec::new();
     let mut events = Vec::new();
     let mut undated = Vec::new();
-    // This machine answers only to whom may work on it, as for `who`.
-    let works_here = node.works_here(acting).is_ok();
+    // This machine answers only to whom works on it, as for `who`.
     if works_here && asks_for(&machine) {
         // This machine's own records are filtered as the other machines
         // filter theirs: by whom each conversation works for.

@@ -51,11 +51,8 @@ fn project_notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Optio
         None => 0,
     };
     let now = Heard { user_prompt: None, town: town.clone(), ledger };
-    // A session that may not work on this computer is not told it is here
-    // (`world-network.md`, 一个居民替谁干活).
-    let works_here = node.residents.about(id).is_none_or(|(about, _)| node.works_here(&about.acting).is_ok());
     let notes = match node.residents.heard(id) {
-        None => vec![introduction(&node.world, id, works_here.then_some(&here), town.as_ref())?],
+        None => vec![introduction(&node.world, id, &here, town.as_ref())?],
         // It moved: entering gave it the new town's record.
         Some(heard) if heard.town != town => Vec::new(),
         Some(heard) if heard.ledger >= ledger => return Ok((Vec::new(), None)),
@@ -73,10 +70,10 @@ fn project_notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Optio
 fn introduction(
     world: &WorldDir,
     id: &ResidentId,
-    here: Option<&MachineName>,
+    here: &MachineName,
     town: Option<&TownName>,
 ) -> io::Result<String> {
-    let on = here.map(|here| format!(" on {here}")).unwrap_or_default();
+    let on = format!(" on {here}");
     Ok(match town {
         Some(town) => match super::instructions::text(world, town)? {
             Some(record) => format!("=== you are {id}{on}, working in the project {town} ===\n{record}"),

@@ -99,16 +99,12 @@ pub(crate) async fn outline_here(folders: Vec<String>, within: Duration) -> Vec<
 }
 
 /// What the model is told of `focus`, read now; none when it points to
-/// nothing. `home` is the machine the session's shell is on, if it has one.
-pub(crate) async fn note(
-    node: &Arc<Node>,
-    acting: &Acting,
-    home: Option<&MachineName>,
-    focus: &Focus,
-) -> Option<String> {
+/// nothing. The session's shell is on this machine, whoever it works for.
+pub(crate) async fn note(node: &Arc<Node>, acting: &Acting, focus: &Focus) -> Option<String> {
     if focus.is_empty() {
         return None;
     }
+    let home = node.machine();
     // Every machine is read at once: one slow to answer delays only itself.
     let mut reading = tokio::task::JoinSet::new();
     for (index, machine) in focus.machines.iter().enumerate() {
@@ -127,7 +123,7 @@ pub(crate) async fn note(
     for (machine, outlines) in focus.machines.iter().zip(read) {
         text.push_str("\n\n");
         text.push_str(&machine.machine.to_string());
-        if home.is_some_and(|home| *home == machine.machine.name && machine.machine.hub.is_none()) {
+        if home == machine.machine.name && machine.machine.hub.is_none() {
             text.push_str(" (this machine)");
         }
         if machine.folders.is_empty() {
@@ -183,11 +179,6 @@ async fn read(node: &Arc<Node>, acting: &Acting, machine: &FocusedMachine) -> Re
     }
 }
 
-/// The machine the shell of a session working for `acting` here is on;
-/// none for an agent assisting another account.
-fn home(node: &Node, acting: &Acting) -> Option<MachineName> {
-    node.works_here(acting).is_ok().then(|| node.machine())
-}
 
 /// What a conversation opened with `focus` is told of it from its first
 /// turn on, kept with it: for Codex in the instructions its thread starts
@@ -200,7 +191,7 @@ pub(crate) async fn open(
 ) -> Result<(), Failure> {
     fastctx_platform::ensure_private_dir(directory.path())
         .map_err(|error| Failure::new(format!("making the conversation's directory: {error}")))?;
-    let note = note(node, acting, home(node, acting).as_ref(), focus).await;
+    let note = note(node, acting, focus).await;
     keep(directory, note.as_deref())?;
     let opening = Opening { focus: focus.clone(), note: note.unwrap_or_default() };
     let bytes = serde_json::to_vec_pretty(&opening).map_err(|error| Failure::new(error.to_string()))?;
@@ -273,7 +264,7 @@ pub(crate) async fn changed(
     focus: &Focus,
 ) -> Result<Delivery, Failure> {
     let directory = node.world.conversation(id);
-    let note = note(node, &about.acting, home(node, &about.acting).as_ref(), focus).await;
+    let note = note(node, &about.acting, focus).await;
     keep(&directory, note.as_deref())?;
     if about.host.agent.as_str() == "claude"
         && let Some(session) = &about.session
@@ -314,7 +305,7 @@ pub(crate) async fn compacted(node: &Arc<Node>, id: &ResidentId, item: &str) {
     if opened == about.focus {
         return;
     }
-    let note = note(node, &about.acting, home(node, &about.acting).as_ref(), &about.focus).await;
+    let note = note(node, &about.acting, &about.focus).await;
     if let Err(failure) = keep(&directory, note.as_deref()) {
         node.log.line(format_args!("after {id} compacted: {}", failure.message));
     }

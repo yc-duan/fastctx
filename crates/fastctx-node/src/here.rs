@@ -144,11 +144,10 @@ pub(crate) fn check_named(node: &Node, acting: &Acting, script: &str) -> Result<
     Ok(())
 }
 
-/// Whether `resident`, of this machine, is an agent assisting the account
-/// it works for, which may not work here and so has no here
-/// (`world-run.md`, 这里).
-pub(crate) fn assisting(node: &Node, resident: &ResidentId) -> bool {
-    node.residents.about(resident).is_some_and(|(about, _)| node.works_here(&about.acting).is_err())
+/// Whether `resident` lives on this machine, registered or being born: its
+/// shell is here, whoever it works for (`world-run.md`, 这里).
+pub(crate) fn lives_here(node: &Node, resident: &ResidentId) -> bool {
+    node.residents.about(resident).is_some() || node.births.0.lock().expect("never poisoned").contains_key(resident)
 }
 
 /// Where a run goes, and what runs there: another machine, or here when it
@@ -169,18 +168,6 @@ pub(crate) fn start(node: &Node, request: RunRequest) -> (Option<Written>, RunRe
 pub(crate) fn single_on(script: &str) -> Option<(Written, String)> {
     let (machine, body) = fastctx_hands::run::preread::on_only(script).ok()?;
     Some((Written::parse(&machine).ok()?, body?))
-}
-
-/// Old installations without a guardian orchestrate literal `on`s on the
-/// first named machine. Validate the original source before stripping `on`.
-pub(crate) fn transition(node: &Node, request: RunRequest) -> Result<(Option<Written>, RunRequest), Failure> {
-    let (machine, body) =
-        fastctx_hands::run::preread::on_only(&request.script).map_err(|failure| Failure::not_run(failure.message))?;
-    let machine = Written::parse(&machine).map_err(|error| Failure::not_run(error.to_string()))?;
-    if node.is_here(&machine) {
-        return Err(Failure::not_run(fastctx_hands::assist::here_refused(&machine.to_string())));
-    }
-    Ok((Some(machine), RunRequest { script: body.unwrap_or(request.script), cwd: None, ..request }))
 }
 
 /// Runs `request` for `resident`, of this machine, on `to`, the one machine

@@ -22,14 +22,15 @@ use crate::around::Heard;
 pub async fn stop(
     node: &Arc<Node>,
     acting: &Acting,
+    works_here: bool,
     by: String,
     job: JobId,
     machine: Option<crate::reach::Written>,
 ) -> Result<Reply, Failure> {
     let here = node.machine();
-    // Only whoever may work on this machine stops what runs here; an agent
-    // assisting another account, or someone at a managed machine, may not.
-    let may_here = node.works_here(acting).is_ok() && !crate::managed::is_managed(node);
+    // Only whoever works on this machine stops what runs here
+    // (`around::works_here`); someone at a managed machine may not.
+    let may_here = works_here && !crate::managed::is_managed(node);
     if may_here
         && machine.as_ref().is_none_or(|machine| node.is_here(machine))
         && let Some(record) = here_(node, &job, &by).await?

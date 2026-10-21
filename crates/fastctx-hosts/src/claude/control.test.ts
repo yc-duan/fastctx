@@ -69,7 +69,7 @@ test('uses the public controls and request return types through the official eng
   })
   on('process.spawn', async function* (_, e, next) {
     if (e.argv[1] === 'claude-session-policy') {
-      yield { stream: 'stdout', text: JSON.stringify({ assisting: false, model: null, effort: null }) }
+      yield { stream: 'stdout', text: JSON.stringify({ model: null, effort: null }) }
       return { value: { code: 0, signal: null } }
     }
     if (e.argv[1] === 'claude-control-guard') {

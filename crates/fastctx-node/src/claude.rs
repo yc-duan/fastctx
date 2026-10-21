@@ -254,15 +254,14 @@ pub(crate) fn recover_startups(node: &Arc<Node>) {
 }
 
 /// Publishes what the session's mod waits for before its system prompt and
-/// its first model request: whether it assists another account, and its
-/// model and effort.
+/// its first model request: its model and effort.
 /// It is published as soon as the session is identified, transcript or not:
 /// Claude Code may build the system prompt before the session-start hook
 /// that reports where the transcript is, so waiting for that would hold the
 /// first turn forever. The context fields come from the transcript when one
 /// is known; the mod's rewind and fork read the transcript themselves.
 fn policy(node: &Node, resident: &ResidentId, directory: &Path) -> std::io::Result<()> {
-    let (about, _) = node.residents.about(resident).ok_or_else(|| std::io::Error::other("unknown Claude resident"))?;
+    node.residents.about(resident).ok_or_else(|| std::io::Error::other("unknown Claude resident"))?;
     let options = crate::session_options::read(node, resident).map_err(|error| std::io::Error::other(error.message))?;
     let path = directory.join("policy.json");
     let registration =
@@ -293,7 +292,7 @@ fn policy(node: &Node, resident: &ResidentId, directory: &Path) -> std::io::Resu
             }
         }
     }
-    let value = serde_json::json!({"instance": registration.instance, "assisting": node.works_here(&about.acting).is_err(), "model": options.model,
+    let value = serde_json::json!({"instance": registration.instance, "model": options.model,
         "effort": options.reasoning_effort, "last_uuid": last_uuid, "context_uuids":context_uuids, "context_tail":context_tail});
     let bytes = serde_json::to_vec(&value).map_err(std::io::Error::other)?;
     fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)

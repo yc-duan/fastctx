@@ -27,7 +27,7 @@ function usage(): SessionUsage {
 
 async function* guard(_$: any, _e: any, next: any) {
   if (_e.argv[1] === 'claude-session-policy') {
-    yield { stream: 'stdout' as const, text: JSON.stringify({ assisting: false, model: null, effort: null }) }
+    yield { stream: 'stdout' as const, text: JSON.stringify({ model: null, effort: null }) }
     return { value: { code: 0, signal: null } }
   }
   yield { stream: 'stdout' as const, text: JSON.stringify({ process: { pid: 124, token: 'activation' }, parent: { pid: 123, token: 'fixture-lifetime' } }) + '\n' }

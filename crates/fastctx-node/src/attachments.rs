@@ -1,6 +1,5 @@
 //! User originals remain on the computer that attached them.
 
-pub(crate) mod reading;
 mod references;
 pub(crate) mod sent;
 pub(crate) use references::{inherit, inherit_texts, preview};

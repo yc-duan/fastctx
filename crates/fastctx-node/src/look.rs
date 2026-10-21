@@ -22,17 +22,16 @@ const ACTIONS: usize = 20;
 
 /// Each of `ids`, on this machine and on each machine whoever asks
 /// (`acting`) may look at.
-pub async fn look(node: &Arc<Node>, acting: &Acting, ids: Vec<String>) -> Vec<LookedUp> {
+pub async fn look(node: &Arc<Node>, acting: &Acting, works_here: bool, ids: Vec<String>) -> Vec<LookedUp> {
     let mut looked = Vec::new();
     for id in ids {
         let mut found = Vec::new();
         let mut unasked = Vec::new();
         let mut jobs = Vec::new();
-        // This machine answers for itself only to whoever may work on it,
-        // and to no one at all when it is a managed machine: an agent
-        // assisting another account, or someone at a managed machine, is
-        // shown nothing of what runs here (`world-network.md`, 一个居民替谁干活).
-        if node.works_here(acting).is_ok() && !crate::managed::is_managed(node) {
+        // This machine answers for itself only to whoever works on it
+        // (`around::works_here`), and to no one at all when it is a managed
+        // machine (`world-network.md`, 一个居民替谁干活).
+        if works_here && !crate::managed::is_managed(node) {
             match look_here(node, &id).await {
                 Ok((here, work)) => {
                     found.extend(crate::admission::seen::looked_here(node, acting, here));

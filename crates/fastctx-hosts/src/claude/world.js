@@ -1111,11 +1111,8 @@ export function register(on) {
   on('prompt.section', async ($, e, next) => {
     if (await removed($)) return next(e)
     // A section's name may carry a variant after a colon; its base names it.
-    const name = e.name.split(':')[0]
-    if (name === 'bg-session') return await startedFor($) === null ? next(e) : withoutJobScratch(await next(e))
-    if (!['env_info_simple', 'env_info_static'].includes(name)) return next(e)
-    const context = await session($, registry, await $.session.id())
-    return (await sessionPolicy($, context)).assisting ? { text: null } : next(e)
+    if (e.name.split(':')[0] !== 'bg-session' || await startedFor($) === null) return next(e)
+    return withoutJobScratch(await next(e))
   }).catch(($, e, next) => continueWithoutWorld($, 'prompt.section', e, next))
   on('classic.PostModelSwitch', async ($, e, next) => {
     if (await removed($)) return next(e)

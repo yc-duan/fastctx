@@ -413,11 +413,11 @@ pub(crate) async fn instructions(
 ) -> Result<(String, Heard), Failure> {
     let mut heard =
         heard_now(node, town).map_err(|error| Failure::new(format!("reading the town's ledger: {error}")))?;
-    // An agent assisting another account is given the machines it may work
-    // on, and never the name of the one it runs on (`world-run.md`, 这里).
-    let assisting = node.works_here(acting).is_err().then(|| {
-        let (_, others, groups) = crate::world::grouped_machines(node, acting);
-        fastctx_types::world::listed(&others, &groups, None)
+    // An agent assisting another account is told where its home is
+    // (`world-run.md`, 这里).
+    let assisting = crate::assists::assisting(node, acting).then(|| {
+        let (_, others, _) = crate::world::grouped_machines(node, acting, true);
+        fastctx_hands::assist::assisting(!others.is_empty())
     });
     let words = words(id, &node.machine(), assisting.as_deref(), town, origin, record);
     let prompt = crate::profile::session::prompt(node, acting);
@@ -434,9 +434,8 @@ pub(crate) async fn instructions(
     Ok((text, heard))
 }
 
-/// `assisting` lists the machines it may work on when it is an agent
-/// assisting another account, which may not work on this machine: none of
-/// its scripts starts here, and this machine goes unnamed.
+/// `assisting` is what an agent assisting another account is told besides
+/// (`fastctx_hands::assist`).
 fn words(
     id: &ResidentId,
     machine: &MachineName,
@@ -460,24 +459,14 @@ fn words(
         ),
         Origin::User => "The user started this session from fastctx and talks to you here.".to_string(),
     };
-    // That it has no shell where it lives, for an agent assisting another
-    // account (`world-network.md`, 共享机器与智能体协助).
     // Many users have this one computer only: other machines are spoken of
     // as `run`'s description lists them, never assumed.
     let on =
         "when `run`'s description lists other machines, `on MACHINE` in the script runs a part of it on one of them";
-    let (who, runs, elsewhere) = match assisting {
-        Some(machines) => (
-            "an agent session working on the user's machines, which fastctx connects".to_string(),
-            "Each script is a single `on MACHINE`, which runs it there".to_string(),
-            format!("\n\n{}", fastctx_hands::assist::opening(machines)),
-        ),
-        None => {
-            (format!("an agent session on {machine}"), format!("It runs bash on this machine; {on}"), String::new())
-        }
-    };
+    let runs = format!("It runs bash on this machine; {on}");
+    let assisting = assisting.map(|assisting| format!("\n\n{assisting}")).unwrap_or_default();
     format!(
-        "You are {id}, {who}.{elsewhere}{place}\n\n{working}\n\nWork through the `run` tool; it is your only shell, editor and image viewer. {runs}; `fastctx view` shows files, images and documents, and `edit` and `write` change files. Its description says how. Paths are absolute, each the path on its own machine, written like C:/Users/me on Windows. A script still running when its call stops waiting (15 seconds by default) goes on by itself in the background; when it ends you are told automatically, with its exit status and last lines, while you work or after you end your turn."
+        "You are {id}, an agent session on {machine}.{assisting}{place}\n\n{working}\n\nWork through the `run` tool; it is your only shell, editor and image viewer. {runs}; `fastctx view` shows files, images and documents, and `edit` and `write` change files. Its description says how. Paths are absolute, each the path on its own machine, written like C:/Users/me on Windows. A script still running when its call stops waiting (15 seconds by default) goes on by itself in the background; when it ends you are told automatically, with its exit status and last lines, while you work or after you end your turn."
     )
 }
 

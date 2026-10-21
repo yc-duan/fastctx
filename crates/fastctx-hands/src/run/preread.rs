@@ -11,17 +11,12 @@ pub fn machines_named(script: &str) -> Vec<(String, usize)> {
     super::heredoc::on_machines(script)
 }
 
-/// A script containing only literal `on` commands. The first machine can
-/// orchestrate the whole script; a single command also supplies its body.
+/// A script containing only literal `on` commands: the first machine named,
+/// and the body when it is a single command, which then goes there whole.
 /// No expansion, local filesystem access or local bash is involved in
 /// recognizing it: the machine that runs what is sent checks it there.
 pub fn on_only(script: &str) -> Result<(String, Option<String>), Failure> {
     super::heredoc::on_only(script)
-}
-
-/// A literal attachment view, without executing or expanding any source.
-pub fn attachment_view(source: &str) -> Option<Vec<String>> {
-    super::heredoc::attachment_view(source)
 }
 
 /// Checks source with the machine's own bash and checks here-document hazards.

@@ -1335,12 +1335,12 @@ impl fastctx_net::link::Node for Handler {
 pub fn grouped_machines(
     node: &Node,
     acting: &Acting,
+    here_too: bool,
 ) -> (MachineName, Vec<String>, Vec<fastctx_types::world::MachineGroup>) {
     let here = node.machine();
     let mut others: Vec<String> = Vec::new();
     let mut groups: Vec<fastctx_types::world::MachineGroup> = Vec::new();
     let mut keys = Vec::new();
-    let here_too = node.works_here(acting).is_ok();
     for link in node.links() {
         let view = link.view();
         let accounts = node.accounts_on(&link, acting);

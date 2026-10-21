@@ -52,6 +52,7 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
             reply: Ok(Reply::Machines {
                 groups: vec![],
                 here: Some("fixture".to_string()),
+                assisting: false,
                 others: vec![],
                 collab: None,
             }),
@@ -67,7 +68,13 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
         reply(
             &mut connection,
             next.0,
-            Reply::Machines { here: Some("fixture".to_string()), others: vec![], groups: vec![], collab: None },
+            Reply::Machines {
+                here: Some("fixture".to_string()),
+                assisting: false,
+                others: vec![],
+                groups: vec![],
+                collab: None,
+            },
         )
         .await;
         answered.send(()).unwrap();

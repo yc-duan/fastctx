@@ -851,6 +851,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let caller = caller::of(node, peer)?;
             let town = town.or_else(|| caller.town(node));
             let acting = crate::around::acting_of(node, &caller);
+            let here_too = crate::around::works_here(node, &caller, &acting);
             let you = match caller {
                 caller::Caller::Resident(address) => Some(address),
                 _ => None,
@@ -869,21 +870,26 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                     _ => None,
                 },
             };
-            let mut reply = who(node, &acting, all, town, since).await?;
+            let mut reply = who(node, &acting, here_too, all, town, since).await?;
             reply.you = you;
             Ok(Reply::Who(reply))
         }
         Call::Since { since, town } => {
-            let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
-            crate::since::query(node, &acting, since, town).await.map(Reply::Since)
+            let caller = caller::of(node, peer)?;
+            let acting = crate::around::acting_of(node, &caller);
+            let here_too = crate::around::works_here(node, &caller, &acting);
+            crate::since::query(node, &acting, here_too, since, town).await.map(Reply::Since)
         }
         Call::Look { ids } => {
-            let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
-            Ok(Reply::Looked { looked: crate::look::look(node, &acting, ids).await })
+            let caller = caller::of(node, peer)?;
+            let acting = crate::around::acting_of(node, &caller);
+            let here_too = crate::around::works_here(node, &caller, &acting);
+            Ok(Reply::Looked { looked: crate::look::look(node, &acting, here_too, ids).await })
         }
         Call::StopJob { job, machine, hub } => {
             let caller = caller::of(node, peer)?;
             let acting = crate::around::acting_of(node, &caller);
+            let here_too = crate::around::works_here(node, &caller, &acting);
             let by = match caller {
                 Caller::Resident(address) => address.tag(),
                 Caller::User => fastctx_types::residents::STOPPED_BY_USER.to_string(),
@@ -891,7 +897,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 Caller::Page(page) => format!("the page {}", page.page),
             };
             let machine = machine.map(|name| crate::reach::Written { name, hub });
-            crate::stop::stop(node, &acting, by, job, machine).await
+            crate::stop::stop(node, &acting, here_too, by, job, machine).await
         }
         Call::Talk { to, machine, text, attachments, files_on, id } => {
             users_voice(node, peer)?;
@@ -1296,8 +1302,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::Reopened { .. } => Err(Failure::new("a way opening is waited for on a connection of its own")),
         Call::Nodes => {
-            let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
-            nodes(node, &acting).await.map(Reply::Nodes)
+            let caller = caller::of(node, peer)?;
+            let acting = crate::around::acting_of(node, &caller);
+            let here_too = crate::around::works_here(node, &caller, &acting);
+            nodes(node, &acting, here_too).await.map(Reply::Nodes)
         }
         Call::Machines { resident, login, thread } => {
             let resident =
@@ -1382,33 +1390,7 @@ async fn run(
     call_id: Option<&str>,
 ) -> Result<RunReply, Failure> {
     request.call_id = call_id.map(str::to_owned);
-    if crate::here::assisting(node, &resident)
-        && target.as_ref().is_none_or(|target| node.is_me(target))
-        && let Some(result) = crate::attachments::reading::run(node, &resident, &request).await
-    {
-        if let Err(error) = &result
-            && let Some(id) = call_id
-        {
-            crate::run_facts::record_failure(node, &resident, id, &error.message)
-                .map_err(|error| Failure::new(format!("recording attachment read: {error}")))?;
-        }
-        return result;
-    }
-    let dispatched = if crate::here::assisting(node, &resident) {
-        crate::here::transition(node, request)
-    } else {
-        Ok(crate::here::start(node, request))
-    };
-    let (goes_to, request) = match dispatched {
-        Ok(dispatched) => dispatched,
-        Err(error) => {
-            if let Some(id) = call_id {
-                crate::run_facts::record_failure(node, &resident, id, &error.message)
-                    .map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
-            }
-            return Err(error);
-        }
-    };
+    let (goes_to, request) = crate::here::start(node, request);
     let machine = goes_to.as_ref().map(|place| place.name.clone()).unwrap_or_else(|| node.machine());
     if let Some(id) = call_id {
         crate::run_facts::begin_for(node, &resident, id, machine)
@@ -1445,14 +1427,6 @@ async fn run_started(
     let reply = match (goes_to, request) {
         (Some(goes_to), request) => crate::here::run(node, &resident, town.clone(), request, &goes_to).await?,
         (None, request) => {
-            // An agent assisting another account may not work where it runs,
-            // so nothing starts here, and the machine goes unnamed
-            // (`world-network.md`, 共享机器与智能体协助).
-            if let Some((about, _)) = node.residents.about(&resident)
-                && node.works_here(&about.acting).is_err()
-            {
-                return Err(Failure::not_run(assisting_refusal(node, &script)));
-            }
             let owner = Address { machine: here.clone(), resident: resident.clone() };
             node.jobs.run(node, owner.into(), town.clone(), request, None).await?.0
         }
@@ -1471,16 +1445,6 @@ async fn run_started(
     blocking("recording the action", move || crate::residents::record_action(&world, &resident, &action)).await?;
     node.shown_changed();
     Ok(reply)
-}
-
-/// Why a script of an agent assisting another account did not run: it
-/// named the computer the agent runs on, which it may not work on, or it
-/// was not literal `on`s alone (`world-guest-accounts.md`, 还没装上看护的机器).
-fn assisting_refusal(node: &Node, script: &str) -> String {
-    match crate::here::single_on(script) {
-        Some((machine, _)) if node.is_here(&machine) => fastctx_hands::assist::here_refused(&machine.to_string()),
-        _ => fastctx_hands::assist::SCRIPT_REFUSED.to_string(),
-    }
 }
 
 /// Writes files for a resident of this machine, from a writing tool a
@@ -1549,6 +1513,7 @@ pub async fn who_here(
 async fn who(
     node: &Arc<Node>,
     acting: &fastctx_types::access::Acting,
+    works_here: bool,
     all: bool,
     town: Option<TownName>,
     since: Option<jiff::Timestamp>,
@@ -1566,10 +1531,9 @@ async fn who(
     };
     let asks_for = |machine: &MachineName| asked.as_ref().is_none_or(|asked| asked.contains(machine));
     let mut machines = Vec::new();
-    // This computer answers only to whom may work on it: an agent assisting
-    // an account that may not is not shown it, not even by name
-    // (`world-network.md`, 一个居民替谁干活).
-    let works_here = node.works_here(acting).is_ok();
+    // This computer answers only to whom works on it (`around::works_here`):
+    // anyone else is not shown it, not even by name (`world-network.md`,
+    // 一个居民替谁干活).
     if works_here && asks_for(&here) {
         machines.push(match who_here(node, all, town.clone(), since).await {
             Ok(reply) => {
@@ -1605,25 +1569,31 @@ fn machines(
     login: Option<&fastctx_types::collab::Caller>,
 ) -> Result<Reply, Failure> {
     let acting = resident.and_then(|resident| crate::here::acting(node, resident)).unwrap_or_default();
-    let (here, others, groups) = crate::world::grouped_machines(node, &acting);
-    // An agent assisting another account has no shell anywhere, and the
-    // machine it runs on is not one it may work on, so it goes unnamed.
-    let here = node.works_here(&acting).is_ok().then(|| here.to_string());
+    // A session living here has its shell here, one assisting another
+    // account among them, which is also told so.
+    let lives_here = resident.is_some_and(|resident| crate::here::lives_here(node, resident));
+    let here_too = lives_here || node.works_here(&acting).is_ok();
+    let (here, others, groups) = crate::world::grouped_machines(node, &acting, here_too);
+    let here = here_too.then(|| here.to_string());
+    let assisting = lives_here && crate::assists::assisting(node, &acting);
     let collab = crate::collab::choices(node, resident, login)?.map(|choices| choices.offered);
-    Ok(Reply::Machines { here, others, groups, collab })
+    Ok(Reply::Machines { here, assisting, others, groups, collab })
 }
 
 /// `fastctx nodes`: this computer, and hub by hub the machines whoever asks
 /// may work on from here, each asked what it is like when it is online, for
 /// one of the accounts it works for. A session sees what it can reach and
 /// no more: a hub where it works for no account goes unnamed, and so does
-/// this computer for an agent assisting an account that may not work on it
-/// (`world-network.md`, 一个居民替谁干活).
-async fn nodes(node: &Arc<Node>, acting: &fastctx_types::access::Acting) -> Result<NodesReply, Failure> {
+/// this computer for whoever does not work on it (`around::works_here`,
+/// `world-network.md`, 一个居民替谁干活).
+async fn nodes(
+    node: &Arc<Node>,
+    acting: &fastctx_types::access::Acting,
+    works_here: bool,
+) -> Result<NodesReply, Failure> {
     use fastctx_net::around::{self, Heard, Reachable};
 
     let here = node.machine();
-    let works_here = node.works_here(acting).is_ok();
     let links = node
         .links()
         .into_iter()

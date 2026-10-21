@@ -263,7 +263,7 @@ mod tests {
         let first = NoticeId::try_from("first").unwrap();
         let second = NoticeId::try_from("second").unwrap();
         let words = "first message\n".to_string() + &"😀".repeat(40_000);
-        let next = "second message\n".to_string() + &"中".repeat(70_000);
+        let next = "second message\n".to_string() + &"中".repeat(40_000);
         let ids = assemble(
             &world,
             &mut answer,

@@ -14,6 +14,13 @@ use fastctx_types::residents::About;
 
 use crate::Node;
 
+/// Whether a session here working for `acting` assists another account
+/// with one of this computer's logins: the accounts it works for may not
+/// work here themselves.
+pub(crate) fn assisting(node: &Node, acting: &Acting) -> bool {
+    node.works_here(acting).is_err()
+}
+
 /// Whether the session `about` may take a new turn now. One that works for
 /// accounts needs one of them logged in here or allowed to use its login
 /// here, as this machine's view of their hub says at this moment; an

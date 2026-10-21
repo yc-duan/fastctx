@@ -7,9 +7,7 @@
 use fastctx_types::ipc::Failure;
 
 mod on_only;
-mod view_only;
 pub(super) use on_only::plan as on_only;
-pub(super) use view_only::arguments as attachment_view;
 
 #[derive(Default)]
 struct Command {

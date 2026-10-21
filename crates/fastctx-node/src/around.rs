@@ -89,3 +89,13 @@ pub(crate) fn acting_of(node: &Node, caller: &crate::town::caller::Caller) -> Ac
         _ => Acting::Here,
     }
 }
+
+/// Whether whoever makes a local call works on this computer: a session
+/// living here does, whoever it works for, a login lent to another account
+/// among them, as its owner's own sessions do (`world-network.md`,
+/// 共享机器与智能体协助); anyone else as the accounts it works for may.
+pub(crate) fn works_here(node: &Node, caller: &crate::town::caller::Caller, acting: &Acting) -> bool {
+    let lives_here = matches!(caller, crate::town::caller::Caller::Resident(address)
+        if node.is_me(&address.machine) && crate::here::lives_here(node, &address.resident));
+    lives_here || node.works_here(acting).is_ok()
+}

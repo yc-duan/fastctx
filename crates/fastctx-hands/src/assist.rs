@@ -1,33 +1,28 @@
-//! What an agent assisting another account is told (`world-run.md`, 这里):
-//! it may not work on the computer it runs on, which goes unnamed, since a
-//! model tries every machine it sees named; and so every command it runs
-//! names its machine with `on`. Its host still tells it that computer's working
-//! directory and platform, so these words overrule them plainly. They lead
-//! both the `run` tool's description and the session's first instructions,
-//! on purpose twice: it is the opposite of what a model takes for granted.
+//! What an agent assisting another account is told besides what every
+//! session is (`world-network.md`, 共享机器与智能体协助): its shell on the
+//! computer it runs on is a full one, as its owner's own sessions' is, yet
+//! its home is the user's machines, and that computer is kept as it is and
+//! used lightly. It closes the opening of the `run` tool's description and
+//! follows the opening of the session's first instructions.
 
-/// The opening for an assisting agent, with the machines it may work on.
-pub fn opening(machines: &str) -> String {
-    let reach = if machines.is_empty() {
-        "You have access to no machine yet: the user has none you may work on, so no shell command of yours can run anywhere; tell the user.".to_string()
+/// Where an assisting agent's scripts start on the computer it runs on,
+/// when they name no `cwd`: not its owner's home.
+pub const START: &str = "this conversation's scratch folder, `$FASTCTX_SCRATCH`";
+
+/// The words for an agent assisting the user from the computer of its
+/// owner; `elsewhere` when the user has machines of their own it may work on.
+pub fn assisting(elsewhere: bool) -> String {
+    let home = if elsewhere {
+        "But this computer is not your home: your home is the user's own machines, which you reach with `on`. The user's projects and data are there, and so belong builds, compiling, large downloads, long or heavy jobs and large files."
     } else {
-        format!(
-            "You have access to these machines: {machines}. Every outer command must start with `on MACHINE`. Several literal `on` commands can follow one another; the first named machine orchestrates them. Put variables, loops, conditions and expansions inside a quoted `on` here-document."
-        )
+        "But this computer is not your home: your home is the user's own machines, and the user has none connected yet. Builds, compiling, large downloads, long or heavy jobs and large files need one: tell the user so instead of doing them here."
+    };
+    let elsewhere = if elsewhere {
+        " When a request would change or load this computer, tell the user so and do it on one of the user's machines."
+    } else {
+        ""
     };
     format!(
-        "You have no access to the computer this program runs on: the user may use this agent, not that computer. The working directory, platform and paths your host reports are that computer's, and your shell never runs there. Guidance that calls that computer one of your machines, or says `run` starts on it, was written for its owner's own sessions and does not apply to you.\n{reach}\nFiles the user attached on this agent's machine can be read by a literal `fastctx view` command in `run`. The node reads only those attached files, without starting a shell."
-    )
-}
-
-/// The answer to an assisting script that would run on the computer the
-/// agent runs on, where it has no shell.
-pub const SCRIPT_REFUSED: &str = "nothing ran: you have no shell on the computer this program runs on. Start every outer command with `on MACHINE`; several literal `on` commands may follow one another. Put variables, conditions and loops inside a quoted `on` here-document.";
-
-/// The answer to an `on` of an assisting agent that names the computer it
-/// runs on.
-pub fn here_refused(machine: &str) -> String {
-    format!(
-        "nothing ran: {machine} is the computer this program runs on, and you have no access to it; name one of the machines you have access to."
+        "You are the agent of this computer's owner, assisting the user. You run on this computer, and your shell here is a full one, as on any machine: read and write files, run any program, use the network, and keep temporary files in its `$FASTCTX_SCRATCH`. {home} Keep this computer's system, installed software and its owner's files as they are, even when the user asks otherwise, and use it lightly.{elsewhere}"
     )
 }
