@@ -5,7 +5,7 @@ use crate::admission::seen::Looker;
 use fastctx_types::ResidentId;
 use fastctx_types::access::{Acting, HubAccount};
 use fastctx_types::usage_calls::{
-    CallCursor, CallOutcome, CallPhase, CallSource, CallTiming, UsageCall, UsageCallsPage, UsageCallsQuery,
+    CALLS_PAGE, CallCursor, CallOutcome, CallPhase, CallSource, CallTiming, UsageCall, UsageCallsPage, UsageCallsQuery,
 };
 use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
@@ -43,9 +43,16 @@ pub(crate) fn calls(
     query: &UsageCallsQuery,
 ) -> io::Result<UsageCallsPage> {
     let path = super::ledger(node, agent, dir);
-    let since = Timestamp::now() - SignedDuration::from_hours(24 * DETAIL_DAYS);
-    // An entry is filed under its own day, so a later page skips the days after its cursor.
-    let last = query.before.as_ref().map(|before| before.at.strftime("%Y-%m-%d").to_string());
+    let kept = Timestamp::now() - SignedDuration::from_hours(24 * DETAIL_DAYS);
+    let since = query.from.map_or(kept, |from| from.max(kept));
+    // An entry is filed under its own day, so the days after the cursor, or
+    // after the end of the range asked for, are not read.
+    let day = |at: &Timestamp| at.strftime("%Y-%m-%d").to_string();
+    let last = [query.before.as_ref().map(|before| day(&before.at)), query.until.as_ref().map(day)]
+        .into_iter()
+        .flatten()
+        .min();
+    let numbered = query.page.is_some();
     super::with_book(node, &path, |book| {
         let mut rows = Vec::new();
         let balances = book.balances();
@@ -58,7 +65,7 @@ pub(crate) fn calls(
             let mut entries = ledger::read(&file)?;
             entries.extend(balances.iter().filter(|row| ledger::day_file(&path, row.at()) == file).cloned());
             for entry in entries {
-                if entry.usage_at() < since {
+                if entry.usage_at() < since || query.until.is_some_and(|until| entry.usage_at() >= until) {
                     continue;
                 }
                 // Row contents remain stable when expired neighbors are folded away.
@@ -90,7 +97,7 @@ pub(crate) fn calls(
                         turn: if owns { detail.turn } else { None },
                     };
                     // Filtering after redaction cannot be used to discover another conversation.
-                    if query.person.as_ref().is_some_and(|p| p.account != row.who)
+                    if query.person.as_ref().is_some_and(|p| p.account != row.who && !(p.with_machine && row.who.is_none()))
                         || query.model.as_ref().is_some_and(|m| row.model.as_ref() != Some(m))
                         || query.source.is_some_and(|s| s != row.source)
                         || query.outcome.is_some_and(|s| s != row.outcome)
@@ -104,13 +111,23 @@ pub(crate) fn calls(
                 }
             }
             rows.sort_by(|a, b| b.cursor.cmp(&a.cursor));
-            if rows.len() > 100 {
+            // Paged by a cursor, the days older than a page's worth are left unread.
+            if !numbered && rows.len() > CALLS_PAGE {
                 break;
             }
         }
-        let more = rows.len() > 100;
-        rows.truncate(100);
+        if let Some(page) = query.page {
+            let total = rows.len() as u64;
+            let start = (page as usize).saturating_mul(CALLS_PAGE).min(rows.len());
+            let mut rows = rows.split_off(start);
+            let more = rows.len() > CALLS_PAGE;
+            rows.truncate(CALLS_PAGE);
+            let next = more.then(|| rows.last().expect("full page").cursor.clone());
+            return Ok(UsageCallsPage { rows, next, total: Some(total) });
+        }
+        let more = rows.len() > CALLS_PAGE;
+        rows.truncate(CALLS_PAGE);
         let next = more.then(|| rows.last().expect("full page").cursor.clone());
-        Ok(UsageCallsPage { rows, next })
+        Ok(UsageCallsPage { rows, next, total: None })
     })
 }

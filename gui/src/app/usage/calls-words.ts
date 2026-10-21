@@ -3,6 +3,8 @@
 // carries and the sentences behind them.
 
 import { effortLabel } from "../../conversation/effort-slider";
+import { enWhen, zhWhen } from "../when-words";
+import type { RangeWords } from "./calls-range";
 import type { CallOutcome, CallPhase, CallSource } from "../../world/usage-calls";
 
 export interface CallsWords {
@@ -29,8 +31,16 @@ export interface CallsWords {
   kept: string;
   none: string;
   noneFiltered: string;
-  /** The pager under the rows. */
+  /** The days asked for: the filter, what it can be set to, the days picked. */
+  when: string;
+  whens: Record<"all" | "today" | "yesterday" | "week" | "days", string>;
+  range: RangeWords;
+  /** The pager under the rows: how many there are, a page, this page of
+   *  how many, going to any page. */
+  count(total: number): string;
   page(page: number): string;
+  pageOf(page: number, pages: number): string;
+  pages: string;
   newer: string;
   older: string;
   newest: string;
@@ -53,6 +63,9 @@ export interface CallsWords {
 }
 
 const zhWeekday = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+
+const zhDay = (at: Date) => `${at.getMonth() + 1}月${at.getDate()}日`;
+const enDay = (at: Date) => at.toLocaleDateString("en", { month: "short", day: "numeric" });
 
 const two = (value: number) => String(value).padStart(2, "0");
 
@@ -85,7 +98,23 @@ export const zhCalls: CallsWords = {
   kept: "逐个请求只留最近 30 天",
   none: "最近 30 天没有请求",
   noneFiltered: "没有这样的请求",
+  when: "时间",
+  whens: { all: "最近 30 天", today: "今天", yesterday: "昨天", week: "最近 7 天", days: "选日子…" },
+  range: {
+    title: "选日子",
+    month: (month) => `${month + 1}月`,
+    weekdays: zhWhen.weekdays,
+    first: "点开始的那天",
+    last: "再点结束的那天",
+    span: (from, to) => (from.getTime() === to.getTime() ? zhDay(from) : `${zhDay(from)} – ${zhDay(to)}`),
+    clear: "不限",
+    done: "好",
+    close: "关闭",
+  },
+  count: (total) => `${total.toLocaleString("en-US")} 次请求`,
   page: (page) => `第 ${page} 页`,
+  pageOf: (page, pages) => `${page} / ${pages}`,
+  pages: "跳到",
   newer: "上一页",
   older: "下一页",
   newest: "回到最新",
@@ -126,7 +155,23 @@ export const enCalls: CallsWords = {
   kept: "Requests are kept one by one for 30 days",
   none: "No requests in the last 30 days",
   noneFiltered: "No such requests",
+  when: "Time",
+  whens: { all: "Last 30 days", today: "Today", yesterday: "Yesterday", week: "Last 7 days", days: "Choose days…" },
+  range: {
+    title: "Choose days",
+    month: (month) => new Date(2000, month, 1).toLocaleDateString("en", { month: "short" }),
+    weekdays: enWhen.weekdays,
+    first: "Press the first day",
+    last: "then the last",
+    span: (from, to) => (from.getTime() === to.getTime() ? enDay(from) : `${enDay(from)} – ${enDay(to)}`),
+    clear: "Any day",
+    done: "Done",
+    close: "Close",
+  },
+  count: (total) => `${total.toLocaleString("en-US")} ${total === 1 ? "request" : "requests"}`,
   page: (page) => `Page ${page}`,
+  pageOf: (page, pages) => `${page} / ${pages}`,
+  pages: "Go to page",
   newer: "Previous page",
   older: "Next page",
   newest: "Back to newest",

@@ -22,14 +22,24 @@ export async function specimenCalls(machine: string, agent: string, dir: string,
   if (!rows) made.set(key, (rows = make(machine, agent, dir, at)));
   const all = await rows;
   const person = query.person;
+  const since = query.from ? Date.parse(query.from) : -Infinity;
+  const until = query.until ? Date.parse(query.until) : Infinity;
   const matching = all.filter(
     (row) =>
-      (!person || (person.account === null ? row.who === null : row.who?.hub === person.account.hub && row.who.account === person.account.account)) &&
+      (!person ||
+        (person.account === null ? row.who === null : (row.who?.hub === person.account.hub && row.who.account === person.account.account) || (!!person.with_machine && row.who === null))) &&
+      Date.parse(row.timing.ended_at) >= since &&
+      Date.parse(row.timing.ended_at) < until &&
       (!query.model || row.model === query.model) &&
       (!query.source || row.source === query.source) &&
       (!query.outcome || row.outcome === query.outcome) &&
       (!query.conversation || (row.conversation === query.conversation && (!query.turn || row.turn === query.turn))),
   );
+  if (query.page != null) {
+    const page = matching.slice(query.page * PAGE, (query.page + 1) * PAGE);
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    return { rows: page, next: (query.page + 1) * PAGE < matching.length ? page[page.length - 1]!.cursor : null, total: matching.length };
+  }
   const start = query.before ? matching.findIndex((row) => Number(row.cursor.key) > Number(query.before!.key)) : 0;
   const from = start < 0 ? matching.length : start;
   const page = matching.slice(from, from + PAGE);

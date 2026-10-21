@@ -361,6 +361,54 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* How many requests there are, quiet at the foot's start. */
+.uc-count {
+  color: var(--text-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Every page by its number in the pill: this one washed, the gap between
+   the shown a press for any. On a phone, this page of how many instead. */
+.uc-numbers {
+  display: inline-flex;
+  align-items: center;
+}
+
+.uc-num {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.uc-num:hover {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.uc-num.on,
+.uc-num.on:hover {
+  color: var(--text-strong);
+  background: var(--accent-wash);
+}
+
+.uc-gap {
+  color: var(--text-3);
+}
+
+.uc-of {
+  display: none;
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  color: var(--text-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Narrower, the seconds and the open mark go; a phone reads one line a
    request: when, whose ink, the model, its bar, and what it cost, or its
    tokens where nothing is costed; the rest a long press away. The page
@@ -411,6 +459,7 @@
   .uc-took,
   .uc-open,
   .uc-tag,
+  .uc-effort,
   .uc-rows.dollars .uc-tokens {
     display: none;
   }
@@ -443,4 +492,58 @@
     width: 44px;
     height: 44px;
   }
+
+  .uc-numbers {
+    display: none;
+  }
+
+  .uc-of {
+    display: block;
+    min-height: 44px;
+    padding: 0 var(--space-3);
+  }
+}
+
+/* Days picked on the months kept: the first and the last washed and
+   strong, the days between washed lighter as one stretch. */
+.ucr-sheet .sheet-body {
+  width: min(400px, 100vw - 32px);
+}
+
+.ucr-days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-auto-rows: 40px;
+  gap: 2px;
+}
+
+.when-day.ucr-first {
+  color: var(--text);
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .ucr-sheet .sheet-body {
+    width: 100%;
+  }
+
+  .ucr-days {
+    grid-auto-rows: 44px;
+  }
+}
+
+.when-day.ucr-in,
+.when-day.ucr-in:hover {
+  color: var(--text);
+  background: var(--fill-strong);
+}
+
+.ucr-said {
+  margin: var(--space-3) 0 0;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.ucr-wait {
+  color: var(--text-3);
 }

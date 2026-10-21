@@ -22371,13 +22371,19 @@
         "agent": "claude",
         "dir": "/home/me/.claude",
         "query": {
-          "person": null,
+          "person": {
+            "account": null,
+            "with_machine": false
+          },
           "model": null,
           "source": "agent",
           "outcome": null,
           "conversation": null,
           "turn": null,
-          "before": null
+          "before": null,
+          "from": "2026-10-20T12:00:00Z",
+          "until": null,
+          "page": 2
         }
       }
     ],
@@ -22441,7 +22447,8 @@
         "next": {
           "at": "2026-10-20T12:00:00Z",
           "key": "next-page"
-        }
+        },
+        "total": 240
       }
     ],
     "remote_calls": [
@@ -22450,13 +22457,19 @@
         "agent": "claude",
         "dir": "/home/me/.claude",
         "query": {
-          "person": null,
+          "person": {
+            "account": null,
+            "with_machine": false
+          },
           "model": null,
           "source": "agent",
           "outcome": null,
           "conversation": null,
           "turn": null,
-          "before": null
+          "before": null,
+          "from": "2026-10-20T12:00:00Z",
+          "until": null,
+          "page": 2
         }
       }
     ],
@@ -22520,7 +22533,8 @@
         "next": {
           "at": "2026-10-20T12:00:00Z",
           "key": "next-page"
-        }
+        },
+        "total": 240
       }
     ]
   }

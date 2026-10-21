@@ -22,8 +22,15 @@ pub fn fixtures() -> Fixtures {
         turn: Some("turn-one".into()),
     };
     let private = UsageCall { conversation: None, turn: None, ..row.clone() };
-    let page = UsageCallsPage { rows: vec![row, private], next: Some(CallCursor { at, key: "next-page".into() }) };
-    let query = UsageCallsQuery { source: Some(CallSource::Agent), ..Default::default() };
+    let page =
+        UsageCallsPage { rows: vec![row, private], next: Some(CallCursor { at, key: "next-page".into() }), total: Some(240) };
+    let query = UsageCallsQuery {
+        source: Some(CallSource::Agent),
+        person: Some(CallPerson { account: None, with_machine: false }),
+        from: Some(at),
+        page: Some(2),
+        ..Default::default()
+    };
     let machine = "laptop".parse().unwrap();
     let agent: fastctx_types::AgentName = "claude".parse().unwrap();
     let dir = std::path::PathBuf::from("/home/me/.claude");

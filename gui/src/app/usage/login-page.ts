@@ -583,7 +583,7 @@ export class LoginUsagePage implements Page {
     // Where the page counts the machine's own sessions as its owner's, the
     // machine cannot narrow to both at once: the rows are narrowed here.
     const local = !!only && name(null).key === only.key;
-    const person = mine || !only ? undefined : { key: only.key, account: local ? null : { account: accountOf(only.key) } };
+    const person = mine || !only ? undefined : { key: only.key, account: { account: accountOf(only.key), ...(local ? { with_machine: true } : {}) }, local };
     return { who, several: !mine && usage.people.length > 1, person, models: usage.week.models.map((one) => one.model), now };
   }
 

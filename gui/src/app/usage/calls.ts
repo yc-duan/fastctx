@@ -5,18 +5,21 @@
 // and the rest is said while the pointer rests on it. A row of the reader's
 // own conversation opens that turn. The rows are those the login's machine
 // lets the reader see, already narrowed and with others' conversations
-// taken out there, a hundred to a page: only the page read is drawn, the
-// pager under it steps to older pages and back, and the first page is read
-// again each minute while it is open.
+// taken out there, a hundred to a page, over the days asked for: only the
+// page read is drawn, the pager under it goes to any page by its number,
+// and the first page is read again each minute while it is open. A machine
+// of an older Fastctx counts no pages; its pager steps to older pages and
+// back.
 
 import { glyph } from "../../conversation/glyphs";
 import { escape } from "../../conversation/prose";
 import { modelName } from "../../conversation/view";
 import type { HubAccount } from "../../world/accounts";
-import type { CallCursor, CallOutcome, CallSource, UsageCall, UsageCallsPage, UsageCallsQuery } from "../../world/usage-calls";
+import type { CallCursor, CallOutcome, CallPerson, CallSource, UsageCall, UsageCallsPage, UsageCallsQuery } from "../../world/usage-calls";
 import type { ResidentId } from "../../world/wire";
 import type { ActsMenu, MenuEntry } from "../acts-menu";
 import { detailOf } from "../problem";
+import { RangeSheet, addDays, midnight, type DaySpan } from "./calls-range";
 import type { CallsWords } from "./calls-words";
 import type { UsageWords } from "./words";
 
@@ -41,15 +44,21 @@ export interface CallsContext {
   who(account: HubAccount | null): { key: string; name: string; ink: string };
   /** More than one used the login: rows say whose they are. */
   several: boolean;
-  /** The person the page is narrowed to, undefined for everyone; by the
-   *  account the machine narrows to, or, where the page counts the
-   *  machine's own sessions as its owner's too, by their key here. */
-  person: { key: string; account: { account: HubAccount | null } | null } | undefined;
+  /** The person the page is narrowed to, undefined for everyone, as the
+   *  machine narrows to them; `local` where the page counts the machine's
+   *  own sessions as its owner's too, which an older Fastctx cannot narrow
+   *  to, so its rows are narrowed here. */
+  person: { key: string; account: CallPerson; local: boolean } | undefined;
   models: string[];
   now: number;
 }
 
-type Filters = { model: string | null; source: CallSource | null; outcome: CallOutcome | null };
+/** The days asked for: all those kept, a few named, or some picked. */
+type When = "all" | "today" | "yesterday" | "week" | DaySpan;
+type Filters = { model: string | null; source: CallSource | null; outcome: CallOutcome | null; when: When };
+
+/** The days a login's machine keeps its requests. */
+const KEPT_DAYS = 30;
 
 /** The rows a page holds, as the login's machine answers them. */
 const PAGE = 100;
@@ -68,11 +77,16 @@ export class CallsList {
   private readonly list: HTMLElement;
   private readonly foot: HTMLElement;
   private context: CallsContext | null = null;
-  private filters: Filters = { model: null, source: null, outcome: null };
+  private filters: Filters = { model: null, source: null, outcome: null, when: "all" };
   private turn: CallsOptions["turn"];
-  /** The page drawn, and where each page up to it starts: the first at the
-   *  newest row, each later one after the last row of the one before. */
+  /** The page drawn: its number, and how many rows there are in all. */
   private rows: UsageCall[] = [];
+  private page = 0;
+  private total = 0;
+  /** The machine counts no pages: where each page up to the one drawn
+   *  starts, the first at the newest row, each later one after the last row
+   *  of the one before. */
+  private legacy = false;
   private pages: (CallCursor | null)[] = [null];
   private next: CallCursor | null = null;
   /** The query the rows are of; another one starts them over. */
@@ -85,6 +99,8 @@ export class CallsList {
   private models = new Set<string>();
   private headDrawn = "";
   private rowsDrawn = "";
+  private pagerDrawn = "";
+  private readonly range: RangeSheet;
   /** Where the rows were scrolled, kept while the page draws itself anew. */
   private scrolled = 0;
 
@@ -93,7 +109,8 @@ export class CallsList {
     this.element = document.createElement("section");
     this.element.className = "ledger-panel uc";
     const { words } = options;
-    this.element.innerHTML = `<div class="ledger-panel-head uc-head"></div><div class="uc-rows"></div><div class="uc-foot" hidden><span class="uc-slip"></span><span class="ledger-grow"></span><button class="uc-newest" type="button" data-uc="newest" hidden>${escape(words.newest)}</button><span class="uc-pager"><button class="icon-button uc-step" type="button" data-uc="newer" title="${escape(words.newer)}" aria-label="${escape(words.newer)}">${glyph("back", 16)}</button><span class="uc-page" aria-live="polite"></span><button class="icon-button uc-step uc-older" type="button" data-uc="older" title="${escape(words.older)}" aria-label="${escape(words.older)}">${glyph("back", 16)}</button></span></div>`;
+    this.element.innerHTML = `<div class="ledger-panel-head uc-head"></div><div class="uc-rows"></div><div class="uc-foot" hidden><span class="uc-count"></span><span class="uc-slip"></span><span class="ledger-grow"></span><button class="uc-newest" type="button" data-uc="newest" hidden>${escape(words.newest)}</button><span class="uc-pager"></span></div>`;
+    this.range = new RangeSheet(words.range);
     this.head = this.element.querySelector<HTMLElement>(".uc-head")!;
     this.list = this.element.querySelector<HTMLElement>(".uc-rows")!;
     this.foot = this.element.querySelector<HTMLElement>(".uc-foot")!;
@@ -116,14 +133,15 @@ export class CallsList {
   async again(): Promise<void> {
     if (!this.context || this.reading) return;
     // Not read the last time, or nothing yet: read from the start.
-    if (this.problem || (!this.rows.length && this.pages.length === 1)) return this.restart(this.asked);
-    if (this.pages.length > 1) return;
+    if (this.problem || (!this.rows.length && this.first())) return this.restart(this.asked);
+    if (!this.first()) return;
     const generation = this.generation;
-    const page = await this.fetch(null).catch(() => null);
-    if (!page || generation !== this.generation || this.reading || this.pages.length > 1) return;
+    const page = await this.fetch(this.legacy ? { before: null } : { page: 0 }).catch(() => null);
+    if (!page || generation !== this.generation || this.reading || !this.first()) return;
     const held = this.anchor();
     this.rows = page.rows;
     this.next = page.next;
+    if (!this.legacy) this.total = page.total ?? 0;
     this.draw();
     if (held) this.restore(held);
   }
@@ -133,28 +151,53 @@ export class CallsList {
     this.reading = false;
   }
 
-  /** The rows asked for: the query, and whom they are narrowed to here. */
-  private queryKey(): string {
-    return JSON.stringify([this.query(null), this.context?.person?.key ?? null]);
+  /** Whether the first page is the one drawn. */
+  private first(): boolean {
+    return this.legacy ? this.pages.length === 1 : this.page === 0;
   }
 
-  private query(before: CallCursor | null): UsageCallsQuery {
+  /** The rows asked for: the query, and whom they are narrowed to here. */
+  private queryKey(): string {
+    return JSON.stringify([this.query({ before: null }), this.context?.person?.key ?? null]);
+  }
+
+  /** The query of one page: by its number, or, of an older Fastctx, from
+   *  where it starts. */
+  private query(at: { page: number } | { before: CallCursor | null }): UsageCallsQuery {
     const { filters, turn } = this;
     const person = this.context?.person;
+    const span = this.span();
     return {
-      ...(person?.account ? { person: person.account } : {}),
+      // An older Fastctx cannot narrow to both the owner and the machine:
+      // it is asked for everyone, and the rows are narrowed here.
+      ...(person && !(this.legacy && person.local) ? { person: person.account } : {}),
       ...(filters.model ? { model: filters.model } : {}),
       ...(filters.source ? { source: filters.source } : {}),
       ...(filters.outcome ? { outcome: filters.outcome } : {}),
       ...(turn ? { conversation: turn.conversation, turn: turn.turn } : {}),
-      ...(before ? { before } : {}),
+      ...(span ? { from: span.from.toISOString(), until: span.until.toISOString() } : {}),
+      ...("page" in at ? { page: at.page } : at.before ? { before: at.before } : {}),
     };
+  }
+
+  /** The moments the days asked for begin and end at, on this device's clock. */
+  private span(): { from: Date; until: Date } | null {
+    const when = this.filters.when;
+    if (when === "all") return null;
+    const today = midnight(new Date(this.context?.now ?? Date.now()));
+    if (when === "today") return { from: today, until: addDays(today, 1) };
+    if (when === "yesterday") return { from: addDays(today, -1), until: today };
+    if (when === "week") return { from: addDays(today, -6), until: addDays(today, 1) };
+    return { from: when.from, until: addDays(when.to, 1) };
   }
 
   private restart(key: string): void {
     this.asked = key;
     this.generation += 1;
     this.rows = [];
+    this.page = 0;
+    this.total = 0;
+    this.legacy = false;
     this.pages = [null];
     this.next = null;
     this.problem = null;
@@ -163,12 +206,13 @@ export class CallsList {
     this.list.scrollTop = 0;
     this.scrolled = 0;
     this.draw();
-    void this.go([null]);
+    void this.go(0);
   }
 
-  /** Reads the last of the pages given and shows it from its top; the page
-   *  shown stays while it is read, and stays if it could not be. */
-  private async go(pages: (CallCursor | null)[]): Promise<void> {
+  /** Reads a page and shows it from its top: by its number, or, of an
+   *  older Fastctx, the last of the pages given. The page shown stays while
+   *  it is read, and stays if it could not be. */
+  private async go(to: number | (CallCursor | null)[]): Promise<void> {
     if (this.reading) return;
     const generation = this.generation;
     this.reading = true;
@@ -176,10 +220,20 @@ export class CallsList {
     this.draw();
     let moved = false;
     try {
-      const page = await this.fetch(pages[pages.length - 1]!);
+      let page = await this.fetch(typeof to === "number" ? { page: to } : { before: to[to.length - 1]! });
       if (generation !== this.generation) return;
-      this.pages = pages;
-      this.rows = page.rows;
+      if (typeof to === "number" && page.total == null) {
+        // The machine counted no pages: an older Fastctx, paged as it can,
+        // asked again as it is asked.
+        this.legacy = true;
+        this.pages = [null];
+        if (this.context?.person?.local) page = await this.fetch({ before: null });
+        if (generation !== this.generation) return;
+      } else if (typeof to === "number") {
+        this.page = to;
+        this.total = page.total ?? 0;
+      } else this.pages = to;
+      this.rows = this.legacy ? this.keep(page.rows) : page.rows;
       this.next = page.next;
       this.problem = null;
       moved = true;
@@ -196,16 +250,16 @@ export class CallsList {
     }
   }
 
-  /** A page from where it starts. Where the machine could not narrow the
-   *  rows, the pages after it are read on until a page's worth shows, and
-   *  the next page starts after the last row kept. */
-  private async fetch(before: CallCursor | null): Promise<UsageCallsPage> {
-    let page = await this.options.ask(this.query(before));
+  /** A page. Of an older Fastctx that could not narrow the rows, the pages
+   *  after it are read on until a page's worth shows, and the next page
+   *  starts after the last row kept. */
+  private async fetch(at: { page: number } | { before: CallCursor | null }): Promise<UsageCallsPage> {
+    let page = await this.options.ask(this.query(at));
     const person = this.context?.person;
-    if (!person || person.account) return page;
+    if (page.total != null || !person?.local) return page;
     let kept = this.keep(page.rows);
     for (let read = 1; page.next && read < FILL && kept.length < PAGE; read += 1) {
-      page = await this.options.ask(this.query(page.next));
+      page = await this.options.ask(this.query({ before: page.next }));
       kept = kept.concat(this.keep(page.rows));
     }
     if (kept.length > PAGE) return { rows: kept.slice(0, PAGE), next: kept[PAGE - 1]!.cursor };
@@ -258,9 +312,17 @@ export class CallsList {
       return;
     }
     const what = target.dataset.uc;
-    if (what === "newer" && this.pages.length > 1) return void this.go(this.pages.slice(0, -1));
-    if (what === "older" && this.next) return void this.go([...this.pages, this.next]);
-    if (what === "newest") return void this.go([null]);
+    if (this.legacy) {
+      if (what === "newer" && this.pages.length > 1) return void this.go(this.pages.slice(0, -1));
+      if (what === "older" && this.next) return void this.go([...this.pages, this.next]);
+      if (what === "newest") return void this.go([null]);
+    } else {
+      if (what === "newer" && this.page > 0) return void this.go(this.page - 1);
+      if (what === "older" && this.page + 1 < this.count()) return void this.go(this.page + 1);
+      if (what === "page") return void this.go(Number(target.dataset.page));
+      if (what === "pages") return this.pick(target);
+    }
+    if (what === "when") return this.when(target);
     if (what === "turn") {
       this.turn = null;
       this.options.unturn();
@@ -270,8 +332,43 @@ export class CallsList {
     if (what === "model" || what === "source" || what === "outcome") this.choose(target, what);
   }
 
+  /** How many pages there are. */
+  private count(): number {
+    return Math.max(1, Math.ceil(this.total / PAGE));
+  }
+
+  /** Every page by its number, to go to any. */
+  private pick(anchor: HTMLElement): void {
+    const { words } = this.options;
+    const entries: MenuEntry[] = Array.from({ length: this.count() }, (_, page) => ({ act: String(page), label: words.page(page + 1), checked: page === this.page }));
+    this.options.menu.open(anchor, words.pages, entries, (act) => {
+      if (act !== "" && Number(act) !== this.page) void this.go(Number(act));
+    });
+  }
+
+  /** The days asked for: a few named, or picked on the months kept. */
+  private when(anchor: HTMLElement): void {
+    const { words } = this.options;
+    const now = this.filters.when;
+    const named = ["all", "today", "yesterday", "week"] as const;
+    const entries: MenuEntry[] = [
+      ...named.map((kind) => ({ act: kind, label: words.whens[kind], checked: now === kind })),
+      { rule: true },
+      { act: "days", label: words.whens.days, checked: typeof now === "object" },
+    ];
+    const take = (when: When) => {
+      this.filters = { ...this.filters, when };
+      const key = this.queryKey();
+      if (key !== this.asked) this.restart(key);
+    };
+    this.options.menu.open(anchor, words.when, entries, (act) => {
+      if (act === "days") this.range.open(typeof now === "object" ? now : null, KEPT_DAYS, this.context?.now ?? Date.now(), (span) => take(span ?? "all"));
+      else if (act) take(act as When);
+    });
+  }
+
   /** A filter's menu: each value it can take, the one it has checked. */
-  private choose(anchor: HTMLElement, what: keyof Filters): void {
+  private choose(anchor: HTMLElement, what: Exclude<keyof Filters, "when">): void {
     const { words, claude } = this.options;
     const now = this.filters[what];
     let entries: MenuEntry[];
@@ -312,14 +409,15 @@ export class CallsList {
     const { words, usage, claude } = this.options;
     const filter = (what: keyof Filters, name: string, value: string | null) =>
       `<button class="uc-filter${value ? " on" : ""}" type="button" data-uc="${what}" data-menu-key="uc:${what}" aria-haspopup="menu"><span>${escape(value ?? name)}</span>${glyph("chevron", 14)}</button>`;
-    const { model, source, outcome } = this.filters;
+    const { model, source, outcome, when } = this.filters;
+    const whenSaid = when === "all" ? null : typeof when === "object" ? words.range.span(when.from, when.to) : words.whens[when];
     const kinds = claude
       ? [["read", usage.kinds.cache_read], ["write", usage.kinds.cache_write], ["input", usage.kinds.input], ["output", usage.kinds.output]]
       : [["input", usage.kinds.fresh], ["read", usage.kinds.cached], ["output", usage.kinds.output], ["reason", usage.kinds.reasoning]];
     const legend = `<span class="ledger-legend uc-legend">${kinds.map(([kind, label]) => `<span class="ledger-keyed"><i class="uc-k-${kind}"></i>${escape(label!)}</span>`).join("")}</span>`;
     const html = `<span class="ledger-panel-title" title="${escape(words.kept)}">${escape(words.title)}</span>${
       this.turn ? `<button class="uc-filter on uc-turn" type="button" data-uc="turn" title="${escape(words.turnSaid)}" aria-label="${escape(`${words.turn}, ${words.allTurns}`)}"><span>${escape(words.turn)}</span>${glyph("close", 14)}</button>` : ""
-    }<span class="ledger-grow"></span>${legend}<span class="uc-filters">${filter("model", words.model, model ? modelName(model) : null)}${filter("source", words.source, source ? words.sources[source] : null)}${filter("outcome", words.outcome, outcome ? words.outcomes[outcome] : null)}</span>`;
+    }<span class="ledger-grow"></span>${legend}<span class="uc-filters">${filter("when", words.when, whenSaid)}${filter("model", words.model, model ? modelName(model) : null)}${filter("source", words.source, source ? words.sources[source] : null)}${filter("outcome", words.outcome, outcome ? words.outcomes[outcome] : null)}</span>`;
     if (html === this.headDrawn) return;
     this.headDrawn = html;
     this.head.innerHTML = html;
@@ -329,7 +427,7 @@ export class CallsList {
    *  not narrow them. */
   private keep(rows: UsageCall[]): UsageCall[] {
     const person = this.context?.person;
-    if (!person || person.account) return rows;
+    if (!this.legacy || !person?.local) return rows;
     const context = this.context!;
     return rows.filter((row) => context.who(row.who).key === person.key);
   }
@@ -353,7 +451,7 @@ export class CallsList {
       }
       html += this.row(row, at, several, context);
     }
-    const filtered = !!(this.filters.model || this.filters.source || this.filters.outcome || this.turn || context.person);
+    const filtered = !!(this.filters.model || this.filters.source || this.filters.outcome || this.filters.when !== "all" || this.turn || context.person);
     // Only an empty list says why: what was not read, what is being read,
     // or that nothing is there.
     const empty = rows.length
@@ -371,22 +469,43 @@ export class CallsList {
     this.list.innerHTML = html + empty;
   }
 
-  /** The pager, once there is more than a page: which page this is, a step
-   *  to the newer and to the older, and back to the newest from further. */
+  /** The pager, once there is more than a page: how many requests there
+   *  are, a step each way, and every page by its number, the first, the
+   *  last and those beside this one shown, the rest a press on the gap
+   *  away; on a phone, this page of how many, pressed for any other. An
+   *  older Fastctx counts no pages: a step each way, and back to the newest
+   *  from further. */
   private drawFoot(): void {
     const { words, usage } = this.options;
-    const page = this.pages.length;
     this.list.setAttribute("aria-busy", String(this.reading));
-    this.foot.hidden = page === 1 && !this.next;
+    const pages = this.legacy ? null : this.count();
+    const page = this.legacy ? this.pages.length : this.page + 1;
+    this.foot.hidden = this.legacy ? page === 1 && !this.next : pages! <= 1;
     if (this.foot.hidden) return;
     const slip = this.foot.querySelector<HTMLElement>(".uc-slip")!;
     slip.textContent = this.slip ? usage.failed : this.reading ? usage.reading : "";
     slip.title = this.slip ?? "";
     slip.classList.toggle("wrong", !!this.slip);
-    this.foot.querySelector<HTMLElement>(".uc-page")!.textContent = words.page(page);
-    this.foot.querySelector<HTMLButtonElement>(".uc-newest")!.hidden = page < 3;
-    this.foot.querySelector<HTMLButtonElement>("[data-uc=newer]")!.disabled = page === 1;
-    this.foot.querySelector<HTMLButtonElement>("[data-uc=older]")!.disabled = !this.next;
+    this.foot.querySelector<HTMLElement>(".uc-count")!.textContent = pages === null ? "" : words.count(this.total);
+    this.foot.querySelector<HTMLButtonElement>(".uc-newest")!.hidden = pages !== null || page < 3;
+    const step = (what: "newer" | "older", off: boolean) =>
+      `<button class="icon-button uc-step${what === "older" ? " uc-older" : ""}" type="button" data-uc="${what}" title="${escape(words[what])}" aria-label="${escape(words[what])}"${off ? " disabled" : ""}>${glyph("back", 16)}</button>`;
+    let middle: string;
+    if (pages === null) middle = `<span class="uc-page" aria-live="polite">${escape(words.page(page))}</span>`;
+    else {
+      const numbers = shownPages(page, pages)
+        .map((one) =>
+          one === null
+            ? `<button class="uc-num uc-gap" type="button" data-uc="pages" data-menu-key="uc:pages" aria-haspopup="menu" aria-label="${escape(words.pages)}">…</button>`
+            : `<button class="uc-num${one === page ? " on" : ""}" type="button" data-uc="page" data-page="${one - 1}"${one === page ? ' aria-current="page"' : ""}>${one}</button>`,
+        )
+        .join("");
+      middle = `<span class="uc-numbers">${numbers}</span><button class="uc-of" type="button" data-uc="pages" data-menu-key="uc:pages" aria-haspopup="menu" aria-label="${escape(words.pages)}">${escape(words.pageOf(page, pages))}</button>`;
+    }
+    const html = step("newer", page === 1) + middle + step("older", pages === null ? !this.next : page >= pages);
+    if (html === this.pagerDrawn) return;
+    this.pagerDrawn = html;
+    this.foot.querySelector<HTMLElement>(".uc-pager")!.innerHTML = html;
   }
 
   private dayOf(at: Date, now: number): string {
@@ -460,4 +579,23 @@ export class CallsList {
       ? `<button class="uc-row own" type="button" data-key="${escape(row.cursor.key)}" title="${escape(said)}">${cells}</button>`
       : `<div class="uc-row" data-key="${escape(row.cursor.key)}" title="${escape(said)}">${cells}</div>`;
   }
+}
+
+/** The page numbers a pager shows: the first and the last, this one and
+ *  those beside it; `null` where numbers are left out between. */
+function shownPages(page: number, pages: number): (number | null)[] {
+  if (pages <= 7) return Array.from({ length: pages }, (_, index) => index + 1);
+  const near = new Set([1, pages, page - 1, page, page + 1].filter((one) => one >= 1 && one <= pages));
+  // Near either end, the run there is drawn long enough to need no gap.
+  if (page <= 4) for (let one = 2; one <= 5; one += 1) near.add(one);
+  if (page >= pages - 3) for (let one = pages - 4; one < pages; one += 1) near.add(one);
+  const sorted = [...near].sort((a, b) => a - b);
+  const shown: (number | null)[] = [];
+  for (const one of sorted) {
+    const last = shown[shown.length - 1];
+    if (typeof last === "number" && one - last === 2) shown.push(one - 1);
+    else if (typeof last === "number" && one - last > 2) shown.push(null);
+    shown.push(one);
+  }
+  return shown;
 }
