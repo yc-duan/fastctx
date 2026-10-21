@@ -37,6 +37,9 @@ struct Request {
 
 pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
+    if crate::assists::assisting(node, &about.acting) {
+        crate::assists::host::require(node, resident)?;
+    }
     if crate::assists::assisting(node, &about.acting)
         && let Control::Command { name, path, .. } = &control
         && (path.is_some() || !fastctx_hosts::claude::assisted::command_allowed(name))
@@ -295,6 +298,11 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
         offers.controls.push(ControlKind::Answer);
     }
     if crate::assists::assisting(node, &about.acting) {
+        if crate::assists::host::kept(node, resident)? != Some(true) {
+            offers.controls.clear();
+            offers.commands.clear();
+            return Ok(offers);
+        }
         offers.commands.retain(|command| {
             command.path.is_none() && fastctx_hosts::claude::assisted::command_allowed(&command.name)
         });

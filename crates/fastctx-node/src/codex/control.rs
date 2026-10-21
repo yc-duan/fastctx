@@ -37,6 +37,11 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
     let mut offers = codex.offers(&thread).await.map_err(Failure::new)?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
     if crate::assists::assisting(node, &about.acting) {
+        if crate::assists::host::kept(node, resident)? != Some(true) {
+            offers.controls.clear();
+            offers.commands.clear();
+            return Ok(offers);
+        }
         offers
             .commands
             .retain(|command| command.path.is_none() && fastctx_hosts::codex::assisted::command_allowed(&command.name));
@@ -80,6 +85,9 @@ fn limits(kept: &AgentLimits) -> Vec<Limit> {
 pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Control) -> Result<Controlled, Failure> {
     let (codex, thread) = thread(node, resident)?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
+    if crate::assists::assisting(node, &about.acting) {
+        crate::assists::host::require(node, resident)?;
+    }
     if crate::assists::assisting(node, &about.acting)
         && let Control::Command { name, path, .. } = &control
         && (path.is_some() || !fastctx_hosts::codex::assisted::command_allowed(name))
@@ -253,9 +261,7 @@ async fn fork(
     through: Option<String>,
 ) -> Result<(String, ResidentId), Failure> {
     let (source, town) = node.residents.about(parent).ok_or_else(|| Failure::new("unknown source resident"))?;
-    if crate::assists::assisting(node, &source.acting) {
-        crate::assists::host::require(node, parent)?;
-    }
+
     let id = node.residents.new_id(&source.host.agent)?;
     crate::session_options::keep(node, &id, &crate::session_options::read(node, parent)?)?;
     let (spec, heard) =
