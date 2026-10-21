@@ -27,12 +27,17 @@ export interface Offered {
   minimum: string | null;
 }
 
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+
 export class Updates {
   readonly state: Signal<UpdateState | null> = signal<UpdateState | null>(null);
   readonly offered: Signal<Offered | null> = signal<Offered | null>(null, (a, b) => JSON.stringify(a) === JSON.stringify(b));
   private installing = false;
   private permission = false;
   private failed: string | null = null;
+  /** A failed release tried again by itself: which, since when, how often. */
+  private retried = { version: "", at: 0, count: 0 };
   private timer: ReturnType<typeof setTimeout> | null = null;
   private known: string | null = null;
   /** What was last told the node of what only the interface knows. */
@@ -142,7 +147,7 @@ export class Updates {
     const offered = state ? this.offerOf(state) : null;
     this.offered.set(offered);
     if (state) this.tell(state, offered);
-    if (!state || !offered || this.installing || this.failed) return;
+    if (!state || !offered || this.installing) return;
     const asked = state.take === offered.manifest.version;
     // The node says which release automatic updates may take; a node before
     // it said so is reckoned with here, under the hubs' major version.
@@ -153,6 +158,27 @@ export class Updates {
     if (!asked && !(this.automatic(state) && within)) return;
     if (offered.stage.kind === "offered") this.go();
     else if (offered.stage.kind === "waiting" && this.idle()) this.install(offered.manifest.version);
+    else if (offered.stage.kind === "failed" && this.due(state, offered.manifest.version)) {
+      this.retried = { version: offered.manifest.version, at: Date.now(), count: this.retried.count + 1 };
+      // What failed here is asked again as it now stands: a package kept
+      // here is installed, not brought again.
+      if (this.failed) {
+        this.failed = null;
+        this.refresh();
+      } else this.go();
+    }
+  }
+
+  /** Whether a failed release is tried again by itself now: when its node
+   *  says, or else an hour after it failed, then two, four, up to a day,
+   *  so a machine nobody tends is never left behind by one failure. */
+  private due(state: UpdateState, version: string): boolean {
+    const now = Date.now();
+    if (this.retried.version !== version) this.retried = { version, at: now, count: 0 };
+    // Never more than once an hour from here, whatever the node says.
+    const since = this.retried.count ? now - this.retried.at : Infinity;
+    if (!this.failed && state.retry_at) return Date.parse(state.retry_at) <= now && since >= HOUR;
+    return now >= this.retried.at + Math.min(HOUR * 2 ** this.retried.count, DAY);
   }
 
   /** Tells the node that an update waits here for the work under way, or

@@ -248,6 +248,7 @@ pub(crate) fn state(node: &Node) -> State {
                     reason: None,
                 })
             }),
+            retry_at: held.attempt.failed.as_ref().and(held.attempt.delay.next),
             kept: cache.kept(),
             app: held.app.clone(),
             kernel_target: fastctx_update::kernel::target(),

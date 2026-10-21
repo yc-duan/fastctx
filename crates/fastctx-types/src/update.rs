@@ -581,6 +581,10 @@ pub struct State {
     pub fetching: Option<Fetching>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failed: Option<Failed>,
+    /// When the failed release is tried again by itself; none where the
+    /// interface keeps its own pace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<jiff::Timestamp>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kept: Vec<Kept>,
     /// The application the interface here says it is.
