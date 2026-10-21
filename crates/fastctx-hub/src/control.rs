@@ -51,6 +51,7 @@ pub(crate) struct Said {
     pub due: bool,
     /// Whether it reads the records of projects deleted.
     pub project_deletes: bool,
+    pub conversation_deletions: bool,
     /// Whether it reads the records of profiles written.
     pub profiles: bool,
     /// What a machine taken off could not do of the uninstall it was asked.
@@ -484,6 +485,7 @@ fn open(
     entry.versions = said.versions;
     entry.due = said.due;
     entry.project_deletes = said.project_deletes;
+    entry.conversation_deletions = said.conversation_deletions;
     entry.profiles = said.profiles;
     if too_old {
         // A member back on a release from before names of any language,
@@ -1245,6 +1247,7 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
             Err("release reads are dispatched asynchronously".into())
         }
         Question::Directory => Ok(Told::Directory { view: Box::new(hub.view_for(name)) }),
+        Question::ProjectDeleted { town } => crate::project_deletions::finished(hub, name, &town),
         Question::Manage { .. } => Err("changes are made as they come".into()),
         Question::LedgerWrite { .. } => Err("ledger entries are written as they come".into()),
         Question::LedgerTowns => {

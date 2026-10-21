@@ -710,7 +710,9 @@ fn apply(
             }
             // Its ledger goes once the directory without it is kept
             // (`change`).
-            projects.remove(position);
+            let project = projects[position].clone();
+            crate::project_deletions::begin(store, project)?;
+            store.book.directory.projects.remove(position);
             Ok(Told::Done)
         }
     }

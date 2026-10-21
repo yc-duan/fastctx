@@ -142,8 +142,8 @@ impl Link {
                 Change::ShareProject { town: town_id(&town)?, with, shared }
             }
             AccountChange::MoveProject { town, to } => Change::MoveProject { town: town_id(&town)?, to },
-            AccountChange::DeleteProject { .. } if !self.view().deletes_projects => {
-                return Err(format!("the hub {} runs an older fastctx that deletes no project", self.hub_name()));
+            AccountChange::DeleteProject { .. } if !self.view().deletes_project_conversations => {
+                return Err(format!("the hub {} must be updated before deleting a project and its conversations", self.hub_name()));
             }
             AccountChange::DeleteProject { town } => Change::DeleteProject { town: town_id(&town)? },
             AccountChange::Relay { .. } if !self.view().lan_relays => {

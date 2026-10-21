@@ -18,6 +18,10 @@ use crate::town::read;
 /// Lets go of every project of `link`'s hub this computer may no longer
 /// keep, as its view now says.
 pub async fn let_go(node: &Arc<Node>, link: &Arc<Link>) {
+    if let Err(error) = super::deletion::finish(node, link).await {
+        node.log.line(format_args!("finishing project deletions: {error}"));
+        return;
+    }
     let hub = link.membership().id.clone();
     let towns = match node.world.towns() {
         Ok(towns) => towns,
@@ -80,7 +84,7 @@ fn spans(node: &Node, town: &TownName, is_me: impl Fn(&fastctx_types::MachineNam
 /// Removes what this computer kept of `town`: its ledger, its signed
 /// entries, attachments, pages and records; the folder itself only when
 /// nothing else is left in it, as a conversation may stand there.
-async fn remove(node: &Arc<Node>, town: &TownName) -> io::Result<()> {
+pub(super) async fn remove(node: &Arc<Node>, town: &TownName) -> io::Result<()> {
     let _syncing = node.syncing.lock().await;
     let directory = node.world.town(town);
     tokio::task::spawn_blocking(move || {

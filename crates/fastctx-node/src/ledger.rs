@@ -36,6 +36,7 @@ use crate::Node;
 use names::Place;
 
 pub(crate) mod letgo;
+pub(crate) mod deletion;
 pub(crate) mod names;
 pub(crate) mod query;
 pub(crate) mod third;

@@ -42,6 +42,8 @@ struct Ask {
     hub: HubId,
     account: AccountName,
     conversation: Address,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    after: Option<ResidentId>,
 }
 
 /// What whoever asks about `resident`, which lives here no more, is told:
@@ -67,6 +69,7 @@ pub(crate) async fn ask(node: &Arc<Node>, resident: ResidentId, machine: Machine
                     hub,
                     account,
                     conversation: Address { machine: node.machine(), resident: resident.clone() },
+                    after: None,
                 })
                 .collect(),
             None => Vec::new(),
@@ -89,7 +92,7 @@ pub(crate) async fn ask(node: &Arc<Node>, resident: ResidentId, machine: Machine
     match link.forget(&account, &conversation).await {
         Ok(true) => Ok(How::Asked),
         Ok(false) => {
-            let ask = Ask { hub: link.membership().id.clone(), account, conversation };
+            let ask = Ask { hub: link.membership().id.clone(), account, conversation, after: None };
             keep(node, vec![ask])
                 .await
                 .map_err(|error| Failure::new(format!("keeping what to ask the hub: {error}")))?;
@@ -98,6 +101,27 @@ pub(crate) async fn ask(node: &Arc<Node>, resident: ResidentId, machine: Machine
         }
         Err(reason) => Err(Failure::new(reason)),
     }
+}
+
+/// Deletes an owner's conversation as part of the hub's project deletion.
+/// The cross-machine cleanup is durable before any local data is removed.
+pub(crate) async fn project(node: &Arc<Node>, id: &ResidentId, hub: &HubId, account: &AccountName) -> Result<(), String> {
+    let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
+    if !node.serves(&about.acting, hub, account) {
+        return Err(format!("{id} does not work for the account {account}"));
+    }
+    let mut accounts = pairs(node, &about.acting);
+    if !accounts.contains(&(hub.clone(), account.clone())) {
+        accounts.push((hub.clone(), account.clone()));
+    }
+    keep(node, accounts.into_iter().map(|(hub, account)| Ask {
+        hub, account,
+        conversation: Address { machine: node.machine(), resident: id.clone() },
+        after: Some(id.clone()),
+    }).collect()).await.map_err(|error| error.to_string())?;
+    home(node, id).await?;
+    node.forget_asks.wake.notify_one();
+    Ok(())
 }
 
 /// The hub `hub` has this machine delete what it keeps of a conversation.
@@ -136,6 +160,7 @@ pub(crate) async fn told(node: &Arc<Node>, hub: &HubId, forgetting: Forgetting) 
             hub,
             account,
             conversation: Address { machine: node.machine(), resident: id.clone() },
+            after: None,
         })
         .collect();
     if !others.is_empty() {
@@ -364,6 +389,10 @@ async fn send_kept(node: &Arc<Node>) -> bool {
     }
     let mut left = Vec::new();
     for ask in &kept {
+        if ask.after.as_ref().is_some_and(|id| node.residents.deleted(id).is_none()) {
+            left.push(ask.clone());
+            continue;
+        }
         let Some(link) = node.link_of(&ask.hub) else {
             node.log.line(format_args!(
                 "not asking that {} be deleted: this computer is no longer on that hub",
@@ -374,11 +403,10 @@ async fn send_kept(node: &Arc<Node>) -> bool {
         match link.forget(&ask.account, &ask.conversation).await {
             Ok(true) => {}
             Ok(false) => left.push(ask.clone()),
-            Err(reason) => node.log.line(format_args!(
-                "the hub did not take the deletion of {} for {}: {reason}",
-                ask.conversation.key(),
-                ask.account
-            )),
+            Err(reason) => {
+                node.log.line(format_args!("the hub did not take the deletion of {} for {}: {reason}", ask.conversation.key(), ask.account));
+                left.push(ask.clone());
+            },
         }
     }
     let done = left.is_empty();
