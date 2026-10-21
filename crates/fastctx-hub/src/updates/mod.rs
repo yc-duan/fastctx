@@ -306,7 +306,14 @@ pub(crate) fn heard(hub: &Arc<Hub>, name: &MachineName, generation: u64, report:
     let stage = hub.updates.lock().expect("never poisoned").last.get(&key).map(|last| last.report.stage.clone());
     if let Some(fastctx_types::update::Stage::Failed { version, problem }) = stage {
         let mut store = hub.store();
-        if let Some(due) = store.hub.due.iter_mut().find(|due| due.key == key && due.due.version == version)
+        // A machine brought to a newer release than it was asked for fails
+        // the arrangement all the same.
+        let reached = fastctx_types::update::release(&version);
+        if let Some(due) = store
+            .hub
+            .due
+            .iter_mut()
+            .find(|due| due.key == key && reached.is_some() && reached >= fastctx_types::update::release(&due.due.version))
             && due.due.problem.as_ref() != Some(&problem)
         {
             due.due.problem = Some(problem);

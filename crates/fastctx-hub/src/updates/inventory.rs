@@ -132,6 +132,34 @@ pub(super) fn held(hub: &Hub, cache: &Cache) -> BTreeSet<Held> {
 pub(super) fn ready_network(hub: &Hub, mut network: Network) -> Network {
     let cache = hub.updates.lock().expect("never poisoned").cache.clone();
     let held = held(hub, &cache);
+    let manifests: Vec<Manifest> = hub.updates.lock().expect("never poisoned").manifests().collect();
+    let targets_of = |name: &MachineName| {
+        let store = hub.store();
+        store.book.directory.member(name).and_then(|member| store.hub.package_targets.get(&member.key)).cloned()
+    };
+    // A machine asked to update when it comes back is brought to the newest
+    // release of the line and major version it was asked for that the
+    // network has whole for it: it was asked to catch up, and a newer one
+    // came while it was away.
+    for (name, due) in network.due.iter_mut() {
+        let channel = fastctx_types::update::Channel::of(&due.version);
+        let major = fastctx_types::update::release(&due.version).map(|version| version.major);
+        let through = needs_network(hub, name);
+        let targets = targets_of(name).unwrap_or_default();
+        let newest = manifests
+            .iter()
+            .filter(|manifest| {
+                channel.takes(&manifest.version)
+                    && manifest.newer_than(&due.version)
+                    && manifest.semver().map(|version| version.major) == major
+                    && (!through || for_targets(manifest, &targets).iter().all(|package| held.contains(package)))
+            })
+            .max_by_key(|manifest| manifest.semver());
+        if let Some(newest) = newest {
+            due.version = newest.version.clone();
+            due.manifest = None;
+        }
+    }
     network.due.retain(|name, due| {
         if !needs_network(hub, name) {
             return true;
