@@ -38,6 +38,7 @@ import { bar, calendar, meter, parts, punch, quota, weeks, type Amounts, type Ri
 import { keepRecord, keptRecord, keptReport, readReport, reportKey } from "./kept";
 import { allowanceTrack, between, byDay, byHourOfWeek, dayOf, DAY_MS, daysBefore, longestRun, pace, total, track, usageOf, valueOf, type Person, type Span, type Unit, type Usage, type Went } from "./model";
 import { assistingMe, assistsOf, namer } from "./people";
+import { assistingOwner } from "../reach";
 import type { UsageWords } from "./words";
 
 type Agent = "codex" | "claude";
@@ -274,7 +275,7 @@ export class LoginUsagePage implements Page {
     const token = identity?.method === "oauth_token";
     const plan = identity?.plan ?? null;
     const title = this.element.querySelector<HTMLElement>(".ledger-title")!;
-    const html = `${glyph(options.agent, 18)}<span class="ledger-who" title="${escape(options.dir)}">${escape(this.who())}</span>${plan ? `<span class="tag">${escape(planName(plan))}</span>` : ""}${token ? `<span class="tag tag-token" title="${escape(options.logins.tokenSaid)}">${escape(options.logins.token)}</span>` : ""}<span class="ledger-machine">${glyph("machine", 14)}${escape(options.machine)}</span>${this.assistedTag(login)}`;
+    const html = `${glyph(options.agent, 18)}<span class="ledger-who" title="${escape(options.dir)}">${escape(this.who())}</span>${plan ? `<span class="tag">${escape(planName(plan))}</span>` : ""}${token ? `<span class="tag tag-token" title="${escape(options.logins.tokenSaid)}">${escape(options.logins.token)}</span>` : ""}${assistingOwner(options.store.world.peek(), options.machine) === null ? `<span class="ledger-machine">${glyph("machine", 14)}${escape(options.machine)}</span>` : ""}${this.assistedTag(login)}`;
     if (title.innerHTML !== html) title.innerHTML = html;
   }
 

@@ -29,7 +29,7 @@ import type { WorldNow } from "../world/bridge";
 import type { MachineFacts, ResidentNow } from "../world/world";
 import type { Place } from "./places";
 import { link } from "./places";
-import { assistantsOf, groupsOf, isComputer, loginLabel, machinesOf, residentIn } from "./reach";
+import { assistantsOf, assistingOwner, groupsOf, isComputer, loginLabel, machinesOf, residentIn } from "./reach";
 import { effect, type Signal } from "./signals";
 import type { Store } from "./store";
 import type { TalkActs } from "./talk-acts";
@@ -493,7 +493,7 @@ export class Sidebar {
     const shown = talks.filter((r, i) => i < SHOWN || r.now?.waiting_for_user || (place.kind === "talk" && place.address.resident === r.about.id && place.address.machine === r.about.machine));
     const rest = talks.length - shown.length;
     const all = place.kind === "talks" && place.town === town;
-    return `<ul class="${kind}">${shown.map((r) => talkRow(r, place, now, facts, words, this.talkList.rowActs(r))).join("")}${
+    return `<ul class="${kind}">${shown.map((r) => talkRow(r, place, now, facts, words, this.talkList.rowActs(r), assistingOwner(this.options.store.world.peek(), r.about.machine))).join("")}${
       rest > 0
         ? `<li><a class="talk-all${all ? " current" : ""}" href="${link({ kind: "talks", town })}"><span class="talk-host"></span><span class="talk-name">${escape(words.all)}</span><span class="count">${talks.length}</span></a></li>`
         : ""
@@ -507,7 +507,7 @@ export class Sidebar {
     const { words, menuWords } = this.options;
     const open = folded.has("archived-open");
     const shown = archived.slice(0, SHOWN);
-    const rows = shown.map((r) => talkRow(r, place, now, facts, words, this.talkList.rowActs(r))).join("");
+    const rows = shown.map((r) => talkRow(r, place, now, facts, words, this.talkList.rowActs(r), assistingOwner(this.options.store.world.peek(), r.about.machine))).join("");
     const all =
       archived.length > shown.length
         ? `<li><a class="talk-all${place.kind === "archived" ? " current" : ""}" href="${link({ kind: "archived" })}"><span class="talk-host"></span><span class="talk-name">${escape(words.all)}</span><span class="count">${archived.length}</span></a></li>`

@@ -9,6 +9,7 @@ import { agentName, titleOf } from "../world/names";
 import type { ResidentNow } from "../world/world";
 import { redrawKeepingFocus } from "./focus";
 import { link, type Place } from "./places";
+import { assistingOwner } from "./reach";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import { isUnreached, type Store } from "./store";
@@ -110,7 +111,7 @@ export class TalksPage implements Page {
 
   private matches(r: ResidentNow): boolean {
     if (!this.query) return true;
-    const said = [titleOf(r) ?? "", agentName(r.about.host.agent), r.about.machine, r.town ?? ""].join(" ").toLowerCase();
+    const said = [titleOf(r) ?? "", agentName(r.about.host.agent), assistingOwner(this.options.store.world.peek(), r.about.machine) ?? r.about.machine, r.town ?? ""].join(" ").toLowerCase();
     return this.query.split(/\s+/).every((word) => said.includes(word));
   }
 
@@ -125,7 +126,7 @@ export class TalksPage implements Page {
     const { listed, archived } = talksOf(world, acts);
     const talks = (archivedOnly ? archived : listed).filter((r) => (town === null || r.town === town) && this.matches(r));
     this.talkList.drawing(talks);
-    const row = (r: ResidentNow) => talkRow(r, place, now, facts, shell, this.talkList.rowActs(r));
+    const row = (r: ResidentNow) => talkRow(r, place, now, facts, shell, this.talkList.rowActs(r), assistingOwner(this.options.store.world.peek(), r.about.machine));
     let html: string;
     if (!talks.length) html = `<p class="talks-none">${escape(archivedOnly ? words.noneArchived : words.none)}</p>`;
     else if (town !== null) html = `<ul class="talks">${talks.map(row).join("")}</ul>`;

@@ -319,6 +319,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
     here: "desktop",
     // Filled from what `nodes` answers, as the shell's World is.
     nodes: [],
+    assisting: new Map(),
     known: [],
     machines: [
       {

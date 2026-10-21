@@ -1333,7 +1333,8 @@ export class ConversationPage {
     const field = document.createElement("input");
     field.className = "who-rename";
     field.value = this.options.conversation.title ?? "";
-    field.placeholder = `${this.options.someone.agent} ${this.options.someone.machine}`;
+    // An agent assisting the user is never named by the computer it runs on.
+    field.placeholder = this.options.someone.assistFrom ? this.options.someone.agent : `${this.options.someone.agent} ${this.options.someone.machine}`;
     field.setAttribute("aria-label", controls.words.commands.rename);
     this.name.replaceChildren(field);
     field.focus();

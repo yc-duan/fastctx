@@ -15,6 +15,8 @@ import { enMoment, zhMoment } from "./when-words";
 import { en as conversationEn, zh as conversationZh } from "../words";
 
 export interface ShellWords {
+  /** An agent assisting the user, as whose it is, never its machine. */
+  someoneAssisting(agent: string, owner: string): string;
   app: string;
   world: string;
   projects: string;
@@ -214,6 +216,8 @@ export interface NewTalkWords {
   assistantWorks(owner: string): string;
   /** An agent assisting the account, whose it is. */
   assistFrom(owner: string): string;
+  /** Where an assisting agent is listed: whose agents, never its machine. */
+  assistAgents(owner: string): string;
   /** When an assistance ends. */
   assistUntil(at: Date, now: Date): string;
   /** An assisting agent was given files other than images, and no machine of
@@ -266,8 +270,9 @@ export const zhNewTalk: NewTalkWords = {
   limitReset: "已重置",
   token: "长期令牌",
   account: "账号",
-  assistantWorks: (owner) => `来自 ${owner}，在你的机器上工作，不接触 ${owner} 的电脑`,
+  assistantWorks: (owner) => `来自 ${owner}，在你的机器上工作`,
   assistFrom: (owner) => `来自 ${owner}`,
+  assistAgents: (owner) => `${owner} 的智能体`,
   assistUntil: (at, now) => `到 ${zhMoment.short(at, now)}`,
   noFilePlace: "没有能放文件的机器",
   project: "项目",
@@ -309,8 +314,9 @@ export const enNewTalk: NewTalkWords = {
   limitReset: "reset",
   token: "Token",
   account: "Account",
-  assistantWorks: (owner) => `From ${owner}; works on your machines, never on ${owner}'s computer`,
+  assistantWorks: (owner) => `From ${owner}; works on your machines`,
   assistFrom: (owner) => `from ${owner}`,
+  assistAgents: (owner) => `${owner}'s agents`,
   assistUntil: (at, now) => `until ${enMoment.short(at, now)}`,
   noFilePlace: "No machine can take the files",
   project: "Project",
@@ -1631,6 +1637,7 @@ export const zhShell: ShellWords = {
   foldSidebar: "隐藏侧栏",
   backTo: (page) => `返回${page}`,
   someone: (agent, machine) => `${machine} 上的 ${agent}`,
+  someoneAssisting: (agent, owner) => `${owner} 的 ${agent}`,
   colleagueFor: (asker) => `${asker} 调用的模型`,
   busy: (lasted) => `工作中　${lasted}`,
   idle: "空闲",
@@ -1682,6 +1689,7 @@ export const enShell: ShellWords = {
   foldSidebar: "Hide sidebar",
   backTo: (page) => `Back to ${page}`,
   someone: (agent, machine) => `${agent} on ${machine}`,
+  someoneAssisting: (agent, owner) => `${owner}'s ${agent}`,
   colleagueFor: (asker) => `called by ${asker}`,
   busy: (lasted) => `working, ${lasted}`,
   idle: "idle",

@@ -6,6 +6,10 @@
 import type { Asked } from "../world/world";
 
 export interface HomeWords {
+  /** Where agents assisting the user run, said as whose agents. */
+  assistAgents(owner: string): string;
+  /** An agent assisting the user, as whose it is, never its machine. */
+  someoneAssisting(agent: string, owner: string): string;
   world: string;
   /** An open page, as who started or wrote something. */
   aPage(name: string): string;
@@ -125,6 +129,8 @@ export const zhHome: HomeWords = {
   renewThere: "前往设置更新",
   setUp: "设置这台电脑",
   someone: (agent, machine) => `${machine} 上的 ${agent}`,
+  someoneAssisting: (agent, owner) => `${owner} 的 ${agent}`,
+  assistAgents: (owner) => `${owner} 的智能体`,
   colleagueOf: (asker) => `${asker} 调用的模型`,
   for: (duration) => duration,
   ago: (ms) => `${zhSpan(ms)}前`,
@@ -177,6 +183,8 @@ export const enHome: HomeWords = {
   renewThere: "Update in Settings",
   setUp: "Set up this computer",
   someone: (agent, machine) => `${agent} on ${machine}`,
+  someoneAssisting: (agent, owner) => `${owner}'s ${agent}`,
+  assistAgents: (owner) => `${owner}'s agents`,
   colleagueOf: (asker) => `called by ${asker}`,
   for: (duration) => duration,
   ago: (ms) => `${enSpan(ms)} ago`,

@@ -43,6 +43,9 @@ export interface WorldState {
   others?: WhoFor[];
   /** The machines this computer or device reaches, itself first. */
   nodes: Machine[];
+  /** Machines of others whose agents assist the user, by whose they are:
+   *  never shown as machines (`world-network.md`, 共享机器与智能体协助). */
+  assisting: Map<string, string>;
   towns: TownSummary[];
   /** What happened while the reader was away; `null` before the World
    *  has been asked, or where there is no earlier visit to ask from. */

@@ -55,6 +55,7 @@ import { focusPlace } from "./focus-places";
 import type { ConsentHome } from "./claude-consent";
 import {
   assistantsOf,
+  fileHome,
   filePlaces,
   groupsOf,
   loginKey,
@@ -747,7 +748,8 @@ export class NewTalk {
       const form = facts?.form === "laptop" ? "laptop" : facts?.form === "server" ? "server" : "desktop";
       return {
         hold: line.hold === "others" ? (line.shared ? "shared" : "others") : line.hold,
-        written: line.written,
+        // Agents assisting the user are listed as whose, never by their machine.
+        written: line.hold === "assist" ? words.assistAgents(line.owner ?? "") : line.written,
         owner: line.owner,
         form,
         online: line.online,
@@ -1170,11 +1172,14 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
     this.models.update(offers);
   }
 
-  /** A computer keeps its originals; a phone uses the conversation's machine. */
+  /** A computer keeps its originals; a phone uses the conversation's machine,
+   *  but for an agent assisting the user, which cannot reach that computer,
+   *  one of the user's own. */
   private placeFiles(): void {
     const world = this.options.store.world.peek();
     const option = this.chosenOption();
-    this.filesOn = option ? (machinesOf(world).find((machine) => machine.here)?.written ?? option.machine) : null;
+    const here = machinesOf(world).find((machine) => machine.here)?.written ?? null;
+    this.filesOn = option ? (here ?? (option.assistant ? fileHome(world, option.assistant.login) : option.machine)) : null;
   }
 
   private drawStart(): void {

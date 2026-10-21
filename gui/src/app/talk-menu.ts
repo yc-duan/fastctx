@@ -8,7 +8,7 @@
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
-import { agentName, titleOf } from "../world/names";
+import { titleOf } from "../world/names";
 import type { ResidentNow } from "../world/world";
 import { layerOpened, type Layer } from "./back";
 import type { TalkActs } from "./talk-acts";
@@ -22,6 +22,10 @@ export interface TalkMenuOptions {
   towns(machine: string): { town: string; name: string }[];
   /** Whether the conversation's machine is there to be asked now. */
   reachable(r: ResidentNow): boolean;
+  /** Who it is with, where it has no name; where it is said to be. Never
+   *  the computer an agent assisting the user runs on. */
+  someone(r: ResidentNow): string;
+  place(r: ResidentNow): string;
   /** Asks before deleting, and deletes; then `then`. */
   askDelete(r: ResidentNow, then?: () => void): void;
 }
@@ -148,17 +152,16 @@ export class TalkMenu {
     if (!this.opened) return;
     const { words, acts } = this.options;
     const r = acts.view(this.opened.r);
-    const machine = r.about.machine;
     const away = !this.options.reachable(r);
     const head = narrow.matches
-      ? `<div class="talk-menu-head"><span class="talk-menu-host">${glyph(r.about.host.agent === "claude" || r.about.host.agent === "codex" ? r.about.host.agent : "agents", 18)}</span><span class="talk-menu-name">${escape(titleOf(r) ?? `${agentName(r.about.host.agent)} ${machine}`)}</span></div>`
+      ? `<div class="talk-menu-head"><span class="talk-menu-host">${glyph(r.about.host.agent === "claude" || r.about.host.agent === "codex" ? r.about.host.agent : "agents", 18)}</span><span class="talk-menu-name">${escape(titleOf(r) ?? this.options.someone(r))}</span></div>`
       : "";
-    const note = away ? `<p class="talk-menu-note">${escape(words.offline(machine))}</p>` : "";
+    const note = away ? `<p class="talk-menu-note">${escape(words.offline(this.options.place(r)))}</p>` : "";
     const item = (act: string, icon: Parameters<typeof glyph>[0], label: string, disabled: boolean, end = "") =>
       `<button class="talk-menu-item${act === "delete" ? " danger" : ""}" type="button" role="menuitem" data-act="${act}"${disabled ? " disabled" : ""}>${glyph(icon, 16)}<span class="talk-menu-label">${escape(label)}</span>${end}</button>`;
     const rule = `<hr class="talk-menu-rule">`;
     if (this.towns) {
-      const towns = this.options.towns(machine);
+      const towns = this.options.towns(r.about.machine);
       const pick = (town: string | null, name: string) =>
         `<button class="talk-menu-item talk-menu-town" type="button" role="menuitemradio" aria-checked="${(r.town ?? null) === town}" data-town="${escape(town ?? "")}"><span class="talk-menu-check">${(r.town ?? null) === town ? glyph("check", 16) : ""}</span><span class="talk-menu-label">${escape(name)}</span></button>`;
       this.element.innerHTML = `${head}<button class="talk-menu-back" type="button" data-act="back">${glyph("back", 16)}<span>${escape(words.move)}</span></button>

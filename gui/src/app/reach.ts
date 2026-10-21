@@ -190,6 +190,15 @@ export function assistantsOf(world: WorldNow | null): Assistant[] {
   return assistants;
 }
 
+/** Whose agents assist the user on `machine`, where that is all the user
+ *  has of it: the user never sees that computer itself, only whose agents
+ *  they are (`world-network.md`, 共享机器与智能体协助). Null for any other
+ *  machine. */
+export function assistingOwner(world: WorldNow | null, machine: string): string | null {
+  const one = assistantsOn(world, machine)[0];
+  return one ? (one.owner ?? "") : null;
+}
+
 /** The assisting logins on one machine, as `name` or as written. */
 export function assistantsOn(world: WorldNow | null, machine: string): Assistant[] {
   return assistantsOf(world).filter((one) => one.machine === machine || one.written === machine);

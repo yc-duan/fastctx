@@ -2436,14 +2436,14 @@ export class MachinesPage implements Page {
     const tags = [this.tag(words.assistShort(first.owner ?? ""), "tag-assist", words.assistantSaid(first.owner ?? "")), reaching ? this.tag(words.reaching, "tag-reach", words.reachingWhat) : ""];
     const state = this.stateOf(first.online, first.since, false, now);
     return `<article class="panel-machine" data-machine="${escape(first.machine)}">
-      ${this.panelHead(first.written, tags, state)}
+      ${this.panelHead(words.assistAgents(first.owner ?? ""), tags, state)}
       ${acts}
       <p class="panel-said" title="${escape(words.assistantSaid(first.owner ?? ""))}">${glyph("colleague", 14)}<span>${escape(words.assistantNote)}</span></p>
       ${assistants
         .filter((one) => one.until)
         .map((one) => `<p class="panel-said">${glyph("history", 14)}<span>${escape(`${agentName(one.agent)} ${this.options.access.moment.until(new Date(one.until!), now)}`)}</span></p>`)
         .join("")}
-      ${this.present(first.machine, world, first.login)}
+      ${this.present(first.machine, world, first.login, false)}
       ${this.agentsLink(first.written)}
     </article>`;
   }
@@ -2498,13 +2498,14 @@ export class MachinesPage implements Page {
 
   /** Who is at work on a machine and what runs there, as `login` sees it;
    *  nothing when no one is. */
-  private present(machine: string, world: WorldNow, login: Login | null): string {
+  private present(machine: string, world: WorldNow, login: Login | null, counted = true): string {
     const { words } = this.options;
     const group = login ? (groupsOf(world).find((one) => sameLogin(one.login, login)) ?? null) : null;
     const residents = residentsOf(world).filter(
       (r) => r.about.machine === machine && (r.now?.activity === "busy" || r.now?.waiting_for_user) && (!group || residentIn(world, group, r)),
     );
-    const jobs = jobsOf(world).filter((job) => job.machine === machine);
+    // Where agents assist the user, what runs there is its owner's, not counted.
+    const jobs = counted ? jobsOf(world).filter((job) => job.machine === machine) : [];
     const agents = residents.length
       ? `<ul class="machine-agents">${residents
           .map(

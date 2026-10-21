@@ -563,6 +563,9 @@ export interface MachinesWords {
    *  the tag on the map, the one line on its panel, and the saying behind
    *  both. */
   assistShort(owner: string): string;
+  /** A machine of another's whose agents assist the account, as the map and
+   *  the list name it: whose agents, never the machine. */
+  assistAgents(owner: string): string;
   assistantNote: string;
   assistantSaid(owner: string): string;
   /** An assisting login its machine does not list. */
@@ -825,6 +828,7 @@ export const zhMachines: MachinesWords = {
   assist: "协助",
   remove: "移除",
   assistShort: (owner) => `来自 ${owner}`,
+  assistAgents: (owner) => `${owner} 的智能体`,
   assistantNote: "在你的机器上工作",
   assistantSaid: (owner) => `${owner} 的智能体在协助你`,
   assistantGone: "该登录已不可用",
@@ -1140,6 +1144,7 @@ export const enMachines: MachinesWords = {
   assist: "Assist",
   remove: "Remove",
   assistShort: (owner) => `from ${owner}`,
+  assistAgents: (owner) => `${owner}'s agents`,
   assistantNote: "Works on your machines",
   assistantSaid: (owner) => `${owner}'s agent is assisting you`,
   assistantGone: "Login unavailable",

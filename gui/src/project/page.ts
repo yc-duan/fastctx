@@ -25,6 +25,8 @@ import { agentName, titleOf } from "../world/names";
 export interface ProjectOptions {
   words: ProjectWords;
   home: HomeWords;
+  /** Who a conversation is with, where it has no name of its own. */
+  someone(r: ResidentNow): string;
   town: string;
   head(title: string, actions?: string): string;
   /** What the actions here are called. */
@@ -208,7 +210,7 @@ export class ProjectPage {
       : r.last_action
         ? `${r.last_action.machine !== r.about.machine ? `${r.last_action.machine} ` : ""}${r.last_action.what}`
         : "";
-    const who = home.someone(agentName(r.about.host.agent), r.about.machine);
+    const who = this.options.someone(r);
     const title = titleOf(r);
     const origin = title ? `<span class="someone-origin">${escape(who)}</span>` : "";
     const since = r.now?.since ?? r.about.born_at;
@@ -233,7 +235,7 @@ export class ProjectPage {
       return this.jobLine(job, now, home.startedBy(home.aPage("page" in job.owner ? job.owner.page.page : "")));
     }
     const owner = known.find((r) => r.about.id === address.resident && r.about.machine === address.machine);
-    const name = owner ? home.someone(agentName(owner.about.host.agent), owner.about.machine) : `${address.resident} ${address.machine}`;
+    const name = owner ? this.options.someone(owner) : `${address.resident} ${address.machine}`;
     const by = owner?.here && !owner.removed ? home.startedBy(name) : `${home.startedBy(name)} ${words.ownerLeft}`;
     return this.jobLine(job, now, by);
   }

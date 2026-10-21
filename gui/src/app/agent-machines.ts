@@ -39,6 +39,8 @@ export interface Pickable {
 }
 
 export interface MachinePickWords {
+  /** Whose agents assist the user, where the menu would name their machine. */
+  assistAgents(owner: string): string;
   holds: Record<Hold, string>;
   here: string;
   ownedBy(owner: string): string;
@@ -90,8 +92,20 @@ export function chosen(machines: Pickable[], named: string | null, kept: string 
   return find(named) ?? find(kept) ?? machines.find((one) => one.here) ?? machines[0] ?? null;
 }
 
+/** What the menu and its pill call a machine: its name, or for one whose
+ *  agents assist the user, whose agents they are, never the computer. */
+function named(machine: Pickable, words: MachinePickWords): string {
+  return machine.hold === "assist" ? words.assistAgents(machine.owner ?? "") : machine.written;
+}
+
+/** Its mark: the computer's, or for agents assisting the user, a person's. */
+function mark(machine: Pickable): string {
+  return glyph(machine.hold === "assist" ? "colleague" : machine.form, 15);
+}
+
 function sub(machine: Pickable, words: MachinePickWords): string {
   if (machine.here) return words.here;
+  if (machine.hold === "assist") return machine.online === false ? words.offline : "";
   if (machine.online === false) return words.offline;
   return machine.owner ? words.ownedBy(machine.owner) : "";
 }
@@ -101,7 +115,7 @@ export function pickButton(machine: Pickable | null, words: MachinePickWords): s
   if (!machine) return "";
   const dot = machine.online === true ? " online" : machine.online === false ? " offline" : "";
   return `<button class="agents-pick" type="button" data-pick-open aria-haspopup="menu" aria-label="${escape(words.pickMachine)}" title="${escape(words.pickMachine)}">
-    <span class="agents-pick-icon${dot}" aria-hidden="true">${glyph(machine.form, 15)}</span><span class="agents-pick-name">${escape(machine.written)}</span>${machine.here ? `<span class="agents-pick-sub">${escape(words.here)}</span>` : ""}${glyph("chevron", 14)}</button>`;
+    <span class="agents-pick-icon${dot}" aria-hidden="true">${mark(machine)}</span><span class="agents-pick-name">${escape(named(machine, words))}</span>${machine.here ? `<span class="agents-pick-sub">${escape(words.here)}</span>` : ""}${glyph("chevron", 14)}</button>`;
 }
 
 /** The menu: a group for each hold, each machine with whether it is
@@ -117,7 +131,7 @@ export function pickMenu(machines: Pickable[], current: Pickable | null, words: 
         const dot = machine.online === true ? " online" : machine.online === false ? " offline" : "";
         const band = machine.group !== null && machine.group !== held[at - 1]?.group ? `<span class="agents-pick-band">${escape(machine.group)}</span>` : "";
         return `${band}<button class="agents-pick-item${on ? " current" : ""}" type="button" role="menuitemradio" aria-checked="${on}" data-pick="${escape(machine.written)}">
-          <span class="agents-pick-icon${dot}" aria-hidden="true">${glyph(machine.form, 15)}</span><span class="agents-pick-name">${escape(machine.written)}</span><span class="agents-pick-sub">${escape(sub(machine, words))}</span></button>`;
+          <span class="agents-pick-icon${dot}" aria-hidden="true">${mark(machine)}</span><span class="agents-pick-name">${escape(named(machine, words))}</span><span class="agents-pick-sub">${escape(sub(machine, words))}</span></button>`;
       })
       .join("");
     return `<div class="agents-pick-group" role="group" aria-label="${escape(words.holds[hold])}"><span class="agents-pick-hold">${escape(words.holds[hold])}</span>${items}</div>`;

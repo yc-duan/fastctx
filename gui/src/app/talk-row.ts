@@ -20,6 +20,8 @@ import type { TalkActs } from "./talk-acts";
 export interface TalkRowWords {
   /** "Claude laptop". */
   someone(agent: string, machine: string): string;
+  /** An agent assisting the user, as whose it is, never its machine. */
+  someoneAssisting(agent: string, owner: string): string;
   busy(lasted: string): string;
   waiting: string;
   /** Its machine is away: the conversation is listed as it last was. */
@@ -66,11 +68,12 @@ export function factsByMachine(world: WorldNow | null): Map<string, MachineFacts
   return facts;
 }
 
-export function talkRow(r: ResidentNow, place: Place, now: Date, facts: Map<string, MachineFacts>, words: TalkRowWords, acts?: RowActs): string {
+export function talkRow(r: ResidentNow, place: Place, now: Date, facts: Map<string, MachineFacts>, words: TalkRowWords, acts?: RowActs, assisting: string | null = null): string {
   const address: Address = { resident: r.about.id, machine: r.about.machine };
   const current = place.kind === "talk" && place.address.resident === address.resident && place.address.machine === address.machine;
   const agent = agentName(r.about.host.agent);
-  const someone = words.someone(agent, r.about.machine);
+  // An agent assisting the user is said as whose it is: its machine is not the user's to see.
+  const someone = assisting !== null ? words.someoneAssisting(agent, assisting) : words.someone(agent, r.about.machine);
   const name = titleOf(r) ?? someone;
   // What a machine away last said of a conversation is not said as now.
   const away = isUnreached(r);
@@ -84,7 +87,7 @@ export function talkRow(r: ResidentNow, place: Place, now: Date, facts: Map<stri
   const known = facts.get(r.about.machine);
   // A node too old to say what it is runs on a computer more often than not.
   const form = known?.form ?? "desktop";
-  const device = [r.about.machine, known ? osName(known.os) : ""].filter(Boolean).join(" ");
+  const device = assisting !== null ? someone : [r.about.machine, known ? osName(known.os) : ""].filter(Boolean).join(" ");
   const named =
     acts?.renaming !== null && acts?.renaming !== undefined
       ? `<input class="talk-rename" value="${escape(acts.renaming)}" aria-label="${escape(name)}" spellcheck="false" autocomplete="off">`
@@ -96,7 +99,7 @@ export function talkRow(r: ResidentNow, place: Place, now: Date, facts: Map<stri
     <span class="talk-host" title="${escape(agent)}">${host}</span>
     ${named}
     ${stateCell}
-    <span class="talk-device" title="${escape(device)}" aria-label="${escape(`${words.device(form)} ${r.about.machine}`)}">${glyph(form, 16)}</span>
+    <span class="talk-device" title="${escape(device)}" aria-label="${escape(assisting !== null ? device : `${words.device(form)} ${r.about.machine}`)}">${glyph(assisting !== null ? "colleague" : form, 16)}</span>
   </a>${acts && !deleting ? quick(acts, archived, name) : ""}</li>`;
 }
 
