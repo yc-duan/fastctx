@@ -77,6 +77,9 @@ export interface MachinesOptions {
   head(title: string, actions?: string): string;
   /** The machine to bring into view, when one was named. */
   focus: string | null;
+  /** Opens on the update view instead, that machine ticked in it: a
+   *  machine's page sends here to update it. */
+  ticked?: boolean;
   /** When, as the front page says it: a clock time today, a day before. */
   when(at: Date, now: Date): string;
   /** Makes a change as a login. */
@@ -169,16 +172,6 @@ const DIRECT_PORT = 7444;
 const VIEW_KEY = "machines.view";
 
 type View = "map" | "list" | "updates";
-
-/** The machines open next on their update view: the view kept is the one
- *  a page opens on. */
-export function showUpdatesNext(): void {
-  try {
-    localStorage.setItem(VIEW_KEY, "updates");
-  } catch {
-    // Not kept: the machines open on the view they last showed.
-  }
-}
 
 function keptView(): View {
   try {
@@ -326,6 +319,8 @@ export class MachinesPage implements Page {
   private readonly folds = new Map<string, boolean>();
   /** Come to a spot named in the address, until the drawing knows it. */
   private focusing: boolean;
+  /** The machine named for the update view is ticked once it is known. */
+  private ticking: boolean;
 
   /** In no network: the film and the ways into one, instead of the
    *  drawing. */
@@ -390,10 +385,12 @@ export class MachinesPage implements Page {
     });
     this.title = words.title;
     this.selected = options.focus ? `m:${options.focus}` : null;
+    const ticked = !!options.ticked && !!options.updates;
     // Come to one from elsewhere, what is known of it is open; a machine's
     // own page is where its details are, so it is only chosen.
-    this.detailsOpen = !!options.focus;
-    this.focusing = !!options.focus;
+    this.detailsOpen = !!options.focus && !ticked;
+    this.focusing = !!options.focus && !ticked;
+    this.ticking = ticked && !!options.focus;
     this.element = document.createElement("div");
     this.element.className = "machines-page";
     this.element.innerHTML = `
@@ -444,8 +441,9 @@ export class MachinesPage implements Page {
     this.card = this.element.querySelector<HTMLElement>(".map-card")!;
     this.list = this.element.querySelector<HTMLElement>(".ml-list")!;
     this.views = this.element.querySelector<HTMLElement>(".ml-views")!;
-    // A machine named in the address is shown on the drawing.
-    this.view = options.focus ? "map" : keptView();
+    // A machine named in the address is shown on the drawing, or ticked in
+    // the update view.
+    this.view = ticked ? "updates" : options.focus ? "map" : keptView();
     if (this.view === "updates" && !options.updates) this.view = "list";
     this.views.addEventListener("click", (event) => {
       const view = (event.target as HTMLElement).closest<HTMLElement>("[data-view]")?.dataset.view as View | undefined;
@@ -720,6 +718,22 @@ export class MachinesPage implements Page {
     const top = document.documentElement.clientHeight - this.panel.offsetHeight;
     const room = Math.max(0, Math.min(box.height, top - box.top));
     this.map.glide(box.width / 2 - at[0], room / 2 - at[1]);
+  }
+
+  /** Ticks the machine a machine's page sent here for, and brings its row
+   *  into view; on a narrow page as a finger held on it does. */
+  private tick(key: string): void {
+    this.ticking = false;
+    if (this.isPickable(key)) {
+      if (this.element.isConnected ? this.narrow() : window.innerWidth <= 860) {
+        this.selecting = true;
+        layerOpened(this.selectLayer);
+        this.anchor = key;
+      }
+      this.framed = [key];
+      this.selected = null;
+    }
+    requestAnimationFrame(() => this.list.querySelector(`[data-ml-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "nearest" }));
   }
 
   /** Shows the machines as a drawing or a list, and keeps the choice on
@@ -1396,6 +1410,7 @@ export class MachinesPage implements Page {
       this.focusing = false;
       if (spot.kind === "machine") this.detailsOpen = false;
     }
+    if (this.ticking && spot) this.tick(this.selected!);
     // On a narrow page nothing floats beside the one chosen: its sheet rises
     // at once, its actions a row in it.
     const narrow = this.narrow();

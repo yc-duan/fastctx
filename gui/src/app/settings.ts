@@ -9,8 +9,8 @@ import { redrawKeepingFocus } from "./focus";
 import { chooseMotion, chosenMotion, motions, type Motion } from "../motion";
 import { chooseSize, chooseTheme, chosenSize, chosenTheme, textSizes, themes, type Theme } from "../theme";
 import type { KeptNow, Legacy, Setup, WorldNow } from "../world/bridge";
-import { RenewalRow, type Renewing } from "./renewal";
-import { UpdateRows } from "./update-rows";
+import type { Renewing } from "./renewal";
+import { UpdateLine } from "./update-line";
 import type { Updates } from "./updates";
 import type { UpdateViewWords } from "./update-view-words";
 import type { UpdateWords } from "./update-words";
@@ -61,7 +61,8 @@ export interface SettingsOptions {
   } | undefined;
   /** New versions of the application: its rows, and the card a new one
    *  opens in; `relays` where this device passes packages to the network. */
-  updates?: { updates: Updates; words: UpdateWords; view: UpdateViewWords; versions(look: boolean): void; relays: boolean } | undefined;
+  /** This device's updates: said in one line, done in their card. */
+  updates?: { updates: Updates; words: UpdateWords; view: UpdateViewWords; open(): void } | undefined;
   /** This is an Android phone: what it lets the World do in the background. */
   phone?: PhoneSeam | undefined;
   /** Whether calls are wanted changed, for where calls are made by more
@@ -90,8 +91,7 @@ export class SettingsPage implements Page {
   readonly element: HTMLElement;
   readonly title: string;
   private stop: () => void;
-  private renewal: RenewalRow | null = null;
-  private updateRows: UpdateRows | null = null;
+  private updateLine: UpdateLine | null = null;
   private device: HTMLElement;
   /** This computer's name: the way to its page, and renaming it there. */
   private name: HTMLElement;
@@ -110,7 +110,7 @@ export class SettingsPage implements Page {
       ${options.head(`<h1 class="page-title">${escape(words.title)}</h1>`)}
       <div class="settings scroller">
         <section class="home-section"><h2 class="section-title">${escape(words.look)}</h2><div class="look"></div></section>
-        <section class="home-section settings-device"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts settings-name" hidden></dl><dl class="facts device"></dl><dl class="facts settings-renewal" hidden></dl><dl class="facts settings-app" hidden></dl><dl class="facts settings-service" hidden></dl>${options.computer ? `<dl class="facts settings-data"><dt>${escape(words.data)}</dt><dd><a class="settings-link" href="#/data"><span class="settings-data-size">${escape(words.dataOpen)}</span>${glyph("chevron", 14)}</a></dd></dl>` : ""}<dl class="facts settings-phone" hidden></dl></section>
+        <section class="home-section settings-device"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts settings-name" hidden></dl><dl class="facts device"></dl><dl class="facts settings-app" hidden></dl><dl class="facts settings-service" hidden></dl>${options.computer ? `<dl class="facts settings-data"><dt>${escape(words.data)}</dt><dd><a class="settings-link" href="#/data"><span class="settings-data-size">${escape(words.dataOpen)}</span>${glyph("chevron", 14)}</a></dd></dl>` : ""}<dl class="facts settings-phone" hidden></dl></section>
         <section class="home-section settings-keys"><h2 class="section-title">${escape(words.keys)}</h2><dl class="facts keys">${words.keyList
           .map(([keys, what]) => `<dt>${keys.split(" ").map((key) => `<kbd>${escape(key)}</kbd>`).join(" ")}</dt><dd>${escape(what)}</dd>`)
           .join("")}</dl></section>
@@ -133,17 +133,16 @@ export class SettingsPage implements Page {
     this.service = this.element.querySelector<HTMLElement>(".settings-service")!;
     this.drawLook();
     this.askService();
-    const renewing = options.computer?.renewing;
-    if (renewing) this.renewal = new RenewalRow(this.element.querySelector<HTMLElement>(".settings-renewal")!, words, renewing);
     const updates = options.updates;
     if (updates) {
-      this.updateRows = new UpdateRows(
+      this.updateLine = new UpdateLine(
         this.element.querySelector<HTMLElement>(".settings-app")!,
         updates.updates,
         updates.words,
         updates.view,
-        updates.versions,
-        updates.relays,
+        words,
+        options.computer?.renewing ?? null,
+        updates.open,
       );
     }
     if (options.phone) new PhoneRow(this.element.querySelector<HTMLElement>(".settings-phone")!, words, options.phone);
@@ -191,8 +190,7 @@ export class SettingsPage implements Page {
 
   leave(): void {
     this.stop();
-    this.renewal?.leave();
-    this.updateRows?.leave();
+    this.updateLine?.leave();
     this.renaming?.dispose();
   }
 

@@ -40,6 +40,9 @@ export interface HomeOptions {
   answer(address: Address, asked: Asked, choice: number): Promise<unknown>;
   /** Stops a running command, on the machine it runs on, whoever started it. */
   stopJob?(job: string, machine: string): Promise<void>;
+  /** Opens this device's updates, where the World's program here is put
+   *  up to the interface's. */
+  updates?(): void;
 }
 
 type Glyph = Parameters<typeof glyph>[0];
@@ -105,6 +108,10 @@ export class HomePage {
         options.newTalk();
         return;
       }
+      if (target.closest("[data-front-updates]")) {
+        options.updates?.();
+        return;
+      }
       const button = target.closest<HTMLButtonElement>(".front-answer");
       if (button) this.answer(button);
       const stop = target.closest<HTMLElement>("[data-job]");
@@ -158,7 +165,7 @@ export class HomePage {
     const { words } = this.options;
     this.now = now;
     const html = old
-      ? `<div class="front-column"><p class="front-trouble">${escape(words.oldWorld(old.node_version, old.client_version))}</p><a class="front-begin-link" href="#/settings">${escape(words.renewThere)}</a></div>`
+      ? `<div class="front-column"><p class="front-trouble">${escape(words.oldWorld(old.node_version, old.client_version))}</p><button class="front-begin-link" type="button" data-front-updates>${escape(words.renewThere)}</button></div>`
       : `<div class="front-column"><p class="front-trouble" title="${escape(why)}">${escape(words.unreachable(why))}</p><a class="front-begin-link" href="#/login">${escape(words.setUp)}</a></div>`;
     this.draw(html, false);
   }

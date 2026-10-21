@@ -593,6 +593,21 @@
   color: var(--accent);
 }
 
+button.front-begin-link {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  line-height: inherit;
+  cursor: pointer;
+}
+
+button.front-begin-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 /* The board rises into place once, as the page opens. */
 .front-board.arriving .front-title,
 .front-board.arriving .front-card,

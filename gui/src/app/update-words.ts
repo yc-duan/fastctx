@@ -128,8 +128,11 @@ export interface UpdateWords {
   barFetching(percent: number | null): string;
   barReady: string;
   barInstalling: string;
-  /** The card. */
+  /** The card: its title with a new version, and with none; the
+   *  settings' button that opens it. */
   title: string;
+  here: string;
+  open: string;
   close: string;
   named(version: string): string;
   beta: string;
@@ -147,8 +150,9 @@ export interface UpdateWords {
   failed(why: string): string;
   /** A setting of this device's updates not changed, the reason under the pointer. */
   notSet: string;
-  /** The settings. */
+  /** The settings' row, and the card's row of the version here. */
   updates: string;
+  version: string;
   current(version: string): string;
   look: string;
   looking: string;
@@ -171,7 +175,9 @@ export interface UpdateWords {
   autoByDefault: string;
   on: string;
   off: string;
+  /** Passing packages on, said short, and whole under the pointer. */
   relay: string;
+  relayWhole: string;
   /** Another machine. */
   updateMachine: string;
   machineBehind(version: string): string;
@@ -192,6 +198,8 @@ export const zhUpdate: UpdateWords = {
   barReady: "重启以更新",
   barInstalling: "正在更新",
   title: "新版本",
+  here: "更新",
+  open: "更新…",
   close: "关闭",
   named: (version) => `Fastctx ${version}`,
   beta: "测试版",
@@ -209,6 +217,7 @@ export const zhUpdate: UpdateWords = {
   failed: (why) => `没能更新：${why}`,
   notSet: "没改成",
   updates: "更新",
+  version: "版本",
   current: (version) => `Fastctx ${version}`,
   look: "检查更新",
   looking: "正在检查…",
@@ -226,7 +235,8 @@ export const zhUpdate: UpdateWords = {
   autoByDefault: "默认",
   on: "开",
   off: "关",
-  relay: "帮网络里的设备传更新包",
+  relay: "帮网络传包",
+  relayWhole: "帮网络里的设备传更新包",
   updateMachine: "更新",
   machineBehind: (version) => `${version} 可用`,
   machineUpdating: "正在更新…",
@@ -245,6 +255,8 @@ export const enUpdate: UpdateWords = {
   barReady: "Restart to update",
   barInstalling: "Updating",
   title: "New version",
+  here: "Updates",
+  open: "Updates…",
   close: "Close",
   named: (version) => `Fastctx ${version}`,
   beta: "Beta",
@@ -262,6 +274,7 @@ export const enUpdate: UpdateWords = {
   failed: (why) => `Couldn't update: ${why}`,
   notSet: "Couldn't change it",
   updates: "Updates",
+  version: "Version",
   current: (version) => `Fastctx ${version}`,
   look: "Check for updates",
   looking: "Checking…",
@@ -279,7 +292,8 @@ export const enUpdate: UpdateWords = {
   autoByDefault: "By default",
   on: "On",
   off: "Off",
-  relay: "Pass updates to the network's devices",
+  relay: "Pass packages on",
+  relayWhole: "Pass updates to the network's devices",
   updateMachine: "Update",
   machineBehind: (version) => `${version} available`,
   machineUpdating: "Updating…",

@@ -54,7 +54,7 @@ import { ProjectActs, enProjectActs, zhProjectActs } from "./app/project-acts";
 import { enMe, zhMe } from "./app/me-words";
 import { enPeople, zhPeople } from "./app/people-words";
 import { LoginPage } from "./app/login";
-import { MachinesPage, showUpdatesNext } from "./app/machines";
+import { MachinesPage } from "./app/machines";
 import { AgentLoginsPage } from "./app/agent-logins";
 import { LoginUsagePage } from "./app/usage/login-page";
 import { enUsage, zhUsage } from "./app/usage/words";
@@ -991,9 +991,28 @@ const updateCard = new UpdateCard(appUpdates, updateWords, live ? !onComputer() 
     return able.size;
   },
   open: () => {
-    showUpdatesNext();
-    location.hash = link({ kind: "machines" });
+    location.hash = link({ kind: "machines", updates: true });
   },
+}, {
+  versions: (look) => versionsHere(look),
+  relays: live ? onComputer() : !params.has("phone"),
+  // The World's program here: put in place by the interface's, then the
+  // node asked to hand over to it.
+  renewing: live
+    ? onComputer()
+      ? {
+          state: renewalState,
+          renew: async () => {
+            await placeFastctx();
+            await renewHere();
+          },
+          guardian: renewGuardianHere,
+        }
+      : null
+    : params.has("phone")
+      ? null
+      : specimenComputer().renewing,
+  settings: english ? enSettings : zhSettings,
 });
 const versionWindow = new VersionWindow(updateWords.versions);
 // A picture attached and not yet sent opens in the same viewer as the
@@ -1304,6 +1323,7 @@ function home(): Page {
     head: head(""),
     newTalk: () => beginTalk(),
     stopJob: live ? (job, machine) => stopJob(job, machine) : async () => {},
+    updates: () => updateCard.open(),
     // An answer from here goes in once, however long the way is closed, as
     // one from a notification does (`world-network.md`, 断开不是结束).
     answer: (address, asked, choice) => {
@@ -2098,8 +2118,7 @@ function show(next: Place): void {
           state: appUpdates.state,
           machine: updateOlderMachine,
           remote: (name, call) => updatesAsked.remote(name, call),
-          versions: versionWindow,
-          versionsHere,
+          here: () => updateCard.open(),
           words: updateWords,
           view: english ? enUpdateView : zhUpdateView,
         },
@@ -2128,6 +2147,7 @@ function show(next: Place): void {
         people: english ? enPeople : zhPeople,
         head,
         focus: next.focus ?? null,
+        ticked: !!next.updates,
         when,
         change,
         invite: (login) => tokens.open(login),
@@ -2398,8 +2418,7 @@ function show(next: Place): void {
           updates: appUpdates,
           words: updateWords,
           view: english ? enUpdateView : zhUpdateView,
-          versions: versionsHere,
-          relays: live ? onComputer() : !params.has("phone"),
+          open: () => updateCard.open(),
         },
         notifyChanged: (on) => {
           if (live && onPhone()) void configurePhone(presenceWords, on).catch((error: unknown) => console.error("telling the phone its calls", error));

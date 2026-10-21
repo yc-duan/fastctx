@@ -48,7 +48,6 @@ import { effect, type Signal } from "./signals";
 import { newestKnown, type UpdateCall, type UpdateState } from "../world/updates";
 import type { UpdateViewWords } from "./update-view-words";
 import type { UpdateWords } from "./update-words";
-import type { VersionWindow } from "./version-window";
 import { jobsOf, residentsOf, type Store } from "./store";
 
 export interface MachinePageOptions {
@@ -84,8 +83,8 @@ export interface MachinePageOptions {
         /** A machine of an earlier release updates to its newest. */
         machine(name: string): Promise<UpdateState>;
         remote(name: string, call: UpdateCall): Promise<UpdateState>;
-        versions: VersionWindow;
-        versionsHere(look: boolean): void;
+        /** This device's own update card. */
+        here(): void;
         words: UpdateWords;
         view: UpdateViewWords;
       }
@@ -206,13 +205,10 @@ export class MachinePage implements Page {
       ? new FastctxBlock({
           words: options.manage,
           view: updates.view,
-          versions: updates.versions,
           local: updates.state,
           remote: updates.remote,
           older: updates.machine,
-          versionsHere: updates.versionsHere,
-          due: (login, machine, version) =>
-            options.change(login, { change: "update_due", machine, ...(version ? { version } : {}) }).then(() => options.store.refresh()),
+          here: updates.here,
           kept: (service) => (service ? options.words.service : options.words.noService),
           changed: () => this.render(),
         })
@@ -927,7 +923,6 @@ export class MachinePage implements Page {
       version: stats?.node.version ?? factsOf(machine)?.version ?? null,
       service: stats ? stats.node.service : null,
       manages,
-      keeps: !!manages && !!world.accounts.hubs.find((hub) => hub.hub === manages.hub)?.due,
     };
     block.show(subject, this.tab === "manage" && document.visibilityState === "visible");
     this.put("fastctx", this.fastctxBox, block.html(subject));

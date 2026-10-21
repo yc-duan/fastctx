@@ -86,6 +86,54 @@
   gap: var(--space-2);
 }
 
+/* A new version, when there is one, then this device: its version and
+   choices, and the World's program here, in the settings' columns. */
+.update-new {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.update-new[hidden] {
+  display: none;
+}
+
+.update-card .facts {
+  align-items: baseline;
+}
+
+.update-card .facts + .facts {
+  margin-top: var(--space-2);
+}
+
+.update-card .facts dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-5);
+  row-gap: 2px;
+}
+
+/* A quiet button's words line up with the column when it wraps. */
+.update-card .facts dd > .text-button {
+  margin-left: calc(-1 * var(--space-3));
+}
+
+.update-card .facts dd > .settings-said {
+  flex: 0 1 auto;
+  margin: 0;
+}
+
+.update-card .facts dd > .settings-notes,
+.update-card .facts dd > .settings-steps {
+  flex: 1 1 100%;
+}
+
+.update-more:empty {
+  display: none;
+}
+
 .update-name {
   display: flex;
   align-items: center;
@@ -134,7 +182,21 @@
 /* The network's other machines that can take a newer version: a quiet
    line under the foot, its words in line with the card's. */
 .update-others {
-  margin: var(--space-2) 0 0 calc(-1 * var(--space-3));
+  margin: var(--space-3) 0 0 calc(-1 * var(--space-3));
+}
+
+/* The settings' one line of it: what to know beside the version. */
+.update-line-said {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.update-line-said.settings-warn {
+  color: var(--accent);
+}
+
+.update-line-said.settings-wrong {
+  color: var(--wrong);
 }
 
 .update-bar {

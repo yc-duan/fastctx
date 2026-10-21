@@ -1,23 +1,22 @@
 // The Fastctx on a machine, at the top of its page's 「管理」 (`world-gui.md`,
 // 机器的详情; `world-upgrade.md`, 别的机器的更新): what it runs, and the
 // application's version where one carries it; whether a boot service keeps
-// it; what it can take, an update picked in the window of versions, and how
-// that update goes, as the machine itself says, asked every few seconds
-// while it is shown; and its two choices. A machine away takes an update
-// the hub keeps for it until it is back. A machine whose Fastctx is older
-// updates to the newest on its line alone. This device's own opens the
-// window its settings open.
+// it; what it can take and how an update of it goes, as the machine itself
+// says, asked every few seconds while it is shown. Updating it and its
+// choices are the machines' update view's, which 「更新…」 opens with it
+// ticked; this device's own opens its update card. A machine whose Fastctx
+// is older updates to the newest on its line alone, from here.
 
 import { escape } from "../conversation/prose";
 import { copyButton, copyFrom } from "./copy-button";
 import type { Login } from "../world/accounts";
-import { compareVersions, newestKnown, type UpdateCall, type UpdateSettings, type UpdateState } from "../world/updates";
+import { compareVersions, newestKnown, type UpdateCall, type UpdateState } from "../world/updates";
+import { link } from "./places";
 import { lineOf, stageMark } from "./update-marks";
 import type { UpdateViewWords } from "./update-view-words";
 import type { ManageWords } from "./machine-manage-words";
 import type { Machine } from "./reach";
 import type { Signal } from "./signals";
-import type { VersionWindow } from "./version-window";
 
 /** How often a machine is asked how its updates stand, and while a package
  *  comes or it changes its World program. */
@@ -29,7 +28,6 @@ export interface FastctxOptions {
   /** How an update under way or stopped is said, as the machines' update
    *  view says it. */
   view: UpdateViewWords;
-  versions: VersionWindow;
   /** How updates stand on this device: what it knows of releases, and of
    *  the network's machines. */
   local: Signal<UpdateState | null>;
@@ -37,10 +35,8 @@ export interface FastctxOptions {
   remote(machine: string, call: UpdateCall): Promise<UpdateState>;
   /** Has a machine of an earlier release update to the newest on its line. */
   older(machine: string): Promise<UpdateState>;
-  /** This device's own window of versions. */
-  versionsHere(look: boolean): void;
-  /** Keeps an update for a machine away, as `login`, or takes it back. */
-  due(login: Login, machine: string, version: string | null): Promise<void>;
+  /** This device's own update card. */
+  here(): void;
   /** How it is kept running: in a boot service, or with its user's login. */
   kept(service: boolean): string;
   /** Something shown changed: the page draws it again. */
@@ -56,9 +52,6 @@ export interface FastctxSubject {
   service: boolean | null;
   /** The login that may update it and set its choices; none, to look only. */
   manages: Login | null;
-  /** Its hub keeps an update for it while it is away: one that reads such
-   *  records, which a machine takes from 1.0.1 beta 3 on. */
-  keeps: boolean;
 }
 
 /** The first release that answers about its updates (`RemoteCall::Updates`). */
@@ -150,75 +143,68 @@ export class FastctxBlock {
     const rows = [`<dt>${escape(words.fastctx)}</dt><dd class="fx-facts"><span>${facts.join(`<span class="sep"></span>`)}</span></dd>`];
     const status = this.status(subject, state, running);
     if (status) rows.push(`<dt></dt><dd class="fx-status">${status}</dd>`);
-    if (!machine.here && subject.manages && state && !this.older(subject) && machine.online !== false) {
-      rows.push(...this.choices(state));
-    }
     return `<dl class="mp-rows">${rows.join("")}</dl>`;
   }
 
-  /** What it can take now and how an update of it goes. */
+  /** What it can take now and how an update of it goes, then the way to
+   *  update it: this device's card, or the update view with it ticked. */
   private status(subject: FastctxSubject, state: UpdateState | null, running: string | null): string {
     const { words } = this.options;
     const { machine, manages } = subject;
-    const button = (act: string, label: string, title = "") =>
-      `<button class="text-button quiet-button" type="button" data-act="${act}"${title ? ` title="${escape(title)}"` : ""}>${escape(label)}</button>`;
+    const bar = (percent: number | null) =>
+      `<span class="fx-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"${percent === null ? "" : ` aria-valuenow="${percent}"`}><span style="width:${percent ?? 6}%"></span></span>`;
+    const admin = `<span class="fx-admin"><span>${escape(words.adminThere)}</span><code class="mono">${escape(ADMIN_LINE)}</code>${copyButton(ADMIN_LINE, words.copy, `data-act="fx-copy"`)}</span>`;
+    const wrong = (said: string, why = "") => `<span class="fx-wrong"${why ? ` title="${escape(why)}"` : ""}>${escape(said)}</span>`;
     // A node that says how its update stands is said in the update view's words.
     const staged = state?.stage ? stageMark(state.stage, lineOf(running), this.options.view) : null;
     if (machine.here) {
-      if (staged) return `<span${staged.kind === "failed" ? ` class="fx-wrong"` : ""}>${escape(staged.said)}</span>${button("fx-versions-here", words.update)}`;
+      const go = `<button class="text-button quiet-button" type="button" data-act="fx-here">${escape(words.update)}</button>`;
+      if (staged) return `${staged.kind === "failed" ? wrong(staged.said) : `<span>${escape(staged.said)}</span>`}${go}`;
       const offer = state?.offer && running && compareVersions(state.offer.version, running) > 0 ? state.offer.version : null;
-      return `<span>${escape(offer ? words.canTake(offer) : words.upToDate)}</span>${button("fx-versions-here", words.update)}`;
+      return `<span>${escape(offer ? words.canTake(offer) : words.upToDate)}</span>${go}`;
     }
     const local = this.options.local.peek();
-    const due = local?.network?.due?.[machine.name];
     const newest = this.newest(local, running);
     if (this.said) return `<span class="fx-said">${escape(this.said)}</span>`;
-    if (machine.online === false) {
-      if (due) return `<span>${escape(words.due(due.version, due.by))}</span>${manages ? button("fx-undue", words.undue) : ""}`;
-      if (!manages) return "";
-      return subject.keeps && !this.older(subject)
-        ? `<span class="fx-quiet">${escape(words.offline)}</span>${button("fx-versions", words.update)}`
-        : `<span class="fx-quiet">${escape(words.away)}</span>`;
-    }
     if (this.older(subject)) {
       if (!newest) return `<span>${escape(words.upToDate)}</span>`;
       // A release before 1.0.1 beta 3 changes only its World program from
       // elsewhere; an application's computer updates at it.
       if (local?.network?.machines?.[machine.name]?.app) return `<span>${escape(words.olderApp(newest))}</span>`;
-      return `<span>${escape(words.canTake(newest))}</span>${manages ? button("fx-older", words.olderGo, words.older) : ""}`;
+      return `<span>${escape(words.canTake(newest))}</span>${manages ? `<button class="text-button quiet-button" type="button" data-act="fx-older" title="${escape(words.older)}">${escape(words.olderGo)}</button>` : ""}`;
+    }
+    const go = manages ? `<a class="text-button quiet-button" href="${link({ kind: "machines", focus: machine.written, updates: true })}">${escape(words.update)}</a>` : "";
+    if (machine.online === false) {
+      const due = local?.network?.due?.[machine.name];
+      return `<span class="fx-quiet">${escape(due ? words.due(due.version, due.by) : words.away)}</span>${go}`;
     }
     if (!manages) return newest ? `<span>${escape(words.canTake(newest))}</span>` : `<span>${escape(words.upToDate)}</span>`;
-    if (!state) return `<span class="fx-quiet">${escape(this.problem ?? words.asking)}</span>`;
+    if (!state) return `<span class="fx-quiet">${escape(this.problem ?? words.asking)}</span>${go}`;
     if (staged && state.stage) {
       const stage = state.stage;
-      const said = `<span${staged.kind === "failed" ? ` class="fx-wrong"` : ""}>${escape(staged.said)}</span>`;
-      if (stage.kind === "fetching") {
-        const percent = stage.total ? Math.min(100, Math.floor((stage.received / stage.total) * 100)) : null;
-        return `${said}<span class="fx-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"${percent === null ? "" : ` aria-valuenow="${percent}"`}><span style="width:${percent ?? 6}%"></span></span>`;
-      }
-      if (stage.kind === "administrator") return `${said}<span class="fx-admin"><span>${escape(words.adminThere)}</span><code class="mono">${escape(ADMIN_LINE)}</code>${copyButton(ADMIN_LINE, words.copy, `data-act="fx-copy"`)}</span>`;
-      return staged.kind === "failed" ? `${said}${button("fx-versions", words.update)}` : said;
+      const said = staged.kind === "failed" ? wrong(staged.said) : `<span>${escape(staged.said)}</span>`;
+      if (stage.kind === "fetching") return `${said}${bar(stage.total ? Math.min(100, Math.floor((stage.received / stage.total) * 100)) : null)}`;
+      if (stage.kind === "administrator") return `${said}${admin}`;
+      return `${said}${go}`;
     }
     const megabytes = (bytes: number) => `${(bytes / 1_000_000).toFixed(1)} MB`;
     if (state.fetching) {
       const { received, total, via, version } = state.fetching;
-      const percent = total ? Math.min(100, Math.floor((received / total) * 100)) : null;
-      return `<span>${escape(version)} ${escape(words.fetching(megabytes(received), total ? megabytes(total) : null, via === "network"))}</span><span class="fx-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"${percent === null ? "" : ` aria-valuenow="${percent}"`}><span style="width:${percent ?? 6}%"></span></span>`;
+      return `<span>${escape(version)} ${escape(words.fetching(megabytes(received), total ? megabytes(total) : null, via === "network"))}</span>${bar(total ? Math.min(100, Math.floor((received / total) * 100)) : null)}`;
     }
     if (state.renewing) {
       const { version, phase, error } = state.renewing;
-      const said = phase === "failed" ? words.failed(error ?? words.phase.failed) : words.phase[phase];
-      const step = `<span${phase === "failed" ? ` class="fx-wrong"` : ""}>${escape(`${version} ${said}`)}</span>`;
-      if (phase !== "awaiting_administrator") return step;
-      return `${step}<span class="fx-admin"><span>${escape(words.adminThere)}</span><code class="mono">${escape(ADMIN_LINE)}</code>${copyButton(ADMIN_LINE, words.copy, `data-act="fx-copy"`)}</span>`;
+      const said = `${version} ${phase === "failed" ? words.failed(error ?? words.phase.failed) : words.phase[phase]}`;
+      if (phase === "awaiting_administrator") return `<span>${escape(said)}</span>${admin}`;
+      return phase === "failed" ? `${wrong(said)}${go}` : `<span>${escape(said)}</span>`;
     }
-    if (state.failed) return `<span class="fx-wrong" title="${escape(state.failed.why)}">${escape(words.failed(state.failed.why))}</span>${button("fx-versions", words.update)}`;
+    if (state.failed) return `${wrong(words.failed(state.failed.why), state.failed.why)}${go}`;
     if (state.take && state.app) {
       const said = state.open ? words.appTakes(state.take) : state.app.target.startsWith("windows") ? words.appClosed(state.take) : words.appOpenThere(state.take);
       return `<span>${escape(said)}</span>`;
     }
     const offer = state.offer && running && compareVersions(state.offer.version, running) > 0 ? state.offer.version : null;
-    return offer ? `<span>${escape(words.canTake(offer))}</span>${button("fx-versions", words.update)}` : `<span>${escape(words.upToDate)}</span>`;
+    return `<span>${escape(offer ? words.canTake(offer) : words.upToDate)}</span>${go}`;
   }
 
   /** The newest release this device knows on the line of `running`. */
@@ -226,86 +212,23 @@ export class FastctxBlock {
     return running ? newestKnown(local, running) : null;
   }
 
-  private choices(state: UpdateState): string[] {
-    const { words } = this.options;
-    const choice = (kind: string, on: boolean) =>
-      `<div class="choice-options">${([true, false] as const)
-        .map(
-          (value) =>
-            `<button type="button" class="choice${value === on ? " chosen" : ""}" role="radio" aria-checked="${value === on}" data-act="fx-choice" data-kind="${kind}" data-value="${value ? "on" : "off"}">${escape(value ? words.on : words.off)}</button>`,
-        )
-        .join("")}</div>`;
-    const auto = state.auto ?? state.settings.auto;
-    const byDefault = state.settings.chosen ? "" : `<span class="choice-note">${escape(words.autoByDefault)}</span>`;
-    return [
-      `<dt>${escape(words.auto)}</dt><dd>${choice("auto", auto)}${byDefault}</dd>`,
-      `<dt>${escape(words.relays)}</dt><dd>${choice("relays", state.settings.relays)}</dd>`,
-    ];
-  }
-
   /** The block's own buttons; whether the press was one of them. */
   click(target: HTMLElement): boolean {
     const subject = this.subject;
     const act = target.dataset.act;
     if (!subject || !act?.startsWith("fx-")) return false;
-    const { machine, manages } = subject;
     switch (act) {
-      case "fx-versions-here":
-        this.options.versionsHere(true);
+      case "fx-here":
+        this.options.here();
         return true;
       case "fx-copy":
         void copyFrom(target, this.options.words.copied);
         return true;
-      case "fx-versions":
-        this.versions(subject);
-        return true;
-      case "fx-undue":
-        if (manages) this.act(this.options.due(manages, machine.name, null));
-        return true;
       case "fx-older":
-        this.act(this.options.older(machine.written));
+        this.act(this.options.older(subject.machine.written));
         return true;
-      case "fx-choice": {
-        const state = this.state;
-        if (!state) return true;
-        const settings: UpdateSettings = { ...state.settings };
-        if (target.dataset.kind === "auto") {
-          settings.auto = target.dataset.value === "on";
-          settings.chosen = true;
-        } else settings.relays = target.dataset.value === "on";
-        this.act(this.options.remote(machine.written, { do: "set", settings }));
-        return true;
-      }
     }
     return false;
-  }
-
-  /** The window of versions for this machine: an update picked goes to it
-   *  now, or, while it is away, is kept by the hub until it is back. */
-  private versions(subject: FastctxSubject): void {
-    const { machine, manages } = subject;
-    const local = this.options.local.peek();
-    const state = this.state ?? local;
-    if (!state || !manages) return;
-    const running = this.state?.running ?? subject.version ?? "";
-    const away = machine.online === false;
-    this.options.versions.open(
-      {
-        who: machine.written,
-        running,
-        state,
-        ...(away ? {} : { look: () => this.options.remote(machine.written, { do: "look" }) }),
-      },
-      {
-        kind: "update",
-        pick: async (version) => {
-          if (away) await this.options.due(manages, machine.name, version);
-          else this.state = await this.options.remote(machine.written, { do: "kernel", version });
-          this.options.changed();
-          void this.ask();
-        },
-      },
-    );
   }
 
   /** Does `doing`, then shows how it stands. */

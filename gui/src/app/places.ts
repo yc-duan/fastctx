@@ -18,8 +18,9 @@ export type Place =
   | { kind: "journal"; town: string; journal: string }
   /** A page of a project: a version of it, or the current one. */
   | { kind: "page"; town: string; page: string; version: number | null }
-  /** The drawing of the machines, with one chosen when `focus` names it. */
-  | { kind: "machines"; focus?: string }
+  /** The drawing of the machines, with one chosen when `focus` names it;
+   *  or their update view, with that one ticked. */
+  | { kind: "machines"; focus?: string; updates?: boolean }
   /** A machine's own page: how it is doing, and what is done to it. */
   | { kind: "machine"; name: string }
   /** The agents: a section of them, the one last shown when none is
@@ -65,6 +66,7 @@ export function link(place: Place): string {
     case "page":
       return `#/page/${part(place.town)}/${part(place.page)}${place.version === null ? "" : `/${place.version}`}`;
     case "machines":
+      if (place.updates) return place.focus ? `#/updates/${part(place.focus)}` : "#/updates";
       return place.focus ? `#/machines/${part(place.focus)}` : "#/machines";
     case "machine":
       return `#/machine/${part(place.name)}`;
@@ -121,6 +123,8 @@ export function placeOf(hash: string): Place {
       break;
     case "machines":
       return parts[1] ? { kind: "machines", focus: parts[1] } : { kind: "machines" };
+    case "updates":
+      return parts[1] ? { kind: "machines", focus: parts[1], updates: true } : { kind: "machines", updates: true };
     case "machine":
       if (parts[1]) return { kind: "machine", name: parts[1] };
       break;
