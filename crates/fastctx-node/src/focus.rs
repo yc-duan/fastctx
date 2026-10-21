@@ -288,7 +288,7 @@ pub(crate) async fn changed(
     })
 }
 
-/// A fork keeps its source's already-injected developer messages. Its own
+/// A fork keeps context already injected into its source's history. Its own
 /// instructions apply on the next full context rebuild, so its current
 /// selection is also delivered once with the next turn, without waking it.
 pub(crate) async fn forked(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {

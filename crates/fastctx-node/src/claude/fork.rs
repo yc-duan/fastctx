@@ -19,7 +19,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     }
     let birth = node.claude.births.read().await;
     let gate = node.residents.management(resident)?;
-    let _source = crate::gate_waits::shared(node, resident, &gate).await?;
+    let source_guard = crate::gate_waits::shared(node, resident, &gate).await?;
     node.residents.active(resident)?;
     let (source, town) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
     let session =
@@ -201,7 +201,9 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
                 why: error.message,
             });
         }
+        drop(source_guard);
         super::fork_ready::finish(node, &id).await?;
+        crate::focus::forked(node, &id).await?;
         Ok(Controlled::Forked { resident: Address { machine: node.machine(), resident: id.clone() } })
     }
     .await;

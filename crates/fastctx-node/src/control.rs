@@ -67,7 +67,9 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
     // Claude commands may wait for user interaction. Stopping their host
     // must remain possible; its bridge reports the interrupted invocation.
     // Answers also pass a queued lifecycle writer so a dialog cannot deadlock it.
-    let _reading = if host == "Codex" && !matches!(control, Control::Answer { .. }) {
+    let forking = matches!(control, Control::Fork { .. })
+        || matches!(&control, Control::Command { name, path: None, .. } if name == "fork");
+    let _reading = if host == "Codex" && !matches!(control, Control::Answer { .. }) && !forking {
         Some(crate::gate_waits::shared(node, resident, &gate).await?)
     } else {
         None

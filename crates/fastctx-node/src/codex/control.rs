@@ -237,6 +237,9 @@ async fn fork(
     thread: &str,
     through: Option<String>,
 ) -> Result<Controlled, Failure> {
+    let gate = node.residents.management(parent)?;
+    let source_guard = crate::gate_waits::shared(node, parent, &gate).await?;
+    node.residents.active(parent)?;
     let (source, town) = node.residents.about(parent).ok_or_else(|| Failure::new("unknown source resident"))?;
     let id = node.residents.new_id(&source.host.agent)?;
     crate::session_options::keep(node, &id, &crate::session_options::read(node, parent)?)?;
@@ -287,6 +290,7 @@ async fn fork(
     let inherited =
         codex.history(&fork, &Address { machine: node.machine(), resident: id.clone() }).await.map_err(Failure::new)?;
     crate::attachments::inherit(node, parent, &id, &inherited)?;
+    drop(source_guard);
     node.residents.set_instructed(&id, heard);
     let event = SessionEvent {
         at,
