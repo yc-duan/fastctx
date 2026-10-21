@@ -20,6 +20,10 @@ pub struct Mount {
 pub fn read() -> io::Result<Vec<Mount>> {
     let bytes = std::fs::read("/proc/self/mountinfo")
         .map_err(|error| io::Error::new(error.kind(), format!("reading /proc/self/mountinfo: {error}")))?;
+    parse(&bytes)
+}
+
+fn parse(bytes: &[u8]) -> io::Result<Vec<Mount>> {
     let mut mounts = Vec::new();
     for line in bytes.split(|&byte| byte == b'\n').filter(|line| !line.is_empty()) {
         let fields: Vec<_> = line.split(|&byte| byte == b' ').collect();
@@ -32,7 +36,9 @@ pub fn read() -> io::Result<Vec<Mount>> {
         mounts.push(Mount {
             id,
             device: text(fields[2])?,
-            root: path(fields[3])?,
+            // A pseudo filesystem's root names an object rather than a
+            // path, such as a namespace's `net:[4026532335]` (Docker's).
+            root: PathBuf::from(OsString::from_vec(unescape(fields[3])?)),
             point: path(fields[4])?,
             kind: text(fields[separator + 1])?,
         });
@@ -60,6 +66,16 @@ pub fn id(path: &Path) -> io::Result<u64> {
 }
 
 fn path(field: &[u8]) -> io::Result<PathBuf> {
+    let path = PathBuf::from(OsString::from_vec(unescape(field)?));
+    if !path.is_absolute() {
+        return Err(invalid());
+    }
+    Ok(path)
+}
+
+/// A field with the kernel's octal escapes of space, tab, newline and
+/// backslash undone.
+fn unescape(field: &[u8]) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::with_capacity(field.len());
     let mut at = 0;
     while at < field.len() {
@@ -77,11 +93,7 @@ fn path(field: &[u8]) -> io::Result<PathBuf> {
             at += 1;
         }
     }
-    let path = PathBuf::from(OsString::from_vec(bytes));
-    if !path.is_absolute() {
-        return Err(invalid());
-    }
-    Ok(path)
+    Ok(bytes)
 }
 
 fn invalid() -> io::Error {
