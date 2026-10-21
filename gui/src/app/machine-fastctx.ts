@@ -263,7 +263,7 @@ export class FastctxBlock {
         if (manages) this.act(this.options.due(manages, machine.name, null));
         return true;
       case "fx-older":
-        this.act(this.options.older(machine.name));
+        this.act(this.options.older(machine.written));
         return true;
       case "fx-choice": {
         const state = this.state;
