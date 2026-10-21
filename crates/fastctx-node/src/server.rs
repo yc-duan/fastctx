@@ -239,21 +239,21 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         if let Call::Wait { jobs, receipt, parent } = call {
             // A wait keeps the connection until the jobs end; its leaving
             // hands back the ends the wait held (`waiting`).
-            let (caller, acting) = match caller::of(node, &hello.peer) {
+            let (caller, acting, here) = match caller::of(node, &hello.peer) {
                 Ok(caller) => {
                     let acting = crate::around::acting_of(node, &caller);
-                    (if let Caller::Resident(resident) = caller { Some(resident) } else { None }, acting)
+                    let here = crate::around::works_here(node, &caller, &acting);
+                    (if let Caller::Resident(resident) = caller { Some(resident) } else { None }, acting, here)
                 }
                 Err(error) => {
                     writer.send(&json(&NodeFrame::Reply { id, reply: Err(error) })).await?;
                     continue;
                 }
             };
-            // The jobs waited for here are this machine's: only whoever may
-            // work on it waits for them, as only they start them here.
-            if let Err(error) =
-                node.works_here(&acting).map_err(Failure::new).and_then(|()| crate::managed::refuse(node))
-            {
+            // The jobs waited for here are this machine's: only whoever works
+            // on it waits for them, as only they start them here.
+            let allowed = if here { Ok(()) } else { node.works_here(&acting).map_err(Failure::new) };
+            if let Err(error) = allowed.and_then(|()| crate::managed::refuse(node)) {
                 writer.send(&json(&NodeFrame::Reply { id, reply: Err(error) })).await?;
                 continue;
             }
