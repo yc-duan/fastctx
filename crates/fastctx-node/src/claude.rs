@@ -1251,15 +1251,19 @@ fn words(notice: &Notice) -> (String, bool) {
 /// Whether the session's process is alive, to hand it words: its mod named
 /// that process when it registered, so no `claude` command runs for each
 /// delivery. A session not heard since this node started is asked of
-/// Claude Code itself.
+/// Claude Code itself, and so is one whose registered process is gone:
+/// Claude Code's daemon may have started it again, its mod not registered
+/// yet, and waking it then would start a copy.
 async fn alive(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Result<bool, Failure> {
     let registration =
         node.claude.state.lock().expect("never poisoned").sessions.get(session).map(|entry| entry.registration.clone());
-    match registration {
-        Some(registration) => pairing::present(node, &registration)
-            .map_err(|error| Failure::new(format!("checking whether the Claude session runs: {error}"))),
-        None => running(node, home, session).await,
+    if let Some(registration) = registration
+        && pairing::present(node, &registration)
+            .map_err(|error| Failure::new(format!("checking whether the Claude session runs: {error}")))?
+    {
+        return Ok(true);
     }
+    running(node, home, session).await
 }
 
 /// Whether the background session, of the home `home`, has a running
