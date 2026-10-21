@@ -33,7 +33,10 @@ impl Device {
             _ => machine.ok_or_else(|| failed("choose a machine for the attachment; a device has no local node"))?,
         };
         let session = self.reaching(&machine)?;
-        let account = session.account_for(&machine, fastctx_types::access::Purpose::Agents)?;
+        let account = match target.conversation_target() {
+            UploadTarget::Resident { resident } => session.link.account_of(&machine, resident).map_err(failed)?,
+            _ => session.account_for(&machine, fastctx_types::access::Purpose::Agents)?,
+        };
         let resumes = (composer.is_some() || matches!(target, UploadTarget::Sent { .. }))
             && resumes_there(&session, &machine).await?;
         let size = file.size;
