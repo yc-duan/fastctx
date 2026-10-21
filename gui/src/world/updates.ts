@@ -57,6 +57,8 @@ export interface Policy {
   minimum?: string;
   /** Whether managed machines take new releases by themselves. */
   managed_auto?: boolean;
+  /** How fast the hub takes a new release in, in bytes a second; none, its default. */
+  intake?: number | null;
 }
 
 export interface UpdateNetwork {

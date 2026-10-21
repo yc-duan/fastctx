@@ -222,6 +222,8 @@ export class MachinesPage implements Page {
   private updatesLogin = new Map<string, Login>();
   /** The hub answers no update view: it runs an older release. */
   private updatesOld = false;
+  /** The page was left: nothing more is drawn. */
+  private left = false;
   /** Why the update view could not be read, while none was; and which ask
    *  was the latest, so an earlier answer coming later is dropped. */
   private updatesFailed: string | null = null;
@@ -591,6 +593,7 @@ export class MachinesPage implements Page {
   }
 
   leave(): void {
+    this.left = true;
     this.stop();
     this.film?.destroy();
     this.moving.dispose();
@@ -1320,6 +1323,8 @@ export class MachinesPage implements Page {
   }
 
   private redraw(): void {
+    // A timer set before the page was left draws nothing after.
+    if (this.left) return;
     this.drawn = "";
     this.listed = "";
     this.draw(this.options.store.world.peek(), this.options.store.clock.peek());
