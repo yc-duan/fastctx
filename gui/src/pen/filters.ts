@@ -5,13 +5,18 @@
 // marker has no waver: its shapes already carry the hand in their outline
 // (`shapes.ts`), and a jittering edge on an even line reads as a child's
 // scribble. Each pen has a light form without the waver, for shapes that
-// move or are many.
+// move or are many. The felt marker of the bars is the one other: its
+// noise is stretched along the stroke into the streaks the felt leaves,
+// and a fine, quick displacement frays its edge the way ink bleeds into
+// paper fibre, too small and too quick to read as a wobble.
 //
 // Decoration only: text is never drawn through these, so it stays sharp.
 
 interface Pen {
   grain: { frequency: number; seed: number; amount: number };
   waver: { frequency: number; seed: number; scale: number } | null;
+  /** Streaks along x: a noise far slower along the stroke than across. */
+  streak?: { frequency: [number, number]; seed: number; amount: number };
 }
 
 const pens: Record<string, Pen> = {
@@ -21,13 +26,21 @@ const pens: Record<string, Pen> = {
   "pen-marker-lite": { grain: { frequency: 0.55, seed: 7, amount: 0.3 }, waver: null },
   "pen-dry-lite": { grain: { frequency: 0.9, seed: 4, amount: 0.55 }, waver: null },
   "pen-rule-lite": { grain: { frequency: 0.72, seed: 5, amount: 0.12 }, waver: null },
+  "pen-felt": {
+    grain: { frequency: 0.85, seed: 5, amount: 0.13 },
+    streak: { frequency: [0.018, 0.62], seed: 13, amount: 0.25 },
+    waver: { frequency: 0.95, seed: 6, scale: 0.75 },
+  },
 };
 
 export type PenName = keyof typeof pens;
 
 function filter(id: string, pen: Pen): string {
-  const { grain, waver } = pen;
-  const inked = `<feTurbulence type="fractalNoise" baseFrequency="${grain.frequency}" numOctaves="2" seed="${grain.seed}" result="grain"/><feColorMatrix in="grain" type="luminanceToAlpha" result="grainAlpha"/><feComposite in="SourceGraphic" in2="grainAlpha" operator="arithmetic" k1="0" k2="1" k3="${-grain.amount}" k4="0" result="inked"/>`;
+  const { grain, waver, streak } = pen;
+  const streaked = streak
+    ? `<feTurbulence type="fractalNoise" baseFrequency="${streak.frequency.join(" ")}" numOctaves="2" seed="${streak.seed}" result="streak"/><feColorMatrix in="streak" type="luminanceToAlpha" result="streakAlpha"/><feComposite in="SourceGraphic" in2="streakAlpha" operator="arithmetic" k1="0" k2="1" k3="${-streak.amount}" k4="0" result="streaked"/>`
+    : "";
+  const inked = `${streaked}<feTurbulence type="fractalNoise" baseFrequency="${grain.frequency}" numOctaves="2" seed="${grain.seed}" result="grain"/><feColorMatrix in="grain" type="luminanceToAlpha" result="grainAlpha"/><feComposite in="${streak ? "streaked" : "SourceGraphic"}" in2="grainAlpha" operator="arithmetic" k1="0" k2="1" k3="${-grain.amount}" k4="0" result="inked"/>`;
   const wavered = waver
     ? `<feTurbulence type="fractalNoise" baseFrequency="${waver.frequency}" numOctaves="2" seed="${waver.seed}" result="waver"/><feDisplacementMap in="inked" in2="waver" scale="${waver.scale}" xChannelSelector="R" yChannelSelector="G"/>`
     : "";

@@ -684,9 +684,90 @@
     padding: var(--space-4);
   }
 
+  /* Each bar as wide as the card, under its name; what it says on the
+     name's line, at its end. The week's figure under its own line. */
   .ledger-meters {
-    grid-template-columns: max-content minmax(60px, 1fr) max-content max-content;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
     gap: var(--space-3);
+  }
+
+  .ledger-meter {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas: "name used note" "track track track";
+    align-items: baseline;
+    column-gap: var(--space-3);
+    row-gap: 6px;
+  }
+
+  .ledger-meter-name {
+    grid-area: name;
+    max-width: none;
+  }
+
+  .ledger-meter-used {
+    grid-area: used;
+    min-width: 0;
+  }
+
+  .ledger-meter-note {
+    grid-area: note;
+    justify-self: end;
+  }
+
+  .ledger-meter-track {
+    grid-area: track;
+  }
+
+  .ledger-meter-track:empty,
+  .ledger-meter-used:empty {
+    display: none;
+  }
+
+  .ledger-week {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "name note" "big big";
+    row-gap: 2px;
+    margin-bottom: var(--space-2);
+  }
+
+  .ledger-week-big {
+    grid-area: big;
+    font-size: 30px;
+  }
+
+  .ledger-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  /* The tabs take the row, each an equal part of it; the unit is at the
+     end of the drawing's head. */
+  .ledger-tabs {
+    flex-wrap: nowrap;
+  }
+
+  .ledger-tablist {
+    flex: 1;
+  }
+
+  .ledger-tablist button {
+    flex: 1;
+    min-height: 36px;
+    padding: 0 6px;
+    text-align: center;
+  }
+
+  .ledger-panel-head .ledger-units {
+    order: 99;
+    margin-left: auto;
+  }
+
+  .ledger-panel-head .ledger-units button {
+    min-height: 28px;
+    padding: 0 12px;
   }
 
 

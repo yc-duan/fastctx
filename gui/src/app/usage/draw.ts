@@ -6,7 +6,8 @@
 // what it stands for.
 
 import { escape } from "../../conversation/prose";
-import { blot, dashed, dot, outline, ruled, ruledPoints, seeded, swatch, type Point } from "../../pen/shapes";
+import { felt } from "../../pen/felt";
+import { blot, dashed, dot, outline, ruled, seeded, swatch, type Point } from "../../pen/shapes";
 import { DAY_MS, HOUR_MS, dayOf, daysBefore, levels, total, weekdayOf, type Person, type Track } from "./model";
 import type { UsageWords } from "./words";
 
@@ -38,52 +39,114 @@ export interface RingPart {
   faded?: boolean;
 }
 
-/** A limit's bar: a ruled line, inked along how much of it is used, clay
- *  turning to caution near the end and to wrong past it. Given the parts
- *  of those who used it, each is inked in turn in its own colour, what no
- *  part covers in graphite. Drawn at a width of its own and stretched to
- *  the column it is in. What is no limit (`limit` false) keeps its inks to
- *  the end. */
+/** How far one stroke of a bar laid after another runs back over its
+ *  tail, as a share of the stroke's height; and the shortest part that is
+ *  still a stroke of the marker, in pixels. */
+const OVERLAP = 0.4;
+const SHORTEST = 2.5;
+
+/** What an ink drawing is of, kept on it so `fitInks` can draw it again at
+ *  the width it is shown at: a felt stroke is drawn at its own size, never
+ *  stretched, or its ends would squash. */
+type Inked =
+  | { kind: "meter"; share: number | null; seed: string; parts: RingPart[]; limit: boolean; height: number }
+  | { kind: "bar"; share: number; seed: string; height: number; ink: string }
+  | { kind: "parts"; shares: { value: number; ink: string; said: string }[]; seed: string };
+
+function marked(svg: string, inked: Inked, width: number): string {
+  return svg.replace("<svg ", `<svg data-ink="${escape(JSON.stringify(inked))}" data-width="${Math.round(width)}" `);
+}
+
+/** Draws again, at the width each is shown at, every ink drawing in `root`
+ *  that is drawn at another. */
+export function fitInks(root: ParentNode): void {
+  for (const svg of root.querySelectorAll<SVGSVGElement>("svg[data-ink]")) {
+    const width = Math.round(svg.getBoundingClientRect().width);
+    if (width < 8 || Number(svg.dataset.width) === width) continue;
+    const inked = JSON.parse(svg.dataset.ink!) as Inked;
+    svg.outerHTML =
+      inked.kind === "meter"
+        ? meter(inked.share, inked.seed, inked.parts, inked.limit, width, inked.height)
+        : inked.kind === "bar"
+          ? bar(inked.share, inked.seed, width, inked.height, inked.ink)
+          : parts(inked.shares, inked.seed, width);
+  }
+}
+
+/** Felt strokes laid end to end from `x0` over `length`, one for each of
+ *  `shares` (a share of the whole length) in its ink: each after the first
+ *  runs back a little over the tail of the one before, the later ink laid
+ *  over the earlier and the earlier showing through its grain; one too
+ *  short to be a stroke is left out, its figure said beside the bar. */
+function strokes(shares: { share: number; fill?: string; className?: string }[], x0: number, length: number, y: number, height: number, random: () => number): string {
+  let x = x0;
+  let ink = "";
+  let before = 0;
+  for (const one of shares) {
+    const span = length * one.share;
+    const end = x + span;
+    if (span >= SHORTEST) {
+      const back = before ? Math.min(height * OVERLAP, before * 0.3, span * 0.4) : 0;
+      // A class gives its own ink.
+      const fill = one.className ? ` class="${one.className}"` : ` style="fill:${one.fill}"`;
+      ink += `<path${fill} d="${felt(x - back, end, y, height, random)}"/>`;
+      before = span;
+    }
+    x = end;
+  }
+  return ink;
+}
+
+/** A limit's bar: a ruled line, inked along how much of it is used in one
+ *  stroke of a broad felt marker, clay turning to caution near the end and
+ *  to wrong past it. Given the parts of those who used it, each is its own
+ *  stroke in its own colour, laid end to end, and what no part covers is
+ *  graphite. What is no limit (`limit` false) keeps its inks to the end. */
 export function meter(share: number | null, seed: string, parts: RingPart[] = [], limit = true, width = 400, height = 14): string {
   const random = seeded(`meter:${seed}`);
   const y = height / 2;
   const whole = ruled([2, y], [width - 2, y], 1, random);
-  const span = (from: number, to: number): string => {
-    const x0 = 3 + (width - 6) * from;
-    const x1 = 3 + (width - 6) * Math.min(1, to);
-    if (x1 - x0 < 1) return "";
-    // A short part keeps its full width to its ends: tapered, it would be
-    // a diamond.
-    return outline(ruledPoints([x0, y], [x1, y], random), height * 0.72, random, { pressure: 0.12, taper: x1 - x0 < 40 ? 0 : 0.02 });
-  };
   const level = share === null || !limit ? "" : share >= 1 ? " spent" : share >= 0.9 ? " high" : "";
+  const thick = height * 0.72;
   let ink = "";
   if (share !== null && share >= 0.005) {
+    const used = Math.min(1, share);
     const shown = parts.filter((part) => part.share >= 0.003);
     // Near the end, the warning says more than who used it.
-    if (!shown.length || level) ink = `<path class="ledger-arc${level}" d="${span(0, share)}"/>`;
+    if (!shown.length || level) ink = strokes([{ share: used, className: `ledger-arc${level}` }], 3, width - 6, y, thick, random);
     else {
       // Faded inks are solid mixes with the page, not transparent ones:
       // the marker's grain turns a half-transparent ink to speckle.
+      const laid: { share: number; fill: string }[] = [];
       let from = 0;
       for (const part of shown) {
-        const to = Math.min(share, from + part.share);
-        ink += `<path style="fill:${part.faded ? `color-mix(in srgb, ${part.ink} 34%, var(--bg))` : part.ink}" d="${span(from, to)}"/>`;
+        const to = Math.min(used, from + part.share);
+        laid.push({ share: to - from, fill: part.faded ? `color-mix(in srgb, ${part.ink} 34%, var(--bg))` : part.ink });
         from = to;
       }
-      if (share - from >= 0.003) ink += `<path style="fill:color-mix(in srgb, var(--pen-graphite) 55%, var(--bg))" d="${span(from, share)}"/>`;
+      if (used - from >= 0.003) laid.push({ share: used - from, fill: "color-mix(in srgb, var(--pen-graphite) 55%, var(--bg))" });
+      ink = strokes(laid, 3, width - 6, y, thick, random);
     }
   }
-  return `<svg class="ledger-meter-ink${share === null ? " unread" : ""}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true"><path class="ledger-trace" d="${whole}"/><g filter="url(#pen-marker-lite)">${ink}</g></svg>`;
+  return marked(
+    `<svg class="ledger-meter-ink${share === null ? " unread" : ""}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true"><path class="ledger-trace" d="${whole}"/><g filter="url(#pen-felt)">${ink}</g></svg>`,
+    { kind: "meter", share, seed, parts, limit, height },
+    width,
+  );
 }
 
-/** A short bar: a ruled line, inked along `share` of it. */
+/** A short bar: a ruled line, inked along `share` of it in one stroke. */
 export function bar(share: number, seed: string, width: number, height: number, ink = "var(--pen-clay)"): string {
   const random = seeded(`bar:${seed}`);
   const y = height / 2;
   const whole = ruled([2, y], [width - 2, y], 1, random);
-  const filled = share > 0.005 ? outline(ruledPoints([3, y], [3 + Math.max(2, (width - 6) * Math.min(1, share)), y], random), height * 0.72, random, { pressure: 0.12, taper: 0.03 }) : "";
-  return `<svg class="ledger-bar" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true"><path class="ledger-trace" d="${whole}"/><g filter="url(#pen-marker-lite)"><path fill="${ink}" d="${filled}"/></g></svg>`;
+  const used = Math.min(1, share);
+  const filled = share > 0.005 ? strokes([{ share: Math.max(used, SHORTEST / Math.max(1, width - 6)), fill: ink }], 3, width - 6, y, height * 0.72, random) : "";
+  return marked(
+    `<svg class="ledger-bar" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true"><path class="ledger-trace" d="${whole}"/><g filter="url(#pen-felt)">${filled}</g></svg>`,
+    { kind: "bar", share, seed, height, ink },
+    width,
+  );
 }
 
 export interface CalendarInput {
@@ -485,20 +548,24 @@ export function punch(input: PunchInput): string {
   return `<svg class="ledger-chart" viewBox="0 0 ${f(width)} ${height}" width="${f(width)}" height="${height}"><path class="ledger-trace" d="${base}"/><g filter="url(#pen-marker-lite)"><path fill="${ink}" fill-opacity="0.9" d="${dots}"/></g>${labels}${hits}</svg>`;
 }
 
-/** One bar of parts, each in its ink and as long as its share. */
+/** One bar of parts, each a felt stroke in its ink as long as its share,
+ *  laid end to end. */
 export function parts(shares: { value: number; ink: string; said: string }[], seed: string, width = 480): string {
   const random = seeded(`parts:${seed}`);
   const sum = shares.reduce((all, one) => all + one.value, 0) || 1;
+  const ink = strokes(shares.map((one) => ({ share: one.value / sum, fill: one.ink })), 2, width - 4, 11, 16, random);
   let x = 2;
-  let ink = "";
   let hits = "";
   for (const one of shares) {
     const length = (one.value / sum) * (width - 4);
-    if (length >= 0.5) ink += `<path fill="${one.ink}" d="${swatch(x, 3, Math.max(1.5, length - 2), 16, random, 2)}"/>`;
     hits += `<rect x="${f(x)}" y="0" width="${f(Math.max(0, length))}" height="22" fill="transparent"${hint(one.said)}/>`;
     x += length;
   }
-  return `<svg class="ledger-parts" viewBox="0 0 ${width} 22" preserveAspectRatio="none"><g filter="url(#pen-marker-lite)">${ink}</g>${hits}</svg>`;
+  return marked(
+    `<svg class="ledger-parts" viewBox="0 0 ${width} 22" preserveAspectRatio="none"><g filter="url(#pen-felt)">${ink}</g>${hits}</svg>`,
+    { kind: "parts", shares, seed },
+    width,
+  );
 }
 
 /** A dashed rule, for an empty chart's baseline. */

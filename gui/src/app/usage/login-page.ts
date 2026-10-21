@@ -34,7 +34,7 @@ import { effect, type Signal } from "../signals";
 import type { Store } from "../store";
 import { CallsList, type CallsContext } from "./calls";
 import type { CallsWords } from "./calls-words";
-import { bar, calendar, meter, parts, punch, quota, weeks, type Amounts, type RingPart } from "./draw";
+import { bar, calendar, fitInks, meter, parts, punch, quota, weeks, type Amounts, type RingPart } from "./draw";
 import { keepRecord, keptRecord, keptReport, readReport, reportKey } from "./kept";
 import { allowanceTrack, between, byDay, byHourOfWeek, dayOf, DAY_MS, daysBefore, longestRun, pace, total, track, usageOf, valueOf, windowOf, type Person, type Span, type Unit, type Usage, type Went } from "./model";
 import { assistingMe, assistsOf, namer } from "./people";
@@ -129,6 +129,7 @@ export class LoginUsagePage implements Page {
     this.resize = new ResizeObserver(() => {
       const figure = this.body.querySelector<HTMLElement>(".ledger-figure");
       if (figure && (Math.abs(figure.clientWidth - this.width) >= 1 || Math.abs(figure.clientHeight - this.height) >= 1)) this.draw();
+      fitInks(this.body);
     });
     this.resize.observe(this.body);
     this.stop = effect(() => {
@@ -232,7 +233,7 @@ export class LoginUsagePage implements Page {
       const foot = calls && !mine ? "" : `${this.where(went, unit)}${this.models(went, unit, amounts, only?.ink)}`;
       html = `<div class="ledger-sheet${mine ? " alone" : ""}${calls ? " calls" : ""}">${this.strip(usage, login?.limits ?? null, unit, amounts, mine, only, caps, now)}
         ${this.tabs(usage, tab, mine, caps)}
-        ${calls ? `<section class="ledger-panel" data-calls></section>` : `<section class="ledger-panel">${this.panel(usage, tab, only, looked, caps, unit, amounts, now)}</section>`}
+        ${calls ? `<section class="ledger-panel" data-calls></section>` : `<section class="ledger-panel">${this.narrow() ? this.panel(usage, tab, only, looked, caps, unit, amounts, now).replace('<div class="ledger-panel-head">', `<div class="ledger-panel-head">${this.unitSwitch(usage, tab)}`) : this.panel(usage, tab, only, looked, caps, unit, amounts, now)}</section>`}
         ${foot}
         ${this.problem ? `<p class="feature-note ledger-problem" title="${escape(this.problem)}">${escape(words.failed)}</p>` : ""}</div>`;
     }
@@ -258,6 +259,7 @@ export class LoginUsagePage implements Page {
       this.calls.placed(context);
     }
     this.body.scrollTop = top;
+    fitInks(this.body);
     // The figure's size is known once it is laid out: a first drawing at a
     // guess is drawn again, once, at the size it has.
     const figure = this.body.querySelector<HTMLElement>(".ledger-figure");
@@ -502,14 +504,28 @@ export class LoginUsagePage implements Page {
     return folds ? `${rows}<button class="ledger-fewer" type="button" data-everyone="0">${escape(words.fewer)}</button>` : rows;
   }
 
+  /** The drawings' tabs, and beside them the unit, except on a phone,
+   *  where the tabs take the row and the unit goes to the drawing's head
+   *  (`unitSwitch`). */
   private tabs(usage: Usage, current_: Tab, mine: Mine | null, caps: Caps | null): string {
     const { words } = this.options;
     const shown = TABS.filter((tab) => tab !== "quota" || !mine || caps?.weekly);
     const tab = (value: Tab) => `<button type="button" role="tab" class="${current_ === value ? "current" : ""}" aria-selected="${current_ === value}" data-view="tab:${value}">${escape(words.tabs[value])}</button>`;
-    const unit = usage.usd && current_ !== "quota" && current_ !== "calls"
-      ? `<div class="ledger-switch" role="group">${(["usd", "tokens"] as const).map((value) => `<button type="button" class="${this.view.unit === value ? "current" : ""}" aria-pressed="${this.view.unit === value}" data-view="unit:${value}">${escape(value === "usd" ? words.usd : words.tokenTab)}</button>`).join("")}</div>`
+    return `<div class="ledger-tabs"><div class="ledger-switch ledger-tablist" role="tablist">${shown.map(tab).join("")}</div>${this.narrow() ? "" : this.unitSwitch(usage, current_)}</div>`;
+  }
+
+  /** Dollars or tokens, where the drawing shown is in either. */
+  private unitSwitch(usage: Usage, tab: Tab): string {
+    const { words } = this.options;
+    return usage.usd && tab !== "quota" && tab !== "calls"
+      ? `<div class="ledger-switch ledger-units" role="group">${(["usd", "tokens"] as const).map((value) => `<button type="button" class="${this.view.unit === value ? "current" : ""}" aria-pressed="${this.view.unit === value}" data-view="unit:${value}">${escape(value === "usd" ? words.usd : words.tokenTab)}</button>`).join("")}</div>`
       : "";
-    return `<div class="ledger-tabs"><div class="ledger-switch" role="tablist">${shown.map(tab).join("")}</div>${unit}</div>`;
+  }
+
+  /** Whether the page is as narrow as a phone's (the sheet's own break). */
+  private narrow(): boolean {
+    const width = this.element.clientWidth;
+    return width > 0 && width <= 600;
   }
 
   /** The drawing chosen, at the width it has, narrowed to the one picked. */
