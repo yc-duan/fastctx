@@ -105,7 +105,7 @@ pub(crate) fn used_up(node: &Node, about: &About, account: &HubAccount, model: O
         let mut reached = Vec::new();
         if let Some(share) = assist.five_hour
             && let Some((_, windows)) = &book.reading
-            && let Some(window) = windows.iter().find(|w| w.minutes == Some(300))
+            && let Some(window) = super::readings::window(windows, 300)
         {
             let until = window.resets_at;
             if until.is_none_or(|until| until > now) && window.used_tenths >= u32::from(share) * 10 {

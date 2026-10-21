@@ -62,10 +62,14 @@ pub(super) fn last_reading(node: &Node, path: &Path) -> Option<Reading> {
     })
 }
 
+/// The window of `minutes` that is most used: an account with several
+/// allowances of one length, as Codex's buckets, is held by the tightest.
+pub(super) fn window(windows: &[LimitWindow], minutes: u32) -> Option<&LimitWindow> {
+    windows.iter().filter(|window| window.minutes == Some(minutes)).max_by_key(|window| window.used_tenths)
+}
+
 pub(super) fn week(reading: Option<&Reading>, now: Timestamp) -> Week {
-    let reset = reading
-        .and_then(|(_, windows)| windows.iter().find(|window| window.minutes == Some(10_080)))
-        .and_then(|w| w.resets_at);
+    let reset = reading.and_then(|(_, windows)| window(windows, 10_080)).and_then(|w| w.resets_at);
     let week = SignedDuration::from_secs(super::WEEK_SECONDS);
     match reset {
         Some(mut end) => {

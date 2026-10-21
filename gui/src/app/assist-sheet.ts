@@ -17,6 +17,7 @@ import { Sheet } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
 import { NameSuggest } from "./name-suggest";
 import { WhenPicker } from "./when";
+import { windowOf } from "./usage/model";
 
 const accountRule = "[a-z][a-z0-9\\-]{0,63}";
 
@@ -77,7 +78,7 @@ export function termsOf(assist: AssistSeen): Terms {
 
 /** The five-hour window among a login's windows. */
 export function fiveHourWindow(windows: LimitWindow[]): LimitWindow | null {
-  return windows.find((window) => window.minutes === 300 || window.name.startsWith("five_hour")) ?? null;
+  return windowOf(windows, 300);
 }
 
 /** The accounts a login may have assisted, as its hub tells them: every

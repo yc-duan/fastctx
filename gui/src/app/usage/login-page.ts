@@ -36,7 +36,7 @@ import { CallsList, type CallsContext } from "./calls";
 import type { CallsWords } from "./calls-words";
 import { bar, calendar, meter, parts, punch, quota, weeks, type Amounts, type RingPart } from "./draw";
 import { keepRecord, keptRecord, keptReport, readReport, reportKey } from "./kept";
-import { allowanceTrack, between, byDay, byHourOfWeek, dayOf, DAY_MS, daysBefore, longestRun, pace, total, track, usageOf, valueOf, type Person, type Span, type Unit, type Usage, type Went } from "./model";
+import { allowanceTrack, between, byDay, byHourOfWeek, dayOf, DAY_MS, daysBefore, longestRun, pace, total, track, usageOf, valueOf, windowOf, type Person, type Span, type Unit, type Usage, type Went } from "./model";
 import { assistingMe, assistsOf, namer } from "./people";
 import { assistingOwner } from "../reach";
 import type { UsageWords } from "./words";
@@ -369,7 +369,7 @@ export class LoginUsagePage implements Page {
     const known = limits?.kind === "known" ? limits.value : null;
     const week = current(usage);
     const rows = [300, 10080].map((minutes) => {
-      const window = known?.windows.find((one) => one.minutes === minutes || one.name.startsWith(minutes === 300 ? "five_hour" : "seven_day")) ?? null;
+      const window = known ? windowOf(known.windows, minutes) : null;
       // A reading without this window: the account has none.
       if (known && !window) return "";
       if (minutes === 300 || !week?.parts.size) return this.windowMeter(minutes, window, known?.observed_at ?? null, now, [], []);

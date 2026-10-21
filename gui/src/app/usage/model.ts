@@ -84,6 +84,14 @@ export interface Usage {
 /** The inks people are drawn in, the reader's own first. */
 const INKS = ["var(--pen-clay)", "var(--pen-sky)", "var(--pen-sage)", "var(--pen-rose)", "var(--pen-graphite)"];
 
+/** The window of five hours (300) or seven days (10080) among `windows`:
+ *  the most used of them, where an account has several allowances of one
+ *  length, as Codex's buckets. */
+export function windowOf(windows: readonly LimitWindow[], minutes: number): LimitWindow | null {
+  const named = minutes === 300 ? "five_hour" : "seven_day";
+  return windows.filter((one) => one.minutes === minutes || one.name.startsWith(named)).reduce<LimitWindow | null>((most, one) => (!most || one.used_tenths > most.used_tenths ? one : most), null);
+}
+
 export const DAY_MS = 86_400_000;
 export const HOUR_MS = 3_600_000;
 
@@ -279,7 +287,7 @@ export function track(usage: Usage, minutes: number): Track | null {
   const points: [number, number][] = [];
   let resets: number | null = null;
   for (const reading of usage.readings) {
-    const window = reading.windows.find((one) => one.minutes === minutes || (minutes === 300 ? one.name.startsWith("five_hour") : one.name.startsWith("seven_day")));
+    const window = windowOf(reading.windows, minutes);
     if (!window) continue;
     points.push([reading.at, window.used_tenths / 1000]);
     resets = window.resets_at ? Date.parse(window.resets_at) : resets;

@@ -237,7 +237,7 @@ pub(super) fn spans(entries: &[Entry], current: Week) -> Vec<Span> {
         .iter()
         .filter_map(|entry| match entry {
             Entry::Reading { at, windows, account } => {
-                let reset = windows.iter().find(|window| window.minutes == Some(10_080))?.resets_at?;
+                let reset = super::readings::window(windows, 10_080)?.resets_at?;
                 let account = account.clone().or_else(|| {
                     owners
                         .iter()
