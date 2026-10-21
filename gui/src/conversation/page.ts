@@ -1148,25 +1148,8 @@ export class ConversationPage {
       return;
     }
     if (this.options.controls && text.startsWith("/")) {
-      const space = text.indexOf(" ");
-      const name = (space < 0 ? text.slice(1) : text.slice(1, space)).trim();
-      const args = space < 0 ? "" : text.slice(space + 1).trim();
-      const command = commandFor(commandsOf(this.offered, this.options.controls.words.commands, this.options.conversation.moving()), name, args);
-      if (command?.arguments === "required" && !args) {
-        this.say(this.options.controls.words.commands.needsArgs(usageOf(command)));
-        return;
-      }
-      if (command) {
-        this.clear();
-        void this.run(command, args);
-        return;
-      }
-      if (this.offered) {
-        // One that waits for the turn is named as waiting, not unknown.
-        const waiting = this.options.conversation.moving() && commandFor(commandsOf(this.offered, this.options.controls.words.commands, false), name, args);
-        this.say(waiting ? this.options.controls.words.afterTurn(name) : this.options.controls.words.unknown(name));
-        return;
-      }
+      void this.typedCommand(text);
+      return;
     }
     // What the last command did is behind the conversation now.
     this.say("");
@@ -1464,6 +1447,37 @@ export class ConversationPage {
           if (this.element.isConnected && !document.querySelector("dialog[open]")) this.attachPaths(paths);
         },
       }) ?? null;
+  }
+
+  /** A command typed in the composer, run as the conversation offers it.
+   *  Where the page has not read what it offers yet, or what it read names
+   *  no such command, it is read again first; a command is never sent on
+   *  to the agent as words. */
+  private async typedCommand(text: string): Promise<void> {
+    const controls = this.options.controls!;
+    const space = text.indexOf(" ");
+    const name = (space < 0 ? text.slice(1) : text.slice(1, space)).trim();
+    const args = space < 0 ? "" : text.slice(space + 1).trim();
+    const find = (moving: boolean) => commandFor(commandsOf(this.offered, controls.words.commands, moving), name, args);
+    if (!find(this.options.conversation.moving())) await this.askOffers();
+    if (this.left) return;
+    if (!this.offered) {
+      this.say(controls.words.noCommands);
+      return;
+    }
+    const command = find(this.options.conversation.moving());
+    if (command?.arguments === "required" && !args) {
+      this.say(controls.words.commands.needsArgs(usageOf(command)));
+      return;
+    }
+    if (command) {
+      this.clear();
+      void this.run(command, args);
+      return;
+    }
+    // One that waits for the turn is named as waiting, not unknown.
+    const waiting = this.options.conversation.moving() && find(false);
+    this.say(waiting ? controls.words.afterTurn(name) : controls.words.unknown(name));
   }
 
   private async askOffers(): Promise<void> {
