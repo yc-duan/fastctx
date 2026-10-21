@@ -653,12 +653,7 @@ fn node(
     // can serve. A prepared successor is already watched by that worker.
     if successor.is_none() {
         match fastctx_install::renewal::read(&root) {
-            Ok(Some(plan))
-                if !matches!(
-                    plan.phase,
-                    fastctx_types::renewal::Phase::Complete | fastctx_types::renewal::Phase::Failed
-                ) =>
-            {
+            Ok(Some(plan)) if plan.phase != fastctx_types::renewal::Phase::Complete => {
                 if let Err(error) = fastctx_install::renewal::request(&root, false) {
                     eprintln!("fastctx: could not resume executable renewal: {error:#}");
                 }

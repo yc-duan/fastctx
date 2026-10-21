@@ -676,19 +676,7 @@ pub async fn run_prepared(
         handoff::follow(node.clone(), supervision);
     }
 
-    match fastctx_install::renewal::read(&node.root) {
-        Ok(Some(plan))
-            if plan.phase != fastctx_types::renewal::Phase::Failed
-                && (plan.phase != fastctx_types::renewal::Phase::Complete
-                    || plan.candidate.build != node.renewal.build) =>
-        {
-            if let Err(error) = fastctx_install::renewal::request(&node.root, false) {
-                node.log.line(format_args!("could not resume executable renewal: {error:#}"));
-            }
-        }
-        Err(error) => node.log.line(format_args!("could not read executable renewal: {error}")),
-        _ => {}
-    }
+    renewal::resume(&node);
 
     stuck::start(&node);
     let watchdog = watchdog::Watchdog::start(node.log.clone()).context("starting the control-loop watchdog")?;

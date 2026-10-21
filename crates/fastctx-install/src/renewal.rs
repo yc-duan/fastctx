@@ -27,6 +27,10 @@ pub struct Plan {
     pub phase: Phase,
     pub error: Option<String>,
     #[serde(default)]
+    pub error_version: Option<String>,
+    #[serde(default)]
+    pub retry: fastctx_update::retry::Retry,
+    #[serde(default)]
     pub keeper_restarted: bool,
 }
 
@@ -269,7 +273,7 @@ pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Res
     anyhow::ensure!(build.protocol != 0, "the offered program has no World kernel identity");
     let old_plan = read(root)?;
     if let Some(plan) = &old_plan {
-        if plan.candidate.build == build && plan.phase != Phase::Failed && plan.phase != Phase::Complete {
+        if plan.candidate.build == build && plan.phase != Phase::Complete {
             return Ok(plan.clone());
         }
         anyhow::ensure!(
@@ -318,7 +322,13 @@ pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Res
         candidate: Program { path: copied, build },
         previous,
         phase: Phase::Staged,
-        error: None,
+        error: old_plan.as_ref().and_then(|plan| plan.error.clone()),
+        error_version: old_plan.as_ref().and_then(|plan| {
+            plan.error
+                .as_ref()
+                .map(|_| plan.error_version.clone().unwrap_or_else(|| plan.candidate.build.version.clone()))
+        }),
+        retry: fastctx_update::retry::Retry::default(),
         keeper_restarted: false,
     };
     save(root, &plan)?;
@@ -328,6 +338,8 @@ pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Res
     {
         install(root, &plan.candidate)?;
         plan.phase = Phase::Complete;
+        plan.error = None;
+        plan.error_version = None;
         save(root, &plan)?;
     } else if installed_build.as_ref() == Some(&plan.candidate.build)
         && plan.previous.as_ref().is_some_and(|previous| previous.build == plan.candidate.build)
@@ -341,6 +353,8 @@ pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Res
         && old_plan.as_ref().is_none_or(|old| old.phase == Phase::Complete)
     {
         plan.phase = Phase::Complete;
+        plan.error = None;
+        plan.error_version = None;
         save(root, &plan)?;
     }
     Ok(plan)
@@ -405,11 +419,16 @@ pub fn publish_image(source: &Path, target: &Path) -> io::Result<()> {
 
 /// Requests progress in a separate user process; closing the interface does
 /// not cancel an idle handover. The worker serializes concurrent requests.
-/// Only an explicit placement, retry, or approval retries a known failure.
+/// Explicit requests bypass a failed attempt's delay; recovery respects it.
 pub fn request(root: &Path, retry: bool) -> anyhow::Result<()> {
     let _starting = FileLock::acquire(&directory(root).join("request.lock"))?;
     if let Some(plan) = read(root)? {
+        if plan.phase == Phase::Failed && !retry && !plan.retry.ready(jiff::Timestamp::now()) {
+            return Ok(());
+        }
+        let Some(worker) = FileLock::try_acquire(&directory(root).join("worker.lock"))? else { return Ok(()) };
         verify(&plan.candidate)?;
+        drop(worker);
         let mut args = vec!["renew".into(), "run".into(), "--dir".into(), root.into()];
         if retry {
             args.push("--retry".into());
