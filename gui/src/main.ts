@@ -708,7 +708,7 @@ const tokens = new Tokens({
       : specimenCode(login, kind === "phone" ? "scan" : "paste", kind, asked),
   server: (login, asked) =>
     live
-      ? serverCommand(login.hubName, login.account, asked.name, codeExpires(asked), asked.managed, asked.uses === 1 ? null : asked.uses, asked.label, asked.windows ?? false)
+      ? serverCommand(login.hubName, login.account, asked.name, codeExpires(asked), asked.managed, asked.uses === 1 ? null : asked.uses, asked.label, asked.windows ?? false, asked.mac ?? false)
       : specimenCode(login, "line", "computer", asked).then(() => "echo 'Specimen: no real token or download'"),
   codes: (login) => codesOf(store.world.peek()?.accounts.hubs.find((hub) => hub.hub === login.hub), login, new Date()),
   revoke: revokeCode,

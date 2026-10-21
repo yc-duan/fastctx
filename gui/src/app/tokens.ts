@@ -46,6 +46,8 @@ export interface CodeAsked {
   managed: boolean;
   /** A Windows computer comes in by the line, not by the code pasted. */
   windows?: boolean;
+  /** A Mac comes in by its line. */
+  mac?: boolean;
 }
 
 export interface TokensOptions {
@@ -106,6 +108,10 @@ export function qrSvg(text: string, label: string): string {
   return `<svg class="qr" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges" role="img" aria-label="${escape(label)}"><rect width="${size}" height="${size}" fill="#fff"/><path d="${path}" fill="#111"/></svg>`;
 }
 
+/** How a managed machine comes in: by a code, or by a Windows or Mac line. */
+type ManagedWay = "code" | "windows" | "mac";
+const MANAGED_WAYS: readonly ManagedWay[] = ["code", "windows", "mac"];
+
 export class Tokens {
   private readonly sheet = new Sheet("device-sheet token-sheet");
   private login: Login | null = null;
@@ -121,7 +127,7 @@ export class Tokens {
   private managed = false;
   /** How a managed machine comes in: the code pasted into its Fastctx, or
    *  the line run on a Windows computer that has none. */
-  private managedWay: "code" | "windows" = "code";
+  private managedWay: ManagedWay = "code";
   /** Codes revoked here, gone from the list before the network says so. */
   private readonly revoked = new Set<string>();
   /** Whether a way in was given this time the sheet was open. */
@@ -158,7 +164,7 @@ export class Tokens {
       }
       const managedWay = target.closest<HTMLButtonElement>("[data-managed-way]");
       if (managedWay) {
-        this.managedWay = managedWay.dataset.managedWay as "code" | "windows";
+        this.managedWay = managedWay.dataset.managedWay as ManagedWay;
         this.draw();
         return;
       }
@@ -304,9 +310,9 @@ export class Tokens {
             .map((way) => `<button class="segment${way === this.way ? " chosen" : ""}" type="button" role="radio" aria-checked="${way === this.way}" data-server-way="${way}">${escape(words.ways[way])}</button>`)
             .join("")}</div>`
         : this.face === "managed"
-          ? `<div class="segmented device-ways" role="radiogroup" aria-label="${escape(words.kinds.managed)}">${(["code", "windows"] as const)
-              .map((way) => `<button class="segment${way === this.managedWay ? " chosen" : ""}" type="button" role="radio" aria-checked="${way === this.managedWay}" data-managed-way="${way}">${escape(words.managedWays[way])}</button>`)
-              .join("")}</div>`
+          ? `<div class="segmented device-ways" role="radiogroup" aria-label="${escape(words.kinds.managed)}">${MANAGED_WAYS.map(
+              (way) => `<button class="segment${way === this.managedWay ? " chosen" : ""}" type="button" role="radio" aria-checked="${way === this.managedWay}" data-managed-way="${way}">${escape(words.managedWays[way])}</button>`,
+            ).join("")}</div>`
           : "";
     // A Linux host may come in as a managed machine, over SSH or by its line.
     const managed =
@@ -333,9 +339,9 @@ export class Tokens {
           <input name="label" maxlength="40" autocomplete="off" spellcheck="false" placeholder="${escape(words.labelHint)}"></label>
         ${this.usesField()}
         ${this.spanField()}
-        <div class="device-middle">${this.storyboard(this.managedWay === "windows" ? "windows" : "managed")}</div>
+        <div class="device-middle">${this.storyboard(this.managedWay === "code" ? "managed" : this.managedWay)}</div>
         <p class="sheet-note" role="alert" hidden></p>
-        <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(this.managedWay === "windows" ? words.makeCommand : words.makeManaged)}</button></footer>`;
+        <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(this.managedWay === "code" ? words.makeManaged : words.makeCommand)}</button></footer>`;
     } else {
       const server = this.face === "server";
       body = `
@@ -469,19 +475,27 @@ export class Tokens {
     go.disabled = true;
     go.textContent = words.making;
     try {
-      const windows = face === "managed" && this.managedWay === "windows";
-      const asked: CodeAsked = { uses, expires, label: codeName, name, managed: face === "managed" || (face === "server" && this.managed), ...(windows ? { windows } : {}) };
-      const made = face === "server" || windows ? await this.options.server(login, asked) : await this.options.code(login, face === "phone" ? "phone" : "computer", asked);
+      // A managed Windows computer or Mac comes in by its own line.
+      const line = face === "managed" && this.managedWay !== "code" ? this.managedWay : null;
+      const asked: CodeAsked = {
+        uses,
+        expires,
+        label: codeName,
+        name,
+        managed: face === "managed" || (face === "server" && this.managed),
+        ...(line === "windows" ? { windows: true } : line === "mac" ? { mac: true } : {}),
+      };
+      const made = face === "server" || line ? await this.options.server(login, asked) : await this.options.code(login, face === "phone" ? "phone" : "computer", asked);
       this.given = true;
       const valid = this.validSaid(expires, uses);
       // The code to scan stands where the drawings stood; a line to copy
       // and a managed machine's code are read from the top.
       sheet.body.querySelector(".device-body")!.innerHTML = `${
-        face === "managed" && !windows
+        face === "managed" && !line
           ? this.managedCode(made, codeName, valid)
           : face === "phone"
             ? `<div class="device-middle"><div class="invitation"><div class="qr-frame">${qrSvg(made, words.qr)}</div><p class="field-hint">${escape(valid)}</p></div></div>`
-            : `<div class="device-made"><p class="field-label">${escape(windows ? words.windowsCommand : words.command)}</p><div class="code-box"><p class="invite-code mono">${escape(made)}</p>${this.copy(made)}</div><p class="field-hint">${escape(valid)}</p></div>`
+            : `<div class="device-made"><p class="field-label">${escape(line === "windows" ? words.windowsCommand : line === "mac" ? words.macCommand : words.command)}</p><div class="code-box"><p class="invite-code mono">${escape(made)}</p>${this.copy(made)}</div><p class="field-hint">${escape(valid)}</p></div>`
       }
         <footer class="sheet-foot"><span></span><button class="text-button make-again" type="button">${escape(words.again)}</button></footer>`;
       // The codes made, with this one, are beside the title.
@@ -513,9 +527,9 @@ export class Tokens {
 
   /** How the device comes in by what this sheet gives it, in three small
    *  drawings and a line each. */
-  private storyboard(way: "computer" | "phone" | "line" | "windows" | "managed"): string {
+  private storyboard(way: "computer" | "phone" | "line" | "windows" | "mac" | "managed"): string {
     const { words } = this.options;
-    const art = way === "managed" ? managedSteps() : joinSteps(way === "windows" ? "line" : way);
+    const art = way === "managed" ? managedSteps() : joinSteps(way === "windows" || way === "mac" ? "line" : way);
     const steps = way === "managed" ? words.steps : words.joinSteps[way];
     return `<ol class="managed-steps">${steps.map((step, index) => `<li class="managed-step">${art[index]}<span><b>${index + 1}</b>${escape(step)}</span></li>`).join("")}</ol>`;
   }
