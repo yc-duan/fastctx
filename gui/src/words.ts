@@ -1,6 +1,6 @@
 import type { HealthKind } from "./world/events";
 import { dollars, underCent } from "./world/money";
-import { enProblems, zhProblems, type Reached } from "./app/problem";
+import { enProblems, known, zhProblems, type Reached } from "./app/problem";
 import type { FileLinkWords } from "./conversation/file-links";
 import type { PictureWords } from "./conversation/pictures";
 import type { QueueWords } from "./conversation/queue";
@@ -537,7 +537,7 @@ export const zh: Words = {
   watchRefused: "你的账号看不了这段对话",
   watchInterrupted: () => "连接中断，正在重连…",
   brokenFor: (took, why) => (why ? `已断开 ${took}：${why}` : `已断开 ${took}`),
-  notSent: () => "发送失败",
+  notSent: (why) => known(why, zhProblems) ?? "发送失败",
   waitingToSend: "等待发送",
   health: {
     reconnecting: "连接中断，正在重试",
@@ -607,8 +607,11 @@ export const zh: Words = {
   jobRunning: (job, machine, lasted) => `${job}　${machine}　${lasted}`,
   minutes: (n) => (n < 1 ? "不到 1 分钟" : `${n} 分钟`),
   hours: (hours, minutes) => (minutes ? `${hours} 小时 ${minutes} 分` : `${hours} 小时`),
-  landed: (how, machine) =>
-    how === "sent"
+  // Words that wait for a known reason say it, as a refused turn's do.
+  landed: (how, machine, why) =>
+    how === "waiting" && why && known(why, zhProblems)
+      ? known(why, zhProblems)!
+      : how === "sent"
       ? `已发往 ${machine}`
       : how === "uncertain"
         ? "不确定是否送到"
@@ -809,7 +812,7 @@ export const en: Words = {
   watchRefused: "Your account can't see this conversation",
   watchInterrupted: () => "Disconnected, reconnecting…",
   brokenFor: (took, why) => (why ? `Disconnected for ${took}: ${why}` : `Disconnected for ${took}`),
-  notSent: () => "Couldn't send",
+  notSent: (why) => known(why, enProblems) ?? "Couldn't send",
   waitingToSend: "Waiting to send",
   health: {
     reconnecting: "Connection lost, retrying",
@@ -879,8 +882,10 @@ export const en: Words = {
   jobRunning: (job, machine, lasted) => `${job} on ${machine}, ${lasted}`,
   minutes: (n) => (n < 1 ? "under a minute" : `${n} min`),
   hours: (hours, minutes) => (minutes ? `${hours} h ${minutes} min` : `${hours} h`),
-  landed: (how, machine) =>
-    how === "sent"
+  landed: (how, machine, why) =>
+    how === "waiting" && why && known(why, enProblems)
+      ? known(why, enProblems)!
+      : how === "sent"
       ? `Sent to ${machine}`
       : how === "uncertain"
         ? "Not sure it arrived"

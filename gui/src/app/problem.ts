@@ -42,6 +42,10 @@ export interface ProblemWords {
   claudeVersionUnknown: string;
   /** A fork that did not finish; it is made again from its source. */
   forkIncomplete: string;
+  /** An assisted conversation from before isolation takes no more turns. */
+  assistedOld: string;
+  /** A command an assisted conversation may not use. */
+  assistedCommand: string;
   /** A fork still being prepared, which takes words once it is done. */
   forkPreparing: string;
   /** This Claude Code cannot rewind; forking through a turn can. */
@@ -79,6 +83,8 @@ export const zhProblems: ProblemWords = {
   claudeTooOld: (oldest) => `这台的 Claude Code 太旧，先升级到 ${oldest} 或更新`,
   claudeVersionUnknown: "认不出这台 Claude Code 的版本",
   forkIncomplete: "这次分叉没完成，请从原来的对话再分一次",
+  assistedOld: "这段协助对话开在隔离之前，请新开一段",
+  assistedCommand: "协助对话里不能用这个命令",
   forkPreparing: "分叉还在准备",
   noRewind: "这一版 Claude Code 不能回退，可以从这一轮分叉",
   somethingElse: "操作未完成",
@@ -114,12 +120,16 @@ export const enProblems: ProblemWords = {
   claudeTooOld: (oldest) => `This machine's Claude Code is too old. Update it to ${oldest} or later`,
   claudeVersionUnknown: "Can't tell which Claude Code this machine has",
   forkIncomplete: "This fork didn't finish. Fork the original conversation again",
+  assistedOld: "This assisted conversation began before isolation. Start a new one",
+  assistedCommand: "This command isn't available in an assisted conversation",
   forkPreparing: "The fork is still being prepared",
   noRewind: "This Claude Code can't rewind. Fork from this turn instead",
   somethingElse: "Something went wrong",
 };
 
 const KNOWN: [RegExp, keyof ProblemWords][] = [
+  [/assisted conversation predates host isolation/, "assistedOld"],
+  [/unavailable in an assisted conversation/, "assistedCommand"],
   [/did not say a version the World can read/, "claudeVersionUnknown"],
   [/fork is incomplete|Claude fork incomplete|stopped before finishing this fork/, "forkIncomplete"],
   [/waiting for Claude to finish copying the fork/, "forkPreparing"],
