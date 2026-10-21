@@ -26,7 +26,14 @@ use crate::town::caller::{self, Caller};
 /// `peer`, when it reaches a conversation of this machine that works for
 /// none of the accounts the caller works for.
 pub fn admit(node: &Node, peer: &Peer, call: &Call) -> Result<(), Failure> {
-    let Some(resident) = reached(node, call) else { return Ok(()) };
+    let inheriting = match call {
+        Call::ReadAttachment { attachment: fastctx_types::attachments::AttachmentSource::Upload(file), .. }
+        | Call::AttachmentThumbnail { attachment: fastctx_types::attachments::AttachmentSource::Upload(file), .. }
+            if node.is_me(&file.conversation().machine) && !node.residents.knows(&file.conversation().resident) =>
+                crate::attachments::lifetime::reader(node, file)?,
+        _ => None,
+    };
+    let Some(resident) = inheriting.as_ref().or_else(|| reached(node, call)) else { return Ok(()) };
     // One this machine does not know is another machine's, or gone, which
     // the call's own answer says.
     if !node.residents.knows(resident) {

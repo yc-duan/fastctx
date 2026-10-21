@@ -103,6 +103,22 @@ pub(crate) async fn ask(node: &Arc<Node>, resident: ResidentId, machine: Machine
     }
 }
 
+pub(crate) fn wake(node: &Node) { node.forget_asks.wake.notify_one(); }
+
+/// Recheck deleted originals after this conversation releases its inherited references.
+pub(crate) async fn release_attachments(node: &Arc<Node>, id: &ResidentId) -> Result<Vec<Address>, String> {
+    let Some((about, _)) = node.residents.about(id) else { return Ok(Vec::new()) };
+    let owners = crate::attachments::lifetime::releasing(node, id).map_err(|error| error.message)?;
+    let mut asks = Vec::new();
+    for conversation in &owners {
+        for (hub, account) in pairs(node, &about.acting) {
+            asks.push(Ask { hub, account, conversation: conversation.clone(), after: Some(id.clone()) });
+        }
+    }
+    if !asks.is_empty() { keep(node, asks).await.map_err(|error| error.to_string())?; }
+    Ok(owners)
+}
+
 /// Deletes an owner's conversation as part of the hub's project deletion.
 /// The cross-machine cleanup is durable before any local data is removed.
 pub(crate) async fn project(node: &Arc<Node>, id: &ResidentId, hub: &HubId, account: &AccountName) -> Result<(), String> {
@@ -131,7 +147,7 @@ pub(crate) async fn told(node: &Arc<Node>, hub: &HubId, forgetting: Forgetting) 
     };
     let Forgetting { conversation, account, .. } = forgetting;
     if !node.is_me(&conversation.machine) {
-        return match elsewhere(node, &conversation).await {
+        return match elsewhere(node, hub, &account, &conversation).await {
             Ok(()) => Forgot::Done,
             Err(reason) => Forgot::Failed { reason },
         };
@@ -260,7 +276,7 @@ const TURN_STOPS: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// Deletes the guest rooms here of the conversation at `conversation`, its
 /// commands in them stopped first.
-async fn elsewhere(node: &Arc<Node>, conversation: &Address) -> Result<(), String> {
+async fn elsewhere(node: &Arc<Node>, hub: &HubId, account: &AccountName, conversation: &Address) -> Result<(), String> {
     let names = node.names();
     let mut machines = names.names_of(&conversation.machine);
     if machines.is_empty() {
@@ -286,6 +302,8 @@ async fn elsewhere(node: &Arc<Node>, conversation: &Address) -> Result<(), Strin
     .map_err(|error| format!("finding its rooms here: {error}"))?;
     for (name, owner) in rooms {
         stop_jobs(node, &owner).await?;
+        crate::attachments::lifetime::remember(node.world.owner(&node.names(), &owner).path(), hub, account)
+            .map_err(|error| error.message)?;
         match crate::data::delete::delete_one(node, &name).await {
             Ok(_) | Err(Stop::Nothing(_)) => {}
             Err(stop) => return Err(stop.why()),

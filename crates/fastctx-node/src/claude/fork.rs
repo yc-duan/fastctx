@@ -17,6 +17,10 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     if let Some(why) = super::fork_ready::pending(node, resident)? {
         return Err(Failure::new(why));
     }
+    let birth = node.claude.births.read().await;
+    let gate = node.residents.management(resident)?;
+    let _source = crate::gate_waits::shared(node, resident, &gate).await?;
+    node.residents.active(resident)?;
     let (source, town) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
     let session =
         source.session.ok_or_else(|| Failure::new("Claude has not identified the source conversation yet"))?;
@@ -126,7 +130,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         let expected_attachments = super::fork_attachments::expected(node, &session, snapshot.as_deref()).await?;
         let selected_model = model.clone();
         let selected_effort = effort.clone();
-        let _birth = node.claude.births.read().await;
+
         let printed = tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
             let start = background::Start {
                 plugin: &plugin,
@@ -153,7 +157,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         node.residents.set_session(&node.world, &id, &short, model, None).map_err(failure)?;
 
         let finishing = async {
-            drop(_birth);
+            drop(birth);
             super::fork_ready::wait(node, &id, false).await?;
             super::control::invoke(node, &id, json!({"do":"fork_prepare"})).await?;
             super::fork_ready::wait(node, &id, true).await?;

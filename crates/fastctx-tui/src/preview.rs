@@ -374,6 +374,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         mcp: false,
         completion_receipts: false,
         upload_resumes: false,
+        attachment_references: false,
         shell: String::new(),
         form: None,
         node_lifetime: None,

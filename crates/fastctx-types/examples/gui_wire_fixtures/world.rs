@@ -298,6 +298,7 @@ fn nodes() -> Vec<NodesReply> {
         mcp: true,
         completion_receipts: false,
         upload_resumes: false,
+        attachment_references: false,
         stats: lifetime,
         shell: String::new(),
         form: None,
