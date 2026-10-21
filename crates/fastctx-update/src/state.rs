@@ -97,11 +97,11 @@ pub fn calculate(mut state: State, context: Context) -> State {
     }
     state.progress = true;
     state.preferences = true;
-    state.stage = stage(&state, context.activity);
+    state.stage = stage(&state, context.activity, running);
     state
 }
 
-fn stage(state: &State, activity: Option<Stage>) -> Stage {
+fn stage(state: &State, activity: Option<Stage>, running: &str) -> Stage {
     if let Some(failed) = &state.failed {
         return Stage::Failed {
             version: failed.version.clone(),
@@ -138,7 +138,9 @@ fn stage(state: &State, activity: Option<Stage>) -> Stage {
             Stage::WaitingIdle { version: version.clone() }
         };
     }
-    if let Some(offer) = state.available.as_ref().or(state.offer.as_ref()) {
+    // A package kept for others of the version running here is no update
+    // waiting to be installed.
+    if let Some(offer) = state.available.as_ref().or(state.offer.as_ref()).filter(|m| m.newer_than(running)) {
         let target = state.app.as_ref().map_or(state.kernel_target.as_str(), |a| a.target.as_str());
         if state.kept.iter().any(|k| k.version == offer.version && k.target == target) {
             return Stage::Ready { version: offer.version.clone() };
