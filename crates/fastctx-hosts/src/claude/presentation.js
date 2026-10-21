@@ -1,5 +1,14 @@
 import { taskSteps } from './steps.js'
 
+// How words the World handed over begin, as `claude::is_framed` knows them:
+// its own telling, before 2026-10-09 and since, and the user's words sent
+// into a running turn.
+const WORLD_FRAMES = [
+  'A message from fastctx, not typed by the user:',
+  'The fastctx plugin delivers a message from the World.',
+  'The user sent a new message while you were working:',
+]
+
 // The session's observable presentation. Transport and inbox delivery live
 // in world.js; this module never submits a prompt or changes a host result.
 // Each handler receives reporting callbacks bound to its original session.
@@ -153,7 +162,11 @@ export function presentation(reserve, currentTurn) {
       } else if (e.agentId === undefined && e.door === 'prompt' && result.message.type === 'user'
         && !result.message.content.some(block => block.type === 'tool_result')) {
         const text = result.message.content.filter(block => block.type === 'text').map(block => block.text).join('\n')
-        if (!['<local-command-caveat>', '<local-command-stdout>', '<local-command-stderr>', '<command-name>',
+        // Words the World handed over are told by its own record, which knows
+        // who said them, as the node's reading of the transcript leaves them
+        // out (`claude::is_framed`).
+        const framed = WORLD_FRAMES.some(frame => text.startsWith(frame) || text.includes('\n' + frame + '\n'))
+        if (!framed && !['<local-command-caveat>', '<local-command-stdout>', '<local-command-stderr>', '<command-name>',
           '<command-message>', '[Request interrupted by user'].some(prefix => text.trimStart().startsWith(prefix))) {
           await emit(reports, { event: 'heard', delivery: null, turn: turn ?? null, from: null, text, notice: null,
             message: { id: result.uuid, client_id: null, attachments: [], content: result.message.content,
