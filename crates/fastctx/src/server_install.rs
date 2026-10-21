@@ -151,8 +151,11 @@ fn install(code: String, name: Option<MachineName>, proxy: Option<String>) -> an
     }
     fastctx_platform::ensure_private_dir(&root)?;
     let _lock = fastctx_platform::FileLock::acquire(&root.join("server-install.lock"))?;
-    // Run again, the line says what was there already rather than what it did.
-    let was_installed = fastctx_install::executable::installed_path(&root).try_exists()?;
+    // Run again, the line says what was there already rather than what it
+    // did. The line's program has put itself in place and handed over to it
+    // before this runs, so a World that has not run yet is a first install.
+    let was_installed = fastctx_install::executable::installed_path(&root).try_exists()?
+        && fastctx_types::layout::WorldDir::under(&root).path().try_exists()?;
     let installed = fastctx_install::server::place(&root, &std::env::current_exe()?)?;
     if was_installed {
         println!("fastctx {} is installed at {} already", env!("CARGO_PKG_VERSION"), installed.display());

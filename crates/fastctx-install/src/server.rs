@@ -77,7 +77,7 @@ pub fn command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> anyh
     };
     let download = unix_download(kernel.version, "unknown-linux-gnu", &directory, &pin, "sha256sum");
     Ok(format!(
-        "(set -e;a=$(uname -m);case $a in x86_64) {};;aarch64) {};;*) echo Unsupported:$a >&2;exit 1;;esac;{download};tar xzf a;./fastctx server install {};cd /;rm -rf \"$d\")",
+        "(set -e;a=$(uname -m);case $a in x86_64) {};;aarch64) {};;*) echo Unsupported:$a >&2;exit 1;;esac;{download};tar xzf a;./fastctx server install {};cd /;rm -rf \"$d\";rmdir \"${{d%/*}}\" 2>/dev/null||:)",
         architecture(kernel.x86_64_sha256, kernel.version),
         architecture(kernel.aarch64_sha256, kernel.version),
         quote(invitation),
@@ -119,7 +119,7 @@ pub fn mac_command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> 
     };
     let download = unix_download(kernel.version, "apple-darwin", &directory, insecure, "shasum -a 256");
     Ok(format!(
-        "(set -e;case $(uname -m) in arm64) a=aarch64;{};;x86_64) a=x86_64;{};;*) echo Unsupported:$(uname -m) >&2;exit 1;;esac;{download};tar xzf a;./fastctx server install {};cd /;rm -rf \"$d\")",
+        "(set -e;case $(uname -m) in arm64) a=aarch64;{};;x86_64) a=x86_64;{};;*) echo Unsupported:$(uname -m) >&2;exit 1;;esac;{download};tar xzf a;./fastctx server install {};cd /;rm -rf \"$d\";rmdir \"${{d%/*}}\" 2>/dev/null||:)",
         mac_architecture(kernel.aarch64_sha256, kernel.version),
         mac_architecture(kernel.x86_64_sha256, kernel.version),
         quote(invitation),
