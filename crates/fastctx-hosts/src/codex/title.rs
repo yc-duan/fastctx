@@ -46,6 +46,10 @@ const PROMPT_MAX_BYTES: usize = 960;
 /// How long a title may take before it is given up on.
 const WITHIN: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// How long a title given up on is still heard, its turn interrupted, for
+/// what it used to reach the root's ledger.
+const LATE: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// The instructions the official client gives, verbatim.
 const INSTRUCTIONS: &str = "Generate a concise, single-line task title of at most 36 characters and under five words where possible. Start with an imperative verb. Capitalize only the first word unless the user's language, proper nouns, acronyms, or code terms require otherwise. Preserve ticket references exactly. Write in the user's language. Do not use quotes, markdown, or trailing punctuation. Do not answer the request.";
 
@@ -124,6 +128,26 @@ impl CodexHost {
             .to_string();
         self.lock().title_usage.insert(temp.clone(), Usage::new(thread.to_string(), model.clone()));
         let answer = self.ask_title(&server, &temp, user_text, model.as_deref() == Some(TITLE_MODEL)).await;
+        if self.lock().title_waiters.contains_key(&temp) {
+            // Given up on and interrupted: its end is still heard a while,
+            // so what it used is counted, then the thread is let go.
+            let host = self.clone();
+            tokio::spawn(async move {
+                let until = tokio::time::Instant::now() + LATE;
+                while host.lock().title_waiters.contains_key(&temp) && tokio::time::Instant::now() < until {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+                {
+                    let mut state = host.lock();
+                    state.title_waiters.remove(&temp);
+                    state.title_usage.remove(&temp);
+                }
+                if let Ok(server) = host.server().await {
+                    let _ = server.request("thread/unsubscribe", json!({ "threadId": temp })).await;
+                }
+            });
+            return Ok(clean(&answer?));
+        }
         self.lock().title_usage.remove(&temp);
         // The hidden thread is let go however the turn went: with no
         // subscriber and no running turn, the app-server unloads it.
@@ -153,18 +177,30 @@ impl CodexHost {
             if luna {
                 params["effort"] = json!("low");
             }
-            server.request("turn/start", params).await?;
+            let started = server.request("turn/start", params).await?;
             match tokio::time::timeout(WITHIN, answered).await {
-                Ok(Ok(result)) => result,
+                Ok(Ok(result)) => Ok(result),
                 Ok(Err(_)) => Err("the title turn's channel closed".to_string()),
-                Err(_) => Err("the title turn did not finish in time".to_string()),
+                Err(_) => {
+                    // It stops spending; its waiter stays for its end.
+                    let turn = started.pointer("/turn/id").cloned().unwrap_or(Value::Null);
+                    let _ = server.request("turn/interrupt", json!({ "threadId": temp, "turnId": turn })).await;
+                    Err(TIMED_OUT.to_string())
+                }
             }
         }
         .await;
-        self.lock().title_waiters.remove(temp);
-        result
+        match result {
+            Err(why) if why == TIMED_OUT => Err(why),
+            result => {
+                self.lock().title_waiters.remove(temp);
+                result.and_then(|answer| answer)
+            }
+        }
     }
 }
+
+const TIMED_OUT: &str = "the title turn did not finish in time";
 
 /// The last message of a completed title turn, from the turn's own items.
 pub(super) fn read_turn_message(params: &Value) -> Option<String> {

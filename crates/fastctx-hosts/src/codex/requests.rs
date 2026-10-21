@@ -38,7 +38,9 @@ impl Requests {
             self.pending = true;
             self.started.get_or_insert(at);
         }
-        if method.ends_with("/delta")
+        // Answer text arrives as `item/agentMessage/delta`, reasoning as
+        // `item/reasoning/summaryTextDelta` and its kin (0.160).
+        if method.to_ascii_lowercase().ends_with("delta")
             && (method.starts_with("item/agentMessage/") || method.starts_with("item/reasoning/"))
         {
             self.first.get_or_insert(at);

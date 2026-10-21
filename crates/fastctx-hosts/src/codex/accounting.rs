@@ -85,6 +85,10 @@ struct Observed {
 pub(super) struct Accounting {
     previous: Option<Counts>,
     turns: HashMap<String, Observed>,
+    /// Its thread was loaded again from what it had done before, so a
+    /// first report may carry requests from before.
+    #[serde(default)]
+    reloaded: bool,
 }
 
 impl Accounting {
@@ -106,7 +110,14 @@ impl Accounting {
             }
             return None;
         };
-        let previous = self.previous.replace(total.clone());
+        let previous = self.previous.replace(total.clone()).or_else(|| {
+            // A thread first heard of whose total is its last request made
+            // none before it, as a sub-agent Codex just spawned: 0.160 sends
+            // it no zero report first, and that request counts whole.
+            Counts::read(&usage["last"])
+                .filter(|last| !self.reloaded && *last == total)
+                .map(|_| Counts { cache_write: total.cache_write.map(|_| 0), ..Counts::default() })
+        });
         if total.synthetic_full(usage["modelContextWindow"].as_u64()) {
             return None;
         }
@@ -144,6 +155,7 @@ impl Accounting {
 
     pub(super) fn reloaded(&mut self) {
         self.previous = None;
+        self.reloaded = true;
     }
 }
 
@@ -154,6 +166,8 @@ pub fn recorded_turn_facts(events: &[SessionEvent], turn: &str, initially_empty:
     let mut accounting = Accounting::default();
     if initially_empty {
         accounting.empty_thread();
+    } else {
+        accounting.reloaded();
     }
     accounting.started(turn);
     for event in events {
