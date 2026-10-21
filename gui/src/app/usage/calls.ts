@@ -130,6 +130,7 @@ export class CallsList {
 
   leave(): void {
     this.generation += 1;
+    this.reading = false;
   }
 
   /** The rows asked for: the query, and whom they are narrowed to here. */
@@ -196,17 +197,19 @@ export class CallsList {
   }
 
   /** A page from where it starts. Where the machine could not narrow the
-   *  rows, the pages after it are read on until a page's worth shows. */
+   *  rows, the pages after it are read on until a page's worth shows, and
+   *  the next page starts after the last row kept. */
   private async fetch(before: CallCursor | null): Promise<UsageCallsPage> {
     let page = await this.options.ask(this.query(before));
     const person = this.context?.person;
     if (!person || person.account) return page;
-    const rows = [...page.rows];
-    for (let read = 1; page.next && read < FILL && this.keep(rows).length < PAGE; read += 1) {
+    let kept = this.keep(page.rows);
+    for (let read = 1; page.next && read < FILL && kept.length < PAGE; read += 1) {
       page = await this.options.ask(this.query(page.next));
-      rows.push(...page.rows);
+      kept = kept.concat(this.keep(page.rows));
     }
-    return { rows, next: page.next };
+    if (kept.length > PAGE) return { rows: kept.slice(0, PAGE), next: kept[PAGE - 1]!.cursor };
+    return { rows: kept, next: page.next };
   }
 
   /** The page's start in view: its rows from the top, and the panel's head
