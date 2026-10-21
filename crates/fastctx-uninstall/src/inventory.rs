@@ -149,6 +149,10 @@ pub fn preview(mut installation: Installation, everything: bool) -> anyhow::Resu
         );
     }
     if everything {
+        // A hub kept on this computer goes with everything, its records with
+        // it: a machine of it is not asked to leave it first, which would
+        // ask a hub that is already going.
+        let here = local_hubs(root, &registrations)?;
         let mut identities = vec![(world.path().to_path_buf(), world.net())];
         identities.extend(
             installation
@@ -164,7 +168,7 @@ pub fn preview(mut installation: Installation, everything: bool) -> anyhow::Resu
                     .file_name()
                     .to_str()
                     .is_some_and(|name| fastctx_net::ids::HubId::try_from(name.to_string()).is_ok());
-                if !named {
+                if !named || hub.file_name().to_str().is_some_and(|id| here.iter().any(|kept| kept == id)) {
                     continue;
                 }
                 let directory = hub.path();
@@ -680,4 +684,24 @@ pub(crate) fn abouts(world: &fastctx_types::layout::WorldDir) -> std::io::Result
         }
     }
     Ok(abouts)
+}
+
+/// The ids of the hubs kept on this computer, as their `hub.json` names them.
+fn local_hubs(root: &std::path::Path, registrations: &[service::Registration]) -> anyhow::Result<Vec<String>> {
+    let mut directories: Vec<PathBuf> = registrations
+        .iter()
+        .filter(|registration| registration.kind == service::Kind::Hub)
+        .map(|registration| registration.directory.clone())
+        .collect();
+    directories.extend(service::registered_hubs(root)?);
+    directories.push(root.join("hub"));
+    let mut ids = Vec::new();
+    for directory in directories {
+        if let Some(metadata) = crate::read::<serde_json::Value>(&directory.join("hub.json"))?
+            && let Some(id) = metadata.get("id").and_then(serde_json::Value::as_str)
+        {
+            ids.push(id.to_owned());
+        }
+    }
+    Ok(ids)
 }
