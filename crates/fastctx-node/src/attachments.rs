@@ -783,21 +783,101 @@ struct Need {
     bytes: bool,
 }
 
-/// Keeps original locations when submitting or resubmitting words.
+/// Keeps original locations when submitting or resubmitting words. A file
+/// no computer of the user's holds, sent from a phone, is kept here; for an
+/// agent assisting the user, which cannot reach this computer, it goes to
+/// the machine the user chose for files, all but images, which go to the
+/// model as images (`world-run.md`, 脚本在哪台机器上跑).
 pub async fn place(
     node: &Arc<Node>,
     resident: &ResidentId,
     attachments: Vec<Attachment>,
-    _files_on: Option<&Written>,
+    files_on: Option<&Written>,
 ) -> Result<Vec<Attachment>, Failure> {
+    let acting = node.residents.about(resident).map(|(about, _)| about.acting).unwrap_or_default();
+    let assisting = !crate::around::works_here(node, &acting);
     let mut given = Vec::with_capacity(attachments.len());
     for attachment in attachments {
-        given.push(match references::reference(node, resident, &attachment)? {
-            Some(kept) => kept,
-            None => kept_here(node, resident, &attachment)?,
+        if let Some(kept) = references::reference(node, resident, &attachment)? {
+            given.push(kept);
+            continue;
+        }
+        let kept = kept_here(node, resident, &attachment)?;
+        given.push(match files_on {
+            _ if !assisting || kept.is_image() => kept,
+            Some(goes_to) if !node.is_here(goes_to) => send_placed(node, &acting, goes_to, resident, kept).await?,
+            _ => {
+                return Err(Failure::not_run(format!(
+                    "{} needs one of your machines to go to: choose where your files go",
+                    kept.file.name
+                )));
+            }
         });
     }
     Ok(given)
+}
+
+/// Places `kept`, an upload of `resident` kept here, on `goes_to`, where
+/// the user chose, for whom it works; answers the copy there.
+async fn send_placed(
+    node: &Arc<Node>,
+    acting: &Acting,
+    goes_to: &Written,
+    resident: &ResidentId,
+    kept: Attachment,
+) -> Result<Attachment, Failure> {
+    let town = match node.speaking(acting, goes_to, Purpose::Hands) {
+        Ok((link, _)) => node.town_across(&link, kept.town.as_ref()),
+        Err(_) => kept.town.clone(),
+    };
+    let call = RemoteCall::Place { resident: resident.clone(), attachment: Attachment { town, ..kept.clone() } };
+    let (path, size) = (PathBuf::from(&kept.path), kept.file.size);
+    let feed = || -> Feed {
+        let path = path.clone();
+        Box::new(move |mut stream: Stream| {
+            Box::pin(async move {
+                let need: Need = stream.hear().await?;
+                if need.bytes {
+                    send_bytes(&mut stream, &path, size).await?;
+                    stream.say(&"placed").await?;
+                }
+                stream.finish().await
+            })
+        })
+    };
+    let refused =
+        |why: String| Failure::new(format!("{} goes to {goes_to} and did not get there: {why}", kept.file.name));
+    let mine = Address { machine: goes_to.name.clone(), resident: resident.clone() };
+    match node.call_with_stream(acting, goes_to, Purpose::Hands, call, feed).await {
+        Ok(Ok(RemoteReply::Uploaded(placed)))
+            if placed.id == kept.id && placed.file == kept.file && placed.owner == mine =>
+        {
+            Ok(placed)
+        }
+        Ok(Ok(_)) => Err(refused(format!("{goes_to} answered something other than the file kept there"))),
+        Ok(Err(failure)) => Err(refused(failure.message)),
+        Err(failure) => Err(refused(failure.to_string())),
+    }
+}
+
+/// Sends the `size` bytes of the file at `path`, and only those: a file
+/// shorter than when it was checked is not sent short.
+async fn send_bytes(stream: &mut Stream, path: &Path, size: u64) -> Result<(), String> {
+    use tokio::io::AsyncReadExt as _;
+    let mut file = tokio::fs::File::open(path).await.map_err(|error| format!("opening {}: {error}", path.display()))?;
+    let mut buffer = vec![0u8; UPLOAD_CHUNK];
+    let mut left = size;
+    while left > 0 {
+        let want = (buffer.len() as u64).min(left) as usize;
+        let read =
+            file.read(&mut buffer[..want]).await.map_err(|error| format!("reading {}: {error}", path.display()))?;
+        if read == 0 {
+            return Err(format!("{} is shorter than when it was attached", path.display()));
+        }
+        stream.send(&buffer[..read]).await?;
+        left -= read as u64;
+    }
+    Ok(())
 }
 
 /// Keeps on this machine a file the user attached for `resident`, of
