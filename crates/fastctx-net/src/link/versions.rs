@@ -20,8 +20,15 @@ pub(crate) struct Versions {
     report: Mutex<(Option<Report>, Option<u64>)>,
     /// What the hub last told.
     network: Mutex<Option<(u64, Network)>>,
+    policy: Mutex<Option<super::update_policy::UpdatePolicy>>,
     synced: std::sync::atomic::AtomicU64,
     fetching: Mutex<std::collections::HashMap<(u64, u64), tokio::sync::watch::Sender<bool>>>,
+}
+
+impl Versions {
+    pub(super) fn with_policy(policy: Option<super::update_policy::UpdatePolicy>) -> Self {
+        Self { policy: Mutex::new(policy), ..Self::default() }
+    }
 }
 
 /// What each end of a package's data connection says before its bytes.
@@ -87,6 +94,16 @@ impl Inner {
     }
 
     pub(super) fn heard_versions(&self, generation: u64, network: Network) {
+        let policy = super::update_policy::UpdatePolicy::of(&network);
+        {
+            let mut kept = self.versions.policy.lock().expect("never poisoned");
+            if kept.as_ref() != Some(&policy) {
+                if let Err(error) = policy.save(self.dir.path()) {
+                    self.node.log(format!("keeping the network's update policy: {error}"));
+                }
+                *kept = Some(policy);
+            }
+        }
         *self.versions.network.lock().expect("never poisoned") = Some((generation, network));
         self.node.versions_changed();
     }
@@ -202,6 +219,14 @@ impl Link {
     /// that does not keep them, or before it told.
     pub fn versions(&self) -> Option<Network> {
         self.inner.versions.network.lock().expect("never poisoned").as_ref().map(|(_, network)| network.clone())
+    }
+
+    /// Last received versions, or only the durable policy before the hub answers.
+    /// Saved constraints never recreate machine reports or queued updates.
+    pub fn update_network(&self) -> Option<Network> {
+        self.versions().or_else(|| {
+            self.inner.versions.policy.lock().expect("never poisoned").as_ref().map(|policy| policy.network())
+        })
     }
 
     /// Versions received on the connection that is still open now.

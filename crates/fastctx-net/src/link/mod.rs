@@ -36,6 +36,7 @@ mod profile;
 mod questions;
 mod session;
 pub mod state;
+mod update_policy;
 pub mod versions;
 mod ways;
 
@@ -447,6 +448,7 @@ impl Link {
             }
             Err(error) => return Err(error),
         };
+        let policy = update_policy::UpdatePolicy::read(dir.path())?;
         let (status, _) = watch::channel(Status::Connecting { since: Timestamp::now(), last_error: None });
         let inner = Arc::new_cyclic(|this| Inner {
             this: this.clone(),
@@ -485,7 +487,7 @@ impl Link {
             line: Mutex::default(),
             direct: direct::Direct::default(),
             afoots: afoot::Afoots::default(),
-            versions: versions::Versions::default(),
+            versions: versions::Versions::with_policy(policy),
             task: Mutex::new(None),
         });
         inner.line_started();

@@ -199,7 +199,7 @@ fn look(node: &Arc<Node>) {
 /// release on each line any of them knows, the policy of the one that asks
 /// most, the oldest hub, and the updates any of them keeps for machines away.
 fn network(node: &Node) -> Option<Network> {
-    fastctx_update::state::merge(node.links().iter().filter_map(|link| link.versions()))
+    fastctx_update::state::merge(node.links().iter().filter_map(|link| link.update_network()))
 }
 
 /// What kind of device this machine is for its updates.
@@ -218,7 +218,7 @@ fn kind(node: &Node, held: &Held) -> Kind {
 /// line of what runs here (`world-upgrade.md`, 正式版与测试版).
 pub(crate) fn state(node: &Node) -> State {
     let links = node.links();
-    let networks = links.iter().filter_map(|link| link.versions()).collect();
+    let networks = links.iter().filter_map(|link| link.update_network()).collect();
     let held = node.updates.held.lock().expect("never poisoned");
     let cache = cache(node);
     let context = fastctx_update::state::Context {
