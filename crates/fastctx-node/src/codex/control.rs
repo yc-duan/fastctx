@@ -160,7 +160,10 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
             codex.rename(&thread, &name).await.map_err(Failure::new)?;
             Ok(Controlled::Done { said: None })
         }
-        Control::Fork { through } => fork(node, resident, &codex, &thread, through).await,
+        Control::Fork { through } => {
+            drop(speaking);
+            fork(node, resident, &codex, &thread, through).await
+        }
         Control::Rewind { from } => {
             codex.rewind(&thread, &from).await.map_err(Failure::new)?;
             drop(speaking);

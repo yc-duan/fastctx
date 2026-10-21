@@ -163,6 +163,7 @@ impl CodexHost {
         let choices = spec.choices.clone();
         entry.spec = Some(spec);
         entry.loaded = current;
+        entry.subscribed = current;
         entry.completed_item = true;
         entry.model = model.clone();
         entry.effort = answer.get("reasoningEffort").and_then(Value::as_str).map(str::to_string);
