@@ -96,7 +96,7 @@ pub fn apply_limit(
     if let Some(previous) = previous
         && (!matches_written(&document, current, previous)
             || previous.written.parse::<u64>().map_err(|_| "Invalid Claude settings receipt")? >= limit.wanted)
-        && !(take_back && !matches_written(&document, current, previous))
+        && (!take_back || matches_written(&document, current, previous))
     {
         return Ok(SettingsEdit {
             bytes: original.map(<[u8]>::to_vec),

@@ -1,10 +1,12 @@
-//! Account-scoped Claude definitions read afresh at each turn boundary.
+//! The Claude subagents of a conversation's account (`world-user-config.md`),
+//! as its plugin reads them at each turn's start: the account's own, or this
+//! version's defaults where it set none. Never a login's own directory.
 
 use crate::Node;
 use fastctx_types::{access::Acting, ipc::Failure, profile::Subagents, residents::About};
 
-pub(crate) const CHANGED: &str = "=== the account's Claude subagent instructions changed; they now read as follows, replacing the previous instructions ===";
-
+/// The account's subagents for a Claude conversation working for one
+/// account, as the hub last told this machine; none for any other.
 pub(crate) fn configuration(node: &Node, about: &About) -> Result<Option<Subagents>, Failure> {
     if about.host.agent.as_str() != "claude" {
         return Ok(None);
@@ -17,6 +19,9 @@ pub(crate) fn configuration(node: &Node, about: &About) -> Result<Option<Subagen
     profile.profile.subagents.unwrap_or_default().for_session().map(Some).map_err(Failure::new)
 }
 
+/// What the plugin of the Claude session `session` registers: its account's
+/// subagents, with the user's instructions in its directory brought up to
+/// date on the way.
 pub(crate) async fn for_session(node: &Node, session: &str) -> Result<Option<Subagents>, Failure> {
     let id = node
         .residents
@@ -26,16 +31,6 @@ pub(crate) async fn for_session(node: &Node, session: &str) -> Result<Option<Sub
     node.residents.active(&id)?;
     if about.host.agent.as_str() != "claude" {
         return Err(Failure::refused("this is not a Claude session"));
-    }
-    // A message can overtake the hub's profile notification on another link.
-    // Read its current view before this turn registers the account's agents.
-    if let Acting::Accounts { accounts } = &about.acting
-        && let [account] = accounts.as_slice()
-    {
-        let link = node
-            .link_of(&account.hub)
-            .ok_or_else(|| Failure::new("the conversation's account is no longer connected"))?;
-        link.refresh().await.map_err(Failure::new)?;
     }
     super::session::ready(node, &about.acting).await?;
     let directory = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session);

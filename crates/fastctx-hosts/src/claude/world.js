@@ -316,14 +316,7 @@ async function submit($, context, deliveries, prompt) {
     }
     // What rides with the next turn goes in just before the prompt that
     // starts it: this plugin's own prompt reaches none of its own hooks.
-    try {
-      await accountAgentsBeforeSubmit($, context)
-    } catch (error) {
-      for (const delivery of deliveries) await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ state: 'refused' }))
-      context.unsettled = true
-      await trouble($, context, deliveries[0].id, 'the account subagents could not be refreshed: ' + String(error))
-      return false
-    }
+    await accountAgentsBeforeSubmit($, context)
     await alongBefore($, context)
     // Its row and turn can come before the call answers.
     context.accepted.push(deliveries)
@@ -433,11 +426,7 @@ async function alongBefore($, context) {
 // that starts it; the turn it starts takes it (`startTurn`).
 async function alongPrompt($, context, e, next) {
   if (e.turnId !== undefined || e.command !== undefined || context.closed) return next(e)
-  try {
-    await refreshAccountAgents($, context)
-  } catch (error) {
-    return { drop: 'The account subagents could not be refreshed: ' + String(error) }
-  }
+  await refreshAccountAgents($, context)
   const { along, texts, keep } = alongNext(context)
   if (texts.length === 0) return next(e)
   let result
@@ -796,7 +785,6 @@ async function startTurn($, context, e, next) {
   // state and what it takes are untouched (Claude Code reports one since
   // 2.1.300; its end is `completeTurn`'s agent branch).
   if (e.agentId !== undefined) return next(e)
-  await refreshAccountAgents($, context)
   await startControlTurn($, e)
   context.busy = true
   context.turn = e.turnId
@@ -963,6 +951,9 @@ const FOCUS_BLOCK = 'machinesAndFolders'
 // None where it works in no project.
 const USER_BLOCK = 'userInstructions'
 const PROJECT_BLOCK = 'projectRecord'
+// How the account wants its subagents used, as it was last read with them
+// (`refreshAccountAgents`).
+const SUBAGENT_BLOCK = 'subagentInstructions'
 
 async function blockText($, context, name) {
   try {
@@ -1041,7 +1032,10 @@ export function register(on) {
     // The session's directory is reserved before its controls make or
     // watch anything in it (`reservations`).
     const context = await session($, registry, await $.session.id(), true)
+    // The session begins with the account's subagents as they are, listed
+    // and in its context.
     await refreshAccountAgents($, context)
+    context.heardAccountAgents = context.accountAgentRevision
     await startControls($)
     return next(e)
   }).catch(($, e, next) => continueWithoutWorld($, 'session.start', e, next))
@@ -1051,7 +1045,7 @@ export function register(on) {
     if (!context) return next(e)
     const offered = offerAccountAgent(context, e)
     return offered === null ? next(e) : { isOffered: offered }
-  }).catch(($, e) => { worldFailure($, 'account subagents', new Error('could not determine the account subagent offer')); return { isOffered: false } })
+  }).catch(($, e, next) => continueWithoutWorld($, 'agent.offer', e, next))
   on('turn.start', async ($, e, next) => {
     if (await removed($)) return next(e)
     return startTurn($, await route($, registry, 'turn.start', e), e, next)
@@ -1149,12 +1143,11 @@ export function register(on) {
     if (await removed($)) return next(e)
     const result = await next(e)
     const context = await session($, registry, await $.session.id())
-    await refreshAccountAgents($, context)
     context.heardAccountAgents = context.accountAgentRevision
     const added = [
       { name: FOCUS_BLOCK, text: await focus($, context) },
       { name: USER_BLOCK, text: await blockText($, context, 'user.md') },
-      { name: 'subagentInstructions', text: context.subagentInstructions || null },
+      { name: SUBAGENT_BLOCK, text: context.subagentInstructions || null },
       { name: PROJECT_BLOCK, text: await blockText($, context, 'project.md') },
     ].filter((block) => block.text !== null)
     if (!added.length) return result

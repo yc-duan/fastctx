@@ -372,7 +372,7 @@ async fn enter(node: &Arc<Node>, caller: &Caller, town: TownName) -> Result<Repl
     let mut map = map::view(node, &town).await?;
     seen(node, caller, &town, &mut map.record)?;
     let ledger = crate::ledger::seq(&node.world, &town).map_err(|error| Failure::new(error.to_string()))?;
-    node.residents.set_heard(&id, Heard { subagent_prompt: None, user_prompt: None, town: Some(town.clone()), ledger });
+    node.residents.set_heard(&id, Heard { user_prompt: None, town: Some(town.clone()), ledger });
     Ok(Reply::Entered { town, map: Box::new(map) })
 }
 

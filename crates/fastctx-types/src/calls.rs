@@ -52,6 +52,8 @@ pub enum Call {
     McpRelay {
         name: String,
     },
+    /// Reads or changes an account's Claude subagents alone, over its
+    /// profile's version.
     ProfileSubagents {
         hub: Option<crate::HubName>,
         account: Option<crate::AccountName>,
@@ -122,10 +124,12 @@ pub enum Call {
         host: Host,
         hints: Hints,
     },
-    /// Reserves a Claude exchange directory before the mod writes through it.
+    /// The Claude subagents of the account a paired Claude session works
+    /// for, as its plugin registers them.
     ClaudeSubagents {
         session: String,
     },
+    /// Reserves a Claude exchange directory before the mod writes through it.
     ClaudeSessionDirectory {
         session: String,
         previous: Option<String>,

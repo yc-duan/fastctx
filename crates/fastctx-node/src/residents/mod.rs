@@ -156,8 +156,6 @@ pub struct Former {
 pub struct Heard {
     #[serde(default)]
     pub user_prompt: Option<String>,
-    #[serde(default)]
-    pub subagent_prompt: Option<String>,
     pub town: Option<TownName>,
     pub ledger: u64,
 }
@@ -1055,7 +1053,7 @@ mod lifetime_tests {
         for index in 0..512 {
             let arrived = residents.arrive(&world, &machine, host.clone(), hints(index)).unwrap();
             let id = &arrived.resident;
-            residents.set_heard(id, Heard { subagent_prompt: None, user_prompt: None, town: None, ledger: index });
+            residents.set_heard(id, Heard { user_prompt: None, town: None, ledger: index });
             residents.set_inbox(id, format!("old-{index}"));
             residents.set_inbox(id, format!("new-{index}"));
             assert!(residents.resident_of_inbox(&format!("old-{index}")).is_none());
