@@ -168,6 +168,17 @@ impl CodexHost {
             entry.spec.as_ref().filter(|_| !entry.loaded).map(|spec| spec.choices.clone())
         };
         let kept = kept.map(|choices| Selection::read(&choices)).transpose()?;
+        // A thread not loaded since this app-server started has not said how
+        // it keeps its history, which decides whether it can go back; Codex
+        // says it without loading the thread.
+        let unknown = self.lock().threads.get(thread).is_some_and(|entry| entry.metadata["historyMode"].is_null());
+        if unknown && let Ok(answer) = server.ask("thread/read", json!({"threadId": thread, "includeTurns": false})).await
+        {
+            let mut state = self.lock();
+            if let Some(entry) = state.threads.get_mut(thread).filter(|entry| entry.metadata["historyMode"].is_null()) {
+                entry.metadata = super::controls::metadata(&answer["thread"]);
+            }
+        }
         let mut state = self.lock();
         let entry = state.threads.get(thread).ok_or("unknown Codex thread")?;
         let chosen = kept.as_ref().unwrap_or(&entry.selection);
