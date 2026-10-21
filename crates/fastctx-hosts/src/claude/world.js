@@ -1046,6 +1046,11 @@ export function register(on) {
     }
     if (await removed($)) return next(e)
     registry.provedCalls.delete(e.tool_use_id)
+    // Strict MCP tools can arrive after session.start; confirm ownership
+    // before issuing their first proof (2.1.303, 2026-10-21).
+    if (!registry.worldTools.has(e.tool) && e.tool.startsWith('mcp__fastctx__') && await assistedSession($)) {
+      await worldTools($, registry)
+    }
     const context = await route($, registry, 'tool.call', e)
     if (registry.worldTools.has(e.tool)) {
       try {
@@ -1235,14 +1240,20 @@ async function proveCall($, context, id) {
 
 async function worldTools($, registry) {
   registry.worldTools = new Set()
-  const connected = await $.mcp.connect('fastctx')
-  if (!connected.isConnected) return
+  // In strict mode this is an explicit global server. A mod's connect()
+  // resolves its plugin's server instead, which strict mode excludes.
+  let server = 'fastctx'
+  if (!await assistedSession($)) {
+    const connected = await $.mcp.connect('fastctx')
+    if (!connected.isConnected) return
+    server = connected.server
+  }
   // connect answers the server's name as /mcp lists it, which for a
   // deduplicated server is the name it runs under; a tool carries the
   // name's tool-name spelling, every character outside [A-Za-z0-9_-] made
   // `_` (`claude.ai Gmail`, `claude_ai_Gmail` in the mod reference; 2.1.289
   // lists `plugin:fastctx-world:fastctx` and `plugin_fastctx-world_fastctx`).
-  const spelled = connected.server.replace(/[^A-Za-z0-9_-]/g, '_')
+  const spelled = server.replace(/[^A-Za-z0-9_-]/g, '_')
   const usage = await $.session.usage({ breakdown: 'summary' })
   if (usage.context.breakdown === undefined) throw new Error('the host did not provide its MCP tool ownership map')
   const owners = new Map()
@@ -1250,5 +1261,5 @@ async function worldTools($, registry) {
     if (owners.has(tool.name) && owners.get(tool.name) !== tool.serverName) owners.set(tool.name, null)
     else if (!owners.has(tool.name)) owners.set(tool.name, tool.serverName)
   }
-  registry.worldTools = new Set([...owners].filter(([, server]) => server === connected.server || server === spelled).map(([name]) => name))
+  registry.worldTools = new Set([...owners].filter(([, owner]) => owner === server || owner === spelled).map(([name]) => name))
 }
