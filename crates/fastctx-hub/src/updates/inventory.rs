@@ -254,11 +254,18 @@ pub(crate) fn prefetch(hub: &Arc<Hub>) {
         if start && let Some(machine) = machine {
             let hub = hub.clone();
             tokio::spawn(async move {
-                if let Err(why) = prepare_update(&hub, &machine, &version).await {
-                    hub.log.line(format_args!("preparing {version} for {machine}: {why}"));
-                    super::view::problem(&hub, &version, None, Some(why));
-                }
+                let failed = match prepare_update(&hub, &machine, &version).await {
+                    Ok(()) => false,
+                    Err(why) => {
+                        hub.log.line(format_args!("preparing {version} for {machine}: {why}"));
+                        super::view::problem(&hub, &version, None, Some(why));
+                        true
+                    }
+                };
                 super::tell(&hub, None);
+                if failed {
+                    again(hub).await;
+                }
             });
         }
     }
@@ -299,16 +306,31 @@ pub(crate) fn prefetch(hub: &Arc<Hub>) {
     // (`super::obtain`); machines are told as each comes.
     let hub = hub.clone();
     tokio::spawn(async move {
+        let mut failed = false;
         for (package, _) in wanted {
             hub.log.line(format_args!("preparing {} of {} before announcing it", package.target, package.version));
             let version = package.version.clone();
             let target = package.target.clone();
             let outcome = super::obtain::obtain(&hub, package, None).await;
+            failed |= outcome.is_err();
             super::view::problem(&hub, &version, Some(&target), outcome.err());
             super::tell(&hub, None);
         }
+        if failed {
+            again(hub).await;
+        }
     });
 }
+
+/// After a package or a release's manifest did not come, the hub tries
+/// again a while later by itself: the machines waiting for it may have
+/// nobody to ask for it again, and may reach nothing but the hub.
+async fn again(hub: Arc<Hub>) {
+    tokio::time::sleep(PREFETCH_AGAIN).await;
+    prefetch(&hub);
+}
+
+const PREFETCH_AGAIN: Duration = Duration::from_secs(5 * 60);
 
 /// The batch waits here before issuing its first remote update. Its durable
 /// demand was recorded by the ordinary update-management operation already.
