@@ -82,11 +82,27 @@ async fn this(node: &Arc<Node>) -> Result<WhoReply, Failure> {
 fn elsewhere(node: &Node) -> Vec<MachineWho> {
     let mut told: HashMap<HubId, BTreeMap<MachineName, Elsewhere>> = HashMap::new();
     let mut machines = Vec::new();
+    let links = node.links();
     for reachable in crate::around::reachable(node, &Acting::Here, Purpose::Look) {
-        let hub = reachable.link.membership().id.clone();
         let view = reachable.link.view();
         let Some(member) = view.member(&reachable.name) else { continue };
-        let afoot = told.entry(hub).or_insert_with(|| reachable.link.afoot()).get(&reachable.name);
+        // Each hub tells of what there works for its own accounts logged in
+        // here: the same machine on two hubs has what both tell.
+        let mut afoot: Option<Elsewhere> = None;
+        for link in &links {
+            let Some(there) = link.view().machines().find(|machine| machine.key == reachable.key).map(|m| m.name.clone())
+            else {
+                continue;
+            };
+            let Some(told) = told.entry(link.membership().id.clone()).or_insert_with(|| link.afoot()).get(&there) else {
+                continue;
+            };
+            let merged = afoot.get_or_insert_with(Elsewhere::default);
+            merged.seen.residents.extend(told.seen.residents.iter().map(|(id, now)| (id.clone(), now.clone())));
+            merged.seen.jobs.extend(told.seen.jobs.iter().map(|(id, job)| (id.clone(), job.clone())));
+            merged.busy = merged.busy.max(told.busy);
+        }
+        let afoot = afoot.as_ref();
         let reply = |afoot: &Elsewhere| WhoReply {
             machine: reachable.name.clone(),
             residents: afoot.seen.residents.values().cloned().collect(),
