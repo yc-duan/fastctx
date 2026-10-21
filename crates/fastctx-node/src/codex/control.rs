@@ -173,7 +173,12 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
             codex.rename(&thread, &name).await.map_err(Failure::new)?;
             Ok(Controlled::Done { said: None })
         }
-        Control::Fork { through } => fork(node, resident, &codex, &thread, through).await,
+        Control::Fork { through } => {
+            let (fork, id) = fork(node, resident, &codex, &thread, through).await?;
+            drop(speaking);
+            crate::codex::claim(node, &fork, &id).await;
+            Ok(Controlled::Forked { resident: Address { machine: node.machine(), resident: id } })
+        }
         Control::Rewind { from } => {
             codex.rewind(&thread, &from).await.map_err(Failure::new)?;
             drop(speaking);
@@ -246,7 +251,7 @@ async fn fork(
     codex: &Arc<CodexHost>,
     thread: &str,
     through: Option<String>,
-) -> Result<Controlled, Failure> {
+) -> Result<(String, ResidentId), Failure> {
     let (source, town) = node.residents.about(parent).ok_or_else(|| Failure::new("unknown source resident"))?;
     if crate::assists::assisting(node, &source.acting) {
         crate::assists::host::require(node, parent)?;
@@ -311,8 +316,7 @@ async fn fork(
         },
     };
     crate::turns::apply(node, &id, event).await.map_err(|error| Failure::new(error.to_string()))?;
-    crate::codex::claim(node, &fork, &id).await;
-    Ok(Controlled::Forked { resident: Address { machine: node.machine(), resident: id } })
+    Ok((fork, id))
 }
 
 fn no_args(args: &str) -> Result<(), Failure> {

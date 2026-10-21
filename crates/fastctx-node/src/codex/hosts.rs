@@ -1,5 +1,6 @@
 //! The node's Codex app-servers, one for each Codex login and a separate
-//! instruction and extension home for its assisted conversations. Each an app-server serves the one login of its home, so each account
+//! instruction and extension home for its assisted conversations. An
+//! app-server serves one login, so each account
 //! runs its own (`AgentHome`). The default home's starts as before; each
 //! other one at its first use, with `CODEX_HOME` naming it and the desktop
 //! app's program when its home records none. Whatever any of them reports
