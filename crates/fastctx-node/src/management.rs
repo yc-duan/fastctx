@@ -267,7 +267,7 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
         Management::Move { town } => {
             let brief = if let Some(town) = &town {
                 crate::town::project::spans_here(node, town).await?;
-                crate::town::map::brief(node, town).await?
+                crate::town::map::brief(node, town, &crate::town::instructions::acting(node, id)).await?
             } else {
                 "You are in no project now. `fastctx project list` lists the projects.".into()
             };

@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use fastctx_types::TownName;
-use fastctx_types::access::Acting;
+use fastctx_types::access::{Acting, HubId};
+use fastctx_types::{MachineName, TownName};
 use fastctx_types::ipc::Failure;
 use fastctx_types::project::{Record, TownSummary};
 
@@ -95,7 +95,10 @@ pub async fn list_for(node: &Arc<Node>, acting: &Acting) -> Result<Vec<TownSumma
         .into_iter()
         .zip(places)
         .filter(|(_, place)| place.as_ref().is_some_and(|place| sees(node, acting, place)))
-        .map(|(summary, _)| summary)
+        .map(|(mut summary, place)| {
+            seen_at(node, acting, place.as_ref().map(|place| &place.hub), &mut summary.record);
+            summary
+        })
         .collect())
 }
 
@@ -109,6 +112,31 @@ pub async fn usable(node: &Arc<Node>, acting: &Acting, town: &TownName) -> Resul
         .map_err(|error| Failure::new(format!("reading the project {town}: {error}")))?
         .map_err(|error| Failure::new(format!("reading the project {town}: {error}")))?;
     Ok(place.is_some_and(|place| sees(node, acting, &place)))
+}
+
+/// `record` as whoever acts as `acting` may know it: of its machines, and
+/// of the places in its address book, only those on machines they may work
+/// on are named (`world-network.md`, 共享机器与智能体协助). A project kept on
+/// no hub spans this computer alone.
+pub(crate) fn seen_at(node: &Node, acting: &Acting, hub: Option<&HubId>, record: &mut Record) {
+    let Some(link) = hub.and_then(|hub| node.link_of(hub)) else { return };
+    let accounts = node.accounts_on(&link, acting);
+    let view = link.view();
+    let here = node.works_here(acting).is_ok();
+    // A machine renamed since the record was written is known by its name now.
+    let usable = |machine: &MachineName| {
+        let machine = view.canonical(machine);
+        (view.is_me(machine) && here) || accounts.iter().any(|account| view.rights(account, machine).hands)
+    };
+    record.machines.retain(|machine| usable(machine));
+    record.places.retain(|place| usable(&place.location.machine));
+}
+
+/// As `seen_at`, for the project `town` as this computer keeps it.
+pub(crate) fn seen(node: &Node, acting: &Acting, town: &TownName, record: &mut Record) -> std::io::Result<()> {
+    let place = super::names::place(&node.world, town)?;
+    seen_at(node, acting, place.as_ref().map(|place| &place.hub), record);
+    Ok(())
 }
 
 /// Whether one of the accounts `acting` works for may use the project at
@@ -162,6 +190,7 @@ pub async fn held(node: &Arc<Node>) -> Result<Vec<TownSummary>, Failure> {
     // A project names its machines as they were called when it was written;
     // each is shown by its name now, as its hub's directory has it.
     for summary in &mut listed {
+        seen_at(node, &Acting::Here, hubs.get(&summary.town), &mut summary.record);
         let Some(view) = hubs.get(&summary.town).and_then(|hub| node.link_of(hub)).map(|link| link.view()) else {
             continue;
         };

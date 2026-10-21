@@ -33,12 +33,16 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
                 return Err(map::no_ledger(node, &town));
             };
             let opened = Stamp { by: first.by.clone(), on: first.on.clone(), at: first.at };
-            Ok(Reply::Record { town, record: Box::new(record.clone()), opened })
+            let mut record = record.clone();
+            seen(node, caller, &town, &mut record)?;
+            Ok(Reply::Record { town, record: Box::new(record), opened })
         }
         ProjectCall::Map { town } => {
             let town = caller.town_or(node, town)?;
             map::query(node, &town).await?;
-            map::view(node, &town).await.map(|map| Reply::Map { map: Box::new(map) })
+            let mut map = map::view(node, &town).await?;
+            seen(node, caller, &town, &mut map.record)?;
+            Ok(Reply::Map { map: Box::new(map) })
         }
         ProjectCall::Enter { town } => enter(node, caller, town).await,
     }
@@ -345,8 +349,9 @@ async fn enter(node: &Arc<Node>, caller: &Caller, town: TownName) -> Result<Repl
     node.residents.active(&id)?;
     map::catch_up(node, &town).await?;
     works_in(node, &id, &town)?;
-    let record = blocking(node, &town, read::latest).await?.ok_or_else(|| map::no_ledger(node, &town))?;
+    let mut record = blocking(node, &town, read::latest).await?.ok_or_else(|| map::no_ledger(node, &town))?;
     if !super::machines::spans_here(node, &town, &record.machines)? {
+        seen(node, caller, &town, &mut record)?;
         return Err(Failure::new(format!(
             "{town} does not span {here}, where {id} lives; its machines are {}",
             record.machines.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
@@ -364,10 +369,18 @@ async fn enter(node: &Arc<Node>, caller: &Caller, town: TownName) -> Result<Repl
         crate::codex::moved(node, &id).await;
         crate::town::instructions::hand_to_current(node, &id);
     }
-    let map = map::view(node, &town).await?;
+    let mut map = map::view(node, &town).await?;
+    seen(node, caller, &town, &mut map.record)?;
     let ledger = crate::ledger::seq(&node.world, &town).map_err(|error| Failure::new(error.to_string()))?;
     node.residents.set_heard(&id, Heard { user_prompt: None, town: Some(town.clone()), ledger });
     Ok(Reply::Entered { town, map: Box::new(map) })
+}
+
+/// `record` of `town` as `caller` may know it (`ledger::query::seen`).
+fn seen(node: &Node, caller: &Caller, town: &TownName, record: &mut fastctx_types::project::Record) -> Result<(), Failure> {
+    let acting = crate::around::acting_of(node, caller);
+    crate::ledger::query::seen(node, &acting, town, record)
+        .map_err(|error| Failure::new(format!("reading the project {town}: {error}")))
 }
 
 async fn blocking<T: Send + 'static>(

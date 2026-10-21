@@ -1548,7 +1548,11 @@ async fn who(
         Some(name) => {
             crate::town::map::query(node, name).await?;
             let (world, town) = (node.world.clone(), name.clone());
-            let record = blocking("reading the town", move || crate::town::read::latest(&world, &town)).await?;
+            let mut record = blocking("reading the town", move || crate::town::read::latest(&world, &town)).await?;
+            if let Some(record) = &mut record {
+                crate::ledger::query::seen(node, acting, name, record)
+                    .map_err(|error| Failure::new(format!("reading the town {name}: {error}")))?;
+            }
             let asked = record.as_ref().map(|record| record.machines.clone());
             (WhoScope::Town { town: name.clone(), record: record.map(Box::new) }, asked)
         }

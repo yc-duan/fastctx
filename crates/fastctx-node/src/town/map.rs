@@ -47,10 +47,14 @@ pub async fn view(node: &Arc<Node>, town: &TownName) -> Result<MapView, Failure>
     })
 }
 
-/// What a resident living in `town` is told of it: its record, while
-/// project memory is not wired in.
-pub async fn brief(node: &Arc<Node>, town: &TownName) -> Result<String, Failure> {
-    Ok(fastctx_hands::town::brief(&view(node, town).await?))
+/// What a resident living in `town` and working for `acting` is told of
+/// it: its record, naming only the machines it may work on, while project
+/// memory is not wired in.
+pub async fn brief(node: &Arc<Node>, town: &TownName, acting: &Acting) -> Result<String, Failure> {
+    let mut map = view(node, town).await?;
+    crate::ledger::query::seen(node, acting, town, &mut map.record)
+        .map_err(|error| Failure::new(format!("reading the project {town}: {error}")))?;
+    Ok(fastctx_hands::town::brief(&map))
 }
 
 /// This machine's copy of a town's ledger trails the hub's by what is still

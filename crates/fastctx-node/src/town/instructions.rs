@@ -10,19 +10,22 @@
 use std::io;
 use std::path::Path;
 
-use fastctx_types::layout::WorldDir;
+use fastctx_types::access::Acting;
 use fastctx_types::project::Stamp;
 use fastctx_types::{ResidentId, TownName};
 
 use crate::Node;
 
-/// The record of `town` as a session reads it, from this machine's copy of
-/// its ledger; none when this machine has no record of it.
-pub(crate) fn text(world: &WorldDir, town: &TownName) -> io::Result<Option<String>> {
-    let records = super::read::records(world, town)?;
+/// The record of `town` as a session working for `acting` reads it, from
+/// this machine's copy of its ledger, naming only the machines it may work
+/// on; none when this machine has no record of it.
+pub(crate) fn text(node: &Node, town: &TownName, acting: &Acting) -> io::Result<Option<String>> {
+    let records = super::read::records(&node.world, town)?;
     let (Some(first), Some(record)) = (records.first(), records.last()) else { return Ok(None) };
     let opened = Stamp { by: first.by.clone(), on: first.on.clone(), at: first.at };
-    Ok(Some(fastctx_hands::town::record_of(town, record, &opened)))
+    let mut record = record.clone();
+    crate::ledger::query::seen(node, acting, town, &mut record)?;
+    Ok(Some(fastctx_hands::town::record_of(town, &record, &opened)))
 }
 
 /// Puts the record of the project the resident `id` works in beside the
@@ -31,7 +34,7 @@ pub(crate) fn text(world: &WorldDir, town: &TownName) -> io::Result<Option<Strin
 pub(crate) fn hand_to_session(node: &Node, id: &ResidentId, session: &Path) -> io::Result<()> {
     let target = session.join("project.md");
     let text = match node.residents.town_of(id).flatten() {
-        Some(town) => text(&node.world, &town)?,
+        Some(town) => text(node, &town, &acting(node, id))?,
         None => None,
     };
     match text {
@@ -44,6 +47,11 @@ pub(crate) fn hand_to_session(node: &Node, id: &ResidentId, session: &Path) -> i
             _ => Ok(()),
         },
     }
+}
+
+/// Whom the resident `id` works for.
+pub(crate) fn acting(node: &Node, id: &ResidentId) -> Acting {
+    node.residents.about(id).map(|(about, _)| about.acting).unwrap_or_default()
 }
 
 /// Hands the record again to the Claude session of the resident `id`, as
