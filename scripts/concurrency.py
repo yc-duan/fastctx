@@ -90,7 +90,7 @@ class Lab:
 
     def on(self, command):
         """`command` as a script may be: one `on` naming this node's machine."""
-        name = json.loads((self.home / "machine.json").read_text(encoding="utf-8"))["name"]
+        name = json.loads((self.home / "world" / "machine.json").read_text(encoding="utf-8"))["name"]
         return f"on {name} <<'RUN'\n{command}\nRUN"
 
     def path(self):
