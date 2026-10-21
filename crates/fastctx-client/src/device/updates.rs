@@ -300,7 +300,7 @@ impl Device {
         tokio::spawn(async move {
             let cache = device.update_cache();
             let sessions = device.sessions();
-            let link = sessions.iter().map(|session| session.link.as_ref()).find(|link| link.keeps_versions());
+            let links: Vec<_> = sessions.iter().map(|session| session.link.as_ref()).collect();
             let progressing = device.clone();
             let mut progress = move |progress: fastctx_update::Progress| {
                 if let Some(fetching) = &mut progressing.updates.held.lock().expect("never poisoned").fetching {
@@ -309,12 +309,8 @@ impl Device {
                     fetching.total = progress.total;
                 }
             };
-            let looked = device.updates.held.lock().expect("never poisoned").looked.clone();
-            let network_now = looked.github == Some(false) && looked.github_at <= looked.at;
             let outcome = match device.manifest_of(&version).await {
-                Ok(manifest) => {
-                    fastctx_update::obtain(&cache, &manifest, &target, link, network_now, &mut progress).await
-                }
+                Ok(manifest) => fastctx_update::obtain(&cache, &manifest, &target, &links, &mut progress).await,
                 Err(why) => Err(why.to_string().into()),
             };
             if outcome.as_ref().is_ok_and(|b| b.github_at.is_some()) {

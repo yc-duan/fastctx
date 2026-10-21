@@ -60,9 +60,8 @@ pub(crate) struct Request {
     pub version: String,
     pub target: String,
     pub package: Package,
-    pub link: Option<Link>,
+    pub links: Vec<Link>,
     pub local: Local,
-    pub network_now: bool,
 }
 
 static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -73,16 +72,14 @@ impl Pool {
         Lease { pool: self.clone(), version: version.to_string() }
     }
 
-    /// Obtains a package once for this device, trying GitHub first.
-    /// `network_now` also starts the hub when a recent check could not reach GitHub.
+    /// Obtains a package once for this device, trying each supplying hub before GitHub.
     #[allow(clippy::too_many_arguments)]
     pub async fn obtain(
         &self,
         cache: &Cache,
         manifest: &Manifest,
         target: &str,
-        link: Option<&Link>,
-        network_now: bool,
+        links: &[&Link],
         carried: Option<PathBuf>,
         progress: &mut (dyn FnMut(Progress) + Send),
         log: Log,
@@ -95,9 +92,8 @@ impl Pool {
             version: manifest.version.clone(),
             target: target.to_string(),
             package: package.clone(),
-            link: link.filter(|link| link.keeps_versions()).cloned(),
+            links: links.iter().filter(|link| link.keeps_versions()).map(|link| (*link).clone()).collect(),
             local: Local { requested: false, carried },
-            network_now,
         };
         let brought = self.join(cache, request, progress, log).await?;
         cache.keep_manifest(manifest).map_err(|why| Problem::new(FailureReason::Disk, why))?;
@@ -118,9 +114,8 @@ impl Pool {
             version: fetch.version.clone(),
             target: fetch.target.clone(),
             package: fetch.package.clone(),
-            link: None,
+            links: Vec::new(),
             local: Local { requested: true, carried },
-            network_now: false,
         };
         self.join(cache, request, progress, log).await
     }
@@ -153,9 +148,8 @@ impl Pool {
                         version: request.version.clone(),
                         target: request.target.clone(),
                         package: request.package.clone(),
-                        link: request.link.clone(),
+                        links: request.links.clone(),
                         local: request.local.clone(),
-                        network_now: request.network_now,
                     };
                     tokio::spawn(async move {
                         pool.own(cache, key, request, source, state, log).await;

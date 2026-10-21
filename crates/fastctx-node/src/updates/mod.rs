@@ -450,13 +450,13 @@ fn fetch(node: &Arc<Node>, version: String, target: String) -> Result<(), String
     Ok(())
 }
 
-/// Brings a package here by the first hub that hands them out, or GitHub
+/// Brings a package here through each supplying hub in turn, then GitHub
 /// (`fastctx_update::obtain`), with its progress kept for the interface.
 /// Helpers can still be delivering other verified packages from this cache.
 async fn bring(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<PathBuf, fastctx_types::update::Problem> {
     let cache = cache(node);
     let links = node.links();
-    let link = links.iter().find(|link| link.keeps_versions()).map(|link| link.as_ref());
+    let sources: Vec<_> = links.iter().map(|link| link.as_ref()).collect();
     let progressing = node.clone();
     let mut progress = move |progress: fastctx_update::Progress| {
         if let Some(fetching) = &mut progressing.updates.held.lock().expect("never poisoned").fetching
@@ -470,7 +470,7 @@ async fn bring(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<Pa
     };
     let logging = node.clone();
     let log: fastctx_update::pool::Log = Arc::new(move |message| logging.log.line(format_args!("{message}")));
-    let (looked, carried) = {
+    let carried = {
         let held = node.updates.held.lock().expect("never poisoned");
         let carried = held
             .carried
@@ -478,11 +478,9 @@ async fn bring(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<Pa
             .filter(|_| held.app.as_ref().is_some_and(|app| app.version == manifest.version))
             .map(|dir| dir.join(format!("{target}.tar.gz")))
             .filter(|path| path.is_file());
-        (held.looked.clone(), carried)
+        carried
     };
-    let network_now = looked.github == Some(false) && looked.github_at <= looked.at;
-    let brought =
-        node.updates.packages.obtain(&cache, manifest, target, link, network_now, carried, &mut progress, log).await?;
+    let brought = node.updates.packages.obtain(&cache, manifest, target, &sources, carried, &mut progress, log).await?;
     if let Some(at) = brought.github_at {
         github_reached(node, at);
     }
