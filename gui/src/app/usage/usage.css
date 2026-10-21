@@ -270,13 +270,15 @@
   color: var(--text-3);
 }
 
-/* The one picked and their allowances, one block. */
+/* The one picked and their allowances, one block, pressed anywhere to
+   close it. */
 .ledger-group {
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: subgrid;
   row-gap: var(--space-3);
   position: relative;
+  cursor: pointer;
 }
 
 /* The one picked: their row alone, or with their allowances one block. */
