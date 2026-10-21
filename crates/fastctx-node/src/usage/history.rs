@@ -54,7 +54,7 @@ impl Day {
         Self {
             readings: rows
                 .iter()
-                .filter(|r| matches!(r, Entry::Reading { .. }))
+                .filter(|r| matches!(r, Entry::Reading { .. } | Entry::Account { .. }))
                 .cloned()
                 .collect(),
             groups: groups.into_values().collect(),

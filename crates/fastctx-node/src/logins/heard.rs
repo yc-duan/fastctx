@@ -56,7 +56,7 @@ fn keep(node: &Node, report: SaidReport) -> Result<(), String> {
         let logins = &mut record.codex.logins;
         match logins.iter_mut().find(|login| crate::homes::same_dir(&login.dir, &home)) {
             Some(login) => {
-                if matches!(said.who, Fact::Known { .. }) {
+                if at >= login.identified.at && matches!(said.who, Fact::Known { .. }) {
                     login.identified = Identified { at, who: said.who };
                     login.signed = Some(signed);
                 }

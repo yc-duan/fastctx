@@ -18,6 +18,12 @@ use serde_json::{Value, json};
 
 use super::server::AppServer;
 
+#[derive(Default)]
+pub(super) struct Owner {
+    pub generation: u64,
+    pub identity: Option<(Timestamp, Identity)>,
+}
+
 impl super::CodexHost {
     pub async fn require_login(self: &std::sync::Arc<Self>) -> Result<(), String> {
         let server = self.server().await?;
@@ -34,8 +40,9 @@ impl super::CodexHost {
     }
 
     pub(super) fn limits_heard(&self, at: Timestamp, how: LimitsHow) {
+        let owner = self.limits_owner.lock().expect("never poisoned").identity.clone();
         if let Some(sink) = self.limits.lock().expect("never poisoned").as_ref() {
-            let _ = sink.send(LimitsReport { home: self.codex_home.clone(), at, how });
+            let _ = sink.send(LimitsReport { home: self.codex_home.clone(), at, how, owner });
         }
     }
 }
@@ -47,6 +54,8 @@ pub struct LimitsReport {
     pub home: PathBuf,
     pub at: Timestamp,
     pub how: LimitsHow,
+    /// Identity observed in the producing app-server, not at delivery time.
+    pub owner: Option<(Timestamp, Identity)>,
 }
 
 #[derive(Clone, Debug)]

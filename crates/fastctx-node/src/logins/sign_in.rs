@@ -116,7 +116,9 @@ async fn again(node: &Arc<Node>) {
             for (login, asked) in answers {
                 let logins = &mut record.of_mut(login.agent).logins;
                 // A scan since may have found it gone.
-                if let Some(known) = logins.iter_mut().find(|known| crate::homes::same_dir(&known.dir, &login.dir)) {
+                if let Some(known) = logins.iter_mut().find(|known| crate::homes::same_dir(&known.dir, &login.dir))
+                    && asked.identified.at >= known.identified.at
+                {
                     *known = KeptLogin::asked(login.dir, login.found, asked, login.signed);
                 }
             }

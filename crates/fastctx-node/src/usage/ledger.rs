@@ -53,6 +53,12 @@ pub(super) enum Entry {
     Reading {
         at: Timestamp,
         windows: Vec<LimitWindow>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account: Option<String>,
+    },
+    Account {
+        at: Timestamp,
+        account: String,
     },
     Summary {
         at: Timestamp,
@@ -81,6 +87,7 @@ impl Entry {
             | Self::Tokens { at, .. }
             | Self::Spent { at, .. }
             | Self::Reading { at, .. }
+            | Self::Account { at, .. }
             | Self::Summary { at, .. }
             | Self::Checkpoint { at, .. }
             | Self::Receipts { at, .. } => *at,
@@ -113,6 +120,8 @@ pub(super) struct Book {
     pub modern: HashSet<String>,
     pub keys: HashSet<String>,
     pub reading: Option<Reading>,
+    pub readings: HashMap<Option<String>, Reading>,
+    pub accounts: Vec<(Timestamp, String)>,
     pub recent: Vec<Charge>,
     pub history: super::history::History,
 }
@@ -160,12 +169,26 @@ impl Book {
             Entry::Receipts { at, keys } if *at >= month => {
                 self.keys.extend(keys.iter().cloned());
             }
-            Entry::Reading { at, windows } => {
-                let mut merged = self.reading.as_ref().map_or_else(Vec::new, |(_, windows)| windows.clone());
-                super::readings::merge(&mut merged, windows.clone());
-                if self.reading.as_ref().is_none_or(|(_, old)| *old != merged) {
-                    self.reading = Some((*at, merged));
+            Entry::Account { at, account } => {
+                if self.accounts.is_empty() {
+                    // The first known owner claims legacy readings once, durably.
+                    if let Some(legacy) = self.readings.remove(&None) {
+                        self.readings.insert(Some(account.clone()), legacy);
+                    }
                 }
+                self.accounts.push((*at, account.clone()));
+                self.accounts.sort_by_key(|(at, _)| *at);
+                self.reading = self.readings.get(&self.account_at(Timestamp::MAX)).cloned();
+            }
+            Entry::Reading { at, windows, account } => {
+                let account = account.clone().or_else(|| self.account_at(*at));
+                let old = self.readings.get(&account);
+                let mut merged = old.map_or_else(Vec::new, |(_, windows)| windows.clone());
+                if old.is_none_or(|(seen, _)| *seen <= *at) {
+                    super::readings::merge(&mut merged, windows.clone());
+                    self.readings.insert(account, (*at, merged));
+                }
+                self.reading = self.readings.get(&self.account_at(Timestamp::MAX)).cloned();
             }
             _ => {}
         }
@@ -175,13 +198,22 @@ impl Book {
                     self.recent.push(Charge {
                         at: row.at(),
                         who,
-                        fable: fastctx_hosts::claude::pricing::is_fable(&usage.model),
+                        fable: fastctx_hosts::claude::pricing::is_fable(&usage.model)
+                            && usage.call.as_ref().is_none_or(|call| call.observed),
                         usd,
                     });
                 }
             }
         }
         self.recent.retain(|charge| charge.at >= recent);
+    }
+    pub fn account_at(&self, at: Timestamp) -> Option<String> {
+        self.accounts
+            .iter()
+            .rev()
+            .find(|(since, _)| *since <= at)
+            .or_else(|| self.accounts.first())
+            .map(|(_, account)| account.clone())
     }
     pub fn commit(&mut self, path: &Path, row: Entry) -> io::Result<()> {
         if let Entry::Tokens { key: Some(key), .. } = &row

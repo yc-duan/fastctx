@@ -22,6 +22,8 @@ struct Counted {
     process: String,
     since: f64,
     steps: Vec<Step>,
+    #[serde(default)]
+    account_at: Option<Timestamp>,
 }
 
 #[derive(Deserialize)]
@@ -77,7 +79,8 @@ pub(super) fn measured(
     super::with_book(node, path, |book| {
         let mut changed = false;
         if let Some(windows) = windows {
-            changed |= super::readings::record(book, path, windows, at)?;
+            let account = book.account_at(counted.as_ref().and_then(|c| c.account_at).unwrap_or(about.born_at));
+            changed |= super::readings::record(book, path, windows, at, account)?;
         }
         let (Some(session), Some(total)) = (&about.session, total) else {
             return Ok(changed);
