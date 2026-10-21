@@ -332,7 +332,7 @@ pub(crate) async fn compacted(node: &Arc<Node>, id: &ResidentId, item: &str) {
         Some(note) => format!(
             "The machines and folders of this conversation, as the user last set them; this replaces what your instructions say of them.\n\n{note}"
         ),
-        None => "The user cleared the machines and folders of this conversation; what your instructions say of them no longer holds.".to_string(),
+        None => "No machines or folders are chosen for this conversation now; what your instructions say of them no longer holds.".to_string(),
     };
     let delivery = Delivery {
         // The same compaction told twice is told once.

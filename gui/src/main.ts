@@ -1486,6 +1486,15 @@ function specimenTalk(address: Address): KeepablePage {
           shared?.forget(what.id);
           return { kind: "done", said: null };
         }
+        // Between turns a compaction is done a moment later, as Codex does it.
+        if ((what.do === "compact" || (what.do === "command" && what.name === "compact")) && !conversation.turning()) {
+          const item = { id: `compact-${Date.now()}`, kind: "compaction" as const };
+          setTimeout(() => {
+            feed?.({ at: new Date().toISOString(), event: "began", turn: "specimen-compact", item });
+            feed?.({ at: new Date().toISOString(), event: "finished", turn: "specimen-compact", item });
+          }, 2500);
+          return { kind: "done", said: null };
+        }
         if (what.do === "compact" || (what.do === "command" && what.name === "compact")) {
           const id = `control-${Date.now()}-${queuedHere.length + 1}-0`;
           queuedHere = [...queuedHere, { id, control: what, at: new Date().toISOString(), state: "waiting" }];
@@ -1548,6 +1557,8 @@ function specimenTalk(address: Address): KeepablePage {
     );
   });
   let left = false;
+  /** Hands the page one more event of the specimen's, once it reads them. */
+  let feed: ((event: SessionEvent) => boolean) | null = null;
   if (params.has("live") && !sample.later) {
     let index = 0;
     const next = () => {
@@ -1581,6 +1592,7 @@ function specimenTalk(address: Address): KeepablePage {
       page.update();
       return true;
     };
+    feed = take;
     if (sample.later?.length) {
       if (sample.timed) playTimed(sample.later, take);
       else playLater(sample.later, sample.rate ?? 0, take);

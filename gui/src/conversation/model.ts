@@ -1062,6 +1062,16 @@ export class Fold {
    *  event said. */
   private readonly controlStates = new Map<string, PendingControl>();
 
+  /** The newest compaction shown, by its key: another one since means the
+   *  context was compacted since. */
+  lastCompaction(): string | null {
+    for (let index = this.entries.length - 1; index >= 0; index--) {
+      const entry = this.entries[index]!;
+      if (entry.kind === "compaction") return entry.key;
+    }
+    return null;
+  }
+
   /** Whether a control the node took moved on since last asked. */
   takeControlsChanged(): boolean {
     const changed = this.controlsChanged;
