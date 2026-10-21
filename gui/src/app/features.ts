@@ -234,7 +234,7 @@ export class FeaturesPage implements Page {
     if (!COLLABORATION_READY) return;
     // In no network, this computer keeps its own settings.
     const [first] = loginsOf(this.options.store.world.peek()?.accounts);
-    readCollab(first?.hub ?? null, first?.account ?? null)
+    readCollab(first?.hubName ?? null, first?.account ?? null)
       .then((view) => draw(view.collab.on))
       .catch(() => draw(false));
   }
@@ -308,7 +308,7 @@ export class FeaturesPage implements Page {
   private async load(): Promise<void> {
     const account = this.account;
     try {
-      this.view = await readCollab(account?.hub ?? null, account?.account ?? null);
+      this.view = await readCollab(account?.hubName ?? null, account?.account ?? null);
       this.draft = structuredClone(this.view.collab);
       this.problem = null;
     } catch (error) {
@@ -463,7 +463,7 @@ export class FeaturesPage implements Page {
     const button = this.body.querySelector<HTMLButtonElement>(".feature-save");
     if (button) button.disabled = true;
     try {
-      const version = await writeCollab(account?.hub ?? null, account?.account ?? null, draft);
+      const version = await writeCollab(account?.hubName ?? null, account?.account ?? null, draft);
       draft.version = version;
       this.view = { ...this.view, collab: structuredClone(draft) };
       this.problem = null;
@@ -487,7 +487,7 @@ export class FeaturesPage implements Page {
     const account = this.account;
     if (!this.draft || !this.view) return;
     const draft = { ...structuredClone(this.draft), on: false };
-    draft.version = await writeCollab(account?.hub ?? null, account?.account ?? null, draft);
+    draft.version = await writeCollab(account?.hubName ?? null, account?.account ?? null, draft);
     this.view = { ...this.view, collab: structuredClone(draft) };
     this.draft = draft;
     this.problem = null;
