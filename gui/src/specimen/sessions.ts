@@ -520,7 +520,7 @@ function codex(): Specimen {
         {
           path: "/srv/ingest/src/retry.rs",
           how: "updated",
-          diff: "@@ pub fn replay(&self, file: &Path) -> Result<()> {\n-        // A failed commit replays the whole file;\n-        // every row is read again from its first byte.\n-        let start = 0;\n+        // A failed commit replays only the open batch.\n+        let start = self.batch_start(file)?;\n",
+          diff: "@@ -40,5 +40,4 @@ pub fn replay(&self, file: &Path) -> Result<()> {\n         let mut reader = open(file)?;\n-        // A failed commit replays the whole file;\n-        // every row is read again from its first byte.\n-        let start = 0;\n+        // A failed commit replays only the open batch.\n+        let start = self.batch_start(file)?;\n         reader.seek(start)?;\n",
         },
       ],
     },

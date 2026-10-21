@@ -1139,12 +1139,12 @@
 
 .lv-line.diff-row {
   display: grid;
-  grid-template-columns: var(--diff-number) var(--diff-number) 2.4ch max-content;
+  grid-template-columns: var(--diff-number) 2.4ch max-content;
   align-items: baseline;
 }
 
 .long-static > .lv-line.diff-row {
-  grid-template-columns: var(--diff-number) var(--diff-number) 2.4ch minmax(0, 1fr);
+  grid-template-columns: var(--diff-number) 2.4ch minmax(0, 1fr);
 }
 
 .lv-line.diff-row.unnumbered {
@@ -1203,7 +1203,7 @@
 
 .lv-line.diff-gap {
   align-items: center;
-  padding-left: calc(var(--diff-number) * 2 + 2.4ch);
+  padding-left: calc(var(--diff-number) + 2.4ch);
   color: var(--text-3);
   font-family: var(--font-reading);
   font-size: var(--size-text);

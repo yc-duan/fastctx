@@ -57,10 +57,12 @@ export function rowOf(line: DiffLine, previous: DiffLine | null, first: boolean)
   }
 }
 
-/** Draws a row: its numbers, its sign, its text in its language's colours;
- *  a hunk as the unchanged lines it stands for. The number columns widen to
- *  the largest number drawn in their holder; a change whose rows know no
- *  place in the file (`numbered` false) has none, wherever it is drawn. */
+/** Draws a row: its number, its sign, its text in its language's colours;
+ *  a hunk as the unchanged lines it stands for. One column of numbers, each
+ *  row's where it stands: a line taken out where it was, every other where
+ *  it is now. The column widens to the largest number drawn in its holder;
+ *  a change whose rows know no place in the file (`numbered` false) has
+ *  none, wherever it is drawn. */
 export function diffPaint(path: string, unchanged: (n: number) => string, numbered = true): LinePaint {
   const lang = language(path);
   return (element, line, _index, match) => {
@@ -73,7 +75,8 @@ export function diffPaint(path: string, unchanged: (n: number) => string, number
       return;
     }
     element.classList.add("diff-row", `diff-${row.kind}`);
-    const widest = Math.max(String(row.old ?? "").length, String(row.new ?? "").length);
+    const lineAt = row.kind === "del" ? row.old : (row.new ?? row.old);
+    const widest = String(lineAt ?? "").length;
     const holder = element.parentElement;
     if (holder && widest > Number(holder.style.getPropertyValue("--diff-digits") || 0)) holder.style.setProperty("--diff-digits", String(widest));
     const cell = (className: string, text: string) => {
@@ -92,8 +95,7 @@ export function diffPaint(path: string, unchanged: (n: number) => string, number
     } else if (lang && row.text) code.innerHTML = hljs.highlight(row.text, { language: lang, ignoreIllegals: true }).value;
     else code.textContent = row.text || " ";
     element.append(
-      cell("diff-num", row.old === null ? "" : String(row.old)),
-      cell("diff-num", row.new === null ? "" : String(row.new)),
+      cell("diff-num", lineAt === null ? "" : String(lineAt)),
       cell("diff-sign", row.kind === "add" ? "+" : row.kind === "del" ? "−" : " "),
       code,
     );
