@@ -142,11 +142,14 @@ pub async fn look_after(running: Option<&str>, previous: &Looked, cache: Option<
             wanted.extend(releases.iter().find(|r| !r.prerelease));
             wanted.sort_by(|a, b| a.version.cmp(&b.version));
             wanted.dedup_by(|a, b| a.version == b.version);
+            // What an earlier check read stands while GitHub still lists it; a
+            // release taken down goes with it.
             let mut manifests: BTreeMap<_, _> = previous
                 .newer
                 .iter()
                 .chain(previous.stable.iter())
                 .chain(previous.beta.iter())
+                .filter(|manifest| releases.iter().any(|release| release.version == manifest.version))
                 .map(|manifest| (manifest.version.clone(), manifest.clone()))
                 .collect();
             let mut failure = None;
@@ -180,7 +183,8 @@ pub async fn look_after(running: Option<&str>, previous: &Looked, cache: Option<
             let mut manifests: Vec<_> = manifests.into_values().collect();
             manifests.sort_by_key(|m| std::cmp::Reverse(m.semver()));
             looked.stable = manifests.iter().find(|m| m.semver().is_some_and(|v| v.pre.is_empty())).cloned();
-            looked.beta = manifests.iter().find(|m| m.semver().is_some_and(|v| !v.pre.is_empty())).cloned();
+            // The beta line is a test release newer than every release out.
+            looked.beta = manifests.first().filter(|m| m.semver().is_some_and(|v| !v.pre.is_empty())).cloned();
             manifests.truncate(NEWER);
             looked.newer = manifests;
             looked.releases = releases;

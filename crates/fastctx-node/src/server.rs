@@ -1458,6 +1458,7 @@ fn unnamed(node: &Node, resident: &ResidentId, why: &str) -> Failure {
     let machines = usable(node, &acting);
     let example = machines.first().map(String::as_str).unwrap_or("MACHINE");
     let names = if machines.is_empty() { "none yet".to_string() } else { machines.join(", ") };
+    let why = why.trim_end_matches('.');
     Failure::new(format!(
         "nothing was run: {why}. Write the script as one `on MACHINE`, as in `on {example} <<'RUN'` ... `RUN`; the machines you can use: {names}"
     ))
