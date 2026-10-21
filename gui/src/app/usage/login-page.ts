@@ -94,6 +94,7 @@ export class LoginUsagePage implements Page {
   private report: UsageReport | null;
   private problem: string | null = null;
   private again = 0;
+  private left = false;
   /** Whether the use was asked for since the page opened. */
   private asked = false;
   private view: { tab: Tab; unit: Unit } = kept();
@@ -138,6 +139,7 @@ export class LoginUsagePage implements Page {
   }
 
   leave(): void {
+    this.left = true;
     this.stop();
     this.resize.disconnect();
     clearTimeout(this.again);
@@ -161,6 +163,8 @@ export class LoginUsagePage implements Page {
       this.problem = null;
     });
     const [, used] = await Promise.allSettled([record, report]);
+    // Left while it read: nothing more is drawn or asked.
+    if (this.left) return;
     if (used.status === "rejected") this.problem = detailOf(used.reason);
     this.draw();
     if (this.calls?.element.isConnected) void this.calls.again();
