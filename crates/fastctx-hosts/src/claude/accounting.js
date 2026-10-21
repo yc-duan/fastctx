@@ -45,7 +45,8 @@ async function stepMeasured($, context, step = null, force = false) {
 async function heldStep($, context, input) {
   try {
     const hold = JSON.parse(await $.fs.read(context.dir + '/hold.json'))
-    if (typeof hold.said !== 'string' || !Number.isFinite(Date.parse(hold.until)) || Date.parse(hold.until) <= Date.now()) return null
+    if (typeof hold.said !== 'string') return null
+    if (hold.until !== null && (!Number.isFinite(Date.parse(hold.until)) || Date.parse(hold.until) <= Date.now())) return null
     if (hold.models !== null && (!Array.isArray(hold.models) || !hold.models.includes('fable') || !/fable|mythos/i.test(input.model))) return null
     return () => {
       const result = { turnId: input.turnId, index: input.index, answer: hold.said, toolUses: [], stopReason: 'end_turn', usage: null }

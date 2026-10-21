@@ -25,7 +25,7 @@ pub(super) fn merge(known: &mut Vec<LimitWindow>, windows: Vec<LimitWindow>) {
             }
             (Some(a), Some(b)) if b < a => {}
             (_, Some(_)) => *old = incoming,
-            _ => old.used_tenths = old.used_tenths.max(incoming.used_tenths),
+            (_, None) => *old = incoming,
         }
     }
     known.sort_by(|a, b| a.name.cmp(&b.name).then(a.minutes.cmp(&b.minutes)));
@@ -35,9 +35,10 @@ pub(super) fn record(book: &mut Book, path: &Path, incoming: Vec<LimitWindow>, a
     if incoming.is_empty() {
         return Ok(false);
     }
+    if book.reading.as_ref().is_some_and(|(seen, _)| *seen > at) { return Ok(false); }
     let mut windows = book.reading.as_ref().map_or_else(Vec::new, |(_, windows)| windows.clone());
     merge(&mut windows, incoming);
-    if book.reading.as_ref().is_some_and(|(_, old)| *old == windows) {
+    if windows.iter().all(|window| window.resets_at.is_some()) && book.reading.as_ref().is_some_and(|(_, old)| *old == windows) {
         return Ok(false);
     }
     book.commit(path, Entry::Reading { at, windows })?;

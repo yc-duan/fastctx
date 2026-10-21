@@ -263,19 +263,7 @@ pub(super) fn days(path: &Path, since: Timestamp) -> io::Result<Vec<PathBuf>> {
 }
 
 pub(super) fn read(path: &Path) -> io::Result<Vec<Entry>> {
-    let bytes = std::fs::read(path)?;
-    let end = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
-    let mut rows = Vec::new();
-    for (line, bytes) in bytes[..end].split(|b| *b == b'\n').enumerate() {
-        if bytes.is_empty() {
-            continue;
-        }
-        rows.push(
-            serde_json::from_slice(bytes)
-                .map_err(|e| io::Error::other(format!("{} line {}: {e}", path.display(), line + 1)))?,
-        );
-    }
-    Ok(rows)
+    super::quarantine::read(path)
 }
 
 pub(super) fn entries(path: &Path, since: Timestamp) -> io::Result<Vec<Entry>> {
