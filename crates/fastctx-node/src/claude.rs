@@ -1295,7 +1295,7 @@ async fn wake(
     id: fastctx_types::NoticeId,
 ) -> Result<Landed, Failure> {
     let mut launching = command(node, home)?;
-    launching.cwd = node.world.path().to_path_buf();
+    launching.cwd = resume_dir(node, session);
     oldest::check(node, &launching).await?;
     let observing = launching.clone();
     let Command { program, cwd, env } = launching;
@@ -1303,11 +1303,10 @@ async fn wake(
         crate::profile::session::claude(node, &resident, false)?;
     }
     let args = background::wake_args(session, &words);
-    let world = node.world.path().to_path_buf();
     // Not tried twice: a resume refused for trust may already have queued
     // the words.
     tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
-        trust(&[world.as_path()], &env).and_then(|()| background::claude(&program, &args, &cwd, &env))
+        trust(&[cwd.as_path()], &env).and_then(|()| background::claude(&program, &args, &cwd, &env))
     }))
     .await
     .map_err(|error| Failure::new(format!("waking the session: {error}")))?
@@ -1316,6 +1315,24 @@ async fn wake(
     // before the World's plugin pairs, which only watching it tells.
     startup::observe(node, resident, id.clone(), observing, true);
     Ok(Landed::Handed { id })
+}
+
+/// Where a session is resumed from: the directory it was opened in, as its
+/// registration says, so its own tools go on working there; the World's
+/// directory where it was opened in the user's home, which Claude Code
+/// cannot keep trusted, or where nothing says.
+pub(crate) fn resume_dir(node: &Node, session: &str) -> PathBuf {
+    let opened = exchange::registration(&exchange::sessions(node.world.path()).join(session))
+        .ok()
+        .flatten()
+        .and_then(|registration| registration.cwd)
+        .map(PathBuf::from)
+        .filter(|directory| directory.is_dir());
+    let home = fastctx_platform::user_home().ok();
+    match opened {
+        Some(directory) if home.as_deref().is_none_or(|home| !crate::homes::same_dir(&directory, home)) => directory,
+        _ => node.world.path().to_path_buf(),
+    }
 }
 
 /// The `claude` command, where to run it, and the environment it gets: the

@@ -46,6 +46,15 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
     {
         return Err(Failure::not_run(fastctx_hosts::claude::assisted::COMMAND_REFUSED));
     }
+    // A model chosen for a conversation whose session is not running is kept
+    // where its mod reads it when the session runs again: nothing is woken
+    // for a choice its next turn takes.
+    if let Control::Model { model, effort } = &control
+        && node.residents.about(resident).is_some_and(|(about, _)| about.session.is_some())
+        && !running(node, resident)?
+    {
+        return keep_selection(node, resident, model.clone(), effort.clone());
+    }
     if !matches!(control, Control::Answer { .. }) {
         super::resume::ready(node, resident).await?;
     }
@@ -94,6 +103,59 @@ pub(super) fn running(node: &Node, resident: &ResidentId) -> Result<bool, Failur
             && host.command_contract == Some(files::COMMAND_CONTRACT)),
         None => Ok(false),
     }
+}
+
+/// The reasoning efforts Claude Code takes, as its mod checks them.
+const EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+
+fn keep_selection(
+    node: &Node,
+    resident: &ResidentId,
+    model: Option<String>,
+    effort: Option<String>,
+) -> Result<Controlled, Failure> {
+    if model.as_deref().is_some_and(|model| model.trim().is_empty()) {
+        return Err(Failure::new("a model cannot be empty"));
+    }
+    if let Some(effort) = &effort
+        && !EFFORTS.contains(&effort.as_str())
+    {
+        return Err(Failure::new(format!("unknown Claude reasoning effort: {effort}")));
+    }
+    let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
+    let session = about.session.ok_or_else(|| Failure::new("Claude has not identified this conversation yet"))?;
+    let directory = files::directory(node.world.path(), &session);
+    let mut selection = files::read::<Value>(&directory.join("selection.json")).map_err(failure)?.unwrap_or(json!({}));
+    if !selection.is_object() {
+        selection = json!({});
+    }
+    if let Some(model) = &model {
+        selection["model"] = json!(model);
+    }
+    if let Some(effort) = &effort {
+        selection["effort"] = json!(effort);
+    }
+    let write = |name: &str, value: &Value| {
+        fastctx_platform::ensure_private_dir(&directory)
+            .and_then(|()| {
+                fastctx_platform::publish(
+                    &directory.join(name),
+                    &serde_json::to_vec(value).map_err(std::io::Error::other)?,
+                    fastctx_platform::Permissions::Private,
+                )
+            })
+            .map_err(failure)
+    };
+    write("selection.json", &selection)?;
+    // A model chosen by the user stops following the engine's own routing,
+    // as the mod does when it takes the choice itself.
+    if model.is_some() {
+        write("routing.json", &Value::Null)?;
+    }
+    Ok(Controlled::Selected {
+        model: selection["model"].as_str().map(str::to_owned),
+        effort: selection["effort"].as_str().map(str::to_owned),
+    })
 }
 
 pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, Failure> {

@@ -145,9 +145,9 @@ pub async fn wake(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Resul
         crate::profile::session::claude(node, &resident, false)?;
     }
     let mut command = super::command(node, home)?;
-    // A foreground history has no saved supervisor cwd. The home directory
-    // cannot receive persistent CLI trust, so launch from the World's directory.
-    command.cwd = node.world.path().to_path_buf();
+    // A foreground history has no saved supervisor cwd: it is resumed where
+    // it was opened (`resume_dir`).
+    command.cwd = super::resume_dir(node, session);
     super::trust(&[command.cwd.as_path()], &command.env).map_err(Failure::new)?;
     let output = run_command(command, vec!["--resume".into(), session.into(), "--bg".into()]).await?;
     let started = background::started(&output).ok_or_else(|| {
