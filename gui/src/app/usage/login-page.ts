@@ -448,10 +448,11 @@ export class LoginUsagePage implements Page {
   }
 
   /** Who used it this week, a row each under the seven-day bar: their bar
-   *  in their ink against their own allowance, the week's where they have
-   *  one, else the day's, and what they spent of it; one without an
-   *  allowance has only what they spent. Each one's part of the whole
-   *  login is the seven-day bar's above; it, their terms and when an
+   *  in their ink, and its figure, say how much of what they may use they
+   *  used: their own allowance where they have one, the week's where they
+   *  have one, else the day's, with what they spent of it beside; else the
+   *  login's seven days, with what they spent. Each one's part of the
+   *  whole login is the seven-day bar's above; it, their terms and when an
    *  assistance ends are a hover away. The one picked has their other
    *  allowances under their row, the block pressed anywhere to close it.
    *  One alone has nothing to tell apart: the seven-day bar is theirs. */
@@ -477,17 +478,18 @@ export class LoginUsagePage implements Page {
         const own = this.capsOf(assisted);
         const shown = own?.weekly ? "weekly" : own?.daily ? "daily" : null;
         const cap = shown === "weekly" ? { cap: own!.weekly!, spent: person.week.usd ?? 0 } : shown === "daily" ? { cap: own!.daily!, spent: person.day?.usd ?? 0 } : null;
-        // Each one's bar is their part of the login's seven days, as long as
-        // their part of the bar above; an allowance of their own is said
-        // beside it, in caution as it runs out, and drawn when they are
-        // picked (`capMeters`).
+        // Bar, figure and note say one thing: how much of what they may use
+        // they used, their own allowance where they have one, in caution as
+        // it runs out, else the login's seven days, as long as their part
+        // of the bar above.
         const spent = cap ? cap.spent / cap.cap : null;
         const level = spent === null ? "" : spent >= 1 ? " spent" : spent >= 0.9 ? " high" : "";
+        const used = spent ?? part;
         const ends = assisted?.until ? glyph("history", 12) : "";
         const row = `<button class="ledger-meter ledger-person${picked ? " on" : ""}" type="button" data-only="${escape(person.key)}" title="${escape(said)}">
           <span class="ledger-meter-name ledger-person-name"><span>${escape(person.name)}</span>${ends}</span>
-          <span class="ledger-meter-track">${part === null ? "" : meter(part, `${this.key}:person:${person.key}`, [{ share: part, ink: person.ink }], false)}</span>
-          <span class="ledger-meter-used">${part === null ? "" : `${Math.round(part * 100)}%`}</span>
+          <span class="ledger-meter-track">${used === null ? "" : meter(Math.min(used, 1), `${this.key}:person:${person.key}`, [{ share: Math.min(used, 1), ink: person.ink }], false)}</span>
+          <span class="ledger-meter-used">${used === null ? "" : `${Math.round(used * 100)}%`}</span>
           <span class="ledger-meter-note${level}">${escape(cap ? words.capOf(words.money(cap.spent), wholeDollars(cap.cap)) : value ? amounts.say(value) : "–")}</span>
         </button>`;
         const more = picked && caps ? this.capMeters(usage, person, caps, person.ink, shown) : "";

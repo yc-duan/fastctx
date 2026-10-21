@@ -330,6 +330,8 @@
 }
 
 .uc-pager .uc-step {
+  display: inline-grid;
+  place-items: center;
   width: 28px;
   height: 28px;
   border-radius: var(--radius-full);
@@ -375,10 +377,14 @@
   align-items: center;
 }
 
+/* Its number stands in the middle of its wash. */
 .uc-num {
+  display: inline-grid;
+  place-items: center;
   min-width: 28px;
   height: 28px;
   padding: 0 6px;
+  line-height: 1;
   border-radius: var(--radius-full);
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
