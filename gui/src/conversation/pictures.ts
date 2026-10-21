@@ -18,6 +18,10 @@ import { HeldReads, LetGo, shareOf, type HeldRead, type ReadProgress } from "../
 import { glyph } from "./glyphs";
 import { escape, naturalPath } from "./prose";
 
+/** The longer side of the small copy a conversation keeps of a picture
+ *  sent from another machine. */
+const PREVIEW = 320;
+
 export interface PictureWords {
   close: string;
   previous: string;
@@ -375,7 +379,17 @@ class PictureViewer {
     const screen = Math.round(Math.max(screen_.width, screen_.height) * devicePixelRatio);
     // Without the larger one the picture stays as the page had it.
     void this.maker?.sized(picture, screen)?.then(
-      (larger) => this.place(larger, shown),
+      (larger) => {
+        this.place(larger, shown);
+        // Made no larger than the small copy a conversation keeps of what
+        // was sent from another machine, whose sender alone keeps it whole:
+        // the whole one is asked for now, not once the user zooms in.
+        const probe = new Image();
+        probe.onload = () => {
+          if (shown === this.shown && screen > PREVIEW && Math.max(probe.naturalWidth, probe.naturalHeight) <= PREVIEW) this.whole(Math.max(probe.naturalWidth, probe.naturalHeight));
+        };
+        probe.src = larger;
+      },
       (error: unknown) => console.warn("a larger picture could not be had", error),
     );
   }
@@ -428,10 +442,17 @@ class PictureViewer {
   /** Closer than the screen-sized picture holds: the whole one is asked
    *  for, once. */
   private closer(): void {
-    const picture = this.picture;
-    if (this.original || !this.camera || (!picture.path && !picture.attachment)) return;
+    if (!this.camera) return;
     const natural = Number(this.image.dataset.natural || this.size[0]);
     if ((this.camera.view.scale * this.size[0] * devicePixelRatio) / natural <= 1.05) return;
+    this.whole(natural);
+  }
+
+  /** The whole picture, asked for once; `natural` pixels being what the
+   *  one shown holds. */
+  private whole(natural: number): void {
+    const picture = this.picture;
+    if (this.original || (!picture.path && !picture.attachment)) return;
     const shown = this.shown;
     this.original = "asked";
     this.looks.hold((held) => this.options.seams.original(picture, natural, held)).then(
