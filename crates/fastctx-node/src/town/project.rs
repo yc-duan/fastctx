@@ -139,7 +139,23 @@ async fn checked(
         return Err(Failure::new("a project spans at least one machine"));
     }
     let known = machines(node, &crate::around::acting_of(node, caller), hub).await;
+    let view = hub.and_then(|hub| node.link_of(hub)).map(|link| link.view());
+    let canonical = |name: &MachineName| match &view {
+        Some(view) => view.canonical(name).clone(),
+        None if node.is_me(name) => node.machine(),
+        None => name.clone(),
+    };
+    for machine in &mut record.machines {
+        *machine = canonical(machine);
+    }
+    for place in &mut record.places {
+        place.location.machine = canonical(&place.location.machine);
+    }
+    if let Some(canon) = &mut record.canon {
+        canon.machine = canonical(&canon.machine);
+    }
     let unknown = |machine: &MachineName| !known.contains(machine);
+    let here = |machine: &MachineName| view.as_ref().map_or_else(|| node.is_me(machine), |view| view.is_me(machine));
     let named = record
         .machines
         .iter()
@@ -152,7 +168,7 @@ async fn checked(
         )));
     }
     for place in &mut record.places {
-        if node.is_me(&place.location.machine) {
+        if here(&place.location.machine) {
             place.location.path = fastctx_platform::local_path(&place.location.path)
                 .map_err(|error| Failure::new(error.to_string()))?
                 .to_string_lossy()
@@ -164,7 +180,7 @@ async fn checked(
         }
     }
     if let Some(canon) = &mut record.canon {
-        if node.is_me(&canon.machine) {
+        if here(&canon.machine) {
             canon.path = fastctx_platform::local_path(&canon.path)
                 .map_err(|error| Failure::new(error.to_string()))?
                 .to_string_lossy()
@@ -272,7 +288,7 @@ pub async fn spans_here(node: &Arc<Node>, town: &TownName) -> Result<(), Failure
     let here = node.machine();
     map::catch_up(node, town).await?;
     let record = blocking(node, town, read::latest).await?.ok_or_else(|| map::no_ledger(node, town))?;
-    if record.machines.contains(&here) {
+    if super::machines::spans_here(node, town, &record.machines)? {
         Ok(())
     } else {
         Err(Failure::new(format!(
@@ -330,7 +346,7 @@ async fn enter(node: &Arc<Node>, caller: &Caller, town: TownName) -> Result<Repl
     map::catch_up(node, &town).await?;
     works_in(node, &id, &town)?;
     let record = blocking(node, &town, read::latest).await?.ok_or_else(|| map::no_ledger(node, &town))?;
-    if !record.machines.contains(&here) {
+    if !super::machines::spans_here(node, &town, &record.machines)? {
         return Err(Failure::new(format!(
             "{town} does not span {here}, where {id} lives; its machines are {}",
             record.machines.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")

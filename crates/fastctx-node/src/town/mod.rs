@@ -6,6 +6,7 @@ pub mod caller;
 pub mod guard;
 pub(crate) mod instructions;
 pub mod journal;
+pub(crate) mod machines;
 pub mod map;
 pub mod notes;
 pub mod project;

@@ -31,19 +31,16 @@ pub async fn relay(
     let target = match &action {
         PageInvocation::Run { machine, .. } => machine.clone(),
         PageInvocation::Say { to, .. } => to.machine.clone(),
-        PageInvocation::Journal { .. } => node.machine(),
+        PageInvocation::Journal { .. } => return execute(node, source, action).await,
     };
-    if node.is_me(&target) {
+    let target = crate::town::machines::destination(node, &source.town, &target)?;
+    if node.is_here(&target) {
         return execute(node, source, action).await;
     }
     // The remote request is issued only after this node's gate, signed as
     // this machine. Devices cannot submit this internal execution call.
     let call = RemoteCall::PageAction { source, action };
-    match node
-        .call(&Acting::Here, &(&target).into(), Purpose::Hands, call)
-        .await
-        .map_err(|e| Failure::new(e.to_string()))??
-    {
+    match node.call(&Acting::Here, &target, Purpose::Hands, call).await.map_err(|e| Failure::new(e.to_string()))?? {
         RemoteReply::PageAction { result } => Ok(result),
         _ => Err(Failure::new(format!("{target} answered something other than a page action"))),
     }
@@ -138,7 +135,8 @@ pub async fn answer(node: &Arc<Node>, source: PageSource, action: PageInvocation
 async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -> Result<PageResult, Failure> {
     match action {
         PageInvocation::Run { machine, script } => {
-            if !node.is_me(&machine) {
+            let target = crate::town::machines::destination(node, &source.town, &machine)?;
+            if !node.is_here(&target) {
                 return Err(Failure::new(format!("this command is for {machine}, not {}", node.machine())));
             }
             let town = Some(source.town.clone());
@@ -149,7 +147,8 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
             Ok(PageResult::Run(Box::new(reply)))
         }
         PageInvocation::Say { to, text } => {
-            if !node.is_me(&to.machine) {
+            let target = crate::town::machines::destination(node, &source.town, &to.machine)?;
+            if !node.is_here(&target) {
                 return Err(Failure::new("the page's recipient lives on another machine"));
             }
             resident(node, &source.town, &to).await?;
@@ -186,13 +185,14 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
 }
 
 pub(super) async fn resident(node: &Arc<Node>, town: &TownName, to: &Address) -> Result<(), Failure> {
-    let lives = if node.is_me(&to.machine) {
+    let target = crate::town::machines::destination(node, town, &to.machine)?;
+    let lives = if node.is_here(&target) {
         node.residents.active(&to.resident)?;
         node.residents.town_of(&to.resident).flatten().as_ref() == Some(town)
     } else {
         let call = RemoteCall::Look { id: to.resident.to_string() };
         match node
-            .call(&Acting::Here, &(&to.machine).into(), Purpose::Look, call)
+            .call(&Acting::Here, &target, Purpose::Look, call)
             .await
             .map_err(|e| Failure::new(e.to_string()))??
         {

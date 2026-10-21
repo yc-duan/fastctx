@@ -149,19 +149,22 @@ async fn roots(
                 return Ok(roots.clone());
             };
             let world = node.world.clone();
-            let reading = move || crate::town::read::latest(&world, &town);
+            let name = town.clone();
+            let reading = move || crate::town::read::latest(&world, &name);
             let record = match initializing {
                 Some(initializing) => initializing.run(reading).await?,
                 None => tokio::task::spawn_blocking(reading).await.map_err(failed)?,
             }
             .map_err(failed)?
             .ok_or_else(|| Failure::new("the resident's project has no local address book"))?;
-            Ok(record
-                .places
-                .into_iter()
-                .filter(|place| node.is_me(&place.location.machine))
-                .map(|place| place.location.path)
-                .collect())
+            let mut roots = Vec::new();
+            for place in record.places {
+                let machine = crate::town::machines::destination(node, &town, &place.location.machine)?;
+                if node.is_here(&machine) {
+                    roots.push(place.location.path);
+                }
+            }
+            Ok(roots)
         }
     }
 }
