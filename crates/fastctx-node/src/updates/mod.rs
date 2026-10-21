@@ -58,6 +58,9 @@ struct Held {
     /// How fast this machine's last download from GitHub went, in bytes a
     /// second (`GITHUB_SPEED`).
     github_speed: Option<u64>,
+    /// What was kept is read: until then, news of versions from a hub the
+    /// node joined first takes nothing by itself.
+    started: bool,
 }
 
 /// Where the speed of the last download from GitHub is kept, for the hub
@@ -132,6 +135,7 @@ pub(crate) fn start(node: &Arc<Node>) {
             held.chosen = take.manifest;
             held.origin = take.origin;
         }
+        held.started = true;
     }
     if let Some(version) = application(node) {
         application::took(node, &version);
@@ -814,7 +818,7 @@ pub(crate) async fn remote(node: &Arc<Node>, asker: Asker, update: Option<Update
 /// passes the hubs' major version (`hub_major`); one the network keeps for
 /// it was asked for by someone, as one the owner picks is.
 fn auto(node: &Arc<Node>) {
-    if !fastctx_platform::follows_releases() {
+    if !fastctx_platform::follows_releases() || !node.updates.held.lock().expect("never poisoned").started {
         return;
     }
     schedule::reconcile(node);
