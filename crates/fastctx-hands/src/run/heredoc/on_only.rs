@@ -17,6 +17,8 @@ pub(in crate::run) fn plan(source: &str) -> Result<(String, Option<String>), Fai
         functions: Default::default(),
     };
     let mut commands = Vec::new();
+    // The line of an `&&`, `||` or `|` still waiting for the command after it.
+    let mut owed = None;
     loop {
         scan.spaces();
         if scan.byte() == Some(b'#') {
@@ -29,6 +31,10 @@ pub(in crate::run) fn plan(source: &str) -> Result<(String, Option<String>), Fai
             continue;
         }
         if scan.byte().is_none() {
+            // Bash refuses a script ending there, and so nothing of it runs.
+            if let Some(line) = owed {
+                return Err(refuse(line, "the script ends after a shell operator, with no command after it"));
+            }
             break;
         }
         let line = scan.line;
@@ -123,6 +129,7 @@ pub(in crate::run) fn plan(source: &str) -> Result<(String, Option<String>), Fai
             words.iter().map(|word| quote(word)).collect::<Vec<_>>().join(" ")
         };
         commands.push((machine, script));
+        owed = None;
         if document.is_some() {
             continue;
         }
@@ -130,8 +137,12 @@ pub(in crate::run) fn plan(source: &str) -> Result<(String, Option<String>), Fai
             None => break,
             Some(b'\n') => scan.advance(1),
             Some(b';') if !scan.at(b";;") && !scan.at(b";&") => scan.advance(1),
-            Some(b'&') if scan.at(b"&&") => scan.advance(2),
+            Some(b'&') if scan.at(b"&&") => {
+                owed = Some(scan.line);
+                scan.advance(2);
+            }
             Some(b'|') => {
+                owed = Some(scan.line);
                 let count = if scan.at(b"||") { 2 } else { 1 };
                 scan.advance(count);
             }
