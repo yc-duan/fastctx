@@ -338,7 +338,8 @@ export class MachinePage implements Page {
     const kept = keptOf(machine.name);
     try {
       const asked = ++kept.asked;
-      const stats = await this.options.stats(machine.here ? null : machine.name, kept.last?.at ?? null);
+      // Asked by how it is written: of two hubs' machines of one name, this one.
+      const stats = await this.options.stats(machine.here ? null : machine.written, kept.last?.at ?? null);
       take(machine.name, stats, !!kept.last, asked);
       this.problem = null;
     } catch (error) {

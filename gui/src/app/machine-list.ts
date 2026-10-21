@@ -166,7 +166,7 @@ export function machineList(now: ListNow, words: MachinesWords): string {
 /** What the update view knows of the machine a node is: a phone by its
  *  name, a machine by the name the network gives it. */
 function updateOf(node: MapNode, machines: Map<string, Machine>, updates: UpdatesNow): MachineUpdate | undefined {
-  return updates.byName.get(machines.get(node.key)?.name ?? node.name);
+  return updates.byName.get(machines.get(node.key)?.written ?? node.name);
 }
 
 /** A mark as a row's cell: what it says, said when pointed at. */

@@ -117,6 +117,11 @@
   rotate: 0deg;
 }
 
+/* Of several hubs this device runs, each policy is said with its hub. */
+.uv-policy-hub {
+  color: var(--text);
+}
+
 .uv-policy-fold .uv-policy {
   margin-top: 0;
 }

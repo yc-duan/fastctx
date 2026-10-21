@@ -220,6 +220,8 @@ export class MachinesPage implements Page {
   private updateViews = new Map<string, UpdatesView>();
   private updatesByName = new Map<string, MachineUpdate>();
   private updatesLogin = new Map<string, Login>();
+  /** Each machine's name on its own hub, by how it is written here. */
+  private updatesBare = new Map<string, string>();
   /** The hub answers no update view: it runs an older release. */
   private updatesOld = false;
   /** The page was left: nothing more is drawn. */
@@ -360,7 +362,7 @@ export class MachinesPage implements Page {
       updates: updating
         ? {
             words: updating.view,
-            of: (machine) => this.updatesByName.get(machine.name),
+            of: (machine) => this.updatesByName.get(machine.written),
             schedule: (machines, version) => this.schedule(machines, version),
             ways: (machines, auto, relays) => this.setWays(machines, auto, relays),
             state: updating.state,
@@ -664,7 +666,7 @@ export class MachinesPage implements Page {
         if (login) this.invite(login);
         return;
       case "remove":
-        this.removeNamed(machine);
+        this.removeNamed(machine, login?.hub ?? null);
         return;
       case "framed-clear":
         this.setPicked([]);
@@ -773,6 +775,12 @@ export class MachinesPage implements Page {
     const views = new Map<string, UpdatesView>();
     const byName = new Map<string, MachineUpdate>();
     const from = new Map<string, Login>();
+    const bare = new Map<string, string>();
+    // A machine is known by how it is written here: two hubs' machines of
+    // one name stay two, and each is asked by its own.
+    const known = machinesOf(world);
+    const writtenOf = (login: Login, name: string) =>
+      known.find((one) => one.name === name && one.on.some((on) => on.hub === login.hub))?.written ?? name;
     let old = false;
     let failed: string | null = null;
     answers.forEach((answer, index) => {
@@ -791,18 +799,22 @@ export class MachinesPage implements Page {
       } else if (answer.value.kind === "view") view = answer.value.view;
       if (!view) return;
       views.set(key, view);
-      for (const machine of view.machines) {
-        const kept = byName.get(machine.machine);
+      for (const told of view.machines) {
+        const written = writtenOf(login, told.machine);
+        const machine = written === told.machine ? told : { ...told, machine: written };
+        const kept = byName.get(written);
         const more = (one: MachineUpdate) => Number(one.actions.schedule.allowed) + Number(one.actions.settings.allowed) + Number(one.actions.update.allowed);
         if (!kept || more(machine) > more(kept)) {
-          byName.set(machine.machine, machine);
-          from.set(machine.machine, login);
+          byName.set(written, machine);
+          from.set(written, login);
+          bare.set(written, told.machine);
         }
       }
     });
     this.updateViews = views;
     this.updatesByName = byName;
     this.updatesLogin = from;
+    this.updatesBare = bare;
     this.updatesOld = !views.size && old;
     this.updatesFailed = views.size || old ? null : failed;
     this.redraw();
@@ -819,7 +831,8 @@ export class MachinesPage implements Page {
     const hub = views[0]?.hub ?? null;
     const top = [...newest].sort(compareVersions).pop() ?? hub;
     const line = lineOf(top);
-    const policy = views.find((view) => view.policy)?.policy ?? null;
+    const policies = [...this.updateViews.entries()].filter(([, view]) => view.policy);
+    const policy = policies[0]?.[1].policy ?? null;
     const machines = [...this.updatesByName.values()];
     let head = "";
     if (this.updatesOld) head = `<p class="uv-old">${escape(words.hubOld)}</p>`;
@@ -829,14 +842,22 @@ export class MachinesPage implements Page {
     else if (machines.length) {
       const width = Math.max(0, this.list.clientWidth - (narrow ? 32 : 48));
       head = rulerOf({ machines, newest, hub, minimum: policy?.minimum ?? null, line, width: width || 900, phone: narrow }, words);
-      if (policy) {
-        const minimum = policy.minimum ?? null;
-        const managed = policy.managed_auto !== false;
-        const items = `<span class="uv-policy-item"><span>${escape(words.minimum)}</span><button class="uv-chip" type="button" data-uv-minimum><span class="ml-num">${escape(minimum ?? words.noMinimum)}</span>${glyph("chevron", 12)}</button></span><span class="uv-policy-item"><span>${escape(words.managedAuto)}</span><span class="uv-auto${managed ? " on" : ""}" role="switch" aria-checked="${managed}" aria-label="${escape(words.managedAuto)}" data-uv-managed><span class="switch-track"><span class="switch-knob"></span></span></span></span>`;
+      if (policies.length) {
+        // Each hub's own, its name first where there are several.
+        const logins = loginsOf(this.options.store.world.peek()?.accounts);
+        const rows = policies
+          .map(([key, view]) => {
+            const one = view.policy!;
+            const minimum = one.minimum ?? null;
+            const managed = one.managed_auto !== false;
+            const hubName = policies.length > 1 ? (logins.find((login) => `${login.hub}\n${login.account}` === key)?.hubName ?? "") : "";
+            return `<div class="uv-policy">${hubName ? `<span class="uv-policy-hub">${escape(hubName)}</span>` : ""}<span class="uv-policy-item"><span>${escape(words.minimum)}</span><button class="uv-chip" type="button" data-uv-minimum="${escape(key)}"><span class="ml-num">${escape(minimum ?? words.noMinimum)}</span>${glyph("chevron", 12)}</button></span><span class="uv-policy-item"><span>${escape(words.managedAuto)}</span><span class="uv-auto${managed ? " on" : ""}" role="switch" aria-checked="${managed}" aria-label="${escape(words.managedAuto)}" data-uv-managed="${escape(key)}"><span class="switch-track"><span class="switch-knob"></span></span></span></span></div>`;
+          })
+          .join("");
         // On a phone the policy is folded into one line until it is opened.
         head += narrow
-          ? `<details class="uv-policy-fold"${this.policyOpen ? " open" : ""}><summary>${glyph("chevron", 14)}<span>${escape(words.policy)}</span></summary><div class="uv-policy">${items}</div></details>`
-          : `<div class="uv-policy">${items}</div>`;
+          ? `<details class="uv-policy-fold"${this.policyOpen ? " open" : ""}><summary>${glyph("chevron", 14)}<span>${escape(words.policy)}</span></summary>${rows}</details>`
+          : rows;
       }
     }
     return { byName: this.updatesByName, line, words, head, said: this.updatesSaid };
@@ -868,13 +889,16 @@ export class MachinesPage implements Page {
       if (machine) void this.setWays([machine], !machine.auto, null);
       return true;
     }
-    const policy = [...this.updateViews.values()].find((view) => view.policy)?.policy;
-    if (target.closest("[data-uv-minimum]") && policy) {
-      updates.minimum(policy.minimum ?? null, (version) => void this.setPolicy(version, policy.managed_auto !== false));
+    const minimumOf = target.closest<HTMLElement>("[data-uv-minimum]")?.dataset.uvMinimum;
+    const managedOf = target.closest<HTMLElement>("[data-uv-managed]")?.dataset.uvManaged;
+    const key = minimumOf ?? managedOf;
+    const policy = key === undefined ? undefined : this.updateViews.get(key)?.policy;
+    if (minimumOf !== undefined && policy) {
+      updates.minimum(policy.minimum ?? null, (version) => void this.setPolicy(minimumOf, version, policy.managed_auto !== false));
       return true;
     }
-    if (target.closest("[data-uv-managed]") && policy) {
-      void this.setPolicy(policy.minimum ?? null, policy.managed_auto === false);
+    if (managedOf !== undefined && policy) {
+      void this.setPolicy(managedOf, policy.minimum ?? null, policy.managed_auto === false);
       return true;
     }
     return false;
@@ -893,19 +917,23 @@ export class MachinesPage implements Page {
       if (!login) continue;
       const key = `${login.hub}\n${login.account}`;
       const entry = byLogin.get(key) ?? { login, names: [] };
-      entry.names.push(machine.machine);
+      // The hub knows it by its name there.
+      entry.names.push(this.updatesBare.get(machine.machine) ?? machine.machine);
       byLogin.set(key, entry);
     }
     for (const { login, names } of byLogin.values()) {
+      // Back from the hub's name to how it is written here.
+      const written = (name: string) =>
+        [...this.updatesBare.entries()].find(([as, one]) => one === name && this.updatesLogin.get(as) === login)?.[0] ?? name;
       try {
         const reply = await updates.ask(login.hubName, login.account, { do: "schedule", machines: names, version });
         if (reply.kind !== "scheduled") continue;
         for (const result of reply.results) {
-          if (result.done) this.updatesSaid.delete(result.machine);
-          else this.sayOnRow(result.machine, words.notScheduled(result.reason ? words.reasons[result.reason] : (result.why ?? words.reasons.other)));
+          if (result.done) this.updatesSaid.delete(written(result.machine));
+          else this.sayOnRow(written(result.machine), words.notScheduled(result.reason ? words.reasons[result.reason] : (result.why ?? words.reasons.other)));
         }
       } catch (error) {
-        for (const name of names) this.sayOnRow(name, words.notScheduled(error instanceof Error ? error.message : String(error)));
+        for (const name of names) this.sayOnRow(written(name), words.notScheduled(error instanceof Error ? error.message : String(error)));
       }
     }
     await this.askUpdates();
@@ -933,13 +961,12 @@ export class MachinesPage implements Page {
     await this.askUpdates();
   }
 
-  /** The network's update policy, set by the login of this device that is
-   *  its super administrator. */
-  private async setPolicy(minimum: string | null, managedAuto: boolean): Promise<void> {
+  /** A network's update policy, set by the login `key` of this device that
+   *  is its super administrator. */
+  private async setPolicy(key: string, minimum: string | null, managedAuto: boolean): Promise<void> {
     const updates = this.options.updates;
     if (!updates) return;
-    const entry = [...this.updateViews.entries()].find(([, view]) => view.policy);
-    const login = entry && loginsOf(this.options.store.world.peek()?.accounts).find((one) => `${one.hub}\n${one.account}` === entry[0]);
+    const login = loginsOf(this.options.store.world.peek()?.accounts).find((one) => `${one.hub}\n${one.account}` === key);
     if (!login) return;
     try {
       await updates.ask(login.hubName, login.account, { do: "policy", minimum, managed_auto: managedAuto });
@@ -1243,10 +1270,13 @@ export class MachinesPage implements Page {
     );
   }
 
-  /** Takes the machine of `name` off, one of three ways. */
-  private removeNamed(name: string): void {
+  /** Takes the machine written `name` off, one of three ways; a name of
+   *  its hub's directory where `hub` says which. */
+  private removeNamed(name: string, hub: string | null = null): void {
     const world = this.options.store.world.peek();
-    const machine = world ? machinesOf(world).find((one) => one.name === name) : undefined;
+    const machine = world
+      ? machinesOf(world).find((one) => (hub === null ? one.written === name : one.name === name && one.on.some((on) => on.hub === hub)))
+      : undefined;
     if (!world || !machine) return;
     const { manage, access } = this.options;
     removeMachines([machine], world, manage.removeTitle(machine.written), {
@@ -1751,7 +1781,7 @@ export class MachinesPage implements Page {
         if (login) this.share(login, machine.name);
         return;
       case "remove":
-        this.removeNamed(machine.name);
+        this.removeNamed(machine.written);
         return;
       case "rename":
         this.renameCard(key, machine);

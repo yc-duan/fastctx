@@ -112,7 +112,7 @@ export class FastctxBlock {
     if (machine.here || !manages || this.away || older) return;
     this.asking = true;
     try {
-      this.state = await this.options.remote(machine.name, { do: "state" });
+      this.state = await this.options.remote(machine.written, { do: "state" });
       this.problem = null;
     } catch (error) {
       this.problem = error instanceof Error ? error.message : String(error);
@@ -273,7 +273,7 @@ export class FastctxBlock {
           settings.auto = target.dataset.value === "on";
           settings.chosen = true;
         } else settings.relays = target.dataset.value === "on";
-        this.act(this.options.remote(machine.name, { do: "set", settings }));
+        this.act(this.options.remote(machine.written, { do: "set", settings }));
         return true;
       }
     }
@@ -294,13 +294,13 @@ export class FastctxBlock {
         who: machine.written,
         running,
         state,
-        ...(away ? {} : { look: () => this.options.remote(machine.name, { do: "look" }) }),
+        ...(away ? {} : { look: () => this.options.remote(machine.written, { do: "look" }) }),
       },
       {
         kind: "update",
         pick: async (version) => {
           if (away) await this.options.due(manages, machine.name, version);
-          else this.state = await this.options.remote(machine.name, { do: "kernel", version });
+          else this.state = await this.options.remote(machine.written, { do: "kernel", version });
           this.options.changed();
           void this.ask();
         },
