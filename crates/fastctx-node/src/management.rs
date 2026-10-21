@@ -4,27 +4,29 @@
 //! list; deleting it is `crate::forget`'s.
 
 use crate::{Node, speech};
+use fastctx_types::access::Written;
 use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::management::{Managed, Management, ManagementOutcome as Outcome, ManagementStep};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::residents::{Activity, Delivery, Notice, WorldFact};
-use fastctx_types::{Address, MachineName, ResidentId, TownName};
+use fastctx_types::{Address, ResidentId, TownName};
 use jiff::Timestamp;
 use std::sync::Arc;
 
 pub async fn manage(
     node: &Arc<Node>,
     resident: ResidentId,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     action: Management,
 ) -> Result<(Address, Managed), Failure> {
+    let local = machine.is_none() && node.residents.about(&resident).is_some();
     let machine = match machine {
-        Some(machine) => machine.into(),
+        Some(machine) => machine,
         None if node.residents.about(&resident).is_some() => node.machine().into(),
         None => crate::colleagues::find_for(node, &Acting::Here, &resident).await?,
     };
-    let managed = if machine.hub.is_none() && node.is_me(&machine.name) {
+    let managed = if local || node.is_here(&machine) {
         here(node, &resident, action).await?
     } else {
         if matches!(action, Management::Mcp { .. }) {

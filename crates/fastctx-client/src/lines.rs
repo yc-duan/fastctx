@@ -1,14 +1,15 @@
 //! Live ownership of a line source, and cancellable independent requests.
 
 use crate::{Client, Error, World};
+use fastctx_types::access::Written;
 use fastctx_types::lines::{Decoding, Reply as LinesReply, Request, Result as Answer};
-use fastctx_types::{Call, MachineName, Reply};
+use fastctx_types::{Call, Reply};
 use std::collections::HashMap;
 
 #[derive(Default)]
 pub(crate) struct Sources {
     generation: u64,
-    held: HashMap<(MachineName, String), Held>,
+    held: HashMap<(Written, String), Held>,
 }
 pub(crate) enum Held {
     Local { _client: Client },
@@ -27,13 +28,16 @@ impl World {
     /// the viewer. Dropping the last World also closes all owned sources.
     pub async fn open_lines(
         &self,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         path: String,
         decoding: Decoding,
     ) -> Result<LinesReply, Error> {
+        // 2026-10-21: historical artifact indexes carry no hub, so they cannot
+        // identify the cached file of a hub-qualified source.
         if let Some(cache) = self.cache().cloned()
             && let Some(machine) = machine.clone()
-            && let Some(frozen) = cache.frozen(&machine, &path, &decoding)
+            && machine.hub.is_none()
+            && let Some(frozen) = cache.frozen(&machine.name, &path, &decoding)
         {
             return self.open_frozen_lines(cache, frozen, machine, path, decoding).await;
         }
@@ -42,11 +46,12 @@ impl World {
 
     pub(crate) async fn open_network_lines(
         &self,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         path: String,
         decoding: Decoding,
     ) -> Result<LinesReply, Error> {
         let generation = self.line_sources.lock().expect("line sources").generation;
+        let selected = machine.clone();
         let (reply, held) = if let Some(device) = self.device() {
             let machine = machine.ok_or_else(|| Error::Other("choose the machine holding the text file".into()))?;
             let (reply, lease) = device.open_lines(machine, path, decoding).await?;
@@ -66,13 +71,13 @@ impl World {
         if sources.generation != generation {
             return Err(Error::Other("the page owning this line source closed while it opened".into()));
         }
-        sources.held.insert((reply.machine.clone(), source.clone()), held);
+        sources.held.insert((selected.unwrap_or_else(|| reply.machine.clone().into()), source.clone()), held);
         Ok(reply)
     }
 
     /// Read, find, or await a growth notification. Cancellation drops the
     /// request's separate IPC/network call, leaving the source open.
-    pub async fn lines(&self, machine: MachineName, request: Request) -> Result<LinesReply, Error> {
+    pub async fn lines(&self, machine: Written, request: Request) -> Result<LinesReply, Error> {
         let source = match &request {
             Request::Read { source, .. }
             | Request::Find { source, .. }
@@ -91,7 +96,7 @@ impl World {
         if let Some((cache, key, mut closed)) = kept {
             if closing {
                 self.line_sources.lock().expect("line sources").held.remove(&(machine.clone(), source.clone()));
-                return Ok(LinesReply { machine, result: Answer::Closed });
+                return Ok(LinesReply { machine: machine.name, result: Answer::Closed });
             }
             if matches!(request, Request::Changed { .. }) {
                 let _ = closed.changed().await;
@@ -101,7 +106,7 @@ impl World {
         }
         if !self.line_sources.lock().expect("line sources").held.contains_key(&(machine.clone(), source.clone())) {
             if closing {
-                return Ok(LinesReply { machine, result: Answer::Closed });
+                return Ok(LinesReply { machine: machine.name, result: Answer::Closed });
             }
             return Err(Error::Other("this World does not own the line source".into()));
         }
@@ -121,7 +126,7 @@ impl World {
 }
 
 impl Sources {
-    pub(crate) fn remove(&mut self, machine: &MachineName, source: &str) {
+    pub(crate) fn remove(&mut self, machine: &Written, source: &str) {
         self.held.remove(&(machine.clone(), source.to_string()));
     }
     pub(crate) fn generation(&self) -> u64 {
@@ -130,7 +135,7 @@ impl Sources {
     pub(crate) fn keep(
         &mut self,
         generation: u64,
-        machine: MachineName,
+        machine: Written,
         source: String,
         cache: std::sync::Arc<crate::cache::Cache>,
         key: String,

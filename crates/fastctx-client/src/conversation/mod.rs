@@ -13,11 +13,12 @@
 
 mod kept;
 
+use fastctx_types::access::Written;
 use std::collections::{HashSet, VecDeque};
 
 use fastctx_types::residents::Landed;
 use fastctx_types::session::{Happened, SessionChange, SessionEvent, Watched};
-use fastctx_types::{Address, MachineName, ResidentId};
+use fastctx_types::{Address, ResidentId};
 use tokio::sync::mpsc;
 
 use crate::Watching;
@@ -63,7 +64,7 @@ type Recording = tokio::task::JoinHandle<(kept::Keeping, Moment, Result<(), Erro
 struct Source {
     world: World,
     resident: ResidentId,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     /// Opened for an interface, which is told whether the resident works.
     shown: bool,
 }
@@ -132,7 +133,7 @@ impl Conversation {
     pub async fn watch(
         world: &World,
         resident: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
     ) -> Result<(Self, Vec<SessionEvent>), Error> {
         Self::watching(Source { world: world.clone(), resident, machine, shown: false }).await
     }
@@ -167,15 +168,23 @@ impl Conversation {
     /// views; the rest, and the history as its machine has it now, follow
     /// as [`Update::History`]. A machine that cannot be reached is said by
     /// the first update, once what is kept was shown.
-    pub async fn open(world: &World, address: Address) -> Result<(Self, Vec<SessionEvent>), Error> {
-        Self::opening(world, address, false).await
+    pub async fn open(
+        world: &World,
+        resident: ResidentId,
+        machine: Written,
+    ) -> Result<(Self, Vec<SessionEvent>), Error> {
+        Self::opening(world, resident, machine, false).await
     }
 
     /// Opens again a conversation an interface already shows, as when it
     /// comes back to it: what is kept is given whole at once, so what is
     /// shown never shrinks to its latest part on the way.
-    pub async fn reopen(world: &World, address: Address) -> Result<(Self, Vec<SessionEvent>), Error> {
-        Self::opening(world, address, true).await
+    pub async fn reopen(
+        world: &World,
+        resident: ResidentId,
+        machine: Written,
+    ) -> Result<(Self, Vec<SessionEvent>), Error> {
+        Self::opening(world, resident, machine, true).await
     }
 
     /// Local history is still due even while a device has no connection.
@@ -183,16 +192,18 @@ impl Conversation {
         self.keeping.as_ref().is_some_and(|keeping| keeping.rest_due())
     }
 
-    async fn opening(world: &World, address: Address, whole: bool) -> Result<(Self, Vec<SessionEvent>), Error> {
-        let source = Source {
-            world: world.clone(),
-            resident: address.resident.clone(),
-            machine: Some(address.machine.clone()),
-            shown: true,
-        };
+    async fn opening(
+        world: &World,
+        resident: ResidentId,
+        machine: Written,
+        whole: bool,
+    ) -> Result<(Self, Vec<SessionEvent>), Error> {
+        let source =
+            Source { world: world.clone(), resident: resident.clone(), machine: Some(machine.clone()), shown: true };
         let Some(cache) = world.cache().cloned() else {
             return Self::watching(source).await;
         };
+        let address = Address { machine: machine.name, resident };
         let (mut keeping, latest) = kept::Keeping::open(cache, address.clone(), whole).await?;
         let watching = source.held(keeping.held());
         if let Some(latest) = latest {

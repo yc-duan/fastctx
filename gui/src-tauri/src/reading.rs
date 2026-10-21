@@ -6,7 +6,7 @@
 
 use fastctx_client::file_read::Read;
 use fastctx_client::{Reading, World};
-use fastctx_types::MachineName;
+use fastctx_types::access::Written;
 use fastctx_types::file_read::{FileRange, FileReadInfo, ReadFileRequest};
 use serde::Serialize;
 use tauri::ipc::Channel;
@@ -29,7 +29,7 @@ pub struct BytesRead {
 
 pub async fn read_bytes(
     world: &World,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     path: String,
     progress: Option<Channel<ReadProgress>>,
 ) -> Result<BytesRead, String> {
@@ -42,7 +42,7 @@ pub async fn read_bytes(
 
 pub async fn read_text(
     world: &World,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     path: String,
     range: FileRange,
     progress: Option<Channel<ReadProgress>>,

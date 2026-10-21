@@ -80,25 +80,25 @@ pub fn fixtures() -> Fixtures {
             },
             Call::Upload {
                 target: target.clone(),
-                node: Some(owner.machine.clone()),
+                node: Some(owner.machine.clone().into()),
                 file: file.clone(),
                 composer: None,
             },
             Call::Upload {
                 target: UploadTarget::New { agent: "codex".parse().unwrap(), town: town.clone() },
-                node: Some(owner.machine.clone()),
+                node: Some(owner.machine.clone().into()),
                 file: file.clone(),
                 composer: None,
             },
             Call::Upload {
                 target: UploadTarget::Draft { resident: owner.resident.clone(), town: town.clone() },
-                node: Some(owner.machine.clone()),
+                node: Some(owner.machine.clone().into()),
                 file: file.clone(),
                 composer: None,
             },
             Call::Talk {
                 to: owner.resident.clone(),
-                machine: Some(owner.machine.clone()),
+                machine: Some(owner.machine.clone().into()),
                 text: text.clone(),
                 attachments: attachments.clone(),
                 files_on: Some("laptop".parse().unwrap()),
@@ -107,7 +107,7 @@ pub fn fixtures() -> Fixtures {
             Call::Open {
                 agent: "codex".parse().unwrap(),
                 town: town.clone(),
-                node: Some(owner.machine.clone()),
+                node: Some(owner.machine.clone().into()),
                 text: text.clone(),
                 model: None,
                 reasoning_effort: None,

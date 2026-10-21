@@ -5,6 +5,7 @@
 //! from what its destination holds: the reader gives the file whole, and
 //! what is held is skipped.
 
+use fastctx_types::access::Written;
 use std::sync::{Arc, Mutex};
 
 use fastctx_net::link::Feed;
@@ -21,8 +22,8 @@ use crate::Error;
 impl Device {
     pub(crate) async fn upload_scoped(
         &self,
-        target: UploadTarget,
-        machine: Option<MachineName>,
+        mut target: UploadTarget,
+        machine: Option<Written>,
         file: UploadFile,
         composer: Option<fastctx_types::composer::UploadScope>,
         mut source: impl AsyncRead + Unpin,
@@ -33,6 +34,10 @@ impl Device {
             _ => machine.ok_or_else(|| failed("choose a machine for the attachment; a device has no local node"))?,
         };
         let session = self.reaching(&machine)?;
+        let machine = machine.name;
+        if let UploadTarget::Sent { machine: destination, .. } = &mut target {
+            *destination = machine.clone().into();
+        }
         let account = match target.conversation_target() {
             UploadTarget::Resident { resident } => session.link.account_of(&machine, resident).map_err(failed)?,
             _ => session.account_for(&machine, fastctx_types::access::Purpose::Agents)?,

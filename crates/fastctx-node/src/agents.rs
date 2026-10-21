@@ -3,17 +3,18 @@
 //! logins (`logins`), with no program started for the asking but to ask
 //! again a login whose sign-in changed.
 
+use fastctx_types::access::Written;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fastctx_install::apply::Places;
+use fastctx_types::AgentName;
 use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::agents::*;
 use fastctx_types::ipc::Failure;
 use fastctx_types::logins::{Found, Login, MachineLogins};
 use fastctx_types::remote::RemoteCall;
-use fastctx_types::{AgentName, MachineName};
 
 use crate::Node;
 
@@ -111,10 +112,10 @@ pub(crate) fn places(node: &Node, env: &[(OsString, OsString)], home: &Path, cla
 
 /// The agents on `machine`, or on this machine and each machine whoever
 /// asks (`acting`) may use.
-pub async fn query(node: &Arc<Node>, acting: &Acting, machine: Option<MachineName>) -> Result<WorldAgents, Failure> {
+pub async fn query(node: &Arc<Node>, acting: &Acting, machine: Option<Written>) -> Result<WorldAgents, Failure> {
     let here = node.machine();
     let mut machines = Vec::new();
-    if machine.as_ref().is_none_or(|machine| node.is_me(machine)) {
+    if machine.as_ref().is_none_or(|machine| node.is_here(machine)) {
         // One that may not work here sees the logins that assist an account
         // it works for alone (`admission::local::agents`).
         let works_here = node.works_here(acting).is_ok();
@@ -128,16 +129,23 @@ pub async fn query(node: &Arc<Node>, acting: &Acting, machine: Option<MachineNam
         });
     }
     let reachable = crate::around::reachable_each(node, acting, Purpose::Look);
-    let reachable = match machine.filter(|machine| !node.is_me(machine)) {
+    let reachable = match machine.clone().filter(|machine| !node.is_here(machine)) {
         Some(name) => {
-            node.locate(&(&name).into())?;
-            let selected: Vec<_> = reachable.into_iter().filter(|target| target.name == name).collect();
+            let links = node.locate(&name)?;
+            let selected: Vec<_> = reachable
+                .into_iter()
+                .filter(|target| {
+                    links.iter().any(|link| link.membership().id == target.link.membership().id)
+                        && target.link.view().same(&target.name, &name.name)
+                })
+                .collect();
             if selected.is_empty() {
                 return Err(Failure::new(format!("{name} is not a machine this caller may ask")));
             }
             selected
         }
-        None => reachable,
+        None if machine.is_none() => reachable,
+        None => Vec::new(),
     };
     let heard = crate::around::ask_each(reachable, |_| RemoteCall::Agents).await;
     machines.extend(fastctx_net::around::answers::collect(heard).into_iter().map(|answers| answers.agents()));

@@ -61,7 +61,7 @@ pub fn fixtures() -> Fixtures {
             .flat_map(|request| {
                 [
                     Call::FindFiles { machine: None, request: request.clone() },
-                    Call::FindFiles { machine: Some(machine.clone()), request: request.clone() },
+                    Call::FindFiles { machine: Some(machine.clone().into()), request: request.clone() },
                 ]
             })
             .collect(),

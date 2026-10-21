@@ -83,7 +83,7 @@ pub(crate) async fn login(
     #[cfg(target_os = "android")]
     crate::android::joining(true)?;
     let joined = world
-        .login(addresses, account(account_name)?, password, register, crate::machine(name)?)
+        .login(addresses, account(account_name)?, password, register, crate::new_machine_name(name)?)
         .await
         .map_err(|error| error.to_string());
     #[cfg(target_os = "android")]
@@ -112,7 +112,7 @@ pub(crate) async fn login_token(
     #[cfg(target_os = "android")]
     crate::android::joining(true)?;
     let joined = world
-        .login_with_token(token.trim().to_string(), crate::machine(name)?)
+        .login_with_token(token.trim().to_string(), crate::new_machine_name(name)?)
         .await
         .map_err(|error| error.to_string());
     #[cfg(target_os = "android")]
@@ -133,7 +133,7 @@ pub(crate) async fn open_account(
     let addresses = fastctx_client::hub_addresses(&hub).await?;
     let joined = shell
         .world()
-        .open_account(addresses, account(account_name)?, password, register, crate::machine(name)?)
+        .open_account(addresses, account(account_name)?, password, register, crate::new_machine_name(name)?)
         .await
         .map_err(|error| error.to_string())?;
     logged_in(&shell, joined).await
@@ -186,7 +186,11 @@ pub(crate) async fn rename_here(shell: tauri::State<'_, Shell>, name: String) ->
 /// The HTTP proxy this computer reaches its hubs through: read, or with
 /// `change`, set to `url`, none clearing it.
 #[fastctx_gui_command::command]
-pub(crate) async fn hub_proxy(shell: tauri::State<'_, Shell>, url: Option<String>, change: bool) -> Result<Option<String>, String> {
+pub(crate) async fn hub_proxy(
+    shell: tauri::State<'_, Shell>,
+    url: Option<String>,
+    change: bool,
+) -> Result<Option<String>, String> {
     shell.world().hub_proxy(url, change).await.map_err(|error| error.to_string())
 }
 
@@ -213,7 +217,7 @@ pub(crate) async fn server_command(
         .server_command(
             hub(hub_name)?,
             account(account_name)?,
-            crate::machine(name)?,
+            crate::new_machine_name(name)?,
             expires,
             managed.unwrap_or(false),
             uses,

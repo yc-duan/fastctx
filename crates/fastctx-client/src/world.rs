@@ -2,6 +2,7 @@
 //! Local calls use independent IPC connections; device calls share one
 //! persistent link and are addressed to their machine or a relay.
 
+use fastctx_types::access::Written;
 use fastctx_types::accounts::{AccountChange, AccountsReply};
 use fastctx_types::copy::{CopyReport, Place};
 use fastctx_types::ipc::Peer;
@@ -172,7 +173,7 @@ impl World {
     /// was asked (`crate::again`): on a device, through its own links; else
     /// as this computer's node says, which is not started for it. Without
     /// a node that answers, it never resolves, and the wait keeps the pace.
-    pub(crate) fn reopened(&self, machine: &MachineName) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send>> {
+    pub(crate) fn reopened(&self, machine: &Written) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send>> {
         if let Some(device) = &self.device {
             return Box::pin(device.reopened(machine));
         }
@@ -272,7 +273,7 @@ impl World {
 
     /// Queries one machine, or fans out to every online machine. Offline
     /// and unanswered machines remain explicit in the result.
-    pub async fn agents(&self, machine: Option<MachineName>) -> Result<fastctx_types::agents::WorldAgents, Error> {
+    pub async fn agents(&self, machine: Option<Written>) -> Result<fastctx_types::agents::WorldAgents, Error> {
         match self.ask(Call::Agents { machine }).await? {
             Reply::Agents(agents) => Ok(agents),
             other => Err(unexpected(other)),
@@ -281,10 +282,7 @@ impl World {
 
     /// What the nodes of one machine, or of every machine this user may
     /// look at, keep of their agents' logins; no program is started.
-    pub async fn agent_logins(
-        &self,
-        machine: Option<MachineName>,
-    ) -> Result<fastctx_types::logins::WorldLogins, Error> {
+    pub async fn agent_logins(&self, machine: Option<Written>) -> Result<fastctx_types::logins::WorldLogins, Error> {
         match self.ask(Call::AgentLogins { machine }).await? {
             Reply::AgentLogins(logins) => Ok(logins),
             other => Err(unexpected(other)),
@@ -296,7 +294,7 @@ impl World {
     /// those searches.
     pub async fn scan_agents(
         &self,
-        machine: MachineName,
+        machine: Written,
         stop: bool,
     ) -> Result<fastctx_types::logins::MachineLogins, Error> {
         machine_logins(self.ask(Call::ScanAgents { machine, stop }).await?)
@@ -305,7 +303,7 @@ impl World {
     /// Takes up `dir` on `machine` as a candidate login of `agent`.
     pub async fn add_agent_login(
         &self,
-        machine: MachineName,
+        machine: Written,
         agent: fastctx_types::AgentName,
         dir: std::path::PathBuf,
     ) -> Result<fastctx_types::logins::MachineLogins, Error> {
@@ -316,7 +314,7 @@ impl World {
     /// or no longer searches it.
     pub async fn agent_folder(
         &self,
-        machine: MachineName,
+        machine: Written,
         dir: std::path::PathBuf,
         change: fastctx_types::logins::FolderChange,
     ) -> Result<fastctx_types::logins::MachineLogins, Error> {
@@ -327,7 +325,7 @@ impl World {
     /// off (`world-agent-logins.md`, 在哪个登录里干活).
     pub async fn set_agent_title(
         &self,
-        machine: MachineName,
+        machine: Written,
         agent: fastctx_types::AgentName,
         dir: std::path::PathBuf,
         on: bool,
@@ -340,7 +338,7 @@ impl World {
     /// of them too.
     pub async fn preview_agent_change(
         &self,
-        machine: MachineName,
+        machine: Written,
         agent: fastctx_types::AgentName,
         dir: std::path::PathBuf,
         into: bool,
@@ -356,7 +354,7 @@ impl World {
     /// machine's node.
     pub async fn change_agent_login(
         &self,
-        machine: MachineName,
+        machine: Written,
         agent: fastctx_types::AgentName,
         dir: std::path::PathBuf,
         into: bool,
@@ -372,7 +370,7 @@ impl World {
     /// Reads a login's limits afresh on its machine.
     pub async fn read_agent_limits(
         &self,
-        machine: MachineName,
+        machine: Written,
         agent: fastctx_types::AgentName,
         dir: std::path::PathBuf,
     ) -> Result<fastctx_types::logins::MachineLogins, Error> {
@@ -383,7 +381,7 @@ impl World {
     /// see it.
     pub async fn agent_calls(
         &self,
-        machine: fastctx_types::MachineName,
+        machine: Written,
         agent: fastctx_types::AgentName,
         dir: std::path::PathBuf,
         query: fastctx_types::usage_calls::UsageCallsQuery,
@@ -396,7 +394,7 @@ impl World {
 
     pub async fn agent_usage(
         &self,
-        machine: MachineName,
+        machine: Written,
         agent: fastctx_types::AgentName,
         dir: std::path::PathBuf,
     ) -> Result<fastctx_types::usage::UsageReport, Error> {
@@ -411,7 +409,7 @@ impl World {
     /// approvals. Answers what it now records and whether that changed.
     pub async fn claude_consent(
         &self,
-        machine: MachineName,
+        machine: Written,
         accept: bool,
         home: Option<std::path::PathBuf>,
     ) -> Result<(bool, bool), Error> {
@@ -487,7 +485,7 @@ impl World {
     }
 
     /// The user's words to a resident on any machine.
-    pub async fn talk(&self, to: ResidentId, machine: Option<MachineName>, text: String) -> Result<Said, Error> {
+    pub async fn talk(&self, to: ResidentId, machine: Option<Written>, text: String) -> Result<Said, Error> {
         match self.ask(Call::Talk { to, machine, text, attachments: Vec::new(), files_on: None, id: None }).await? {
             Reply::Spoken { to, landed, delivery } => Ok(Said { to, landed, delivery }),
             other => Err(unexpected(other)),
@@ -499,7 +497,7 @@ impl World {
         &self,
         agent: AgentName,
         town: Option<TownName>,
-        node: Option<MachineName>,
+        node: Option<Written>,
         text: String,
     ) -> Result<Said, Error> {
         self.open_with_options(agent, town, node, text, fastctx_types::agents::SessionOptions::default()).await
@@ -511,7 +509,7 @@ impl World {
         &self,
         agent: AgentName,
         town: Option<TownName>,
-        node: Option<MachineName>,
+        node: Option<Written>,
         text: String,
         options: fastctx_types::agents::SessionOptions,
     ) -> Result<Said, Error> {
@@ -524,7 +522,7 @@ impl World {
         &self,
         agent: AgentName,
         town: Option<TownName>,
-        node: Option<MachineName>,
+        node: Option<Written>,
         text: String,
         options: fastctx_types::agents::SessionOptions,
         choices: fastctx_types::agents::Choices,
@@ -549,7 +547,7 @@ impl World {
 
     /// Stops the turn a resident on any machine is running; returns where it
     /// lives and whether a turn was running.
-    pub async fn stop(&self, resident: ResidentId, machine: Option<MachineName>) -> Result<(Address, bool), Error> {
+    pub async fn stop(&self, resident: ResidentId, machine: Option<Written>) -> Result<(Address, bool), Error> {
         match self.ask(Call::Stop { resident, machine }).await? {
             Reply::Stopped { resident, stopped } => Ok((resident, stopped)),
             other => Err(unexpected(other)),
@@ -559,8 +557,15 @@ impl World {
     /// Stops a job and everything it started, as the user: its resident is
     /// told the user stopped it. `machine` is where it runs, this one when
     /// absent.
-    pub async fn stop_job(&self, job: JobId, machine: Option<MachineName>) -> Result<(), Error> {
-        match self.ask(Call::StopJob { job, machine, hub: None }).await? {
+    pub async fn stop_job(&self, job: JobId, machine: Option<Written>) -> Result<(), Error> {
+        match self
+            .ask(Call::StopJob {
+                job,
+                hub: machine.as_ref().and_then(|machine| machine.hub.clone()),
+                machine: machine.map(|machine| machine.name),
+            })
+            .await?
+        {
             Reply::JobStopped { .. } => Ok(()),
             other => Err(unexpected(other)),
         }
@@ -571,7 +576,7 @@ impl World {
     pub async fn control(
         &self,
         resident: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         control: Control,
     ) -> Result<(Address, Controlled), Error> {
         match self.ask(Call::Control { resident, machine, control }).await? {
@@ -581,7 +586,7 @@ impl World {
     }
 
     /// What a resident's conversation offers now.
-    pub async fn offers(&self, resident: ResidentId, machine: Option<MachineName>) -> Result<(Address, Offers), Error> {
+    pub async fn offers(&self, resident: ResidentId, machine: Option<Written>) -> Result<(Address, Offers), Error> {
         match self.ask(Call::Offers { resident, machine }).await? {
             Reply::Offers { resident, offers } => Ok((resident, *offers)),
             other => Err(unexpected(other)),
@@ -601,11 +606,12 @@ impl World {
     /// a slimmed history leaves out, for when the user would see it.
     pub async fn item_detail(
         &self,
-        address: Address,
+        resident: ResidentId,
+        machine: Written,
         turn: Option<String>,
         item: String,
     ) -> Result<Option<serde_json::Value>, Error> {
-        let call = Call::ItemDetail { resident: address.resident, machine: Some(address.machine), turn, item };
+        let call = Call::ItemDetail { resident, machine: Some(machine), turn, item };
         match self.ask(call).await? {
             Reply::ItemDetail { detail, .. } => Ok(detail),
             other => Err(unexpected(other)),
@@ -616,10 +622,11 @@ impl World {
     /// read from its own record on the resident's machine.
     pub async fn agent_activity(
         &self,
-        address: Address,
+        resident: ResidentId,
+        machine: Written,
         agent: String,
     ) -> Result<fastctx_types::session::AgentActivity, Error> {
-        let call = Call::AgentActivity { resident: address.resident, machine: Some(address.machine), agent };
+        let call = Call::AgentActivity { resident, machine: Some(machine), agent };
         match self.ask(call).await? {
             Reply::AgentActivity { activity, .. } => Ok(*activity),
             other => Err(unexpected(other)),
@@ -628,7 +635,7 @@ impl World {
 
     /// Watches a resident on any machine: its history, then each event as
     /// it happens.
-    pub async fn watch(&self, resident: ResidentId, machine: Option<MachineName>) -> Result<Watching, Error> {
+    pub async fn watch(&self, resident: ResidentId, machine: Option<Written>) -> Result<Watching, Error> {
         self.watch_with_composer(resident, machine, None).await
     }
 
@@ -638,7 +645,7 @@ impl World {
     pub async fn watch_held(
         &self,
         resident: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         held: fastctx_types::session::held::Held,
     ) -> Result<Watching, Error> {
         self.watch_as(resident, machine, None, Some(held), false).await
@@ -650,7 +657,7 @@ impl World {
     pub(crate) async fn watch_shown(
         &self,
         resident: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         held: Option<fastctx_types::session::held::Held>,
     ) -> Result<Watching, Error> {
         self.watch_as(resident, machine, None, held, true).await
@@ -659,7 +666,7 @@ impl World {
     pub(crate) async fn watch_with_composer(
         &self,
         resident: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         composer: Option<String>,
     ) -> Result<Watching, Error> {
         self.watch_as(resident, machine, composer, None, false).await
@@ -668,7 +675,7 @@ impl World {
     async fn watch_as(
         &self,
         resident: ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         composer: Option<String>,
         held: Option<fastctx_types::session::held::Held>,
         now: bool,
@@ -744,7 +751,7 @@ impl World {
     }
 
     /// Adds an agent's home on `machine`, or hides one or shows it again.
-    pub async fn homes(&self, machine: MachineName, change: fastctx_types::agents::HomeChange) -> Result<(), Error> {
+    pub async fn homes(&self, machine: Written, change: fastctx_types::agents::HomeChange) -> Result<(), Error> {
         done(self.ask(Call::Homes { machine, change }).await?)
     }
 
@@ -752,7 +759,7 @@ impl World {
     /// `path`, the places a choice of one starts from.
     pub async fn folders(
         &self,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         path: Option<String>,
     ) -> Result<fastctx_types::focus::Folders, Error> {
         match self.ask(Call::Folders { machine, path }).await? {
@@ -765,7 +772,7 @@ impl World {
     /// lines' history only after `after`, when given.
     pub async fn stats(
         &self,
-        machine: Option<MachineName>,
+        machine: Option<fastctx_types::access::Written>,
         after: Option<jiff::Timestamp>,
     ) -> Result<fastctx_types::stats::MachineStats, Error> {
         match self.ask(Call::Stats { machine, after }).await? {

@@ -72,7 +72,7 @@ fn broke(why: impl std::fmt::Display) -> Failure {
 pub async fn upload(
     node: &Arc<Node>,
     target: UploadTarget,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     file: UploadFile,
     composer: Option<fastctx_types::composer::UploadScope>,
     mut source: FrameReader,
@@ -81,8 +81,14 @@ pub async fn upload(
         return sent::upload(node, machine, *target, operation, file, composer, source).await;
     }
     validate_file(&file)?;
+    let local = machine.is_none()
+        && (composer.is_none()
+            || match &target {
+                UploadTarget::Resident { resident } => node.residents.about(resident).is_some(),
+                _ => false,
+            });
     let machine = match machine {
-        Some(machine) => machine.into(),
+        Some(machine) => machine,
         None if composer.is_some() => match &target {
             UploadTarget::Resident { resident } if node.residents.about(resident).is_some() => node.machine().into(),
             UploadTarget::Resident { resident } => crate::colleagues::find_for(node, &Acting::Here, resident).await?,
@@ -90,7 +96,7 @@ pub async fn upload(
         },
         None => node.machine().into(),
     };
-    if machine.hub.is_none() && node.is_me(&machine.name) {
+    if local || node.is_here(&machine) {
         let _place = using_target(node, &target).await;
         let (mut arriving, mut guard) =
             match arrival(node, &node.machine(), target, file, composer.as_ref(), true).await? {

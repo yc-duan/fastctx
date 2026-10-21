@@ -108,7 +108,56 @@ async function pricedRequest($, context, e) {
     turn: null, agent: null, tokens: { input: Number(a.input_tokens ?? 0), output: Number(a.output_tokens ?? 0),
       cache_read: Number(a.cache_read_tokens ?? 0), cache_write: Number(a.cache_creation_tokens ?? 0), reasoning: 0 } }
   if (a['event.sequence'] === undefined) throw new Error('Claude request has no accounting sequence')
-  await accountingReport($, context, {}, { priced })
+  const key = usageKey(a.input_tokens, a.output_tokens, a.cache_read_tokens, a.cache_creation_tokens)
+  const book = pairing(context)
+  const at = book.steps.findIndex((one) => one.key === key)
+  if (at >= 0) {
+    Object.assign(priced, book.steps.splice(at, 1)[0].owner)
+    return accountingReport($, context, {}, { priced })
+  }
+  // Its step has not ended yet: the price waits a moment for it, then is
+  // written as it is. Nothing here holds up the request.
+  let settled = false
+  const take = (owner) => {
+    if (settled) return
+    settled = true
+    Object.assign(priced, owner)
+    accountingReport($, context, {}, { priced }).catch((error) => worldFailure($, 'request accounting', error))
+  }
+  book.prices.push({ key, take })
+  $.clock.after(PAIRING_MS, () => {
+    const index = book.prices.findIndex((one) => one.take === take)
+    if (index >= 0) book.prices.splice(index, 1)
+    take({ turn: null, agent: null })
+  })
+}
+
+// A priced request names no turn or agent; the step that made it does, and
+// both carry the usage of the one response. Whichever comes first waits a
+// moment for the other.
+const PAIRING_MS = 3000
+
+function usageKey(input, output, cacheRead, cacheWrite) {
+  return [input, output, cacheRead, cacheWrite].map((n) => Number(n ?? 0)).join(':')
+}
+
+function pairing(context) {
+  context.pairing ??= { steps: [], prices: [] }
+  const now = Date.now()
+  context.pairing.steps = context.pairing.steps.filter((one) => now - one.at < PAIRING_MS)
+  return context.pairing
+}
+
+// A step that ended with usage gives its turn and agent to its price.
+function stepPriced(context, step) {
+  const u = step.usage
+  const key = usageKey(u.input_tokens, u.output_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens)
+  // The step says whose request it was more surely than the request's own source.
+  const owner = { turn: step.turn ?? null, agent: step.agent ?? null, source: step.agent ? 'agent' : 'main' }
+  const book = pairing(context)
+  const at = book.prices.findIndex((one) => one.key === key)
+  if (at >= 0) return book.prices.splice(at, 1)[0].take(owner)
+  book.steps.push({ key, at: Date.now(), owner })
 }
 
 async function stepMeasured($, context, step = null, force = false) {
@@ -117,6 +166,8 @@ async function stepMeasured($, context, step = null, force = false) {
     if (step !== null && step.usage === null) {
       const key = JSON.stringify([step.turn, step.agent, step.index])
       await accountingReport($, context, {}, { steps: [step], detail_key: key })
+    } else if (step !== null) {
+      stepPriced(context, step)
     }
     const usage = await sessionUsage($)
     if (usage === null) throw new Error('Claude did not provide its usage sample')

@@ -2,6 +2,7 @@
 //! asked of each machine (`around`), or, for the projects' ledgers, to one
 //! machine that acts for the device's account and answers from its copy.
 
+use fastctx_types::access::Written;
 use std::sync::Arc;
 
 use fastctx_net::link::CallFailure;
@@ -42,9 +43,12 @@ impl Device {
             _ => None,
         };
         if let Some((machine, auto, relays)) = preferences {
-            let running = self.sessions().iter().find_map(|session| {
-                session.link.versions().and_then(|n| n.machines.get(&machine).map(|m| m.kernel.clone()))
-            });
+            let session = self.reaching(&machine)?;
+            let view = session.link.view();
+            let running = session
+                .link
+                .versions()
+                .and_then(|n| n.machines.get(view.canonical(&machine.name)).map(|m| m.kernel.clone()));
             if running.as_deref().and_then(fastctx_types::update::release)
                 < fastctx_types::update::release(fastctx_types::update::ASKED_SINCE)
             {
@@ -140,8 +144,8 @@ impl Device {
             }
             Call::Forget { resident, machine } => {
                 let how = self.forget_conversation(&resident, &machine).await?;
-                let address = Address { machine: machine.clone(), resident };
-                return Ok((Reply::Forgetting { resident: address, how }, machine));
+                let address = Address { machine: machine.name.clone(), resident };
+                return Ok((Reply::Forgetting { resident: address, how }, machine.name));
             }
             Call::WorldNow => return Ok((Reply::WorldNow(Box::new(self.world_now().await?)), here())),
             Call::Features => return Ok((Reply::Features(self.features()?), here())),
@@ -251,9 +255,13 @@ impl Device {
                 (machine, RemoteCall::Stop { resident: resident.clone() }, Some(resident))
             }
             // A command stops as the user asks, on the machine it runs on.
-            Call::StopJob { job, machine, .. } => {
+            Call::StopJob { job, machine, hub } => {
                 let machine = machine.ok_or_else(|| failed("say which machine the command runs on"))?;
-                (machine, RemoteCall::StopJob { job, by: fastctx_types::residents::STOPPED_BY_USER.to_string() }, None)
+                (
+                    Written { name: machine, hub },
+                    RemoteCall::StopJob { job, by: fastctx_types::residents::STOPPED_BY_USER.to_string() },
+                    None,
+                )
             }
             Call::Manage { resident, machine, action } => {
                 let machine = self.find(&resident, machine).await?;
@@ -297,6 +305,7 @@ impl Device {
             _ => return Err(failed("this call belongs to a local node, not a device")),
         };
         let session = self.reaching(&machine)?;
+        let machine = machine.name;
         let purpose = remote.purpose();
         let account = match chosen {
             Some(chosen) if chosen.hub != session.link.membership().id => {
@@ -408,22 +417,18 @@ impl Device {
     async fn forget_conversation(
         &self,
         resident: &ResidentId,
-        machine: &MachineName,
+        machine: &Written,
     ) -> Result<fastctx_types::management::Forgetting, Error> {
-        let session = self
-            .sessions()
-            .into_iter()
-            .find(|session| session.link.view().member(machine).is_some())
-            .ok_or_else(|| failed(format!("no hub this device is on has a machine named {machine}")))?;
-        let account = session.link.account_of(machine, resident).map_err(failed)?;
-        let conversation = Address { machine: machine.clone(), resident: resident.clone() };
+        let session = self.reaching(machine)?;
+        let account = session.link.account_of(&machine.name, resident).map_err(failed)?;
+        let conversation = Address { machine: machine.name.clone(), resident: resident.clone() };
         match session.link.forget(&account, &conversation).await.map_err(failed)? {
             true => Ok(fastctx_types::management::Forgetting::Asked),
             false => Err(failed("not connected to the hub now; nothing was deleted, try again once connected")),
         }
     }
 
-    pub(super) async fn find(&self, resident: &ResidentId, machine: Option<MachineName>) -> Result<MachineName, Error> {
+    pub(super) async fn find(&self, resident: &ResidentId, machine: Option<Written>) -> Result<Written, Error> {
         if let Some(machine) = machine {
             return Ok(machine);
         }
@@ -436,7 +441,14 @@ impl Device {
                 if let Looked::Resident(detail) = found
                     && detail.resident.about.id == *resident
                 {
-                    machines.insert(detail.resident.about.machine.clone());
+                    machines.insert(
+                        detail
+                            .resident
+                            .source
+                            .as_ref()
+                            .map(|source| source.written.clone())
+                            .unwrap_or_else(|| detail.resident.about.machine.clone().into()),
+                    );
                 }
             }
         }

@@ -226,8 +226,9 @@ async fn validate_acts(node: &Arc<Node>, town: &TownName, acts: &[PageAct]) -> R
                 if script.trim().is_empty() {
                     return Err(Failure::new("a page run needs its exact nonempty command"));
                 }
-                if !node.is_me(machine)
-                    && !node.links().iter().any(|link| link.view().machines().any(|m| m.named(machine)))
+                let target = crate::town::machines::destination(node, town, machine)?;
+                if !node.is_here(&target)
+                    && !node.locate(&target)?.iter().any(|link| link.view().machines().any(|m| m.named(machine)))
                 {
                     return Err(Failure::new(format!("there is no machine named {machine}")));
                 }

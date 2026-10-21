@@ -35,11 +35,11 @@ pub fn fixtures() -> Fixtures {
         .iter()
         .map(|action| Call::Manage {
             resident: address.resident.clone(),
-            machine: Some(address.machine.clone()),
+            machine: Some(address.machine.clone().into()),
             action: action.clone(),
         })
         .collect();
-    calls.push(Call::Forget { resident: address.resident.clone(), machine: address.machine.clone() });
+    calls.push(Call::Forget { resident: address.resident.clone(), machine: address.machine.clone().into() });
     let remote_calls =
         actions.into_iter().map(|action| RemoteCall::Manage { resident: address.resident.clone(), action }).collect();
     let state = |outcome, activity, detail: &str| Managed {

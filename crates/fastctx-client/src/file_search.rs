@@ -1,5 +1,6 @@
+use fastctx_types::access::Written;
 use fastctx_types::file_search::{FileSearchReply, FileSearchRequest, FileSearchResult, FileSearchScope};
-use fastctx_types::{Call, MachineName, Reply};
+use fastctx_types::{Call, Reply};
 use std::sync::Arc;
 
 use crate::{Error, World};
@@ -7,7 +8,7 @@ use crate::{Error, World};
 pub(crate) struct Searches {
     generation: u64,
     closed: tokio::sync::watch::Sender<()>,
-    held: std::collections::HashMap<(MachineName, String), Arc<Search>>,
+    held: std::collections::HashMap<(Written, String), Arc<Search>>,
 }
 
 impl Default for Searches {
@@ -21,7 +22,7 @@ enum Held {
 }
 
 struct Opened {
-    machine: MachineName,
+    machine: Written,
     search: String,
     _held: Held,
 }
@@ -44,7 +45,7 @@ impl World {
     /// a machine; that machine checks their remote permission.
     pub async fn find_files(
         &self,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         request: FileSearchRequest,
     ) -> Result<FileSearchReply, Error> {
         if let FileSearchRequest::Start { scope } | FileSearchRequest::Open { scope } = request {
@@ -137,9 +138,10 @@ impl World {
 
     async fn open_search(
         &self,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         scope: FileSearchScope,
     ) -> Result<(FileSearchReply, Opened), Error> {
+        let selected = machine.clone();
         let (reply, held) = if let Some(device) = self.device() {
             let (reply, lease) = device.open_file_search(machine, scope).await?;
             (reply, Held::Remote { _lease: lease })
@@ -152,13 +154,17 @@ impl World {
         let FileSearchResult::Started { search } = &reply.result else {
             return Err(Error::Unexpected(format!("{reply:?}")));
         };
-        let opened = Opened { machine: reply.machine.clone(), search: search.clone(), _held: held };
+        let opened = Opened {
+            machine: selected.unwrap_or_else(|| reply.machine.clone().into()),
+            search: search.clone(),
+            _held: held,
+        };
         Ok((reply, opened))
     }
 
     async fn query_search(
         &self,
-        machine: MachineName,
+        machine: Written,
         search: String,
         query: String,
         limit: usize,
@@ -168,7 +174,7 @@ impl World {
 
     async fn search_call(
         &self,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         request: FileSearchRequest,
     ) -> Result<FileSearchReply, Error> {
         match self.call(Call::FindFiles { machine, request }).await?.0 {

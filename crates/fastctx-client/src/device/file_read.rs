@@ -2,7 +2,7 @@
 //! the control connection's heartbeat and other calls.
 
 use fastctx_net::file_read::Part;
-use fastctx_types::MachineName;
+use fastctx_types::access::Written;
 use fastctx_types::file_read::{FileRange, ReadFileRequest};
 use fastctx_types::ipc::Failure;
 use tokio::sync::mpsc;
@@ -22,7 +22,7 @@ impl Device {
         range: FileRange,
     ) -> Result<Reading, Error> {
         let machine = attachment.owner().machine.clone();
-        let session = self.reaching(&machine)?;
+        let session = self.reaching(&machine.clone().into())?;
         session.account_for(&machine, fastctx_types::access::Purpose::Agents)?;
         if session.link.view().member(&machine).is_some_and(|member| !member.online) {
             return Err(CallError::Failed(Failure::not_run(format!(
@@ -67,14 +67,11 @@ impl Device {
         });
         Ok(Reading { parts, task })
     }
-    pub(crate) async fn read_file(
-        &self,
-        machine: Option<MachineName>,
-        request: ReadFileRequest,
-    ) -> Result<Reading, Error> {
+    pub(crate) async fn read_file(&self, machine: Option<Written>, request: ReadFileRequest) -> Result<Reading, Error> {
         let machine =
             machine.ok_or_else(|| failed("choose the machine that has the file; a device has no local node"))?;
         let session = self.reaching(&machine)?;
+        let machine = machine.name;
         let account = session.account_for(&machine, fastctx_types::access::Purpose::Hands)?;
         // One queued block is the same backpressure boundary as local IPC.
         let (sender, parts) = mpsc::channel(1);

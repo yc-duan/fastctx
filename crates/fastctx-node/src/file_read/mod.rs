@@ -5,9 +5,9 @@ mod ipc;
 mod local;
 mod remote;
 
+use fastctx_types::access::Written;
 use std::sync::Arc;
 
-use fastctx_types::MachineName;
 use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::file_read::*;
 use fastctx_types::ipc::Failure;
@@ -20,7 +20,7 @@ use fastctx_net::file_read::Part;
 type Sender = mpsc::Sender<Result<Part, Failure>>;
 type Receiver = mpsc::Receiver<Result<Part, Failure>>;
 
-fn start(node: Arc<Node>, acting: Acting, machine: Option<MachineName>, request: ReadFileRequest) -> Receiver {
+fn start(node: Arc<Node>, acting: Acting, machine: Option<Written>, request: ReadFileRequest) -> Receiver {
     // At most one data-message payload waits between the file/network and
     // IPC. Slow interfaces therefore stop the producer instead of buffering.
     let (sender, receiver) = mpsc::channel(1);
@@ -28,7 +28,7 @@ fn start(node: Arc<Node>, acting: Acting, machine: Option<MachineName>, request:
         tokio::select! {
             () = sender.closed() => {},
             result = async {
-                match machine.filter(|machine| !node.is_me(machine)) {
+                match machine.filter(|machine| !node.is_here(machine)) {
                     None => {
                         let path = request.path.clone();
                         Ok(local::read(node.machine(), request, &sender).await.map_err(|mut error| {
@@ -36,9 +36,9 @@ fn start(node: Arc<Node>, acting: Acting, machine: Option<MachineName>, request:
                             error
                         }))
                     }
-                    Some(machine) => match node.speaking(&acting, &(&machine).into(), Purpose::Hands) {
+                    Some(machine) => match node.speaking(&acting, &machine, Purpose::Hands) {
                         Ok((link, account)) => {
-                            fastctx_net::file_read::read(&link, machine, account, request, &sender).await
+                            fastctx_net::file_read::read(&link, machine.name, account, request, &sender).await
                         }
                         Err(failure) => Err(Failure::new(failure.to_string())),
                     },
@@ -68,8 +68,8 @@ fn start_attachment(
             () = sender.closed() => {},
             result = async {
                 let machine = attachment.owner().machine.clone();
-                if !node.is_me(&machine) {
-                    let speakers = node.speakers(&Acting::Here, &(&machine).into(), Purpose::Agents).map_err(|error| Failure::new(error.to_string()))?;
+                if !node.is_here(&machine.clone().into()) {
+                    let speakers = node.speakers(&Acting::Here, &machine.clone().into(), Purpose::Agents).map_err(|error| Failure::new(error.to_string()))?;
                     let mut refused = None;
                     for (link,account) in speakers {
                         if link.view().member(&machine).is_some_and(|member| !member.online) {

@@ -138,11 +138,11 @@ pub fn fixtures() -> Fixtures {
     Fixtures {
         calls: vec![
             Call::Agents { machine: None },
-            Call::Agents { machine: Some(machine.clone()) },
+            Call::Agents { machine: Some(machine.clone().into()) },
             Call::Open {
                 agent: "codex".parse().unwrap(),
                 town: None,
-                node: Some(machine.clone()),
+                node: Some(machine.clone().into()),
                 text: "First words".into(),
                 model: Some("model-a".into()),
                 reasoning_effort: Some("medium".into()),
@@ -179,22 +179,22 @@ pub fn fixtures() -> Fixtures {
                 attachments: Vec::new(),
                 choices: Default::default(),
             },
-            Call::ClaudeConsent { machine: machine.clone(), accept: true, home: None },
+            Call::ClaudeConsent { machine: machine.clone().into(), accept: true, home: None },
             Call::ClaudeConsent {
-                machine: machine.clone(),
+                machine: machine.clone().into(),
                 accept: false,
                 home: Some("/home/ada/.claude-work".into()),
             },
             Call::Homes {
-                machine: machine.clone(),
+                machine: machine.clone().into(),
                 change: HomeChange::Add { agent: "claude".parse().unwrap(), dir: "D:/agents/claude-token".into() },
             },
             Call::Homes {
-                machine: machine.clone(),
+                machine: machine.clone().into(),
                 change: HomeChange::Hide { agent: "codex".parse().unwrap(), dir: "C:/Users/ada/.codex-old".into() },
             },
             Call::Homes {
-                machine: machine.clone(),
+                machine: machine.clone().into(),
                 change: HomeChange::Show { agent: "codex".parse().unwrap(), dir: "C:/Users/ada/.codex-old".into() },
             },
         ],

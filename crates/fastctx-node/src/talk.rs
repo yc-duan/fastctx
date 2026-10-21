@@ -44,18 +44,19 @@ struct Piece {
 pub async fn talk(
     node: &Arc<Node>,
     to: ResidentId,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     text: String,
     attachments: Vec<Attachment>,
     files_on: Option<Written>,
     id: Option<String>,
 ) -> Result<(Address, Landed), Failure> {
     let here = node.machine();
+    let local = machine.is_none() && node.residents.about(&to).is_some();
     let machine = match machine {
-        Some(machine) => machine.into(),
+        Some(machine) => machine,
         None => locate(node, &to).await?,
     };
-    if machine.hub.is_none() && node.is_me(&machine.name) {
+    if local || node.is_here(&machine) {
         let landed = talk_here(node, &here, &to, text, attachments, files_on.as_ref(), id.as_deref()).await?;
         return Ok((Address { machine: here, resident: to }, landed));
     }
@@ -95,17 +96,18 @@ pub async fn talk_here(
 pub async fn watch(
     node: &Arc<Node>,
     resident: ResidentId,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     composer: Option<String>,
     held: Option<Held>,
     now: bool,
 ) -> Result<mpsc::UnboundedReceiver<Result<Watched, Failure>>, Failure> {
+    let local = machine.is_none() && node.residents.about(&resident).is_some();
     let machine = match machine {
-        Some(machine) => machine.into(),
+        Some(machine) => machine,
         None => locate(node, &resident).await?,
     };
     let (sender, receiver) = mpsc::unbounded_channel();
-    if machine.hub.is_none() && node.is_me(&machine.name) {
+    if local || node.is_here(&machine) {
         let mut told = Told::new(node, &resident, now && composer.is_none());
         let (lease, opened) = opening(node, &resident, composer, held.as_ref()).await?;
         let Opening { pieces, mut events, slim } = opened;
@@ -725,7 +727,7 @@ pub async fn open(
     node: &Arc<Node>,
     agent: AgentName,
     town: Option<TownName>,
-    target: Option<MachineName>,
+    target: Option<Written>,
     text: String,
     options: fastctx_types::agents::SessionOptions,
     attachments: Vec<Attachment>,
@@ -767,7 +769,7 @@ pub async fn open(
             }
         }
     };
-    match target.filter(|target| !node.is_me(target)) {
+    match target.filter(|target| !node.is_here(target)) {
         None => {
             let (id, landed) = open_here(node, &here, acting, agent, town, text, options, attachments, choices).await?;
             Ok((Address { machine: here, resident: id }, landed))
@@ -780,10 +782,9 @@ pub async fn open(
                 || !profile.codex.is_empty()
                 || !profile.servers.is_empty()
             {
-                let (link, account) = node
-                    .speaking(&acting, &(&target).into(), Purpose::Agents)
-                    .map_err(|e| Failure::new(e.to_string()))?;
-                crate::mcp::supports(node, &link, &account, &target).await?;
+                let (link, account) =
+                    node.speaking(&acting, &target, Purpose::Agents).map_err(|e| Failure::new(e.to_string()))?;
+                crate::mcp::supports(node, &link, &account, &target.name).await?;
             }
             let call = RemoteCall::Open {
                 mcp_off: choices.mcp_off.clone(),
@@ -797,9 +798,11 @@ pub async fn open(
                 home: choices.home,
                 files_on: choices.files_on,
             };
-            let reply = node.call(&acting, &(&target).into(), Purpose::Agents, call).await;
+            let reply = node.call(&acting, &target, Purpose::Agents, call).await;
             match reply.map_err(|failure| Failure::new(failure.to_string()))? {
-                Ok(RemoteReply::Opened { resident, landed }) => Ok((Address { machine: target, resident }, landed)),
+                Ok(RemoteReply::Opened { resident, landed }) => {
+                    Ok((Address { machine: target.name, resident }, landed))
+                }
                 Ok(_) => Err(Failure::new(format!("{target} answered something other than an opened session"))),
                 // What went wrong there is said of that machine, not this one.
                 Err(failure) => Err(Failure::new(format!("on {target}: {}", failure.message))),
@@ -902,14 +905,15 @@ pub async fn open_here(
 pub async fn stop(
     node: &Arc<Node>,
     resident: ResidentId,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
 ) -> Result<(Address, bool), Failure> {
     let here = node.machine();
+    let local = machine.is_none() && node.residents.about(&resident).is_some();
     let machine = match machine {
-        Some(machine) => machine.into(),
+        Some(machine) => machine,
         None => locate(node, &resident).await?,
     };
-    if machine.hub.is_none() && node.is_me(&machine.name) {
+    if local || node.is_here(&machine) {
         let stopped = stop_here(node, &resident).await?;
         return Ok((Address { machine: here, resident }, stopped));
     }

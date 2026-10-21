@@ -8,10 +8,8 @@ use crate::{
         lines::{self, Frozen, Index},
     },
 };
-use fastctx_types::{
-    MachineName,
-    lines::{Decoding, Part, Reply, Request, Result as Answer},
-};
+use fastctx_types::access::Written;
+use fastctx_types::lines::{Decoding, Part, Reply, Request, Result as Answer};
 use std::sync::Arc;
 
 impl World {
@@ -19,7 +17,7 @@ impl World {
         &self,
         cache: Arc<Cache>,
         frozen: Frozen,
-        machine: MachineName,
+        machine: Written,
         path: String,
         decoding: Decoding,
     ) -> Result<Reply, Error> {
@@ -46,14 +44,14 @@ impl World {
             cache,
             frozen.key,
         )?;
-        Ok(Reply { machine, result: Answer::Opened { source, path, extent: index.extent } })
+        Ok(Reply { machine: machine.name, result: Answer::Opened { source, path, extent: index.extent } })
     }
 
     async fn fetch_frozen_output(
         &self,
         cache: Arc<Cache>,
         frozen: &Frozen,
-        machine: &MachineName,
+        machine: &Written,
         path: &str,
         decoding: Decoding,
     ) -> Result<Index, Error> {

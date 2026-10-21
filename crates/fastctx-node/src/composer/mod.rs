@@ -7,6 +7,7 @@ mod submissions;
 pub(crate) mod uploads;
 mod watching;
 
+use fastctx_types::access::Written;
 pub use storage::recover;
 use storage::{event, load, publish};
 pub use submissions::resume;
@@ -64,15 +65,16 @@ fn failure(error: impl std::fmt::Display) -> Failure {
 pub async fn request(
     node: &Arc<Node>,
     resident: ResidentId,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     request: Request,
 ) -> Result<Updated, Failure> {
+    let local = machine.is_none() && node.residents.about(&resident).is_some();
     let machine = match machine {
-        Some(machine) => machine.into(),
+        Some(machine) => machine,
         None if node.residents.about(&resident).is_some() => node.machine().into(),
         None => crate::colleagues::find_for(node, &Acting::Here, &resident).await?,
     };
-    if machine.hub.is_none() && node.is_me(&machine.name) {
+    if local || node.is_here(&machine) {
         return here(node, &node.machine(), &resident, request).await;
     }
     let call = RemoteCall::Composer { resident, request };

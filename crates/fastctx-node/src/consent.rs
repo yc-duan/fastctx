@@ -2,11 +2,11 @@
 //! the machine it is about. Only the user gives it, on one of the user's own
 //! devices (`world-projects.md`); the machine records who and when.
 
+use fastctx_types::access::Written;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use fastctx_install::apply;
-use fastctx_types::MachineName;
 use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
@@ -17,16 +17,16 @@ use crate::Node;
 /// records once the word is given, and whether it changed.
 pub async fn call(
     node: &Arc<Node>,
-    machine: MachineName,
+    machine: Written,
     accept: bool,
     home: Option<PathBuf>,
 ) -> Result<(bool, bool), Failure> {
-    if node.is_me(&machine) {
+    if node.is_here(&machine) {
         return here(node, accept, home, format!("the user on {machine}")).await;
     }
     let call = RemoteCall::ClaudeConsent { accept, home };
     match node
-        .call(&Acting::Here, &(&machine).into(), Purpose::Agents, call)
+        .call(&Acting::Here, &machine, Purpose::Agents, call)
         .await
         .map_err(|error| Failure::new(error.to_string()))??
     {

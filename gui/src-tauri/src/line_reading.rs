@@ -1,7 +1,8 @@
 //! Line-source command contracts, growth channels and explicit cancellation.
 
 use crate::Shell;
-use fastctx_types::MachineName;
+use fastctx_types::access::Written;
+
 use fastctx_types::ipc::Failure;
 use fastctx_types::lines::{Decoding, Direction, Extent, Match, Position, Request, Result as Answer};
 use serde::Serialize;
@@ -36,7 +37,7 @@ impl Drop for Pending {
 
 #[derive(Serialize)]
 pub(crate) struct Opened {
-    machine: MachineName,
+    machine: Written,
     source: String,
     path: String,
     extent: Extent,
@@ -59,15 +60,14 @@ pub(crate) async fn lines_open(
 ) -> Result<Opened, Failure> {
     let page = shell.page.load(Ordering::Relaxed);
     let world = shell.world();
-    let reply = world
-        .open_lines(crate::machine(machine_name).map_err(Failure::new)?, path, decoding)
-        .await
-        .map_err(open_failed)?;
+    let machine = crate::machine(machine_name).map_err(Failure::new)?;
+    let reply = world.open_lines(machine.clone(), path, decoding).await.map_err(open_failed)?;
     let Answer::Opened { source, path, extent } = reply.result else {
         return Err(Failure::new("expected an opened line source"));
     };
+    let machine = machine.unwrap_or_else(|| reply.machine.clone().into());
     let watch = shell.next.fetch_add(1, Ordering::Relaxed);
-    let (held_source, held_machine, initial_version) = (source.clone(), reply.machine.clone(), extent.version);
+    let (held_source, held_machine, initial_version) = (source.clone(), machine.clone(), extent.version);
     let watching_world = world.clone();
     let followed = shell.follow(page, watch, async move {
         let world = watching_world;
@@ -98,12 +98,12 @@ pub(crate) async fn lines_open(
     });
     if let Err(error) = followed {
         world
-            .lines(reply.machine.clone(), Request::Close { source: source.clone() })
+            .lines(machine.clone(), Request::Close { source: source.clone() })
             .await
             .map_err(|closing| Failure::new(format!("{error}; closing its line source: {closing}")))?;
         return Err(Failure::new(error));
     }
-    Ok(Opened { machine: reply.machine, source, path, extent, watch })
+    Ok(Opened { machine, source, path, extent, watch })
 }
 
 fn open_failed(error: fastctx_client::Error) -> Failure {
@@ -114,7 +114,7 @@ fn open_failed(error: fastctx_client::Error) -> Failure {
 }
 
 async fn request(shell: &Shell, machine_name: String, request_id: String, request: Request) -> Result<Answer, String> {
-    let machine = MachineName::try_from(machine_name.as_str()).map_err(|error| error.to_string())?;
+    let machine = Written::parse(&machine_name).map_err(|error| error.to_string())?;
     let world = shell.world();
     let task = {
         let mut requests = shell.line_requests.0.lock().expect("line requests");
@@ -185,7 +185,7 @@ pub(crate) async fn lines_close(
     if let Some(task) = shell.watches.lock().expect("watch table").remove(&watch) {
         task.abort();
     }
-    let machine = MachineName::try_from(machine_name.as_str()).map_err(|error| error.to_string())?;
+    let machine = Written::parse(&machine_name).map_err(|error| error.to_string())?;
     shell.world().lines(machine, Request::Close { source }).await.map(|_| ()).map_err(|error| error.to_string())
 }
 

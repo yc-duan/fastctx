@@ -53,7 +53,7 @@ use fastctx_types::project::{JournalSummary, JournalView, MapView, Record, Recor
 use fastctx_types::residents::Landed;
 use fastctx_types::session::control::{Control, Controlled, Offers};
 use fastctx_types::town::{LookedUp, WorldWho};
-use fastctx_types::{Address, AgentName, EntryId, JournalName, MachineName, ResidentId, TownName};
+use fastctx_types::{Address, AgentName, EntryId, JournalName, ResidentId, TownName};
 use serde::Serialize;
 use tauri::Manager as _;
 use tauri::async_runtime::JoinHandle;
@@ -348,8 +348,12 @@ fn resident(id: String) -> Result<ResidentId, String> {
     ResidentId::try_from(id).map_err(|error| error.to_string())
 }
 
-fn machine(name: Option<String>) -> Result<Option<MachineName>, String> {
-    name.map(|name| name.parse::<MachineName>().map_err(|error| error.to_string())).transpose()
+fn new_machine_name(name: Option<String>) -> Result<Option<fastctx_types::MachineName>, String> {
+    name.map(|name| name.parse::<fastctx_types::MachineName>().map_err(|error| error.to_string())).transpose()
+}
+
+fn machine(name: Option<String>) -> Result<Option<fastctx_types::access::Written>, String> {
+    name.map(|name| name.parse::<fastctx_types::access::Written>().map_err(|error| error.to_string())).transpose()
 }
 
 /// Starts watching a resident: returns the part of it the page opens on,
@@ -370,9 +374,7 @@ async fn watch(
     let machine = machine(machine_name)?;
     #[cfg(not(target_os = "android"))]
     let (conversation, history) = match &machine {
-        Some(machine) => {
-            Conversation::open(&world, Address { machine: machine.clone(), resident: resident.clone() }).await
-        }
+        Some(machine) => Conversation::open(&world, resident.clone(), machine.clone()).await,
         None => Conversation::watch(&world, resident.clone(), None).await,
     }?;
     #[cfg(target_os = "android")]

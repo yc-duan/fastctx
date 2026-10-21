@@ -918,7 +918,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
 
             crate::consent::call(node, machine.clone(), accept, home)
                 .await
-                .map(|(accepted, changed)| Reply::ClaudeConsent { machine, accepted, changed })
+                .map(|(accepted, changed)| Reply::ClaudeConsent { machine: machine.name, accepted, changed })
         }
         Call::Homes { machine, change } => {
             users_voice(node, peer)?;
@@ -1052,7 +1052,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::Forget { resident, machine } => {
             users_voice(node, peer)?;
-            let address = fastctx_types::Address { machine: machine.clone(), resident: resident.clone() };
+            let address = fastctx_types::Address { machine: machine.name.clone(), resident: resident.clone() };
             crate::forget::ask(node, resident, machine).await.map(|how| Reply::Forgetting { resident: address, how })
         }
         Call::Control { resident, machine, control } => {
@@ -1318,11 +1318,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
 
 /// Answers once a way from this computer to `machine` opens that was not
 /// there when asked (`Call::Reopened`).
-async fn reopened(node: &Arc<Node>, machine: MachineName) -> Result<Reply, Failure> {
-    if node.is_me(&machine) {
+async fn reopened(node: &Arc<Node>, machine: crate::reach::Written) -> Result<Reply, Failure> {
+    if node.is_here(&machine) {
         return Err(Failure::new(format!("{machine} is this computer; no way to it opens")));
     }
-    node.reopened(vec![(&machine).into()]).await;
+    node.reopened(vec![machine]).await;
     Ok(Reply::Done)
 }
 
@@ -1386,7 +1386,7 @@ async fn run(
     resident: ResidentId,
     town: Option<TownName>,
     mut request: RunRequest,
-    target: Option<MachineName>,
+    target: Option<crate::reach::Written>,
     call_id: Option<&str>,
 ) -> Result<RunReply, Failure> {
     request.call_id = call_id.map(str::to_owned);
@@ -1412,10 +1412,10 @@ async fn run_started(
     town: Option<TownName>,
     request: RunRequest,
     goes_to: Option<fastctx_types::access::Written>,
-    target: Option<MachineName>,
+    target: Option<crate::reach::Written>,
     call_id: Option<&str>,
 ) -> Result<RunReply, Failure> {
-    if let Some(target) = target.filter(|target| !node.is_me(target)) {
+    if let Some(target) = target.filter(|target| !node.is_here(target)) {
         return Err(Failure::new(format!(
             "run goes to another machine only through `on`: write `on {target}` in the script to run part of it there"
         )));
@@ -1480,9 +1480,9 @@ async fn write(
     resident: ResidentId,
     town: Option<TownName>,
     op: WriteOp,
-    target: Option<MachineName>,
+    target: Option<crate::reach::Written>,
 ) -> Result<WriteOutcome, Failure> {
-    if let Some(target) = target.filter(|target| !node.is_me(target)) {
+    if let Some(target) = target.filter(|target| !node.is_here(target)) {
         return Err(Failure::new(format!(
             "files on {target} are written there: `on {target} edit PATH` or `on {target} write PATH` in the run tool"
         )));

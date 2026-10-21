@@ -15,7 +15,7 @@ use fastctx_types::agents::AgentsReply;
 use fastctx_types::attachments::UploadTarget;
 use fastctx_types::ipc::{Failure, Peer};
 use fastctx_types::logins::MachineLogins;
-use fastctx_types::{Call, MachineName, ResidentId};
+use fastctx_types::{Call, ResidentId};
 
 use super::Asker;
 use super::seen::{self, Looker};
@@ -116,7 +116,7 @@ fn askers(node: &Node, acting: &Acting) -> Vec<(Arc<Link>, Asker)> {
 
 /// The conversation of this machine `call` reaches, if it reaches one.
 fn reached<'a>(node: &Node, call: &'a Call) -> Option<&'a ResidentId> {
-    let here = |machine: Option<&MachineName>| machine.is_none_or(|machine| node.is_me(machine));
+    let here = |machine: Option<&fastctx_types::access::Written>| machine.is_none_or(|machine| node.is_here(machine));
     match call {
         Call::Talk { to: resident, machine, .. }
         | Call::Message { to: resident, machine, .. }
@@ -132,7 +132,7 @@ fn reached<'a>(node: &Node, call: &'a Call) -> Option<&'a ResidentId> {
         {
             Some(resident)
         }
-        Call::Forget { resident, machine } if node.is_me(machine) => Some(resident),
+        Call::Forget { resident, machine } if node.is_here(machine) => Some(resident),
         Call::Attach { resident } => Some(resident),
         Call::Upload { target, node: machine, .. } => {
             let machine = match target {

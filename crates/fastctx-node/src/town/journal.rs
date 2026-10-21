@@ -195,7 +195,6 @@ async fn stage(
     staging: &Path,
     attach: &[Attach],
 ) -> Result<Vec<Staged>, Failure> {
-    let here = node.machine();
     let _ = std::fs::remove_dir_all(staging);
     if !attach.is_empty() {
         fastctx_platform::ensure_private_dir(staging)
@@ -209,7 +208,7 @@ async fn stage(
             return Err(Failure::new(format!("two attachments are named {name}")));
         }
         let path = staging.join(&name);
-        match one.machine.as_ref().filter(|machine| !node.is_me(machine)) {
+        match one.machine.as_ref().filter(|machine| !node.is_here(machine)) {
             None => {
                 let from = fastctx_platform::local_path(&one.path).map_err(|error| Failure::new(error.to_string()))?;
                 let to = path.clone();
@@ -219,8 +218,9 @@ async fn stage(
                     .map_err(|error| Failure::new(format!("attaching {}: {error}", one.path)))?;
             }
             Some(machine) => {
-                let from = Place { machine: Some(machine.clone()), hub: None, path: one.path.clone() };
-                let to = Place { machine: Some(here.clone()), hub: None, path: crate::world::native(&path) };
+                let from =
+                    Place { machine: Some(machine.name.clone()), hub: machine.hub.clone(), path: one.path.clone() };
+                let to = Place { machine: None, hub: None, path: crate::world::native(&path) };
                 crate::copy::copy(node, acting, from, to)
                     .await
                     .map_err(|failure| Failure::new(format!("attaching {} from {machine}: {failure}", one.path)))?;

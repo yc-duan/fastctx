@@ -231,8 +231,8 @@ pub(crate) fn take_back(node: &Node, link: &Link) {
     let Some(collab) = view.account(&home).and_then(|found| found.collab.clone()) else { return };
     let here = node.machine();
     let own = Collab {
-        callers: collab.callers.into_iter().filter(|caller| node.is_me(&caller.machine)).collect(),
-        callees: collab.callees.into_iter().filter(|callee| node.is_me(&callee.login.machine)).collect(),
+        callers: collab.callers.into_iter().filter(|caller| view.is_me(&caller.machine)).collect(),
+        callees: collab.callees.into_iter().filter(|callee| view.is_me(&callee.login.machine)).collect(),
         ..collab
     };
     match keep(&path, &own) {

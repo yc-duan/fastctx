@@ -160,7 +160,7 @@ pub fn fixtures() -> Fixtures {
     let agent: fastctx_types::AgentName = "claude".parse().unwrap();
     Fixtures {
         calls: vec![Call::AgentUsage {
-            machine: machine.clone(),
+            machine: machine.clone().into(),
             agent: agent.clone(),
             dir: "C:\\Users\\me\\.claude".into(),
         }],

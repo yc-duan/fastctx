@@ -126,7 +126,7 @@ async fn ask_for_account(
         )));
     }
     let here = node.machine();
-    if node.is_me(&machine) {
+    if link.view().is_me(&machine) {
         let acting = Acting::one(link.membership().id.clone(), account.clone());
         let address = Address { machine: here.clone(), resident: request.about.id.clone() };
         let id = ask_here(node, address, acting, call_town, request.label, request.prompt, started).await?;
@@ -458,7 +458,7 @@ pub async fn message(
     node: &Arc<Node>,
     from: ResidentId,
     to: ResidentId,
-    to_machine: Option<MachineName>,
+    to_machine: Option<Written>,
     text: String,
     login: Option<&fastctx_types::collab::Caller>,
 ) -> Result<(Address, Landed), Failure> {
@@ -466,7 +466,7 @@ pub async fn message(
     let here = node.machine();
     let at = Timestamp::now();
     let machine = match to_machine {
-        Some(machine) => machine.into(),
+        Some(machine) => machine,
         None => locate(node, &from, &to).await?,
     };
     let to = Address { machine: machine.name.clone(), resident: to };
@@ -482,7 +482,7 @@ pub async fn message(
         }
         None => choices.acting,
     };
-    if node.is_me(&to.machine) {
+    if node.is_here(&machine) {
         let (recipient, _) = node
             .residents
             .about(&to.resident)

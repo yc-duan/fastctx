@@ -4,7 +4,6 @@ use crate::{
     Error,
     cache::lines::{Index, Row},
 };
-use fastctx_types::MachineName;
 use sha2::{Digest as _, Sha256};
 use tokio::io::AsyncWriteExt as _;
 
@@ -80,7 +79,7 @@ impl Drop for Pending {
 
 pub(crate) struct SourceOwner {
     pub(crate) sources: std::sync::Arc<std::sync::Mutex<crate::lines::Sources>>,
-    pub(crate) machine: MachineName,
+    pub(crate) machine: fastctx_types::access::Written,
     pub(crate) source: String,
 }
 impl Drop for SourceOwner {

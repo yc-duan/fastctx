@@ -189,7 +189,7 @@ impl Held {
                         follower.taken(job).map_err(|error| Failure::new(error.to_string()))?;
                     }
                 }
-                if let Some(owner) = record.owner.resident().filter(|owner| owner.machine == self.node.machine()) {
+                if let Some(owner) = record.owner.resident().filter(|owner| self.node.is_me(&owner.machine)) {
                     let gate = self.node.residents.management(&owner.resident)?;
                     let _taking = gate.write().await;
                     let directory = self.node.world.conversation(&owner.resident);

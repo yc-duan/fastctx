@@ -1,9 +1,7 @@
 //! One transfer of an immutable artifact; later viewports and searches are local.
 
-use fastctx_types::{
-    MachineName,
-    lines::{Decoding, Reply, Request, Result as Answer},
-};
+use fastctx_types::access::Written;
+use fastctx_types::lines::{Decoding, Reply, Request, Result as Answer};
 use std::sync::Arc;
 
 use crate::{
@@ -20,7 +18,7 @@ impl World {
         &self,
         cache: Arc<Cache>,
         frozen: Frozen,
-        machine: MachineName,
+        machine: Written,
         path: String,
         decoding: Decoding,
     ) -> Result<Reply, Error> {
@@ -117,14 +115,14 @@ impl World {
             cache,
             frozen.key,
         )?;
-        Ok(Reply { machine, result: Answer::Opened { source, path, extent: index.extent } })
+        Ok(Reply { machine: machine.name, result: Answer::Opened { source, path, extent: index.extent } })
     }
 
     pub(crate) async fn kept_lines(
         &self,
         cache: Arc<Cache>,
         key: String,
-        machine: MachineName,
+        machine: Written,
         request: Request,
     ) -> Result<Reply, Error> {
         let result = blocking(move || {
@@ -141,7 +139,7 @@ impl World {
             }
         })
         .await?;
-        Ok(Reply { machine, result })
+        Ok(Reply { machine: machine.name, result })
     }
 }
 

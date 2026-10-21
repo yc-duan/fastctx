@@ -142,7 +142,7 @@ pub(crate) async fn network_updates(
 /// Has `machine_name` update its World program itself.
 #[fastctx_gui_command::command]
 pub(crate) async fn update_machine(shell: tauri::State<'_, Shell>, machine_name: String) -> Result<State, String> {
-    let machine = fastctx_types::MachineName::try_from(machine_name).map_err(|error| error.to_string())?;
+    let machine = fastctx_types::access::Written::try_from(machine_name).map_err(|error| error.to_string())?;
     match shell.world().call(Call::UpdateMachine { machine }).await.map_err(|error| error.to_string())?.0 {
         Reply::Update(state) => Ok(*state),
         other => Err(format!("the World answered {other:?}")),
@@ -157,7 +157,7 @@ pub(crate) async fn machine_updates(
     machine_name: String,
     mut update: UpdateCall,
 ) -> Result<State, String> {
-    let machine = fastctx_types::MachineName::try_from(machine_name).map_err(|error| error.to_string())?;
+    let machine = fastctx_types::access::Written::try_from(machine_name).map_err(|error| error.to_string())?;
     if matches!(update, UpdateCall::App { .. } | UpdateCall::Fetch { .. } | UpdateCall::Progress { .. }) {
         return Err("only an interface on that machine says what it is or brings packages there".to_string());
     }

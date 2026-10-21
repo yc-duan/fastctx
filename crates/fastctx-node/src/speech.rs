@@ -66,7 +66,7 @@ pub(crate) async fn tell_at(
     notice: Notice,
     owed: Owed,
 ) -> Result<Landed, Failure> {
-    if machine.hub.is_none() && node.is_me(&to.machine) {
+    if node.is_here(machine) {
         let delivery = Delivery { id, at: Timestamp::now(), notice };
         if crate::on_delivery::park(node, &to.resident, &delivery)
             .map_err(|error| Failure::new(format!("keeping the on completion: {error}")))?

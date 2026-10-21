@@ -84,11 +84,12 @@ pub(crate) fn confirmed_under(
     delivery: JobDelivery,
     acting: Option<&Acting>,
 ) -> io::Result<()> {
-    if node.is_me(&machine) {
+    let dispatched = crate::here::get_dispatched(node, &owner.resident, &delivery.job);
+    let destination = dispatched.map(|(destination, _)| destination).unwrap_or_else(|| machine.clone().into());
+    if node.is_here(&destination) {
         received_here(node, &owner, &delivery, None, false, None, &mut HashSet::new())?;
     } else {
-        let dispatched = crate::here::get_dispatched(node, &owner.resident, &delivery.job);
-        let hub = dispatched.as_ref().and_then(|(destination, _)| destination.hub.clone());
+        let hub = destination.hub;
         let acting = acting.cloned().unwrap_or_default();
         let key = (owner.resident.clone(), delivery.job.clone());
         enqueue(

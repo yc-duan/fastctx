@@ -5,7 +5,7 @@
 
 use fastctx_client::World;
 use fastctx_client::file_read::Read;
-use fastctx_types::MachineName;
+use fastctx_types::access::Written;
 use fastctx_types::file_read::{FileRange, ReadFileRequest};
 use tauri::ipc::Channel;
 
@@ -13,7 +13,7 @@ use crate::held_reads::{ReadProgress, tell};
 
 pub async fn read_binary(
     world: &World,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     path: String,
     progress: Option<Channel<ReadProgress>>,
 ) -> Result<tauri::ipc::Response, String> {

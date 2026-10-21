@@ -5,12 +5,13 @@
 //! it. Claude Code keeps each subagent's record beside its session's;
 //! Codex keeps each agent it spawned as a thread of its own.
 
+use fastctx_types::access::Written;
 use std::sync::Arc;
 
 use fastctx_hosts::claude::{subagents, transcript};
 use fastctx_types::ipc::Failure;
 use fastctx_types::session::{AgentActivity, Happened, HostAgentStart, SessionEvent};
-use fastctx_types::{Address, MachineName, ResidentId};
+use fastctx_types::{Address, ResidentId};
 
 use crate::Node;
 
@@ -25,15 +26,16 @@ const DEEPEST: usize = 16;
 pub(crate) async fn read(
     node: &Arc<Node>,
     resident: ResidentId,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     agent: String,
 ) -> Result<(Address, AgentActivity), Failure> {
+    let local = machine.is_none() && node.residents.about(&resident).is_some();
     let machine = match machine {
-        Some(machine) => machine.into(),
+        Some(machine) => machine,
         None if node.residents.about(&resident).is_some() => node.machine().into(),
         None => crate::colleagues::find_for(node, &fastctx_types::access::Acting::Here, &resident).await?,
     };
-    if machine.hub.is_none() && node.is_me(&machine.name) {
+    if local || node.is_here(&machine) {
         let activity = here(node, &resident, &agent).await?;
         return Ok((Address { machine: machine.name, resident }, activity));
     }

@@ -305,31 +305,39 @@ pub fn fixtures() -> Fixtures {
     Fixtures {
         calls: vec![
             Call::AgentLogins { machine: None },
-            Call::ScanAgents { machine: machine.clone(), stop: false },
-            Call::AddAgentLogin { machine: machine.clone(), agent: codex.clone(), dir: "D:/backup/.codex".into() },
+            Call::ScanAgents { machine: machine.clone().into(), stop: false },
+            Call::AddAgentLogin {
+                machine: machine.clone().into(),
+                agent: codex.clone(),
+                dir: "D:/backup/.codex".into(),
+            },
             Call::AgentFolder {
-                machine: machine.clone(),
+                machine: machine.clone().into(),
                 dir: "C:/Users/me/CodexHomes".into(),
                 change: FolderChange::Choose,
             },
-            Call::AgentFolder { machine: machine.clone(), dir: "D:/".into(), change: FolderChange::Stop },
-            Call::AgentFolder { machine: machine.clone(), dir: "E:/old".into(), change: FolderChange::Forget },
+            Call::AgentFolder { machine: machine.clone().into(), dir: "D:/".into(), change: FolderChange::Stop },
+            Call::AgentFolder { machine: machine.clone().into(), dir: "E:/old".into(), change: FolderChange::Forget },
             Call::PreviewAgentChange {
-                machine: machine.clone(),
+                machine: machine.clone().into(),
                 agent: claude.clone(),
                 dir: "/home/me/.claude-work".into(),
                 into: true,
                 take_back: true,
             },
             Call::ChangeAgentLogin {
-                machine: machine.clone(),
+                machine: machine.clone().into(),
                 agent: codex.clone(),
                 dir: "C:/Users/me/.codex".into(),
                 into: true,
                 raise_output_limit: true,
                 take_back: true,
             },
-            Call::ReadAgentLimits { machine: machine.clone(), agent: codex.clone(), dir: "C:/Users/me/.codex".into() },
+            Call::ReadAgentLimits {
+                machine: machine.clone().into(),
+                agent: codex.clone(),
+                dir: "C:/Users/me/.codex".into(),
+            },
         ],
         replies: vec![
             Reply::AgentLogins(WorldLogins {

@@ -37,7 +37,7 @@ pub fn fixtures() -> Fixtures {
     Fixtures {
         calls: vec![
             Call::Folders { machine: None, path: None },
-            Call::Folders { machine: Some(machine.clone()), path: Some("C:/work".into()) },
+            Call::Folders { machine: Some(machine.clone().into()), path: Some("C:/work".into()) },
         ],
         replies: vec![Reply::Folders(starts.clone()), Reply::Folders(inside.clone())],
         remote_calls: vec![

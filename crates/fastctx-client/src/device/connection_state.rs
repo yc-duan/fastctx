@@ -1,5 +1,5 @@
 use fastctx_net::link::Status;
-use fastctx_types::MachineName;
+use fastctx_types::access::Written;
 
 use super::Device;
 use crate::Error;
@@ -19,7 +19,7 @@ impl Device {
     /// the one hub when no machine is named.
     pub fn machine_changes(
         &self,
-        machine: Option<&MachineName>,
+        machine: Option<&Written>,
     ) -> Result<(fastctx_types::HubName, tokio::sync::watch::Receiver<Status>), Error> {
         let session = match machine {
             Some(machine) => self.reaching(machine)?,
@@ -36,7 +36,7 @@ impl Device {
     }
 
     /// The same count for the link that reaches `machine`, as it changes.
-    pub fn machine_checks(&self, machine: Option<&MachineName>) -> Result<tokio::sync::watch::Receiver<u64>, Error> {
+    pub fn machine_checks(&self, machine: Option<&Written>) -> Result<tokio::sync::watch::Receiver<u64>, Error> {
         let session = match machine {
             Some(machine) => self.reaching(machine)?,
             None => self.on_hub(None)?,

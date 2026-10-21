@@ -1,8 +1,9 @@
 //! Streaming uploads use a dedicated IPC connection, just as watches do.
 
+use fastctx_types::access::Written;
 use fastctx_types::attachments::{Attachment, UPLOAD_CHUNK, UploadFile, UploadTarget, Uploaded};
 use fastctx_types::ipc::{ClientFrame, NodeFrame};
-use fastctx_types::{Call, MachineName, Reply};
+use fastctx_types::{Call, Reply};
 use tokio::io::{AsyncRead, AsyncReadExt as _};
 
 use crate::{CallError, Client, Error, Said, World};
@@ -19,7 +20,7 @@ impl Client {
     pub async fn upload(
         self,
         target: UploadTarget,
-        node: Option<MachineName>,
+        node: Option<Written>,
         file: UploadFile,
         source: impl AsyncRead + Unpin,
     ) -> Result<Attachment, CallError> {
@@ -29,7 +30,7 @@ impl Client {
     pub(crate) async fn upload_scoped(
         mut self,
         target: UploadTarget,
-        node: Option<MachineName>,
+        node: Option<Written>,
         file: UploadFile,
         composer: Option<fastctx_types::composer::UploadScope>,
         mut source: impl AsyncRead + Unpin,
@@ -127,7 +128,7 @@ impl World {
     pub async fn upload(
         &self,
         target: UploadTarget,
-        node: Option<MachineName>,
+        node: Option<Written>,
         file: UploadFile,
         source: impl AsyncRead + Unpin,
     ) -> Result<Attachment, Error> {
@@ -141,7 +142,7 @@ impl World {
     pub async fn upload_composer(
         &self,
         resident: fastctx_types::ResidentId,
-        node: Option<MachineName>,
+        node: Option<Written>,
         file: UploadFile,
         scope: fastctx_types::composer::UploadScope,
         source: impl AsyncRead + Unpin,
@@ -168,7 +169,7 @@ impl World {
     pub async fn talk_with_attachments(
         &self,
         to: fastctx_types::ResidentId,
-        machine: Option<MachineName>,
+        machine: Option<Written>,
         text: String,
         attachments: Vec<Attachment>,
         files_on: Option<fastctx_types::access::Written>,
@@ -185,7 +186,7 @@ impl World {
         &self,
         agent: fastctx_types::AgentName,
         town: Option<fastctx_types::TownName>,
-        node: Option<MachineName>,
+        node: Option<Written>,
         text: String,
         options: fastctx_types::agents::SessionOptions,
         attachments: Vec<Attachment>,

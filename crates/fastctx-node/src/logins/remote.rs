@@ -4,29 +4,26 @@
 //! the machine owner's to change); another account that may see the machine
 //! sees its listed logins, and one some of them assist sees those alone.
 
+use fastctx_types::access::Written;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use fastctx_types::AgentName;
 use fastctx_types::access::{Acting, HubAccount, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::logins::{ChangePreview, FolderChange, LoginChange, MachineLogins, MachineLoginsHeard, WorldLogins};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::usage::UsageReport;
-use fastctx_types::{AgentName, MachineName};
 
 use crate::Node;
 use crate::admission::Asker;
 
 /// The record of `machine`, or of this one and every machine `acting` may
 /// look at.
-pub(crate) async fn query(
-    node: &Arc<Node>,
-    acting: &Acting,
-    machine: Option<MachineName>,
-) -> Result<WorldLogins, Failure> {
+pub(crate) async fn query(node: &Arc<Node>, acting: &Acting, machine: Option<Written>) -> Result<WorldLogins, Failure> {
     let here = node.machine();
     let mut machines = Vec::new();
-    if machine.as_ref().is_none_or(|machine| node.is_me(machine)) {
+    if machine.as_ref().is_none_or(|machine| node.is_here(machine)) {
         // One that may not work here sees what an account it works for would
         // from another machine (`admission::local::logins`).
         let works_here = node.works_here(acting).is_ok();
@@ -42,16 +39,23 @@ pub(crate) async fn query(
         });
     }
     let reachable = crate::around::reachable_each(node, acting, Purpose::Look);
-    let reachable = match machine.filter(|machine| !node.is_me(machine)) {
+    let reachable = match machine.clone().filter(|machine| !node.is_here(machine)) {
         Some(name) => {
-            node.locate(&(&name).into())?;
-            let selected: Vec<_> = reachable.into_iter().filter(|target| target.name == name).collect();
+            let links = node.locate(&name)?;
+            let selected: Vec<_> = reachable
+                .into_iter()
+                .filter(|target| {
+                    links.iter().any(|link| link.membership().id == target.link.membership().id)
+                        && target.link.view().same(&target.name, &name.name)
+                })
+                .collect();
             if selected.is_empty() {
                 return Err(Failure::new(format!("{name} is not a machine this caller may ask")));
             }
             selected
         }
-        None => reachable,
+        None if machine.is_none() => reachable,
+        None => Vec::new(),
     };
     let heard = crate::around::ask_each(reachable, |_| RemoteCall::AgentLogins).await;
     machines.extend(fastctx_net::around::answers::collect(heard).into_iter().map(|answers| answers.logins()));
@@ -129,21 +133,16 @@ pub(crate) fn may_see(
 
 /// Asks `machine`'s node, of the user's own, for `call`, or this node when
 /// it is this machine.
-async fn ask(
-    node: &Arc<Node>,
-    machine: &MachineName,
-    purpose: Purpose,
-    call: RemoteCall,
-) -> Result<RemoteReply, Failure> {
-    node.call(&Acting::Here, &machine.into(), purpose, call).await.map_err(|error| Failure::new(error.to_string()))?
+async fn ask(node: &Arc<Node>, machine: &Written, purpose: Purpose, call: RemoteCall) -> Result<RemoteReply, Failure> {
+    node.call(&Acting::Here, machine, purpose, call).await.map_err(|error| Failure::new(error.to_string()))?
 }
 
-fn other(machine: &MachineName) -> Failure {
+fn other(machine: &Written) -> Failure {
     Failure::new(format!("{machine} answered something other than its agents' logins; the World there may be older"))
 }
 
-pub(crate) async fn scan(node: &Arc<Node>, machine: MachineName, stop: bool) -> Result<MachineLogins, Failure> {
-    if node.is_me(&machine) {
+pub(crate) async fn scan(node: &Arc<Node>, machine: Written, stop: bool) -> Result<MachineLogins, Failure> {
+    if node.is_here(&machine) {
         return super::scan::scan(node, stop).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::ScanAgents { stop }).await? {
@@ -154,11 +153,11 @@ pub(crate) async fn scan(node: &Arc<Node>, machine: MachineName, stop: bool) -> 
 
 pub(crate) async fn add(
     node: &Arc<Node>,
-    machine: MachineName,
+    machine: Written,
     agent: AgentName,
     dir: PathBuf,
 ) -> Result<MachineLogins, Failure> {
-    if node.is_me(&machine) {
+    if node.is_here(&machine) {
         return super::take_up(node, agent, dir).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::AddAgentLogin { agent, dir }).await? {
@@ -169,11 +168,11 @@ pub(crate) async fn add(
 
 pub(crate) async fn folder(
     node: &Arc<Node>,
-    machine: MachineName,
+    machine: Written,
     dir: PathBuf,
     change: FolderChange,
 ) -> Result<MachineLogins, Failure> {
-    if node.is_me(&machine) {
+    if node.is_here(&machine) {
         return super::folders::change(node, dir, change).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::AgentFolder { dir, change }).await? {
@@ -184,13 +183,13 @@ pub(crate) async fn folder(
 
 pub(crate) async fn preview(
     node: &Arc<Node>,
-    machine: MachineName,
+    machine: Written,
     agent: AgentName,
     dir: PathBuf,
     into: bool,
     take_back: bool,
 ) -> Result<ChangePreview, Failure> {
-    if node.is_me(&machine) {
+    if node.is_here(&machine) {
         return super::change::preview(node, agent, dir, into, take_back).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::PreviewAgentChange { agent, dir, into, take_back }).await? {
@@ -201,14 +200,14 @@ pub(crate) async fn preview(
 
 pub(crate) async fn change(
     node: &Arc<Node>,
-    machine: MachineName,
+    machine: Written,
     agent: AgentName,
     dir: PathBuf,
     into: bool,
     raise_output_limit: bool,
     take_back: bool,
 ) -> Result<LoginChange, Failure> {
-    if node.is_me(&machine) {
+    if node.is_here(&machine) {
         return super::change::change(node, agent, dir, into, raise_output_limit, take_back).await;
     }
     let call = RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit, take_back };
@@ -220,11 +219,11 @@ pub(crate) async fn change(
 
 pub(crate) async fn read_limits(
     node: &Arc<Node>,
-    machine: MachineName,
+    machine: Written,
     agent: AgentName,
     dir: PathBuf,
 ) -> Result<MachineLogins, Failure> {
-    if node.is_me(&machine) {
+    if node.is_here(&machine) {
         super::limits::read(node, &agent, &dir).await?;
         return super::here(node).await;
     }
@@ -238,12 +237,12 @@ pub(crate) async fn read_limits(
 /// here or on another of the user's machines.
 pub(crate) async fn set_title(
     node: &Arc<Node>,
-    machine: MachineName,
+    machine: Written,
     agent: AgentName,
     dir: PathBuf,
     on: bool,
 ) -> Result<MachineLogins, Failure> {
-    if node.is_me(&machine) {
+    if node.is_here(&machine) {
         super::set_title(node, &agent, &dir, on)?;
         return super::here(node).await;
     }
@@ -257,11 +256,11 @@ pub(crate) async fn set_title(
 /// user may see it.
 pub(crate) async fn usage(
     node: &Arc<Node>,
-    machine: MachineName,
+    machine: Written,
     agent: AgentName,
     dir: PathBuf,
 ) -> Result<UsageReport, Failure> {
-    if node.is_me(&machine) {
+    if node.is_here(&machine) {
         return here_usage(node, agent, dir, None).await;
     }
     match ask(node, &machine, Purpose::Look, RemoteCall::AgentUsage { agent, dir }).await? {
@@ -273,12 +272,12 @@ pub(crate) async fn usage(
 /// Request records with the financial scope and conversation ownership checked independently.
 pub(crate) async fn calls(
     node: &Arc<Node>,
-    machine: MachineName,
+    machine: Written,
     agent: AgentName,
     dir: PathBuf,
     query: fastctx_types::usage_calls::UsageCallsQuery,
 ) -> Result<fastctx_types::usage_calls::UsageCallsPage, Failure> {
-    if node.is_me(&machine) {
+    if node.is_here(&machine) {
         return here_calls(node, agent, dir, None, query).await;
     }
     match ask(node, &machine, Purpose::Look, RemoteCall::AgentCalls { agent, dir, query }).await? {

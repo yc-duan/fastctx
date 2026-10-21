@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use clap::{ArgAction, Subcommand};
 use fastctx_hands::town::{journal, journal_line, size};
 use fastctx_types::project::Kept;
-use fastctx_types::{Attach, Call, EntryId, JournalCall, JournalName, MachineName, Reply, TownName};
+use fastctx_types::{Attach, Call, EntryId, JournalCall, JournalName, Reply, TownName};
 
 use crate::ask;
 
@@ -91,7 +91,10 @@ pub fn run(command: JournalCommand) -> anyhow::Result<()> {
                 .map(|path| Ok(Attach { machine: None, path: absolute(path)?.to_string_lossy().into_owned() }))
                 .collect::<anyhow::Result<_>>()?;
             for pair in attach_from.chunks(2) {
-                files.push(Attach { machine: Some(MachineName::try_from(pair[0].as_str())?), path: pair[1].clone() });
+                files.push(Attach {
+                    machine: Some(fastctx_types::access::Written::parse(&pair[0])?),
+                    path: pair[1].clone(),
+                });
             }
             JournalCall::Add {
                 town: town(given)?,

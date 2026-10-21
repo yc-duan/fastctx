@@ -2,9 +2,10 @@
 
 use fastctx_client::{World, composer::Composing};
 use fastctx_net::link::Status;
+use fastctx_types::ResidentId;
+use fastctx_types::access::Written;
 use fastctx_types::attachments::Attachment;
 use fastctx_types::composer::{Change, Composer, Mutation, Request, Target, Updated};
-use fastctx_types::{MachineName, ResidentId};
 use serde::Serialize;
 use tauri::ipc::Channel;
 
@@ -119,7 +120,7 @@ impl From<String> for NotOpened {
 async fn open(
     world: &World,
     resident: &ResidentId,
-    machine: &Option<MachineName>,
+    machine: &Option<Written>,
 ) -> Result<(Composing, String, Composer), NotOpened> {
     // A device waits for the link of the hub the resident's machine is on.
     let mut changes = world
@@ -162,7 +163,7 @@ async fn open(
 async fn stream(
     world: World,
     resident: ResidentId,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     initial: Composing,
     name: String,
     pieces: Channel<Piece>,

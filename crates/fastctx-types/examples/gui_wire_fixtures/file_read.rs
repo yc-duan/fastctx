@@ -29,7 +29,7 @@ pub fn fixtures() -> Fixtures {
     let mut remote_calls = Vec::new();
     for range in ranges {
         let request = ReadFileRequest { path: "C:/work/中文 项目/output.bin".into(), range };
-        calls.push(Call::ReadFile { machine: Some(machine.clone()), request: request.clone() });
+        calls.push(Call::ReadFile { machine: Some(machine.clone().into()), request: request.clone() });
         calls.push(Call::ReadFile { machine: None, request: request.clone() });
         remote_calls.push(RemoteCall::ReadFile { request, read: 17 });
     }

@@ -33,7 +33,7 @@ pub async fn view(node: &Arc<Node>, town: &TownName) -> Result<MapView, Failure>
     };
     let opened = Stamp { by: first.by.clone(), on: first.on.clone(), at: first.at };
     let canon = match &record.canon {
-        Some(location) => Some(canon(node, location).await),
+        Some(location) => Some(canon(node, town, location).await),
         None => None,
     };
     Ok(MapView {
@@ -118,8 +118,9 @@ pub fn no_ledger(node: &Node, town: &TownName) -> Failure {
 }
 
 /// The documents of a canon, read where it is.
-async fn canon(node: &Arc<Node>, location: &Location) -> Result<Vec<CanonHead>, String> {
-    if node.is_me(&location.machine) {
+async fn canon(node: &Arc<Node>, town: &TownName, location: &Location) -> Result<Vec<CanonHead>, String> {
+    let machine = super::machines::destination(node, town, &location.machine).map_err(|error| error.to_string())?;
+    if node.is_here(&machine) {
         let path = location.path.clone();
         return tokio::task::spawn_blocking(move || heads(Path::new(&path)))
             .await
@@ -127,7 +128,7 @@ async fn canon(node: &Arc<Node>, location: &Location) -> Result<Vec<CanonHead>, 
             .map_err(|error| error.to_string());
     }
     let call = RemoteCall::Canon { path: location.path.clone() };
-    match node.call(&Acting::Here, &(&location.machine).into(), Purpose::Hands, call).await {
+    match node.call(&Acting::Here, &machine, Purpose::Hands, call).await {
         Ok(Ok(RemoteReply::Canon { heads })) => Ok(heads),
         Ok(Ok(_)) => Err(format!("{} answered something else", location.machine)),
         Ok(Err(failure)) => Err(failure.message),

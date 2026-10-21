@@ -1,5 +1,6 @@
 mod sessions;
 
+use fastctx_types::access::Written;
 use std::sync::Arc;
 
 pub(crate) use sessions::Searches;
@@ -35,14 +36,13 @@ pub(crate) async fn open(
     node: &Arc<Node>,
     acting: &Acting,
     from: MachineName,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     scope: FileSearchScope,
 ) -> Result<(FileSearchReply, Lease), Failure> {
-    if let Some(machine) = machine.filter(|machine| !node.is_me(machine)) {
-        let (link, account) = node
-            .speaking(acting, &(&machine).into(), Purpose::Hands)
-            .map_err(|failure| Failure::new(failure.to_string()))?;
-        let (reply, lease) = fastctx_net::file_search::open(link, machine, account, scope).await?;
+    if let Some(machine) = machine.filter(|machine| !node.is_here(machine)) {
+        let (link, account) =
+            node.speaking(acting, &machine, Purpose::Hands).map_err(|failure| Failure::new(failure.to_string()))?;
+        let (reply, lease) = fastctx_net::file_search::open(link, machine.name, account, scope).await?;
         return Ok((reply, Lease::Remote(lease)));
     }
     let initializing = crate::initializing::take()?;
@@ -80,15 +80,15 @@ pub(crate) async fn serve(
 pub(crate) async fn call(
     node: &Arc<Node>,
     acting: &Acting,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     request: FileSearchRequest,
 ) -> Result<FileSearchReply, Failure> {
     let local = node.machine();
-    let Some(target) = machine.filter(|machine| *machine != local) else {
+    let Some(target) = machine.filter(|machine| !node.is_here(machine)) else {
         return here(node, local, request).await;
     };
     let call = RemoteCall::FindFiles { request };
-    match node.call(acting, &(&target).into(), Purpose::Hands, call).await.map_err(failed)?? {
+    match node.call(acting, &target, Purpose::Hands, call).await.map_err(failed)?? {
         RemoteReply::FilesFound(reply) => Ok(reply),
         _ => Err(Failure::new(format!("{target} answered something other than a file search"))),
     }
@@ -149,19 +149,22 @@ async fn roots(
                 return Ok(roots.clone());
             };
             let world = node.world.clone();
-            let reading = move || crate::town::read::latest(&world, &town);
+            let name = town.clone();
+            let reading = move || crate::town::read::latest(&world, &name);
             let record = match initializing {
                 Some(initializing) => initializing.run(reading).await?,
                 None => tokio::task::spawn_blocking(reading).await.map_err(failed)?,
             }
             .map_err(failed)?
             .ok_or_else(|| Failure::new("the resident's project has no local address book"))?;
-            Ok(record
-                .places
-                .into_iter()
-                .filter(|place| node.is_me(&place.location.machine))
-                .map(|place| place.location.path)
-                .collect())
+            let mut roots = Vec::new();
+            for place in record.places {
+                let machine = crate::town::machines::destination(node, &town, &place.location.machine)?;
+                if node.is_here(&machine) {
+                    roots.push(place.location.path);
+                }
+            }
+            Ok(roots)
         }
     }
 }

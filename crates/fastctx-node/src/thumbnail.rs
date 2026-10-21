@@ -1,12 +1,12 @@
 //! Decode in a single isolated process so malformed images cannot exhaust the node.
 
+use fastctx_types::access::Written;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use base64::Engine as _;
-use fastctx_types::MachineName;
 use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
@@ -33,14 +33,14 @@ impl Drop for Worker {
 
 pub(crate) async fn call(
     node: &Arc<crate::Node>,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     request: ThumbnailRequest,
 ) -> Result<Thumbnail, Failure> {
-    if let Some(machine) = machine.filter(|machine| !node.is_me(machine)) {
+    if let Some(machine) = machine.filter(|machine| !node.is_here(machine)) {
         return match node
             .call_with_stream(
                 &Acting::Here,
-                &(&machine).into(),
+                &machine,
                 Purpose::Hands,
                 RemoteCall::Thumbnail { request },
                 fastctx_net::cancellable::feed,
@@ -60,12 +60,12 @@ pub(crate) async fn attachment(
     attachment: fastctx_types::attachments::AttachmentSource,
     max: u32,
 ) -> Result<Thumbnail, Failure> {
-    let machine = attachment.thumbnail_owner().machine.clone();
-    if !node.is_me(&machine) {
+    let machine: Written = attachment.thumbnail_owner().machine.clone().into();
+    if !node.is_here(&machine) {
         return match node
             .call_with_stream(
                 &Acting::Here,
-                &(&machine).into(),
+                &machine,
                 Purpose::Agents,
                 RemoteCall::AttachmentThumbnail { attachment, max },
                 fastctx_net::cancellable::feed,

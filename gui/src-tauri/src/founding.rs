@@ -118,7 +118,7 @@ pub(crate) async fn create_world(
     let admin = fastctx_types::AccountName::try_from(admin).map_err(|error| error.to_string())?;
     let joined = shell
         .world()
-        .login(addresses, admin, password, register, crate::machine(machine)?)
+        .login(addresses, admin, password, register, crate::new_machine_name(machine)?)
         .await
         .map_err(|error| error.to_string())?;
     #[cfg(windows)]

@@ -81,6 +81,17 @@ impl Node {
             .iter()
             .filter_map(|link| link.view().member(&machine.name).map(|member| (link.clone(), member.key)))
             .collect();
+        if self.is_me(&machine.name) && holding.iter().any(|(link, _)| !link.view().is_me(&machine.name)) {
+            return Err(Failure::not_run(format!(
+                "{} also names this computer; identify a network machine as {}",
+                machine.name,
+                holding
+                    .iter()
+                    .map(|(link, _)| format!("{}.{}", machine.name, link.hub_name()))
+                    .collect::<Vec<_>>()
+                    .join(" or ")
+            )));
+        }
         match holding.first() {
             // Not in any view yet: the only hub, if there is one, may know
             // it, and its answer says so if not.
@@ -108,17 +119,30 @@ impl Node {
     /// different computer of that name.
     pub(crate) fn written(&self, link: &Link, name: &MachineName) -> Written {
         let key = link.view().member(name).map(|member| member.key);
-        let shared = self.links().iter().any(|other| {
-            other.membership().id != link.membership().id
-                && other.view().member(name).is_some_and(|member| Some(&member.key) != key.as_ref())
-        });
+        let shared = (self.is_me(name) && !link.view().is_me(name))
+            || self.links().iter().any(|other| {
+                other.membership().id != link.membership().id
+                    && other.view().member(name).is_some_and(|member| Some(&member.key) != key.as_ref())
+            });
         Written { name: name.clone(), hub: shared.then(|| link.membership().hub_name.clone()) }
     }
 
-    /// Whether `machine` is this computer, by its name now or one it had.
+    /// Whether `machine` identifies this computer. A qualified name belongs
+    /// to that hub's directory; an unqualified local name must not also name
+    /// another computer on any of the connected hubs.
     pub(crate) fn is_here(&self, machine: &Written) -> bool {
+        let links = self.links();
+        if let Some(hub) = &machine.hub {
+            return links
+                .iter()
+                .find(|link| link.hub_name() == *hub)
+                .is_some_and(|link| link.view().is_me(&machine.name));
+        }
         self.is_me(&machine.name)
-            && machine.hub.as_ref().is_none_or(|hub| self.links().iter().any(|link| link.membership().hub_name == *hub))
+            && links.iter().all(|link| {
+                let view = link.view();
+                view.member(&machine.name).is_none() || view.is_me(&machine.name)
+            })
     }
 
     /// The accounts `acting` may speak for on `link`'s hub.

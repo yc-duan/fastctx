@@ -290,10 +290,18 @@ impl Device {
     /// Resolves once a way to `machine` opens that was not there when this
     /// was asked, as a pause before trying again waits for one
     /// (`crate::again`).
-    pub(crate) fn reopened(self: &Arc<Self>, machine: &MachineName) -> impl Future<Output = ()> + Send + 'static {
+    pub(crate) fn reopened(
+        self: &Arc<Self>,
+        machine: &fastctx_types::access::Written,
+    ) -> impl Future<Output = ()> + Send + 'static {
         let (device, machine) = (Arc::downgrade(self), machine.clone());
         fastctx_net::again::reopened(self.ways.subscribe(), move || match device.upgrade() {
-            Some(device) => device.sessions().iter().filter_map(|session| session.link.way_to(&machine)).collect(),
+            Some(device) => device
+                .reaching(&machine)
+                .ok()
+                .into_iter()
+                .filter_map(|session| session.link.way_to(&machine.name))
+                .collect(),
             None => Vec::new(),
         })
     }
@@ -322,18 +330,34 @@ impl Device {
         }
     }
 
-    /// The session of the hub `machine` is on.
-    fn reaching(&self, machine: &MachineName) -> Result<Arc<Session>, Error> {
+    /// The session of the named hub, or one of the hubs that know the same
+    /// computer. Different computers sharing a name require a hub qualifier.
+    fn reaching(&self, machine: &fastctx_types::access::Written) -> Result<Arc<Session>, Error> {
+        if let Some(hub) = &machine.hub {
+            return self.on_hub(Some(hub));
+        }
         let sessions = self.sessions();
         if sessions.is_empty() {
             return Err(failed("this device is logged in to no hub"));
         }
-        let holding: Vec<Arc<Session>> =
-            sessions.into_iter().filter(|session| session.link.view().member(machine).is_some()).collect();
-        match holding.len() {
-            1 => Ok(holding.into_iter().next().expect("one")),
-            0 => Err(failed(format!("no hub this device is on has a machine named {machine}"))),
-            _ => Err(failed(format!("{machine} is a machine on more than one hub this device is on"))),
+        let holding: Vec<_> = sessions
+            .into_iter()
+            .filter_map(|session| {
+                let key = session.link.view().member(&machine.name)?.key;
+                Some((session, key))
+            })
+            .collect();
+        match holding.first() {
+            Some((session, key)) if holding.iter().all(|(_, other)| other == key) => Ok(session.clone()),
+            None => Err(failed(format!("no hub this device is on has a machine named {machine}"))),
+            Some(_) => Err(failed(format!(
+                "{machine} names different computers; write it as {}",
+                holding
+                    .iter()
+                    .map(|(session, _)| format!("{}.{}", machine.name, session.link.hub_name()))
+                    .collect::<Vec<_>>()
+                    .join(" or ")
+            ))),
         }
     }
 }

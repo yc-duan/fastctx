@@ -12,7 +12,7 @@ pub enum UploadTarget {
     /// Keep bytes on the sending computer, or on `machine` for a node-less device.
     /// The operation is stable across retries; the inner target names the conversation.
     Sent {
-        machine: crate::MachineName,
+        machine: crate::access::Written,
         target: Box<UploadTarget>,
         operation: String,
     },

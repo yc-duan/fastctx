@@ -2,7 +2,7 @@
 
 use fastctx_client::file_read::Read;
 use fastctx_client::{Reading, World};
-use fastctx_types::MachineName;
+use fastctx_types::access::Written;
 use fastctx_types::file_read::{FileRange, FileReadInfo, ReadFileRequest};
 use std::path::{Path, PathBuf};
 use tauri::ipc::Channel;
@@ -12,7 +12,7 @@ use crate::held_reads::{ReadProgress, tell};
 
 pub async fn fetch(
     world: &World,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     path: String,
     cache: &Path,
     progress: Option<Channel<ReadProgress>>,

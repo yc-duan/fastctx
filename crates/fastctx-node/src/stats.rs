@@ -13,8 +13,7 @@ use std::time::{Duration, Instant};
 
 use fastctx_net::link::Status;
 use fastctx_platform::system::{CpuTimes, Traffic};
-use fastctx_types::MachineName;
-use fastctx_types::access::{Acting, Purpose};
+use fastctx_types::access::{Acting, Purpose, Written};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::stats::{Card, Cpu, Disk, Gpu, Line, MachineStats, Memory, NodeSeen};
@@ -27,14 +26,14 @@ use crate::Node;
 pub(crate) async fn query(
     node: &Arc<Node>,
     acting: &Acting,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
     after: Option<Timestamp>,
 ) -> Result<MachineStats, Failure> {
-    let Some(target) = machine.filter(|machine| !node.is_me(machine)) else {
+    let Some(target) = machine.filter(|machine| !node.is_here(machine)) else {
         return here(node, after).await;
     };
     match node
-        .call(acting, &(&target).into(), Purpose::Hands, RemoteCall::Stats { after })
+        .call(acting, &target, Purpose::Hands, RemoteCall::Stats { after })
         .await
         .map_err(|failure| Failure::new(failure.to_string()))??
     {

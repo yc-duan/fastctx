@@ -118,7 +118,7 @@ async fn feed_page(world: World, sender: Sender, page: u64, feed: Feed) {
 
 /// This computer's agents, as its node answers for it.
 async fn here_agents(world: &World, machine: MachineName) -> Result<fastctx_types::agents::AgentsReply, String> {
-    let agents = world.agents(Some(machine.clone())).await.map_err(|error| error.to_string())?;
+    let agents = world.agents(Some(machine.clone().into())).await.map_err(|error| error.to_string())?;
     agents
         .machines
         .into_iter()
@@ -188,7 +188,7 @@ async fn watch(
     machine: fastctx_types::MachineName,
 ) {
     let address = fastctx_types::Address { machine, resident };
-    let (mut conversation, history) = match Conversation::open(&world, address).await {
+    let (mut conversation, history) = match Conversation::open(&world, address.resident, address.machine.into()).await {
         Ok(watching) => watching,
         Err(error) => {
             let _ = sender.send((page, Data::Unwatched(Some(error.to_string()))));
@@ -313,11 +313,11 @@ pub fn run(world: World, sender: Sender, page: u64, job: Job) {
 
 async fn work(world: &World, job: Job) -> Result<Done, fastctx_client::Error> {
     Ok(match job {
-        Job::Talk { to, machine, text } => Done::Said(world.talk(to, Some(machine), text).await?),
-        Job::Stop { resident, machine } => Done::Stopped(world.stop(resident, Some(machine)).await?.1),
+        Job::Talk { to, machine, text } => Done::Said(world.talk(to, Some(machine.into()), text).await?),
+        Job::Stop { resident, machine } => Done::Stopped(world.stop(resident, Some(machine.into())).await?.1),
         Job::Attach { resident } => Done::Attachable(world.attach(resident).await?),
         Job::Open { agent, town, node, text, choices } => {
-            Done::Opened(world.open_with(agent, town, node, text, Default::default(), choices).await?)
+            Done::Opened(world.open_with(agent, town, node.map(Into::into), text, Default::default(), choices).await?)
         }
         Job::OpenTown { town, fields } => Done::Record(Box::new(world.open_town(town, fields, None, None).await?)),
         Job::EditTown { town, fields } => Done::Record(Box::new(world.edit_town(Some(town), fields).await?)),
