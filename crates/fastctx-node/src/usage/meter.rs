@@ -34,6 +34,8 @@ pub(super) struct Priced {
     source: CallSource,
     turn: Option<String>,
     agent: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
 }
 
 impl Meter {
@@ -44,6 +46,7 @@ impl Meter {
                 let mut call = self.detail.clone();
                 call.turn = None;
                 call.agent = None;
+                call.effort = None;
                 call.source = CallSource::Background;
                 call.observed = false;
                 call.outcome = CallOutcome::Unknown;
@@ -105,6 +108,7 @@ pub(super) fn record(
             turn: None,
             source: CallSource::Background,
             agent: None,
+            effort: None,
             timing: CallTiming { started_at: None, first_at: None, ended_at: at, approximate: false },
             outcome: CallOutcome::Unknown,
             phase: CallPhase::Unknown,
@@ -153,6 +157,7 @@ pub(super) fn record(
                 turn: priced.turn,
                 source: priced.source,
                 agent: priced.agent,
+                effort: priced.effort,
                 timing: priced.timing,
                 outcome: CallOutcome::Completed,
                 phase: CallPhase::Finished,

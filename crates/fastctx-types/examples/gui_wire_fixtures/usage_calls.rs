@@ -9,7 +9,8 @@ pub fn fixtures() -> Fixtures {
     let row = UsageCall {
         cursor: CallCursor { at, key: "example-request".into() },
         who: None,
-        model: Some("claude-haiku-5-5".into()),
+        model: Some("claude-sonnet-5-5".into()),
+        effort: Some("medium".into()),
         tokens: Some(Tokens { input: 100, output: 50, ..Default::default() }),
         usd: Some(Usd(35)),
         source: CallSource::Agent,

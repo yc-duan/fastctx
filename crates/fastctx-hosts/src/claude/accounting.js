@@ -104,8 +104,9 @@ async function pricedRequest($, context, e) {
     first_at: Number.isFinite(duration) && Number.isFinite(first) ? new Date(ended - duration + first).toISOString() : null }
   const source = typeof a.query_source === 'string' && a.query_source.startsWith('agent:') ? 'agent'
     : ['sdk', 'repl_main'].includes(a.query_source) ? 'main' : 'background'
+  // The effort is the one the request body carried, absent when none was sent.
   const priced = { key: String(a['event.sequence']), usd: a.cost_usd, model: a.model, timing, source,
-    turn: null, agent: null, tokens: { input: Number(a.input_tokens ?? 0), output: Number(a.output_tokens ?? 0),
+    effort: typeof a.effort === 'string' ? a.effort : null, turn: null, agent: null, tokens: { input: Number(a.input_tokens ?? 0), output: Number(a.output_tokens ?? 0),
       cache_read: Number(a.cache_read_tokens ?? 0), cache_write: Number(a.cache_creation_tokens ?? 0), reasoning: 0 } }
   if (a['event.sequence'] === undefined) throw new Error('Claude request has no accounting sequence')
   const key = usageKey(a.input_tokens, a.output_tokens, a.cache_read_tokens, a.cache_creation_tokens)
@@ -229,7 +230,9 @@ async function* measuredStep($, context, shown, reported, input, next, held) {
   } finally {
     try { await stream.return() } catch { /* The original stream error remains authoritative. */ }
     timing.ended_at = new Date().toISOString()
+    // A held step sent nothing; any other names the effort it asked for.
+    const effort = !held && typeof input.effort === 'string' ? input.effort : null
     await stepMeasured($, context, { usage: result?.usage ?? null, model: input.model,
-      turn: input.turnId, index: input.index, agent: input.agentId ?? null, timing, outcome, phase })
+      turn: input.turnId, index: input.index, agent: input.agentId ?? null, effort, timing, outcome, phase })
   }
 }

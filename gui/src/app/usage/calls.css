@@ -183,6 +183,16 @@
   color: var(--text-3);
 }
 
+/* The effort, in a lighter ink after the model; it gives way first. */
+.uc-effort {
+  flex: 0 2 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+
 .uc-hook {
   display: none;
   flex: none;

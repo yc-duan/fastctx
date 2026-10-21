@@ -1180,7 +1180,7 @@ impl CodexHost {
                 let entry = state.threads.entry(thread.clone()).or_default();
                 entry.request_timing.observe(method, params, at).map(|request| json!({ "counted": {
                 "thread": thread, "turn": params.pointer("/turn/id").and_then(Value::as_str).or(turn.as_deref()),
-                "model": entry.model, "tokens": null, "request": request,
+                "model": entry.model, "effort": entry.effort, "tokens": null, "request": request,
             }}))
             };
         if let Some(usage) = failed {
@@ -1389,7 +1389,7 @@ impl CodexHost {
                     entry
                         .accounting
                         .usage(params.get("turnId").and_then(Value::as_str), &params["tokenUsage"])
-                        .map(|tokens| json!({ "thread": thread, "turn": turn, "model": entry.model, "tokens": tokens,
+                        .map(|tokens| json!({ "thread": thread, "turn": turn, "model": entry.model, "effort": entry.effort, "tokens": tokens,
                             "request": entry.request_timing.finish(at, fastctx_types::usage_calls::CallOutcome::Completed) }))
                 };
                 let mut usage = params["tokenUsage"].clone();

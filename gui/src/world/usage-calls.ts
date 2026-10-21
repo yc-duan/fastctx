@@ -25,6 +25,8 @@ export interface UsageCall {
   cursor: CallCursor;
   who: HubAccount | null;
   model: string | null;
+  /** The reasoning effort the request was sent with; absent where none was. */
+  effort?: string | null;
   tokens: Tokens | null;
   /** Millionths of a dollar, as the ledger keeps it. */
   usd: number | null;

@@ -417,6 +417,7 @@ export class CallsList {
     const rough = row.timing.approximate;
     const own = row.conversation !== null;
     const model = row.model ? modelName(row.model) : null;
+    const effort = row.effort ?? null;
     const usd = row.usd === null ? null : row.usd / 1_000_000;
 
     // The sentences behind the row.
@@ -425,7 +426,7 @@ export class CallsList {
     const said = [
       words.at(at),
       several ? who.name : "",
-      background ? words.backgroundSaid : [model ?? "", row.source === "agent" ? words.agentTag : ""].filter(Boolean).join(words.and),
+      background && !model ? words.backgroundSaid : [model ?? "", effort ? words.effortSaid(effort) : "", row.source === "agent" ? words.agentTag : background ? words.background : ""].filter(Boolean).join(words.and),
       ...kinds.filter(([, value]) => value > 0).map(([kind, value]) => `${named(kind)} ${value.toLocaleString("en-US")}`),
       usd !== null ? usage.money(usd) : "",
       [took !== null ? words.took(took) : "", first !== null ? words.first(first) : ""].filter(Boolean).join(words.and),
@@ -441,7 +442,7 @@ export class CallsList {
     // A subagent's request: a tag where there is room, a hook off the main
     // loop where there is not.
     const sub = row.source === "agent";
-    const modelCell = `<span class="uc-model${model ? "" : " quiet"}">${sub ? `<span class="uc-hook">${glyph("fed", 14)}</span>` : ""}<span class="uc-model-name">${escape(model ?? words.background)}</span>${sub ? `<span class="uc-tag">${escape(words.agentTag)}</span>` : ""}</span>`;
+    const modelCell = `<span class="uc-model${model ? "" : " quiet"}">${sub ? `<span class="uc-hook">${glyph("fed", 14)}</span>` : ""}<span class="uc-model-name">${escape(model ?? words.background)}</span>${effort ? `<span class="uc-effort">${escape(words.effort(effort))}</span>` : ""}${sub ? `<span class="uc-tag">${escape(words.agentTag)}</span>` : ""}</span>`;
     const width = sum ? Math.max(3, Math.min(100, Math.sqrt(sum / FULL) * 100)) : 0;
     const mix = sum
       ? `<span class="uc-mix" style="width:${width.toFixed(1)}%">${kinds

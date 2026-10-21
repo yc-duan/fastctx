@@ -78,6 +78,10 @@ pub struct UsageCall {
     pub who: Option<HubAccount>,
     /// Claude's unobserved auxiliary requests have neither model nor tokens.
     pub model: Option<String>,
+    /// The reasoning effort the request was sent with, as its host names it;
+    /// absent where the host sent none or a ledger row predates it.
+    #[serde(default)]
+    pub effort: Option<String>,
     pub tokens: Option<Tokens>,
     pub usd: Option<Usd>,
     pub source: CallSource,

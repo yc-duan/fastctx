@@ -227,7 +227,16 @@ impl CodexHost {
                 }
             }
             "thread/reverted" => entry.accounting.reloaded(),
-            "thread/started" => entry.metadata = metadata(&params["thread"]),
+            "thread/started" => {
+                entry.metadata = metadata(&params["thread"]);
+                // A thread Codex spawned for another names its model and
+                // effort only here; one started here already has them.
+                let text = |key: &str| params["thread"][key].as_str().map(str::to_string);
+                if entry.model.is_none() {
+                    entry.model = text("model");
+                    entry.effort = text("reasoningEffort");
+                }
+            }
             "thread/tokenUsage/updated" => entry.usage = Some(params["tokenUsage"].clone()),
             "thread/settings/updated" => {
                 entry.model = params.pointer("/threadSettings/model").and_then(Value::as_str).map(str::to_string);

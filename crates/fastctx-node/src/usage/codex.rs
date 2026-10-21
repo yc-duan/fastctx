@@ -13,6 +13,8 @@ use std::path::Path;
 struct Counted {
     thread: String,
     model: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
     tokens: Option<TurnTokens>,
     #[serde(default)]
     turn: Option<String>,
@@ -85,6 +87,7 @@ pub(super) fn measured(
                         CallSource::Main
                     },
                     agent,
+                    effort: counted.effort,
                     timing: counted.request.as_ref().map(|r| r.timing.clone()).unwrap_or(CallTiming {
                         started_at: None,
                         first_at: None,

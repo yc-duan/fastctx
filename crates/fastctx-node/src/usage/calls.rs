@@ -23,6 +23,9 @@ pub(super) struct Detail {
     pub turn: Option<String>,
     pub source: CallSource,
     pub agent: Option<String>,
+    /// Older rows have none; leaving it out keeps their stored identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     pub timing: CallTiming,
     pub outcome: CallOutcome,
     pub phase: CallPhase,
@@ -70,10 +73,12 @@ pub(crate) fn calls(
                     key.update(identity);
                     key.update((item as u64).to_be_bytes());
                     let cursor = CallCursor { at: entry.usage_at(), key: format!("{:x}", key.finalize()) };
+                    let named = detail.source != CallSource::Background || detail.observed;
                     let row = UsageCall {
                         cursor,
                         who,
-                        model: (detail.source != CallSource::Background || detail.observed).then_some(usage.model),
+                        model: named.then_some(usage.model),
+                        effort: detail.effort.filter(|_| named),
                         tokens: detail.observed.then_some(usage.tokens),
                         usd: usage.usd,
                         source: detail.source,

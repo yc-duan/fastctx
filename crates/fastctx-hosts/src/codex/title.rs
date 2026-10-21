@@ -20,14 +20,15 @@ use fastctx_types::session::{Happened, SessionChange};
 pub(super) struct Usage {
     root: String,
     model: Option<String>,
+    effort: Option<String>,
     accounting: super::accounting::Accounting,
     requests: super::requests::Requests,
 }
 impl Usage {
-    pub(super) fn new(root: String, model: Option<String>) -> Self {
+    pub(super) fn new(root: String, model: Option<String>, effort: Option<String>) -> Self {
         let mut accounting = super::accounting::Accounting::default();
         accounting.empty_thread();
-        Self { root, model, accounting, requests: Default::default() }
+        Self { root, model, effort, accounting, requests: Default::default() }
     }
 }
 
@@ -75,7 +76,8 @@ impl CodexHost {
                     usage.root.clone(),
                     json!({ "counted": {
                         "thread": thread, "turn": params.get("turnId").or_else(|| params.pointer("/turn/id")),
-                        "model": usage.model, "tokens": tokens, "request": request, "background": true,
+                        "model": usage.model, "effort": usage.effort, "tokens": tokens, "request": request,
+                        "background": true,
                     }}),
                 )
             })
@@ -126,8 +128,14 @@ impl CodexHost {
             .and_then(Value::as_str)
             .ok_or("the hidden title thread started without an id")?
             .to_string();
-        self.lock().title_usage.insert(temp.clone(), Usage::new(thread.to_string(), model.clone()));
-        let answer = self.ask_title(&server, &temp, user_text, model.as_deref() == Some(TITLE_MODEL)).await;
+        let luna = model.as_deref() == Some(TITLE_MODEL);
+        let effort = if luna {
+            Some("low".to_string())
+        } else {
+            started.get("reasoningEffort").and_then(Value::as_str).map(str::to_string)
+        };
+        self.lock().title_usage.insert(temp.clone(), Usage::new(thread.to_string(), model.clone(), effort));
+        let answer = self.ask_title(&server, &temp, user_text, luna).await;
         if self.lock().title_waiters.contains_key(&temp) {
             // Given up on and interrupted: its end is still heard a while,
             // so what it used is counted, then the thread is let go.

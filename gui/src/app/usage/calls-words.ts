@@ -2,6 +2,7 @@
 // its filters, the day each group of rows is from, the short marks a row
 // carries and the sentences behind them.
 
+import { effortLabel } from "../../conversation/effort-slider";
 import type { CallOutcome, CallPhase, CallSource } from "../../world/usage-calls";
 
 export interface CallsWords {
@@ -17,8 +18,9 @@ export interface CallsWords {
   sources: Record<CallSource | "all", string>;
   outcome: string;
   outcomes: Record<CallOutcome | "all", string>;
-  /** A row's short marks. */
+  /** A row's short marks: a subagent's, the effort it was sent with. */
   agentTag: string;
+  effort(value: string): string;
   background: string;
   /** The days rows are grouped by. */
   today: string;
@@ -36,6 +38,7 @@ export interface CallsWords {
   at(at: Date): string;
   backgroundSaid: string;
   agentSaid: string;
+  effortSaid(value: string): string;
   took(ms: number): string;
   first(ms: number): string;
   roughly: string;
@@ -75,6 +78,7 @@ export const zhCalls: CallsWords = {
   outcome: "结果",
   outcomes: { all: "全部", completed: "完成", failed: "出错", interrupted: "中断", held: "拦下", unknown: "不明" },
   agentTag: "子代理",
+  effort: (value) => effortLabel(value, false),
   background: "后台",
   today: "今天",
   yesterday: "昨天",
@@ -88,6 +92,7 @@ export const zhCalls: CallsWords = {
   at: (at) => `${at.getMonth() + 1}月${at.getDate()}日 ${zhWeekday[(at.getDay() + 6) % 7]} ${at.getHours()}:${two(at.getMinutes())}:${two(at.getSeconds())}`,
   backgroundSaid: "Claude Code 自己的后台请求（压缩、起标题、处理网页），看不到 token 与型号",
   agentSaid: "子代理的请求",
+  effortSaid: (value) => `思考强度${effortLabel(value, false)}`,
   took: (ms) => `用时 ${short(ms)}`,
   first: (ms) => `首个片段 ${short(ms)}`,
   roughly: "Codex 只给得出大概的时刻",
@@ -114,6 +119,7 @@ export const enCalls: CallsWords = {
   outcome: "Outcome",
   outcomes: { all: "All", completed: "Completed", failed: "Failed", interrupted: "Interrupted", held: "Held", unknown: "Unknown" },
   agentTag: "Subagent",
+  effort: (value) => effortLabel(value, true),
   background: "Background",
   today: "Today",
   yesterday: "Yesterday",
@@ -127,6 +133,7 @@ export const enCalls: CallsWords = {
   at: (at) => `${enWeekday[(at.getDay() + 6) % 7]} ${enMonth[at.getMonth()]} ${at.getDate()}, ${at.getHours()}:${two(at.getMinutes())}:${two(at.getSeconds())}`,
   backgroundSaid: "Claude Code's own background request (compacting, titles, web pages); its tokens and model aren't visible",
   agentSaid: "A subagent's request",
+  effortSaid: (value) => `${effortLabel(value, true)} effort`,
   took: (ms) => `Took ${short(ms)}`,
   first: (ms) => `First chunk ${short(ms)}`,
   roughly: "Codex gives only rough times",

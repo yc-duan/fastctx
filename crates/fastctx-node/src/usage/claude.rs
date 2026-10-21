@@ -41,6 +41,8 @@ enum Step {
         model: String,
         turn: String,
         agent: Option<String>,
+        #[serde(default)]
+        effort: Option<String>,
         timing: CallTiming,
         outcome: CallOutcome,
         phase: CallPhase,
@@ -220,7 +222,7 @@ fn divide(total: Usd, steps: &[Step], id: &ResidentId, about: &About, at: Timest
     for ((step, tokens), usd) in steps.iter().zip(tokens).zip(amounts) {
         let (model, call) = match step {
             Step::Legacy(usage) => (usage.model.clone(), None),
-            Step::Current { usage, model, turn, agent, timing, outcome, phase } => (
+            Step::Current { usage, model, turn, agent, effort, timing, outcome, phase } => (
                 usage.as_ref().map_or_else(|| model.clone(), |u| u.model.clone()),
                 Some(Detail {
                     conversation: id.clone(),
@@ -228,6 +230,7 @@ fn divide(total: Usd, steps: &[Step], id: &ResidentId, about: &About, at: Timest
                     turn: Some(turn.clone()),
                     source: if agent.is_some() { CallSource::Agent } else { CallSource::Main },
                     agent: agent.clone(),
+                    effort: effort.clone(),
                     timing: timing.clone(),
                     outcome: *outcome,
                     phase: *phase,
@@ -255,6 +258,7 @@ fn divide(total: Usd, steps: &[Step], id: &ResidentId, about: &About, at: Timest
                 turn: None,
                 source: CallSource::Background,
                 agent: None,
+                effort: None,
                 timing: CallTiming { started_at: None, first_at: None, ended_at: at, approximate: false },
                 outcome: CallOutcome::Unknown,
                 phase: CallPhase::Unknown,
