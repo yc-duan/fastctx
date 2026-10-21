@@ -1,8 +1,8 @@
 //! What a session the user opens is told about its working environment, in
 //! its host's guidance file (`world-run.md`, 模型怎样知道): that `run` is its
-//! shell and its way to look at and change files on this machine, since the
-//! host's own shell and image viewer are off; that other machines, when
-//! `run`'s description lists any, are reached with `on`; and the one rule a
+//! shell and its way to look at and change files, on this machine too, since
+//! the host's own shell and image viewer are off; that each script is one
+//! `on MACHINE` naming a machine `run`'s description lists; and the one rule a
 //! session needs before it touches anything, that it enters a project only
 //! when the user says. It is written once, when fastctx is applied, and many
 //! users have only this one computer, so it never says the user has several
@@ -48,7 +48,7 @@ You work through fastctx's `run` tool. `run` is your shell: bash with the GNU to
 
 `run`'s description shows each of these in full.
 
-`run` starts on the machine its description names, usually this one. When its description lists other machines of the user's, it says how to work on them; when the user speaks of one of those machines, work on it that way.
+`run` runs each script on one of the machines its description lists, this computer among them, the whole script written as one `on MACHINE`; its description says how. When the user speaks of one of those machines, work on it.
 
 Inside a script, these commands are ordinary programs: give them several files, pipe into and out of them, loop over machines, as with any command. Calls to `run` share nothing: make several at once, or call `run` from your scripts and subagents, as with any tool.
 
