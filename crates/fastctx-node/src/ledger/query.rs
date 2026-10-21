@@ -146,13 +146,36 @@ pub async fn held(node: &Arc<Node>) -> Result<Vec<TownSummary>, Failure> {
     .await
     .map_err(|error| Failure::new(format!("reading the projects: {error}")))?
     .map_err(|error| Failure::new(format!("reading the projects: {error}")))?;
+    let mut hubs = std::collections::HashMap::new();
     let mine = towns
         .into_iter()
         .zip(places)
         .filter(|(_, place)| place.as_ref().is_some_and(|place| sees(node, &Acting::Here, place)))
-        .map(|(town, _)| town)
+        .map(|(town, place)| {
+            if let Some(place) = place {
+                hubs.insert(town.clone(), place.hub);
+            }
+            town
+        })
         .collect();
-    summaries(node, mine).await
+    let mut listed = summaries(node, mine).await?;
+    // A project names its machines as they were called when it was written;
+    // each is shown by its name now, as its hub's directory has it.
+    for summary in &mut listed {
+        let Some(view) = hubs.get(&summary.town).and_then(|hub| node.link_of(hub)).map(|link| link.view()) else {
+            continue;
+        };
+        for machine in &mut summary.record.machines {
+            *machine = view.canonical(machine).clone();
+        }
+        for place in &mut summary.record.places {
+            place.location.machine = view.canonical(&place.location.machine).clone();
+        }
+        if let Some(canon) = &mut summary.record.canon {
+            canon.machine = view.canonical(&canon.machine).clone();
+        }
+    }
+    Ok(listed)
 }
 
 /// Takes, from `link`'s hub, `town`'s new entries when this computer keeps
