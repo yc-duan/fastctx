@@ -17,7 +17,7 @@ pub async fn codex(
         return Ok(vec![event]);
     }
     let (about, _) = node.residents.about(resident).ok_or_else(|| std::io::Error::other("unknown picture resident"))?;
-    let host = node.codex.of(&about).map_err(|error| std::io::Error::other(error.message))?;
+    let host = node.codex.of(node, &about).map_err(|error| std::io::Error::other(error.message))?;
     let mut events = host
         .locate_user_images(thread, &Address { machine: node.machine(), resident: resident.clone() }, event)
         .await

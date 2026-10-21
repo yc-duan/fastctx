@@ -77,7 +77,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     super::fork_ready::begin(node, &id)?;
     let cwd = crate::colleagues::standing(node, town.as_ref())?;
     crate::profile::session::ready(node, &source.acting).await?;
-    let assisting = node.works_here(&source.acting).is_err();
+    let assisting = crate::assists::host::starting(node, &id, &source.acting)?;
     let at = Timestamp::now();
     let about = About {
         forked_from: Some(Address { machine: node.machine(), resident: resident.clone() }),

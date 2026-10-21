@@ -217,7 +217,7 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
             crate::forks::keep(node, &resident.about).map_err(|error| Stop::Failed(error.to_string()))?;
             if let Some(session) = &resident.about.session {
                 node.codex
-                    .of(&resident.about)
+                    .of(node, &resident.about)
                     .map_err(|error| Stop::Failed(error.message))?
                     .archive(session)
                     .await
@@ -412,7 +412,7 @@ async fn host(node: &Arc<Node>, about: &About, measured: &Measured) -> Result<()
     match about.host.agent.as_str() {
         "codex" => {
             let Some(session) = &about.session else { return Ok(()) };
-            let codex = node.codex.of(about).map_err(|failure| Stop::Failed(failure.message))?;
+            let codex = node.codex.of(node, about).map_err(|failure| Stop::Failed(failure.message))?;
             let deleted = codex
                 .delete(session)
                 .await

@@ -83,7 +83,7 @@ pub(crate) async fn resolve(
         let turn = tool_image.turn.as_deref().ok_or_else(Failure::original_gone)?;
         let (mime, base64) = node
             .codex
-            .of(&about)?
+            .of(node, &about)?
             .tool_image(thread, turn, &tool_image.item, tool_image.image)
             .await
             .map_err(failed)?
@@ -96,7 +96,7 @@ pub(crate) async fn resolve(
     if let AttachmentSource::HostImage { host_image: HostImage::Codex { turn, message, image }, .. } = &source {
         let thread = about.session.as_deref().ok_or_else(Failure::original_gone)?;
         if let Some(picture) =
-            node.codex.of(&about)?.user_picture(thread, turn, *message, *image).await.map_err(failed)?
+            node.codex.of(node, &about)?.user_picture(thread, turn, *message, *image).await.map_err(failed)?
         {
             let picture = picture.ok_or_else(Failure::original_gone)?;
             let temporary = node.world.path().join("image-reading");
@@ -121,7 +121,7 @@ pub(crate) async fn resolve(
     let paths = match about.host.agent.as_str() {
         "codex" => {
             let thread = about.session.as_deref().ok_or_else(Failure::original_gone)?;
-            let host = node.codex.of(&about)?;
+            let host = node.codex.of(node, &about)?;
             let path = host.rollout(thread).await.map_err(failed)?.ok_or_else(Failure::original_gone)?;
             vec![path]
         }

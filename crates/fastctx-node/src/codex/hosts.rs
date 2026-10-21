@@ -1,5 +1,6 @@
-//! The node's Codex app-servers, one for each Codex home its residents
-//! use: an app-server serves the one login of its home, so each account
+//! The node's Codex app-servers, one for each Codex login and a separate
+//! instruction and extension home for its assisted conversations. An
+//! app-server serves one login, so each account
 //! runs its own (`AgentHome`). The default home's starts as before; each
 //! other one at its first use, with `CODEX_HOME` naming it and the desktop
 //! app's program when its home records none. Whatever any of them reports
@@ -21,6 +22,7 @@ use tokio::sync::mpsc;
 pub(crate) struct CodexHosts {
     default: Arc<CodexHost>,
     others: Mutex<Vec<Arc<CodexHost>>>,
+    assisted: Mutex<Vec<Arc<CodexHost>>>,
     /// `<world>/codex`, where the default home's app-server runs; each
     /// other one runs in `homes/<key>` under it.
     workdir: PathBuf,
@@ -58,7 +60,17 @@ impl CodexHosts {
         default.report_limits_to(limits.clone());
         default.report_said_to(said.clone());
         forward(reports, events.clone());
-        let hosts = Self { default, others: Mutex::new(Vec::new()), workdir, environment, log, events, limits, said };
+        let hosts = Self {
+            default,
+            others: Mutex::new(Vec::new()),
+            assisted: Mutex::new(Vec::new()),
+            workdir,
+            environment,
+            log,
+            events,
+            limits,
+            said,
+        };
         (hosts, Heard { events: merged, limits: limits_heard, said: said_heard })
     }
 
@@ -137,14 +149,34 @@ impl CodexHosts {
         })
     }
 
-    /// The host a resident's threads are in: its home's.
-    pub(crate) fn of(&self, about: &About) -> Result<Arc<CodexHost>, Failure> {
-        self.home(about.home.as_deref())
+    /// The original or isolated host recorded when the conversation was born.
+    pub(crate) fn of(&self, node: &crate::Node, about: &About) -> Result<Arc<CodexHost>, Failure> {
+        self.session(about.home.as_deref(), crate::assists::host::kept(node, &about.id)?.unwrap_or(false))
+    }
+
+    pub(crate) fn session(&self, dir: Option<&Path>, assisting: bool) -> Result<Arc<CodexHost>, Failure> {
+        let owner = self.home(dir)?;
+        if !assisting {
+            return Ok(owner);
+        }
+        let mut assisted = self.assisted.lock().expect("never poisoned");
+        if let Some(host) = assisted.iter().find(|host| crate::homes::same_dir(host.config_home(), owner.config_home()))
+        {
+            return Ok(host.clone());
+        }
+        let workdir = super::directories::get(&self.workdir.join("assisted"), owner.config_home())
+            .map_err(|error| Failure::new(format!("keeping the assisted Codex home: {error}")))?;
+        let (host, reports) = CodexHost::new_assisted(owner, workdir).map_err(Failure::new)?;
+        host.report_limits_to(self.limits.clone());
+        forward(reports, self.events.clone());
+        assisted.push(host.clone());
+        Ok(host)
     }
 
     pub(crate) fn all(&self) -> Vec<Arc<CodexHost>> {
         let mut all = vec![self.default.clone()];
         all.extend(self.others.lock().expect("never poisoned").iter().cloned());
+        all.extend(self.assisted.lock().expect("never poisoned").iter().cloned());
         all
     }
 

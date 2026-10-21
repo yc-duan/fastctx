@@ -19,7 +19,7 @@ use crate::Node;
 fn thread(node: &Node, resident: &ResidentId) -> Result<(Arc<CodexHost>, String), Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new(format!("{resident} is not here")))?;
     crate::homes::available(node, &about)?;
-    let host = node.codex.of(&about)?;
+    let host = node.codex.of(node, &about)?;
     about.session.map(|thread| (host, thread)).ok_or_else(|| Failure::new(format!("{resident} has no Codex thread")))
 }
 
@@ -35,6 +35,17 @@ pub(super) fn reported(node: &Node, resident: &ResidentId, thread: &str, event: 
 pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, Failure> {
     let (codex, thread) = thread(node, resident)?;
     let mut offers = codex.offers(&thread).await.map_err(Failure::new)?;
+    let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
+    if crate::assists::assisting(node, &about.acting) {
+        if crate::assists::host::kept(node, resident)? != Some(true) {
+            offers.controls.clear();
+            offers.commands.clear();
+            return Ok(offers);
+        }
+        offers
+            .commands
+            .retain(|command| command.path.is_none() && fastctx_hosts::codex::assisted::command_allowed(&command.name));
+    }
     // A thread Codex has not reported on since it restarted has the model
     // it last reported in the resident's record.
     if offers.model.is_none() {
@@ -73,6 +84,16 @@ fn limits(kept: &AgentLimits) -> Vec<Limit> {
 
 pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Control) -> Result<Controlled, Failure> {
     let (codex, thread) = thread(node, resident)?;
+    let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
+    if crate::assists::assisting(node, &about.acting) {
+        crate::assists::host::require(node, resident)?;
+    }
+    if crate::assists::assisting(node, &about.acting)
+        && let Control::Command { name, path, .. } = &control
+        && (path.is_some() || !fastctx_hosts::codex::assisted::command_allowed(name))
+    {
+        return Err(Failure::not_run(fastctx_hosts::codex::assisted::COMMAND_REFUSED));
+    }
     if let Control::Answer { request, answer } = control {
         codex.answer(&thread, &request, &answer).map_err(Failure::new)?;
         return done("Answer sent. Codex uses the first response it receives; another client may have answered first.");
@@ -241,6 +262,7 @@ async fn fork(
     let source_guard = crate::gate_waits::shared(node, parent, &gate).await?;
     node.residents.active(parent)?;
     let (source, town) = node.residents.about(parent).ok_or_else(|| Failure::new("unknown source resident"))?;
+
     let id = node.residents.new_id(&source.host.agent)?;
     crate::session_options::keep(node, &id, &crate::session_options::read(node, parent)?)?;
     crate::focus::open(node, &node.world.conversation(&id), &source.acting, &source.focus).await?;

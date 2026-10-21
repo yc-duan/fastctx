@@ -131,7 +131,7 @@ async fn stamp(node: &Arc<Node>, resident: &ResidentId) -> Result<Option<String>
         // would not change.
         ("codex", Some(_)) if !about.world_started => return Ok(None),
         ("codex", Some(thread)) => {
-            let codex = node.codex.of(&about)?;
+            let codex = node.codex.of(node, &about)?;
             take(codex.stamp(thread).await.map_err(Failure::new)?.as_bytes());
         }
         ("claude", _) => crate::claude::history::stamp(node, resident, &mut take),

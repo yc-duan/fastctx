@@ -355,7 +355,7 @@ async fn submit_thread(
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::new(format!("{id} has no record here")))?;
     crate::homes::available(node, &about)?;
     crate::assists::may_turn(node, id, &about)?;
-    let codex = node.codex.of(&about)?;
+    let codex = node.codex.of(node, &about)?;
     // Its tools start before the words go in, outside the lock others' words
     // and its turns' ends wait on.
     let missing = codex.prepare(thread).await.map_err(Failure::new)?;

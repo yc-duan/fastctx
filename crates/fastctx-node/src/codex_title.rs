@@ -42,7 +42,7 @@ pub(crate) fn maybe(node: &Arc<Node>, id: &ResidentId, about: &About) {
         STARTED.lock().expect("never poisoned").remove(id);
         return;
     };
-    let codex = match node.codex.of(about) {
+    let codex = match node.codex.of(node, about) {
         Ok(codex) => codex,
         Err(_) => {
             STARTED.lock().expect("never poisoned").remove(id);

@@ -65,7 +65,7 @@ pub(crate) async fn here(node: &Arc<Node>, resident: &ResidentId, agent: &str) -
         "codex" => {
             let thread =
                 about.session.clone().ok_or_else(|| Failure::new(format!("{resident} has no Codex thread yet")))?;
-            let codex = node.codex.of(&about)?;
+            let codex = node.codex.of(node, &about)?;
             let owner = Address { machine: node.machine(), resident: resident.clone() };
             codex_agent(&codex, &thread, agent, &owner).await
         }
