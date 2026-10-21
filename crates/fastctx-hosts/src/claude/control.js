@@ -16,7 +16,9 @@ const reservations = new Map()
 
 async function controlReserved(sessionId) {
   const reserving = reservations.get(sessionId)
-  if (reserving) await reserving.catch(() => {})
+  // 2026-10-21: an early control hook must not recreate a directory while the node moves it.
+  if (!reserving) throw new Error('the Claude session directory has not been reserved yet')
+  await reserving
 }
 
 function controlWake(sessionId, look) {

@@ -1199,9 +1199,9 @@ export function register(on) {
   }).catch(($, e, next) => continueWithoutWorld($, 'session.end', e, next))
   on('classic.SessionStart', async ($, e, next) => {
     if (await removed($)) return next(e)
-    await startControls($)
     await worldTools($, registry)
     const context = await session($, registry, await $.session.id(), e.source === 'clear' || e.source === 'resume')
+    await startControls($)
     await transcript($, context, e.transcript_path)
     await observeTitle($, context, e)
     return next(e)
