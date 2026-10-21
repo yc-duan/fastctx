@@ -21795,6 +21795,7 @@
   "stats": {
     "stats": [
       {
+        "run": "5f3a9c",
         "machine": "desktop",
         "at": "2026-10-13T08:30:00Z",
         "boot": "2026-10-10T01:12:40Z",
@@ -21861,6 +21862,10 @@
         "lines": [
           {
             "hub": "home",
+            "kept": {
+              "trips": 41,
+              "changes": 3
+            },
             "since": "2026-10-13T07:58:10Z",
             "up": true,
             "trips": [
@@ -21935,6 +21940,10 @@
         "lines": [
           {
             "hub": "home",
+            "kept": {
+              "trips": 41,
+              "changes": 3
+            },
             "since": "2026-10-13T08:00:00Z",
             "up": false,
             "through": "desktop",

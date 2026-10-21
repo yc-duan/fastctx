@@ -16,7 +16,7 @@ use fastctx_platform::system::{CpuTimes, Traffic};
 use fastctx_types::access::{Acting, Purpose, Written};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
-use fastctx_types::stats::{Card, Cpu, Disk, Gpu, Line, MachineStats, Memory, NodeSeen};
+use fastctx_types::stats::{Card, Cpu, Disk, Gpu, Line, MachineStats, Memory, NodeSeen, StatsSeen};
 use jiff::Timestamp;
 
 use crate::Node;
@@ -28,12 +28,13 @@ pub(crate) async fn query(
     acting: &Acting,
     machine: Option<Written>,
     after: Option<Timestamp>,
+    seen: Option<StatsSeen>,
 ) -> Result<MachineStats, Failure> {
     let Some(target) = machine.filter(|machine| !node.is_here(machine)) else {
-        return here(node, after).await;
+        return here(node, after, seen).await;
     };
     match node
-        .call(acting, &target, Purpose::Hands, RemoteCall::Stats { after })
+        .call(acting, &target, Purpose::Hands, RemoteCall::Stats { after, seen })
         .await
         .map_err(|failure| Failure::new(failure.to_string()))??
     {
@@ -51,6 +52,13 @@ struct Counters {
 }
 
 static LAST: Mutex<Option<Counters>> = Mutex::new(None);
+
+/// This run of the node, which the number of a line's round trips and
+/// changes belongs to.
+fn run() -> String {
+    static RUN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    RUN.get_or_init(|| format!("{:x}", Timestamp::now().as_nanosecond())).clone()
+}
 
 /// How long apart two readings are taken when there was none lately: long
 /// enough for the processors' counters to have moved.
@@ -80,7 +88,11 @@ fn counters(traffic: &[Traffic]) -> Counters {
 
 /// How this computer is doing now; its lines' history only after `after`,
 /// when given.
-pub(crate) async fn here(node: &Arc<Node>, after: Option<Timestamp>) -> Result<MachineStats, Failure> {
+pub(crate) async fn here(
+    node: &Arc<Node>,
+    after: Option<Timestamp>,
+    seen: Option<StatsSeen>,
+) -> Result<MachineStats, Failure> {
     let read = || async {
         tokio::task::spawn_blocking(|| {
             let traffic = fastctx_platform::system::traffic().unwrap_or_default();
@@ -177,9 +189,13 @@ pub(crate) async fn here(node: &Arc<Node>, after: Option<Timestamp>) -> Result<M
             )
             .then((b.received + b.sent).cmp(&(a.received + a.sent)))
     });
-    // What came after the reading before; all of it again when that reading
-    // is later than now, this machine's clock having gone back since.
+    // What came after the reading before: by how many of each it was told,
+    // in this run of the node; asked by an older interface, by when it was,
+    // all of it again when that is later than now, this machine's clock
+    // having gone back since.
     let fresh = |when: Timestamp| after.is_none_or(|after| when > after || after > at);
+    let run = run();
+    let seen = seen.filter(|seen| seen.run == run);
     let lines = node
         .links()
         .iter()
@@ -189,17 +205,24 @@ pub(crate) async fn here(node: &Arc<Node>, after: Option<Timestamp>) -> Result<M
                 Status::Connecting { since, .. } => (false, since, None),
                 Status::Stopped { .. } => (false, at, None),
             };
-            Line {
-                hub: link.hub_name(),
-                since,
-                up,
-                through,
-                trips: link.trips().into_iter().filter(|trip| fresh(trip.at)).collect(),
-                changes: link.line_changes().into_iter().filter(|change| fresh(change.at())).collect(),
-            }
+            let hub = link.hub_name();
+            let (trips, changes, kept) = match &seen {
+                // A line the last reading did not tell is told whole.
+                Some(seen) => link.line_after(seen.lines.iter().find(|(line, _)| *line == hub).map(|(_, kept)| *kept)),
+                None => {
+                    let (trips, changes, kept) = link.line_after(None);
+                    (
+                        trips.into_iter().filter(|trip| fresh(trip.at)).collect(),
+                        changes.into_iter().filter(|change| fresh(change.at())).collect(),
+                        kept,
+                    )
+                }
+            };
+            Line { hub, kept: Some(kept), since, up, through, trips, changes }
         })
         .collect();
     Ok(MachineStats {
+        run: Some(run),
         machine: node.machine(),
         at,
         boot: uptime.and_then(|uptime| at.checked_sub(jiff::SignedDuration::try_from(uptime).ok()?).ok()),

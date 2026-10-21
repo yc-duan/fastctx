@@ -8,7 +8,7 @@
 
 use std::collections::VecDeque;
 
-use fastctx_types::stats::{LineChange, Trip};
+use fastctx_types::stats::{LineChange, LineKept, Trip};
 use jiff::{SignedDuration, Timestamp};
 
 use super::{Inner, state};
@@ -32,6 +32,9 @@ const TRIPS: SignedDuration = SignedDuration::from_hours(1);
 pub(crate) struct Line {
     trips: VecDeque<Trip>,
     changes: Vec<LineChange>,
+    /// How many of each were kept in this run, those since let go included:
+    /// a kept one's number is where it stands among them.
+    kept: LineKept,
 }
 
 impl Inner {
@@ -42,7 +45,11 @@ impl Inner {
             self.node.log(format!("reading how the line to the hub held: {error}; it is kept afresh"));
             Vec::new()
         });
-        self.line.lock().expect("never poisoned").changes = changes;
+        {
+            let mut line = self.line.lock().expect("never poisoned");
+            line.kept.changes = changes.len() as u64;
+            line.changes = changes;
+        }
         self.line_changed(LineChange::Started { at: Timestamp::now() });
     }
 
@@ -50,6 +57,7 @@ impl Inner {
     pub(super) fn line_changed(&self, change: LineChange) {
         let mut line = self.line.lock().expect("never poisoned");
         line.changes.push(change);
+        line.kept.changes += 1;
         let since = Timestamp::now() - SignedDuration::from_hours(24 * DAYS);
         line.changes.retain(|change| change.at() >= since);
         let over = line.changes.len().saturating_sub(KEPT);
@@ -78,6 +86,7 @@ impl Inner {
         let at = Timestamp::now();
         let mut line = self.line.lock().expect("never poisoned");
         line.trips.push_back(Trip { at, ms });
+        line.kept.trips += 1;
         let since = at - TRIPS;
         while line.trips.front().is_some_and(|trip| trip.at < since) {
             line.trips.pop_front();
@@ -95,6 +104,21 @@ impl super::Link {
     /// first.
     pub fn line_changes(&self) -> Vec<LineChange> {
         self.inner.line.lock().expect("never poisoned").changes.clone()
+    }
+
+    /// The round trips and changes kept after the first `seen` of each in
+    /// this run, and how many there have been; every one kept where `seen`
+    /// is more than this run kept, as of a line made anew.
+    pub fn line_after(&self, seen: Option<LineKept>) -> (Vec<Trip>, Vec<LineChange>, LineKept) {
+        let line = self.inner.line.lock().expect("never poisoned");
+        let seen = seen.filter(|seen| seen.trips <= line.kept.trips && seen.changes <= line.kept.changes);
+        let after = |kept: u64, len: usize, seen: Option<u64>| -> usize {
+            let first = kept - len as u64;
+            seen.map_or(0, |seen| seen.saturating_sub(first).min(len as u64) as usize)
+        };
+        let trips = line.trips.iter().skip(after(line.kept.trips, line.trips.len(), seen.map(|seen| seen.trips))).copied().collect();
+        let changes = line.changes[after(line.kept.changes, line.changes.len(), seen.map(|seen| seen.changes))..].to_vec();
+        (trips, changes, line.kept)
     }
 }
 

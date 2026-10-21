@@ -4,7 +4,7 @@
 // machine sends whole once and then only adds to. Nothing is read or kept
 // for a machine whose page was not opened.
 
-import type { Line, LineChange, MachineStats, Trip } from "../world/stats";
+import type { Line, LineChange, MachineStats, StatsSeen, Trip } from "../world/stats";
 
 /** One reading's rates, for the drawings. */
 export interface Sample {
@@ -52,6 +52,13 @@ export function keptOf(machine: string): Kept {
 }
 
 const time = (at: string) => Date.parse(at);
+
+/** What `stats` told of its lines, for the next reading to go on from;
+ *  none of a node that does not count them. */
+export function seenOf(stats: MachineStats | null): StatsSeen | null {
+  if (!stats?.run || stats.lines.some((line) => !line.kept)) return null;
+  return { run: stats.run, lines: stats.lines.map((line) => [line.hub, line.kept!]) };
+}
 
 /** Takes in a reading of `machine`, the `asked`th asked for: its rates
  *  join the drawings, and, when it was asked for what came after the last

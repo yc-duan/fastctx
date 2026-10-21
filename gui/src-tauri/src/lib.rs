@@ -675,8 +675,9 @@ async fn machine_stats(
     shell: tauri::State<'_, Shell>,
     machine_name: Option<String>,
     after: Option<jiff::Timestamp>,
+    seen: Option<fastctx_types::stats::StatsSeen>,
 ) -> Result<fastctx_types::stats::MachineStats, String> {
-    shell.world().stats(machine(machine_name)?, after).await.map_err(|error| error.to_string())
+    shell.world().stats(machine(machine_name)?, after, seen).await.map_err(|error| error.to_string())
 }
 
 /// Archives a conversation or brings it back, lets it sleep, wakes it or

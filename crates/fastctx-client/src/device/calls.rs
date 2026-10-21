@@ -190,10 +190,10 @@ impl Device {
                 let machine = machine.ok_or_else(|| failed("choose a machine for its folders; a device has none"))?;
                 (machine, RemoteCall::Folders { path }, None)
             }
-            Call::Stats { machine, after } => {
+            Call::Stats { machine, after, seen } => {
                 let machine =
                     machine.ok_or_else(|| failed("choose a machine; a device has no details page of its own"))?;
-                (machine, RemoteCall::Stats { after }, None)
+                (machine, RemoteCall::Stats { after, seen }, None)
             }
             Call::UpdateMachine { machine } => (machine, RemoteCall::UpdateWorld, None),
             Call::MachineUpdates { machine, update } => (machine, RemoteCall::Updates { update }, None),

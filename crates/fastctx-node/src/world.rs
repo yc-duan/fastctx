@@ -1012,8 +1012,8 @@ impl fastctx_net::link::Node for Handler {
                         .map(|state| RemoteReply::Update(Box::new(state)))
                         .map_err(Failure::new)
                 }
-                RemoteCall::Stats { after } => {
-                    crate::stats::here(&node, after).await.map(|stats| RemoteReply::Stats(Box::new(stats)))
+                RemoteCall::Stats { after, seen } => {
+                    crate::stats::here(&node, after, seen).await.map(|stats| RemoteReply::Stats(Box::new(stats)))
                 }
                 RemoteCall::Interfaces => {
                     crate::hub_arrival::interfaces().map(|addresses| RemoteReply::Interfaces { addresses })

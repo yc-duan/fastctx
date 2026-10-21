@@ -2082,7 +2082,7 @@ function show(next: Place): void {
         name,
         when,
         ago: (ms) => homeWords.ago(ms),
-        stats: (machine, after) => (live ? machineStats(machine, after) : specimenStats(machine, after)),
+        stats: (machine, after, seen) => (live ? machineStats(machine, after, seen) : specimenStats(machine, after)),
         nameProblem: (text) => (live ? nameProblem("machine", text) : specimenNameProblem("machine", text)),
         change,
         log: live ? machineLog : specimenMachineLog,

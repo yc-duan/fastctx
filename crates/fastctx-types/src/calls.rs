@@ -254,6 +254,9 @@ pub enum Call {
         machine: Option<crate::access::Written>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         after: Option<jiff::Timestamp>,
+        /// What the last reading told, to bring only what came after it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seen: Option<crate::stats::StatsSeen>,
     },
     /// On a session's own connection: a `ToolsChanged` frame each time the
     /// tools `resident`, the session's resident when it is known, is

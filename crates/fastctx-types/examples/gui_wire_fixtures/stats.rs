@@ -13,6 +13,7 @@ fn at(text: &str) -> Timestamp {
 
 pub fn fixtures() -> Fixtures {
     let windows = MachineStats {
+        run: Some("5f3a9c".into()),
         machine: "desktop".parse().unwrap(),
         at: at("2026-10-13T08:30:00Z"),
         boot: Some(at("2026-10-10T01:12:40Z")),
@@ -68,6 +69,7 @@ pub fn fixtures() -> Fixtures {
             busy: Some(0.42),
         }],
         lines: vec![Line {
+            kept: Some(fastctx_types::stats::LineKept { trips: 41, changes: 3 }),
             hub: "home".parse().unwrap(),
             since: at("2026-10-13T07:58:10Z"),
             up: true,
@@ -93,6 +95,7 @@ pub fn fixtures() -> Fixtures {
         },
     };
     let linux = MachineStats {
+        run: None,
         machine: "server".parse().unwrap(),
         at: at("2026-10-13T08:30:02Z"),
         boot: Some(at("2026-09-01T00:00:00Z")),
@@ -112,6 +115,7 @@ pub fn fixtures() -> Fixtures {
         cards: vec![],
         gpus: vec![],
         lines: vec![Line {
+            kept: Some(fastctx_types::stats::LineKept { trips: 41, changes: 3 }),
             hub: "home".parse().unwrap(),
             since: at("2026-10-13T08:00:00Z"),
             up: false,

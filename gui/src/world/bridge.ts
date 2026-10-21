@@ -21,7 +21,7 @@ import type { Cut, Edge, FindDoc, Found, PartRead, Window } from "../conversatio
 import type { AccountChange, AccountsReply, HubAccount, TokenPeek } from "./accounts";
 import type { UsageReport } from "./usage";
 import type { HubMoveReply, HubMoveRequest } from "./hub-move";
-import type { MachineStats } from "./stats";
+import type { MachineStats, StatsSeen } from "./stats";
 import type { Looked, RemoteHub, RemoteKey, RemoteServer, RemoteStep } from "../app/remote-world";
 import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
 
@@ -502,8 +502,8 @@ export function openAccount(hub: string, account: string, password: string, regi
 
 /** How `machine` is doing, or this computer with none; its lines' history
  *  only after `after`, when given (`fastctx_types::stats`). */
-export function machineStats(machine: MachineName | null, after: string | null = null): Promise<MachineStats> {
-  return invoke("machine_stats", { machineName: machine, after });
+export function machineStats(machine: MachineName | null, after: string | null = null, seen: StatsSeen | null = null): Promise<MachineStats> {
+  return invoke("machine_stats", { machineName: machine, after, seen });
 }
 
 /** Renames this computer `name`: on no hub, here alone; on hubs, through

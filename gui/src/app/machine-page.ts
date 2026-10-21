@@ -18,7 +18,7 @@ import { escape } from "../conversation/prose";
 import { loginsOf, names, type AccountChange, type HubAccounts, type Login } from "../world/accounts";
 import type { NameProblem, WorldNow } from "../world/bridge";
 import { agentName, osName, titleOf } from "../world/names";
-import type { Card, MachineStats } from "../world/stats";
+import type { Card, MachineStats, StatsSeen } from "../world/stats";
 import type { MachineFacts } from "../world/world";
 import type { AccessWords, MachinesWords } from "./account-words";
 import { AssistSheet, assistChange, assistancesIn, namesOn, type Assistance } from "./assist-sheet";
@@ -26,7 +26,7 @@ import type { Confirm } from "./confirm";
 import { bytesSaid } from "./data-page";
 import { redrawKeepingFocus } from "./focus";
 import { diskBar, Ring, Spark, Strip, type LineMark, type LineSpan } from "./machine-draw";
-import { daysOf, heldOf, keptOf, SPAN_MS, take, tripsHeld, type Sample } from "./machine-history";
+import { daysOf, heldOf, keptOf, seenOf, SPAN_MS, take, tripsHeld, type Sample } from "./machine-history";
 import type { MachinePageWords } from "./machine-page-words";
 import { FastctxBlock, type FastctxSubject } from "./machine-fastctx";
 import type { ReadLog } from "./machine-log";
@@ -64,7 +64,7 @@ export interface MachinePageOptions {
   when(at: Date, now: Date): string;
   /** How long ago, as the front page says it. */
   ago(ms: number): string;
-  stats(machine: string | null, after: string | null): Promise<MachineStats>;
+  stats(machine: string | null, after: string | null, seen: StatsSeen | null): Promise<MachineStats>;
   nameProblem(text: string): Promise<NameProblem | null>;
   change(login: Login, change: AccountChange): Promise<void>;
   /** A hub's log, to follow the machine told to uninstall as it is taken off. */
@@ -339,7 +339,7 @@ export class MachinePage implements Page {
     try {
       const asked = ++kept.asked;
       // Asked by how it is written: of two hubs' machines of one name, this one.
-      const stats = await this.options.stats(machine.here ? null : machine.written, kept.last?.at ?? null);
+      const stats = await this.options.stats(machine.here ? null : machine.written, kept.last?.at ?? null, seenOf(kept.last));
       take(machine.name, stats, !!kept.last, asked);
       this.problem = null;
     } catch (error) {

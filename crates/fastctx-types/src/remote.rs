@@ -432,6 +432,9 @@ pub enum RemoteCall {
     Stats {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         after: Option<jiff::Timestamp>,
+        /// What the last reading told, to bring only what came after it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seen: Option<crate::stats::StatsSeen>,
     },
     /// That machine's network addresses, as a place for the hub
     /// (`crate::hub_move`). A machine that cannot take the hub does not

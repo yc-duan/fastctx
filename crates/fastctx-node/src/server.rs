@@ -1003,10 +1003,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
             crate::focus::folders(node, &acting, machine, path).await.map(Reply::Folders)
         }
-        Call::Stats { machine, after } => {
+        Call::Stats { machine, after, seen } => {
             users_voice(node, peer)?;
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
-            crate::stats::query(node, &acting, machine, after).await.map(|stats| Reply::Stats(Box::new(stats)))
+            crate::stats::query(node, &acting, machine, after, seen).await.map(|stats| Reply::Stats(Box::new(stats)))
         }
         Call::Open { agent, town, node: target, text, model, reasoning_effort, attachments, choices } => {
             users_voice(node, peer)?;

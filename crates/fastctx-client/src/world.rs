@@ -774,8 +774,9 @@ impl World {
         &self,
         machine: Option<fastctx_types::access::Written>,
         after: Option<jiff::Timestamp>,
+        seen: Option<fastctx_types::stats::StatsSeen>,
     ) -> Result<fastctx_types::stats::MachineStats, Error> {
-        match self.ask(Call::Stats { machine, after }).await? {
+        match self.ask(Call::Stats { machine, after, seen }).await? {
             Reply::Stats(stats) => Ok(*stats),
             other => Err(unexpected(other)),
         }

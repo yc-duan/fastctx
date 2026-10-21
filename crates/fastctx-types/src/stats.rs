@@ -21,6 +21,9 @@ use crate::{HubName, MachineName};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MachineStats {
+    /// Which run of its node told it, for `StatsSeen`; an older node says nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
     pub machine: MachineName,
     /// When this was read.
     pub at: Timestamp,
@@ -138,6 +141,11 @@ pub struct Gpu {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Line {
     pub hub: HubName,
+    /// How many round trips and changes its node has kept in this run, the
+    /// first of the next reading's to be numbered after them; an older
+    /// node says nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept: Option<LineKept>,
     /// Since when it is up, or, while it is down, since when it tries.
     pub since: Timestamp,
     pub up: bool,
@@ -223,4 +231,20 @@ pub struct StuckWork {
     pub what: String,
     /// For how long, in seconds.
     pub seconds: u64,
+}
+
+/// How many round trips and changes of a line its node has kept in one run.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineKept {
+    pub trips: u64,
+    pub changes: u64,
+}
+
+/// What a reading of a machine's lines was told already: the run of its
+/// node, and how many of each line's round trips and changes. The next
+/// reading brings only those after them, whatever its clock did meanwhile.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatsSeen {
+    pub run: String,
+    pub lines: Vec<(HubName, LineKept)>,
 }
