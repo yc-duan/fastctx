@@ -63,6 +63,7 @@ fn resident(
     ResidentNow {
         source: None,
         about: About {
+            forked_from: None,
             id: id(who),
             host: Host {
                 agent: AgentName::try_from(agent).expect("an agent"),

@@ -80,6 +80,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     let assisting = node.works_here(&source.acting).is_err();
     let at = Timestamp::now();
     let about = About {
+        forked_from: Some(Address { machine: node.machine(), resident: resident.clone() }),
         mcp_off: source.mcp_off.clone(),
         id: id.clone(),
         host: Host { agent: source.host.agent, client: "claude-code".into(), version: source.host.version },

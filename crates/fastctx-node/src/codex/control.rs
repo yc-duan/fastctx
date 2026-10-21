@@ -249,6 +249,7 @@ async fn fork(
     let (fork, model) = codex.fork(thread, through.as_deref(), spec).await.map_err(Failure::new)?;
     let at = Timestamp::now();
     let about = About {
+        forked_from: Some(Address { machine: node.machine(), resident: parent.clone() }),
         mcp_off: source.mcp_off.clone(),
         id: id.clone(),
         host: source.host,
