@@ -294,6 +294,15 @@ async function controlExecute($, state, control) {
   if (control.do === 'checkpoint_import') {
     const current = await $.session.messages()
     const hashes = await messageFingerprints(current)
+    // A compaction's result that no transcript row anchors stays in the
+    // source's memory, and a fork, rebuilt from the transcript, does not
+    // carry it (2.1.303). Only such leading messages may be missing; the
+    // turns are counted from what the fork keeps.
+    const missing = control.checkpoints.messages.length - hashes.length
+    if (current.length < 4096 && missing > 0 && control.checkpoints.uuids?.length === control.checkpoints.messages.length
+      && control.checkpoints.uuids.slice(0, missing).every((uuid) => uuid == null)) {
+      control.checkpoints = checkpointsFrom(control.checkpoints, missing)
+    }
     const expected = control.checkpoints.messages
     const expectedTail = current.length >= 4096 ? expected.slice(-hashes.length) : expected
     if (hashes.length !== expectedTail.length || !hashes.every((hash, index) => expectedTail[index] === hash)) throw new Error('the fork does not carry the same retained message context')

@@ -96,6 +96,24 @@ async function trackCheckpoint($, state, result) {
   return true
 }
 
+// The checkpoints without their first `offset` messages: a turn that began
+// before them keeps where it ended, one that ended before them goes.
+function checkpointsFrom(checkpoints, offset) {
+  const turns = {}
+  for (const [turn, point] of Object.entries(checkpoints.turns)) {
+    if (point.after !== undefined && point.after - offset <= 0) continue
+    const kept = { ...point }
+    if (point.after !== undefined) kept.after = point.after - offset
+    if (point.before !== undefined && point.before - offset > 0) kept.before = point.before - offset
+    else {
+      delete kept.before
+      kept.before_uuid = null
+    }
+    turns[turn] = kept
+  }
+  return { ...checkpoints, messages: checkpoints.messages.slice(offset), uuids: checkpoints.uuids.slice(offset), turns }
+}
+
 function checkpointCut(current, checkpoint) {
   if (!checkpoint.length) throw new Error('Claude Code cannot retain an empty conversation through session.compact')
   if (!checkpoint.every((hash, index) => current[index] === hash)) throw new Error('the selected turn was compacted away or has no retained message boundary')
