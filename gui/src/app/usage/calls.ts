@@ -414,6 +414,7 @@ export class CallsList {
     const rough = row.timing.approximate;
     const own = row.conversation !== null;
     const model = row.model ? modelName(row.model) : null;
+    const usd = row.usd === null ? null : row.usd / 1_000_000;
 
     // The sentences behind the row.
     const named = (kind: string) => (claude ? { read: usage.kinds.cache_read, write: usage.kinds.cache_write, input: usage.kinds.input, output: usage.kinds.output } : { input: usage.kinds.fresh, read: usage.kinds.cached, output: usage.kinds.output, reason: usage.kinds.reasoning })[kind as "input"] ?? kind;
@@ -423,7 +424,7 @@ export class CallsList {
       several ? who.name : "",
       background ? words.backgroundSaid : [model ?? "", row.source === "agent" ? words.agentTag : ""].filter(Boolean).join(words.and),
       ...kinds.filter(([, value]) => value > 0).map(([kind, value]) => `${named(kind)} ${value.toLocaleString("en-US")}`),
-      row.usd !== null ? usage.money(row.usd) : "",
+      usd !== null ? usage.money(usd) : "",
       [took !== null ? words.took(took) : "", first !== null ? words.first(first) : ""].filter(Boolean).join(words.and),
       rough && took !== null ? words.roughly : "",
       failed ? [words.outcomeSaid[row.outcome as Exclude<CallOutcome, "completed">], row.phase === "before_response" || row.phase === "streaming" ? words.phase[row.phase] : ""].filter(Boolean).join(words.and) : "",
@@ -445,7 +446,7 @@ export class CallsList {
           .map(([kind, value]) => `<i class="uc-k-${kind}" style="flex-grow:${value}"></i>`)
           .join("")}</span>`
       : "";
-    const figures = `<span class="uc-bar">${mix}</span><span class="uc-tokens">${sum ? escape(usage.tokens(sum)) : ""}</span>${claude ? `<span class="uc-usd">${row.usd !== null ? escape(usage.money(row.usd)) : ""}</span>` : ""}<span class="uc-took">${took !== null ? `${rough ? "≈" : ""}${escape(words.short(took))}` : ""}</span>`;
+    const figures = `<span class="uc-bar">${mix}</span><span class="uc-tokens">${sum ? escape(usage.tokens(sum)) : ""}</span>${claude ? `<span class="uc-usd">${usd !== null ? escape(usage.money(usd)) : ""}</span>` : ""}<span class="uc-took">${took !== null ? `${rough ? "≈" : ""}${escape(words.short(took))}` : ""}</span>`;
     const mark = failed
       ? `<span class="uc-mark ${row.outcome}">${row.outcome === "failed" ? glyph("cross", 14) : row.outcome === "interrupted" ? glyph("stop", 14) : row.outcome === "held" ? glyph("lock", 14) : "?"}</span>`
       : `<span class="uc-mark"></span>`;

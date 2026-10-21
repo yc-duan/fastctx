@@ -26,6 +26,7 @@ export interface UsageCall {
   who: HubAccount | null;
   model: string | null;
   tokens: Tokens | null;
+  /** Millionths of a dollar, as the ledger keeps it. */
   usd: number | null;
   source: CallSource;
   agent: string | null;

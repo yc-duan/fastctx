@@ -74,7 +74,8 @@ async function make(machine: string, agent: string, dir: string, at: Date): Prom
       const roll = random();
       const outcome: CallOutcome = roll < 0.012 ? "failed" : roll < 0.022 ? "interrupted" : claude && roll < 0.027 ? "held" : "completed";
       const sent = outcome !== "held";
-      const usd = claude ? (sent ? ((model.includes("haiku") ? 0.2 : model.includes("sonnet") ? 0.6 : 1) * (input * 5 + write * 6.25 + read * 0.5 + output * 25)) / 1_000_000 : 0) : null;
+      // Millionths of a dollar, as the ledger keeps them.
+      const usd = claude ? (sent ? Math.round((model.includes("haiku") ? 0.2 : model.includes("sonnet") ? 0.6 : 1) * (input * 5 + write * 6.25 + read * 0.5 + output * 25)) : 0) : null;
       rows.push({
         cursor: { at: new Date(at).toISOString(), key: "" },
         who,
@@ -98,7 +99,7 @@ async function make(machine: string, agent: string, dir: string, at: Date): Prom
           who,
           model: null,
           tokens: null,
-          usd: 0.002 + random() * 0.03,
+          usd: Math.round((0.002 + random() * 0.03) * 1_000_000),
           source: "background",
           agent: null,
           timing: { started_at: null, first_at: null, ended_at: new Date(at).toISOString(), approximate: false },
