@@ -14,7 +14,9 @@ export type Control =
   | { do: "answer"; request: JsonValue; answer: JsonValue }
   /** Claude Code's own subagents, and the latest messages of one. */
   | { do: "agents" }
-  | { do: "agent_messages"; agent_id: string };
+  | { do: "agent_messages"; agent_id: string }
+  /** Withdraws a control still waiting for the turn under way to end. */
+  | { do: "cancel_control"; id: string };
 
 export type ControlKind = Control["do"];
 
@@ -25,7 +27,9 @@ export type ControlKind = Control["do"];
  *  the model selector to open, with the host's catalog; or the fork. */
 export type Controlled =
   | { kind: "done"; said: string | null }
-  | { kind: "reported"; said: string | null }
+  /** `queued`: taken to do once the turn under way ends; its progress
+   *  comes as the conversation's events (`PendingControl`). */
+  | { kind: "reported"; said: string | null; queued?: string | null }
   | { kind: "refused"; said: string; current_model?: string | null }
   | { kind: "model_menu"; models: ModelOffer[]; model: string | null; effort: string | null; service_tier: string | null }
   | { kind: "forked"; resident: Address }
@@ -85,7 +89,23 @@ export interface Usage {
   raw: JsonValue;
 }
 
+/** A control the node took to do later, and where it stands. */
+export type ControlState = "waiting" | "running" | "completed" | "failed" | "cancelled" | "uncertain";
+
+export interface PendingControl {
+  id: string;
+  control: Control;
+  at: string;
+  state: ControlState;
+  result?: Controlled | null;
+  error?: string | null;
+}
+
 export interface Offers {
+  /** The node takes controls to do once a turn ends, and their withdrawal. */
+  control_queue?: boolean;
+  /** Those it holds, waiting or being done. */
+  pending_controls?: PendingControl[];
   controls: ControlKind[];
   commands: CommandOffer[];
   models: ModelOffer[];

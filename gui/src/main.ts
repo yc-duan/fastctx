@@ -131,7 +131,7 @@ import { TalkActs } from "./app/talk-acts";
 import { TalkMenu } from "./app/talk-menu";
 import { enTalkMenu, zhTalkMenu } from "./app/talk-menu-words";
 import { TalkToast } from "./app/talk-toast";
-import type { Controlled } from "./world/control";
+import type { Controlled, PendingControl } from "./world/control";
 import { escape as escapeText } from "./conversation/prose";
 import {
   enComposer,
@@ -1413,6 +1413,7 @@ function home(): Page {
 }
 
 function specimenTalk(address: Address): KeepablePage {
+  let queuedHere: PendingControl[] = [];
   const name = address.resident;
   const sample: Specimen & { later?: SessionEvent[]; rate?: number; timed?: boolean } = name.startsWith("stream")
     ? streamSpecimen(params)
@@ -1472,8 +1473,21 @@ function specimenTalk(address: Address): KeepablePage {
     },
     controls: {
       words: composerWords,
-      offers: async () => (sample.agent === "claude" ? specimenClaudeOffers : specimenOffers),
-      control: async () => ({ kind: "done", said: english ? "this is a specimen" : "这是样例，没有连着世界" }),
+      // A compaction asked for here waits for a turn's end, as one asked
+      // mid-turn does, so its line above the input can be looked at.
+      offers: async () => ({ ...(sample.agent === "claude" ? specimenClaudeOffers : specimenOffers), control_queue: true, pending_controls: queuedHere }),
+      control: async (what) => {
+        if (what.do === "cancel_control") {
+          queuedHere = queuedHere.filter((row) => row.id !== what.id);
+          return { kind: "done", said: null };
+        }
+        if (what.do === "compact" || (what.do === "command" && what.name === "compact")) {
+          const id = `control-specimen-${queuedHere.length + 1}`;
+          queuedHere = [...queuedHere, { id, control: what, at: new Date().toISOString(), state: "waiting" }];
+          return { kind: "reported", said: "Waiting for the current turn to end.", queued: id };
+        }
+        return { kind: "done", said: english ? "this is a specimen" : "这是样例，没有连着世界" };
+      },
       forked: () => {},
       open: openOutside,
     },

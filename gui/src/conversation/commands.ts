@@ -52,7 +52,8 @@ export interface MenuCommand {
 /** What `/` offers. While a turn runs, compaction (and Codex's review, which
  *  starts a turn of its own) waits for it to end, so it is not offered. */
 export function commandsOf(offers: Offers | null, words: CommandWords, moving = false): MenuCommand[] {
-  const waits = (name: string) => moving && (name === "compact" || name === "review");
+  // A node that keeps them until the turn ends takes them at any time.
+  const waits = (name: string) => moving && !offers?.control_queue && (name === "compact" || name === "review");
   const own: MenuCommand[] = (offers?.commands ?? []).filter((command) => command.path || !waits(command.name)).map((command: CommandOffer) => ({
     name: command.name,
     description: (command.source === "codex" && !command.path && words.host[command.name]) || command.description,

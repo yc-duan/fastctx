@@ -1015,6 +1015,12 @@ button.composer-context[hidden] {
   color: var(--wrong);
 }
 
+/* A command the node does once the turn ends has no grip to move it by:
+   its words start where a queued line's words do. */
+.control-queue .queue-row {
+  padding-left: var(--space-3);
+}
+
 .queue-row.unsure .queue-text {
   padding-left: var(--space-3);
   color: var(--text-3);

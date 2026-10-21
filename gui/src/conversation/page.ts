@@ -17,6 +17,8 @@ import { SendQueue, type Queued } from "./queue";
 import { bindComposer, type ComposerSession, type ComposerSessionState } from "./composer";
 import type { ComposerSnapshot, ComposerUpdated } from "../world/composer";
 import { NodeQueue } from "./node-queue";
+import { ControlQueue, controlName } from "./control-queue";
+import type { PendingControl } from "../world/control";
 import { NodeTray, type AssistantFiles } from "./node-tray";
 import { Menu, commandFor, commandRow, commandsOf, usageOf, type MenuCommand } from "./commands";
 import { ModelPanel, enModelPanel, zhModelPanel } from "./model-panel";
@@ -403,6 +405,10 @@ export class ConversationPage {
       changed: () => this.drawAction(),
     });
     this.element.querySelector(".composer-queue")!.replaceWith(this.queue.element);
+    if (options.controls) {
+      this.controlQueue = new ControlQueue(options.controls.words, (id) => void this.withdraw(id));
+      this.queue.element.before(this.controlQueue.element);
+    }
     this.chip = this.element.querySelector<HTMLButtonElement>(".composer-chip")!;
     this.input.value = this.draft() ?? "";
     if (options.controls) this.menus();
@@ -748,6 +754,7 @@ export class ConversationPage {
     if (how.read) this.read = true;
     // The commands it offers changed (a plugin loaded, a description came).
     if (this.options.conversation.takeOffersChanged()) void this.askOffers();
+    if (this.options.conversation.takeControlsChanged()) this.syncControls();
     // A host that keeps a checkpoint per turn (Claude) has one more once a
     // turn ends; nothing else it offers changes with a turn, and what does
     // change is said by the host (commands, above).
@@ -923,6 +930,10 @@ export class ConversationPage {
   private sharedState: ComposerSessionState | null = null;
   private unbindShared: (() => void) | null = null;
   private nodeQueue: NodeQueue | null = null;
+  private controlQueue: ControlQueue | null = null;
+  /** The controls the node took to do once a turn ends, by their ids. */
+  private readonly pendingControls = new Map<string, PendingControl>();
+  private offersAsked = 0;
   private nodeTray: NodeTray | null = null;
   /** This device's last send of the shared words, until the node answers. */
   private sendingShared: Promise<unknown> = Promise.resolve();
@@ -1484,10 +1495,16 @@ export class ConversationPage {
     const controls = this.options.controls;
     if (!controls || this.left) return;
     clearTimeout(this.offersAgain);
+    // An answer to an earlier asking that comes after a later one is set aside.
+    const asking = ++this.offersAsked;
     try {
-      this.offered = await controls.offers();
+      const offered = await controls.offers();
+      if (asking !== this.offersAsked) return;
+      this.offered = offered;
       this.offersFailed = 0;
+      this.syncControls(offered.pending_controls ?? []);
     } catch {
+      if (asking !== this.offersAsked) return;
       // The way to its machine broke for a moment: asked again a few times,
       // soon and then less often; after that, when a turn ends. Its machine
       // offers a model picker whatever its host answers, so only a machine
@@ -1800,6 +1817,13 @@ export class ConversationPage {
     if (!quiet) this.say(words.running(command.name));
     try {
       const done = await controls.control(what);
+      // Taken to do once the turn ends: its line above the input says so.
+      if (done.kind === "reported" && done.queued) {
+        this.pendingControls.set(done.queued, { id: done.queued, control: what, at: new Date().toISOString(), state: "waiting" });
+        this.say("");
+        this.syncControls();
+        return true;
+      }
       // A choice kept for the next turn: the caller already shows it, and
       // nothing else changed for it to be asked again.
       if (quiet && (done.kind === "done" || done.kind === "reported" || done.kind === "selected")) return true;
@@ -2074,8 +2098,61 @@ export class ConversationPage {
     this.drawState();
   }
 
+  /** The controls the node took to do later, as the conversation has them:
+   *  what the node holds now (`snapshot`, with what it offers) and each
+   *  one's events since; one that ended is said, and goes. */
+  private syncControls(snapshot?: PendingControl[]): void {
+    const conversation = this.options.conversation;
+    if (snapshot) {
+      const held = new Set(snapshot.map((row) => row.id));
+      for (const row of snapshot) if (!this.pendingControls.has(row.id)) this.pendingControls.set(row.id, row);
+      // One no longer held that no event saw end ended out of sight.
+      for (const id of [...this.pendingControls.keys()]) if (!held.has(id) && !conversation.controlState(id)) this.pendingControls.delete(id);
+    }
+    for (const [id, row] of this.pendingControls) {
+      const latest = conversation.controlState(id);
+      if (!latest || latest.state === row.state) continue;
+      if (latest.state === "waiting" || latest.state === "running") this.pendingControls.set(id, latest);
+      else {
+        this.pendingControls.delete(id);
+        this.ended(latest);
+      }
+    }
+    this.controlQueue?.draw([...this.pendingControls.values()]);
+  }
+
+  /** Says what came of a control the node did after a turn. */
+  private ended(row: PendingControl): void {
+    const words = this.options.controls?.words;
+    if (!words) return;
+    const name = controlName(row);
+    const result = row.result;
+    if (row.state === "cancelled") return;
+    if (row.state === "failed") this.say(words.failed(row.error ?? ""), row.error ?? "", true);
+    else if (row.state === "uncertain") this.say(words.unknownOutcome(name), row.error ?? "", true);
+    else if (result?.kind === "refused") this.say(result.said, "", true);
+    else if (result?.kind === "reported") this.say(result.said ?? words.reported(name));
+    else this.say(words.done(name));
+    void this.askOffers();
+  }
+
+  /** Takes back a control still waiting for the turn to end. */
+  private async withdraw(id: string): Promise<void> {
+    const controls = this.options.controls;
+    if (!controls) return;
+    try {
+      await controls.control({ do: "cancel_control", id });
+      this.pendingControls.delete(id);
+      this.syncControls();
+    } catch (error) {
+      this.say(controls.words.failed(detailOf(error)), detailOf(error), true);
+    }
+  }
+
   /** The stream came back after it broke. */
   resumed(): void {
+    // What it offers may have changed while it was away.
+    void this.askOffers();
     if (!this.interrupted) return;
     this.interrupted = false;
     this.gone = null;

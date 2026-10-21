@@ -18,6 +18,7 @@ import type { SessionEvent, TurnEnd } from "../world/events";
 import type { MachineName } from "../world/events";
 import { Fold, type Block, type Entry, type Gap, type KeptWords, type SendState, type ShownAttachment } from "./model";
 import type { AgentRun } from "./agents";
+import type { PendingControl } from "../world/control";
 
 /** The part a page opens on, in place of all it held. */
 export interface Window {
@@ -579,6 +580,12 @@ export class Conversation {
   }
   hasTurns(): boolean {
     return this.tail.start > 0 || this.parts.some((part) => part.fold.hasTurns());
+  }
+  takeControlsChanged(): boolean {
+    return this.live.takeControlsChanged();
+  }
+  controlState(id: string): PendingControl | undefined {
+    return this.live.controlState(id);
   }
   takeOffersChanged(): boolean {
     return this.live.takeOffersChanged();

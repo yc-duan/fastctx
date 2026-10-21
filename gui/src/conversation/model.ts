@@ -24,6 +24,7 @@ import { userWords } from "./told";
 import { readReply, type AsyncQuestion } from "./async-ask";
 import { Agents, type AgentRun } from "./agents";
 import { Requests } from "./requests";
+import type { PendingControl } from "../world/control";
 
 export type Use = "done" | "failed" | "declined" | "cut" | "unknown";
 
@@ -608,6 +609,15 @@ export class Fold {
           }
           return;
         }
+        // A control the node took to do later moved on: its latest word.
+        if (change.kind === "metadata") {
+          const row = (change.metadata as { fastctx_control?: PendingControl } | null)?.fastctx_control;
+          if (row && typeof row.id === "string") {
+            this.controlStates.set(row.id, row);
+            this.controlsChanged = true;
+          }
+          return;
+        }
         if (change.kind === "history_changed" || change.kind === "history_cut") {
           this.stale = true;
           return;
@@ -1047,6 +1057,21 @@ export class Fold {
   }
 
   private offersChanged = false;
+  private controlsChanged = false;
+  /** Where each control the node took to do later stands, as its last
+   *  event said. */
+  private readonly controlStates = new Map<string, PendingControl>();
+
+  /** Whether a control the node took moved on since last asked. */
+  takeControlsChanged(): boolean {
+    const changed = this.controlsChanged;
+    this.controlsChanged = false;
+    return changed;
+  }
+
+  controlState(id: string): PendingControl | undefined {
+    return this.controlStates.get(id);
+  }
 
   /** Whether what the conversation offers changed since last asked. */
   takeOffersChanged(): boolean {
