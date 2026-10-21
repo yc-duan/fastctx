@@ -144,6 +144,11 @@ pub(crate) async fn remote_retained(node: &Arc<Node>, places: &[PathBuf]) -> Res
         if slots.is_empty() {
             continue;
         }
+        // A machine no hub knows any more keeps no conversation that could
+        // still read them: they go with the room.
+        if !node.links().iter().any(|link| link.view().member(&owner.machine).is_some()) {
+            continue;
+        }
         let acting = super::references::optional::<Acting>(&place.join(RETAINED))?.unwrap_or(Acting::Here);
         let target = (&owner.machine).into();
         let facts = node.call(&acting, &target, Purpose::Look, RemoteCall::Facts).await.map_err(failed)??;
