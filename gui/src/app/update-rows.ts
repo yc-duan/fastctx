@@ -6,6 +6,7 @@
 // Which line it follows is the line of the version it runs: no choice.
 
 import { escape } from "../conversation/prose";
+import { detailOf } from "./problem";
 import { effect } from "./signals";
 import { lineOf, stageMark } from "./update-marks";
 import type { Updates } from "./updates";
@@ -54,10 +55,16 @@ export class UpdateRows {
       settings.auto = value === "on";
       settings.chosen = true;
     } else if (kind === "relays") settings.relays = value === "on";
-    this.updates.set(settings).catch((error: unknown) => {
-      this.said = String(error);
-      this.draw(this.updates.state.peek());
-    });
+    this.updates.set(settings).then(
+      () => {
+        this.said = "";
+        this.draw(this.updates.state.peek());
+      },
+      (error: unknown) => {
+        this.said = detailOf(error);
+        this.draw(this.updates.state.peek());
+      },
+    );
   }
 
   /** The one line of how this device's updates stand, and what is behind
@@ -65,7 +72,7 @@ export class UpdateRows {
   private line(state: UpdateState | null): string {
     const { words } = this;
     const offered = this.updates.offered.peek();
-    if (this.said) return escape(this.said);
+    if (this.said) return `<span class="settings-wrong" title="${escape(this.said)}">${escape(words.notSet)}</span>`;
     if (!state) return "";
     const looked = state.looked;
     const said = (text: string, title = "", tone = "") => `<span${tone ? ` class="${tone}"` : ""}${title ? ` title="${escape(title)}"` : ""}>${escape(text)}</span>`;

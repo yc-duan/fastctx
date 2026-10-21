@@ -67,6 +67,7 @@ import { WaysSheet } from "./machine-ways";
 import type { Signal } from "./signals";
 import type { VersionWindow } from "./version-window";
 import { jobsOf, residentsOf, type Store } from "./store";
+import { detailOf } from "./problem";
 
 export interface MachinesOptions {
   store: Store;
@@ -221,6 +222,10 @@ export class MachinesPage implements Page {
   private updatesLogin = new Map<string, Login>();
   /** The hub answers no update view: it runs an older release. */
   private updatesOld = false;
+  /** Why the update view could not be read, while none was; and which ask
+   *  was the latest, so an earlier answer coming later is dropped. */
+  private updatesFailed: string | null = null;
+  private updatesAsked = 0;
   private updatesTimer = 0;
   /** What scheduling or setting a machine just said, by its name. */
   private readonly updatesSaid = new Map<string, string>();
@@ -746,20 +751,30 @@ export class MachinesPage implements Page {
     const world = this.options.store.world.peek();
     if (!updates || !world) return;
     const logins = loginsOf(world.accounts);
+    const asked = ++this.updatesAsked;
     const answers = await Promise.allSettled(logins.map((login) => updates.ask(login.hubName, login.account, { do: "view" })));
+    if (asked !== this.updatesAsked) return;
     const views = new Map<string, UpdatesView>();
     const byName = new Map<string, MachineUpdate>();
     const from = new Map<string, Login>();
-    let refused = false;
+    let old = false;
+    let failed: string | null = null;
     answers.forEach((answer, index) => {
       const login = logins[index]!;
+      const key = `${login.hub}\n${login.account}`;
+      let view: UpdatesView | undefined;
       if (answer.status === "rejected") {
-        refused = true;
-        return;
-      }
-      if (answer.value.kind !== "view") return;
-      const view = answer.value.view;
-      views.set(`${login.hub}\n${login.account}`, view);
+        const why = detailOf(answer.reason);
+        // Only a hub before the view says so; anything else passes, and
+        // what was read last stands meanwhile.
+        if (/does not support the updates view/.test(why)) old = true;
+        else {
+          failed = why;
+          view = this.updateViews.get(key);
+        }
+      } else if (answer.value.kind === "view") view = answer.value.view;
+      if (!view) return;
+      views.set(key, view);
       for (const machine of view.machines) {
         const kept = byName.get(machine.machine);
         const more = (one: MachineUpdate) => Number(one.actions.schedule.allowed) + Number(one.actions.settings.allowed) + Number(one.actions.update.allowed);
@@ -772,7 +787,8 @@ export class MachinesPage implements Page {
     this.updateViews = views;
     this.updatesByName = byName;
     this.updatesLogin = from;
-    this.updatesOld = !views.size && refused;
+    this.updatesOld = !views.size && old;
+    this.updatesFailed = views.size || old ? null : failed;
     this.redraw();
   }
 
@@ -791,6 +807,9 @@ export class MachinesPage implements Page {
     const machines = [...this.updatesByName.values()];
     let head = "";
     if (this.updatesOld) head = `<p class="uv-old">${escape(words.hubOld)}</p>`;
+    else if (this.updatesFailed) head = `<p class="uv-old" title="${escape(this.updatesFailed)}">${escape(words.unread)}</p>`;
+    // What the page itself was asked and could not do, said over it.
+    if (this.note?.machine === "") head = `<p class="uv-old">${escape(this.note.text)}</p>${head}`;
     else if (machines.length) {
       const width = Math.max(0, this.list.clientWidth - (narrow ? 32 : 48));
       head = rulerOf({ machines, newest, hub, minimum: policy?.minimum ?? null, line, width: width || 900, phone: narrow }, words);
@@ -909,8 +928,9 @@ export class MachinesPage implements Page {
     if (!login) return;
     try {
       await updates.ask(login.hubName, login.account, { do: "policy", minimum, managed_auto: managedAuto });
+      if (this.note?.machine === "") this.note = null;
     } catch (error) {
-      this.note = { machine: "", text: error instanceof Error ? error.message : String(error) };
+      this.note = { machine: "", text: this.options.access.failed(detailOf(error)) };
     }
     await this.askUpdates();
   }

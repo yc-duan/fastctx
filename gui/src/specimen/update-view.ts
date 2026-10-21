@@ -105,7 +105,10 @@ export function specimenUpdateView(world: () => WorldNow | null): (hub: string, 
     const versions = releases.map((one) => ({ version: one.version, published: one.pub_date ?? null, summary: one.notes ?? null, manifest: one, problem: null }));
     return { hub: v(7), stable: null, beta: manifest(v(8)), releases, versions, policy: { ...policy }, machines, available: machines.filter((one) => one.offer && one.actions.schedule.allowed).length };
   };
-  return async (_hub, _account, call) => {
+  return async (hub, _account, call) => {
+    // A node knows its hubs by name, not by id: asked by anything else, the
+    // specimen refuses as the node does.
+    if (!(world()?.accounts.hubs ?? []).some((one) => one.name === hub)) throw new Error(`this computer is not logged in to a hub named ${hub}`);
     if (call.do === "view") return { kind: "view", view: view() };
     if (call.do === "release") {
       const one = manifest(call.version);

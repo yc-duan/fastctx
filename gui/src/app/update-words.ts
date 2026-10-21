@@ -145,6 +145,8 @@ export interface UpdateWords {
   permission: string;
   minimum(version: string): string;
   failed(why: string): string;
+  /** A setting of this device's updates not changed, the reason under the pointer. */
+  notSet: string;
   /** The settings. */
   updates: string;
   current(version: string): string;
@@ -205,6 +207,7 @@ export const zhUpdate: UpdateWords = {
   permission: "在系统设置里允许 Fastctx 安装应用，回来再点更新",
   minimum: (version) => `网络要求至少 ${version}`,
   failed: (why) => `没能更新：${why}`,
+  notSet: "没改成",
   updates: "更新",
   current: (version) => `Fastctx ${version}`,
   look: "检查更新",
@@ -257,6 +260,7 @@ export const enUpdate: UpdateWords = {
   permission: "Allow Fastctx to install apps in the system settings, then tap Update again",
   minimum: (version) => `The network asks for at least ${version}`,
   failed: (why) => `Couldn't update: ${why}`,
+  notSet: "Couldn't change it",
   updates: "Updates",
   current: (version) => `Fastctx ${version}`,
   look: "Check for updates",

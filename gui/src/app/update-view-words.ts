@@ -39,8 +39,10 @@ export interface UpdateViewWords {
   managedAuto: string;
   /** A switch of a machine's own updating by itself. */
   auto: string;
-  /** A hub too old to tell the view. */
+  /** A hub too old to tell the view; a view not read for another reason,
+   *  the reason under the pointer. */
   hubOld: string;
+  unread: string;
   /** What is done to the machines chosen, and its short words on a phone. */
   updateTo: string;
   ways: string;
@@ -81,6 +83,7 @@ export const zhUpdateView: UpdateViewWords = {
   managedAuto: "受管机器自动更新",
   auto: "自动更新",
   hubOld: "中枢还是旧版本，换上新版后这里才能管更新",
+  unread: "没读到中枢的更新情况",
   updateTo: "更新到…",
   ways: "更新方式",
   cancel: "撤销安排",
@@ -138,6 +141,7 @@ export const enUpdateView: UpdateViewWords = {
   managedAuto: "Managed machines update by themselves",
   auto: "Update automatically",
   hubOld: "The hub runs an older version; updates can be managed here once it is updated",
+  unread: "Couldn't read the hub's updates",
   updateTo: "Update to…",
   ways: "Update settings",
   cancel: "Cancel scheduled",
