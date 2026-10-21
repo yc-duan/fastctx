@@ -301,6 +301,7 @@ async fn fork(
     };
     crate::turns::apply(node, &id, event).await.map_err(|error| Failure::new(error.to_string()))?;
     crate::codex::claim(node, &fork, &id).await;
+    crate::focus::forked(node, &id).await?;
     Ok(Controlled::Forked { resident: Address { machine: node.machine(), resident: id } })
 }
 

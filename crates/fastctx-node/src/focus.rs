@@ -288,6 +288,29 @@ pub(crate) async fn changed(
     })
 }
 
+/// A fork keeps its source's already-injected developer messages. Its own
+/// instructions apply on the next full context rebuild, so its current
+/// selection is also delivered once with the next turn, without waking it.
+pub(crate) async fn forked(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
+    let opening = opening(&node.world.conversation(id))?
+        .ok_or_else(|| Failure::new("the fork has no saved machine and folder context"))?;
+    let text = if opening.note.is_empty() {
+        "No machines or folders are selected for this fork; this replaces any earlier selection in its inherited history and does not limit which machines it may use.".to_string()
+    } else {
+        format!(
+            "The machines and folders selected for this fork; this replaces any earlier selection in its inherited history.\n\n{}",
+            opening.note
+        )
+    };
+    let delivery = Delivery {
+        id: crate::speech::new_id("fork-focus"),
+        at: Timestamp::now(),
+        notice: Notice::World { fact: WorldFact::Focus { focus: opening.focus }, text },
+    };
+    crate::speech::tell_here(node, id, delivery, crate::speech::Owed::Nobody).await?;
+    Ok(())
+}
+
 /// A Codex thread compacted its conversation, `item` naming the compaction:
 /// it is told the machines and folders again where its instructions are
 /// out of date.
