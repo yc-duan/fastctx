@@ -61,11 +61,6 @@ impl From<fastctx_net::web::Failure> for Failure {
     }
 }
 
-/// Looks without a durable listing cache, for callers that do not own one.
-pub async fn look(running: Option<&str>) -> Looked {
-    look_after(running, &Looked::default(), None).await
-}
-
 /// Performs one bounded check, preserving earlier discoveries on failure.
 /// `cache` keeps ETags and their corresponding pages together across restarts.
 pub async fn look_after(running: Option<&str>, previous: &Looked, cache: Option<&Path>) -> Looked {
@@ -147,32 +142,53 @@ pub async fn look_after(running: Option<&str>, previous: &Looked, cache: Option<
             wanted.extend(releases.iter().find(|r| !r.prerelease));
             wanted.sort_by(|a, b| a.version.cmp(&b.version));
             wanted.dedup_by(|a, b| a.version == b.version);
-            let mut manifests = Vec::new();
+            let mut manifests: BTreeMap<_, _> = previous
+                .newer
+                .iter()
+                .chain(previous.stable.iter())
+                .chain(previous.beta.iter())
+                .map(|manifest| (manifest.version.clone(), manifest.clone()))
+                .collect();
+            let mut failure = None;
             // Bound manifest work separately: missing assets must not turn an
             // otherwise successful check into minutes per listed release.
             let read = async {
                 for release in wanted {
-                    if let Ok(manifest) = of(release).await {
-                        manifests.push(manifest);
+                    match of(release).await {
+                        Ok(manifest) => {
+                            manifests.insert(manifest.version.clone(), manifest);
+                        }
+                        Err(why) => {
+                            if failure.is_none() || matches!(why.kind, CheckFailure::RateLimited { .. }) {
+                                failure = Some(why);
+                            }
+                        }
                     }
                 }
             };
-            let _ =
-                tokio::time::timeout(CHECK_TIME.saturating_sub(started.elapsed()).min(Duration::from_secs(60)), read)
-                    .await;
-            looked.stable = releases
-                .iter()
-                .find(|r| !r.prerelease)
-                .and_then(|r| manifests.iter().find(|m| m.version == r.version))
-                .cloned();
-            looked.beta = releases
-                .first()
-                .filter(|r| r.prerelease)
-                .and_then(|r| manifests.iter().find(|m| m.version == r.version))
-                .cloned();
+            if tokio::time::timeout(CHECK_TIME.saturating_sub(started.elapsed()).min(Duration::from_secs(60)), read)
+                .await
+                .is_err()
+                && failure.is_none()
+            {
+                failure = Some(Failure {
+                    reached: true,
+                    kind: CheckFailure::Unreachable { reason: ReachFailure::Timeout },
+                    why: "reading GitHub's release manifests timed out".into(),
+                });
+            }
+            let mut manifests: Vec<_> = manifests.into_values().collect();
             manifests.sort_by_key(|m| std::cmp::Reverse(m.semver()));
+            looked.stable = manifests.iter().find(|m| m.semver().is_some_and(|v| v.pre.is_empty())).cloned();
+            looked.beta = manifests.iter().find(|m| m.semver().is_some_and(|v| !v.pre.is_empty())).cloned();
+            manifests.truncate(NEWER);
             looked.newer = manifests;
             looked.releases = releases;
+            if let Some(failure) = failure {
+                looked.why = Some(failure.why);
+                looked.failure = Some(failure.kind);
+                looked.failures = previous.failures.saturating_add(1);
+            }
         }
         Err(failure) => {
             looked.github = Some(failure.reached);

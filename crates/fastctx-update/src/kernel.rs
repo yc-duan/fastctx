@@ -13,15 +13,13 @@ pub fn target() -> String {
     format!("{KERNEL_PREFIX}{}", triple())
 }
 
-/// The Rust target triple this program was built for, as releases name
-/// their command-line programs: Linux's static programs keep the `gnu`
-/// name they were published under.
+/// The release's command-line target for this platform. Windows on Arm uses
+/// the published x64 program; Linux's static programs keep their `gnu` name.
 pub fn triple() -> &'static str {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
         ("linux", "aarch64") => "aarch64-unknown-linux-gnu",
-        ("windows", "x86_64") => "x86_64-pc-windows-msvc",
-        ("windows", "aarch64") => "aarch64-pc-windows-msvc",
+        ("windows", "x86_64" | "aarch64") => "x86_64-pc-windows-msvc",
         ("macos", "x86_64") => "x86_64-apple-darwin",
         ("macos", "aarch64") => "aarch64-apple-darwin",
         _ => "unknown",

@@ -8,11 +8,12 @@
 
 mod application;
 mod packages;
+mod retry;
 mod schedule;
 
 pub(crate) use application::Open;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -25,10 +26,6 @@ use fastctx_types::update::{
 use fastctx_update::Cache;
 
 use crate::Node;
-
-/// How long a release this machine tried to take by itself waits before it
-/// is tried again.
-const TRY_AGAIN: Duration = Duration::from_secs(3600);
 
 #[derive(Default)]
 pub(crate) struct Updates {
@@ -51,10 +48,8 @@ struct Held {
     take: Option<String>,
     origin: Option<schedule::Origin>,
     fetching: Option<Fetching>,
-    failed: Option<Failed>,
+    attempt: retry::Attempt,
     activity: Option<Stage>,
-    /// The release last tried by itself, and when.
-    tried: Option<(String, std::time::Instant)>,
     /// How fast this machine's last download from GitHub went, in bytes a
     /// second (`GITHUB_SPEED`).
     github_speed: Option<u64>,
@@ -135,8 +130,16 @@ pub(crate) fn start(node: &Arc<Node>) {
             held.chosen = take.manifest;
             held.origin = take.origin;
         }
+        held.attempt = match read_json(&dir.join("attempt.json")) {
+            Ok(attempt) => attempt.unwrap_or_default(),
+            Err(error) => {
+                node.log.line(format_args!("reading the update attempt: {error}"));
+                retry::Attempt::default()
+            }
+        };
         held.started = true;
     }
+    retry::complete(node, env!("CARGO_PKG_VERSION"));
     if let Some(version) = application(node) {
         application::took(node, &version);
     }
@@ -199,7 +202,7 @@ fn look(node: &Arc<Node>) {
 /// release on each line any of them knows, the policy of the one that asks
 /// most, the oldest hub, and the updates any of them keeps for machines away.
 fn network(node: &Node) -> Option<Network> {
-    fastctx_update::state::merge(node.links().iter().filter_map(|link| link.versions()))
+    fastctx_update::state::merge(node.links().iter().filter_map(|link| link.update_network()))
 }
 
 /// What kind of device this machine is for its updates.
@@ -218,7 +221,7 @@ fn kind(node: &Node, held: &Held) -> Kind {
 /// line of what runs here (`world-upgrade.md`, 正式版与测试版).
 pub(crate) fn state(node: &Node) -> State {
     let links = node.links();
-    let networks = links.iter().filter_map(|link| link.versions()).collect();
+    let networks = links.iter().filter_map(|link| link.update_network()).collect();
     let held = node.updates.held.lock().expect("never poisoned");
     let cache = cache(node);
     let context = fastctx_update::state::Context {
@@ -236,7 +239,15 @@ pub(crate) fn state(node: &Node) -> State {
             chosen: held.chosen.clone(),
             looked: held.looked.clone(),
             fetching: held.fetching.clone(),
-            failed: held.failed.clone(),
+            failed: held.attempt.failed.clone().or_else(|| {
+                let plan = fastctx_install::renewal::read(&node.root).ok().flatten()?;
+                Some(Failed {
+                    version: plan.error_version.unwrap_or(plan.candidate.build.version),
+                    target: fastctx_update::kernel::target(),
+                    why: plan.error?,
+                    reason: None,
+                })
+            }),
             kept: cache.kept(),
             app: held.app.clone(),
             kernel_target: fastctx_update::kernel::target(),
@@ -422,7 +433,6 @@ fn fetch(node: &Arc<Node>, version: String, target: String) -> Result<(), String
         if held.fetching.is_some() || matches!(held.activity, Some(Stage::Installing { .. })) {
             return Err("an update is already being downloaded or installed".into());
         }
-        held.failed = None;
         held.activity = None;
         held.fetching = Some(Fetching {
             version: version.clone(),
@@ -438,25 +448,23 @@ fn fetch(node: &Arc<Node>, version: String, target: String) -> Result<(), String
             Ok(manifest) => bring(&node, &manifest, &target).await,
             Err(why) => Err(why.into()),
         };
-        let mut held = node.updates.held.lock().expect("never poisoned");
-        held.fetching = None;
+        node.updates.held.lock().expect("never poisoned").fetching = None;
         if let Err(why) = outcome {
             node.log.line(format_args!("bringing {target} of {version} here: {why}"));
-            held.failed = Some(Failed { version, target, why: why.why, reason: Some(why.reason) });
+            retry::failed(&node, Failed { version, target, why: why.why, reason: Some(why.reason) });
         }
-        drop(held);
         report(&node);
     });
     Ok(())
 }
 
-/// Brings a package here by the first hub that hands them out, or GitHub
+/// Brings a package here through each supplying hub in turn, then GitHub
 /// (`fastctx_update::obtain`), with its progress kept for the interface.
 /// Helpers can still be delivering other verified packages from this cache.
 async fn bring(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<PathBuf, fastctx_types::update::Problem> {
     let cache = cache(node);
     let links = node.links();
-    let link = links.iter().find(|link| link.keeps_versions()).map(|link| link.as_ref());
+    let sources: Vec<_> = links.iter().map(|link| link.as_ref()).collect();
     let progressing = node.clone();
     let mut progress = move |progress: fastctx_update::Progress| {
         if let Some(fetching) = &mut progressing.updates.held.lock().expect("never poisoned").fetching
@@ -470,19 +478,15 @@ async fn bring(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<Pa
     };
     let logging = node.clone();
     let log: fastctx_update::pool::Log = Arc::new(move |message| logging.log.line(format_args!("{message}")));
-    let (looked, carried) = {
+    let carried = {
         let held = node.updates.held.lock().expect("never poisoned");
-        let carried = held
-            .carried
+        held.carried
             .as_ref()
             .filter(|_| held.app.as_ref().is_some_and(|app| app.version == manifest.version))
             .map(|dir| dir.join(format!("{target}.tar.gz")))
-            .filter(|path| path.is_file());
-        (held.looked.clone(), carried)
+            .filter(|path| path.is_file())
     };
-    let network_now = looked.github == Some(false) && looked.github_at <= looked.at;
-    let brought =
-        node.updates.packages.obtain(&cache, manifest, target, link, network_now, carried, &mut progress, log).await?;
+    let brought = node.updates.packages.obtain(&cache, manifest, target, &sources, carried, &mut progress, log).await?;
     if let Some(at) = brought.github_at {
         github_reached(node, at);
     }
@@ -543,12 +547,10 @@ fn reject_update(
     reason: fastctx_types::update::FailureReason,
     why: String,
 ) -> String {
-    node.updates.held.lock().expect("never poisoned").failed = Some(Failed {
-        version: version.to_string(),
-        target: target.to_string(),
-        why: why.clone(),
-        reason: Some(reason),
-    });
+    retry::failed(
+        node,
+        Failed { version: version.to_string(), target: target.to_string(), why: why.clone(), reason: Some(reason) },
+    );
     report(node);
     why
 }
@@ -606,7 +608,6 @@ async fn kernel(node: &Arc<Node>, version: Option<&str>, asker: Option<Asker>) -
             }
             None => {}
         }
-        held.failed = None;
         held.activity = None;
         held.fetching = Some(Fetching {
             version: offer.version.clone(),
@@ -617,17 +618,13 @@ async fn kernel(node: &Arc<Node>, version: Option<&str>, asker: Option<Asker>) -
         });
     }
     let taken = take(node, &offer, &target, asker).await;
-    let mut held = node.updates.held.lock().expect("never poisoned");
-    held.fetching = None;
+    node.updates.held.lock().expect("never poisoned").fetching = None;
     if let Err(why) = &taken {
-        held.failed = Some(Failed {
-            version: offer.version.clone(),
-            target,
-            why: why.why.clone(),
-            reason: Some(why.reason.clone()),
-        });
+        retry::failed(
+            node,
+            Failed { version: offer.version.clone(), target, why: why.why.clone(), reason: Some(why.reason.clone()) },
+        );
     }
-    drop(held);
     report(node);
     taken.map_err(|problem| problem.why)
 }
@@ -671,14 +668,6 @@ async fn take(
     .await
     .map_err(|error| error.to_string())??;
     node.log.line(format_args!("staged fastctx {} to take over once the turns under way end", offer.version));
-    Ok(())
-}
-
-fn stage(root: &Path, program: &Path) -> Result<(), String> {
-    let plan = fastctx_install::renewal::stage(root, program, None).map_err(|error| error.to_string())?;
-    if plan.phase != fastctx_types::renewal::Phase::Complete {
-        fastctx_install::renewal::request(root, true).map_err(|error| error.to_string())?;
-    }
     Ok(())
 }
 
@@ -824,7 +813,7 @@ fn auto(node: &Arc<Node>) {
     schedule::reconcile(node);
     let state = state(node);
     if state.fetching.is_some()
-        || state.renewing.is_some()
+        || state.renewing.as_ref().is_some_and(|renewing| renewing.phase != fastctx_types::renewal::Phase::Failed)
         || application::busy()
         || (state.take.is_some() && (application::open() || !cfg!(windows)))
     {
@@ -857,15 +846,11 @@ fn auto(node: &Arc<Node>) {
         },
         None => return,
     };
-    {
-        let held = node.updates.held.lock().expect("never poisoned");
-        if held.tried.as_ref().is_some_and(|(tried, at)| *tried == version && at.elapsed() < TRY_AGAIN) {
-            return;
-        }
+    if state.renewing.as_ref().is_some_and(|renewing| renewing.version == version) {
+        // A staged failed handover has its own durable recovery schedule.
+        return;
     }
-    // Taken or not, a release is not tried again for a while: one that put
-    // in place a program of another version would be taken over and over.
-    node.updates.held.lock().expect("never poisoned").tried = Some((version.clone(), std::time::Instant::now()));
+    let Some(attempt) = retry::begin(node, &version) else { return };
     let node = node.clone();
     tokio::spawn(async move {
         let result = match asker {
@@ -876,11 +861,13 @@ fn auto(node: &Arc<Node>) {
         };
         if let Err(why) = result {
             node.log.line(format_args!("updating this machine to {version}: {why}"));
-            let mut held = node.updates.held.lock().expect("never poisoned");
-            if held.failed.as_ref().is_none_or(|failure| failure.version != version) {
-                held.failed = Some(Failed { version, target: state.kernel_target, why, reason: None });
+            let recorded = {
+                let held = node.updates.held.lock().expect("never poisoned");
+                held.attempt.version.as_deref() == Some(&version) && held.attempt.delay.attempts > attempt
+            };
+            if !recorded {
+                retry::failed(&node, Failed { version, target: state.kernel_target, why, reason: None });
             }
-            drop(held);
             report(&node);
         }
     });

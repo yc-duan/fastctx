@@ -343,23 +343,21 @@ pub(crate) async fn prepare_update(hub: &Arc<Hub>, name: &MachineName, version: 
         }
         store.hub.package_targets.get(&member.key).cloned().unwrap_or_default()
     };
-    let (known, releases, cache) = {
+    let (known, previous, cache) = {
         let updates = hub.updates.lock().expect("never poisoned");
-        (updates.manifest(version), updates.looked.releases.clone(), updates.cache.clone())
+        (updates.manifest(version), updates.looked.clone(), updates.cache.clone())
     };
     let manifest = match known {
         Some(manifest) => manifest,
         None => {
-            let releases = if releases.iter().any(|release| release.version == version) {
-                releases
+            let releases = if previous.releases.iter().any(|release| release.version == version) {
+                previous.releases
             } else {
-                let looked = fastctx_update::github::look(None).await;
+                let looked = super::discovery::check(hub, true).await;
                 if let Some(why) = &looked.why {
                     hub.log.line(format_args!("looking for {version}: {why}"));
                 }
-                let releases = looked.releases.clone();
-                hub.updates.lock().expect("never poisoned").looked = looked;
-                releases
+                looked.releases
             };
             fastctx_update::github::manifest_of(&releases, version).await?
         }

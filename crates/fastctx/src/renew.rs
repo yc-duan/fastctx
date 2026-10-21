@@ -132,12 +132,14 @@ async fn worker(root: &Path, retry: bool) -> anyhow::Result<()> {
     anyhow::ensure!(!root.join("uninstalled.json").try_exists()?, "this World is being uninstalled");
     let Some(_worker) = FileLock::try_acquire(&store::directory(root).join("worker.lock"))? else { return Ok(()) };
     let mut plan = store::read(root)?.context("no local replacement was staged")?;
-    if plan.phase == Phase::Failed && !retry {
+    if plan.phase == Phase::Failed && !retry && !plan.retry.ready(jiff::Timestamp::now()) {
         return Ok(());
     }
     let result = advance(root, &mut plan).await;
     if let Err(error) = &result {
         plan.error = Some(format!("{error:#}"));
+        plan.error_version = Some(plan.candidate.build.version.clone());
+        plan.retry.postpone(jiff::Timestamp::now());
         plan.phase = Phase::Failed;
         store::save(root, &plan)?;
     }
@@ -146,9 +148,19 @@ async fn worker(root: &Path, retry: bool) -> anyhow::Result<()> {
 
 fn phase(root: &Path, plan: &mut Plan, phase: Phase) -> anyhow::Result<()> {
     plan.phase = phase;
-    plan.error = None;
+    if plan.phase == Phase::Complete {
+        plan.error = None;
+        plan.error_version = None;
+        plan.retry = Default::default();
+    }
     store::save(root, plan)?;
     Ok(())
+}
+
+async fn complete(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
+    let (folder, digest) = (root.to_path_buf(), plan.candidate.build.digest.clone());
+    tokio::task::spawn_blocking(move || follow_hubs(&folder, &digest)).await??;
+    phase(root, plan, Phase::Complete)
 }
 
 async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
@@ -166,7 +178,7 @@ async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
             return finish_bridge(root, plan, needs_guardian).await;
         }
         if !needs_guardian && (!kept || node.supervised || cfg!(target_os = "linux")) {
-            return phase(root, plan, Phase::Complete);
+            return complete(root, plan).await;
         }
         // The guardian runs the candidate as its node already, as after a
         // handover whose guardian refused the program: a bridge would wait
@@ -228,7 +240,7 @@ async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
             return if node.bridge {
                 finish_bridge(root, plan, needs_guardian).await
             } else {
-                phase(root, plan, Phase::Complete)
+                complete(root, plan).await
             };
         }
         if !fastctx_platform::is_alive(&candidate)? {
@@ -236,7 +248,7 @@ async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
                 && node.build == plan.candidate.build
             {
                 if !needs_guardian {
-                    return phase(root, plan, Phase::Complete);
+                    return complete(root, plan).await;
                 }
                 bail!("the prepared process stopped; the new node serves, but its guardian still needs renewal");
             }
@@ -279,7 +291,14 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
         // a LaunchDaemon, needs an administrator to start the new program.
         // A Linux node's unit restarts as root or by the rule its install
         // left (`fastctx_install::service::Service::may_restart`).
-        let restart_refusal = if cfg!(target_os = "linux") { service.may_restart().err() } else { None };
+        #[cfg(target_os = "linux")]
+        let restart = {
+            let status = service.status()?;
+            service.main_pid()? == 0 && !status.state.starts_with("activating/")
+        };
+        #[cfg(not(target_os = "linux"))]
+        let restart = true;
+        let restart_refusal = if cfg!(target_os = "linux") && restart { service.may_restart().err() } else { None };
         if let Some(error) = &restart_refusal {
             refused = Some(format!("{error:#}"));
         }
@@ -302,7 +321,9 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
         };
         ensure!(node.bridge && node.build == plan.candidate.build, "the replacement bridge is not serving");
         phase(root, plan, Phase::UpdatingGuardian)?;
-        service.restart_guardian(&plan.candidate.build.digest)?;
+        if restart {
+            service.restart_guardian(&plan.candidate.build.digest)?;
+        }
         plan.keeper_restarted = true;
         store::save(root, plan)?;
     }
@@ -314,14 +335,19 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
             && !node.bridge
             && node.build.digest == plan.candidate.build.digest
         {
-            phase(root, plan, Phase::Complete)?;
-            let (folder, digest) = (root.to_path_buf(), plan.candidate.build.digest.clone());
-            let followed = tokio::task::spawn_blocking(move || follow_hubs(&folder, &digest)).await?;
-            if let Err(error) = followed {
-                plan.error = Some(format!("the node runs the new program; {error:#}"));
-                store::save(root, plan)?;
+            #[cfg(target_os = "linux")]
+            {
+                let service = fastctx_install::service::Service::new(
+                    fastctx_install::service::Kind::Node,
+                    store::installed(root),
+                    root,
+                );
+                ensure!(
+                    service.main_pid()? == u64::from(node.process.pid),
+                    "the replacement is not the service's node"
+                );
             }
-            return Ok(());
+            return complete(root, plan).await;
         }
         tick().await;
     }
@@ -366,14 +392,7 @@ async fn guard_supervised(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
             && !node.bridge
             && node.build.digest == plan.candidate.build.digest
         {
-            phase(root, plan, Phase::Complete)?;
-            let (folder, digest) = (root.to_path_buf(), plan.candidate.build.digest.clone());
-            let followed = tokio::task::spawn_blocking(move || follow_hubs(&folder, &digest)).await?;
-            if let Err(error) = followed {
-                plan.error = Some(format!("the node runs the new program; {error:#}"));
-                store::save(root, plan)?;
-            }
-            return Ok(());
+            return complete(root, plan).await;
         }
         tick().await;
     }

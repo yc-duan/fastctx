@@ -88,3 +88,44 @@ pub(crate) fn answer(node: &Arc<Node>, request: Request) -> io::Result<Response>
         }
     })
 }
+
+/// Resumes an interrupted handover and retries failed attempts after their delay.
+pub(crate) fn resume(node: &Arc<Node>) {
+    let weak = Arc::downgrade(node);
+    tokio::spawn(async move {
+        let mut first = true;
+        loop {
+            let Some(node) = weak.upgrade() else { return };
+            let root = node.root.clone();
+            let build = node.renewal.build.clone();
+            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                if let Some(plan) = store::read(&root)? {
+                    let failed = plan.phase == fastctx_types::renewal::Phase::Failed;
+                    if (failed && plan.retry.ready(jiff::Timestamp::now()))
+                        || (!failed
+                            && (matches!(
+                                plan.phase,
+                                fastctx_types::renewal::Phase::Staged
+                                    | fastctx_types::renewal::Phase::Preparing
+                                    | fastctx_types::renewal::Phase::WaitingForIdle
+                                    | fastctx_types::renewal::Phase::UpdatingGuardian
+                                    | fastctx_types::renewal::Phase::ReturningToService
+                            ) || (first
+                                && (plan.phase != fastctx_types::renewal::Phase::Complete
+                                    || plan.candidate.build != build))))
+                    {
+                        store::request(&root, false)?;
+                    }
+                }
+                Ok(())
+            })
+            .await;
+            if let Err(error) = result.unwrap_or_else(|error| Err(error.into())) {
+                node.log.line(format_args!("could not resume executable renewal: {error:#}"));
+            }
+            first = false;
+            drop(node);
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        }
+    });
+}

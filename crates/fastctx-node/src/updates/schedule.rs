@@ -35,7 +35,9 @@ pub(super) fn withdrawn(node: &Node, version: &str, origin: Option<&Origin>) -> 
 }
 
 pub(super) fn reconcile(node: &Arc<Node>) {
-    if application::busy() || super::renewing(node).is_some() {
+    if application::busy()
+        || super::renewing(node).is_some_and(|renewing| renewing.phase != fastctx_types::renewal::Phase::Failed)
+    {
         return;
     }
     let mut held = node.updates.held.lock().expect("never poisoned");
@@ -59,8 +61,6 @@ pub(super) fn reconcile(node: &Arc<Node>) {
         held.chosen = None;
     }
     held.activity = None;
-    held.failed = None;
-    held.tried = None;
     drop(held);
     super::report(node);
 }

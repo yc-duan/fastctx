@@ -134,7 +134,8 @@ impl Cache {
             let Ok(entries) = std::fs::read_dir(&dir) else { continue };
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
-                if name == MANIFEST || name.ends_with(".part") || !target_name(&name) {
+                // Older application installers left executable copies beside packages (2026-10-21).
+                if name == MANIFEST || name.ends_with(".part") || name.ends_with(".exe") || !target_name(&name) {
                     continue;
                 }
                 if entry.file_type().is_ok_and(|kind| kind.is_file()) {

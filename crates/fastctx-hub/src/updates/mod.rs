@@ -15,6 +15,7 @@ mod attempt;
 mod cleanup;
 
 use attempt::{Attempt, Race};
+mod discovery;
 mod inventory;
 mod obtain;
 mod receipt_writer;
@@ -88,6 +89,7 @@ pub(crate) struct Updates {
     catalog: BTreeMap<String, Manifest>,
     /// What the hub found when it last looked on GitHub.
     looked: Looked,
+    check: Arc<tokio::sync::Mutex<()>>,
     /// What every machine was last told.
     told: HashMap<MachineName, Network>,
     /// The packages being brought in, and who waits for each.
@@ -137,6 +139,10 @@ impl Updates {
             cache.clear_attempts().into_iter().map(|failed| format!("deleting a package left coming: {failed}")),
         );
         let (last, history_writer) = history::open(cache.root())?;
+        let looked = discovery::read(cache.root()).unwrap_or_else(|why| {
+            left.push(format!("reading discovered releases: {why}"));
+            Looked::default()
+        });
         let catalog = cache
             .manifests()
             .into_iter()
@@ -149,7 +155,8 @@ impl Updates {
             last,
             history_writer,
             catalog,
-            looked: Looked::default(),
+            looked,
+            check: Arc::new(tokio::sync::Mutex::new(())),
             told: HashMap::new(),
             obtaining: HashMap::new(),
             requests: HashMap::new(),
@@ -431,22 +438,10 @@ pub(crate) async fn look_every(hub: Weak<Hub>) {
     tokio::time::sleep(Duration::from_secs(60)).await;
     loop {
         let Some(current) = hub.upgrade() else { return };
-        let (previous, path) = {
-            let updates = current.updates.lock().expect("never poisoned");
-            (updates.looked.clone(), updates.cache.root().join("github-list.json"))
-        };
+        discovery::check(&current, false).await;
         drop(current);
-        let looked = fastctx_update::github::look_after(None, &previous, Some(&path)).await;
-        let wait = fastctx_update::github::wait(&looked);
-        let Some(current) = hub.upgrade() else { return };
-        if let Some(why) = &looked.why {
-            current.log.line(format_args!("looking for new versions on GitHub: {why}"));
-        }
-        current.updates.lock().expect("never poisoned").looked = looked;
-        prefetch(&current);
-        tell(&current, None);
-        drop(current);
-        tokio::time::sleep(wait).await;
+        // An on-demand check can shorten the next deadline while this loop sleeps.
+        tokio::time::sleep(Duration::from_secs(30)).await;
     }
 }
 

@@ -6,7 +6,7 @@
 //! program the new application carries to the renewal. Elsewhere it waits
 //! for the application to be opened.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
@@ -97,7 +97,6 @@ pub(super) fn ask(node: &Arc<Node>, manifest: Manifest, asker: Asker, app: &str)
         held.take = Some(manifest.version.clone());
         held.origin = origin;
         held.chosen = Some(manifest.clone());
-        held.failed = None;
         held.activity = None;
     }
     super::report(node);
@@ -108,8 +107,10 @@ pub(super) fn ask(node: &Arc<Node>, manifest: Manifest, asker: Asker, app: &str)
         let _installing = installing;
         if let Err(why) = install(&node, &manifest, &target).await {
             node.log.line(format_args!("installing Fastctx {} while it was closed: {why}", manifest.version));
-            node.updates.held.lock().expect("never poisoned").failed =
-                Some(Failed { version: manifest.version.clone(), target, why: why.why, reason: Some(why.reason) });
+            super::retry::failed(
+                &node,
+                Failed { version: manifest.version.clone(), target, why: why.why, reason: Some(why.reason) },
+            );
         }
         super::report(&node);
     });
@@ -119,6 +120,9 @@ pub(super) fn ask(node: &Arc<Node>, manifest: Manifest, asker: Asker, app: &str)
 /// The application here says it is `version`: a release asked for that it
 /// is, or passes, is taken.
 pub(super) fn took(node: &Node, version: &str) {
+    if fastctx_types::update::release(env!("CARGO_PKG_VERSION")) >= fastctx_types::update::release(version) {
+        super::retry::complete(node, version);
+    }
     let mut held = node.updates.held.lock().expect("never poisoned");
     let taken = held
         .take
@@ -143,7 +147,6 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
         if held.fetching.is_some() {
             return Err("a package is on its way here already".into());
         }
-        held.failed = None;
         held.activity = None;
         held.fetching = Some(Fetching {
             version: manifest.version.clone(),
@@ -163,7 +166,7 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
     node.updates.held.lock().expect("never poisoned").activity =
         Some(fastctx_types::update::Stage::Installing { version: manifest.version.clone() });
     super::report(node);
-    let installed = run_installer(&installer).await;
+    let installed = run_installer(&installer, &dir(node)).await;
     node.updates.held.lock().expect("never poisoned").activity = None;
     installed?;
     let inspecting = program.clone();
@@ -177,6 +180,13 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
             format!("the installer left World {} instead of {}", build.version, manifest.version),
         ));
     }
+    // Keep the kernel handover before acknowledging the application's version.
+    // If staging fails, the existing take remains eligible for another attempt.
+    let (root, staged) = (node.root.clone(), program.clone());
+    let plan = tokio::task::spawn_blocking(move || fastctx_install::renewal::stage(&root, &staged, None))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
     {
         let mut held = node.updates.held.lock().expect("never poisoned");
         let mut app = held.app.clone().ok_or("the application's identity disappeared")?;
@@ -185,8 +195,13 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
         keep(node, "app.json", &file).map_err(|e| Problem::new(FailureReason::Disk, e.to_string()))?;
         held.app = Some(app);
     }
-    let root = node.root.clone();
-    tokio::task::spawn_blocking(move || super::stage(&root, &program)).await.map_err(|error| error.to_string())??;
+    if plan.phase != fastctx_types::renewal::Phase::Complete {
+        let root = node.root.clone();
+        tokio::task::spawn_blocking(move || fastctx_install::renewal::request(&root, true))
+            .await
+            .map_err(|error| error.to_string())?
+            .map_err(|error| error.to_string())?;
+    }
     took(node, &manifest.version);
     node.log.line(format_args!(
         "installed Fastctx {} while it was closed; its World program takes over once the turns under way end",
@@ -196,23 +211,22 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
 }
 
 /// Runs the installer silently, for this user alone, to its end.
-async fn run_installer(installer: &Path) -> Result<(), Problem> {
-    // The cached package carries no extension; the installer runs as an
-    // executable only under one.
-    let runnable: PathBuf = installer.with_extension("exe");
-    if runnable != installer {
-        std::fs::copy(installer, &runnable)
-            .map_err(|error| Problem::new(FailureReason::Disk, format!("{}: {error}", runnable.display())))?;
-    }
+async fn run_installer(installer: &Path, directory: &Path) -> Result<(), Problem> {
+    // The executable copy is private to this installation, outside the inventory.
+    let temporary = tempfile::Builder::new()
+        .prefix("installer-")
+        .tempdir_in(directory)
+        .map_err(|error| Problem::new(FailureReason::Disk, error.to_string()))?;
+    let runnable = temporary.path().join("installer.exe");
+    std::fs::copy(installer, &runnable)
+        .map_err(|error| Problem::new(FailureReason::Disk, format!("{}: {error}", runnable.display())))?;
     let mut command = tokio::process::Command::new(&runnable);
     command.arg("/S").stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).kill_on_drop(true);
     let status = fastctx_platform::doing::outside("the application's installer", INSTALLING, command.status())
         .await
         .map_err(|_| format!("the installer did not finish within {} minutes", INSTALLING.as_secs() / 60))?
         .map_err(|error| format!("running the installer: {error}"))?;
-    if runnable != installer {
-        let _ = std::fs::remove_file(&runnable);
-    }
+    temporary.close().map_err(|error| Problem::new(FailureReason::Disk, format!("removing the installer: {error}")))?;
     if !status.success() {
         return Err(Problem::new(
             FailureReason::Installer { code: status.code() },
