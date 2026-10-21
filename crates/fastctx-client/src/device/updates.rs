@@ -302,6 +302,8 @@ impl Device {
             let sessions = device.sessions();
             let links: Vec<_> = sessions.iter().map(|session| session.link.as_ref()).collect();
             let progressing = device.clone();
+            let looked = device.updates.held.lock().expect("never poisoned").looked.clone();
+            let network_now = looked.github == Some(false) && looked.github_at <= looked.at;
             let mut progress = move |progress: fastctx_update::Progress| {
                 if let Some(fetching) = &mut progressing.updates.held.lock().expect("never poisoned").fetching {
                     fetching.via = progress.via;
@@ -310,7 +312,9 @@ impl Device {
                 }
             };
             let outcome = match device.manifest_of(&version).await {
-                Ok(manifest) => fastctx_update::obtain(&cache, &manifest, &target, &links, &mut progress).await,
+                Ok(manifest) => {
+                    fastctx_update::obtain(&cache, &manifest, &target, &links, network_now, &mut progress).await
+                }
                 Err(why) => Err(why.to_string().into()),
             };
             if outcome.as_ref().is_ok_and(|b| b.github_at.is_some()) {

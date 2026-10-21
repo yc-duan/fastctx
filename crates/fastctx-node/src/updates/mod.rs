@@ -458,8 +458,8 @@ fn fetch(node: &Arc<Node>, version: String, target: String) -> Result<(), String
     Ok(())
 }
 
-/// Brings a package here through each supplying hub in turn, then GitHub
-/// (`fastctx_update::obtain`), with its progress kept for the interface.
+/// Brings a package here from GitHub, or through each supplying hub in turn
+/// when GitHub fails or goes slowly (`fastctx_update::obtain`), with its progress kept for the interface.
 /// Helpers can still be delivering other verified packages from this cache.
 async fn bring(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<PathBuf, fastctx_types::update::Problem> {
     let cache = cache(node);
@@ -478,15 +478,22 @@ async fn bring(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<Pa
     };
     let logging = node.clone();
     let log: fastctx_update::pool::Log = Arc::new(move |message| logging.log.line(format_args!("{message}")));
-    let carried = {
+    let (looked, carried) = {
         let held = node.updates.held.lock().expect("never poisoned");
-        held.carried
+        let carried = held
+            .carried
             .as_ref()
             .filter(|_| held.app.as_ref().is_some_and(|app| app.version == manifest.version))
             .map(|dir| dir.join(format!("{target}.tar.gz")))
-            .filter(|path| path.is_file())
+            .filter(|path| path.is_file());
+        (held.looked.clone(), carried)
     };
-    let brought = node.updates.packages.obtain(&cache, manifest, target, &sources, carried, &mut progress, log).await?;
+    let network_now = looked.github == Some(false) && looked.github_at <= looked.at;
+    let brought = node
+        .updates
+        .packages
+        .obtain(&cache, manifest, target, &sources, network_now, carried, &mut progress, log)
+        .await?;
     if let Some(at) = brought.github_at {
         github_reached(node, at);
     }

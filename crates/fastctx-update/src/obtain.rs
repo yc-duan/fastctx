@@ -2,13 +2,14 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use fastctx_net::link::Link;
 use fastctx_types::update::{FailureReason, Manifest, PackageProgress, Problem, SourceFailure, Via};
 use tokio::sync::watch;
 
 use crate::Cache;
+use crate::pace::{Pace, Verdict};
 use crate::pool::{Local, Log, Request};
 
 /// Bytes delivered here by a source; subscribers see the leading active source.
@@ -40,6 +41,7 @@ pub async fn obtain(
     manifest: &Manifest,
     target: &str,
     links: &[&Link],
+    network_now: bool,
     progress: &mut (dyn FnMut(Progress) + Send),
 ) -> Result<Brought, Problem> {
     static POOL: std::sync::OnceLock<crate::pool::Pool> = std::sync::OnceLock::new();
@@ -51,7 +53,7 @@ pub async fn obtain(
             eprintln!("{message}");
         }
     });
-    POOL.get_or_init(Default::default).obtain(cache, manifest, target, links, None, progress, log).await
+    POOL.get_or_init(Default::default).obtain(cache, manifest, target, links, network_now, None, progress, log).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -60,21 +62,27 @@ pub(crate) async fn run(
     request: &Request,
     hub_file: &Path,
     local_file: &Path,
-    mut local: watch::Receiver<Local>,
+    local: watch::Receiver<Local>,
     progress: &mut (dyn FnMut(SourceEvent) + Send),
     log: &Log,
 ) -> Result<Brought, Problem> {
     let package = &request.package;
     let version = &request.version;
     let target = &request.target;
+    let started = Instant::now();
+    let github_pace = Mutex::new(Pace::new(started));
+    let github_total = Mutex::new(package.size);
     let shown = Mutex::new(Shown { progress });
     let mut hub_heard = |received, total| {
         shown.lock().expect("never poisoned").tell(Via::Network, received, total);
     };
     let mut github_heard = |received, total: Option<u64>| {
         let total = total.or(package.size);
+        github_pace.lock().expect("never poisoned").heard(Instant::now(), received);
+        *github_total.lock().expect("never poisoned") = total;
         shown.lock().expect("never poisoned").tell(Via::Github, received, total);
     };
+    // The network's source asks each hub that keeps versions in turn.
     let hub = async {
         let mut failures = Vec::new();
         for link in &request.links {
@@ -126,18 +134,28 @@ pub(crate) async fn run(
         Ok::<_, Problem>((speed, downloaded.then(jiff::Timestamp::now)))
     };
     tokio::pin!(hub, github);
-    let mut hub_going = !request.links.is_empty();
-    let mut github_going = !hub_going || local.borrow().requested || local.borrow().carried.is_some();
-    let mut github_tried = github_going;
+    // GitHub first, judged patiently; the network joins once GitHub fails or
+    // goes too slowly, or at once where the last check could not reach it.
+    let (mut hub_going, mut github_going) = (false, true);
+    let mut hub_tried = false;
     let mut failures = Vec::new();
+    let mut tick = tokio::time::interval(Duration::from_millis(200));
     let deadline = tokio::time::sleep(Duration::from_secs(45 * 60));
     tokio::pin!(deadline);
     loop {
-        if !github_tried && (!hub_going || local.borrow().requested) {
-            // A hub can ask this device to supply the very package it is waiting
-            // for (2026-10-21). That helper must use the independent local source.
-            github_going = true;
-            github_tried = true;
+        let verdict = github_pace
+            .lock()
+            .expect("never poisoned")
+            .verdict(Instant::now(), *github_total.lock().expect("never poisoned"));
+        if !hub_tried
+            && !request.links.is_empty()
+            && (request.network_now || !github_going || verdict != Verdict::Promising)
+        {
+            hub_tried = true;
+            hub_going = true;
+            log(format!(
+                "bringing {target} of {version}: starting the network source; GitHub active={github_going}, pace={verdict:?}"
+            ));
         }
         tokio::select! {
             result = &mut hub, if hub_going => {
@@ -162,10 +180,10 @@ pub(crate) async fn run(
                     }
                 }
             }
-            _ = local.changed(), if !github_tried => {}
+            _ = tick.tick() => {}
             () = &mut deadline => return Err(Problem::new(FailureReason::Sources { sources: failures.iter().map(|(via,p)| SourceFailure { via: *via, why: p.why.clone() }).collect() }, format!("bringing {target} of {version} took more than 45 minutes"))),
         }
-        if !hub_going && !github_going && github_tried {
+        if !hub_going && !github_going && (hub_tried || request.links.is_empty()) {
             let reason = if failures.iter().any(|(_, p)| p.reason == FailureReason::Signature) {
                 FailureReason::Signature
             } else if failures.iter().any(|(_, p)| p.reason == FailureReason::Disk) {

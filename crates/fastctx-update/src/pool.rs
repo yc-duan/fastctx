@@ -62,6 +62,7 @@ pub(crate) struct Request {
     pub package: Package,
     pub links: Vec<Link>,
     pub local: Local,
+    pub network_now: bool,
 }
 
 static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -72,7 +73,9 @@ impl Pool {
         Lease { pool: self.clone(), version: version.to_string() }
     }
 
-    /// Obtains a package once for this device, trying each supplying hub before GitHub.
+    /// Obtains a package once for this device, trying GitHub first; the
+    /// network's source asks each supplying hub in turn. `network_now` also
+    /// starts the network when a recent check could not reach GitHub.
     #[allow(clippy::too_many_arguments)]
     pub async fn obtain(
         &self,
@@ -80,6 +83,7 @@ impl Pool {
         manifest: &Manifest,
         target: &str,
         links: &[&Link],
+        network_now: bool,
         carried: Option<PathBuf>,
         progress: &mut (dyn FnMut(Progress) + Send),
         log: Log,
@@ -94,6 +98,7 @@ impl Pool {
             package: package.clone(),
             links: links.iter().filter(|link| link.keeps_versions()).map(|link| (*link).clone()).collect(),
             local: Local { requested: false, carried },
+            network_now,
         };
         let brought = self.join(cache, request, progress, log).await?;
         cache.keep_manifest(manifest).map_err(|why| Problem::new(FailureReason::Disk, why))?;
@@ -116,6 +121,7 @@ impl Pool {
             package: fetch.package.clone(),
             links: Vec::new(),
             local: Local { requested: true, carried },
+            network_now: false,
         };
         self.join(cache, request, progress, log).await
     }
@@ -150,6 +156,7 @@ impl Pool {
                         package: request.package.clone(),
                         links: request.links.clone(),
                         local: request.local.clone(),
+                        network_now: request.network_now,
                     };
                     tokio::spawn(async move {
                         pool.own(cache, key, request, source, state, log).await;
