@@ -15,6 +15,10 @@ pub enum UploadTarget {
         machine: crate::access::Written,
         target: Box<UploadTarget>,
         operation: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account: Option<crate::access::HubAccount>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        files_on: Option<crate::access::Written>,
     },
     Resident {
         resident: ResidentId,
@@ -27,6 +31,14 @@ pub enum UploadTarget {
         resident: ResidentId,
         town: Option<TownName>,
     },
+}
+
+/// File destinations for the account opening or using a conversation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachmentPlaces {
+    pub machines: Vec<crate::access::Written>,
+    pub selected: Option<crate::access::Written>,
+    pub images_only: bool,
 }
 
 /// Description supplied by the uploader. Size and SHA-256 describe the

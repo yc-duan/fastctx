@@ -844,7 +844,7 @@ pub async fn open_here(
     if let Some(town) = &town {
         crate::town::project::spans_here(node, town).await?;
     }
-    let (id, _opening) = crate::attachments::opening(node, &agent, town.as_ref(), &attachments).await?;
+    let (id, _opening) = crate::attachments::opening(node, &agent, &opened.acting, town.as_ref(), &attachments).await?;
     let _birth = crate::here::born(node, &id, opened.acting.clone());
     let origin = Origin::User;
     crate::session_options::keep(node, &id, &options)?;

@@ -125,6 +125,19 @@ fn disconnected(error: &std::io::Error) -> bool {
 }
 
 impl World {
+    pub async fn attachment_places(
+        &self,
+        target: UploadTarget,
+        machine: Option<Written>,
+        account: Option<fastctx_types::access::HubAccount>,
+        preferred: Option<Written>,
+    ) -> Result<fastctx_types::attachments::AttachmentPlaces, Error> {
+        match self.call(Call::AttachmentPlaces { target, machine, account, preferred }).await?.0 {
+            Reply::AttachmentPlaces(places) => Ok(places),
+            _ => Err(Error::Unexpected("upgrade Fastctx to choose attachment destinations".into())),
+        }
+    }
+
     pub async fn upload(
         &self,
         target: UploadTarget,
@@ -153,6 +166,8 @@ impl World {
                 machine: machine.clone(),
                 target: Box::new(target),
                 operation: scope.operation.clone(),
+                account: None,
+                files_on: None,
             },
             None => target,
         };

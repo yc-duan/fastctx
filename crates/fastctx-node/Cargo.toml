@@ -32,6 +32,7 @@ getrandom = { version = "0.3", features = ["std"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 jiff.workspace = true
 notify = "8"
+quick-xml = "0.42"
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"

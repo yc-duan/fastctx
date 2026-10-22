@@ -59,11 +59,13 @@ pub async fn read_attachment(
     range: FileRange,
     sender: &Sender,
 ) -> Result<FileReadResult, Failure> {
+    let purpose =
+        RemoteCall::ReadAttachment { attachment: attachment.clone(), read: 0, range: range.clone() }.purpose();
     receive(
         link,
         machine,
         account,
-        Purpose::Agents,
+        purpose,
         None,
         |read| RemoteCall::ReadAttachment { attachment, read, range },
         sender,

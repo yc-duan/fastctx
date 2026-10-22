@@ -67,9 +67,19 @@ fn start_attachment(
         tokio::select! {
             () = sender.closed() => {},
             result = async {
+                let (attachment, acting) = match &attachment {
+                    fastctx_types::attachments::AttachmentSource::Upload(receipt) =>
+                        match crate::attachments::forwarded::original(&node, receipt)? {
+                            Some((original, acting)) => (original.into(), acting),
+                            None => (attachment, Acting::Here),
+                        },
+                    _ => (attachment, Acting::Here),
+                };
                 let machine = attachment.owner().machine.clone();
                 if !node.is_here(&machine.clone().into()) {
-                    let speakers = node.speakers(&Acting::Here, &machine.clone().into(), Purpose::Agents).map_err(|error| Failure::new(error.to_string()))?;
+                    let speakers = node.speakers(&acting, &machine.clone().into(), fastctx_types::remote::RemoteCall::ReadAttachment {
+                        attachment: attachment.clone(), range: range.clone(), read: 0,
+                    }.purpose()).map_err(|error| Failure::new(error.to_string()))?;
                     let mut refused = None;
                     for (link,account) in speakers {
                         if link.view().member(&machine).is_some_and(|member| !member.online) {

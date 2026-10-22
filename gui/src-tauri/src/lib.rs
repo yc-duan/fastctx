@@ -1251,6 +1251,7 @@ pub fn run() {
             talk,
             upload_path,
             upload_bytes,
+            uploading::attachment_places,
             open,
             stop,
             stop_job,

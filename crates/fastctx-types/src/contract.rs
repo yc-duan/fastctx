@@ -114,7 +114,8 @@ impl RemoteCall {
             }
             Self::Mcp { mcp: crate::mcp::MachineCall::Test { .. } } => Contract::ASKS_AGENT,
             Self::McpServe { .. } => Contract { cancellable: true, ..Contract::STREAM },
-            Self::Who { .. }
+            Self::AttachmentPlaces { .. }
+            | Self::Who { .. }
             | Self::Since { .. }
             | Self::Folders { .. }
             | Self::Outline { .. }
@@ -249,7 +250,8 @@ impl Call {
     /// (`Leaving`).
     pub fn on_leaving(&self) -> Leaving {
         match self {
-            Self::McpRelay { .. }
+            Self::AttachmentPlaces { .. }
+            | Self::McpRelay { .. }
             | Self::MachineLog { .. }
             | Self::CollabRead { .. }
             | Self::ProfileRead { .. }

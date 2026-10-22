@@ -1,5 +1,7 @@
 //! User originals remain on the computer that attached them.
 
+pub(crate) mod destinations;
+pub(crate) mod forwarded;
 pub(crate) mod lifetime;
 mod references;
 pub(crate) mod sent;
@@ -53,6 +55,8 @@ struct Draft {
     town: Option<TownName>,
     #[serde(default)]
     from: Option<MachineName>,
+    #[serde(default)]
+    acting: Option<Acting>,
 }
 
 fn failure(error: impl std::fmt::Display) -> Failure {
@@ -77,8 +81,45 @@ pub async fn upload(
     composer: Option<fastctx_types::composer::UploadScope>,
     mut source: FrameReader,
 ) -> Result<Uploaded, Failure> {
-    if let UploadTarget::Sent { machine, target, operation } = target {
-        return sent::upload(node, machine, *target, operation, file, composer, source).await;
+    if let UploadTarget::Sent { machine, target, operation, account, files_on } = target {
+        let uploader = destinations::sender(node, &machine, &target, account.as_ref())?;
+        if node.is_here(&machine) {
+            let acting = destinations::acting(node, &target, &uploader)?;
+            if !file.media_type.starts_with("image/") && destinations::assisted(node, &target, &acting)? {
+                return forwarded::upload(
+                    node,
+                    &node.machine(),
+                    acting,
+                    *target,
+                    operation,
+                    file,
+                    composer,
+                    files_on,
+                    forwarded::Input::Local(source),
+                )
+                .await;
+            }
+        }
+        if !node.is_here(&machine) {
+            let (link, account_name) = node.speaking(&uploader, &machine, Purpose::Agents).map_err(failure)?;
+            let supported = match link
+                .call(&machine.name, &account_name, Purpose::Look, RemoteCall::Facts)
+                .await
+                .map_err(broke)??
+            {
+                RemoteReply::Facts(facts) => facts.attachment_places,
+                _ => false,
+            };
+            if supported {
+                let sent = UploadTarget::Sent { machine: machine.clone(), target, operation, account, files_on };
+                return relay(node, &uploader, &machine, sent, file, composer, source).await;
+            }
+            if files_on.is_some() {
+                return Err(Failure::not_run("upgrade the conversation machine to select attachment storage"));
+            }
+            destinations::owns_here(node, &uploader)?;
+        }
+        return sent::upload(node, &uploader, machine, *target, operation, file, composer, source).await;
     }
     validate_file(&file)?;
     let local = machine.is_none()
@@ -97,9 +138,29 @@ pub async fn upload(
         None => node.machine().into(),
     };
     if local || node.is_here(&machine) {
+        let uploader = destinations::sender(node, &machine, &target, None)?;
+        let acting = destinations::acting(node, &target, &uploader)?;
+        if !file.media_type.starts_with("image/") && destinations::assisted(node, &target, &acting)? {
+            let operation = composer
+                .as_ref()
+                .map(|scope| scope.operation.clone())
+                .unwrap_or_else(|| crate::speech::new_id("upload").to_string());
+            return forwarded::upload(
+                node,
+                &node.machine(),
+                acting,
+                target,
+                operation,
+                file,
+                composer,
+                None,
+                forwarded::Input::Local(source),
+            )
+            .await;
+        }
         let _place = using_target(node, &target).await;
         let (mut arriving, mut guard) =
-            match arrival(node, &node.machine(), target, file, composer.as_ref(), true).await? {
+            match arrival(node, &node.machine(), &acting, target, file, composer.as_ref(), true).await? {
                 Arrival::Ended(uploaded) => return Ok(uploaded),
                 Arrival::Going(arriving, guard) => (arriving, guard),
             };
@@ -125,9 +186,22 @@ pub async fn upload(
         }
         return result;
     }
-    // The bytes come once, so the upload is tried for one account.
-    let (link, account) = node.speaking(&Acting::Here, &machine, Purpose::Agents).map_err(failure)?;
-    let machine = machine.name;
+    let acting = destinations::sender(node, &machine, &target, None)?;
+    relay(node, &acting, &machine, target, file, composer, source).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn relay(
+    node: &Arc<Node>,
+    acting: &Acting,
+    machine: &Written,
+    target: UploadTarget,
+    file: UploadFile,
+    composer: Option<fastctx_types::composer::UploadScope>,
+    source: FrameReader,
+) -> Result<Uploaded, Failure> {
+    let (link, account) = node.speaking(acting, machine, Purpose::Agents).map_err(failure)?;
+    let machine = machine.name.clone();
     let resumes = composer.is_some() && resumes_there(&link, &machine, &account).await?;
     let size = file.size;
     let source_error = Arc::new(Mutex::new(None));
@@ -187,13 +261,14 @@ enum Arrival {
 async fn arrival(
     node: &Arc<Node>,
     from: &MachineName,
+    acting: &Acting,
     target: UploadTarget,
     file: UploadFile,
     scope: Option<&fastctx_types::composer::UploadScope>,
     resume: bool,
 ) -> Result<Arrival, Failure> {
     use crate::composer::uploads::Prior;
-    let Some(scope) = scope else { return Ok(Arrival::Going(prepare(node, target, file).await?, None)) };
+    let Some(scope) = scope else { return Ok(Arrival::Going(prepare(node, from, acting, target, file).await?, None)) };
     let UploadTarget::Resident { resident } = &target else {
         return Err(failure("a shared composer upload needs an existing resident"));
     };
@@ -223,7 +298,7 @@ async fn arrival(
             }
         }
         Prior::Fresh => {
-            let mut arriving = prepare(node, target, file).await?;
+            let mut arriving = prepare(node, from, acting, target, file).await?;
             let guard = crate::composer::uploads::begin(node, &resident, from, scope, &arriving.attachment).await?;
             arriving.keep = true;
             Ok(Arrival::Going(arriving, Some(guard)))
@@ -315,22 +390,68 @@ async fn forward(mut source: FrameReader, mut stream: Stream, size: u64, resumes
 /// The destination of an authenticated upload call and its data stream.
 /// When the caller `resumes`, it is first told how much of the file is held
 /// here from an earlier try, and sends the rest.
+#[allow(clippy::too_many_arguments)]
 pub async fn receive(
     node: &Arc<Node>,
     from: &MachineName,
+    uploader: &Acting,
     target: UploadTarget,
     file: UploadFile,
     composer: Option<fastctx_types::composer::UploadScope>,
     resumes: bool,
     mut stream: Stream,
 ) -> Result<Uploaded, Failure> {
-    if let UploadTarget::Sent { machine, target, operation } = target {
-        return sent::receive(node, from, machine, *target, operation, file, composer, resumes, stream).await;
+    let acting = destinations::acting(node, &target, uploader)?;
+    let routed = !file.media_type.starts_with("image/") && destinations::assisted(node, &target, &acting)?;
+    if let UploadTarget::Sent { machine, target, operation, account, files_on } = target {
+        if account
+            .as_ref()
+            .is_some_and(|account| uploader != &Acting::one(account.hub.clone(), account.account.clone()))
+        {
+            return Err(Failure::refused("the upload account differs from its authenticated sender"));
+        }
+        if routed {
+            if !node.is_here(&machine) {
+                return Err(failure("upload the file through its conversation machine"));
+            }
+            return forwarded::upload(
+                node,
+                from,
+                acting,
+                *target,
+                operation,
+                file,
+                composer,
+                files_on,
+                forwarded::Input::Remote(stream, resumes),
+            )
+            .await;
+        }
+        return sent::receive(node, from, &acting, machine, *target, operation, file, composer, resumes, stream).await;
+    }
+    if routed {
+        let operation = composer
+            .as_ref()
+            .map(|scope| scope.operation.clone())
+            .unwrap_or_else(|| crate::speech::new_id("upload").to_string());
+        return forwarded::upload(
+            node,
+            from,
+            acting,
+            target,
+            operation,
+            file,
+            composer,
+            None,
+            forwarded::Input::Remote(stream, resumes),
+        )
+        .await;
     }
     let _place = using_target(node, &target).await;
     validate_file(&file)?;
     let size = file.size;
-    let (mut arriving, mut guard) = match arrival(node, from, target, file, composer.as_ref(), resumes).await? {
+    let (mut arriving, mut guard) = match arrival(node, from, &acting, target, file, composer.as_ref(), resumes).await?
+    {
         Arrival::Ended(uploaded) => return Ok(uploaded),
         Arrival::Going(arriving, guard) => (arriving, guard),
     };
@@ -390,7 +511,13 @@ async fn using_target(node: &Arc<Node>, target: &UploadTarget) -> Option<crate::
     }
 }
 
-async fn prepare(node: &Arc<Node>, target: UploadTarget, file: UploadFile) -> Result<Arriving, Failure> {
+async fn prepare(
+    node: &Arc<Node>,
+    from: &MachineName,
+    acting: &Acting,
+    target: UploadTarget,
+    file: UploadFile,
+) -> Result<Arriving, Failure> {
     let (resident, town) = match target {
         UploadTarget::Sent { .. } => return Err(failure("nested upload policy")),
         UploadTarget::Resident { resident } => {
@@ -416,12 +543,20 @@ async fn prepare(node: &Arc<Node>, target: UploadTarget, file: UploadFile) -> Re
                 format!("{agent}-{:032x}", u128::from_be_bytes(identity)).parse().map_err(failure)?;
             let directory = node.world.conversation(&resident);
             std::fs::create_dir_all(directory.path()).map_err(failure)?;
-            write_new(&directory.draft(), &Draft { agent, town: town.clone(), from: None })?;
+            write_new(
+                &directory.draft(),
+                &Draft { agent, town: town.clone(), from: Some(from.clone()), acting: Some(acting.clone()) },
+            )?;
             (resident, town)
         }
         UploadTarget::Draft { resident, town } => {
             let directory = node.world.conversation(&resident);
             let draft: Draft = read_json(&directory.draft())?;
+            if draft.acting.as_ref() != Some(acting) || draft.from.as_ref() != Some(from) {
+                return Err(Failure::refused(
+                    "the upload draft belongs to another account or device; attach the file again",
+                ));
+            }
             if draft.town != town || node.residents.about(&resident).is_some() {
                 return Err(failure("that upload draft is already open or belongs to another town"));
             }
@@ -465,6 +600,7 @@ fn arriving_in(directory: &Path, mut attachment: Attachment, resume: bool) -> Re
         "image/jpeg" => "content.jpg",
         "image/webp" => "content.webp",
         "image/gif" => "content.gif",
+        "image/svg+xml" => "content.svg",
         _ => "content",
     };
     let name = if name == "content" {
@@ -484,7 +620,27 @@ fn arriving_in(directory: &Path, mut attachment: Attachment, resume: bool) -> Re
     };
     let path = directory.join(name);
     attachment.path = crate::world::native(&path);
-    Ok(Arriving { attachment, temporary, path, output: Some(output), received, hash, unpublished: false, keep: false })
+    let image_prefix = if attachment.is_image() && received == 0 { Some(Vec::new()) } else { None };
+    if attachment.is_image() && received > 0 {
+        let mut header = Vec::new();
+        std::fs::File::open(&temporary)
+            .map_err(failure)?
+            .take(image_header_size(&attachment.file))
+            .read_to_end(&mut header)
+            .map_err(failure)?;
+        check_image(&header, &attachment.file.media_type)?;
+    }
+    Ok(Arriving {
+        attachment,
+        temporary,
+        path,
+        output: Some(output),
+        received,
+        hash,
+        unpublished: false,
+        keep: false,
+        image_prefix,
+    })
 }
 
 /// The part at `temporary` an earlier try left, open to go on writing, with
@@ -526,10 +682,58 @@ struct Arriving {
     /// upload that broke goes on from it. Bytes that could never make the
     /// file are not kept.
     keep: bool,
+    image_prefix: Option<Vec<u8>>,
+}
+
+fn image_header_size(file: &UploadFile) -> u64 {
+    if file.media_type == "image/svg+xml" { 64 * 1024 } else { 16 }
+}
+
+fn check_image(header: &[u8], media_type: &str) -> Result<(), Failure> {
+    let matches = if media_type == "image/svg+xml" {
+        let mut xml = quick_xml::Reader::from_reader(header);
+        loop {
+            match xml.read_event() {
+                Ok(quick_xml::events::Event::Start(tag) | quick_xml::events::Event::Empty(tag)) => {
+                    break tag.local_name().as_ref() == "svg";
+                }
+                Ok(
+                    quick_xml::events::Event::Decl(_)
+                    | quick_xml::events::Event::Comment(_)
+                    | quick_xml::events::Event::PI(_)
+                    | quick_xml::events::Event::DocType(_),
+                ) => {}
+                Ok(quick_xml::events::Event::Text(text)) if text.as_ref().chars().all(char::is_whitespace) => {}
+                _ => break false,
+            }
+        }
+    } else {
+        image::guess_format(header).is_ok_and(|format| format.to_mime_type() == media_type)
+    };
+    if !matches {
+        return Err(failure("the attachment bytes do not match the declared image type"));
+    }
+    Ok(())
 }
 
 impl Arriving {
     fn write(&mut self, bytes: &[u8]) -> Result<(), Failure> {
+        if let Some(prefix) = self.image_prefix.as_mut() {
+            prefix.extend_from_slice(bytes);
+            if prefix.len() as u64 > self.attachment.file.size {
+                self.keep = false;
+                return Err(failure("the image exceeds its declared size"));
+            }
+            if (prefix.len() as u64) < image_header_size(&self.attachment.file).min(self.attachment.file.size) {
+                return Ok(());
+            }
+            let prefix = self.image_prefix.take().expect("image header");
+            if let Err(error) = check_image(&prefix, &self.attachment.file.media_type) {
+                self.keep = false;
+                return Err(error);
+            }
+            return self.write(&prefix);
+        }
         if bytes.len() as u64 > self.attachment.file.size - self.received {
             self.keep = false;
             return Err(failure("the uploader sent more than the declared size"));
@@ -542,6 +746,9 @@ impl Arriving {
 
     fn finish(mut self) -> Result<Attachment, Failure> {
         self.keep = false;
+        if self.image_prefix.is_some() {
+            return Err(failure("the attachment has no complete image header"));
+        }
         if self.received != self.attachment.file.size {
             return Err(failure(format!("received {} bytes; expected {}", self.received, self.attachment.file.size)));
         }
@@ -801,11 +1008,14 @@ pub async fn place(
     attachments: Vec<Attachment>,
     files_on: Option<&Written>,
 ) -> Result<Vec<Attachment>, Failure> {
-    let acting = node.residents.about(resident).map(|(about, _)| about.acting).unwrap_or_default();
+    let acting = node.residents.about(resident).ok_or_else(|| crate::forget::gone(node, resident))?.0.acting;
     let assisting = !crate::around::works_here(node, &acting);
     let mut given = Vec::with_capacity(attachments.len());
     for attachment in attachments {
         if let Some(kept) = references::reference(node, resident, &attachment)? {
+            if assisting && !kept.is_image() {
+                destinations::validate_original(node, &acting, &kept)?;
+            }
             given.push(kept);
             continue;
         }
@@ -995,6 +1205,7 @@ impl Drop for Opening {
 pub async fn opening(
     node: &Arc<Node>,
     agent: &AgentName,
+    acting: &Acting,
     town: Option<&TownName>,
     attachments: &[Attachment],
 ) -> Result<(ResidentId, Opening), Failure> {
@@ -1007,6 +1218,9 @@ pub async fn opening(
     }
     let directory = node.world.conversation(&id);
     let draft: Draft = read_json(&directory.draft())?;
+    if draft.acting.as_ref() != Some(acting) {
+        return Err(Failure::refused("the upload draft belongs to another account; attach the file again"));
+    }
     if draft.agent != *agent || draft.town.as_ref() != town {
         return Err(failure("the upload draft is for another agent or town"));
     }

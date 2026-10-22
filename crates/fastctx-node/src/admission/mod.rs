@@ -51,12 +51,12 @@ fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
         | RemoteCall::ItemDetail { resident: who, .. }
         | RemoteCall::AgentActivity { resident: who, .. } => Some(who),
         RemoteCall::CommitAttachment { attachment, .. } => Some(&attachment.conversation().resident),
-        RemoteCall::Upload { target, .. } | RemoteCall::ReserveAttachment { target, .. } => {
-            match target.conversation_target() {
-                fastctx_types::attachments::UploadTarget::Resident { resident } => Some(resident),
-                _ => None,
-            }
-        }
+        RemoteCall::AttachmentPlaces { target, .. }
+        | RemoteCall::Upload { target, .. }
+        | RemoteCall::ReserveAttachment { target, .. } => match target.conversation_target() {
+            fastctx_types::attachments::UploadTarget::Resident { resident } => Some(resident),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -76,13 +76,13 @@ fn town_of(call: &RemoteCall) -> Option<&TownName> {
         | RemoteCall::PipeOut { origin, .. } => origin.town.as_ref(),
         RemoteCall::PageAction { source, .. } => Some(&source.town),
         RemoteCall::Place { attachment, .. } => attachment.town.as_ref(),
-        RemoteCall::Upload { target, .. } | RemoteCall::ReserveAttachment { target, .. } => {
-            match target.conversation_target() {
-                fastctx_types::attachments::UploadTarget::New { town, .. }
-                | fastctx_types::attachments::UploadTarget::Draft { town, .. } => town.as_ref(),
-                _ => None,
-            }
-        }
+        RemoteCall::AttachmentPlaces { target, .. }
+        | RemoteCall::Upload { target, .. }
+        | RemoteCall::ReserveAttachment { target, .. } => match target.conversation_target() {
+            fastctx_types::attachments::UploadTarget::New { town, .. }
+            | fastctx_types::attachments::UploadTarget::Draft { town, .. } => town.as_ref(),
+            _ => None,
+        },
         RemoteCall::Manage { action: Management::Move { town: Some(town) }, .. } => Some(town),
         _ => None,
     }

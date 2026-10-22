@@ -1110,6 +1110,12 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             crate::lines::call(node, node.machine(), machine, request).await.map(Reply::Lines)
         }
+        Call::AttachmentPlaces { target, machine, account, preferred } => {
+            users_voice(node, peer)?;
+            crate::attachments::destinations::query(node, target, machine, account, preferred)
+                .await
+                .map(Reply::AttachmentPlaces)
+        }
         Call::Upload { .. } => Err(Failure::new("an upload requires its byte stream on a dedicated connection")),
         Call::Collect { .. } | Call::Taken { .. } => Err(Failure::new("this is asked on a session's own connection")),
         Call::Wait { .. } => Err(Failure::new("a wait is asked on a command's own connection")),

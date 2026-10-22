@@ -300,6 +300,7 @@ fn nodes() -> Vec<NodesReply> {
         mcp: true,
         mcp_import: true,
         page_accounts: true,
+        attachment_places: true,
         completion_receipts: false,
         upload_resumes: false,
         attachment_references: false,
