@@ -3,6 +3,27 @@
    network's policy in one quiet line under it, then the list's tree with
    what each machine runs, a mark of where its update stands and its switch. */
 
+/* The ruler and the policy stand still over the machines, which scroll in
+   their own room below them. */
+.ml-list.updates {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+.uv-top {
+  flex: none;
+}
+
+/* A row scrolled up under the policy fades out rather than being cut; at
+   rest the first group's own margin is where the fade falls. */
+.uv-rows {
+  flex: 1;
+  padding-bottom: var(--space-8);
+  mask-image: linear-gradient(to bottom, transparent, var(--text) var(--space-5));
+}
+
 .uv-ruler {
   position: relative;
   max-width: 1080px;

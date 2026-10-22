@@ -1467,8 +1467,13 @@ export class MachinesPage implements Page {
       );
       if (html !== this.listed) {
         this.listed = html;
+        // The update view's machines scroll on their own, and are where
+        // they were after each drawing.
+        const scrolled = this.list.querySelector<HTMLElement>(".uv-rows")?.scrollTop ?? 0;
         redrawKeepingFocus(this.list, () => {
           this.list.innerHTML = html;
+          const rows = this.list.querySelector<HTMLElement>(".uv-rows");
+          if (rows) rows.scrollTop = scrolled;
         });
       }
     }

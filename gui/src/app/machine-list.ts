@@ -159,7 +159,8 @@ export function machineList(now: ListNow, words: MachinesWords): string {
     sections.push(section(label, words.groupSub(all.length, online(all)), "", body));
   }
   if (assisting.length && !updates) sections.push(section(words.assistSection, words.groupSub(assisting.length, online(assisting)), "", draw.leaves(assisting, 0)));
-  if (updates) return `${updates.head}${sections.join("")}`;
+  // The ruler and the policy stay put; the machines under them scroll.
+  if (updates) return `<div class="uv-top">${updates.head}</div><div class="uv-rows scroller">${sections.join("")}</div>`;
   return `<div class="ml-hubs">${hubRows.join("")}</div>${sections.join("")}`;
 }
 
