@@ -130,7 +130,12 @@
 }
 
 /* The head names the agent, its mark before its name; across from it, the
-   agent's programs on the machine, how the scan goes, and scanning again. */
+   agent's programs on the machine, how the scan goes, and scanning again.
+   The name, the switch and the pills beside it stand on one middle line. */
+.logins-page .page-head-title {
+  align-items: center;
+}
+
 .logins-title {
   display: inline-flex;
   align-items: center;
