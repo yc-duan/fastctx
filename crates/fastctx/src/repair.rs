@@ -246,14 +246,14 @@ fn run_inner(args: RepairArgs) -> anyhow::Result<()> {
         let node = node(&root, &build, &runtime, &mut journal);
         journal.end(node)?;
     }
-    journal.finish()?;
-    if journal.report.success
-        && let Some(executable) = &args.reopen
+    if journal.report.steps.iter().all(|step| {
+        matches!(step.outcome, fastctx_types::repair::Outcome::Unchanged | fastctx_types::repair::Outcome::Repaired)
+    }) && let Some(executable) = &args.reopen
     {
         journal.begin("reopen")?;
         journal.end(reopen(&root, executable).map(|_| "application launch accepted".into()))?;
-        journal.finish()?;
     }
+    journal.finish()?;
     println!("{}", serde_json::to_string(&journal.report)?);
     ensure!(journal.report.success, "{}", journal.report.error.as_deref().unwrap_or("repair failed"));
     Ok(())
@@ -277,18 +277,24 @@ fn reopen(root: &Path, executable: &Path) -> anyhow::Result<()> {
     let app = store::read_json::<fastctx_install::repair::application::Registration>(&root.join("updates/app.json"))?
         .context("no registered application to reopen")?;
     ensure!(app.executable()? == executable, "application to reopen differs from its registration");
-    let environment: Vec<_> = std::env::vars_os()
-        .filter(|(name, _)| {
-            !["FASTCTX_RESIDENT", "FASTCTX_CONVERSATION", "FASTCTX_SESSION"].iter().any(|key| name == key)
-        })
-        .collect();
-    fastctx_platform::spawn_detached(
-        executable,
-        &[],
-        executable.parent().context("application has no parent")?,
-        &environment,
-    )
-    .with_context(|| format!("reopening application {}", executable.display()))?;
+    #[cfg(windows)]
+    fastctx_install::interactive::reopen(root, executable)?;
+    #[cfg(not(windows))]
+    {
+        let environment: Vec<_> = std::env::vars_os()
+            .filter(|(name, _)| {
+                !["FASTCTX_RESIDENT", "FASTCTX_CONVERSATION", "FASTCTX_SESSION"].iter().any(|key| name == key)
+            })
+            .collect();
+        fastctx_platform::spawn_detached(
+            executable,
+            &[],
+            executable.parent().context("application has no parent")?,
+            &environment,
+        )
+        .with_context(|| format!("reopening application {}", executable.display()))?;
+    }
+
     Ok(())
 }
 

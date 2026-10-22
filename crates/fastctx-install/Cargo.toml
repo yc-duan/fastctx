@@ -42,6 +42,7 @@ libc = "0.2"
 xattr = "1"
 
 [target.'cfg(windows)'.dependencies]
+tempfile = "3"
 which = "=8.0.0"
 windows-registry = "0.6"
 windows-service = "0.8.1"

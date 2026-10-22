@@ -5,6 +5,7 @@ use super::Journal;
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+#[cfg(not(windows))]
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -49,33 +50,34 @@ pub fn check(root: &Path, app: &Registration, build: &fastctx_types::renewal::Bu
     let executable = app.executable()?;
     let receipt = root.join("updates").join(format!("application-probe-{}.json", std::process::id()));
     let profile = root.join("updates").join(format!("application-probe-{}", std::process::id()));
-    let mut command = std::process::Command::new(&executable);
-    command
+    #[cfg(not(windows))]
+    let mut child = std::process::Command::new(&executable)
         .arg("--repair-probe")
         .arg(&receipt)
         .arg(&profile)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt as _;
-        command.creation_flags(0x08000000);
-    }
-    let mut child = command.spawn().with_context(|| format!("probing application {}", executable.display()))?;
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .with_context(|| format!("probing application {}", executable.display()))?;
     let result = (|| -> anyhow::Result<()> {
-        let began = Instant::now();
-        loop {
-            if let Some(status) = child.try_wait()? {
-                ensure!(status.success(), "application probe {} exited {status}", executable.display());
-                break;
+        #[cfg(windows)]
+        crate::interactive::probe(root, &executable, &receipt, &profile)?;
+        #[cfg(not(windows))]
+        {
+            let began = Instant::now();
+            loop {
+                if let Some(status) = child.try_wait()? {
+                    ensure!(status.success(), "application probe {} exited {status}", executable.display());
+                    break;
+                }
+                ensure!(
+                    began.elapsed() < Duration::from_secs(45),
+                    "application {} did not open its probe window in 45 seconds",
+                    executable.display()
+                );
+                std::thread::sleep(Duration::from_millis(100));
             }
-            ensure!(
-                began.elapsed() < Duration::from_secs(45),
-                "application {} did not open its probe window in 45 seconds",
-                executable.display()
-            );
-            std::thread::sleep(Duration::from_millis(100));
         }
         let probe = crate::renewal::read_json::<Probe>(&receipt)?
             .with_context(|| format!("application {} produced no window receipt", executable.display()))?;
@@ -90,6 +92,7 @@ pub fn check(root: &Path, app: &Registration, build: &fastctx_types::renewal::Bu
         Ok(())
     })();
     // This is only the directly owned probe child, never a discovered process.
+    #[cfg(not(windows))]
     if child.try_wait()?.is_none() {
         child.kill()?;
         child.wait()?;
@@ -151,22 +154,11 @@ pub async fn install(
     fastctx_update::verify::file(installer, &package.signature, &manifest.version).map_err(anyhow::Error::msg)?;
     #[cfg(windows)]
     {
-        ensure!(
-            !fastctx_platform::elevation::is_elevated()?,
-            "application installation requires the user's ordinary interactive token"
-        );
-        let executable = root.join("updates").join(format!("installer-{}.exe", std::process::id()));
-        std::fs::copy(installer, &executable)?;
-        let mut command = tokio::process::Command::new(&executable);
-        command.args(["/S", "/UPDATE"]).stdin(std::process::Stdio::null()).kill_on_drop(true);
-        command.creation_flags(0x08000000);
-        let result = tokio::time::timeout(Duration::from_secs(600), command.status()).await;
-        let _ = std::fs::remove_file(&executable);
-        let status = result
-            .context("application installer exceeded ten minutes")?
-            .with_context(|| format!("running {}", executable.display()))?;
-        ensure!(status.success(), "application installer {} exited {status}", executable.display());
-        Ok(())
+        let (root, installer, signature, version) =
+            (root.to_owned(), installer.to_owned(), package.signature.clone(), manifest.version.clone());
+        tokio::task::spawn_blocking(move || crate::interactive::install(&root, &installer, &signature, &version, true))
+            .await
+            .context("joining interactive application installer")?
     }
     #[cfg(target_os = "macos")]
     {

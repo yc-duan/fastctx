@@ -12,6 +12,31 @@ Var FastctxEverything
 ; uses $R0 and the like for itself, so it is kept in a variable of its own.
 Var FastctxParameters
 
+; Repair keeps /UPDATE semantics while restoring a missing WebView runtime.
+; The bootstrapper is embedded in, and authenticated with, the Fastctx package.
+!macro NSIS_HOOK_PREINSTALL
+  ${GetParameters} $R8
+  ClearErrors
+  ${GetOptions} $R8 "/FASTCTXREPAIR" $R9
+  ${IfNot} ${Errors}
+    ; 2026-10-22: a broken runtime can leave its version registered. Let the
+    ; embedded installer check it, then the repairer's real WebView probe decides.
+      !if "${INSTALLWEBVIEW2MODE}" != "embedBootstrapper"
+        !error "Fastctx repair requires an embedded WebView2 bootstrapper."
+      !endif
+      InitPluginsDir
+      File "/oname=$PLUGINSDIR\MicrosoftEdgeWebview2Setup.exe" "${WEBVIEW2BOOTSTRAPPERPATH}"
+      ClearErrors
+      ExecWait '"$PLUGINSDIR\MicrosoftEdgeWebview2Setup.exe" /silent /install' $R9
+      ${If} ${Errors}
+        Abort "Starting the embedded WebView2 installer failed."
+      ${EndIf}
+      ${If} $R9 != 0
+        Abort "The embedded WebView2 installer failed (exit $R9)."
+      ${EndIf}
+  ${EndIf}
+!macroend
+
 ; The identity is installed even when the optional shortcut task is off:
 ; unpackaged Windows notifications require this Start menu shortcut.
 !macro NSIS_HOOK_POSTINSTALL
@@ -28,8 +53,10 @@ Var FastctxParameters
   ; service that keeps it there from boot. What goes wrong is said and the
   ; installation goes on; World offers what is missing. A computer in no
   ; network gets its service when it first joins or creates one.
-  nsExec::ExecToLog '"$INSTDIR\${MAINBINARYNAME}.exe" --after-install'
-  Pop $0
+  ${If} $UpdateMode != 1
+    nsExec::ExecToLog '"$INSTDIR\${MAINBINARYNAME}.exe" --after-install'
+    Pop $0
+  ${EndIf}
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
