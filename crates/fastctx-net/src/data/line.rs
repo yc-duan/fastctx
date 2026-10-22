@@ -197,6 +197,9 @@ async fn read(
             _ = over.wait_for(|over| *over) => break None,
         };
         let message = match next {
+            // The hub says why it let the pair go when the far end took
+            // nothing; a close that says nothing is the other end done.
+            Some(Ok(WsMessage::Close(Some(frame)))) if !frame.reason.is_empty() => break Some(frame.reason.to_string()),
             None | Some(Ok(WsMessage::Close(_))) => break None,
             Some(Err(error)) => break Some(format!("receiving: {}", dial::describe(&error))),
             Some(Ok(WsMessage::Binary(bytes))) => Received::Bytes(bytes.to_vec()),

@@ -408,26 +408,36 @@ async fn relay(mut first: Socket, mut second: Socket, cutting: oneshot::Receiver
     let (mut second_sink, mut second_stream) = second.split();
     // Each message is passed on for as long as it moves: an end's pings say
     // how much it took of what the hub sent it (`fastctx_net::pulse`), and
-    // go on to the other end, which counts them as the far end's own.
+    // go on to the other end, which counts them as the far end's own. Each
+    // direction ends with why, when the end it wrote to took nothing.
     let forward = async {
         while let Some(Ok(message)) = first_stream.next().await {
             told(&first_pulse, &message);
             carried += message.len() as u64;
-            if message.is_close()
-                || !second_pulse.writing(second_sink.send(message)).await.is_ok_and(|sent| sent.is_ok())
-            {
+            if message.is_close() {
                 break;
             }
+            match second_pulse.writing(second_sink.send(message)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => break,
+                Err(quiet) => return Some(quiet.to_string()),
+            }
         }
+        None
     };
     let backward = async {
         while let Some(Ok(message)) = second_stream.next().await {
             told(&second_pulse, &message);
-            if message.is_close() || !first_pulse.writing(first_sink.send(message)).await.is_ok_and(|sent| sent.is_ok())
-            {
+            if message.is_close() {
                 break;
             }
+            match first_pulse.writing(first_sink.send(message)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => break,
+                Err(quiet) => return Some(quiet.to_string()),
+            }
         }
+        None
     };
     // A pair whose cut is dropped unsent ended some other way.
     let cut = async {
@@ -436,15 +446,26 @@ async fn relay(mut first: Socket, mut second: Socket, cutting: oneshot::Receiver
         }
     };
     // A WebSocket close does not pass through as half a close: when either
-    // side is done, the transfer is.
-    tokio::select! {
-        () = forward => {}
-        () = backward => {}
-        () = cut => {}
-    }
-    let _ = tokio::time::timeout(SILENCE, first_sink.close()).await;
-    let _ = tokio::time::timeout(SILENCE, second_sink.close()).await;
+    // side is done, the transfer is. The end whose far end took nothing is
+    // told so in the close, as its own write would have found out.
+    let (first_why, second_why) = tokio::select! {
+        why = forward => (why, None),
+        why = backward => (None, why),
+        () = cut => (None, None),
+    };
+    close(&mut first_sink, first_why).await;
+    close(&mut second_sink, second_why).await;
     carried
+}
+
+/// Closes an end of a pair, saying `why` when there is something to say.
+async fn close(sink: &mut futures_util::stream::SplitSink<Socket, crate::WsMessage>, why: Option<String>) {
+    use tokio_tungstenite::tungstenite::protocol::{CloseFrame, frame::coding::CloseCode};
+    if let Some(why) = why {
+        let frame = CloseFrame { code: CloseCode::Away, reason: why.into() };
+        let _ = tokio::time::timeout(SILENCE, sink.send(crate::WsMessage::Close(Some(frame)))).await;
+    }
+    let _ = tokio::time::timeout(SILENCE, sink.close()).await;
 }
 
 /// Notes what an end's ping says it took of what the hub sent it.
