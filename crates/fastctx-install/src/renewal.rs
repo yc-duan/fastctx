@@ -212,6 +212,49 @@ fn handed_over(root: &Path, entry: &Path) -> anyhow::Result<Option<FileLock>> {
     Ok(None)
 }
 
+/// Where the process coordinating the handover to the program `digest`
+/// says who it is (`fastctx_node::replacement::prepare`).
+pub fn coordinator(root: &Path, digest: &str) -> PathBuf {
+    directory(root).join(format!("coordinator-{digest}.json"))
+}
+
+/// A handover its boot service never took keeps its gate for good: the
+/// process coordinating it holds the gate for as long as the stable node it
+/// started serves, and that node serves on while the service refuses its
+/// program, as an earlier release's guardian refused one without its own
+/// signature. A newer program offered then ends that coordinator, which by
+/// then only holds the gate, its node, detached from it, going on serving;
+/// and takes the gate, which nothing else ever would. The gate once the
+/// coordinator has let it go; none where no such handover holds it.
+fn superseded(root: &Path, entry: &Path, source: &Path) -> anyhow::Result<Option<FileLock>> {
+    let Some(plan) = read(root)? else { return Ok(None) };
+    let stuck = matches!(plan.phase, Phase::AwaitingAdministrator | Phase::Failed)
+        || (plan.phase == Phase::UpdatingGuardian && plan.error.is_some());
+    if !stuck {
+        return Ok(None);
+    }
+    let Some(holder) = read_json::<fastctx_types::ProcessIdentity>(&coordinator(root, &plan.candidate.build.digest))?
+    else {
+        return Ok(None);
+    };
+    if !fastctx_platform::is_alive(&holder)? {
+        return Ok(None);
+    }
+    let offered = crate::program::inspect(source)?;
+    if !crate::program::newer(&offered, &plan.candidate.build)? {
+        return Ok(None);
+    }
+    fastctx_platform::terminate::terminate(&holder)?;
+    let began = std::time::Instant::now();
+    while began.elapsed() < HANDOVER {
+        if let Some(lock) = FileLock::try_acquire(entry)? {
+            return Ok(Some(lock));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    Ok(None)
+}
+
 /// Takes the program out of a release's checked package, its own signature
 /// beside it (`fastctx_update::kernel::unpack`), and stages it, unpacking in
 /// `unpacking`, a directory of the caller's emptied first and after.
@@ -250,9 +293,14 @@ pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Res
     let entry = directory(root).join("node-entry.lock");
     let _node_entry = match FileLock::try_acquire(&entry)? {
         Some(lock) => lock,
-        None => handed_over(root, &entry)?.ok_or_else(|| {
-            anyhow::anyhow!("the node is completing its program handover; it was asked to finish it, and its plan was left unchanged")
-        })?,
+        None => match handed_over(root, &entry)? {
+            Some(lock) => lock,
+            None => superseded(root, &entry, source)?.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "the node is completing its program handover; it was asked to finish it, and its plan was left unchanged"
+                )
+            })?,
+        },
     };
     let _activation = FileLock::try_acquire(&directory(root).join("activation.lock"))?.ok_or_else(|| {
         anyhow::anyhow!("the World program is starting or being published; its plan was left unchanged")

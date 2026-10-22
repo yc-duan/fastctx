@@ -15,10 +15,20 @@ pub fn ensure(root: &Path, source: &Path) -> anyhow::Result<PathBuf> {
     if installed.is_file() {
         let current = crate::program::inspect(&installed)?;
         // This very program is in place already, and no replacement by it is
-        // still under way: there is nothing to place, nor to wait for.
+        // still under way, or one is past publishing it, its boot service
+        // still to take it, which goes on by itself: there is nothing to
+        // place, nor to wait for.
         if current == candidate
-            && crate::renewal::read(root)?
-                .is_none_or(|plan| plan.phase == Phase::Complete || plan.candidate.build != candidate)
+            && crate::renewal::read(root)?.is_none_or(|plan| {
+                plan.candidate.build != candidate
+                    || matches!(
+                        plan.phase,
+                        Phase::Complete
+                            | Phase::AwaitingAdministrator
+                            | Phase::UpdatingGuardian
+                            | Phase::ReturningToService
+                    )
+            })
         {
             return Ok(installed);
         }

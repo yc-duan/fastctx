@@ -8,7 +8,7 @@ use fastctx_platform::{FileLock, current_identity, ensure_private_dir, is_alive}
 use fastctx_types::{ProcessIdentity, layout::WorldDir};
 
 fn witness(root: &Path, digest: &str) -> std::path::PathBuf {
-    store::directory(root).join(format!("coordinator-{digest}.json"))
+    store::coordinator(root, digest)
 }
 
 /// A kept bridge retains the node startup gate until its stable child yields.

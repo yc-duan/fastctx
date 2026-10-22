@@ -839,6 +839,13 @@ fn auto(node: &Arc<Node>) {
     {
         return;
     }
+    // Where GitHub cannot be reached the network is the only source: an
+    // update waits for a hub to be connected, rather than failing while the
+    // line is down and waiting an hour (a room's line comes and goes).
+    let linked = node.links().iter().any(|link| matches!(link.status(), fastctx_net::link::Status::Online { .. }));
+    if !linked && state.looked.github != Some(true) {
+        return;
+    }
     let me = node.machine();
     let running =
         fastctx_types::update::release(state.app.as_ref().map_or(env!("CARGO_PKG_VERSION"), |a| a.version.as_str()));
