@@ -11,6 +11,7 @@ pub mod access;
 pub mod accounts;
 pub mod agents;
 pub mod attachments;
+pub mod authorization;
 pub mod calls;
 pub mod collab;
 pub mod collab_prompt;
