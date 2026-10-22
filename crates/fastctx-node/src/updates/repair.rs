@@ -54,17 +54,9 @@ fn accept_from(
     origin: Option<fastctx_net::ids::HubId>,
 ) -> Result<(), String> {
     fastctx_platform::ensure_private_dir(&super::dir(node)).map_err(|e| e.to_string())?;
-    let state = super::state(node);
-    let mut versions = vec![env!("CARGO_PKG_VERSION").to_string()];
-    versions.extend(version);
-    versions.extend(state.renewing.map(|r| r.version));
-    versions.extend(state.failed.map(|r| r.version));
-    versions.extend(state.take);
-    versions.extend(state.app.map(|a| a.version));
-    if versions.iter().any(|v| release(v).is_none()) {
-        return Err("repair target is not a release version".into());
-    }
-    let version = versions.into_iter().max_by_key(|v| release(v)).ok_or("repair has no target")?;
+    let version =
+        fastctx_install::repair::target::select(&node.root, env!("CARGO_PKG_VERSION"), version.as_deref(), None)
+            .map_err(|e| format!("selecting repair target: {e:#}"))?;
     let pending = Pending {
         id: id.unwrap_or_else(|| format!("{}-{}", jiff::Timestamp::now().as_nanosecond(), std::process::id())),
         version,
@@ -177,6 +169,17 @@ fn drive_checked(node: &Arc<Node>) -> Result<bool, String> {
         if !orphaned_preparation && fastctx_platform::is_alive(owner).map_err(|e| e.to_string())? {
             return Ok(true);
         }
+        let Some(_repair) = fastctx_platform::FileLock::try_acquire(&super::dir(node).join("repair.lock"))
+            .map_err(|e| e.to_string())?
+        else {
+            return Ok(true);
+        };
+        let current = fastctx_install::repair::read(&node.root).map_err(|e| e.to_string())?;
+        if current.as_ref().is_none_or(|r| {
+            r.id != report.id || r.started != report.started || r.process != report.process || r.finished.is_some()
+        }) {
+            return Ok(true);
+        }
         let mut ended = report.clone();
         ended.finished = Some(jiff::Timestamp::now());
         ended.error = Some(format!("repair process {} ended before recording completion", report.process.pid));
@@ -281,13 +284,22 @@ fn drive_checked(node: &Arc<Node>) -> Result<bool, String> {
                 .map_err(|e| e.to_string())?;
         }
     }
-    let Some(pending) = pending else { return Ok(false) };
-    if !pending.delay.ready(jiff::Timestamp::now()) { return Ok(!newer_requested(node, &pending.version)); }
+    let Some(mut pending) = pending else { return Ok(false) };
+    if !pending.delay.ready(jiff::Timestamp::now()) {
+        return Ok(!newer_requested(node, &pending.version));
+    }
     if pending.process.as_ref().is_some_and(|p| fastctx_platform::is_alive(p).unwrap_or(true)) {
         return Ok(true);
     }
     if node.updates.held.lock().expect("update activity").fetching.is_some() || super::application::busy() {
         return Ok(true);
+    }
+    let target =
+        fastctx_install::repair::target::select(&node.root, env!("CARGO_PKG_VERSION"), Some(&pending.version), None)
+            .map_err(|e| format!("selecting retry target: {e:#}"))?;
+    if target != pending.version {
+        pending.version = target;
+        write_json(&path(node), &pending).map_err(|e| e.to_string())?;
     }
     launch(node, pending);
     drop(_gate);
@@ -307,6 +319,14 @@ fn launch(node: &Arc<Node>, pending: Pending) {
                 else {
                     return Ok(());
                 };
+                if let Some(receipt) = fastctx_install::repair::read(&node.root)?
+                    && (receipt.id != pending.id
+                        || receipt.finished.is_some()
+                        || (receipt.process != fastctx_platform::current_identity()?
+                            && fastctx_platform::is_alive(&receipt.process)?))
+                {
+                    return Ok(());
+                }
                 let mut journal = fastctx_install::repair::Journal::start(
                     &node.root,
                     &pending.version,
@@ -354,6 +374,14 @@ async fn prepare(node: &Arc<Node>, pending: &Pending) -> Result<(), String> {
     }
     let mut archive = None;
     for target in targets {
+        node.updates.packages.clear_incomplete(&super::cache(node), &pending.version, &target, |path| {
+            fastctx_install::repair::note(
+                &node.root,
+                &pending.id,
+                format!("delete stale package partial {}: no acquisition owns it", path.display()),
+            )
+            .map_err(|e| format!("{e:#}"))
+        })?;
         let package =
             manifest.package(&target).ok_or_else(|| format!("{} has no package for {target}", manifest.version))?;
         if let Some(path) = super::cache(node).get(&pending.version, &target) {
@@ -510,5 +538,8 @@ pub(super) fn retry_at(node: &Node) -> Option<jiff::Timestamp> {
 fn newer_requested(node: &Node, version: &str) -> bool {
     let state = super::state(node);
     state.automatic.as_ref().filter(|_| state.auto).is_some_and(|v| release(v) > release(version))
-        || node.links().iter().any(|link| link.versions().is_some_and(|n| n.due.get(&link.name()).is_some_and(|d| release(&d.version) > release(version))))
+        || node.links().iter().any(|link| {
+            link.versions()
+                .is_some_and(|n| n.due.get(&link.name()).is_some_and(|d| release(&d.version) > release(version)))
+        })
 }

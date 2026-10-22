@@ -69,6 +69,30 @@ impl Cache {
         Ok(dir.join(format!("{target}.{attempt}{ATTEMPT}")))
     }
 
+    /// Incomplete files for exactly this package. Callers must exclude its live
+    /// acquisition owner before deleting any of these paths.
+    pub fn incomplete(&self, version: &str, target: &str) -> Result<Vec<PathBuf>, String> {
+        let path = self.path(version, target)?;
+        let directory = path.parent().expect("package directory");
+        let entries = match std::fs::read_dir(directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(format!("reading incomplete packages in {}: {error}", directory.display())),
+        };
+        let mut paths = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("reading {}: {e}", directory.display()))?;
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.strip_prefix(&format!("{target}.")).and_then(|rest| rest.strip_suffix("part")).is_some_and(|rest| {
+                rest.is_empty() || rest.strip_suffix('.').is_some_and(|number| number.parse::<u64>().is_ok())
+            }) {
+                paths.push(entry.path());
+            }
+        }
+        Ok(paths)
+    }
+
     /// Deletes what tries of bringing packages in left: none outlives the
     /// process that made it. Says what it could not delete.
     pub fn clear_attempts(&self) -> Vec<String> {

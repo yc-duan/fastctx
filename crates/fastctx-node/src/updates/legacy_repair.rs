@@ -50,6 +50,9 @@ pub(super) async fn help(
     owner: &AccountName,
     due: &RepairDue,
 ) -> Result<(), String> {
+    if !arranged(link, machine, &due.id) {
+        return Ok(());
+    }
     let acting = Acting::one(link.hub().clone(), owner.clone());
     let machine = Written { name: machine.clone(), hub: Some(link.hub_name()) };
     let current = super::machine(node, &acting, machine.clone(), UpdateCall::State).await.map_err(|e| e.to_string())?;
@@ -79,7 +82,13 @@ pub(super) async fn help(
         targets.push(app.target.clone());
     }
     for target in targets {
+        if !arranged(link, &machine.name, &due.id) {
+            return Ok(());
+        }
         super::bring(node, &manifest, &target).await.map_err(|e| e.why)?;
+        if !arranged(link, &machine.name, &due.id) {
+            return Ok(());
+        }
         let destination = format!("{}/updates/packages/v{}/{target}", root.trim_end_matches('/'), due.version);
         crate::copy::update::send_package(node, &acting, &manifest, &target, &machine, &destination).await?;
     }
@@ -109,6 +118,9 @@ pub(super) async fn help(
             return Ok(());
         }
     }
+    if !arranged(link, &machine.name, &due.id) {
+        return Ok(());
+    }
     let action = format!(
         "\"$program\" renew repair --background --dir \"$root\" --package \"$package\" --version \"$version\" --id {} --by {}",
         quote(&due.id),
@@ -118,6 +130,11 @@ pub(super) async fn help(
         node.log.line(format_args!("legacy repair {} accepted on {}: {}", due.id, machine, output.trim()));
     }
     Ok(())
+}
+
+fn arranged(link: &Link, machine: &MachineName, id: &str) -> bool {
+    matches!(link.status(), fastctx_net::link::Status::Online { .. })
+        && link.current_versions().is_some_and(|network| network.repairs.get(machine).is_some_and(|due| due.id == id))
 }
 
 async fn run(node: &Arc<Node>, acting: &Acting, machine: &Written, script: String) -> Result<Option<String>, String> {

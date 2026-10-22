@@ -63,7 +63,18 @@ fn background(args: RepairArgs) -> anyhow::Result<()> {
         Journal::start(&root, args.version.as_deref().unwrap_or(env!("CARGO_PKG_VERSION")), &args.by, args.id)?;
     journal.begin("package")?;
     let _collection = fastctx_platform::FileLock::acquire(&store::collection_lock(&root))?;
-    let program = store::keep_image(&root, &std::env::current_exe()?)?;
+    let source = std::env::current_exe()?;
+    let digest = store::digest(&source)?;
+    let retained = store::directory(&root).join("images").join(&digest).join(store::EXECUTABLE);
+    if retained.is_file() && store::digest(&retained)? != digest {
+        journal.action(format!(
+            "restore damaged repair controller {} from {}",
+            retained.display(),
+            source.display()
+        ))?;
+        store::publish_image(&source, &retained)?;
+    }
+    let program = store::keep_image(&root, &source)?;
     let mut words = vec![
         "renew".into(),
         "repair".into(),
@@ -117,13 +128,27 @@ fn run_inner(args: RepairArgs) -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     let source = std::env::current_exe()?;
     let build = store::build()?;
-    let version = if args.application_only {
-        requested_application(&root, args.version.as_deref(), &build.version)?
-    } else {
-        requested(&root, args.version.as_deref(), &build.version)?
-    };
-    let mut journal = Journal::start(&root, &version, &args.by, args.id.clone())?;
+    let mut journal = Journal::start(&root, &build.version, &args.by, args.id.clone())?;
     journal.begin("package")?;
+    let target = (|| -> anyhow::Result<String> {
+        if args.application_only {
+            return requested_application(&root, args.version.as_deref(), &build.version);
+        }
+        let serving = match runtime.block_on(crate::renew::observing(&WorldDir::under(&root)))? {
+            Probe::Running(node) => Some(node.build.version),
+            _ => None,
+        };
+        fastctx_install::repair::target::select(&root, &build.version, args.version.as_deref(), serving.as_deref())
+    })();
+    let version = match target {
+        Ok(version) => version,
+        Err(error) => {
+            journal.end(Err(error))?;
+            journal.finish()?;
+            bail!("{}", journal.report.error.unwrap_or_default());
+        }
+    };
+    journal.set_version(version.clone())?;
     let distributed = fastctx_platform::RELEASED || std::env::var_os("FASTCTX_UPDATE_RELEASES").is_some();
     let manifest = if distributed || args.package.is_some() || version != build.version {
         match runtime.block_on(package::manifest(&root, &version)) {
@@ -298,27 +323,6 @@ fn reopen(root: &Path, executable: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn requested(root: &Path, explicit: Option<&str>, running: &str) -> anyhow::Result<String> {
-    let mut versions = vec![running.to_string()];
-    if let Some(version) = explicit {
-        versions.push(version.into());
-    }
-    if let Some(plan) = store::read(root)? {
-        versions.push(plan.candidate.build.version);
-    }
-    for name in ["attempt.json", "take.json"] {
-        if let Some(value) = store::read_json::<serde_json::Value>(&root.join("updates").join(name))?
-            && let Some(version) = value.get("version").and_then(|v| v.as_str())
-        {
-            versions.push(version.into());
-        }
-    }
-    for version in &versions {
-        ensure!(fastctx_types::update::release(version).is_some(), "invalid repair target {version}");
-    }
-    Ok(versions.into_iter().max_by_key(|v| fastctx_types::update::release(v)).context("no repair version")?)
-}
-
 fn program(
     root: &Path,
     source: &Path,
@@ -445,13 +449,23 @@ fn node(
             }
             if connected(root)? {
                 let links = runtime.block_on(async {
-                    let mut client = fastctx_client::Client::connect(
-                        &world,
-                        fastctx_types::ipc::Peer::Command { resident: None, session: None },
-                    )
-                    .await?;
-                    let answer = client.call(fastctx_types::Call::Nodes).await?;
-                    Ok::<_, anyhow::Error>(answer)
+                    tokio::time::timeout(Duration::from_secs(30), async {
+                        let mut client = fastctx_client::Client::connect(
+                            &world,
+                            fastctx_types::ipc::Peer::Command { resident: None, session: None },
+                        )
+                        .await?;
+                        let answer = client.call(fastctx_types::Call::Nodes).await?;
+                        Ok::<_, anyhow::Error>(answer)
+                    })
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "checking node {} network status under {} exceeded 30 seconds",
+                            node.process.pid,
+                            root.display()
+                        )
+                    })?
                 })?;
                 if let fastctx_types::Reply::Nodes(nodes) = links {
                     if !nodes.hubs.is_empty()

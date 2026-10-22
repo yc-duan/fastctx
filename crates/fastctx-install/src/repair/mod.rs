@@ -6,6 +6,7 @@ mod appimage;
 pub mod application;
 pub mod package;
 pub mod records;
+pub mod target;
 
 use anyhow::Context as _;
 use fastctx_types::repair::{Outcome, Report, Step};
@@ -61,6 +62,11 @@ impl Journal {
     /// releasing the exclusion gate that child is waiting for.
     pub fn handoff(&mut self, process: fastctx_types::ProcessIdentity) -> anyhow::Result<()> {
         self.report.process = process;
+        self.save()
+    }
+
+    pub fn set_version(&mut self, version: String) -> anyhow::Result<()> {
+        self.report.version = version;
         self.save()
     }
 

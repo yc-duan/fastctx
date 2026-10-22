@@ -263,6 +263,26 @@ impl Pool {
         owners.remove(&key);
     }
 
+    /// Clears stale partials while excluding this process's acquisition owner.
+    /// Standalone repair downloads use a separate private inventory.
+    pub fn clear_incomplete(
+        &self,
+        cache: &Cache,
+        version: &str,
+        target: &str,
+        mut before: impl FnMut(&std::path::Path) -> Result<(), String>,
+    ) -> Result<bool, String> {
+        let owners = self.0.lock().expect("never poisoned");
+        if owners.contains_key(&cache.path(version, target)?) {
+            return Ok(false);
+        }
+        for path in cache.incomplete(version, target)? {
+            before(&path)?;
+            std::fs::remove_file(&path).map_err(|e| format!("deleting stale package {}: {e}", path.display()))?;
+        }
+        Ok(true)
+    }
+
     /// Retires unused versions without racing a newly admitted acquisition.
     pub fn prune(&self, cache: &Cache, keep: &[String], log: Log) {
         let owners = self.0.lock().expect("never poisoned");
