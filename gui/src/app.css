@@ -459,6 +459,17 @@
   .composer-context > .context-share {
     display: none;
   }
+
+  /* A refusal does not fit beside the tools on a phone: it takes a line of
+     its own above them, and the tools keep theirs. */
+  .composer-row {
+    flex-wrap: wrap;
+  }
+
+  .composer-row > .composer-note.refused {
+    flex-basis: 100%;
+    order: -1;
+  }
 }
 
 .composer-chip > .glyph {
@@ -484,8 +495,14 @@
   color: var(--text-3);
 }
 
-/* A command the host refused, or that failed: in clay. */
+/* A command the host refused, or that failed: in clay, and read whole,
+   wrapping to a second line where the row is narrow rather than cut. */
 .composer-note.refused {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  line-height: var(--leading-ui);
   color: var(--accent);
 }
 

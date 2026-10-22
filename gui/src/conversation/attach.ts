@@ -28,6 +28,10 @@ export interface AttachWords {
   size(bytes: number): string;
   /** Said when words are sent while something attached is still going. */
   wait: string;
+  /** Said when a file other than an image is offered for an agent of
+   *  another's and no computer of the user's is online to keep it: images
+   *  go with the conversation, other files only to the user's own. */
+  imagesOnly: string;
 }
 
 export interface Attached {
@@ -60,6 +64,10 @@ export class AttachTray {
   readonly element: HTMLElement;
   private items: Attached[] = [];
   private sent = new Map<string, number>();
+  /** Whether files other than images are taken now: why not, when not. */
+  private refusing: (() => string | null) | null = null;
+  /** Says why a file offered was not taken. */
+  private refused: (why: string) => void = () => {};
 
   constructor(
     private readonly words: AttachWords,
@@ -84,10 +92,27 @@ export class AttachTray {
     });
   }
 
+  /** Files other than images are taken only while `refusing` gives no
+   *  reason; one offered then is not taken, and `refused` hears why. */
+  onlyImages(refusing: () => string | null, refused: (why: string) => void): void {
+    this.refusing = refusing;
+    this.refused = refused;
+  }
+
+  /** Why a file other than an image is not taken now; null when it is. */
+  private refusal(image: boolean): string | null {
+    return image ? null : (this.refusing?.() ?? null);
+  }
+
   /** Files from the page: pasted, picked, or dropped in a browser. */
   addFiles(files: Iterable<File>): void {
     for (const file of files) {
       const image = file.type.startsWith("image/") || IMAGE.test(file.name);
+      const why = this.refusal(image);
+      if (why) {
+        this.refused(why);
+        continue;
+      }
       this.add({
         name: file.name || this.words.attach,
         size: file.size,
@@ -102,7 +127,13 @@ export class AttachTray {
   addPaths(paths: string[]): void {
     for (const path of paths) {
       const name = path.split(/[\\/]/).pop() ?? path;
-      this.add({ name, size: null, image: IMAGE.test(name), preview: null, source: { kind: "path", path } });
+      const image = IMAGE.test(name);
+      const why = this.refusal(image);
+      if (why) {
+        this.refused(why);
+        continue;
+      }
+      this.add({ name, size: null, image, preview: null, source: { kind: "path", path } });
     }
   }
 

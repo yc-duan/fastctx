@@ -528,7 +528,7 @@
 
 .mcp-pick {
   display: grid;
-  grid-template-columns: 20px 18px auto minmax(0, 1fr) auto;
+  grid-template-columns: 20px 18px minmax(0, 1fr) auto;
   align-items: center;
   column-gap: var(--space-3);
   width: 100%;
@@ -546,6 +546,12 @@
 
 .mcp-pick.ticked {
   background: var(--accent-wash);
+}
+
+.mcp-pick .mcp-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .mcp-check {

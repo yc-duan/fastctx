@@ -77,7 +77,7 @@ function keep(name: string, server: Server, machine: string | undefined): McpRep
 }
 
 async function answer(call: McpCall): Promise<McpReply> {
-  await pause(call.do === "test" ? 1400 : call.do === "found" ? 700 : 250);
+  await pause(call.do === "test" ? 1400 : call.do === "found" || call.do === "candidates" ? 700 : 250);
   switch (call.do) {
     case "list":
       return { reply: "listed", servers: listed() };
@@ -99,6 +99,8 @@ async function answer(call: McpCall): Promise<McpReply> {
       return keep(call.as_name, { kind: "command", command: "uvx", args: [call.name] }, call.machine);
     case "found":
       return { reply: "found", machine: call.machine ?? "desktop", servers: found };
+    case "candidates":
+      return { reply: "candidates", machine: call.machine ?? "desktop", servers: found.map(({ source, name, server }) => ({ source, name, kind: server.kind })) };
   }
 }
 

@@ -42,7 +42,7 @@ import type { Words } from "../words";
 import type { HubAccount, Login } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
 import type { AgentFacts, AgentModel, WorldAgents } from "../world/agents";
-import type { Attachment, UploadTarget } from "../world/attachments";
+import type { Attachment, FilePlace, UploadTarget } from "../world/attachments";
 import type { WorldNow } from "../world/bridge";
 import type { Offers } from "../world/control";
 import type { Address } from "../world/events";
@@ -134,8 +134,10 @@ export interface NewTalkOptions {
   /** Attaching files to the first words, where the World can carry them. */
   attach?: {
     words: AttachWords;
-    /** Carries one file to a machine for the conversation about to begin. */
-    upload(machine: string, target: UploadTarget, source: AttachSource, progress: (sent: number) => void): Promise<Attachment>;
+    /** Carries one file to a machine for the conversation about to begin;
+     *  `place` is where a file other than an image goes, for an agent of
+     *  another's assisting the user. */
+    upload(machine: string, target: UploadTarget, source: AttachSource, progress: (sent: number) => void, place: FilePlace | null): Promise<Attachment>;
     /** Files dropped onto the window, by path, where the shell gives
      *  them so; returns how to stop listening. */
     drops?(on: { over(over: boolean): void; dropped(paths: string[]): void }): () => void;
@@ -468,7 +470,9 @@ export class NewTalk {
             this.draft?.for === chosen
               ? { kind: "draft", resident: this.draft.resident, town: this.town }
               : { kind: "new", agent: option.agent, town: this.town };
-          const done = await attach.upload(option.written, target, source, progress);
+          const login = option.assistant?.login;
+          const place = login && this.filesOn ? { account: { hub: login.hub, account: login.account }, filesOn: this.filesOn } : null;
+          const done = await attach.upload(option.written, target, source, progress, place);
           this.draft = { resident: done.owner.resident, for: chosen };
           return done;
         },
@@ -480,6 +484,7 @@ export class NewTalk {
       },
       true,
     );
+    tray.onlyImages(() => this.imagesOnly(), (why) => this.refuseFile(why));
     this.tray = tray;
     this.element.querySelector(".composer-tray")!.replaceWith(tray.element);
     const button = this.element.querySelector<HTMLButtonElement>(".composer-attach")!;
@@ -1180,7 +1185,23 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
     const world = this.options.store.world.peek();
     const option = this.chosenOption();
     const here = machinesOf(world).find((machine) => machine.here)?.written ?? null;
-    this.filesOn = option ? (here ?? (option.assistant ? fileHome(world, option.assistant.login) : option.written)) : null;
+    this.filesOn = option ? (option.assistant ? fileHome(world, option.assistant.login) : (here ?? option.written)) : null;
+    // No machine of the user's can take files: only text and images go,
+    // said the moment one is offered (`world-run.md`, 受协助的人附的文件).
+    const pick = this.element.querySelector<HTMLInputElement>(".composer-pick");
+    if (pick) pick.accept = this.imagesOnly() ? "image/*" : "";
+  }
+
+  /** Why only images can be attached now: the agent assists the user, and
+   *  no machine of theirs can take a file; null when any file can. */
+  private imagesOnly(): string | null {
+    return this.chosenOption()?.assistant && !this.filesOn && this.options.attach ? this.options.attach.words.imagesOnly : null;
+  }
+
+  /** A file offered that cannot be taken, said under the words. */
+  private refuseFile(why: string): void {
+    this.note.textContent = why;
+    this.note.classList.add("refused");
   }
 
   private drawStart(): void {

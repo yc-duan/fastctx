@@ -2,6 +2,7 @@
 // (`fastctx-types/src/attachments.rs`): kept on the sending computer, with
 // a small history image at the conversation's home. Phones upload there.
 
+import type { HubAccount } from "./accounts";
 import type { Address, NoticeId, ResidentId } from "./wire";
 
 /** Where an upload goes: an agent there now, a conversation about to be
@@ -17,6 +18,19 @@ export interface SentUploadTarget {
   machine: string;
   target: UploadTarget;
   operation: string;
+  /** The account the file is for, where the conversation works for one
+   *  assisted by another's agent. */
+  account?: HubAccount;
+  /** The machine of that account's the original goes to, as written. */
+  files_on?: string;
+}
+
+/** Where a file other than an image goes, for a conversation an agent of
+ *  another's works in for the user: that account, and one of its own
+ *  machines (`world-run.md`, 受协助的人附的文件). */
+export interface FilePlace {
+  account: HubAccount;
+  filesOn: string;
 }
 
 export interface UploadFile {

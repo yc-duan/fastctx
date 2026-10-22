@@ -137,20 +137,47 @@ export class NodeTray {
   addFiles(files: Iterable<File>): void {
     for (const file of files) {
       const image = file.type.startsWith("image/") || IMAGE.test(file.name);
+      const placed = this.placed(image);
+      if (placed === null) continue;
       const preview = image ? URL.createObjectURL(file) : null;
       if (preview) this.previews.set(`${file.name}:${file.size}`, preview);
-      this.start({ name: file.name || this.words.attach, size: file.size, image, preview }, () => this.session.attachFile(file, this.document));
+      this.start({ name: file.name || this.words.attach, size: file.size, image, preview }, () => this.session.attachFile(file, this.document), placed);
     }
   }
 
   addPaths(paths: string[]): void {
     for (const path of paths) {
       const name = path.split(/[\\/]/).pop() ?? path;
-      this.start({ name, size: null, image: IMAGE.test(name), preview: null }, () => this.session.attachPath(path, () => {}, this.document));
+      const image = IMAGE.test(name);
+      const placed = this.placed(image);
+      if (placed === null) continue;
+      this.start({ name, size: null, image, preview: null }, () => this.session.attachPath(path, () => {}, this.document), placed);
     }
   }
 
-  private start(file: Sending, upload: () => ReturnType<ComposerSession["attachFile"]>): void {
+  /** What has to come before a file goes to an agent assisting the user: a
+   *  file other than an image goes straight to a machine of the user's, so
+   *  the node is told which first. Null where none can take it, which is
+   *  then not attached and said so; nothing to do for any other file. */
+  private placed(image: boolean): (() => Promise<unknown>) | null | undefined {
+    if (image || !this.assistantFiles?.assisting()) return undefined;
+    const kept = this.draft()?.files_on ?? null;
+    const place = kept ?? this.assistantFiles.place();
+    if (place === null) {
+      this.failed(this.words.imagesOnly);
+      return null;
+    }
+    return place === kept ? undefined : () => this.session.setFilesOn(place, this.document);
+  }
+
+  private start(file: Sending, upload: () => ReturnType<ComposerSession["attachFile"]>, first?: () => Promise<unknown>): void {
+    if (first) {
+      first().then(
+        () => this.start(file, upload),
+        (error: unknown) => this.failed(this.words.failed(String(error instanceof Error ? error.message : error))),
+      );
+      return;
+    }
     const before = new Set(this.session.state.operations.map((operation) => operation.id));
     const done = upload();
     const operation = this.session.state.operations.find((one) => !before.has(one.id));

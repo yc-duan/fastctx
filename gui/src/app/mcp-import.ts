@@ -3,15 +3,16 @@
 // its node and listed by the tool that has it, each with a box to tick. A
 // server the account already has by that name is listed unticked; ticked, it
 // replaces the one there. Those a command starts are kept on the machine
-// they were read on; those at an address, on the account.
+// they were read on; those at an address, on the account. What is listed
+// is a name and a kind: an address, a header or a command leaves the
+// machine only for the server ticked, and only into the account.
 
 import { escape } from "../conversation/prose";
 import { glyph } from "../conversation/glyphs";
 import type { Login } from "../world/accounts";
-import { freeName, nameProblem, type Found } from "../world/profile";
+import { freeName, nameProblem, type ImportCandidate } from "../world/profile";
 import type { Pickable } from "./agent-machines";
 import { Sheet } from "./confirm";
-import { serverLine } from "./mcp-sheet";
 import type { ProfileCalls } from "./profile-account";
 import type { ProfileWords } from "./profile-words";
 import { detailOf } from "./problem";
@@ -27,7 +28,7 @@ export interface ImportOpening {
 /** One server read on the machine: under what name it would be kept, and
  *  whether it is ticked. */
 interface Candidate {
-  found: Found;
+  found: ImportCandidate;
   name: string;
   had: boolean;
   ticked: boolean;
@@ -85,9 +86,9 @@ export class McpImport {
     this.problem = null;
     this.draw();
     try {
-      const reply = await opening.calls.mcp(opening.login.hubName, opening.login.account, { do: "found", machine });
+      const reply = await opening.calls.mcp(opening.login.hubName, opening.login.account, { do: "candidates", machine });
       if (this.machine !== machine) return;
-      if (reply.reply !== "found") throw new Error(reply.reply);
+      if (reply.reply !== "candidates") throw new Error(reply.reply);
       const names = new Set(opening.taken);
       const candidates = reply.servers.map((found): Candidate => {
         const had = opening.taken.includes(found.name);
@@ -141,12 +142,10 @@ export class McpImport {
 
   private row(candidate: Candidate, index: number): string {
     const { words } = this;
-    const server = candidate.found.server;
     return `<li><button type="button" class="mcp-pick${candidate.ticked ? " ticked" : ""}" role="checkbox" aria-checked="${candidate.ticked}" data-tick="${index}">
         <span class="mcp-check" aria-hidden="true">${candidate.ticked ? glyph("check", 14) : ""}</span>
-        <span class="mcp-kind">${glyph(server.kind === "command" ? "terminal" : "link", 16)}</span>
+        <span class="mcp-kind">${glyph(candidate.found.kind === "command" ? "terminal" : "link", 16)}</span>
         <span class="mcp-name">${escape(candidate.name)}</span>
-        <span class="mcp-detail">${escape(server.kind === "remote" ? serverLine(server) : "")}</span>
         ${candidate.had ? `<span class="mcp-tag">${escape(words.import.had)}</span>` : ""}
       </button></li>`;
   }
@@ -164,16 +163,15 @@ export class McpImport {
     let kept = 0;
     try {
       for (const one of ticked) {
-        const server = one.found.server;
-        // One a command starts is taken by its machine, from where it was
-        // found; one at an address is kept on the account as it is.
-        await opening.calls.mcp(
-          opening.login.hubName,
-          opening.login.account,
-          server.kind === "command"
-            ? { do: "import", machine: reading.machine, source: one.found.source, name: one.found.name, as_name: one.name }
-            : { do: "keep", name: one.name, server },
-        );
+        // The machine it was found on takes it: one a command starts stays
+        // there, one at an address it reads again for the account.
+        await opening.calls.mcp(opening.login.hubName, opening.login.account, {
+          do: "import",
+          machine: reading.machine,
+          source: one.found.source,
+          name: one.found.name,
+          as_name: one.name,
+        });
         one.ticked = false;
         one.had = true;
         kept += 1;
@@ -190,7 +188,7 @@ export class McpImport {
   }
 }
 
-function sourceName(found: Found, words: ProfileWords): string {
+function sourceName(found: ImportCandidate, words: ProfileWords): string {
   const source = found.source;
   if (source.app === "claude_desktop") return words.import.claudeDesktop;
   if (source.app === "cursor") return words.import.cursor;

@@ -134,22 +134,25 @@ export function unconsented(page: PageView): PageAct[] {
   return page.publication.acts.filter((act) => !holds(agreed, act));
 }
 
-export function readPage(town: TownName, page: PageName, version: number | null): Promise<PageView> {
-  return invoke<PageView>("page_read", { town, page, version });
+/** Reads the page as `account` sees it, the one of this device's logins
+ *  the project is for; none where this device has one login there. */
+export function readPage(town: TownName, page: PageName, version: number | null, account: string | null = null): Promise<PageView> {
+  return invoke<PageView>("page_read", { town, page, version, account });
 }
 
 export function pageHistory(town: TownName, page: PageName): Promise<PageVersion[]> {
   return invoke<PageVersion[]>("page_history", { town, page });
 }
 
-/** Sets what the user agrees the page may do, replacing what they agreed
- *  before; `base` is the consent they were shown. */
-export function consent(town: TownName, page: PageName, version: number, base: number | null, acts: PageAct[]): Promise<PageConsent> {
-  return invoke<PageConsent>("page_consent", { town, page, version, base, acts });
+/** Sets what the user agrees the page may do, as `account`, replacing
+ *  what they agreed before; `base` is the consent they were shown. What a
+ *  page does is done for the account that agreed to it. */
+export function consent(town: TownName, page: PageName, version: number, base: number | null, acts: PageAct[], account: string | null = null): Promise<PageConsent> {
+  return invoke<PageConsent>("page_consent", { town, page, version, base, acts, account });
 }
 
-export function act(town: TownName, page: PageName, version: number, action: PageInvocation): Promise<PageResult> {
-  return invoke<PageResult>("page_act", { town, page, version, action });
+export function act(town: TownName, page: PageName, version: number, action: PageInvocation, account: string | null = null): Promise<PageResult> {
+  return invoke<PageResult>("page_act", { town, page, version, action, account });
 }
 
 /** Takes the page down: a new version without HTML. */

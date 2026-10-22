@@ -7,7 +7,8 @@
 import { focusPlace } from "./app/focus-places";
 import { followSwitches } from "./app/segment-slide";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import type { Attachment, UploadTarget } from "./world/attachments";
+import type { Attachment, FilePlace, UploadTarget } from "./world/attachments";
+import type { AssistantFiles } from "./conversation/node-tray";
 import "katex/dist/katex.min.css";
 import "./design/fonts.css";
 import "./design/tokens.css";
@@ -159,7 +160,7 @@ import {
 import { enRemoval, zhRemoval } from "./app/removal-words";
 import { enAccess, enLogin, enMachines, enToken, zhAccess, zhLogin, zhMachines, zhToken } from "./app/account-words";
 import { LASTING, loginsOf, type AccountChange, type Login, type TokenSeen, type TokenWay } from "./world/accounts";
-import { assistantOf, assistantsOf, assistingOwner, filePlaces, groupsOf, inNoNetwork, loginKey, loginLabel, machinesOf, residentIn, sameLogin, workPlaces, type Machine } from "./app/reach";
+import { assistantOf, assistantsOf, assistingOwner, fileHome, filePlaces, groupsOf, inNoNetwork, loginKey, loginLabel, machinesOf, residentIn, sameLogin, workPlaces, type Machine } from "./app/reach";
 import type { FocusPlace } from "./app/focus-panel";
 import { folders as foldersOf, noFocus, type Focus, type Folders } from "./world/focus";
 import { ComposerSession } from "./conversation/composer";
@@ -570,10 +571,10 @@ const makeNewTalk = (town: string | null) => new NewTalk({
   allowClaude: (machine, go, home) => consent.allow(machine, go, home),
   attach: {
     words: (english ? enComposer : zhComposer).attach,
-    async upload(machine, target, source, progress) {
+    async upload(machine, target, source, progress, place) {
       if (!live) return specimenUpload(machine, target, source, progress);
-      if (source.kind === "path") return uploadPath(machine, target, source.path, progress);
-      const done = await uploadBytes(machine, target, source.file);
+      if (source.kind === "path") return uploadPath(machine, target, source.path, progress, place);
+      const done = await uploadBytes(machine, target, source.file, place);
       progress(source.file.size);
       return done;
     },
@@ -1644,6 +1645,35 @@ function specimenTalk(address: Address): KeepablePage {
   };
 }
 
+/** For a conversation an agent of another's works in for the user: where
+ *  its files other than images go, one of the user's own machines, as the
+ *  World is now (`world-run.md`, 受协助的人附的文件). */
+function assistantFiles(address: Address, nowhere: string): AssistantFiles {
+  const assistant = () => {
+    const world = store.world.peek();
+    const known = residentAt(world, address);
+    return known ? assistantOf(world, known) : null;
+  };
+  return {
+    assisting: () => !!assistant(),
+    place: () => {
+      const one = assistant();
+      return one ? fileHome(store.world.peek(), one.login) : null;
+    },
+    nowhere,
+  };
+}
+
+/** Where a file this device attaches to `address` goes, when an agent of
+ *  another's works there for the user; none for any other conversation. */
+function filePlace(address: Address): FilePlace | null {
+  const world = store.world.peek();
+  const known = residentAt(world, address);
+  const assistant = known ? assistantOf(world, known) : null;
+  const filesOn = assistant ? fileHome(world, assistant.login) : null;
+  return assistant && filesOn ? { account: { hub: assistant.login.hub, account: assistant.login.account }, filesOn } : null;
+}
+
 /** Who a resident is, as the World last listed it, removed or not; null
  *  while it is not listed yet. */
 function someoneOf(world: ReturnType<typeof store.world.peek>, address: Address): Someone | null {
@@ -1736,11 +1766,13 @@ function liveTalk(address: Address): KeepablePage {
     },
     attach: {
       words: composerWords.attach,
+      filesOn: assistantFiles(address, composerWords.attach.imagesOnly),
       seam: {
         upload: async (source, _name, progress) => {
           const target: UploadTarget = { kind: "resident", resident: address.resident };
-          if (source.kind === "path") return uploadPath(address.machine, target, source.path, progress);
-          const done = await uploadBytes(address.machine, target, source.file);
+          const place = filePlace(address);
+          if (source.kind === "path") return uploadPath(address.machine, target, source.path, progress, place);
+          const done = await uploadBytes(address.machine, target, source.file, place);
           progress(source.file.size);
           return done;
         },
@@ -2039,6 +2071,18 @@ function journalPage(town: string, name: string): Page {
 let openPage: PageScreen | null = null;
 const pageConfirm = new Confirm({ close: pageWords.close, working: pageWords.working, failed: pageWords.failed });
 
+/** The one of this device's logins a project's page is seen and agreed to
+ *  as: its owner where logged in here, else the first it is shared with. */
+function pageAccount(town: string): string | null {
+  for (const hub of store.world.peek()?.accounts.hubs ?? []) {
+    const project = hub.projects.find((one) => one.name === town);
+    if (!project) continue;
+    const able = hub.logins.filter((login) => login === project.owner || project.granted.includes(login));
+    return able.find((login) => login === project.owner) ?? able[0] ?? null;
+  }
+  return null;
+}
+
 function pageScreen(town: string, name: string, version: number | null): Page {
   const project = store.world.peek()?.towns.find((t) => t.town === town)?.record.name ?? town;
   const screen = new PageScreen({
@@ -2052,9 +2096,9 @@ function pageScreen(town: string, name: string, version: number | null): Page {
     someone: someoneAt,
     world: live
       ? {
-          read: (version) => readPage(town, name, version),
+          read: (version) => readPage(town, name, version, pageAccount(town)),
           history: () => pageHistory(town, name),
-          consent: (version, base, acts) => pageConsent(town, name, version, base, acts),
+          consent: (version, base, acts) => pageConsent(town, name, version, base, acts, pageAccount(town)),
           withdraw: (base) => withdrawPage(town, name, base),
           restore: (base, version) => restorePage(town, name, base, version),
         }
@@ -2064,7 +2108,7 @@ function pageScreen(town: string, name: string, version: number | null): Page {
         town,
         store,
         open: (address) => (location.hash = talkLink(address)),
-        act: (action) => pageAct(town, name, view.publication.version, action),
+        act: (action) => pageAct(town, name, view.publication.version, action, pageAccount(town)),
         reads,
       });
       return live ? tools : specimenPageTools(view, tools);

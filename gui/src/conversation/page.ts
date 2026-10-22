@@ -1251,6 +1251,14 @@ export class ConversationPage {
     this.say(text, "", refused);
   }
 
+  /** Why only images can be attached now: an agent of another's assists
+   *  the user here, and no machine of theirs can take a file; null when any
+   *  file can (`world-run.md`, 受协助的人附的文件). */
+  private imagesOnly(): string | null {
+    const files = this.options.attach?.filesOn;
+    return files?.assisting() && !files.place() ? this.options.attach!.words.imagesOnly : null;
+  }
+
   private say(text: string, detail = "", refused = false): void {
     this.note.textContent = text;
     this.note.title = detail;
@@ -1394,6 +1402,7 @@ export class ConversationPage {
    *  dropped anywhere on the page. */
   private attaching(attach: NonNullable<PageOptions["attach"]>): void {
     const tray = new AttachTray(attach.words, attach.seam, () => this.drawAction());
+    tray.onlyImages(() => this.imagesOnly(), (why) => this.say(why, "", true));
     this.tray = tray;
     this.element.querySelector(".composer-tray")!.replaceWith(tray.element);
     const button = this.element.querySelector<HTMLButtonElement>(".composer-attach")!;
@@ -1402,7 +1411,12 @@ export class ConversationPage {
     button.innerHTML = glyph("attach", 18);
     button.setAttribute("aria-label", attach.words.attach);
     button.title = attach.words.attach;
-    button.addEventListener("click", () => pick.click());
+    // Where no machine of the user's can take a file, the picker offers
+    // images alone.
+    button.addEventListener("click", () => {
+      pick.accept = this.imagesOnly() ? "image/*" : "";
+      pick.click();
+    });
     pick.addEventListener("change", () => {
       if (pick.files) this.attachFiles(pick.files);
       pick.value = "";

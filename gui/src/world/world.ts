@@ -192,6 +192,13 @@ export interface MachineFacts {
   /** It keeps and runs an account's command MCP servers; older nodes do
    *  not. */
   mcp?: boolean;
+  /** It lists what can be imported by name and kind alone, and reads a
+   *  chosen server again to import it. */
+  mcp_import?: boolean;
+  /** It keeps what a page is agreed to do, and does it, for one account. */
+  page_accounts?: boolean;
+  /** It says where an attached file may be kept before any of it comes. */
+  attachment_places?: boolean;
   name: MachineName;
   os: string;
   arch: string;

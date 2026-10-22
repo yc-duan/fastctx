@@ -55,11 +55,15 @@ export type McpCall =
   | { do: "keep"; name: string; server: Server; machine?: string }
   | { do: "remove"; name: string }
   | { do: "test"; name: string }
-  /** Takes what one of them has on `machine` as `as_name`, on that
-   *  machine: its command never leaves it. */
+  /** Takes what one of them has on `machine` as `as_name`: one a command
+   *  starts is kept on that machine, its command never leaving it; one at
+   *  an address is read there again and kept on the account. */
   | { do: "import"; machine: string; source: Source; name: string; as_name: string }
   /** What Claude Desktop, Claude Code and Cursor on `machine` have. */
-  | { do: "found"; machine?: string };
+  | { do: "found"; machine?: string }
+  /** What they have on `machine`, by name and kind alone: no address,
+   *  header or command leaves it before one is imported. */
+  | { do: "candidates"; machine?: string };
 
 /** What the machine of a command server says of it; what it keeps never
  *  leaves it. */
@@ -96,12 +100,20 @@ export interface Found {
   server: FoundServer;
 }
 
+/** One server a tool on a machine has, as importing lists it. */
+export interface ImportCandidate {
+  source: Source;
+  name: string;
+  kind: "command" | "remote";
+}
+
 export type McpReply =
   | { reply: "listed"; servers: Listed[] }
   | { reply: "kept"; name: string; version: number }
   | { reply: "removed"; version: number }
   | ({ reply: "tested" } & Tested)
-  | { reply: "found"; machine: string; servers: Found[] };
+  | { reply: "found"; machine: string; servers: Found[] }
+  | { reply: "candidates"; machine: string; servers: ImportCandidate[] };
 
 /** The Claude Code settings an account may set for itself
  *  (`fastctx_types::profile::CLAUDE_SETTINGS`). */

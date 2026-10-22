@@ -1190,6 +1190,7 @@ export const zhComposer: ComposerWords = {
     retry: "重试",
     size: (bytes) => sizeOf(bytes, ["B", "KB", "MB", "GB"]),
     wait: "文件上传完成后再发送",
+    imagesOnly: "没有你的电脑在线，存不了这个文件",
   },
   asks: {
     waiting: "等待确认",
@@ -1407,6 +1408,7 @@ export const enComposer: ComposerWords = {
     retry: "Retry",
     size: (bytes) => sizeOf(bytes, ["B", "KB", "MB", "GB"]),
     wait: "Wait for uploads to finish",
+    imagesOnly: "None of your computers is online to keep this file",
   },
   asks: {
     waiting: "Needs your approval",

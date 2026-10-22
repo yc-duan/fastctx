@@ -280,11 +280,11 @@ export function workPlaces(world: WorldNow | null, lives: Machine, login: Login 
   });
 }
 
-/** Where files an assisting agent is given may go: the machines the account it
- *  works for may work on, this computer only where it is the account's own
- *  machine, for only a machine can take them. */
+/** Where files an assisting agent is given may go: the account's own
+ *  machines it may work on, never one shared to it, whose owner's disk the
+ *  original is not to land on (`world-run.md`, 受协助的人附的文件). */
 export function filePlaces(world: WorldNow | null, login: Login): Machine[] {
-  return machinesOf(world).filter((machine) => (machine.here ? owns(machine, login) : rightsOn(machine, login).hands));
+  return machinesOf(world).filter((machine) => owns(machine, login) && (machine.here || rightsOn(machine, login).hands));
 }
 
 /** Where files other than images go for an assisting agent, which works on no
