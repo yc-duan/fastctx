@@ -110,6 +110,9 @@ pub(crate) fn resume(node: &Arc<Node>) {
                                     | fastctx_types::renewal::Phase::WaitingForIdle
                                     | fastctx_types::renewal::Phase::UpdatingGuardian
                                     | fastctx_types::renewal::Phase::ReturningToService
+                                    // Left by an earlier release; this one
+                                    // waits for nobody and goes on.
+                                    | fastctx_types::renewal::Phase::AwaitingAdministrator
                             ) || (first
                                 && (plan.phase != fastctx_types::renewal::Phase::Complete
                                     || plan.candidate.build != build))))

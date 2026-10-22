@@ -69,6 +69,17 @@ pub(super) fn uninstall(service: &Service) -> anyhow::Result<Status> {
     observed(service, false)
 }
 
+/// Whether this process may start the service again: a user's own agent
+/// by that user, a daemon of the machine by root alone. A daemon a user may
+/// not restart starts again by itself on a newer World program
+/// (`fastctx_hub::renewal`).
+pub(super) fn may_restart(service: &Service) -> anyhow::Result<()> {
+    if daemon(service) && !fastctx_platform::elevation::is_elevated()? {
+        bail!("{} is a daemon of this Mac, which only root restarts", label(service));
+    }
+    Ok(())
+}
+
 /// Starts the service's program again now, as after a new image was put in
 /// place.
 pub(super) fn restart(service: &Service) -> anyhow::Result<()> {

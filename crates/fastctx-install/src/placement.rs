@@ -54,10 +54,13 @@ pub fn ensure(root: &Path, source: &Path) -> anyhow::Result<PathBuf> {
             Phase::Failed => {
                 bail!("kernel renewal failed: {}", plan.error.unwrap_or_else(|| "no failure detail recorded".into()))
             }
-            Phase::AwaitingAdministrator => bail!(
-                "kernel is serving; completing its boot-service handover needs `fastctx renew guardian --dir {}`",
-                root.display()
-            ),
+            // Published and serving, its boot service still to take it,
+            // which goes on by itself: the program is in place.
+            Phase::AwaitingAdministrator | Phase::UpdatingGuardian | Phase::ReturningToService
+                if crate::renewal::digest(&installed)? == plan.candidate.build.digest =>
+            {
+                return Ok(installed);
+            }
             Phase::AwaitingLegacyExit => {
                 bail!("the prepared kernel waits for the legacy node to exit; the installed program has not changed")
             }

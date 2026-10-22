@@ -244,7 +244,9 @@ impl Service {
             let normalized = self.normalized()?;
             linux_restart::may(&normalized.id(&normalized.uid.to_le_bytes()))
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
+        return macos::may_restart(&self.normalized()?);
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         Ok(())
     }
 

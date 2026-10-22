@@ -163,6 +163,15 @@ async fn complete(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
     phase(root, plan, Phase::Complete)
 }
 
+/// The boot service's side has not taken the new program yet: the renewal
+/// waits in the service's step, saying why, and the node asks it again within
+/// half a minute (`fastctx_node::renewal::resume`). Nobody is waited for
+/// (`world-upgrade.md`, 换版不要人确认).
+fn waiting_for_service(root: &Path, plan: &mut Plan, why: String) -> anyhow::Result<()> {
+    plan.error = Some(why);
+    phase(root, plan, Phase::UpdatingGuardian)
+}
+
 async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
     let world = WorldDir::under(root);
     let kept = world.node_service().exists();
@@ -280,10 +289,10 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
     if !plan.keeper_restarted {
         let service =
             fastctx_install::service::Service::new(fastctx_install::service::Kind::Node, store::installed(root), root);
-        // The protected guardian takes an officially signed newer program
-        // by itself (`world-upgrade.md`, 换版不要人确认); a development build,
-        // or a guardian of an earlier release, waits for an administrator,
-        // and so does one that says why it will not, its reason kept.
+        // The protected guardian, SYSTEM's, takes an officially signed newer
+        // program by itself (`world-upgrade.md`, 换版不要人确认); one that
+        // cannot now, not running or of an earlier release, is asked again
+        // until it does, its reason kept.
         let mut refused = None;
         let staged = !needs_guardian || service.guardian_staged(&plan.candidate.build.digest)? || {
             mend_signature(root, plan);
@@ -296,34 +305,22 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
                 }
             }
         };
-        // A macOS node is the user's own LaunchAgent; only a hub kept here,
-        // a LaunchDaemon, needs an administrator to start the new program.
-        // A Linux node's unit restarts as root or by the rule its install
-        // left (`fastctx_install::service::Service::may_restart`).
+        if !staged {
+            let why = refused.unwrap_or_else(|| "the boot service has not taken the new program yet".to_string());
+            return waiting_for_service(root, plan, why);
+        }
+        // A macOS node is the user's own LaunchAgent, restarted by its user.
+        // A stopped Linux unit restarts as root, or by the rule its install
+        // left (`fastctx_install::service::Service::may_restart`); where it
+        // has none, its own checking timer, root's, starts it within a minute
+        // on the program in place now, and the bridge serves till then.
         #[cfg(target_os = "linux")]
         let restart = {
             let status = service.status()?;
-            service.main_pid()? == 0 && !status.state.starts_with("activating/")
+            service.main_pid()? == 0 && !status.state.starts_with("activating/") && service.may_restart().is_ok()
         };
         #[cfg(not(target_os = "linux"))]
         let restart = true;
-        let restart_refusal = if cfg!(target_os = "linux") && restart { service.may_restart().err() } else { None };
-        if let Some(error) = &restart_refusal {
-            refused = Some(format!("{error:#}"));
-        }
-        if !staged
-            || restart_refusal.is_some()
-            || (cfg!(target_os = "macos")
-                && !fastctx_platform::elevation::is_elevated()?
-                && !fastctx_install::service::registered_hubs(root)?.is_empty())
-        {
-            phase(root, plan, Phase::AwaitingAdministrator)?;
-            if refused.is_some() {
-                plan.error = refused;
-                store::save(root, plan)?;
-            }
-            return Ok(());
-        }
         let _gate = FileLock::acquire(&store::directory(root).join("manager-gate.lock"))?;
         let Probe::Running(node) = renewal::probe(&WorldDir::under(root)).await? else {
             bail!("no serving replacement bridge")
@@ -383,12 +380,8 @@ async fn guard_supervised(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
         }
     };
     if !staged {
-        phase(root, plan, Phase::AwaitingAdministrator)?;
-        if refused.is_some() {
-            plan.error = refused;
-            store::save(root, plan)?;
-        }
-        return Ok(());
+        let why = refused.unwrap_or_else(|| "the boot service has not taken the new program yet".to_string());
+        return waiting_for_service(root, plan, why);
     }
     phase(root, plan, Phase::UpdatingGuardian)?;
     let (restarting, digest) = (service.clone(), digest.clone());
@@ -420,40 +413,40 @@ fn mend_signature(root: &Path, plan: &Plan) {
 
 /// A hub this computer keeps runs the same World program and would go on
 /// speaking the old network protocol (`world-upgrade.md`, 中枢跟着换). Once
-/// the node is back in its boot service, the hub starts again on the new
-/// program, and its machines reconnect by themselves: on Linux systemd runs
-/// it straight from the World program, on Windows its guardian takes the
-/// signed program first. Where neither can be done without an
-/// administrator, the administrator's step does it (`guardian_apply`).
+/// the node is back in its boot service, the hub is started again on the new
+/// program where its user may, and its machines reconnect by themselves: on
+/// Windows its guardian, SYSTEM's, takes the signed program first. Where its
+/// user may not, the hub follows by itself within a minute, its guardian
+/// taking the newer signed program (`windows_guardian::adopt::offered`), or,
+/// on Linux and macOS, the hub ending once it sees the program it runs from
+/// replaced by a newer one, for its service to start it again
+/// (`fastctx_hub::renewal`).
 fn follow_hubs(root: &Path, digest: &str) -> anyhow::Result<()> {
-    if !cfg!(any(windows, target_os = "linux")) {
-        return Ok(());
-    }
     for directory in fastctx_install::service::registered_hubs(root)? {
         let hub = fastctx_install::service::Service::new(
             fastctx_install::service::Kind::Hub,
             store::installed(root),
             &directory,
         );
-        if !hub.status()?.installed || (cfg!(windows) && hub.guardian_current(digest)?) {
-            continue;
-        }
-        let ready = if cfg!(windows) {
-            hub.adopt_guardian(digest)?
-        } else {
-            hub.may_restart()
-                .with_context(|| format!("authorizing restart of the hub kept at {}", directory.display()))?;
-            true
-        };
-        anyhow::ensure!(
-            ready,
-            "the hub kept at {} takes the new program once an administrator runs `fastctx renew guardian --dir {}`",
-            directory.display(),
-            if cfg!(windows) { root.display().to_string() } else { fastctx_platform::shell_quote::path(root) }
-        );
-        hub.restart_guardian(digest).with_context(|| format!("restarting the hub kept at {}", directory.display()))?;
+        let _ = follow_hub(&hub, digest);
     }
     Ok(())
+}
+
+/// Starts the hub `hub` again on the program `digest`, when it is not on it
+/// and its user may.
+fn follow_hub(hub: &fastctx_install::service::Service, digest: &str) -> anyhow::Result<()> {
+    if !hub.status()?.installed {
+        return Ok(());
+    }
+    if cfg!(windows) {
+        if hub.guardian_current(digest)? || !hub.adopt_guardian(digest)? {
+            return Ok(());
+        }
+    } else {
+        hub.may_restart()?;
+    }
+    hub.restart_guardian(digest)
 }
 
 async fn recover(root: &Path, plan: &Plan, kept: bool) -> anyhow::Result<()> {
@@ -521,7 +514,7 @@ async fn guardian(root: &Path, graphical: bool) -> anyhow::Result<()> {
     let _ = graphical;
     let plan = store::read(root)?.context("no local replacement was staged")?;
     ensure!(
-        plan.phase == Phase::AwaitingAdministrator || plan.phase == Phase::Failed,
+        matches!(plan.phase, Phase::AwaitingAdministrator | Phase::UpdatingGuardian | Phase::Failed),
         "the replacement has not reached guardian renewal"
     );
     store::verify(&plan.candidate)?;

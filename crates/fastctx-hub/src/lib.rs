@@ -42,6 +42,7 @@ mod outq;
 mod project_deletions;
 mod records;
 mod releases;
+mod renewal;
 mod store;
 pub mod third;
 mod updates;
@@ -593,6 +594,8 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
     }
     let settled = dissolve::settled(&hub);
     tokio::pin!(settled);
+    let replaced = renewal::replaced();
+    tokio::pin!(replaced);
     let switched = loop {
         tokio::select! {
             accepted = kept.listener.accept() => match accepted {
@@ -608,6 +611,10 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
                 }
             },
             () = shutdown_signal() => break false,
+            version = &mut replaced => {
+                hub.log.line(format_args!("the program this hub runs from is {version} now: stopping for its service to start it on that"));
+                break false;
+            }
             expired = machine_log::expire(&hub) => expired?,
             ended = assists::expire(&hub) => ended?,
             Ok(()) = &mut switch => break true,

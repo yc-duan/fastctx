@@ -110,7 +110,8 @@ fn serve() -> anyhow::Result<()> {
     };
     let result = runtime::run(config.clone(), requests.clone(), events, sender, ready);
     // A stop while still installed is recoverable, too: it ends as a failure,
-    // which the service manager answers by starting the guardian again.
+    // which the service manager answers by starting the guardian again, as
+    // it does a hub's guardian that took a newer program by itself.
     // Uninstall disables failure actions and auto-start before requesting
     // this same stop. A stop its user said was planned, to restart it on a
     // new image, ends well.

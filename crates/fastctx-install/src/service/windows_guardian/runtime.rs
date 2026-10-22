@@ -35,6 +35,9 @@ pub(super) struct Requests {
     pub adopt: AtomicBool,
     /// Its user said the next stop is planned.
     pub planned: AtomicBool,
+    /// A hub's guardian took a newer World program by itself and ends, to be
+    /// started again on it at once (`super::adopt::offered`).
+    pub renewed: AtomicBool,
     pub wake_queued: AtomicBool,
 }
 
@@ -71,6 +74,9 @@ pub(super) fn run(
     let mut profile_lease = None;
     let mut refresh = true;
     let mut ready = Some(ready);
+    // What a hub's guardian last said of a newer program it did not take,
+    // said once rather than every minute.
+    let mut refused: Option<String> = None;
     let result = (|| {
         loop {
             if requests.stop.load(Ordering::SeqCst) || requests.shutdown.load(Ordering::SeqCst) {
@@ -83,6 +89,22 @@ pub(super) fn run(
                 match super::adopt::adopt(&config) {
                     Ok(()) => line(&mut log, "took the newer World program its user asked for"),
                     Err(error) => line(&mut log, &format!("did not take the World program: {error:#}")),
+                }
+            }
+            if refresh && config.kind == Kind::Hub && super::adopt::offered(&config) {
+                match super::adopt::adopt(&config) {
+                    Ok(()) => {
+                        line(&mut log, "took the newer World program by itself; starting again on it");
+                        requests.renewed.store(true, Ordering::SeqCst);
+                        return Ok(());
+                    }
+                    Err(error) => {
+                        let said = format!("did not take the newer World program: {error:#}");
+                        if refused.as_deref() != Some(said.as_str()) {
+                            line(&mut log, &said);
+                            refused = Some(said);
+                        }
+                    }
                 }
             }
             if refresh || active.is_none() && candidate.is_none() {

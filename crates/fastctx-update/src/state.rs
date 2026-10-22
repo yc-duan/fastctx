@@ -112,7 +112,9 @@ fn stage(state: &State, activity: Option<Stage>, running: &str) -> Stage {
         let version = renewing.version.clone();
         return match renewing.phase {
             Phase::WaitingForIdle => Stage::WaitingIdle { version },
-            Phase::AwaitingAdministrator => Stage::Administrator { version },
+            // An earlier release's wait for an administrator goes on by
+            // itself now, as the boot service's step.
+            Phase::AwaitingAdministrator => Stage::Renewing { version, phase: Phase::UpdatingGuardian },
             Phase::Failed => Stage::Failed {
                 version,
                 problem: Problem { reason: FailureReason::Other, why: renewing.error.clone().unwrap_or_default() },

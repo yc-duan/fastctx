@@ -73,6 +73,20 @@ fn take(config: &Config) -> anyhow::Result<String> {
     images::digest(&root.join("guardian.exe")).map_err(Into::into)
 }
 
+/// In a hub's guardian, at its check each minute: whether the World program
+/// its registration names says by its signature that it is a release newer
+/// than this guardian. The guardian then takes it (`take`) and starts again
+/// on it by itself, as a hub's user may not ask it to (`ask`), and the hub
+/// would go on speaking the old network protocol (`world-upgrade.md`,
+/// 中枢跟着换). Only the signature's word is read here; `take` checks it over
+/// the program's bytes.
+pub(super) fn offered(config: &Config) -> bool {
+    let Ok(signature) = std::fs::read_to_string(images::signature_of(&config.executable())) else { return false };
+    fastctx_update::verify::signed_version(&signature).is_some_and(|version| {
+        fastctx_types::update::release(&version) > fastctx_types::update::release(env!("CARGO_PKG_VERSION"))
+    })
+}
+
 /// As the guardian's user: asks it to take the program and waits until it
 /// has, it says why not, or it does not answer, as a guardian of an earlier
 /// release does not. Whether it took the program with `digest`.

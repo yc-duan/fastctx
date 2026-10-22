@@ -9,7 +9,7 @@ use windows_service::service::{ServiceAccess, ServiceState};
 
 use super::{config::Config, owner, scm};
 use crate::renewal as images;
-use crate::service::Service;
+use crate::service::{Kind, Service};
 
 #[derive(Serialize, Deserialize)]
 struct Running {
@@ -29,17 +29,19 @@ pub(crate) fn current(service: &Service, digest: &str) -> anyhow::Result<bool> {
     let running: Option<Running> = images::read_json(&root.join("running.json"))?;
     Ok(match running {
         Some(running) => {
-            running.digest == digest
-                && fastctx_platform::is_alive(&running.process)?
-                && images::digest(&root.join("guardian.exe"))? == digest
+            running.digest == digest && fastctx_platform::is_alive(&running.process)? && staged(service, digest)?
         }
         None => false,
     })
 }
 
+/// Whether the image `digest` is in place: the guardian's, and a hub's
+/// program beside it, which the guardian runs.
 pub(crate) fn staged(service: &Service, digest: &str) -> anyhow::Result<bool> {
     let config = Config::new(service)?;
-    Ok(images::digest(&config.root()?.join("guardian.exe"))? == digest)
+    let root = config.root()?;
+    Ok(images::digest(&root.join("guardian.exe"))? == digest
+        && (config.kind != Kind::Hub || images::digest(&root.join("payload.exe"))? == digest))
 }
 
 /// Stages the approved image in a node's or a hub's protected registration.
@@ -59,6 +61,9 @@ pub(crate) fn replace(service: &Service, digest: &str) -> anyhow::Result<()> {
     ensure!(scm::capture(&config.name)?.is_some(), "guardian registration is absent");
     ensure!(images::build()?.digest == digest, "approved guardian image differs");
     images::publish_image(&std::env::current_exe()?, &root.join("guardian.exe"))?;
+    if config.kind == Kind::Hub {
+        images::publish_image(&std::env::current_exe()?, &root.join("payload.exe"))?;
+    }
     Ok(())
 }
 
