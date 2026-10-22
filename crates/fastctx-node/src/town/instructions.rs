@@ -20,6 +20,9 @@ use crate::Node;
 /// this machine's copy of its ledger, naming only the machines it may work
 /// on; none when this machine has no record of it.
 pub(crate) fn text(node: &Node, town: &TownName, acting: &Acting) -> io::Result<Option<String>> {
+    if !super::access::permits(node, acting, town).map_err(io::Error::other)? {
+        return Ok(None);
+    }
     let records = super::read::records(&node.world, town)?;
     let (Some(first), Some(record)) = (records.first(), records.last()) else { return Ok(None) };
     let opened = Stamp { by: first.by.clone(), on: first.on.clone(), at: first.at };
@@ -55,24 +58,26 @@ pub(crate) fn acting(node: &Node, id: &ResidentId) -> Acting {
 }
 
 /// Hands the record again to the Claude session of the resident `id`, as
-/// after it moved; what goes wrong is logged.
-pub(crate) fn hand_to_current(node: &Node, id: &ResidentId) {
-    let Some((about, _)) = node.residents.about(id) else { return };
-    let Some(session) = about.session.filter(|_| about.host.agent.as_str() == "claude") else { return };
+/// after it moved. A failed write is returned to the operation that moved it.
+pub(crate) fn hand_to_current(node: &Node, id: &ResidentId) -> io::Result<()> {
+    let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
+    let Some(session) = about.session.filter(|_| about.host.agent.as_str() == "claude") else { return Ok(()) };
     let directory = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session);
-    if directory.is_dir()
-        && let Err(error) = hand_to_session(node, id, &directory)
-    {
-        node.log.line(format_args!("handing {id}'s project to its Claude session: {error}"));
+    if directory.is_dir() {
+        hand_to_session(node, id, &directory)?;
     }
+    Ok(())
 }
 
 /// Hands the record of `town` again to the Claude session of every
 /// resident working in it here, after its ledger changed.
 pub(crate) fn refresh(node: &Node, town: &TownName) {
     for resident in node.residents.everyone() {
-        if resident.removed.is_none() && resident.town.as_ref() == Some(town) {
-            hand_to_current(node, &resident.id);
+        if resident.removed.is_none()
+            && resident.town.as_ref() == Some(town)
+            && let Err(error) = hand_to_current(node, &resident.id)
+        {
+            node.log.line(format_args!("refreshing {}'s project instructions: {error}", resident.id));
         }
     }
 }

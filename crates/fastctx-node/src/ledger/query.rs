@@ -1,29 +1,22 @@
-//! Projects this machine spans are kept here as they change; others are
-//! taken on demand.
+//! Project copies follow the accounts this machine acts for. Work locations
+//! in a record do not determine which ledgers are kept or refreshed.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use fastctx_types::access::{Acting, HubId};
-use fastctx_types::{MachineName, TownName};
 use fastctx_types::ipc::Failure;
 use fastctx_types::project::{Record, TownSummary};
+use fastctx_types::{MachineName, TownName};
 
 use crate::Node;
 use crate::town::read;
 
-/// A project that spans this machine is kept here already. A wider query
-/// asks each hub for the projects this computer's accounts may use, and
-/// takes those it does not have. Without a connection it returns the copies
+/// Asks each hub for the projects this computer's accounts may use and
+/// takes entries after the local cursor. Without a connection it returns copies
 /// already here; `fastctx nodes` reports the disconnected state. Explicit
 /// refusals and corrupt data still fail.
 pub async fn query(node: &Arc<Node>, town: Option<&TownName>) -> Result<Vec<TownName>, String> {
-    let local = available(node, town).await?;
-    if let Some(town) = town
-        && local.get(town).is_some_and(|record| record.machines.contains(&node.machine()))
-    {
-        return Ok(vec![town.clone()]);
-    }
     let _syncing = node.syncing.lock().await;
     for link in node.links() {
         let Some(catalog) = link.try_ledger_catalog().await? else { continue };
@@ -102,18 +95,6 @@ pub async fn list_for(node: &Arc<Node>, acting: &Acting) -> Result<Vec<TownSumma
         .collect())
 }
 
-/// Whether whoever acts as `acting` may use the project `town`, taken from
-/// its hub first when this computer keeps nothing of it yet.
-pub async fn usable(node: &Arc<Node>, acting: &Acting, town: &TownName) -> Result<bool, Failure> {
-    query(node, Some(town)).await.map_err(Failure::new)?;
-    let (world, name) = (node.world.clone(), town.clone());
-    let place = tokio::task::spawn_blocking(move || super::names::place(&world, &name))
-        .await
-        .map_err(|error| Failure::new(format!("reading the project {town}: {error}")))?
-        .map_err(|error| Failure::new(format!("reading the project {town}: {error}")))?;
-    Ok(place.is_some_and(|place| sees(node, acting, &place)))
-}
-
 /// `record` as whoever acts as `acting` may know it: of its machines, and
 /// of the places in its address book, only those on machines they may work
 /// on are named (`world-network.md`, 共享机器与智能体协助). A project kept on
@@ -130,6 +111,9 @@ pub(crate) fn seen_at(node: &Node, acting: &Acting, hub: Option<&HubId>, record:
     };
     record.machines.retain(|machine| usable(machine));
     record.places.retain(|place| usable(&place.location.machine));
+    if record.canon.as_ref().is_some_and(|canon| !usable(&canon.machine)) {
+        record.canon = None;
+    }
 }
 
 /// As `seen_at`, for the project `town` as this computer keeps it.
@@ -207,49 +191,14 @@ pub async fn held(node: &Arc<Node>) -> Result<Vec<TownSummary>, Failure> {
     Ok(listed)
 }
 
-/// Takes, from `link`'s hub, `town`'s new entries when this computer keeps
-/// it without spanning it; with no town, every project this computer may
-/// use that it does not have whole, as when it connects again. A project
-/// that spans it is taken as it changes already (`super::sync`).
-pub async fn follow(
-    node: &Arc<Node>,
-    link: &Arc<fastctx_net::link::Link>,
-    town: Option<&fastctx_types::access::TownId>,
-) -> Result<(), String> {
-    match town {
-        None => query(node, None).await.map(|_| ()),
-        Some(town) => {
-            let Some(name) = link.view().project(town).map(|project| project.name.clone()) else { return Ok(()) };
-            query(node, Some(&name)).await.map(|_| ())
-        }
-    }
-}
-
-/// Takes the projects `link`'s view names that this computer keeps nothing
-/// of yet: one shared with an account here since.
-pub async fn follow_view(node: &Arc<Node>, link: &Arc<fastctx_net::link::Link>) -> Result<(), String> {
-    let names: Vec<TownName> = link.view().projects.iter().map(|project| project.name.clone()).collect();
-    for name in names {
-        let kept = super::names::place(&node.world, &name).map_err(|error| format!("reading {name}: {error}"))?;
-        if kept.is_none() {
-            query(node, Some(&name)).await?;
-        }
-    }
-    Ok(())
-}
-
 async fn summaries(node: &Arc<Node>, towns: Vec<TownName>) -> Result<Vec<TownSummary>, Failure> {
-    let alone = !node.connected_anywhere();
-    let here = node.machine();
     let world = node.world.clone();
     tokio::task::spawn_blocking(move || {
         let mut listed = Vec::new();
         for town in towns {
             let record = read::latest(&world, &town)?
                 .ok_or_else(|| std::io::Error::other(format!("{town} has no project record in its ledger")))?;
-            if alone && !record.machines.contains(&here) {
-                continue;
-            }
+
             let journals = read::journal_names(&world, &town)?.len();
             listed.push(TownSummary { town, record, journals });
         }

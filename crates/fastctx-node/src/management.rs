@@ -269,7 +269,7 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
         }
         Management::Move { town } => {
             let brief = if let Some(town) = &town {
-                crate::town::project::spans_here(node, town).await?;
+                crate::town::access::ready(node, &about.acting, town).await?;
                 crate::town::map::brief(node, town, &crate::town::instructions::acting(node, id)).await?
             } else {
                 "You are in no project now. `fastctx project list` lists the projects.".into()
@@ -292,6 +292,12 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                 }
             };
             result.town = town.clone();
+            completed(
+                &mut result,
+                "context",
+                crate::town::instructions::hand_to_current(node, id).map_err(|error| Failure::new(error.to_string())),
+                "Project instructions refreshed.",
+            );
             step(
                 &mut result,
                 "records",

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use fastctx_net::link::CallFailure;
 use fastctx_types::TownName;
-use fastctx_types::access::{Acting, HubId, Purpose, TownId};
+use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::project::{CanonHead, Location, MapView, Stamp};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
@@ -16,8 +16,8 @@ use crate::Node;
 use crate::town::read;
 
 /// The map of `town`, from this machine's copy of its ledger.
-pub async fn view(node: &Arc<Node>, town: &TownName) -> Result<MapView, Failure> {
-    catch_up(node, town).await?;
+pub async fn view(node: &Arc<Node>, town: &TownName, acting: &Acting) -> Result<MapView, Failure> {
+    super::access::ready(node, acting, town).await?;
     let (world, name) = (node.world.clone(), town.clone());
     let (records, journals, pages) = tokio::task::spawn_blocking(move || {
         let records = read::records(&world, &name)?;
@@ -32,14 +32,16 @@ pub async fn view(node: &Arc<Node>, town: &TownName) -> Result<MapView, Failure>
         return Err(no_ledger(node, town));
     };
     let opened = Stamp { by: first.by.clone(), on: first.on.clone(), at: first.at };
+    let mut record = record.clone();
+    crate::ledger::query::seen(node, acting, town, &mut record).map_err(|error| Failure::new(error.to_string()))?;
     let canon = match &record.canon {
-        Some(location) => Some(canon(node, town, location).await),
+        Some(location) => Some(canon(node, town, location, acting).await),
         None => None,
     };
     Ok(MapView {
         town: town.clone(),
         ledger: crate::world::native(&node.world.town(town).ledger()),
-        record: record.clone(),
+        record,
         opened,
         journals,
         pages,
@@ -51,60 +53,10 @@ pub async fn view(node: &Arc<Node>, town: &TownName) -> Result<MapView, Failure>
 /// it: its record, naming only the machines it may work on, while project
 /// memory is not wired in.
 pub async fn brief(node: &Arc<Node>, town: &TownName, acting: &Acting) -> Result<String, Failure> {
-    let mut map = view(node, town).await?;
-    crate::ledger::query::seen(node, acting, town, &mut map.record)
-        .map_err(|error| Failure::new(format!("reading the project {town}: {error}")))?;
-    Ok(fastctx_hands::town::brief(&map))
-}
-
-/// This machine's copy of a town's ledger trails the hub's by what is still
-/// on its way to it, as right after the town was opened on another machine.
-/// A town it has no record of yet is taken from the hub before anything
-/// about it is answered.
-/// The hub that keeps the project `town`, and its id there, as this
-/// computer's accounts see them: one of a name, or none.
-fn find(node: &Node, town: &TownName) -> Result<(HubId, TownId), Failure> {
-    if let Some(place) =
-        crate::ledger::names::place(&node.world, town).map_err(|error| Failure::new(error.to_string()))?
-    {
-        return Ok((place.hub, place.town));
-    }
-    let mut found = Vec::new();
-    for link in node.links() {
-        let view = link.view();
-        let mine = view.mine();
-        for project in view.projects.iter().filter(|project| project.name == *town) {
-            if mine.iter().any(|account| view.in_project(account, &project.town)) {
-                found.push((link.membership().id.clone(), link.membership().hub_name.clone(), project.town.clone()));
-            }
-        }
-    }
-    match found.len() {
-        0 => Err(no_ledger(node, town)),
-        1 => {
-            let (hub, _, id) = found.pop().expect("one");
-            Ok((hub, id))
-        }
-        _ => Err(Failure::new(format!(
-            "projects named {town} are on several hubs ({}); this computer keeps one project of a name",
-            found.iter().map(|(_, name, _)| name.to_string()).collect::<Vec<_>>().join(", ")
-        ))),
-    }
-}
-
-pub async fn catch_up(node: &Arc<Node>, town: &TownName) -> Result<(), Failure> {
-    if crate::ledger::query::available(node, Some(town)).await.map_err(Failure::new)?.contains_key(town) {
-        return Ok(());
-    }
-    let (hub, id) = find(node, town)?;
-    crate::ledger::sync(node, &hub, Some(id))
-        .await
-        .map_err(|error| Failure::new(format!("taking {town}'s ledger from the hub: {error}")))?;
-    if crate::ledger::query::available(node, Some(town)).await.map_err(Failure::new)?.contains_key(town) {
-        Ok(())
-    } else {
-        Err(no_ledger(node, town))
-    }
+    super::access::ready(node, acting, town).await?;
+    super::instructions::text(node, town, acting)
+        .map_err(|error| Failure::new(error.to_string()))?
+        .ok_or_else(|| no_ledger(node, town))
 }
 
 /// Reads a replicated town locally. Other towns are queried while the
@@ -122,9 +74,15 @@ pub fn no_ledger(node: &Node, town: &TownName) -> Failure {
 }
 
 /// The documents of a canon, read where it is.
-async fn canon(node: &Arc<Node>, town: &TownName, location: &Location) -> Result<Vec<CanonHead>, String> {
+async fn canon(
+    node: &Arc<Node>,
+    town: &TownName,
+    location: &Location,
+    acting: &Acting,
+) -> Result<Vec<CanonHead>, String> {
     let machine = super::machines::destination(node, town, &location.machine).map_err(|error| error.to_string())?;
     if node.is_here(&machine) {
+        node.works_here(acting)?;
         let path = location.path.clone();
         return tokio::task::spawn_blocking(move || heads(Path::new(&path)))
             .await
@@ -132,7 +90,7 @@ async fn canon(node: &Arc<Node>, town: &TownName, location: &Location) -> Result
             .map_err(|error| error.to_string());
     }
     let call = RemoteCall::Canon { path: location.path.clone() };
-    match node.call(&Acting::Here, &machine, Purpose::Hands, call).await {
+    match node.call(acting, &machine, Purpose::Hands, call).await {
         Ok(Ok(RemoteReply::Canon { heads })) => Ok(heads),
         Ok(Ok(_)) => Err(format!("{} answered something else", location.machine)),
         Ok(Err(failure)) => Err(failure.message),

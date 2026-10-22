@@ -10,7 +10,7 @@ use fastctx_types::{AccountName, HubName, MachineName, ProjectCall, Reply, TownN
 use jiff::Timestamp;
 
 use crate::Node;
-use crate::residents::Heard;
+
 use crate::town::caller::Caller;
 use crate::town::{map, read};
 
@@ -40,11 +40,11 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
         ProjectCall::Map { town } => {
             let town = caller.town_or(node, town)?;
             map::query(node, &town).await?;
-            let mut map = map::view(node, &town).await?;
+            let mut map = map::view(node, &town, &crate::around::acting_of(node, caller)).await?;
             seen(node, caller, &town, &mut map.record)?;
             Ok(Reply::Map { map: Box::new(map) })
         }
-        ProjectCall::Enter { town } => enter(node, caller, town).await,
+        ProjectCall::Enter { town } => super::enter::call(node, caller, town).await,
     }
 }
 
@@ -285,99 +285,13 @@ async fn write(node: &Arc<Node>, town: &TownName, record: &Record) -> Result<(),
     crate::ledger::write(node, town, vec![(record_path(record.version), bytes)], Some(record.machines.clone())).await
 }
 
-/// Refuses unless `town` spans this machine: a resident lives in a town on
-/// the machine its session runs on, and the town's `w` asks only the
-/// machines it spans.
-pub async fn spans_here(node: &Arc<Node>, town: &TownName) -> Result<(), Failure> {
-    let here = node.machine();
-    map::catch_up(node, town).await?;
-    let record = blocking(node, town, read::latest).await?.ok_or_else(|| map::no_ledger(node, town))?;
-    if super::machines::spans_here(node, town, &record.machines)? {
-        Ok(())
-    } else {
-        Err(Failure::new(format!(
-            "{town} does not span {here}; its machines are {}",
-            record.machines.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
-        )))
-    }
-}
-
-/// Refuses unless the resident `id` works for an account that may use
-/// `town`: a town's residents work for its accounts.
-fn works_in(node: &Node, id: &fastctx_types::ResidentId, town: &TownName) -> Result<(), Failure> {
-    let Some(place) =
-        crate::ledger::names::place(&node.world, town).map_err(|error| Failure::new(error.to_string()))?
-    else {
-        return Err(map::no_ledger(node, town));
-    };
-    // A project of a computer on no hub is its own.
-    let Some(link) = node.link_of(&place.hub) else { return Ok(()) };
-    let acting = node.residents.about(id).map(|(about, _)| about.acting).unwrap_or_default();
-    let view = link.view();
-    if node.accounts_on(&link, &acting).iter().any(|account| view.in_project(account, &place.town)) {
-        Ok(())
-    } else {
-        Err(Failure::not_run(format!("{id} works for no account that may use the project {town}")))
-    }
-}
-
-/// The calling resident lives in `town` from now on, and is given its map.
-async fn enter(node: &Arc<Node>, caller: &Caller, town: TownName) -> Result<Reply, Failure> {
-    let here = node.machine();
-    let id = match caller {
-        Caller::Resident(address) if node.is_me(&address.machine) => address.resident.clone(),
-        Caller::Resident(address) => {
-            return Err(Failure::new(format!(
-                "{} lives on {}; enter the town there, running the command without a node",
-                address.resident, address.machine
-            )));
-        }
-        Caller::User => {
-            return Err(Failure::new(
-                "only a resident enters a town: an agent's session, which runs this through the World's tools",
-            ));
-        }
-        Caller::Page(_) => return Err(Failure::new("a page does not enter a town")),
-        Caller::Session(agent) => {
-            return Err(Failure::new(format!(
-                "the World does not know this {agent} session yet; it becomes a resident at its first call of a World tool, and enters a town after that"
-            )));
-        }
-    };
-    let gate = node.residents.management(&id)?;
-    let _writing = gate.write().await;
-    node.residents.active(&id)?;
-    map::catch_up(node, &town).await?;
-    works_in(node, &id, &town)?;
-    let mut record = blocking(node, &town, read::latest).await?.ok_or_else(|| map::no_ledger(node, &town))?;
-    if !super::machines::spans_here(node, &town, &record.machines)? {
-        seen(node, caller, &town, &mut record)?;
-        return Err(Failure::new(format!(
-            "{town} does not span {here}, where {id} lives; its machines are {}",
-            record.machines.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
-        )));
-    }
-    let (world, resident, name) = (node.world.clone(), id.clone(), town.clone());
-    let moved = {
-        let node = node.clone();
-        tokio::task::spawn_blocking(move || node.residents.enter(&world, &resident, &name))
-            .await
-            .map_err(|error| Failure::new(format!("moving {id}: {error}")))?
-            .map_err(|error| Failure::new(format!("moving {id}: {error}")))?
-    };
-    if moved {
-        crate::codex::moved(node, &id).await;
-        crate::town::instructions::hand_to_current(node, &id);
-    }
-    let mut map = map::view(node, &town).await?;
-    seen(node, caller, &town, &mut map.record)?;
-    let ledger = crate::ledger::seq(&node.world, &town).map_err(|error| Failure::new(error.to_string()))?;
-    node.residents.set_heard(&id, Heard { user_prompt: None, town: Some(town.clone()), ledger });
-    Ok(Reply::Entered { town, map: Box::new(map) })
-}
-
 /// `record` of `town` as `caller` may know it (`ledger::query::seen`).
-fn seen(node: &Node, caller: &Caller, town: &TownName, record: &mut fastctx_types::project::Record) -> Result<(), Failure> {
+fn seen(
+    node: &Node,
+    caller: &Caller,
+    town: &TownName,
+    record: &mut fastctx_types::project::Record,
+) -> Result<(), Failure> {
     let acting = crate::around::acting_of(node, caller);
     crate::ledger::query::seen(node, &acting, town, record)
         .map_err(|error| Failure::new(format!("reading the project {town}: {error}")))

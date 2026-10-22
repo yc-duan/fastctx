@@ -109,7 +109,7 @@ async fn ask_for_account(
 ) -> Result<Address, Failure> {
     let machine = started.callee.login.machine.clone();
     let view = link.view();
-    let call_town = node.town_across(link, request.town);
+    let call_town = node.town_across(link, request.town)?;
     if let Some(town) = &call_town {
         let allowed = view
             .projects
@@ -172,7 +172,7 @@ pub async fn ask_here(
         .set_departed(&node.world, &asker, false, None)
         .map_err(|error| Failure::not_run(format!("recording that {asker} returned: {error}")))?;
     if let Some(town) = &town {
-        crate::town::project::spans_here(node, town).await?;
+        crate::town::access::ready(node, &acting, town).await?;
     }
     // The Codex home it is born in must be one this machine has, so the
     // account the user chose is the one that answers.
@@ -247,6 +247,9 @@ pub async fn ask_here(
         last_compacted: false,
         asked: None,
     };
+    if let Some(town) = &town {
+        crate::town::access::check(node, &about.acting, town)?;
+    }
     node.residents
         .create(&node.world, about.clone(), town.clone(), now)
         .map_err(|error| Failure::new(format!("recording the colleague: {error}")))?;

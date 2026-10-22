@@ -182,10 +182,23 @@ impl Inner {
         let via = match if large { None } else { self.direct_link_for(to, account, &call) } {
             Some(conn) => {
                 if let Some(resident) = crate::message::worked_for(&self.me(), &call) {
-                    self.direct.note_worked(Worked { to: to.clone(), account: account.clone(), purpose, resident });
-                    if self.connection().is_some() && self.view().direct_links {
-                        let inner = self.clone();
-                        tokio::spawn(async move { super::session::tell_worked(&inner).await });
+                    if self.view().project_entry && !self.view().may_act_for(account, to) {
+                        // A job may immediately return a project selection. Its
+                        // origin must reach the hub before it starts remotely.
+                        self.ask(wire::Question::Worked {
+                            to: to.clone(),
+                            account: account.clone(),
+                            purpose,
+                            resident: resident.clone(),
+                        })
+                        .await
+                        .map_err(|reason| CallFailure::Unreachable { name: to.clone(), reason })?;
+                    } else {
+                        self.direct.note_worked(Worked { to: to.clone(), account: account.clone(), purpose, resident });
+                        if self.connection().is_some() && self.view().direct_links {
+                            let inner = self.clone();
+                            tokio::spawn(async move { super::session::tell_worked(&inner).await });
+                        }
                     }
                 }
                 Via::Peer(conn)

@@ -23,6 +23,12 @@ use crate::{AgentName, ResidentId, TownName};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum RemoteCall {
+    /// A running job returns its resident's project selection to its home.
+    /// This call is relayed and authorized by a hub supporting project entry.
+    EnterProject {
+        resident: ResidentId,
+        town: TownName,
+    },
     Mcp {
         mcp: crate::mcp::MachineCall,
     },
@@ -482,6 +488,7 @@ impl RemoteCall {
     /// check it.
     pub fn purpose(&self) -> Purpose {
         match self {
+            Self::EnterProject { .. } => Purpose::Echo,
             RemoteCall::Mcp { .. }
             | RemoteCall::McpServe { .. }
             | RemoteCall::Run { .. }
@@ -556,6 +563,10 @@ impl RemoteCall {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum RemoteReply {
+    Entered {
+        town: TownName,
+        map: Box<crate::project::MapView>,
+    },
     Mcp {
         result: crate::mcp::MachineReply,
     },

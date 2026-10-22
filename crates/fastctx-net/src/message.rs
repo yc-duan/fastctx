@@ -92,6 +92,24 @@ pub fn worked_for(from: &fastctx_types::MachineName, call: &RemoteCall) -> Optio
     }
 }
 
+/// A bounded project-entry request whose origin the hub can verify before
+/// forwarding it. Streamed calls cannot carry this control operation.
+pub fn project_entry(
+    message: &crate::envelope::Envelope,
+) -> Option<(fastctx_types::ResidentId, fastctx_types::TownName)> {
+    if message.kind != crate::envelope::Kind::Call
+        || message.stream.is_some()
+        || message.body.get("call").and_then(|call| call.get("call")).and_then(serde_json::Value::as_str)
+            != Some("enter_project")
+    {
+        return None;
+    }
+    match message.body::<Body>().ok()? {
+        Body::Call { call: RemoteCall::EnterProject { resident, town } } => Some((resident, town)),
+        _ => None,
+    }
+}
+
 /// The agent's login a call starts a session of, if it starts one: a
 /// session opened for the user, or a colleague asked; none is the agent's
 /// default login there.

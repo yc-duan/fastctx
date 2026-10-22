@@ -176,7 +176,7 @@ pub(crate) async fn run(
     let mut words = node.words.watch(&here);
     let mut interrupted = node.interrupts.watch(&here);
     let town = match node.speaking(&acting, to, Purpose::Hands) {
-        Ok((link, _)) => node.town_across(&link, town.as_ref()),
+        Ok((link, _)) => node.town_across(&link, town.as_ref())?,
         Err(_) => town,
     };
     let (script, started_at) = (request.script.clone(), jiff::Timestamp::now());

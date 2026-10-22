@@ -176,13 +176,11 @@ impl Node {
         &self,
         link: &Link,
         town: Option<&fastctx_types::TownName>,
-    ) -> Option<fastctx_types::TownName> {
-        let town = town?;
-        crate::ledger::names::place(&self.world, town)
-            .ok()
-            .flatten()
-            .filter(|place| place.hub == link.membership().id)
-            .map(|_| town.clone())
+    ) -> Result<Option<fastctx_types::TownName>, Failure> {
+        let Some(town) = town else { return Ok(None) };
+        let place = crate::ledger::names::place(&self.world, town)
+            .map_err(|error| Failure::new(format!("reading the project {town}'s hub: {error}")))?;
+        Ok(place.filter(|place| place.hub == link.membership().id).map(|_| town.clone()))
     }
 
     /// Whether scripts may start on this computer for `acting`: for a

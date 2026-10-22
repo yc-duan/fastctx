@@ -107,7 +107,7 @@ fn owner(node: &Node, looker: Looker, owner: &JobOwner, account: Option<&HubAcco
         JobOwner::Resident(_) => account.is_some_and(|account| looker.sees_account(node, account)),
         JobOwner::Page { .. } => match looker {
             Looker::Asker(asker) => asker.hands,
-            Looker::Here(_) => true,
+            Looker::Here(acting) => node.works_here(acting).is_ok(),
         },
     }
 }
@@ -131,6 +131,9 @@ pub fn who_here(node: &Node, acting: &Acting, mut reply: WhoReply) -> WhoReply {
     reply.history = reply.history.map(|history| since(node, looker, history));
     unseen_by_account(node, looker, None, &mut reply);
     reply.residents.retain(|now| resident(node, looker, &now.about.id));
+    if node.works_here(acting).is_err() {
+        reply.jobs.retain(|job| owner(node, looker, &job.owner, job.account.as_ref()));
+    }
     reply
 }
 

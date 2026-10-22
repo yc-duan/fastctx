@@ -187,6 +187,9 @@ pub enum Intent {
         /// page with one.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         project_deletes: bool,
+        /// Accepts a running job's project selection at its resident's home.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        project_entry: bool,
         /// Understands shared attachment lifetimes and account-scoped project deletion.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         conversation_deletions: bool,
@@ -570,8 +573,8 @@ pub enum Question {
         town: TownId,
         entry: Signed,
     },
-    /// The projects this member spans, each with the number of its latest
-    /// entry.
+    /// The legacy ledger catalog. Current hubs list projects available to
+    /// this member's accounts; older hubs limited it to work locations.
     LedgerTowns,
     /// Every project this member may use, each with the number of its
     /// latest entry. This does not subscribe the asker to replication.

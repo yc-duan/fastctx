@@ -81,6 +81,7 @@ impl Caller {
     /// `given`, or else the town the caller lives in.
     pub fn town_or(&self, node: &Node, given: Option<TownName>) -> Result<TownName, Failure> {
         if let Some(town) = given.or_else(|| self.town(node)) {
+            super::access::check(node, &crate::around::acting_of(node, self), &town)?;
             return Ok(town);
         }
         Err(Failure::new(match self {

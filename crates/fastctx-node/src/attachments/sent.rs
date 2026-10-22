@@ -45,9 +45,7 @@ pub(crate) async fn reserve(
             if !matches!(agent.as_str(), "codex" | "claude") {
                 return Err(failure("the agent must be codex or claude"));
             }
-            if let Some(town) = town {
-                crate::town::project::spans_here(node, town).await?;
-            }
+
             let digest = format!("{:x}", Sha256::digest(format!("{}\0{operation}", from.key())));
             let resident: ResidentId = format!("{agent}-{}", &digest[..32]).parse().map_err(failure)?;
             let room = node.world.conversation(&resident);
@@ -278,6 +276,9 @@ pub(super) async fn upload(
     mut source: FrameReader,
 ) -> Result<Uploaded, Failure> {
     let from = node.machine();
+    if node.is_here(&machine) {
+        check_project(node, &Acting::Here, &target).await?;
+    }
     let mut prepared = prepare_sent(node, &from, &machine, target, file.clone(), operation, composer).await?;
     if prepared.arriving.is_none() {
         return complete_sent(node, &from, prepared).await;

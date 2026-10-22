@@ -1432,7 +1432,7 @@ pub async fn open_here(
     attachments: Vec<fastctx_types::attachments::Attachment>,
 ) -> Result<(ResidentId, Landed), Failure> {
     if let Some(town) = &town {
-        crate::town::project::spans_here(node, town).await?;
+        crate::town::access::ready(node, &opened.acting, town).await?;
     }
     // Nothing of the conversation is made for a Claude Code that cannot
     // run it.
@@ -1486,6 +1486,9 @@ pub async fn open_here(
         last_compacted: false,
         asked: None,
     };
+    if let Some(town) = &town {
+        crate::town::access::check(node, &about.acting, town)?;
+    }
     node.residents
         .create(&node.world, about, town.clone(), now)
         .map_err(|error| Failure::new(format!("recording the session: {error}")))?;
