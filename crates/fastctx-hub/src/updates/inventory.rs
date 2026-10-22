@@ -146,12 +146,17 @@ pub(super) fn ready_network(hub: &Hub, mut network: Network) -> Network {
         let major = fastctx_types::update::release(&due.version).map(|version| version.major);
         let through = needs_network(hub, name);
         let targets = targets_of(name).unwrap_or_default();
+        // Never to a release without a package for what the machine runs.
+        let packaged = |manifest: &Manifest| {
+            targets.app.iter().chain(targets.kernel.iter()).all(|target| manifest.package(target).is_some())
+        };
         let newest = manifests
             .iter()
             .filter(|manifest| {
                 channel.takes(&manifest.version)
                     && manifest.newer_than(&due.version)
                     && manifest.semver().map(|version| version.major) == major
+                    && packaged(manifest)
                     && (!through || for_targets(manifest, &targets).iter().all(|package| held.contains(package)))
             })
             .max_by_key(|manifest| manifest.semver());

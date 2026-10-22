@@ -234,6 +234,10 @@ pub(crate) fn state(node: &Node) -> State {
             fetching: held.fetching.clone(),
             failed: held.attempt.failed.clone().or_else(|| {
                 let plan = fastctx_install::renewal::read(&node.root).ok().flatten()?;
+                // A step waited on says why without having failed.
+                if plan.phase != fastctx_types::renewal::Phase::Failed {
+                    return None;
+                }
                 let version = plan.error_version.unwrap_or(plan.candidate.build.version);
                 // A program this node runs already, or one older, is no
                 // failure to tell now.
@@ -360,8 +364,23 @@ pub(crate) async fn call(node: &Arc<Node>, call: UpdateCall) -> Result<State, St
     }
     match call {
         UpdateCall::Progress { stage } => {
+            // An installation the interface could not make is kept as any
+            // failed update is, and not tried again before its time, the
+            // interface opened again or not.
+            if let Stage::Failed { version, problem } = &stage {
+                let target = node.updates.held.lock().expect("never poisoned").app.as_ref().map(|app| app.target.clone());
+                if let Some(target) = target {
+                    let failure = Failed {
+                        version: version.clone(),
+                        target,
+                        why: problem.why.clone(),
+                        reason: Some(problem.reason.clone()),
+                    };
+                    retry::failed(node, failure);
+                }
+            }
             node.updates.held.lock().expect("never poisoned").activity =
-                (!matches!(stage, Stage::Idle)).then_some(stage);
+                (!matches!(stage, Stage::Idle | Stage::Failed { .. })).then_some(stage);
             report(node);
         }
         UpdateCall::Preferences { auto, relays } => {
@@ -816,10 +835,7 @@ fn auto(node: &Arc<Node>) {
     }
     schedule::reconcile(node);
     let state = state(node);
-    if state.fetching.is_some()
-        || state.renewing.as_ref().is_some_and(|renewing| renewing.phase != fastctx_types::renewal::Phase::Failed)
-        || application::busy()
-        || (state.take.is_some() && (application::open() || !cfg!(windows)))
+    if state.fetching.is_some() || application::busy() || (state.take.is_some() && (application::open() || !cfg!(windows)))
     {
         return;
     }
@@ -850,8 +866,12 @@ fn auto(node: &Arc<Node>) {
         },
         None => return,
     };
-    if state.renewing.as_ref().is_some_and(|renewing| renewing.version == version) {
-        // A staged failed handover has its own durable recovery schedule.
+    // A change to this release or a later one goes on by itself, a failed
+    // one on its own durable recovery schedule; one to an earlier release,
+    // under way or stuck, gives way to this one.
+    if state.renewing.as_ref().is_some_and(|renewing| {
+        fastctx_types::update::release(&renewing.version) >= fastctx_types::update::release(&version)
+    }) {
         return;
     }
     let Some(attempt) = retry::begin(node, &version) else { return };
