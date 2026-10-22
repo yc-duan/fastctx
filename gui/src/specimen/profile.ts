@@ -36,6 +36,12 @@ let profile: Profile = {
   },
 };
 
+// `?noServers`: an account that keeps none yet, its page as it starts.
+if (new URLSearchParams(location.search).has("noServers")) {
+  profile = { ...profile, servers: {} };
+  for (const servers of kept.values()) servers.clear();
+}
+
 const found: Found[] = [
   { source: { app: "claude_desktop" }, name: "unityMCP", server: { kind: "command" } },
   { source: { app: "claude_desktop" }, name: "blender", server: { kind: "command" } },

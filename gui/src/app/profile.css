@@ -36,13 +36,16 @@
   color: var(--text-3);
 }
 
-/* Nothing yet, or nothing here: a mark and the one or two things to do. */
+/* Nothing yet, or nothing here: a mark and the one or two things to do, in
+   the middle of the page. */
 .prof-empty {
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: var(--space-4);
-  padding-top: 18vh;
+  min-height: 100%;
   color: var(--text-3);
 }
 
