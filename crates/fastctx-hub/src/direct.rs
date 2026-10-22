@@ -98,6 +98,34 @@ pub(crate) async fn change(
     outcome
 }
 
+fn authorized(
+    directory: &fastctx_net::directory::Directory,
+    asker: &MachineName,
+    account: &AccountName,
+    machine: &MachineName,
+    at: &[SocketAddr],
+) -> Result<fastctx_net::sign::PublicKey, String> {
+    if !directory.logged_in(asker, account) {
+        return Err(format!("{asker} is not logged in to the account {account}"));
+    }
+    if directory.account(account).is_some_and(|found| found.locked) {
+        return Err(format!("the account {account} is locked"));
+    }
+    if !directory.is_super(account) {
+        return Err(format!("only the network's administrator allows direct connections, and {account} is not it"));
+    }
+    let member = directory.member(machine).ok_or_else(|| format!("there is no machine named {machine}"))?;
+    if !member.is_machine() {
+        return Err(format!("{machine} is a device, not a machine; only machines take direct connections"));
+    }
+    // A visitor's machines are its alone, the administrator's reach
+    // stops there; one that takes them already may still be stopped.
+    if !at.is_empty() && member.home.as_ref().is_some_and(|owner| directory.is_visitor(owner)) {
+        return Err(format!("{machine} is a visitor's machine, which only its owner uses"));
+    }
+    Ok(member.key)
+}
+
 async fn allow(
     hub: &Arc<Hub>,
     asker: &MachineName,
@@ -105,34 +133,20 @@ async fn allow(
     machine: &MachineName,
     at: &[SocketAddr],
 ) -> Result<Told, String> {
-    let key = {
-        let store = hub.store();
-        let directory = &store.book.directory;
-        if !directory.logged_in(asker, account) {
-            return Err(format!("{asker} is not logged in to the account {account}"));
-        }
-        if directory.account(account).is_some_and(|found| found.locked) {
-            return Err(format!("the account {account} is locked"));
-        }
-        if !directory.is_super(account) {
-            return Err(format!("only the network's administrator allows direct connections, and {account} is not it"));
-        }
-        let member = directory.member(machine).ok_or_else(|| format!("there is no machine named {machine}"))?;
-        if !member.is_machine() {
-            return Err(format!("{machine} is a device, not a machine; only machines take direct connections"));
-        }
-        // A visitor's machines are its alone, the administrator's reach
-        // stops there; one that takes them already may still be stopped.
-        if !at.is_empty() && member.home.as_ref().is_some_and(|owner| directory.is_visitor(owner)) {
-            return Err(format!("{machine} is a visitor's machine, which only its owner uses"));
-        }
-        member.key
-    };
+    let key = authorized(&hub.store().book.directory, asker, account, machine, at)?;
     if at.is_empty() {
         let mut store = hub.store();
-        if let Some(member) = store.book.directory.members.iter_mut().find(|member| member.name == *machine) {
-            member.direct.clear();
+        if authorized(&store.book.directory, asker, account, machine, at)? != key {
+            return Err("the machine's identity changed while direct connections were being changed".into());
         }
+        let member = store
+            .book
+            .directory
+            .members
+            .iter_mut()
+            .find(|member| member.name == *machine)
+            .ok_or_else(|| format!("the machine {machine} was removed"))?;
+        member.direct.clear();
         store.save_book().map_err(|error| format!("keeping the change: {error}"))?;
         return Ok(Told::Done);
     }
@@ -194,9 +208,17 @@ async fn allow(
         return Err(failures.join("; "));
     }
     let mut store = hub.store();
-    if let Some(member) = store.book.directory.members.iter_mut().find(|member| member.name == *machine) {
-        member.direct = at.to_vec();
+    if authorized(&store.book.directory, asker, account, machine, at)? != key {
+        return Err("the machine's identity changed while its direct address was checked".into());
     }
+    let member = store
+        .book
+        .directory
+        .members
+        .iter_mut()
+        .find(|member| member.name == *machine)
+        .ok_or_else(|| format!("the machine {machine} was removed"))?;
+    member.direct = at.to_vec();
     store.save_book().map_err(|error| format!("keeping the change: {error}"))?;
     Ok(Told::Done)
 }

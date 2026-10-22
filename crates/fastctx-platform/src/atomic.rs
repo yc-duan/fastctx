@@ -48,12 +48,13 @@ pub struct PublishFailure {
 /// Stages and flushes the complete new file, then verifies the expected revision
 /// immediately before publication. The caller must serialize cooperating writers;
 /// operating systems do not offer a portable content-based compare-and-rename.
-pub fn publish_checked(
+/// A guard returned by `verify` remains held through publication and its durability check.
+pub fn publish_checked<G>(
     path: &Path,
     bytes: &[u8],
     permissions: Permissions,
     replace: bool,
-    verify: impl FnOnce() -> io::Result<()>,
+    verify: impl FnOnce() -> io::Result<G>,
 ) -> Result<(), PublishFailure> {
     let mut published = false;
     imp::publish(path, bytes, permissions, replace, verify, &mut published)
@@ -120,12 +121,12 @@ mod imp {
 
     use super::{Permissions, temporary_beside};
 
-    pub fn publish(
+    pub fn publish<G>(
         path: &Path,
         bytes: &[u8],
         permissions: Permissions,
         replace: bool,
-        verify: impl FnOnce() -> io::Result<()>,
+        verify: impl FnOnce() -> io::Result<G>,
         published: &mut bool,
     ) -> io::Result<()> {
         let temporary = temporary_beside(path)?;
@@ -145,7 +146,7 @@ mod imp {
             }
             owned_as_directory(&file, path)?;
             file.sync_all()?;
-            verify()?;
+            let _authority = verify()?;
             if replace {
                 fs::rename(&temporary, path)?;
                 *published = true;
@@ -300,12 +301,12 @@ mod imp {
     const FILE_RENAME_FLAG_REPLACE_IF_EXISTS: u32 = 0x1;
     const FILE_RENAME_FLAG_POSIX_SEMANTICS: u32 = 0x2;
 
-    pub fn publish(
+    pub fn publish<G>(
         path: &Path,
         bytes: &[u8],
         _permissions: Permissions,
         replace: bool,
-        verify: impl FnOnce() -> io::Result<()>,
+        verify: impl FnOnce() -> io::Result<G>,
         published: &mut bool,
     ) -> io::Result<()> {
         let temporary = temporary_beside(path)?;
@@ -317,7 +318,7 @@ mod imp {
             if unsafe { FlushFileBuffers(handle.0) } == 0 {
                 return Err(io::Error::last_os_error());
             }
-            verify()?;
+            let _authority = verify()?;
             rename_by_handle(handle.0, &target, replace)?;
             *published = true;
             Ok(())
