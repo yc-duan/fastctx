@@ -1455,7 +1455,7 @@ export interface AccessWords {
 export const zhAccess: AccessWords = {
   shareTitle: (machine) => `共享 ${machine}`,
   shareWhat: "对方可以使用这台机器和上面的所有智能体。",
-  shareSees: "对方的操作会在这台机器上真实运行，请只共享给信任的人。",
+  shareSees: "对方能以这台机器的系统用户做任何事，读得到上面的文件和智能体登录的凭据。请只共享给信任的人。",
   sharedTo: "已共享给",
   shareGo: "共享",
   assistTitle: (login, machine) => `让 ${machine} 上的 ${login} 协助他人`,
@@ -1511,7 +1511,7 @@ export const zhAccess: AccessWords = {
 export const enAccess: AccessWords = {
   shareTitle: (machine) => `Share ${machine}`,
   shareWhat: "They can use this machine and every agent on it.",
-  shareSees: "What they do runs for real on this machine. Share only with people you trust.",
+  shareSees: "They can do anything this machine's system user can, its files and its agents' login credentials included. Share only with people you trust.",
   sharedTo: "Shared with",
   shareGo: "Share",
   assistTitle: (login, machine) => `Let ${login} on ${machine} assist others`,

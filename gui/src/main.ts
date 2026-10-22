@@ -159,7 +159,7 @@ import {
 import { enRemoval, zhRemoval } from "./app/removal-words";
 import { enAccess, enLogin, enMachines, enToken, zhAccess, zhLogin, zhMachines, zhToken } from "./app/account-words";
 import { LASTING, loginsOf, type AccountChange, type Login, type TokenSeen, type TokenWay } from "./world/accounts";
-import { assistantOf, assistantsOf, assistingOwner, filePlaces, groupsOf, inNoNetwork, loginKey, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
+import { assistantOf, assistantsOf, assistingOwner, filePlaces, groupsOf, inNoNetwork, loginKey, loginLabel, machinesOf, residentIn, sameLogin, workPlaces, type Machine } from "./app/reach";
 import type { FocusPlace } from "./app/focus-panel";
 import { folders as foldersOf, noFocus, type Focus, type Folders } from "./world/focus";
 import { ComposerSession } from "./conversation/composer";
@@ -792,7 +792,7 @@ const talkActs = new TalkActs({
 const talkMenu = new TalkMenu({
   words: talkMenuWords,
   acts: talkActs,
-  towns: townsOn,
+  towns: townsFor,
   reachable: (r) => !isUnreached(r),
   someone: (r) => someoneSaid(r),
   place: (r) => placeSaid(r),
@@ -1290,11 +1290,13 @@ function specimenFolders(machine: string, path: string | null): Promise<Folders>
   return new Promise((resolve) => setTimeout(() => resolve({ machine, path, parent, home, folders }), 280));
 }
 
-/** The projects an agent on `machine` can be in: those spanning it. */
-function townsOn(machine: string): { town: string; name: string }[] {
-  return (store.world.peek()?.towns ?? [])
-    .filter((town) => town.record.machines.includes(machine))
-    .map((town) => ({ town: town.town, name: town.record.name }));
+/** The projects a conversation can be in: those of the accounts it works
+ *  for, wherever its agent lives. */
+function townsFor(r: ResidentNow): { town: string; name: string }[] {
+  const world = store.world.peek();
+  if (!world) return [];
+  const usable = new Set(groupsOf(world).filter((group) => residentIn(world, group, r)).flatMap((group) => group.towns));
+  return world.towns.filter((town) => usable.has(town.town)).map((town) => ({ town: town.town, name: town.record.name }));
 }
 
 /** The machines page's drawing of `world`, as a picture on another page:

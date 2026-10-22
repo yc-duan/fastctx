@@ -19,7 +19,8 @@ export interface TalkMenuOptions {
   words: TalkMenuWords;
   acts: TalkActs;
   /** The projects a conversation on `machine` can be in. */
-  towns(machine: string): { town: string; name: string }[];
+  /** The projects a conversation can be in. */
+  towns(r: ResidentNow): { town: string; name: string }[];
   /** Whether the conversation's machine is there to be asked now. */
   reachable(r: ResidentNow): boolean;
   /** Who it is with, where it has no name; where it is said to be. Never
@@ -162,7 +163,7 @@ export class TalkMenu {
       `<button class="talk-menu-item${act === "delete" ? " danger" : ""}" type="button" role="menuitem" data-act="${act}"${disabled ? " disabled" : ""}>${glyph(icon, 16)}<span class="talk-menu-label">${escape(label)}</span>${end}</button>`;
     const rule = `<hr class="talk-menu-rule">`;
     if (this.towns) {
-      const towns = this.options.towns(r.about.machine);
+      const towns = this.options.towns(r);
       const pick = (town: string | null, name: string) =>
         `<button class="talk-menu-item talk-menu-town" type="button" role="menuitemradio" aria-checked="${(r.town ?? null) === town}" data-town="${escape(town ?? "")}"><span class="talk-menu-check">${(r.town ?? null) === town ? glyph("check", 16) : ""}</span><span class="talk-menu-label">${escape(name)}</span></button>`;
       this.element.innerHTML = `${head}<button class="talk-menu-back" type="button" data-act="back">${glyph("back", 16)}<span>${escape(words.move)}</span></button>

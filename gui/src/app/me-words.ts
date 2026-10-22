@@ -68,6 +68,10 @@ export interface MeWords {
   tookBack(what: string): string;
   sharedLabel(machine: string, account: string): string;
   assistLabel(login: string, account: string): string;
+  /** What an account was given, under its name. */
+  givenSub(machines: number, logins: number): string;
+  /** A group of machines given together, in a sentence. */
+  groupOf(group: string, count: number): string;
   /** Others' machines whose agents may reach the user's. */
   reaching: string;
   reachingWhat: string;
@@ -151,6 +155,8 @@ export const zhMe: MeWords = {
   tookBack: (what) => `已收回${what}`,
   sharedLabel: (machine, account) => ` ${account} 对 ${machine} 的使用`,
   assistLabel: (login, account) => ` ${login} 对 ${account} 的协助`,
+  givenSub: (machines, logins) => [machines ? `${machines} 台机器` : "", logins ? `${logins} 个登录协助` : ""].filter(Boolean).join("，"),
+  groupOf: (group, count) => `${group}（${count} 台）`,
   reaching: "能访问你的机器的智能体",
   reachingWhat: "你用过别人机器上的智能体之后，它们可以访问你的机器",
   reachingLine: (machine, owner) => (owner ? `${owner} 的智能体` : machine),
@@ -234,6 +240,9 @@ export const enMe: MeWords = {
   tookBack: (what) => `Took back${what}`,
   sharedLabel: (machine, account) => ` ${machine} from ${account}`,
   assistLabel: (login, account) => ` ${login}'s help for ${account}`,
+  givenSub: (machines, logins) =>
+    [machines ? `${machines} ${machines === 1 ? "machine" : "machines"}` : "", logins ? `${logins} ${logins === 1 ? "login" : "logins"} assisting` : ""].filter(Boolean).join(", "),
+  groupOf: (group, count) => `${group} (${count} machines)`,
   reaching: "Agents with access to your machines",
   reachingWhat: "Once you use an agent on someone else's machine, its agents can access your machines",
   reachingLine: (machine, owner) => (owner ? `${owner}'s agents` : machine),

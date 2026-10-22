@@ -257,7 +257,15 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         { key: "specimen-phone-qr", account: "me", kind: "phone", uses: 1, used: 0, expires: daysAhead(1), way: "scan", made_by: "desktop", made_at: at("13:05:00") },
         { key: "specimen-bo-code", account: "bo", label: "实验室", kind: "computer", managed: true, uses: 10, used: 3, expires: daysAhead(20), way: "paste", made_by: "gpu", made_at: at("08:00:00") },
       ],
-      shares: [{ machine: "lab", account: "ada" }],
+      // With ?many, a room of machines shared one by one, as a lab is.
+      shares: [
+        { machine: "lab", account: "ada" },
+        { machine: "lab-a-01", account: "bo" },
+        { machine: "lab-a-02", account: "bo" },
+        ...manyOnes()
+          .filter((one) => one.owner === "me" && one.group !== "教学楼2层")
+          .map((one) => ({ machine: one.name, account: "bo" })),
+      ],
       assists: [
         { machine: "desktop", account: "ada", agent: "codex", home: "C:\\Users\\me\\.codex-work", until: daysAhead(3) },
         { machine: "desktop", account: "bo", agent: "codex", home: "C:\\Users\\me\\.codex-work", until: null },

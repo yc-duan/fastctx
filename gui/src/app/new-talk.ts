@@ -899,12 +899,13 @@ export class NewTalk {
     const line = lines.find((one) => option && one.options.includes(option)) ?? null;
     const logins = this.openers(world, option);
     const login = logins.chosen;
-    // The projects of the account it works for that span where it lives.
+    // The projects of the account it works for, wherever the agent lives: a
+    // project's machines are where it works, not where its agents may be.
     const group = login ? groupsOf(world).find((one) => sameLogin(one.login, login)) : null;
     const towns: Choice[] = [
       { value: "", label: words.outsideProject },
       ...(world?.towns ?? [])
-        .filter((town) => !!option && town.record.machines.includes(option.machine) && (!group || group.towns.includes(town.town)))
+        .filter((town) => !!option && (!group || group.towns.includes(town.town)))
         .map((town) => ({ value: town.town, label: town.record.name })),
     ];
     // A project the agent cannot work in is kept while the machines are

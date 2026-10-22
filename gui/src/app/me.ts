@@ -122,14 +122,28 @@ export class MePage implements Page {
       case "unshare": {
         const machine = button.dataset.machine!;
         const give: AccountChange = { change: "share", machine, to: name, shared: true };
-        return void this.takeBack(login, `share\n${machine}\n${name}`, words.sharedLabel(machine, name), { ...give, shared: false }, give);
+        return void this.takeBack(login, [`share\n${machine}\n${name}`], words.sharedLabel(machine, name), [{ ...give, shared: false }], [give]);
+      }
+      case "unshare-group": {
+        const group = button.dataset.group!;
+        const hub = this.hubOf(login);
+        const ours = new Set(hub?.members.filter((member) => member.home === login.account && member.group === group).map((member) => member.name));
+        const machines = (hub?.shares ?? []).filter((share) => share.account === name && ours.has(share.machine)).map((share) => share.machine);
+        const gives: AccountChange[] = machines.map((machine) => ({ change: "share", machine, to: name, shared: true }));
+        return void this.takeBack(
+          login,
+          machines.map((machine) => `share\n${machine}\n${name}`),
+          words.sharedLabel(words.groupOf(group, machines.length), name),
+          gives.map((give) => ({ ...give, shared: false })),
+          gives,
+        );
       }
       case "unassist": {
         const assist = this.hubOf(login)?.assists.find((one) => assistKey(one) === button.dataset.assist);
         if (!assist) return;
         const give = assistChange(assist.machine, assist.agent, assist.home, assist.account, termsOf(assist));
         const take = assistChange(assist.machine, assist.agent, assist.home, assist.account, null);
-        return void this.takeBack(login, `assist\n${assistKey(assist)}`, words.assistLabel(`${agentName(assist.agent)} ${assist.machine}`, assist.account), take, give);
+        return void this.takeBack(login, [`assist\n${assistKey(assist)}`], words.assistLabel(`${agentName(assist.agent)} ${assist.machine}`, assist.account), [take], [give]);
       }
       case "leave":
         return this.leaveNetwork(login);
@@ -186,23 +200,32 @@ export class MePage implements Page {
 
   /** Takes back a share or an assistance: gone from the page at once, and
    *  for a moment given back from the line that says so. */
-  private async takeBack(login: Login, key: string, label: string, take: AccountChange, give: AccountChange): Promise<void> {
+  /** Takes back what `takes` say, each shown gone by its key while it
+   *  goes; what went can be given again from the word that says so. */
+  private async takeBack(login: Login, keys: string[], label: string, takes: AccountChange[], gives: AccountChange[]): Promise<void> {
     const { words, change, store, say } = this.options;
-    const taking = { hub: login.hub, key };
-    this.taking.push(taking);
+    const taking = keys.map((key) => ({ hub: login.hub, key }));
+    this.taking.push(...taking);
     this.redraw();
+    const went: AccountChange[] = [];
     try {
-      await change(login, take);
+      for (const [index, take] of takes.entries()) {
+        await change(login, take);
+        went.push(gives[index]!);
+      }
     } catch (error) {
       const said = error instanceof Error ? error.message : String(error);
       say(words.failed(said), { detail: said });
+      await store.refresh();
       return;
     } finally {
-      this.taking.splice(this.taking.indexOf(taking), 1);
+      for (const one of taking) this.taking.splice(this.taking.indexOf(one), 1);
     }
     say(words.tookBack(label), {
       undo: () => {
-        void change(login, give).then(
+        void (async () => {
+          for (const give of went) await change(login, give);
+        })().then(
           () => store.refresh(),
           (error: unknown) => say(words.failed(String(error instanceof Error ? error.message : error))),
         );
@@ -321,7 +344,7 @@ export class MePage implements Page {
       ${this.card(login, hub, world)}
       ${me?.level === "visitor" ? `<p class="me-note">${escape(words.visitorGives)}</p>` : ""}
       ${this.arrivals(hub.arrivals.filter((arrival) => arrival.account === login.account), hub, world, now)}
-      ${this.given(login, hub, world, now)}
+      ${this.given(login, hub, now)}
       ${this.reaching(login, hub, now)}
       ${this.devices(login, hub, world, now)}
       ${this.codes(login, hub, world, now)}
@@ -399,39 +422,58 @@ export class MePage implements Page {
   }
 
   /** The user's machines shared with others and their logins assisting
-   *  others, a row each, whom as chips to take back. */
-  private given(login: Login, hub: HubAccounts, world: WorldNow, now: Date): string {
+   *  others: a row for each account given anything, what it was given as
+   *  chips to take back. Machines of one group given to it are one chip, as
+   *  a room of machines shared one by one would otherwise run on and on. */
+  private given(login: Login, hub: HubAccounts, now: Date): string {
     const { words, short } = this.options;
-    const mine = new Set(hub.members.filter((member) => member.home === login.account).map((member) => member.name));
+    const mine = new Map(hub.members.filter((member) => member.home === login.account).map((member) => [member.name, member]));
     const taken = (key: string) => this.taking.some((one) => one.hub === hub.hub && one.key === key);
     const shares = hub.shares.filter((share) => mine.has(share.machine) && !taken(`share\n${share.machine}\n${share.account}`));
     const assists = hub.assists.filter((assist) => mine.has(assist.machine) && !taken(`assist\n${assistKey(assist)}`));
     if (!shares.length && !assists.length) return "";
-    const forms = factsByMachine(world);
-    const chip = (label: string, take: string, title: string, more = "") =>
-      `<span class="chip">${escape(label)}${more}<button class="chip-x" type="button" ${take} aria-label="${escape(title)}" title="${escape(title)}">${glyph("close", 12)}</button></span>`;
-    const machines = [...new Set(shares.map((share) => share.machine))].map((machine) => {
-      const form = forms.get(machine)?.form;
-      const chips = shares
-        .filter((share) => share.machine === machine)
-        .map((share) => chip(share.account, `data-act="unshare" data-machine="${escape(machine)}" data-name="${escape(share.account)}"`, words.takeBack(words.sharedLabel(machine, share.account))))
-        .join("");
-      return row(glyph(form === "laptop" ? "laptop" : form === "server" ? "server" : "desktop", 16), escape(machine), "", words.sharedTo, chips);
-    });
-    const logins = [...new Map(assists.map((assist) => [`${assist.machine}\n${assist.agent}\n${assist.home ?? ""}`, assist])).values()].map((first) => {
-      const same = assists.filter((assist) => assist.machine === first.machine && assist.agent === first.agent && assist.home === first.home);
-      const home = first.home ? (first.home.split(/[\\/]/).filter(Boolean).pop() ?? first.home) : "";
-      const chips = same
+    const chip = (label: string, take: string, title: string, more = "", tip = "") =>
+      `<span class="chip"${tip ? ` title="${escape(tip)}"` : ""}><span class="me-chip-label">${escape(label)}</span>${more}<button class="chip-x" type="button" ${take} aria-label="${escape(title)}" title="${escape(title)}">${glyph("close", 12)}</button></span>`;
+    const accounts = [...new Set([...shares.map((share) => share.account), ...assists.map((assist) => assist.account)])].sort((a, b) => a.localeCompare(b));
+    const rows = accounts.map((account) => {
+      const machines = shares.filter((share) => share.account === account).map((share) => share.machine);
+      const grouped = new Map<string, string[]>();
+      const alone: string[] = [];
+      for (const machine of machines) {
+        const group = mine.get(machine)?.group;
+        if (group) grouped.set(group, [...(grouped.get(group) ?? []), machine]);
+        else alone.push(machine);
+      }
+      for (const [group, members] of grouped) {
+        if (members.length > 1) continue;
+        grouped.delete(group);
+        alone.push(...members);
+      }
+      const groupChips = [...grouped].map(([group, members]) =>
+        chip(
+          group,
+          `data-act="unshare-group" data-group="${escape(group)}" data-name="${escape(account)}"`,
+          words.takeBack(words.sharedLabel(words.groupOf(group, members.length), account)),
+          `<span class="chip-more">${members.length}</span>`,
+          members.join(words.separator),
+        ),
+      );
+      const machineChips = alone.map((machine) =>
+        chip(machine, `data-act="unshare" data-machine="${escape(machine)}" data-name="${escape(account)}"`, words.takeBack(words.sharedLabel(machine, account))),
+      );
+      const loginChips = assists
+        .filter((assist) => assist.account === account)
         .map((assist) => {
+          const home = assist.home ? (assist.home.split(/[\\/]/).filter(Boolean).pop() ?? assist.home) : "";
           const until = assist.until ? `<span class="chip-more">${glyph("history", 12)}${escape(short(new Date(assist.until), now))}</span>` : "";
           const daily = assist.daily ? `<span class="chip-more">${escape(words.dailyShort(wholeDollars(assist.daily / 1_000_000)))}</span>` : "";
           const weekly = assist.weekly ? `<span class="chip-more">${escape(words.weeklyShort(wholeDollars(assist.weekly / 1_000_000)))}</span>` : "";
-          return chip(assist.account, `data-act="unassist" data-assist="${escape(assistKey(assist))}"`, words.takeBack(words.assistLabel(`${agentName(assist.agent)} ${assist.machine}`, assist.account)), until + daily + weekly);
-        })
-        .join("");
-      return row(glyph(first.agent === "claude" ? "claude" : "codex", 16), escape(agentName(first.agent)), escape([first.machine, home].filter(Boolean).join(" ")), words.assisting, chips);
+          const label = [agentName(assist.agent), assist.machine, home].filter(Boolean).join(" ");
+          return chip(label, `data-act="unassist" data-assist="${escape(assistKey(assist))}"`, words.takeBack(words.assistLabel(`${agentName(assist.agent)} ${assist.machine}`, account)), until + daily + weekly);
+        });
+      return row(glyph("person", 16), escape(account), escape(words.givenSub(machines.length, loginChips.length)), "", [...groupChips, ...machineChips, ...loginChips].join(""));
     });
-    return part(words.given, "", `<ul class="me-rows">${[...machines, ...logins].join("")}</ul>`);
+    return part(words.given, "", `<ul class="me-rows">${rows.join("")}</ul>`);
   }
 
   private reaching(login: Login, hub: HubAccounts, now: Date): string {
