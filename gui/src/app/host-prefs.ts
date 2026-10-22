@@ -2,7 +2,8 @@
 // `world-gui.md`, 智能体页): the tab beside that agent's logins. What is
 // asked of an agent first comes first: the model a conversation begins with
 // and how hard it reasons, then how far its context grows and when it is
-// compacted; the rest below. A row of steps is the hand-drawn slider the
+// compacted; the rest below, Claude Code's leading first to the page of its
+// subagents. A row of steps is the hand-drawn slider the
 // conversation's own effort uses (`../conversation/effort-slider`), with
 // 「默认」 before it: left to the login's own setting, the knob rests faint
 // where that stands, and a step pressed or dragged to makes it the
@@ -33,6 +34,12 @@ export interface HostPrefsOptions {
   calls: ProfileCalls;
   /** The models this agent's logins offer, across the user's machines. */
   models(agent: Host): Promise<AgentModel[]>;
+  /** For Claude Code, the account's subagents: their names, null where the
+   *  hub keeps none, and the way to their page. */
+  subagents?: {
+    names(login: Login): Promise<string[] | null>;
+    open(): void;
+  } | undefined;
 }
 
 /** A preference laid out as a slider of steps, and how it sits in the
@@ -55,7 +62,9 @@ type Row =
   | { kind: "model"; id: string; label: string; key: string }
   | Slid
   | { kind: "choices"; id: string; label: string; key: string; choices: [unknown, string][] }
-  | { kind: "word"; id: string; label: string; key: string; placeholder: string };
+  | { kind: "word"; id: string; label: string; key: string; placeholder: string }
+  /** A row that leads to a page of its own, what is there named on it. */
+  | { kind: "link"; id: string; label: string };
 
 interface Section {
   title: string;
@@ -95,6 +104,8 @@ export class HostPrefs {
   private saidTimer = 0;
   private note: { text: string; detail: string } | null = null;
   private models: AgentModel[] | null = null;
+  /** The account's subagents by name, once read. */
+  private names: string[] | null = null;
   private asked = false;
   private menu: { element: HTMLElement; popover: Popover } | null = null;
 
@@ -105,7 +116,10 @@ export class HostPrefs {
     this.sections = [
       { title: p.modelSection, rows: [{ kind: "model", id: "model", label: p.model, key: MODEL_KEY[agent] }, this.effortRow()] },
       { title: p.contextSection, rows: [this.context.window, this.context.compact] },
-      { title: p.otherSection, rows: otherRows(agent, p) },
+      {
+        title: p.otherSection,
+        rows: [...(options.subagents ? [{ kind: "link" as const, id: "subagents", label: words.subagents.agents }] : []), ...otherRows(agent, p)],
+      },
     ];
     this.choice = new AccountChoice(words, (login) => void this.load(login));
     this.account = this.choice.element;
@@ -213,6 +227,15 @@ export class HostPrefs {
     const key = loginKey(login);
     this.shownLogin = key;
     this.note = null;
+    this.names = null;
+    this.options.subagents
+      ?.names(login)
+      .then((names) => {
+        if (this.shownLogin !== key) return;
+        this.names = names;
+        this.refresh();
+      })
+      .catch(() => {});
     if (this.state.kind !== "ready") {
       this.state = { kind: "reading" };
       this.render();
@@ -280,6 +303,8 @@ export class HostPrefs {
         return `<div class="choice-row hp-row" role="radiogroup" aria-label="${escape(row.label)}">${label}<div class="choice-options" data-hp-choices="${row.id}"></div></div>`;
       case "word":
         return `<label class="choice-row hp-row">${label}<span class="choice-options"><input class="prefs-word" type="text" data-hp-word="${row.id}" placeholder="${escape(row.placeholder)}" spellcheck="false" autocomplete="off"></span></label>`;
+      case "link":
+        return `<div class="choice-row hp-row">${label}<div class="choice-options"><button class="choice hp-link" type="button" data-hp-link="${row.id}"><span class="hp-link-what" data-hp-what="${row.id}"></span>${glyph("chevron", 14)}</button></div></div>`;
     }
   }
 
@@ -343,6 +368,14 @@ export class HostPrefs {
           if (document.activeElement !== input) input.value = typeof table[row.key] === "string" ? (table[row.key] as string) : "";
           break;
         }
+        case "link": {
+          const s = words.subagents;
+          const what = this.names === null ? "" : this.names.length ? s.names(this.names) : s.none;
+          const place = this.element.querySelector<HTMLElement>(`[data-hp-what="${row.id}"]`)!;
+          if (place.textContent !== what) place.textContent = what;
+          place.title = what;
+          break;
+        }
       }
     }
     this.element.classList.toggle("hp-saving", this.saving);
@@ -352,6 +385,10 @@ export class HostPrefs {
   private click(event: Event): void {
     const target = event.target as HTMLElement;
     if (this.state.kind !== "ready") return;
+    if (target.closest("[data-hp-link]")) {
+      this.options.subagents?.open();
+      return;
+    }
     const reset = target.closest<HTMLElement>("[data-hp-reset]");
     if (reset) {
       const row = this.row(reset.dataset.hpReset!);

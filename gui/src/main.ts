@@ -71,7 +71,7 @@ import { isHost, keepSection, sectionOf, tabOf } from "./app/agent-sections";
 import "./app/agent-sections.css";
 import { PromptPage } from "./app/prompt-page";
 import { HostPrefs } from "./app/host-prefs";
-import { SubagentsTab } from "./app/subagents-tab";
+import { SubagentsPage } from "./app/subagents-page";
 import { profileSubagents } from "./world/subagents";
 import { specimenSubagents } from "./specimen/subagents";
 import { ProfileDefaults } from "./app/profile-defaults";
@@ -407,7 +407,7 @@ let place: Place = { kind: "home" };
 /** The pages one comes into from another, which have a way back in their
  *  head (`world-gui.md`, 界面的结构); the sidebar's own pages have none. */
 function inner(at: Place): boolean {
-  return ["feature", "data", "journal", "page", "file", "login", "talks", "archived", "machine", "usage"].includes(at.kind);
+  return ["feature", "data", "journal", "page", "file", "login", "talks", "archived", "machine", "usage", "subagents"].includes(at.kind);
 }
 
 /** Where a page's back goes when it was not come into from another page,
@@ -416,6 +416,8 @@ function parentOf(at: Place): Place {
   switch (at.kind) {
     case "usage":
       return { kind: "agents", machine: at.machine };
+    case "subagents":
+      return { kind: "agents", machine: null, section: "claude", tab: "prefs" };
     case "feature":
       return { kind: "features" };
     case "data":
@@ -438,6 +440,7 @@ function placeName(at: Place): string {
     case "home":
       return deviceFeatures.conversations.peek() ? shellWords.world : shellWords.agents;
     case "agents":
+      return at.section === "claude" || at.section === "codex" ? (english ? enProfile : zhProfile).sections[at.section] : shellWords.agents;
     case "usage":
       return shellWords.agents;
     case "machines":
@@ -2262,17 +2265,25 @@ function show(next: Place): void {
         tab: tabOf(next),
         prefs: {
           words: profile,
-          make: (agent) => new HostPrefs({ agent, words: profile, english, calls: profileCalls, models: agentModels }),
-        },
-        subagents: {
-          make: () =>
-            new SubagentsTab({
+          make: (agent) =>
+            new HostPrefs({
+              agent,
               words: profile,
               english,
-              call: subagentCalls,
-              models: () => agentModels("claude"),
-              confirm: accountConfirm,
-              close: pageWords.close,
+              calls: profileCalls,
+              models: agentModels,
+              subagents:
+                agent === "claude"
+                  ? {
+                      names: async (login) => {
+                        const view = await subagentCalls(login.hubName, login.account, { operation: "list" });
+                        return view.supported ? view.configuration.agents.map((agent) => agent.name) : null;
+                      },
+                      open: () => {
+                        location.hash = link({ kind: "subagents" });
+                      },
+                    }
+                  : undefined,
             }),
         },
         tabbed: (tab, agent) => {
@@ -2308,6 +2319,19 @@ function show(next: Place): void {
       });
       break;
     }
+    case "subagents":
+      keepSection("claude");
+      page = new SubagentsPage({
+        store,
+        head,
+        words: english ? enProfile : zhProfile,
+        english,
+        call: subagentCalls,
+        models: () => agentModels("claude"),
+        confirm: accountConfirm,
+        close: pageWords.close,
+      });
+      break;
     case "usage": {
       const usagePlace = next;
       page = new LoginUsagePage({

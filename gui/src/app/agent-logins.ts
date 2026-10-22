@@ -41,7 +41,6 @@ import type { Confirm } from "./confirm";
 import { FolderPicker } from "./folder-picker";
 import { redrawKeepingFocus } from "./focus";
 import type { HostPrefs } from "./host-prefs";
-import type { SubagentsTab } from "./subagents-tab";
 import { detailOf } from "./problem";
 import { isVisitor } from "./reach";
 import type { AgentTab, ProfileWords } from "./profile-words";
@@ -71,8 +70,6 @@ export interface AgentLoginsOptions {
   /** The account's preferences for an agent, where this device keeps an
    *  account's own configuration. */
   prefs: { words: ProfileWords; make(agent: Agent): HostPrefs } | null;
-  /** The account's Claude subagents, on Claude Code's page alone. */
-  subagents: { make(): SubagentsTab } | null;
   /** The machine shown changed, or the agent, as when a folder chosen is the
    *  other agent's login: the address and the sidebar follow. */
   showing(machine: string, agent: Agent): void;
@@ -160,7 +157,6 @@ export class AgentLoginsPage implements Page {
   private pickDrawn = "";
   private drawn = "";
   private prefs: HostPrefs | null;
-  private subagents: SubagentsTab | null = null;
   private readonly tabs: HTMLElement;
   private tab: AgentTab;
   private tabsDrawn = "";
@@ -206,7 +202,6 @@ export class AgentLoginsPage implements Page {
       this.element.querySelector(".host-status-place")!.replaceWith(this.prefs.status);
       this.element.append(this.prefs.element);
     }
-    this.makeSubagents();
     this.tabs.addEventListener("click", (event) => {
       const tab = (event.target as HTMLElement).closest<HTMLElement>("[data-host-tab]")?.dataset.hostTab as AgentTab | undefined;
       if (tab) this.chooseTab(tab);
@@ -240,7 +235,6 @@ export class AgentLoginsPage implements Page {
       options.store.clock.get();
       options.workbench.get();
       this.prefs?.draw(world);
-      this.subagents?.draw(world);
       this.drawTabs();
       this.draw();
       this.ensure();
@@ -253,30 +247,13 @@ export class AgentLoginsPage implements Page {
     this.machines?.element.remove();
     this.menu.close();
     this.prefs?.leave();
-    this.subagents?.leave();
   }
 
-  /** The tab shown: the preferences and the subagents only where there is
-   *  an account whose they are. */
+  /** The tab shown: the preferences only where there is an account whose
+   *  they are. */
   private shownTab(): AgentTab {
     if (this.tab === "prefs" && this.prefs?.available()) return "prefs";
-    if (this.tab === "subagents" && this.subagents?.available()) return "subagents";
     return "logins";
-  }
-
-  /** The subagents' tab, where the agent shown is Claude Code, beside the
-   *  preferences' account pill and status. */
-  private makeSubagents(): void {
-    this.subagents?.leave();
-    this.subagents?.account.remove();
-    this.subagents?.status.remove();
-    this.subagents?.element.remove();
-    this.subagents = this.agent === "claude" && this.prefs ? (this.options.subagents?.make() ?? null) : null;
-    if (!this.subagents || !this.prefs) return;
-    this.prefs.account.after(this.subagents.account);
-    this.prefs.status.after(this.subagents.status);
-    this.element.append(this.subagents.element);
-    this.subagents.draw(this.options.store.world.peek());
   }
 
   private chooseTab(tab: AgentTab): void {
@@ -298,7 +275,6 @@ export class AgentLoginsPage implements Page {
     old.element.replaceWith(next.element);
     this.prefs = next;
     next.draw(this.options.store.world.peek());
-    this.makeSubagents();
     this.drawTabs();
   }
 
@@ -309,7 +285,7 @@ export class AgentLoginsPage implements Page {
     const words = this.options.prefs?.words;
     const html =
       this.prefs?.available() && words
-        ? `<div class="segmented host-tabs" role="tablist">${(this.subagents ? (["logins", "prefs", "subagents"] as const) : (["logins", "prefs"] as const))
+        ? `<div class="segmented host-tabs" role="tablist">${(["logins", "prefs"] as const)
             .map((tab) => `<button class="segment${tab === shown ? " chosen" : ""}" type="button" role="tab" aria-selected="${tab === shown}" data-host-tab="${tab}">${escape(words.tabs[tab])}</button>`)
             .join("")}</div>`
         : "";
@@ -318,7 +294,6 @@ export class AgentLoginsPage implements Page {
       this.tabsDrawn = html;
     }
     const prefs = shown === "prefs";
-    const subagents = shown === "subagents";
     this.element.classList.toggle("host-tabbed", html !== "");
     this.body.hidden = shown !== "logins";
     this.pick.hidden = shown !== "logins";
@@ -328,12 +303,6 @@ export class AgentLoginsPage implements Page {
       this.prefs.account.hidden = !prefs;
       this.prefs.status.hidden = !prefs;
       if (prefs) this.prefs.shown();
-    }
-    if (this.subagents) {
-      this.subagents.element.hidden = !subagents;
-      this.subagents.account.hidden = !subagents;
-      this.subagents.status.hidden = !subagents;
-      if (subagents) this.subagents.shown();
     }
   }
 

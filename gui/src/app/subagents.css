@@ -1,4 +1,4 @@
-/* The account's Claude subagents (`subagents-tab.ts`): a solid row for each,
+/* The account's Claude subagents (`subagents-page.ts`): a solid row for each,
    its name, when it is handed work, and what it runs on; 「添加」 at the end
    of the list's rule. Under them the instructions on a short sheet of the
    prompt's writing paper, and, where the account changed them, the way

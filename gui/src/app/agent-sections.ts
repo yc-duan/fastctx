@@ -1,6 +1,7 @@
 // The agents' sections (`world-gui.md`, 智能体页): each agent on a page of
 // its own, its logins and, beside them on a tab, the account's preferences
-// for it; then the rest of the account's own layer of configuration
+// for it, Claude Code's leading on to its subagents; then the rest of the
+// account's own layer of configuration
 // (`world-user-config.md`): its prompt and its MCP servers. While one of
 // them is open they stand under 「智能体」 in the sidebar, a step in, as a
 // project's conversations stand under it; the one last open, and the tab, are
@@ -61,8 +62,10 @@ export function keepSection(section: AgentSection): void {
 /** The tab of a host's page last shown. */
 export function keptTab(): AgentTab {
   try {
+    // The subagents were a tab once: who left them comes back to the
+    // preferences they now open from.
     const kept = localStorage.getItem(VIEW);
-    return kept === "prefs" || kept === "subagents" ? kept : "logins";
+    return kept === "prefs" || kept === "subagents" ? "prefs" : "logins";
   } catch {
     return "logins";
   }
@@ -81,6 +84,7 @@ export function keepTab(tab: AgentTab): void {
  *  preferences with none, the last agent's. */
 export function sectionOf(place: Place): AgentSection | null {
   if (place.kind === "usage") return place.agent;
+  if (place.kind === "subagents") return "claude";
   if (place.kind !== "agents") return null;
   if (place.section) return place.section;
   if (place.tab === "prefs" || place.machine !== null) return keptHost();
@@ -117,9 +121,7 @@ export function sectionRows(current: AgentSection | null, own: boolean, words: P
   return `<ul class="asec-list">${shown
     .map((section) => {
       const on = section === current;
-      // The subagents are Claude Code's alone: Codex opens on its preferences.
-      const kept: AgentTab = tab === "subagents" && section !== "claude" ? "prefs" : tab;
-      const place: Place = isHost(section) && kept !== "logins" ? { kind: "agents", machine: null, section, tab: kept } : { kind: "agents", machine: null, section };
+      const place: Place = isHost(section) && tab !== "logins" ? { kind: "agents", machine: null, section, tab } : { kind: "agents", machine: null, section };
       return `<li><a class="place asec-row${on ? " current" : ""}" href="${link(place)}"${on ? ' aria-current="page"' : ""}><span class="place-mark">${sectionMark(section)}</span><span class="place-name">${escape(words.sections[section])}</span></a></li>`;
     })
     .join("")}</ul>`;

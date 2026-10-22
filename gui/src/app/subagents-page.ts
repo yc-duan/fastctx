@@ -1,11 +1,12 @@
 // The account's Claude subagents (`world-user-config.md`, 子代理;
-// `world-gui.md`, 智能体页): the tab beside Claude Code's logins and
-// preferences. The subagents its conversations may hand work to, one row
-// each, the defaults Fastctx carries until the account changes any of them;
-// a row opens it to rewrite (`./subagent-sheet`). Under them, on a sheet of
-// writing paper as the prompt is, a few words to the main agent on how to
-// use them. Each change is made over the version read; written elsewhere in
-// the meantime, the tab shows that version and says so.
+// `world-gui.md`, 智能体页): a page come into from Claude Code's
+// preferences, its head the way back, its name and the account's pill. The
+// subagents its conversations may hand work to, one row each, the defaults
+// Fastctx carries until the account changes any of them; a row opens it to
+// rewrite (`./subagent-sheet`). Under them, on a sheet of writing paper as
+// the prompt is, a few words to the main agent on how to use them. Each
+// change is made over the version read; written elsewhere in the meantime,
+// the page shows that version and says so.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -20,9 +21,14 @@ import type { Confirm } from "./confirm";
 import { AccountChoice, loginKey } from "./profile-account";
 import type { ProfileWords } from "./profile-words";
 import { detailOf } from "./problem";
+import type { Page } from "./shell";
+import { effect } from "./signals";
+import type { Store } from "./store";
 import { SubagentSheet } from "./subagent-sheet";
 
-export interface SubagentsTabOptions {
+export interface SubagentsPageOptions {
+  store: Store;
+  head(title: string, actions?: string): string;
   words: ProfileWords;
   english: boolean;
   /** Reads or changes the account's subagents. */
@@ -37,83 +43,72 @@ type State = { kind: "none" } | { kind: "reading" } | { kind: "failed"; detail: 
 
 const SAID_MS = 2400;
 
-export class SubagentsTab {
-  /** The tab's body, scrolling on its own. */
+export class SubagentsPage implements Page {
   readonly element: HTMLElement;
-  /** The head's account pill, where there is a choice of accounts. */
-  readonly account: HTMLElement;
+  readonly title: string;
+  /** The body, scrolling on its own. */
+  private readonly body: HTMLElement;
   /** What became of the last change, in the head. */
-  readonly status: HTMLElement;
+  private readonly status: HTMLElement;
   private readonly choice: AccountChoice;
   private readonly sheet: SubagentSheet;
+  private readonly stop: () => void;
   private state: State = { kind: "none" };
   private shownLogin: string | null = null;
-  private visible = false;
   private models: AgentModel[] = [];
-  private asked = false;
   private saving = false;
   private said = false;
   private saidTimer = 0;
   private note: { text: string; detail: string } | null = null;
   private drawn = "";
 
-  constructor(private readonly options: SubagentsTabOptions) {
+  constructor(private readonly options: SubagentsPageOptions) {
     const { words } = options;
+    this.title = words.subagents.agents;
     this.choice = new AccountChoice(words, (login) => void this.load(login));
-    this.account = this.choice.element;
     this.sheet = new SubagentSheet(words, options.english, options.close);
-    this.status = document.createElement("span");
-    this.status.className = "prof-status";
-    this.status.setAttribute("role", "status");
     this.element = document.createElement("div");
-    this.element.className = "host-prefs sa-tab scroller";
-    this.element.hidden = true;
-    this.element.addEventListener("click", (event) => this.click(event));
-    this.element.addEventListener("input", (event) => {
+    this.element.className = "prof-page sa-page";
+    this.element.innerHTML = `${options.head(`<h1 class="page-title">${escape(this.title)}</h1><span class="sa-account-place"></span>`, `<span class="prof-status" role="status"></span>`)}
+      <div class="host-prefs sa-body scroller"></div>`;
+    this.element.querySelector(".sa-account-place")!.replaceWith(this.choice.element);
+    this.status = this.element.querySelector<HTMLElement>(".prof-status")!;
+    this.body = this.element.querySelector<HTMLElement>(".sa-body")!;
+    this.body.addEventListener("click", (event) => this.click(event));
+    this.body.addEventListener("input", (event) => {
       if ((event.target as HTMLElement).matches(".sa-text")) {
         this.keepDraft();
         this.drawFoot();
       }
     });
-    this.element.addEventListener("keydown", (event) => {
+    this.body.addEventListener("keydown", (event) => {
       if ((event.target as HTMLElement).matches(".sa-text") && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
         void this.saveInstructions();
       }
     });
-  }
-
-  /** Whether there is an account whose subagents these are. */
-  available(): boolean {
-    return this.choice.chosen() !== null;
-  }
-
-  draw(world: WorldNow | null): void {
-    this.choice.draw(world);
-    const login = this.choice.chosen();
-    if (this.visible && login && loginKey(login) !== this.shownLogin) void this.load(login);
-  }
-
-  /** The tab is shown: what it shows is read the first time. */
-  shown(): void {
-    this.visible = true;
-    const login = this.choice.chosen();
-    if (login && loginKey(login) !== this.shownLogin) void this.load(login);
-    if (!this.asked) {
-      this.asked = true;
-      this.options
-        .models()
-        .then((models) => {
-          this.models = models;
-        })
-        .catch(() => {})
-        .finally(() => this.render());
-    }
+    this.stop = effect(() => this.draw(options.store.world.get()));
+    this.options
+      .models()
+      .then((models) => {
+        this.models = models;
+      })
+      .catch(() => {})
+      .finally(() => this.render());
   }
 
   leave(): void {
+    this.stop();
     clearTimeout(this.saidTimer);
     this.choice.leave();
+  }
+
+  /** The account pill as the World now stands, and the account's subagents
+   *  read again once another is chosen. */
+  private draw(world: WorldNow | null): void {
+    this.choice.draw(world);
+    const login = this.choice.chosen();
+    if (login && loginKey(login) !== this.shownLogin) void this.load(login);
   }
 
   private async load(login: Login): Promise<void> {
@@ -134,7 +129,7 @@ export class SubagentsTab {
     this.render(true);
   }
 
-  /** Lays the tab out; the paper is drawn again only when what it holds
+  /** Lays the page out; the paper is drawn again only when what it holds
    *  was saved or read anew (`fresh`), never over what is being typed. */
   private render(fresh = false): void {
     const { words } = this.options;
@@ -161,7 +156,7 @@ export class SubagentsTab {
     const typed = paper?.value;
     if (html !== this.drawn) {
       this.drawn = html;
-      this.element.innerHTML = html;
+      this.body.innerHTML = html;
       const text = this.element.querySelector<HTMLTextAreaElement>(".sa-text");
       if (text) text.value = fresh || typed === undefined ? (this.draft() ?? this.saved()) : typed;
     } else if (fresh && paper) paper.value = this.draft() ?? this.saved();

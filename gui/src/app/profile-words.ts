@@ -6,9 +6,9 @@
 
 export type AgentSection = "claude" | "codex" | "prompt" | "mcp";
 
-/** What an agent's page shows: its logins, the account's preferences for
- *  it, or, for Claude Code, the account's subagents. */
-export type AgentTab = "logins" | "prefs" | "subagents";
+/** What an agent's page shows: its logins, or the account's preferences
+ *  for it. */
+export type AgentTab = "logins" | "prefs";
 
 export interface ProfileWords {
   sections: Record<AgentSection, string>;
@@ -156,8 +156,11 @@ export interface ProfileWords {
     rawReasoning: string;
   };
   subagents: {
-    /** The list, and the tag beside it while it is the defaults. */
+    /** The page and its row among Claude Code's preferences, the list,
+     *  and the tag beside it while it is the defaults. */
     agents: string;
+    /** The subagents named on that row. */
+    names(names: string[]): string;
     defaults: string;
     /** Said on hover over that tag. */
     defaultsTip: string;
@@ -209,7 +212,7 @@ export interface ProfileWords {
 
 export const zhProfile: ProfileWords = {
   sections: { claude: "Claude Code", codex: "Codex", prompt: "提示词", mcp: "MCP" },
-  tabs: { logins: "登录", prefs: "偏好", subagents: "子代理" },
+  tabs: { logins: "登录", prefs: "偏好" },
   account: "账号",
   olderHub: "这个网络的中枢服务器要先升级",
   reading: "正在读取",
@@ -337,6 +340,7 @@ export const zhProfile: ProfileWords = {
   },
   subagents: {
     agents: "子代理",
+    names: (names) => names.join("、"),
     defaults: "默认",
     defaultsTip: "Fastctx 自带的一套，随版本更新；改动任何一处，就成了你自己的",
     add: "添加",
@@ -377,7 +381,7 @@ export const zhProfile: ProfileWords = {
 
 export const enProfile: ProfileWords = {
   sections: { claude: "Claude Code", codex: "Codex", prompt: "Prompt", mcp: "MCP" },
-  tabs: { logins: "Logins", prefs: "Preferences", subagents: "Subagents" },
+  tabs: { logins: "Logins", prefs: "Preferences" },
   account: "Account",
   olderHub: "This network's server needs updating first",
   reading: "Reading",
@@ -505,6 +509,7 @@ export const enProfile: ProfileWords = {
   },
   subagents: {
     agents: "Subagents",
+    names: (names) => names.join(", "),
     defaults: "Default",
     defaultsTip: "The set Fastctx comes with, updated with it; change any of it and it becomes your own",
     add: "Add",

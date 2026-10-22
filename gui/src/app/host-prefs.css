@@ -102,6 +102,30 @@
   min-width: max(100%, 220px);
 }
 
+/* A row that leads to a page of its own: a pill as wide as a word's field,
+   what is there named in it, a chevron turned to point the way in. */
+.hp-link {
+  align-items: center;
+  justify-content: space-between;
+  width: min(16em, 100%);
+  min-width: 0;
+  text-align: left;
+}
+
+.hp-link-what {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hp-link .glyph {
+  flex: none;
+  margin-right: -4px;
+  rotate: -90deg;
+  color: var(--text-3);
+}
+
 .agents-pick-note {
   margin: 0;
   padding: var(--space-2) var(--space-3);
