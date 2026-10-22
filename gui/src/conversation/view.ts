@@ -79,8 +79,8 @@ export interface Context {
   english: boolean;
   /** The machine this interface runs on. */
   here: MachineName;
-  /** The machine the resident lives on: a tool that acted there needs no
-   *  word of where; one that acted elsewhere says so. */
+  /** The machine the resident lives on: where the agents it starts work,
+   *  which name a machine only where they worked elsewhere. */
   residentMachine: MachineName;
   /** The region the conversation scrolls in. */
   scroller: HTMLElement;
@@ -1725,7 +1725,7 @@ export class ConversationView {
     const tool = member.tool;
     const script = tool.does.as === "command" ? tool.does.command : "";
     const said = ownWork(script) ?? undefined;
-    const draw = { words: this.context.words, resident: this.context.residentMachine ?? null };
+    const draw = { words: this.context.words };
     return tripItems(script, steps, tool.run?.writes ?? []).map((item): Row => {
       if (item.kind === "own") return { key: member.key, signature: `${this.memberSignature(member)}|own`, html: () => this.member(member, said), text: () => this.findRowText(member, said) };
       if (item.kind === "write") return this.writeRowOf(member, item.write);
@@ -1834,12 +1834,12 @@ export class ConversationView {
       line.added !== null && line.removed !== null
         ? `<span class="row-stats"><span class="add">+${line.added}</span><span class="del">−${line.removed}</span></span>`
         : "";
-    const elsewhere = write.machine !== this.context.residentMachine ? `<span class="row-machine">${glyph("machine", 12)}${escape(words.on(write.machine))}</span>` : "";
+    const where = `<span class="row-machine">${glyph("machine", 12)}${escape(words.on(write.machine))}</span>`;
     const chevron = expandable ? `<span class="row-chevron">${glyph("chevron", 16)}</span>` : "";
     const fold = expandable ? `<div class="fold-box"${open ? "" : " style=\"height:0\" inert"}><div class="fold-content"></div></div>` : "";
     // A change that could not be read line by line says why on hover.
     const why = write.unavailable ? ` title="${escape(write.unavailable)}"` : "";
-    return `<div class="row row-tool row-done${enter}" data-row="${escape(key)}"><span class="rail">${glyph(line.glyph)}</span><button class="row-line" type="button" ${expandable ? `data-open="${escape(key)}"` : 'aria-disabled="true"'} aria-expanded="${open}"${why}><span class="row-action">${escape(line.action)}</span><span class="row-rest"><span class="row-object">${escape(line.object ?? "")}</span><span class="row-meta">${stats}${elsewhere}${chevron}</span></span></button>${fold}</div>`;
+    return `<div class="row row-tool row-done${enter}" data-row="${escape(key)}"><span class="rail">${glyph(line.glyph)}</span><button class="row-line" type="button" ${expandable ? `data-open="${escape(key)}"` : 'aria-disabled="true"'} aria-expanded="${open}"${why}><span class="row-action">${escape(line.action)}</span><span class="row-rest"><span class="row-object">${escape(line.object ?? "")}</span><span class="row-meta">${stats}${where}${chevron}</span></span></button>${fold}</div>`;
   }
 
   /** Whether a row comes in as it is first drawn: once, for a row new to a
@@ -1870,10 +1870,8 @@ export class ConversationView {
     const tense = tenseOf(entry.ended);
     const open = this.openRows.has(entry.key);
     const expandable = this.hasDetails(entry.tool);
-    const elsewhere =
-      entry.tool.machine && entry.tool.machine !== this.context.residentMachine
-        ? `<span class="row-machine">${glyph("machine", 12)}${escape(words.on(entry.tool.machine))}</span>`
-        : "";
+    // Where it ran, this computer too: every script says where it runs.
+    const where = entry.tool.machine ? `<span class="row-machine">${glyph("machine", 12)}${escape(words.on(entry.tool.machine))}</span>` : "";
     const stats =
       line.added !== null && line.removed !== null
         ? `<span class="row-stats"><span class="add">+${line.added}</span><span class="del">−${line.removed}</span></span>`
@@ -1889,9 +1887,9 @@ export class ConversationView {
       worldColleague(entry.tool) && entry.tool.does.as === "colleague" && entry.tool.does.to && this.context.link
         ? `<a class="row-link" href="${escape(this.context.link({ resident: entry.tool.does.to, machine: entry.tool.machine ?? this.context.residentMachine }))}">${escape(words.openColleague)}${glyph("chevron", 14)}</a>`
         : "";
-    // What it did and on what, its figures beside it, the machine where it
-    // was not here; how a command ended is in what it holds.
-    const meta = `<span class="row-meta">${stats}${this.outcome(entry, tense)}${elsewhere}${chevron}</span>`;
+    // What it did and on what, its figures beside it, the machine it ran
+    // on; how a command ended is in what it holds.
+    const meta = `<span class="row-meta">${stats}${this.outcome(entry, tense)}${where}${chevron}</span>`;
     return `<div class="row row-tool row-${tense}${enter}" data-row="${escape(entry.key)}"><span class="rail">${mark}</span><button class="row-line" type="button" ${expandable ? `data-open="${escape(entry.key)}"` : 'aria-disabled="true"'} aria-expanded="${open}"><span class="row-action">${escape(line.action)}</span><span class="row-rest">${object}${meta}</span></button>${colleague}${fold}</div>`;
   }
 

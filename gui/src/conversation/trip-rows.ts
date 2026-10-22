@@ -23,8 +23,6 @@ export type StepItem = Exclude<TripItem, { kind: "own" } | { kind: "write" }>;
 
 export interface TripDraw {
   words: Words;
-  /** The machine the conversation lives on: what happens there is not named. */
-  resident: string | null;
   enter: string;
   open: boolean;
 }
@@ -61,8 +59,10 @@ interface RowSaid {
 }
 
 function rowSaid(item: StepItem, draw: TripDraw): RowSaid {
-  const { words, resident } = draw;
-  const machine = (name: string) => (name === resident ? "" : `<span class="row-machine">${glyph("machine", 12)}${escape(words.on(name))}</span>`);
+  const { words } = draw;
+  // Every step names its machine, this computer too: every script says where
+  // it runs (`world-run.md`).
+  const machine = (name: string) => `<span class="row-machine">${glyph("machine", 12)}${escape(words.on(name))}</span>`;
   switch (item.kind) {
     case "on": {
       // As with any command, its exit code is no outcome of the row; a
@@ -97,7 +97,7 @@ export function tripNow(script: string, steps: readonly RunStep[], writes: reado
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index]!;
     if (item.kind === "own" || item.kind === "write") continue;
-    const said = rowSaid(item, { words, resident: null, enter: "", open: false });
+    const said = rowSaid(item, { words, enter: "", open: false });
     if (said.running) return { action: words.act(said.act, "running"), object: said.object };
   }
   const own = ownWork(script);
