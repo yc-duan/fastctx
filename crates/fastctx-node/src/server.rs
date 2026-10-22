@@ -1503,6 +1503,11 @@ async fn write(
             "files on {target} are written there: `on {target} edit PATH` or `on {target} write PATH` in the run tool"
         )));
     }
+    // Written here only for an account that may work here, as a run is:
+    // an agent assisting another account writes nothing on its owner's
+    // computer.
+    let acting = node.residents.about(&resident).map(|(about, _)| about.acting).unwrap_or_default();
+    node.works_here(&acting).map_err(Failure::not_run)?;
     let here = node.machine();
     let started_at = jiff::Timestamp::now();
     let owner = Address { machine: here.clone(), resident: resident.clone() };
