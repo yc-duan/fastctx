@@ -3,6 +3,7 @@
 //! replica. A device only logs in; it is never registered as a machine.
 
 mod around;
+mod attachment_places;
 mod calls;
 mod connection_state;
 mod features;

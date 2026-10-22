@@ -359,14 +359,9 @@ pub async fn thread_spec(
     }
     let user_mcp = crate::profile::session::codex(node, id, acting, &mut config)?;
     crate::session_options::configure(&mut config, crate::session_options::read(node, id)?);
-    let user_mcp = if assisting {
-        let world = config["mcp_servers"][codex::SERVER_NAME].clone();
-        config["mcp_servers"] = serde_json::json!({ codex::SERVER_NAME: world });
+    if assisting {
         codex::assisted::configure_thread(&mut config);
-        Default::default()
-    } else {
-        user_mcp
-    };
+    }
     let (mut developer_instructions, heard) = instructions(node, id, town, origin, acting, true).await?;
     // The machines and folders the user pointed it at, in the words its
     // thread started with, each time it is resumed (`crate::focus`).

@@ -45,6 +45,11 @@ pub enum McpCall {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         machine: Option<Written>,
     },
+    /// Import metadata without server addresses, headers or commands.
+    Candidates {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        machine: Option<Written>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,6 +70,10 @@ pub enum McpReply {
     Found {
         machine: MachineName,
         servers: Vec<Found>,
+    },
+    Candidates {
+        machine: MachineName,
+        servers: Vec<ImportCandidate>,
     },
 }
 
@@ -145,6 +154,20 @@ pub struct ProfileView {
     pub kept: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportCandidate {
+    pub source: Source,
+    pub name: String,
+    pub kind: ImportKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportKind {
+    Command,
+    Remote,
+}
+
 /// Imported command contents remain on the machine that found them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
@@ -156,11 +179,30 @@ pub enum FoundServer {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "do")]
 pub enum MachineCall {
-    Status { names: Vec<String> },
-    Keep { name: String, version: u64, server: CommandMcp },
-    Import { name: String, version: u64, source: Source, original: String },
+    Status {
+        names: Vec<String>,
+    },
+    Keep {
+        name: String,
+        version: u64,
+        server: CommandMcp,
+    },
+    Import {
+        name: String,
+        version: u64,
+        source: Source,
+        original: String,
+    },
     Found,
-    Test { name: String },
+    Candidates,
+    /// Reads one selected URL server again, only while importing it.
+    ImportRemote {
+        source: Source,
+        original: String,
+    },
+    Test {
+        name: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,5 +211,7 @@ pub enum MachineReply {
     Status { kept: std::collections::BTreeSet<String> },
     Kept,
     Found { servers: Vec<Found> },
+    Candidates { servers: Vec<ImportCandidate> },
+    ImportedRemote { server: RemoteMcp },
     Tested(Tested),
 }

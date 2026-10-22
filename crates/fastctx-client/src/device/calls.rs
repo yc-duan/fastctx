@@ -291,6 +291,62 @@ impl Device {
             Call::Since { since, town } => return Ok((Reply::Since(self.since(since, town).await?), here())),
             Call::Look { ids } => return Ok((Reply::Looked { looked: self.look(ids).await? }, here())),
             Call::Agents { machine } => return Ok((Reply::Agents(self.agents(machine).await?), here())),
+            Call::AttachmentPlaces { target, machine, account: selected, preferred } => {
+                if machine.is_none() && matches!(target, fastctx_types::attachments::UploadTarget::New { .. }) {
+                    let places = self.unattached_places(selected.as_ref(), preferred.as_ref())?;
+                    return Ok((Reply::AttachmentPlaces(places), here()));
+                }
+                let machine = match &target {
+                    fastctx_types::attachments::UploadTarget::Sent { machine, .. } => machine.clone(),
+                    _ => machine.ok_or_else(|| failed("choose the conversation's machine"))?,
+                };
+                let session = self.reaching(&machine)?;
+                let account = match selected {
+                    Some(selected)
+                        if selected.hub == session.link.membership().id
+                            && session.link.view().logged_in(&session.link.view().me, &selected.account) =>
+                    {
+                        selected.account
+                    }
+                    Some(_) => return Err(failed("this device is not logged in to the selected upload account")),
+                    None => match target.conversation_target() {
+                        fastctx_types::attachments::UploadTarget::Resident { resident } => {
+                            session.link.account_of(&machine.name, resident).map_err(failed)?
+                        }
+                        _ => {
+                            if session.link.view().me().is_some_and(|member| member.logins.len() > 1) {
+                                return Err(failed("choose the account this upload belongs to"));
+                            }
+                            session.account_for(&machine.name, fastctx_types::access::Purpose::Agents)?
+                        }
+                    },
+                };
+                match session
+                    .link
+                    .call(&machine.name, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts)
+                    .await
+                    .map_err(failed)?
+                    .map_err(failed)?
+                {
+                    RemoteReply::Facts(facts) if facts.attachment_places => {}
+                    _ => return Err(failed(format!("upgrade {machine} to choose attachment destinations"))),
+                }
+                let reply = session
+                    .link
+                    .call(
+                        &machine.name,
+                        &account,
+                        fastctx_types::access::Purpose::Agents,
+                        RemoteCall::AttachmentPlaces { target, preferred },
+                    )
+                    .await
+                    .map_err(failed)?
+                    .map_err(failed)?;
+                return match reply {
+                    RemoteReply::AttachmentPlaces(places) => Ok((Reply::AttachmentPlaces(places), machine.name)),
+                    _ => Err(failed("the conversation machine did not list attachment destinations")),
+                };
+            }
             Call::AgentLogins { machine } => {
                 return Ok((Reply::AgentLogins(self.agent_logins(machine).await?), here()));
             }
@@ -487,6 +543,30 @@ impl Device {
         let mut asked = false;
         for session in self.sessions() {
             for (machine, account) in actors(&session) {
+                if let Call::Page(page) = &call {
+                    if page.account().is_some_and(|selected| selected != &account) {
+                        continue;
+                    }
+                    match session
+                        .link
+                        .call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts)
+                        .await
+                    {
+                        Ok(Ok(RemoteReply::Facts(facts))) if facts.page_accounts => {}
+                        Ok(Ok(_)) => {
+                            unanswered.push(format!("upgrade {machine} to keep page consent by account"));
+                            continue;
+                        }
+                        Ok(Err(error)) => {
+                            unanswered.push(error.to_string());
+                            continue;
+                        }
+                        Err(error) => {
+                            unanswered.push(error.to_string());
+                            continue;
+                        }
+                    }
+                }
                 asked = true;
                 // Heartbeats establish connection liveness, not a deadline
                 // for completing a query or transferring its answer. Only a
@@ -506,7 +586,7 @@ impl Device {
                 }
             }
         }
-        if !asked {
+        if !asked && unanswered.is_empty() {
             return Err(failed(
                 "no machine that may act for this device's accounts is online; a device cannot read a project's ledger itself",
             ));

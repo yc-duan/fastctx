@@ -14,7 +14,7 @@ use fastctx_net::envelope::{Envelope, Kind};
 use fastctx_net::sign::{PublicKey, Signature};
 use fastctx_net::wire::{self, CallStatus, Change, Down, HEARTBEAT, Letters, Question, Refusal, SILENCE, Told, Up};
 use fastctx_types::access::Purpose;
-use fastctx_types::{AccountName, MachineName};
+use fastctx_types::{AccountName, AgentName, MachineName};
 use futures_util::{SinkExt as _, StreamExt as _};
 use jiff::Timestamp;
 use tokio::sync::mpsc;
@@ -1084,6 +1084,40 @@ fn echoes_work(hub: &Hub, message: &Envelope) -> bool {
     directory.admits_echo(&message.from, account, &message.to).is_ok() && store.worked.contains(&(from, resident))
 }
 
+/// The call a message carries, when it carries one.
+fn carried_call(message: &Envelope) -> Option<fastctx_types::remote::RemoteCall> {
+    match message.body::<fastctx_net::message::Body>().ok()? {
+        fastctx_net::message::Body::Call { call } | fastctx_net::message::Body::StreamCall { call } => Some(call),
+        _ => None,
+    }
+}
+
+/// Preparing a draft's non-image attachment already works for its account:
+/// the host forwards it to that account's storage before a model starts.
+fn upload_login(hub: &Hub, message: &Envelope, standing: &Standing) -> Option<(AgentName, Option<std::path::PathBuf>)> {
+    let fastctx_types::remote::RemoteCall::Upload { target, file, .. } = carried_call(message)? else { return None };
+    if file.media_type.starts_with("image/") {
+        return None;
+    }
+    let agent = match target.conversation_target() {
+        fastctx_types::attachments::UploadTarget::New { agent, .. } => agent.clone(),
+        fastctx_types::attachments::UploadTarget::Draft { resident, .. } => resident.agent(),
+        _ => return None,
+    };
+    if !matches!(agent.as_str(), "codex" | "claude") {
+        return None;
+    }
+    let store = hub.store();
+    let directory = &store.book.directory;
+    if directory.rights(&standing.account, &standing.to).hands {
+        return Some((agent, None));
+    }
+    directory
+        .assisting(&standing.account, &standing.to)
+        .find(|entry| entry.agent == agent)
+        .map(|entry| (agent.clone(), entry.home.clone()))
+}
+
 /// Checks that a call starting a session may use that agent's login on the
 /// machine it goes to, and notes that machine acts for the account from now
 /// on when it did not: an agent of another's machine that works for an
@@ -1097,7 +1131,9 @@ fn use_agent(
     standing: &Standing,
     details: &fastctx_net::call_details::CallDetails,
 ) -> Result<(), String> {
-    let Some((agent, home)) = details.login.clone() else { return Ok(()) };
+    let Some((agent, home)) = details.login.clone().or_else(|| upload_login(hub, message, standing)) else {
+        return Ok(());
+    };
     let (account, to) = (&standing.account, &standing.to);
     let noted = {
         let mut store = hub.store();

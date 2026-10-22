@@ -52,12 +52,12 @@ fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
         | RemoteCall::ItemDetail { resident: who, .. }
         | RemoteCall::AgentActivity { resident: who, .. } => Some(who),
         RemoteCall::CommitAttachment { attachment, .. } => Some(&attachment.conversation().resident),
-        RemoteCall::Upload { target, .. } | RemoteCall::ReserveAttachment { target, .. } => {
-            match target.conversation_target() {
-                fastctx_types::attachments::UploadTarget::Resident { resident } => Some(resident),
-                _ => None,
-            }
-        }
+        RemoteCall::AttachmentPlaces { target, .. }
+        | RemoteCall::Upload { target, .. }
+        | RemoteCall::ReserveAttachment { target, .. } => match target.conversation_target() {
+            fastctx_types::attachments::UploadTarget::Resident { resident } => Some(resident),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -78,13 +78,13 @@ pub(crate) fn town_of(call: &RemoteCall) -> Option<&TownName> {
         | RemoteCall::PipeOut { origin, .. } => origin.town.as_ref(),
         RemoteCall::PageAction { source, .. } => Some(&source.town),
         RemoteCall::Place { attachment, .. } => attachment.town.as_ref(),
-        RemoteCall::Upload { target, .. } | RemoteCall::ReserveAttachment { target, .. } => {
-            match target.conversation_target() {
-                fastctx_types::attachments::UploadTarget::New { town, .. }
-                | fastctx_types::attachments::UploadTarget::Draft { town, .. } => town.as_ref(),
-                _ => None,
-            }
-        }
+        RemoteCall::AttachmentPlaces { target, .. }
+        | RemoteCall::Upload { target, .. }
+        | RemoteCall::ReserveAttachment { target, .. } => match target.conversation_target() {
+            fastctx_types::attachments::UploadTarget::New { town, .. }
+            | fastctx_types::attachments::UploadTarget::Draft { town, .. } => town.as_ref(),
+            _ => None,
+        },
         RemoteCall::Manage { action: Management::Move { town: Some(town) }, .. } => Some(town),
         _ => None,
     }
@@ -198,7 +198,7 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
     // Of another's machine, an account its agents' logins assist uses
     // those logins alone (`world-network.md`, 共享机器与智能体协助).
     let login = |agent: &fastctx_types::AgentName, home: Option<&std::path::Path>| {
-        if hands || view.may_use_login(&caller.account, &here, agent, home) {
+        if hands || crate::homes::may_use_login(node, &view, &caller.account, &here, agent, home)? {
             return Ok(());
         }
         let login = home.map(|home| home.display().to_string()).unwrap_or_else(|| "default".to_string());

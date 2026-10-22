@@ -15,6 +15,21 @@ use sha2::{Digest, Sha256};
 use tauri::ipc::Channel;
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 
+#[fastctx_gui_command::command]
+pub async fn attachment_places(
+    shell: tauri::State<'_, crate::Shell>,
+    target: UploadTarget,
+    machine_name: Option<String>,
+    account: Option<fastctx_types::access::HubAccount>,
+    preferred: Option<Written>,
+) -> Result<fastctx_types::attachments::AttachmentPlaces, String> {
+    shell
+        .world()
+        .attachment_places(target, crate::machine(machine_name)?, account, preferred)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Uploads the file at `path` on this computer; `sent` hears how many of
 /// its bytes have gone so far.
 pub async fn from_path(

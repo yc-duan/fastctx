@@ -28,6 +28,7 @@ mod kernel;
 mod ledger;
 mod letters;
 mod line;
+mod login_identity;
 mod machine_log;
 mod moving;
 mod outgoing;
@@ -91,6 +92,10 @@ pub struct Caller {
 
 /// What the link hands the node: calls to answer and letters to keep.
 pub trait Node: Send + Sync + 'static {
+    /// Known local login directories, without scanning or asking a host.
+    fn login_homes(&self, agent: &fastctx_types::AgentName) -> Result<Vec<(std::path::PathBuf, bool)>, String> {
+        Err(format!("this device has no local {agent} logins"))
+    }
     /// Takes the place a call from `from` takes here while it is answered,
     /// of the kind `pool` (`fastctx_types::contract::Pool`), before anything
     /// waits on it; or says why there is none: this machine is answering as
@@ -703,6 +708,10 @@ impl Link {
         // A call's future is tens of kilobytes; on the heap it does not grow
         // every future that makes a call, which a build without
         // optimizations keeps whole on the stack, once for each.
+        let call = match self.login_call(to, account, call).await {
+            Ok(call) => call,
+            Err(reason) => return Ok(Err(fastctx_types::ipc::Failure::not_run(reason))),
+        };
         Box::pin(self.inner.call(to, account, purpose, call, None)).await
     }
 
@@ -716,6 +725,10 @@ impl Link {
         call: RemoteCall,
         feed: Feed,
     ) -> Result<RemoteResult, CallFailure> {
+        let call = match self.login_call(to, account, call).await {
+            Ok(call) => call,
+            Err(reason) => return Ok(Err(fastctx_types::ipc::Failure::not_run(reason))),
+        };
         Box::pin(self.inner.call(to, account, purpose, call, Some(feed))).await
     }
 

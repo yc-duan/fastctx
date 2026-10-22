@@ -70,6 +70,8 @@ pub fn fixtures() -> Fixtures {
             },
             Call::Upload {
                 target: UploadTarget::Sent {
+                    account: None,
+                    files_on: None,
                     machine: "desktop".parse().unwrap(),
                     target: Box::new(target.clone()),
                     operation: "upload-1".into(),

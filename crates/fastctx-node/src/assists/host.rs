@@ -42,6 +42,20 @@ pub(crate) fn starting(node: &Node, resident: &ResidentId, acting: &Acting) -> R
     Ok(assisted)
 }
 
+/// A fork stays on the app-server that actually owns its parent thread.
+pub(crate) fn inherit(node: &Node, assisted: bool, child: &ResidentId) -> Result<(), Failure> {
+    let path = path(node, child);
+    fastctx_platform::ensure_private_dir(path.parent().expect("conversation directory"))
+        .and_then(|()| {
+            fastctx_platform::publish(
+                &path,
+                if assisted { b"true" } else { b"false" },
+                fastctx_platform::Permissions::Private,
+            )
+        })
+        .map_err(|error| Failure::new(format!("recording the fork's host isolation: {error}")))
+}
+
 pub(crate) fn require(node: &Node, resident: &ResidentId) -> Result<(), Failure> {
     if kept(node, resident)? == Some(true) {
         return Ok(());

@@ -57,6 +57,7 @@ pub fn fixtures() -> Fixtures {
     restored.base = Some(2);
     restored.restored_from = Some(1);
     let source = PageSource {
+        identity: None,
         town: town.clone(),
         page: page.clone(),
         version: 1,
@@ -65,6 +66,7 @@ pub fn fixtures() -> Fixtures {
         opened_on: "phone".parse().unwrap(),
     };
     let consent = PageConsent {
+        identity: None,
         version: 1,
         base: None,
         page_version: 1,
@@ -86,18 +88,33 @@ pub fn fixtures() -> Fixtures {
     let calls = vec![
         PageCall::Publish { town: Some(town.clone()), page: page.clone(), base: None, draft: draft.clone() },
         PageCall::Publish { town: Some(town.clone()), page: page.clone(), base: Some(1), draft },
-        PageCall::Read { town: Some(town.clone()), page: page.clone(), version: None },
-        PageCall::Read { town: Some(town.clone()), page: page.clone(), version: Some(1) },
+        PageCall::Read { town: Some(town.clone()), page: page.clone(), version: None, account: None },
+        PageCall::Read { town: Some(town.clone()), page: page.clone(), version: Some(1), account: None },
         PageCall::List { town: Some(town.clone()) },
         PageCall::History { town: Some(town.clone()), page: page.clone() },
         PageCall::Withdraw { town: Some(town.clone()), page: page.clone(), base: 1 },
         PageCall::Restore { town: Some(town.clone()), page: page.clone(), base: 2, version: 1 },
-        PageCall::Consent { town: Some(town.clone()), page: page.clone(), version: 1, base: None, acts: acts.clone() },
-        PageCall::Consent { town: Some(town.clone()), page: page.clone(), version: 3, base: Some(1), acts: Vec::new() },
+        PageCall::Consent {
+            town: Some(town.clone()),
+            page: page.clone(),
+            version: 1,
+            base: None,
+            acts: acts.clone(),
+            account: None,
+        },
+        PageCall::Consent {
+            town: Some(town.clone()),
+            page: page.clone(),
+            version: 3,
+            base: Some(1),
+            acts: Vec::new(),
+            account: None,
+        },
     ];
     let calls = calls
         .into_iter()
         .chain(invocations.iter().cloned().map(|action| PageCall::Act {
+            account: None,
             town: Some(town.clone()),
             page: page.clone(),
             version: 1,
@@ -184,6 +201,6 @@ pub fn fixtures() -> Fixtures {
         speaker: Speaker::Page { page: Box::new(source.clone()) },
         writer: Writer::Page { page: Box::new(source.clone()) },
         job_owner: JobOwner::Page { page: source.clone() },
-        peer: Peer::Page { page: Box::new(source) },
+        peer: Peer::Page { page: Box::new(source), job: None },
     }
 }

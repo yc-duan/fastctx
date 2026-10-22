@@ -28,7 +28,11 @@ pub fn of(node: &Node, peer: &Peer) -> Result<Caller, Failure> {
     let here = node.machine();
     let resident = |id| Caller::Resident(Address { machine: here.clone(), resident: id });
     match peer {
-        Peer::Page { page } => Ok(Caller::Page(page.clone())),
+        Peer::Page { page, job } => {
+            crate::pages::identity::job(node, page, job.as_ref())?;
+            crate::pages::identity::acting(node, page)?;
+            Ok(Caller::Page(page.clone()))
+        }
         Peer::Command { resident: Some(address), .. } => {
             if node.is_me(&address.machine) {
                 node.residents.active(&address.resident)?;

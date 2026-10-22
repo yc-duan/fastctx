@@ -583,6 +583,9 @@ pub fn facts(node: &Node) -> MachineFacts {
         attachment_references: true,
         stats: true,
         mcp: true,
+        mcp_import: true,
+        page_accounts: true,
+        attachment_places: true,
         shell: shell(),
         form: Some(form()),
         node_lifetime: Some(Box::new(node.lifetime.clone())),
@@ -651,6 +654,10 @@ struct Handler {
 }
 
 impl fastctx_net::link::Node for Handler {
+    fn login_homes(&self, agent: &fastctx_types::AgentName) -> Result<Vec<(std::path::PathBuf, bool)>, String> {
+        let node = self.node.upgrade().ok_or("the node is stopping")?;
+        crate::logins::identities(&node, agent).map_err(|error| error.message)
+    }
     fn place(
         &self,
         machine: &MachineName,
@@ -749,9 +756,11 @@ impl fastctx_net::link::Node for Handler {
                     let stream = stream.ok_or_else(|| Failure::new("MCP requires a data connection"))?;
                     crate::mcp::serve(&node, &hub, &caller.account, &name, stream).await.map(|()| RemoteReply::Set)
                 }
-                RemoteCall::PageAction { source, action } => crate::pages::actions::answer(&node, source, action)
-                    .await
-                    .map(|result| RemoteReply::PageAction { result }),
+                RemoteCall::PageAction { source, action } => {
+                    crate::pages::actions::answer(&node, &asker, source, action)
+                        .await
+                        .map(|result| RemoteReply::PageAction { result })
+                }
                 RemoteCall::Relay { made } => crate::devices::relay(&node, &asker, made).await,
                 // A resident of the calling machine works here (`world-run.md`,
                 // 这里).
@@ -1049,14 +1058,18 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(RemoteReply::Copied)
                 }
+                RemoteCall::AttachmentPlaces { target, preferred } => {
+                    crate::attachments::destinations::places(&node, &from, &target, &acting, preferred.as_ref())
+                        .map(RemoteReply::AttachmentPlaces)
+                }
                 RemoteCall::ReserveAttachment { target, file, operation, composer } => {
                     crate::attachments::check_project(&node, &acting, &target).await?;
-                    crate::attachments::sent::reserve(&node, &from, &from, target, file, operation, composer)
+                    crate::attachments::sent::reserve(&node, &from, &from, &acting, target, file, operation, composer)
                         .await
                         .map(RemoteReply::Uploaded)
                 }
                 RemoteCall::CommitAttachment { attachment, preview } => {
-                    crate::attachments::sent::commit(&node, &from, attachment, preview)
+                    crate::attachments::sent::commit(&node, &from, &acting, attachment, preview)
                         .await
                         .map(crate::attachments::remote_reply)
                 }
@@ -1070,7 +1083,7 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::Upload { target, file, composer, resumes } => {
                     crate::attachments::check_project(&node, &acting, &target).await?;
                     let stream = stream.ok_or_else(|| Failure::new("an upload requires its data connection"))?;
-                    crate::attachments::receive(&node, &from, target, file, composer, resumes, stream)
+                    crate::attachments::receive(&node, &from, &acting, target, file, composer, resumes, stream)
                         .await
                         .map(crate::attachments::remote_reply)
                 }

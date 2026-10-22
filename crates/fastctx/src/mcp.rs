@@ -96,7 +96,7 @@ pub(crate) fn run(args: McpArgs) -> anyhow::Result<()> {
             }
         }
         McpCommand::Import { on, select } => {
-            let McpReply::Found { machine, servers } = ask(McpCall::Found { machine: on.clone() })? else {
+            let McpReply::Candidates { machine, servers } = ask(McpCall::Candidates { machine: on.clone() })? else {
                 anyhow::bail!("the machine did not list import candidates");
             };
             if select.is_empty() {
@@ -107,9 +107,9 @@ pub(crate) fn run(args: McpArgs) -> anyhow::Result<()> {
                         server.name,
                         machine,
                         server.source,
-                        match server.server {
-                            FoundServer::Command => "command",
-                            FoundServer::Remote(_) => "URL",
+                        match server.kind {
+                            ImportKind::Command => "command",
+                            ImportKind::Remote => "URL",
                         }
                     );
                 }
@@ -174,7 +174,7 @@ fn show(reply: McpReply) -> anyhow::Result<()> {
             }
             println!("MCP initialized and listed its tools");
         }
-        McpReply::Found { .. } => anyhow::bail!("unexpected import answer"),
+        McpReply::Found { .. } | McpReply::Candidates { .. } => anyhow::bail!("unexpected import answer"),
     }
     Ok(())
 }

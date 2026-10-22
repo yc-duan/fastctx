@@ -36,12 +36,16 @@ pub(crate) fn permitted(
         ))
     })?;
     let view = crate::authorization::current_view(&link)?;
+    // The login as the directory writes it: a default directory written out
+    // and one left unwritten are the same login (`crate::homes::assistance`).
+    let home = crate::homes::assistance(node, &view, &account.account, &view.me, &about.host.agent, about.home.as_deref())?
+        .map_or_else(|| about.home.clone(), |assist| assist.home.clone());
     view.authorize(
         &account.account,
         fastctx_net::authorization::Action::Login {
             machine: &view.me,
             agent: Some(&about.host.agent),
-            home: about.home.as_deref(),
+            home: home.as_deref(),
         },
     )
     .map_err(Failure::from)

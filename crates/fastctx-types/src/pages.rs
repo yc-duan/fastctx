@@ -40,9 +40,19 @@ pub struct PageVersion {
     pub at: Timestamp,
 }
 
+/// The account that consented, or the user of a project kept only locally.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum PageIdentity {
+    Account { hub: crate::access::HubId, account: crate::AccountName },
+    Local { machine: MachineName },
+}
+
 /// A user's complete consent set, independent of publication versions.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PageConsent {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<PageIdentity>,
     pub version: u32,
     pub base: Option<u32>,
     pub page_version: u32,
@@ -69,6 +79,9 @@ pub struct PageView {
 /// Attribution stamped by the core, never supplied by the embedded HTML.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct PageSource {
+    /// Missing in earlier records, which cannot authorize new page actions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<PageIdentity>,
     pub town: TownName,
     pub page: PageName,
     pub version: u32,
@@ -123,6 +136,8 @@ pub enum PageCall {
         town: Option<TownName>,
         page: PageName,
         version: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account: Option<crate::AccountName>,
     },
     List {
         town: Option<TownName>,
@@ -145,6 +160,8 @@ pub enum PageCall {
     /// Replaces consent; an empty set revokes everything. `base` is the
     /// consent version read by the user, while `version` is the page version.
     Consent {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account: Option<crate::AccountName>,
         town: Option<TownName>,
         page: PageName,
         version: u32,
@@ -152,6 +169,8 @@ pub enum PageCall {
         acts: Vec<PageAct>,
     },
     Act {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account: Option<crate::AccountName>,
         town: Option<TownName>,
         page: PageName,
         version: u32,
@@ -160,6 +179,23 @@ pub enum PageCall {
 }
 
 impl PageCall {
+    pub fn account(&self) -> Option<&crate::AccountName> {
+        match self {
+            Self::Read { account, .. } | Self::Consent { account, .. } | Self::Act { account, .. } => account.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// A relay uses its authenticated account, never a payload's claim.
+    pub fn for_account(&mut self, selected: crate::AccountName) {
+        match self {
+            Self::Read { account, .. } | Self::Consent { account, .. } | Self::Act { account, .. } => {
+                *account = Some(selected)
+            }
+            _ => {}
+        }
+    }
+
     /// The town the call names; `None` means the caller's.
     pub fn town(&self) -> Option<&TownName> {
         match self {
@@ -189,6 +225,14 @@ pub fn version_path(page: &PageName, version: u32) -> String {
 
 pub fn html_path(page: &PageName, version: u32) -> String {
     format!("pages/{page}/versions/v{version:06}/page.html")
+}
+
+pub fn account_consent_path(page: &PageName, identity: &PageIdentity, version: u32) -> String {
+    let key = match identity {
+        PageIdentity::Account { hub, account } => format!("{hub}-{account}"),
+        PageIdentity::Local { .. } => "local".to_string(),
+    };
+    format!("pages/{page}/consent/{key}/v{version:06}.json")
 }
 
 pub fn consent_path(page: &PageName, version: u32) -> String {

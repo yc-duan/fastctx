@@ -506,7 +506,9 @@ pub fn command_peer() -> std::io::Result<Peer> {
     };
     if let Some(page) = set("FASTCTX_PAGE")? {
         let page = serde_json::from_str(&page).map_err(|_| invalid("FASTCTX_PAGE"))?;
-        return Ok(Peer::Page { page });
+        // The page's script runs as a job; the node checks it is that job.
+        let job = set("FASTCTX_JOB")?.map(|job| job.parse().map_err(|_| invalid("FASTCTX_JOB"))).transpose()?;
+        return Ok(Peer::Page { page, job });
     }
     let resident =
         set("FASTCTX_RESIDENT")?.map(|value| value.parse().map_err(|_| invalid("FASTCTX_RESIDENT"))).transpose()?;

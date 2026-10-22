@@ -7,6 +7,8 @@ use fastctx_types::thumbnail::Thumbnail;
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct Reservation {
     from: MachineName,
+    #[serde(default)]
+    acting: Option<Acting>,
     target: UploadTarget,
     operation: String,
     composer: Option<UploadScope>,
@@ -22,16 +24,28 @@ fn put(path: &Path, value: &impl Serialize) -> Result<(), Failure> {
     .map_err(failure)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn reserve(
     node: &Arc<Node>,
     from: &MachineName,
     storage: &MachineName,
+    acting: &Acting,
     target: UploadTarget,
     file: UploadFile,
     operation: String,
     composer: Option<UploadScope>,
 ) -> Result<Attachment, Failure> {
     validate_file(&file)?;
+    let actor = destinations::acting(node, &target, acting)?;
+    if !file.media_type.starts_with("image/") && !node.is_me(storage) && destinations::assisted(node, &target, &actor)?
+    {
+        let choices = destinations::places(node, from, &target, &actor, None)?;
+        if !choices.machines.iter().any(|machine| machine.name == *storage) {
+            return Err(Failure::not_run(
+                "upgrade the sender to forward this file directly to the account's own machine",
+            ));
+        }
+    }
     if operation.is_empty() || operation.len() > 256 || matches!(target, UploadTarget::Sent { .. }) {
         return Err(failure("an upload needs one stable operation and a conversation target"));
     }
@@ -50,7 +64,12 @@ pub(crate) async fn reserve(
             let resident: ResidentId = format!("{agent}-{}", &digest[..32]).parse().map_err(failure)?;
             let room = node.world.conversation(&resident);
             fastctx_platform::ensure_private_dir(room.path()).map_err(failure)?;
-            let draft = Draft { agent: agent.clone(), town: town.clone(), from: Some(from.clone()) };
+            let draft = Draft {
+                agent: agent.clone(),
+                town: town.clone(),
+                from: Some(from.clone()),
+                acting: Some(acting.clone()),
+            };
             match read_json::<Draft>(&room.draft()) {
                 Ok(kept) if kept == draft => {}
                 Ok(_) => return Err(failure("that upload operation belongs to a different draft")),
@@ -61,7 +80,7 @@ pub(crate) async fn reserve(
         }
         UploadTarget::Draft { resident, town } => {
             let draft: Draft = read_json(&node.world.conversation(resident).draft())?;
-            if draft.town != *town || draft.from.as_ref().is_some_and(|owner| owner != from) {
+            if draft.town != *town || draft.from.as_ref() != Some(from) || draft.acting.as_ref() != Some(acting) {
                 return Err(failure("this upload draft belongs to another device or project"));
             }
             (resident.clone(), town.clone())
@@ -86,7 +105,8 @@ pub(crate) async fn reserve(
         path: String::new(),
         file,
     };
-    let reservation = Reservation { from: from.clone(), target, operation, composer, attachment };
+    let reservation =
+        Reservation { from: from.clone(), acting: Some(acting.clone()), target, operation, composer, attachment };
     let path = directory.join("reservation.json");
     if path.exists() {
         let kept: Reservation = read_json(&path)?;
@@ -106,16 +126,18 @@ pub(crate) async fn reserve(
 pub(crate) async fn commit(
     node: &Arc<Node>,
     from: &MachineName,
+    acting: &Acting,
     attachment: Attachment,
     preview: Option<Thumbnail>,
 ) -> Result<Uploaded, Failure> {
     let _place = node.places.using(attachment.conversation().resident.as_str()).await;
-    commit_held(node, from, attachment, preview).await
+    commit_held(node, from, acting, attachment, preview).await
 }
 
 async fn commit_held(
     node: &Arc<Node>,
     from: &MachineName,
+    acting: &Acting,
     attachment: Attachment,
     preview: Option<Thumbnail>,
 ) -> Result<Uploaded, Failure> {
@@ -132,6 +154,7 @@ async fn commit_held(
     let expected = &reservation.attachment;
     // 2026-10-20: only the authenticated uploader may complete its own reservation.
     if reservation.from != *from
+        || reservation.acting.as_ref() != Some(acting)
         || expected.id != attachment.id
         || expected.owner != attachment.owner
         || expected.conversation != attachment.conversation
@@ -175,6 +198,7 @@ fn validate_preview(preview: &Thumbnail, attachment: &Attachment) -> Result<(), 
 }
 
 struct Prepared {
+    acting: Acting,
     home: Written,
     attachment: Attachment,
     arriving: Option<Arriving>,
@@ -182,9 +206,11 @@ struct Prepared {
     _place: crate::data::places::Using,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn prepare_sent(
     node: &Arc<Node>,
     from: &MachineName,
+    acting: &Acting,
     machine: &Written,
     target: UploadTarget,
     file: UploadFile,
@@ -192,10 +218,10 @@ async fn prepare_sent(
     composer: Option<UploadScope>,
 ) -> Result<Prepared, Failure> {
     let attachment = if node.is_here(machine) {
-        reserve(node, from, &node.machine(), target, file, operation, composer).await?
+        reserve(node, from, &node.machine(), acting, target, file, operation, composer).await?
     } else {
         let call = RemoteCall::ReserveAttachment { target, file, operation, composer };
-        match node.call(&Acting::Here, machine, Purpose::Agents, call).await.map_err(broke)?? {
+        match node.call(acting, machine, Purpose::Agents, call).await.map_err(broke)?? {
             RemoteReply::Uploaded(attachment)
                 if attachment.owner.machine == node.machine()
                     && node
@@ -232,7 +258,7 @@ async fn prepare_sent(
         arriving.keep = true;
         (arriving.attachment.clone(), Some(arriving))
     };
-    Ok(Prepared { home: machine.clone(), attachment, arriving, _lock: lock, _place: place })
+    Ok(Prepared { acting: acting.clone(), home: machine.clone(), attachment, arriving, _lock: lock, _place: place })
 }
 
 async fn complete_sent(node: &Arc<Node>, from: &MachineName, prepared: Prepared) -> Result<Uploaded, Failure> {
@@ -254,10 +280,10 @@ async fn complete_sent(node: &Arc<Node>, from: &MachineName, prepared: Prepared)
         None
     };
     if node.is_here(home) {
-        return commit_held(node, from, attachment, preview).await;
+        return commit_held(node, from, &prepared.acting, attachment, preview).await;
     }
     let call = RemoteCall::CommitAttachment { attachment: attachment.clone(), preview };
-    match node.call(&Acting::Here, home, Purpose::Agents, call).await.map_err(broke)?? {
+    match node.call(&prepared.acting, home, Purpose::Agents, call).await.map_err(broke)?? {
         RemoteReply::Uploaded(attachment) => Ok(Uploaded { attachment, composer: None }),
         RemoteReply::ComposerUploaded(result) => {
             Ok(Uploaded { attachment: result.attachment, composer: Some(result.updated) })
@@ -266,8 +292,10 @@ async fn complete_sent(node: &Arc<Node>, from: &MachineName, prepared: Prepared)
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn upload(
     node: &Arc<Node>,
+    acting: &Acting,
     machine: Written,
     target: UploadTarget,
     operation: String,
@@ -277,9 +305,9 @@ pub(super) async fn upload(
 ) -> Result<Uploaded, Failure> {
     let from = node.machine();
     if node.is_here(&machine) {
-        check_project(node, &Acting::Here, &target).await?;
+        check_project(node, acting, &target).await?;
     }
-    let mut prepared = prepare_sent(node, &from, &machine, target, file.clone(), operation, composer).await?;
+    let mut prepared = prepare_sent(node, &from, acting, &machine, target, file.clone(), operation, composer).await?;
     if prepared.arriving.is_none() {
         return complete_sent(node, &from, prepared).await;
     }
@@ -311,6 +339,7 @@ pub(super) async fn upload(
 pub(super) async fn receive(
     node: &Arc<Node>,
     from: &MachineName,
+    acting: &Acting,
     machine: Written,
     target: UploadTarget,
     operation: String,
@@ -322,7 +351,7 @@ pub(super) async fn receive(
     if !node.is_here(&machine) {
         return Err(failure("a device uploads to the conversation's machine"));
     }
-    let mut prepared = prepare_sent(node, from, &machine, target, file.clone(), operation, composer).await?;
+    let mut prepared = prepare_sent(node, from, acting, &machine, target, file.clone(), operation, composer).await?;
     if prepared.arriving.is_none() {
         return complete_sent(node, from, prepared).await;
     }

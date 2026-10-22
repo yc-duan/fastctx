@@ -434,6 +434,15 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// File destinations available before an attachment picker opens.
+    AttachmentPlaces {
+        target: crate::attachments::UploadTarget,
+        machine: Option<Written>,
+        #[serde(default)]
+        account: Option<crate::access::HubAccount>,
+        #[serde(default)]
+        preferred: Option<Written>,
+    },
     /// The user's byte stream, followed by an empty frame, on its own IPC
     /// connection. The final Uploaded reply is sent only after verification.
     Upload {
@@ -760,6 +769,7 @@ pub enum Reply {
         accepted: bool,
         changed: bool,
     },
+    AttachmentPlaces(crate::attachments::AttachmentPlaces),
     Uploaded(crate::attachments::Attachment),
     Arrived(Whereabouts),
     Run(RunReply),

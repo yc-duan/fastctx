@@ -86,6 +86,18 @@ pub async fn prior(
     Ok(Prior::Ended(Box::new(fastctx_types::composer::UploadResult { attachment: record.attachment, updated })))
 }
 
+/// The selected destination of the exact draft receiving an upload.
+pub(crate) async fn files_on(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    scope: &UploadScope,
+) -> Result<Option<fastctx_types::access::Written>, Failure> {
+    let cell = node.composers.cell(id);
+    let mut cell = cell.lock().await;
+    load(node, id, &mut cell)?;
+    Ok(cell.as_mut().expect("loaded").document(&scope.target, scope.epoch)?.files_on.clone())
+}
+
 pub async fn begin(
     node: &Arc<Node>,
     id: &ResidentId,

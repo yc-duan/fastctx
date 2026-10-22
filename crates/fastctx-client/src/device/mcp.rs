@@ -24,7 +24,14 @@ async fn ask(
     machine: &MachineName,
     mcp: MachineCall,
 ) -> Result<MachineReply, Error> {
-    supports(link, account, machine).await?;
+    if matches!(mcp, MachineCall::Candidates | MachineCall::ImportRemote { .. }) {
+        match link.call(machine, account, Purpose::Look, RemoteCall::Facts).await.map_err(failed)?.map_err(failed)? {
+            RemoteReply::Facts(facts) if facts.mcp_import => {}
+            _ => return Err(failed(format!("upgrade {machine} to import MCP definitions privately"))),
+        }
+    } else {
+        supports(link, account, machine).await?;
+    }
     match link.call(machine, account, Purpose::Hands, RemoteCall::Mcp { mcp }).await.map_err(failed)?.map_err(failed)? {
         RemoteReply::Mcp { result } => Ok(result),
         _ => Err(failed(format!("{machine} did not answer the MCP call"))),
@@ -118,26 +125,47 @@ pub(super) async fn call(link: &Link, account: &AccountName, mcp: McpCall) -> Re
             let MachineReply::Found { servers } = ask(link, account, &machine, MachineCall::Found).await? else {
                 return Err(failed("the machine did not list import candidates"));
             };
+            if servers.iter().any(|server| matches!(server.server, FoundServer::Remote(_))) {
+                return Err(failed("upgrade the requesting Fastctx to list MCP import candidates privately"));
+            }
             Ok(McpReply::Found { machine, servers })
+        }
+        McpCall::Candidates { machine } => {
+            let machine = target(link, account, machine)?;
+            let MachineReply::Candidates { servers } = ask(link, account, &machine, MachineCall::Candidates).await?
+            else {
+                return Err(failed("the machine did not list private import candidates"));
+            };
+            Ok(McpReply::Candidates { machine, servers })
         }
         McpCall::Import { machine, source, name, as_name } => {
             fastctx_types::profile::name_of(&as_name).map_err(failed)?;
             let machine = target(link, account, Some(machine))?;
-            let MachineReply::Found { servers } = ask(link, account, &machine, MachineCall::Found).await? else {
-                return Err(failed("the machine did not list import candidates"));
+            let MachineReply::Candidates { servers } = ask(link, account, &machine, MachineCall::Candidates).await?
+            else {
+                return Err(failed("the machine did not list private import candidates"));
             };
             let found = servers
                 .into_iter()
                 .find(|f| f.source == source && f.name == name)
                 .ok_or_else(|| failed("the import candidate disappeared"))?;
-            let command = matches!(found.server, FoundServer::Command);
-            view.profile.servers.insert(
-                as_name.clone(),
-                match found.server {
-                    FoundServer::Command => Entry::Command { machine: machine.clone() },
-                    FoundServer::Remote(remote) => Entry::Remote(remote),
-                },
-            );
+            let command = found.kind == ImportKind::Command;
+            let entry = if command {
+                Entry::Command { machine: machine.clone() }
+            } else {
+                let MachineReply::ImportedRemote { server } = ask(
+                    link,
+                    account,
+                    &machine,
+                    MachineCall::ImportRemote { source: source.clone(), original: name.clone() },
+                )
+                .await?
+                else {
+                    return Err(failed("the machine did not reread the selected URL server"));
+                };
+                Entry::Remote(server)
+            };
+            view.profile.servers.insert(as_name.clone(), entry);
             let version = link.profile_write(account, view.profile).await.map_err(failed)?;
             if command {
                 ask(

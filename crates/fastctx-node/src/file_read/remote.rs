@@ -18,7 +18,7 @@ pub(crate) async fn serve(
     stream: Stream,
 ) -> Result<RemoteReply, Failure> {
     let mut parts = super::start(node.clone(), Default::default(), None, request);
-    send(link, &mut parts, read, stream).await
+    send(link, &node.machine(), &mut parts, read, stream).await
 }
 
 pub(crate) async fn serve_attachment(
@@ -30,7 +30,7 @@ pub(crate) async fn serve_attachment(
     stream: Stream,
 ) -> Result<RemoteReply, Failure> {
     let mut parts = super::start_attachment(node.clone(), attachment, range);
-    send(link, &mut parts, read, stream).await
+    send(link, &node.machine(), &mut parts, read, stream).await
 }
 
 /// Sends the read's pieces down the caller's data connection. A connection
@@ -38,6 +38,7 @@ pub(crate) async fn serve_attachment(
 /// file: the caller goes on from what came (`world-network.md`, 断开不是结束).
 async fn send(
     link: &Arc<fastctx_net::link::Link>,
+    serving: &fastctx_types::MachineName,
     parts: &mut super::Receiver,
     read: u64,
     mut stream: Stream,
@@ -50,7 +51,10 @@ async fn send(
         };
         let Some(part) = part else { break };
         let (content, bytes, ended) = match part? {
-            Part::Opened(info) => (Content::Opened { info }, None, None),
+            Part::Opened(mut info) => {
+                info.machine = serving.clone();
+                (Content::Opened { info }, None, None)
+            }
             Part::Chunk { offset, bytes } => {
                 let content = Content::Chunk { offset, bytes: bytes.len() as u64, sha256: Digest(sha256(&bytes)) };
                 (content, Some(bytes), None)

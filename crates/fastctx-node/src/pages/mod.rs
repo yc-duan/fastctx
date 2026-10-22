@@ -2,13 +2,14 @@
 //! against a fresh ledger; immutable paths arbitrate cross-machine races.
 
 pub mod actions;
+pub(crate) mod identity;
 pub mod read;
 
 use std::sync::Arc;
 
 use fastctx_types::ipc::Failure;
 use fastctx_types::pages::{
-    PageAct, PageCall, PageConsent, PageDraft, PageVersion, consent_path, html_path, version_path,
+    PageAct, PageCall, PageConsent, PageDraft, PageVersion, account_consent_path, html_path, version_path,
 };
 use fastctx_types::project::{Stamp, Writer};
 use fastctx_types::{MachineName, PageName, Reply, TownName};
@@ -41,7 +42,7 @@ pub async fn call(
             refresh(node, &town).await?;
             let stored = stored(node, &town, &page)?;
             check_base(&page, Some(base), stored.current().map(|v| v.version))?;
-            let current = stored.view(&town, &page, None).map_err(Failure::new)?;
+            let current = stored.view(&town, &page, None, None).map_err(Failure::new)?;
             let draft = PageDraft {
                 title: current.publication.title,
                 description: current.publication.description,
@@ -57,7 +58,7 @@ pub async fn call(
             refresh(node, &town).await?;
             let stored = stored(node, &town, &page)?;
             check_base(&page, Some(base), stored.current().map(|v| v.version))?;
-            let source = stored.view(&town, &page, Some(version)).map_err(Failure::new)?;
+            let source = stored.view(&town, &page, Some(version), None).map_err(Failure::new)?;
             let withdrawn = source.publication.withdrawn;
             let draft = PageDraft {
                 title: source.publication.title,
@@ -67,18 +68,21 @@ pub async fn call(
             };
             publish(node, caller, &town, &page, Some(base), draft, withdrawn, Some(version)).await
         }
-        PageCall::Read { town, page, version } => {
+        PageCall::Read { town, page, version, account } => {
             let town = caller.town_or(node, town)?;
             read_ready(node, &town).await?;
+            let identity = identity::resolve(node, caller, opened_on, &town, account.as_ref())?;
             Ok(Reply::Page {
-                view: Box::new(stored(node, &town, &page)?.view(&town, &page, version).map_err(Failure::new)?),
+                view: Box::new(
+                    stored(node, &town, &page)?.view(&town, &page, version, Some(&identity)).map_err(Failure::new)?,
+                ),
             })
         }
         PageCall::History { town, page } => {
             let town = caller.town_or(node, town)?;
             read_ready(node, &town).await?;
             let stored = stored(node, &town, &page)?;
-            stored.view(&town, &page, None).map_err(Failure::new)?;
+            stored.view(&town, &page, None, None).map_err(Failure::new)?;
             Ok(Reply::PageHistory { town, page, versions: stored.versions.into_values().map(|(v, _)| v).collect() })
         }
         PageCall::List { town } => {
@@ -88,7 +92,7 @@ pub async fn call(
             let pages = read::summaries(&node.world, &town).map_err(io_failure)?;
             Ok(Reply::Pages { town, pages })
         }
-        PageCall::Consent { town, page, version, base, acts } => {
+        PageCall::Consent { town, page, version, base, acts, account } => {
             user(caller)?;
             let town = caller.town_or(node, town)?;
             let _writing = node.writing.lock().await;
@@ -96,26 +100,28 @@ pub async fn call(
             let stored = stored(node, &town, &page)?;
             check_base(&page, Some(version), stored.current().map(|v| v.version))?;
             let current = stored.current().expect("checked current version");
-            let current_consent = stored.consent.as_ref().map(|c| c.version);
+            let identity = identity::resolve(node, caller, opened_on, &town, account.as_ref())?;
+            let consent = stored.consents.get(&identity).map(|(consent, _)| consent);
+            let current_consent = consent.map(|c| c.version);
             if base != current_consent {
                 let current = current_consent.map_or_else(|| "none".to_string(), |v| v.to_string());
                 return Err(Failure::new(format!(
                     "consent for {page} is at version {current}; read the page before changing consent"
                 )));
             }
-            if acts.iter().any(|act| {
-                !current.acts.contains(act) && !stored.consent.as_ref().is_some_and(|c| c.acts.contains(act))
-            }) {
+            if acts.iter().any(|act| !current.acts.contains(act) && !consent.is_some_and(|c| c.acts.contains(act))) {
                 return Err(Failure::new("consent includes an action this page has not declared"));
             }
             let consent = PageConsent {
+                identity: Some(identity.clone()),
                 version: next(base)?,
                 base,
                 page_version: version,
                 acts: unique(acts),
                 stamp: Stamp { by: Writer::User, on: opened_on.clone(), at: Timestamp::now() },
             };
-            let files = vec![(consent_path(&page, consent.version), pretty(&consent)?)];
+            let files = vec![(account_consent_path(&page, &identity, consent.version), pretty(&consent)?)];
+            identity::resolve(node, caller, opened_on, &town, account.as_ref())?;
             crate::ledger::write(node, &town, files, None).await.map_err(|failure| {
                 Failure::new(format!(
                     "changing consent for {page}: {failure}; read the page before changing consent again"
@@ -123,10 +129,13 @@ pub async fn call(
             })?;
             Ok(Reply::PageConsent { town, page, consent })
         }
-        PageCall::Act { town, page, version, action } => {
+        PageCall::Act { town, page, version, action, account } => {
             user(caller)?;
             let town = caller.town_or(node, town)?;
-            actions::relay(node, opened_on, town, page, version, action).await.map(|result| Reply::PageAct { result })
+            let identity = identity::resolve(node, caller, opened_on, &town, account.as_ref())?;
+            actions::relay(node, opened_on, identity, town, page, version, action)
+                .await
+                .map(|result| Reply::PageAct { result })
         }
     }
 }
@@ -282,7 +291,7 @@ async fn publish(
         }
         return Err(Failure::new(format!("publishing page {page} (HTML {html_bytes} bytes): {failure}")));
     }
-    let consent = stored(node, town, page)?.consent;
+    let consent = None;
     Ok(Reply::Page {
         view: Box::new(fastctx_types::pages::PageView {
             town: town.clone(),

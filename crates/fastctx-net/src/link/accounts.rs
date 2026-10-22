@@ -186,7 +186,54 @@ impl Link {
     /// know and keeps the assistance without it; one meant to end, or to
     /// stop at an allowance, must not outlive that, so it is ended at once
     /// and the owner told why.
-    async fn assist(&self, account: &AccountName, assist: Assist, assisting: bool) -> Result<(), String> {
+    async fn assist(&self, account: &AccountName, mut assist: Assist, assisting: bool) -> Result<(), String> {
+        let homes = if !assisting && self.view().member(&assist.machine).is_some_and(|member| !member.online) {
+            let view = self.view();
+            let related: Vec<_> = view
+                .assists
+                .iter()
+                .filter(|entry| {
+                    entry.machine == assist.machine && entry.account == assist.account && entry.agent == assist.agent
+                })
+                .collect();
+            if !related.is_empty() && !related.iter().any(|entry| entry.home == assist.home) {
+                return Err("the machine is offline; revoke the listed login by its stored path, or wait for it to identify the default login".into());
+            }
+            Vec::new()
+        } else {
+            self.login_homes(&assist.machine, account, &assist.agent).await?
+        };
+        assist.home = super::login_identity::canonical(assist.home.as_deref(), &homes);
+        let aliases: Vec<_> = self
+            .view()
+            .assists
+            .iter()
+            .filter(|entry| {
+                entry.machine == assist.machine
+                    && entry.account == assist.account
+                    && entry.agent == assist.agent
+                    && super::login_identity::canonical(entry.home.as_deref(), &homes) == assist.home
+                    && (!assisting || entry.home != assist.home)
+            })
+            .cloned()
+            .collect();
+        for entry in aliases {
+            self.manage(
+                account,
+                Change::Assist {
+                    machine: entry.machine,
+                    to: entry.account,
+                    agent: entry.agent,
+                    home: entry.home,
+                    assisting: false,
+                    until: None,
+                    weekly: None,
+                    daily: None,
+                    five_hour: None,
+                },
+            )
+            .await?;
+        }
         let change = |assisting: bool, limited: bool| Change::Assist {
             machine: assist.machine.clone(),
             to: assist.account.clone(),

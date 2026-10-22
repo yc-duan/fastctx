@@ -38,10 +38,36 @@ impl Device {
         if let UploadTarget::Sent { machine: destination, .. } = &mut target {
             *destination = machine.clone().into();
         }
-        let account = match target.conversation_target() {
-            UploadTarget::Resident { resident } => session.link.account_of(&machine, resident).map_err(failed)?,
-            _ => session.account_for(&machine, fastctx_types::access::Purpose::Agents)?,
+        let account = if let UploadTarget::Sent { account: Some(selected), .. } = &target {
+            if selected.hub != session.link.membership().id
+                || !session.link.view().logged_in(&session.link.view().me, &selected.account)
+            {
+                return Err(failed("this device is not logged in to the upload account"));
+            }
+            selected.account.clone()
+        } else {
+            match target.conversation_target() {
+                UploadTarget::Resident { resident } => session.link.account_of(&machine, resident).map_err(failed)?,
+                _ => {
+                    if session.link.view().me().is_some_and(|member| member.logins.len() > 1) {
+                        return Err(failed("choose the account this upload belongs to"));
+                    }
+                    session.account_for(&machine, fastctx_types::access::Purpose::Agents)?
+                }
+            }
         };
+        if !file.media_type.starts_with("image/") || matches!(&target, UploadTarget::Sent { files_on: Some(_), .. }) {
+            match session.link.call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts).await {
+                Ok(Ok(RemoteReply::Facts(facts))) if facts.attachment_places => {}
+                Ok(Ok(_)) => {
+                    return Err(failed(
+                        "upgrade the conversation machine to keep files on this account's selected machine",
+                    ));
+                }
+                Ok(Err(error)) => return Err(failed(error)),
+                Err(error) => return Err(failed(error)),
+            }
+        }
         let resumes = (composer.is_some() || matches!(target, UploadTarget::Sent { .. }))
             && resumes_there(&session, &machine).await?;
         let size = file.size;

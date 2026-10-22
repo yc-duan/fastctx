@@ -1,11 +1,11 @@
 //! Read other clients' account-level MCP definitions without starting them.
 
 use crate::Node;
-use fastctx_types::mcp::{Found, FoundServer, Source};
+use fastctx_types::mcp::{Found, FoundServer, ImportCandidate, ImportKind, Source};
 use fastctx_types::profile::{Server, parse_servers};
 use std::path::PathBuf;
 
-pub(super) fn candidates(node: &Node) -> Result<Vec<(Found, Server)>, String> {
+fn files(node: &Node) -> Result<Vec<(Source, PathBuf)>, String> {
     let home = fastctx_platform::user_home().map_err(|e| e.to_string())?;
     let mut files = vec![(Source::Cursor, home.join(".cursor/mcp.json"))];
     let env = fastctx_platform::user_environment().map_err(|e| e.to_string())?;
@@ -23,7 +23,45 @@ pub(super) fn candidates(node: &Node) -> Result<Vec<(Found, Server)>, String> {
     for dir in crate::logins::claude_directories(node).map_err(|e| e.message)? {
         files.push((Source::ClaudeCode { home: dir.to_string_lossy().into_owned() }, dir.join(".claude.json")));
     }
-    read_files(files)
+    Ok(files)
+}
+
+pub(super) fn candidates(node: &Node) -> Result<Vec<(Found, Server)>, String> {
+    read_files(files(node)?)
+}
+
+pub(super) fn selected(node: &Node, source: &Source, name: &str) -> Result<Server, String> {
+    let paths = files(node)?.into_iter().filter(|(known, _)| known == source).collect();
+    read_files(paths)?
+        .into_iter()
+        .find(|(found, _)| found.name == name)
+        .map(|(_, server)| server)
+        .ok_or_else(|| "the import candidate disappeared".into())
+}
+
+/// The metadata shown before a user chooses which definition to import.
+pub(super) fn metadata(node: &Node) -> Result<Vec<ImportCandidate>, String> {
+    Ok(candidates(node)?
+        .into_iter()
+        .map(|(found, server)| ImportCandidate {
+            source: found.source,
+            name: found.name,
+            kind: match server {
+                Server::Command(_) => ImportKind::Command,
+                Server::Remote(_) => ImportKind::Remote,
+            },
+        })
+        .collect())
+}
+
+/// Earlier clients require URL contents in their candidate response, which
+/// cannot represent a private candidate. Ask them to upgrade explicitly.
+pub(super) fn legacy(node: &Node) -> Result<Vec<Found>, String> {
+    let candidates = candidates(node)?;
+    if candidates.iter().any(|(_, server)| matches!(server, Server::Remote(_))) {
+        return Err("upgrade the requesting Fastctx to list MCP import candidates without exposing credentials".into());
+    }
+    Ok(candidates.into_iter().map(|(found, _)| found).collect())
 }
 
 fn read_files(files: Vec<(Source, PathBuf)>) -> Result<Vec<(Found, Server)>, String> {

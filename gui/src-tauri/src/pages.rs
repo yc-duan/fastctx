@@ -23,8 +23,14 @@ pub async fn page_read(
     town: String,
     page: String,
     version: Option<u32>,
+    account: Option<String>,
 ) -> Result<PageView, String> {
-    shell.world().page(self::town(town)?, self::page(page)?, version).await.map_err(|error| error.to_string())
+    let account = account.map(fastctx_types::AccountName::try_from).transpose().map_err(|error| error.to_string())?;
+    shell
+        .world()
+        .page_as(self::town(town)?, self::page(page)?, version, account)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[fastctx_gui_command::command]
@@ -44,10 +50,12 @@ pub async fn page_consent(
     version: u32,
     base: Option<u32>,
     acts: Vec<PageAct>,
+    account: Option<String>,
 ) -> Result<PageConsent, String> {
+    let account = account.map(fastctx_types::AccountName::try_from).transpose().map_err(|error| error.to_string())?;
     shell
         .world()
-        .consent_page(self::town(town)?, self::page(page)?, version, base, acts)
+        .consent_page_as(self::town(town)?, self::page(page)?, version, base, acts, account)
         .await
         .map_err(|error| error.to_string())
 }
@@ -59,10 +67,12 @@ pub async fn page_act(
     page: String,
     version: u32,
     action: PageInvocation,
+    account: Option<String>,
 ) -> Result<PageResult, String> {
+    let account = account.map(fastctx_types::AccountName::try_from).transpose().map_err(|error| error.to_string())?;
     shell
         .world()
-        .act_page(self::town(town)?, self::page(page)?, version, action)
+        .act_page_as(self::town(town)?, self::page(page)?, version, action, account)
         .await
         .map_err(|error| error.to_string())
 }

@@ -7,6 +7,12 @@ pub(crate) fn reference(
     resident: &ResidentId,
     wanted: &Attachment,
 ) -> Result<Option<Attachment>, Failure> {
+    if let Some((original, _)) = super::forwarded::original(node, wanted)? {
+        if original.conversation().resident != *resident {
+            return Err(failure("the forwarded original belongs to another conversation"));
+        }
+        return Ok(Some(original));
+    }
     let room = node.world.conversation(resident);
     let path = room.attachments().join(wanted.id.as_str()).join("reference.json");
     if let Some(kept) = optional::<Attachment>(&path)? {
