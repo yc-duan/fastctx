@@ -212,6 +212,7 @@ impl Device {
                 link: session.link.state(),
                 logins,
                 home: None,
+                here: Vec::new(),
                 machines,
             });
         }

@@ -339,6 +339,7 @@ fn nodes() -> Vec<NodesReply> {
                 link,
                 logins: vec![me.clone()],
                 home: Some(me.clone()),
+                here: vec![(me.clone(), all)],
                 machines: vec![
                     Node {
                         name: "lab".parse().unwrap(),

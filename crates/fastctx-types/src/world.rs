@@ -162,6 +162,11 @@ pub struct HubNodes {
     pub logins: Vec<crate::AccountName>,
     /// The account this computer is registered under there.
     pub home: Option<crate::AccountName>,
+    /// What each of the logins may do on this computer itself, as the hub's
+    /// directory decides it; none from a node before 1.0.1-beta.10, and none
+    /// from a phone, which is no machine.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub here: Vec<(crate::AccountName, crate::access::Rights)>,
     pub machines: Vec<Node>,
 }
 

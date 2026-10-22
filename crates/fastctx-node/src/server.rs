@@ -1727,10 +1727,16 @@ async fn nodes(
                 }
             })
             .collect();
+        let here = if works_here {
+            logins.iter().map(|account| (account.clone(), view.call_rights(&view.me, account, &view.me))).collect()
+        } else {
+            Vec::new()
+        };
         fastctx_types::world::HubNodes {
             hub: link.membership().id.clone(),
             name: view.hub_name.clone(),
             link: link.state(),
+            here,
             logins,
             // Whose this computer is, to whom may work on it alone.
             home: view.me().and_then(|me| me.home.clone()).filter(|_| works_here),

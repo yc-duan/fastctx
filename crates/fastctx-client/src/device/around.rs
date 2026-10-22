@@ -300,6 +300,7 @@ impl Device {
                 link: link.state(),
                 logins,
                 home: None,
+                here: Vec::new(),
                 machines,
             }
         })

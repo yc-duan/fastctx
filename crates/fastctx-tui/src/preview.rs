@@ -409,6 +409,7 @@ fn nodes(now: Timestamp) -> NodesReply {
             },
             logins: vec!["me".parse().expect("an account")],
             home: Some("me".parse().expect("an account")),
+            here: vec![("me".parse().expect("an account"), fastctx_types::access::Rights { hands: true, agents: true })],
             machines: vec![
                 node("desktop", true, 300, Ok(facts("desktop", "windows", "C:/Users/me"))),
                 node("laptop", true, 180, Ok(facts("laptop", "windows", "C:/Users/me"))),

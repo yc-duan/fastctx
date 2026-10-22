@@ -239,6 +239,9 @@ export interface HubNodes {
   logins: AccountName[];
   /** The account this computer is registered under there. */
   home: AccountName | null;
+  /** What each login may do on this computer itself, as the hub's
+   *  directory decides it; absent from a node before 1.0.1-beta.10. */
+  here?: [AccountName, Rights][];
   machines: Node[];
 }
 
