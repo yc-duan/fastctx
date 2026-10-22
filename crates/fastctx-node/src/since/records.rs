@@ -646,20 +646,6 @@ fn ledger_fact(_town: &TownName, path: &str, bytes: &[u8]) -> io::Result<Option<
     Ok(Some(fact))
 }
 
-pub(super) fn machines(world: &WorldDir, town: &TownName) -> io::Result<Option<Vec<MachineName>>> {
-    let mut latest: Option<Record> = None;
-    for (_, entry) in crate::ledger::entries_after(world, town, 0)? {
-        for file in entry.files {
-            if let Some(version) = file.path.strip_prefix("project/").and_then(version_of)
-                && latest.as_ref().is_none_or(|record| version > record.version)
-            {
-                latest = Some(serde_json::from_slice(&file.bytes.0).map_err(io::Error::other)?);
-            }
-        }
-    }
-    Ok(latest.map(|record| record.machines))
-}
-
 fn paths(directory: &Path) -> io::Result<Vec<PathBuf>> {
     match std::fs::read_dir(directory) {
         Ok(entries) => {

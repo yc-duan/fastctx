@@ -21,6 +21,9 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     // consumed before taking the birth gate: their reader also registers sessions.
     node.residents.active(resident)?;
     let (source, town) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
+    if let Some(town) = &town {
+        crate::town::access::ready(node, &source.acting, town).await?;
+    }
     let session =
         source.session.ok_or_else(|| Failure::new("Claude has not identified the source conversation yet"))?;
     super::history::wait_stored(node, &session).await.map_err(Failure::new)?;
@@ -88,14 +91,17 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         session: None,
         world_started: true,
         model: model.clone(),
-        acting: source.acting,
+        acting: source.acting.clone(),
         focus: source.focus,
         home: source.home,
         callee: None,
     };
     let mut now = crate::residents::idle(at);
     now.activity = fastctx_types::residents::Activity::Busy;
-    node.residents.create(&node.world, about, town, now).map_err(failure)?;
+    if let Some(town) = &town {
+        crate::town::access::check(node, &about.acting, town)?;
+    }
+    node.residents.create(&node.world, about, town.clone(), now).map_err(failure)?;
 
     let completion = async {
         node.residents.set_instructed(&id, heard);
@@ -134,6 +140,9 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         let gate = node.residents.management(resident)?;
         let source_guard = crate::gate_waits::shared(node, resident, &gate).await?;
         node.residents.active(resident)?;
+        if let Some(town) = &town {
+            crate::town::access::check(node, &source.acting, town)?;
+        }
         let printed = tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
             let start = background::Start {
                 plugin: &plugin,

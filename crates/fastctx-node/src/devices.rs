@@ -199,6 +199,11 @@ pub async fn relay(node: &Arc<Node>, asker: &Asker, call: serde_json::Value) -> 
     }
     let user = Peer::Command { resident: None, session: None };
     let reply = match call {
+        Call::Project(ProjectCall::Map { town: Some(town) }) => {
+            let acting = fastctx_types::access::Acting::one(asker.hub.clone(), account.clone());
+            let map = crate::town::map::view(node, &town, &acting).await?;
+            Reply::Map { map: Box::new(map) }
+        }
         Call::Page(call) => crate::pages::call(node, &crate::town::caller::Caller::User, from, call).await?,
         call => match crate::server::handle(node, &user, call).await? {
             Reply::Towns { towns } => {

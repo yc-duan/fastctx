@@ -50,8 +50,8 @@ impl Link {
         }
     }
 
-    /// The projects this machine spans, with the number of each one's
-    /// latest entry at the hub.
+    /// The legacy catalog, with each project's latest entry. Current hubs
+    /// list projects available to this machine's accounts.
     pub async fn ledger_towns(&self) -> Result<Vec<(TownId, u64)>, String> {
         match self.inner.ask(Question::LedgerTowns).await? {
             Told::Towns { towns } => Ok(towns),

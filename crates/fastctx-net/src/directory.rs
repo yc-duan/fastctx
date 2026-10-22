@@ -605,7 +605,8 @@ impl Directory {
     }
 
     fn in_project_of(&self, account: &AccountName, project: &Project) -> bool {
-        project.owner == *account || project.granted.contains(account)
+        self.account(account).is_some_and(|account| !account.locked)
+            && (project.owner == *account || project.granted.contains(account))
     }
 
     /// Whether `member`, acting for any account it may, may read and write
@@ -689,6 +690,9 @@ pub struct View {
     /// session of a member that sent one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deletes_projects: bool,
+    /// Authorizes project entry returned from a resident's running job.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub project_entry: bool,
     /// Deletes the owner's conversations as part of deleting a project.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deletes_project_conversations: bool,
@@ -781,6 +785,7 @@ impl View {
             groups: false,
             dissolves: false,
             deletes_projects: false,
+            project_entry: false,
             deletes_project_conversations: false,
             project_deletions: Vec::new(),
             lan_relays: false,

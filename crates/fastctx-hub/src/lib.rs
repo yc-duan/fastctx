@@ -40,6 +40,7 @@ mod manage;
 mod moving;
 mod outq;
 mod project_deletions;
+mod project_entry;
 mod records;
 mod releases;
 mod renewal;
@@ -280,6 +281,7 @@ pub(crate) struct Session {
     cancels: bool,
     /// Whether it reads who is online as it changes (`Down::Presence`).
     presence: bool,
+    project_entry: bool,
 }
 
 pub(crate) enum Out {
@@ -763,6 +765,7 @@ async fn intended(
                 versions,
                 due,
                 project_deletes,
+                project_entry,
                 conversation_deletions,
                 profiles,
                 left,
@@ -784,6 +787,7 @@ async fn intended(
                 versions,
                 due,
                 project_deletes,
+                project_entry,
                 conversation_deletions,
                 profiles,
                 left,

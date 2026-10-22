@@ -150,7 +150,8 @@ pub(crate) fn check_named(node: &Node, acting: &Acting, script: &str) -> Result<
 /// anything else is refused with why, before anything of it runs.
 pub(crate) fn start(node: &Node, request: RunRequest) -> Result<(Option<Written>, RunRequest), String> {
     let (machine, body) = fastctx_hands::run::preread::on_only(&request.script).map_err(|failure| failure.message)?;
-    let body = body.ok_or("a script is one `on MACHINE`; put the rest inside it, where `on` reaches the other machines")?;
+    let body =
+        body.ok_or("a script is one `on MACHINE`; put the rest inside it, where `on` reaches the other machines")?;
     let machine = Written::parse(&machine).map_err(|error| error.to_string())?;
     let whole = RunRequest { script: body, cwd: None, ..request };
     Ok(((!node.is_here(&machine)).then_some(machine), whole))
@@ -174,7 +175,7 @@ pub(crate) async fn run(
     let mut words = node.words.watch(&here);
     let mut interrupted = node.interrupts.watch(&here);
     let town = match node.speaking(&acting, to, Purpose::Hands) {
-        Ok((link, _)) => node.town_across(&link, town.as_ref()),
+        Ok((link, _)) => node.town_across(&link, town.as_ref())?,
         Err(_) => town,
     };
     let (script, started_at) = (request.script.clone(), jiff::Timestamp::now());

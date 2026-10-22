@@ -1,9 +1,5 @@
-//! Lets go of the projects of a hub this computer may keep no longer: one
-//! deleted, one no account it acts for may read since a sharing was taken
-//! back or the project was handed on. A copy stays while an account this
-//! computer acts for may read the project, or while the project spans it;
-//! the conversations here still in a project let go of move out of it
-//! first (`world-network.md`, 项目也照同一个规矩).
+//! Reconciles each conversation's project access before deciding whether
+//! this machine still needs a ledger for another account.
 
 use std::io;
 use std::sync::Arc;
@@ -13,7 +9,7 @@ use fastctx_types::TownName;
 use fastctx_types::management::Management;
 
 use crate::Node;
-use crate::town::read;
+use fastctx_types::management::ManagementOutcome;
 
 /// Lets go of every project of `link`'s hub this computer may no longer
 /// keep, as its view now says.
@@ -23,6 +19,9 @@ pub async fn let_go(node: &Arc<Node>, link: &Arc<Link>) {
         return;
     }
     let hub = link.membership().id.clone();
+    if link.view().me().is_none() {
+        return;
+    }
     let towns = match node.world.towns() {
         Ok(towns) => towns,
         Err(error) => return node.log.line(format_args!("listing the projects kept here: {error}")),
@@ -40,27 +39,44 @@ pub async fn let_go(node: &Arc<Node>, link: &Arc<Link>) {
         let kept = {
             let view = link.view();
             let Some(me) = view.me().map(|me| me.name.clone()) else { return };
-            view.project(&place.town).is_some()
-                && (view.member_in_project(&me, &place.town) || spans(node, &town, |machine| view.same(machine, &me)))
+            view.member_in_project(&me, &place.town)
         };
-        if kept {
-            continue;
-        }
-        let living: Vec<_> = node
-            .residents
-            .everyone()
-            .filter(|resident| resident.removed.is_none() && resident.town.as_ref() == Some(&town))
-            .map(|resident| resident.id)
-            .collect();
+        let living: Vec<_> =
+            node.residents.everyone().filter(|resident| resident.town.as_ref() == Some(&town)).collect();
         let mut stuck = false;
-        for id in living {
-            if let Err(failure) = crate::management::here(node, &id, Management::Move { town: None }).await {
-                node.log.line(format_args!("moving {id} out of {town}, which is let go of: {}", failure.message));
+        for resident in living {
+            let id = &resident.id;
+            match crate::town::access::permits(node, &resident.about.acting, &town) {
+                Ok(true) => continue,
+                Err(error) => {
+                    node.log.line(format_args!("checking {id}'s project access: {error}"));
+                    stuck = true;
+                    continue;
+                }
+                Ok(false) => {}
+            }
+            let moved = if resident.removed.is_some() || resident.about.session.is_none() {
+                leave_kept(node, id).await
+            } else {
+                crate::management::here(node, id, Management::Move { town: None }).await.and_then(|result| {
+                    if result.town.is_some()
+                        || result.steps.iter().any(|step| step.outcome == ManagementOutcome::Failed)
+                    {
+                        Err(fastctx_types::ipc::Failure::new(format!(
+                            "project removal was incomplete: {:?}",
+                            result.steps
+                        )))
+                    } else {
+                        Ok(())
+                    }
+                })
+            };
+            if let Err(failure) = moved {
+                node.log.line(format_args!("moving {id} out of {town}: {failure}"));
                 stuck = true;
             }
         }
-        // A conversation still in it keeps it until the view changes again.
-        if stuck {
+        if kept || stuck {
             continue;
         }
         match remove(node, &town).await {
@@ -76,9 +92,20 @@ pub async fn let_go(node: &Arc<Node>, link: &Arc<Link>) {
     }
 }
 
-/// Whether the latest record of `town` says it spans this computer.
-fn spans(node: &Node, town: &TownName, is_me: impl Fn(&fastctx_types::MachineName) -> bool) -> bool {
-    read::latest(&node.world, town).ok().flatten().is_some_and(|record| record.machines.iter().any(is_me))
+/// Archived or not-yet-paired conversations also lose their project record.
+pub(crate) async fn leave_kept(
+    node: &Arc<Node>,
+    id: &fastctx_types::ResidentId,
+) -> Result<(), fastctx_types::ipc::Failure> {
+    let gate = node.residents.management(id)?;
+    let _exclusive = crate::gate_waits::alone(node, id, &gate).await?;
+    node.residents
+        .relocate_kept(&node.world, id, None)
+        .map_err(|error| fastctx_types::ipc::Failure::new(error.to_string()))?;
+    crate::town::instructions::hand_to_current(node, id)
+        .map_err(|error| fastctx_types::ipc::Failure::new(error.to_string()))?;
+    crate::codex::moved(node, id).await;
+    Ok(())
 }
 
 /// Removes what this computer kept of `town`: its ledger, its signed

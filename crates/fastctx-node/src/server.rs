@@ -1127,7 +1127,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::Project(call) => {
             let caller = caller::of(node, peer)?;
-            named_town(node, &caller, call.town()).await?;
+            if !matches!(call, fastctx_types::ProjectCall::Enter { .. }) {
+                named_town(node, &caller, call.town()).await?;
+            }
             crate::town::project::call(node, &caller, call).await
         }
         Call::Journal(call) => {
@@ -1372,18 +1374,14 @@ fn users_voice(node: &Node, peer: &Peer) -> Result<(), Failure> {
 /// other is answered as one that is not there (`world-network.md`, 一个居民
 /// 替谁干活).
 async fn named_town(node: &Arc<Node>, caller: &Caller, town: Option<&TownName>) -> Result<(), Failure> {
-    let (Caller::Resident(_), Some(town)) = (caller, town) else { return Ok(()) };
-    let acting = crate::around::acting_of(node, caller);
-    if crate::ledger::query::usable(node, &acting, town).await? {
-        Ok(())
-    } else {
-        Err(crate::town::map::no_ledger(node, town))
-    }
+    let Some(town) = town else { return Ok(()) };
+    crate::town::access::ready(node, &crate::around::acting_of(node, caller), town).await
 }
 
 /// The town a resident of this machine lives in.
 fn town_of(node: &Node, resident: &ResidentId) -> Result<Option<TownName>, Failure> {
     node.residents.active(resident)?;
+    crate::town::access::current(node, resident)?;
     node.residents
         .town_of(resident)
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))
@@ -1565,26 +1563,24 @@ async fn who(
     since: Option<jiff::Timestamp>,
 ) -> Result<WorldWho, Failure> {
     let here = node.machine();
-    let (scope, asked) = match &town {
+    let scope = match &town {
         Some(name) => {
-            crate::town::map::query(node, name).await?;
+            crate::town::access::ready(node, acting, name).await?;
             let (world, town) = (node.world.clone(), name.clone());
             let mut record = blocking("reading the town", move || crate::town::read::latest(&world, &town)).await?;
             if let Some(record) = &mut record {
                 crate::ledger::query::seen(node, acting, name, record)
                     .map_err(|error| Failure::new(format!("reading the town {name}: {error}")))?;
             }
-            let asked = record.as_ref().map(|record| record.machines.clone());
-            (WhoScope::Town { town: name.clone(), record: record.map(Box::new) }, asked)
+            WhoScope::Town { town: name.clone(), record: record.map(Box::new) }
         }
-        None => (WhoScope::World { towns: crate::ledger::query::list_for(node, acting).await? }, None),
+        None => WhoScope::World { towns: crate::ledger::query::list_for(node, acting).await? },
     };
-    let asks_for = |machine: &MachineName| asked.as_ref().is_none_or(|asked| asked.contains(machine));
     let mut machines = Vec::new();
     // This computer answers only to whom works on it (`around::works_here`):
     // anyone else is not shown it, not even by name (`world-network.md`,
     // 一个居民替谁干活).
-    if works_here && asks_for(&here) {
+    if works_here || crate::around::looks_here(node, acting) {
         machines.push(match who_here(node, all, town.clone(), since).await {
             Ok(reply) => {
                 MachineWho::Answered { observation: None, reply: crate::admission::seen::who_here(node, acting, reply) }
@@ -1592,10 +1588,7 @@ async fn who(
             Err(error) => MachineWho::NoAnswer { observation: None, machine: here.clone(), reason: error.message },
         });
     }
-    let reachable: Vec<_> = crate::around::reachable_each(node, acting, fastctx_types::access::Purpose::Look)
-        .into_iter()
-        .filter(|machine| asks_for(&machine.name))
-        .collect();
+    let reachable = crate::around::reachable_each(node, acting, fastctx_types::access::Purpose::Look);
     let heard = crate::around::ask_each(reachable, |_| RemoteCall::Who { all, town: town.clone(), since }).await;
     machines
         .extend(fastctx_net::around::answers::collect(heard).into_iter().map(|answers| answers.who(since.is_some())));

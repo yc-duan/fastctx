@@ -97,3 +97,15 @@ pub(crate) fn acting_of(node: &Node, caller: &crate::town::caller::Caller) -> Ac
 pub(crate) fn works_here(node: &Node, acting: &Acting) -> bool {
     node.works_here(acting).is_ok()
 }
+
+/// A session may see its conversations at home even when it only assists
+/// an account and cannot execute commands on that machine.
+pub(crate) fn looks_here(node: &Node, acting: &Acting) -> bool {
+    works_here(node, acting)
+        || node.links().iter().any(|link| {
+            let view = link.view();
+            node.accounts_on(link, acting)
+                .iter()
+                .any(|account| view.admits(&view.me, account, &view.me, Purpose::Look).is_ok())
+        })
+}

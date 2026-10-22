@@ -36,29 +36,19 @@ pub async fn query(
     let machine = node.machine();
     let mut issues = Vec::new();
     match &town {
-        Some(town) => crate::town::map::query(node, town).await?,
+        Some(town) => crate::town::access::ready(node, acting, town).await?,
         None => {
             if let Err(error) = crate::ledger::query(node, None).await {
                 issues.push(SinceIssue { source: "the projects' ledgers".to_string(), reason: error });
             }
         }
     }
-    let asked = match &town {
-        Some(town) => {
-            let (world, town) = (node.world.clone(), town.clone());
-            tokio::task::spawn_blocking(move || records::machines(&world, &town))
-                .await
-                .map_err(|error| Failure::new(format!("reading the town: {error}")))?
-                .map_err(|error| Failure::new(format!("reading the town: {error}")))?
-        }
-        None => None,
-    };
-    let asks_for = |name: &MachineName| asked.as_ref().is_none_or(|asked| asked.contains(name));
+
     let mut answers = Vec::new();
     let mut events = Vec::new();
     let mut undated = Vec::new();
     // This machine answers only to whom works on it, as for `who`.
-    if works_here && asks_for(&machine) {
+    if works_here || crate::around::looks_here(node, acting) {
         // This machine's own records are filtered as the other machines
         // filter theirs: by whom each conversation works for.
         let looker = crate::admission::seen::Looker::Here(acting);
@@ -79,10 +69,7 @@ pub async fn query(
         // machines are offline. Their resident records remain unavailable.
         events.extend(ledger_events(node, since, town, &mut issues).await?);
     }
-    let reachable: Vec<_> = crate::around::reachable_each(node, acting, Purpose::Look)
-        .into_iter()
-        .filter(|machine| asks_for(&machine.name))
-        .collect();
+    let reachable = crate::around::reachable_each(node, acting, Purpose::Look);
     let heard = crate::around::ask_each(reachable, |_| RemoteCall::Since { since, town: town.clone() }).await;
     for group in fastctx_net::around::answers::collect(heard) {
         let source = group.source.clone();

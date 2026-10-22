@@ -19,12 +19,3 @@ pub(crate) fn destination(node: &Node, town: &TownName, name: &MachineName) -> R
     }
     Err(Failure::new(format!("this computer is not connected to the hub of {town}")))
 }
-
-pub(crate) fn spans_here(node: &Node, town: &TownName, names: &[MachineName]) -> Result<bool, Failure> {
-    for name in names {
-        if node.is_here(&destination(node, town, name)?) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}

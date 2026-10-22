@@ -694,6 +694,11 @@ impl fastctx_net::link::Node for Handler {
                 return Err(Failure::new("the node is stopping"));
             };
             let link = node.link_of(&hub).ok_or_else(|| Failure::new("the link that brought the call is gone"))?;
+            if let Some(town) = crate::admission::town_of(&call)
+                && link.view().project_named(&caller.account, town).is_none()
+            {
+                link.refresh().await.map_err(Failure::new)?;
+            }
             let asker = match crate::admission::admit(&node, &link, &caller, &call) {
                 Ok(asker) => asker,
                 Err(refused) => {
@@ -988,6 +993,13 @@ impl fastctx_net::link::Node for Handler {
                         .map(|heads| RemoteReply::Canon { heads })
                         .map_err(|error| Failure::new(format!("reading the canon on {machine}: {error}")))
                 }
+                RemoteCall::EnterProject { resident, town } => {
+                    let account =
+                        fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
+                    crate::town::enter::here(&node, &resident, &town, Some(&account))
+                        .await
+                        .map(|map| RemoteReply::Entered { town, map: Box::new(map) })
+                }
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&node))),
                 RemoteCall::AttachmentReferences { conversation, attachments } => {
                     if !node.is_me(&conversation.machine)
@@ -1038,6 +1050,7 @@ impl fastctx_net::link::Node for Handler {
                         .map(RemoteReply::Copied)
                 }
                 RemoteCall::ReserveAttachment { target, file, operation, composer } => {
+                    crate::attachments::check_project(&node, &acting, &target).await?;
                     crate::attachments::sent::reserve(&node, &from, &from, target, file, operation, composer)
                         .await
                         .map(RemoteReply::Uploaded)
@@ -1055,6 +1068,7 @@ impl fastctx_net::link::Node for Handler {
                         .map(RemoteReply::Uploaded)
                 }
                 RemoteCall::Upload { target, file, composer, resumes } => {
+                    crate::attachments::check_project(&node, &acting, &target).await?;
                     let stream = stream.ok_or_else(|| Failure::new("an upload requires its data connection"))?;
                     crate::attachments::receive(&node, &from, target, file, composer, resumes, stream)
                         .await
@@ -1200,13 +1214,7 @@ impl fastctx_net::link::Node for Handler {
                 node.log.line(format_args!("taking the projects' ledgers: {error}; trying again"));
                 tokio::time::sleep(again.next()).await;
             }
-            // What this computer keeps of projects it does not span is kept
-            // as current as the rest (`world-network.md`, 隔着网络也要顺手).
-            if let Some(link) = node.link_of(&hub)
-                && let Err(error) = crate::ledger::query::follow(&node, &link, town.as_ref()).await
-            {
-                node.log.line(format_args!("taking the ledgers of projects this computer does not span: {error}"));
-            }
+
             node.shown_changed();
         });
     }
@@ -1262,8 +1270,19 @@ impl fastctx_net::link::Node for Handler {
         // A project shared with an account here since is taken to be listed.
         if let Some(link) = node.link_of(&self.hub) {
             tokio::spawn(async move {
-                if let Err(error) = crate::ledger::query::follow_view(&node, &link).await {
-                    node.log.line(format_args!("taking a project shared with this computer: {error}"));
+                crate::ledger::letgo::let_go(&node, &link).await;
+                let mut again = crate::again::Again::default();
+                loop {
+                    match crate::ledger::sync(&node, link.hub(), None).await {
+                        Ok(()) => break,
+                        Err(error) => {
+                            node.log.line(format_args!("taking the projects of this computer's accounts: {error}"));
+                            if !matches!(link.status(), Status::Online { .. }) {
+                                break;
+                            }
+                            tokio::time::sleep(again.next()).await;
+                        }
+                    }
                 }
                 // One deleted, or no longer this computer's to keep, goes.
                 crate::ledger::letgo::let_go(&node, &link).await;

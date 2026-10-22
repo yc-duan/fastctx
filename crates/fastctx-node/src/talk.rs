@@ -842,7 +842,7 @@ pub async fn open_here(
         }
     }
     if let Some(town) = &town {
-        crate::town::project::spans_here(node, town).await?;
+        crate::town::access::ready(node, &opened.acting, town).await?;
     }
     let (id, _opening) = crate::attachments::opening(node, &agent, town.as_ref(), &attachments).await?;
     let _birth = crate::here::born(node, &id, opened.acting.clone());
@@ -897,6 +897,9 @@ pub async fn open_here(
         last_compacted: false,
         asked: None,
     };
+    if let Some(town) = &town {
+        crate::town::access::check(node, &about.acting, town)?;
+    }
     node.residents
         .create(&node.world, about, town, now)
         .map_err(|error| Failure::new(format!("recording the session: {error}")))?;

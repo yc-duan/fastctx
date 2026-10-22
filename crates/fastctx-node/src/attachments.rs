@@ -97,6 +97,7 @@ pub async fn upload(
         None => node.machine().into(),
     };
     if local || node.is_here(&machine) {
+        check_project(node, &Acting::Here, &target).await?;
         let _place = using_target(node, &target).await;
         let (mut arriving, mut guard) =
             match arrival(node, &node.machine(), target, file, composer.as_ref(), true).await? {
@@ -390,6 +391,26 @@ async fn using_target(node: &Arc<Node>, target: &UploadTarget) -> Option<crate::
     }
 }
 
+/// Checks the upload's authenticated account, or the existing conversation's
+/// accounts, before reserving any project-owned storage.
+pub(crate) async fn check_project(node: &Arc<Node>, acting: &Acting, target: &UploadTarget) -> Result<(), Failure> {
+    match target.conversation_target() {
+        UploadTarget::Resident { resident } => {
+            let (about, town) = node.residents.about(resident).ok_or_else(|| crate::forget::gone(node, resident))?;
+            if let Some(town) = town {
+                crate::town::access::ready(node, &about.acting, &town).await?;
+            }
+        }
+        UploadTarget::New { town, .. } | UploadTarget::Draft { town, .. } => {
+            if let Some(town) = town {
+                crate::town::access::ready(node, acting, town).await?;
+            }
+        }
+        UploadTarget::Sent { .. } => return Err(failure("nested upload policy")),
+    }
+    Ok(())
+}
+
 async fn prepare(node: &Arc<Node>, target: UploadTarget, file: UploadFile) -> Result<Arriving, Failure> {
     let (resident, town) = match target {
         UploadTarget::Sent { .. } => return Err(failure("nested upload policy")),
@@ -404,9 +425,7 @@ async fn prepare(node: &Arc<Node>, target: UploadTarget, file: UploadFile) -> Re
             if !matches!(agent.as_str(), "codex" | "claude") {
                 return Err(failure(format!("the World cannot open {agent} sessions")));
             }
-            if let Some(town) = &town {
-                crate::town::project::spans_here(node, town).await?;
-            }
+
             // Drafts are not in the live resident index. Their 128-bit ids
             // also occupy a different namespace from the ordinary four-hex
             // allocator, which must never assign an unopened draft's id.
@@ -834,7 +853,7 @@ async fn send_placed(
     kept: Attachment,
 ) -> Result<Attachment, Failure> {
     let town = match node.speaking(acting, goes_to, Purpose::Hands) {
-        Ok((link, _)) => node.town_across(&link, kept.town.as_ref()),
+        Ok((link, _)) => node.town_across(&link, kept.town.as_ref())?,
         Err(_) => kept.town.clone(),
     };
     let call = RemoteCall::Place { resident: resident.clone(), attachment: Attachment { town, ..kept.clone() } };

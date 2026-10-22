@@ -339,7 +339,7 @@ async fn there(
         node.speaking(&acting, &written, Purpose::Hands).map_err(|failure| Failure::not_run(failure.to_string()))?;
     // Recorded here under its project; there, under it only on its hub.
     let local_origin = origin;
-    let origin = &OnOrigin { town: node.town_across(&link, origin.town.as_ref()), ..origin.clone() };
+    let origin = &OnOrigin { town: node.town_across(&link, origin.town.as_ref())?, ..origin.clone() };
     pieces.2.lock().expect("never poisoned").origin = origin.clone();
     let sizes = sizes(&request.package).await.map_err(|failure| Failure::not_run(failure.message))?;
     requested(node, local_origin, request).await?;

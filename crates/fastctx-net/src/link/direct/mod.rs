@@ -414,6 +414,9 @@ impl Inner {
         account: &AccountName,
         call: &fastctx_types::remote::RemoteCall,
     ) -> Option<Arc<PeerConn>> {
+        if matches!(call, fastctx_types::remote::RemoteCall::EnterProject { .. }) {
+            return None;
+        }
         let conn = self.direct.link(to)?;
         if crate::message::login_asked(call).is_some() && !self.view().may_act_for(account, to) {
             return None;

@@ -51,6 +51,7 @@ pub(crate) struct Said {
     pub due: bool,
     /// Whether it reads the records of projects deleted.
     pub project_deletes: bool,
+    pub project_entry: bool,
     pub conversation_deletions: bool,
     /// Whether it reads the records of profiles written.
     pub profiles: bool,
@@ -72,13 +73,24 @@ pub(crate) struct Standing {
     pub account: AccountName,
     pub to: MachineName,
     pub purpose: Purpose,
+    pub project_entry: Option<(fastctx_types::ResidentId, fastctx_types::TownName)>,
 }
 
 impl Standing {
     /// Why it no longer holds, if it does not.
     pub fn lapsed(&self, hub: &Hub) -> Option<String> {
         let store = hub.store();
-        store.book.directory.admits(&self.from, &self.account, &self.to, self.purpose).err()
+        store
+            .book
+            .directory
+            .admits(&self.from, &self.account, &self.to, self.purpose)
+            .and_then(|()| match &self.project_entry {
+                Some((resident, town)) => {
+                    crate::project_entry::check(&store, &self.from, &self.account, &self.to, resident, town)
+                }
+                None => Ok(()),
+            })
+            .err()
     }
 }
 
@@ -545,6 +557,7 @@ fn open(
         versions: said.versions,
         cancels: said.cancels,
         presence: said.presence,
+        project_entry: said.project_entry,
     };
     let replaced = hub.sessions().insert(name.clone(), session);
     drop(store);
@@ -846,7 +859,11 @@ fn canonical_address(hub: &Hub, address: fastctx_types::Address) -> fastctx_type
 fn standing(hub: &Hub, message: &Envelope) -> Result<Standing, String> {
     let (account, purpose) = message.standing()?;
     let (from, to) = (canonical(hub, &message.from), canonical(hub, &message.to));
-    let standing = Standing { from, account: account.clone(), to, purpose };
+    let project_entry = fastctx_net::message::project_entry(message);
+    if project_entry.is_some() && purpose != Purpose::Echo {
+        return Err("a project entry must return to its conversation as a job request".into());
+    }
+    let standing = Standing { from, account: account.clone(), to, purpose, project_entry };
     match standing.lapsed(hub) {
         Some(why) => Err(why),
         None => Ok(standing),
@@ -1150,6 +1167,13 @@ fn call(hub: &Hub, name: &MachineName, generation: u64, id: u64, message: Envelo
         && let Err(error) = hub.store().note_worked(&to, resident)
     {
         hub.log.line(format_args!("noting that {to} works for a resident: {error}"));
+    }
+    if standing.project_entry.is_some() && hub.sessions().get(&to).is_some_and(|session| !session.project_entry) {
+        return CallStatus::Refused {
+            reason: format!(
+                "{to} runs an older Fastctx that cannot enter projects from another machine; update it first"
+            ),
+        };
     }
     let target = hub.sessions().get(&to).map(|session| (session.generation, session.out.clone()));
     let Some((target_generation, target)) = target else {

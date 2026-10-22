@@ -18,10 +18,7 @@ pub(crate) async fn finish(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), Str
                 if node.serves(&resident.about.acting, &hub, &project.owner) {
                     crate::forget::project(node, &resident.id, &hub, &project.owner).await?;
                 } else if resident.removed.is_some() {
-                    let gate = node.residents.management(&resident.id).map_err(|error| error.message)?;
-                    let _exclusive =
-                        crate::gate_waits::alone(node, &resident.id, &gate).await.map_err(|error| error.message)?;
-                    node.residents.relocate_kept(&node.world, &resident.id, None).map_err(|error| error.to_string())?;
+                    super::letgo::leave_kept(node, &resident.id).await.map_err(|error| error.message)?;
                 } else {
                     let moved = crate::management::here(node, &resident.id, Management::Move { town: None })
                         .await

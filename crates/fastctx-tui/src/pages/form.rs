@@ -3,7 +3,7 @@
 //! this computer in to an account or out of one, adding another device, a
 //! member taken out of an account. Choices come from what the
 //! World says now: the machines online, the agents assisting this computer's
-//! accounts, the projects that span the chosen machine, the accounts this
+//! accounts, the projects those accounts may use, the accounts this
 //! computer is logged in to.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -319,16 +319,10 @@ impl FormPage {
             }));
             *index = options.iter().position(|(_, value)| *value == chosen).unwrap_or(0);
         }
-        let machine = MachineName::try_from(self.value(Key::Machine)).ok();
         if let Some(Field { value: Value::Choice { options, index }, .. }) = self.field(Key::Project) {
             let chosen = options.get(*index).map(|(_, value)| value.clone()).or(preset.map(|town| town.to_string()));
             let mut list = vec![(words.no_project().to_string(), String::new())];
-            list.extend(
-                towns
-                    .iter()
-                    .filter(|town| machine.as_ref().is_some_and(|machine| town.record.machines.contains(machine)))
-                    .map(|town| (town.record.name.clone(), town.town.to_string())),
-            );
+            list.extend(towns.iter().map(|town| (town.record.name.clone(), town.town.to_string())));
             *options = list;
             *index = chosen.and_then(|chosen| options.iter().position(|(_, value)| *value == chosen)).unwrap_or(0);
         }

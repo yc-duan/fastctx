@@ -46,7 +46,7 @@ pub(crate) use reading::ask;
 pub struct TownLedger {
     /// The number the next entry gets.
     pub next: u64,
-    pub machines: Vec<MachineName>,
+
     /// Every path written, in lower case, as a system that ignores case
     /// would compare them.
     paths: BTreeSet<String>,
@@ -163,24 +163,12 @@ impl Ledgers {
         Ok(Checked { seq, entry, path, bytes })
     }
 
-    /// Keeps an entry checked and written; returns its number and the
-    /// members to tell.
-    pub fn commit(
-        &mut self,
-        directory: &Directory,
-        from: &MachineName,
-        town: &TownId,
-        checked: Checked,
-    ) -> (u64, Vec<MachineName>) {
+    /// Keeps an entry checked and written and returns its number.
+    pub fn commit(&mut self, town: &TownId, checked: Checked) -> u64 {
         let ledger = self.towns.entry(town.clone()).or_insert_with(|| TownLedger { next: 1, ..TownLedger::default() });
         ledger.add(&checked.entry);
         ledger.next = checked.seq + 1;
-        let mut tell: Vec<MachineName> =
-            ledger.machines.iter().map(|machine| directory.canonical(machine).clone()).collect();
-        tell.push(directory.canonical(from).clone());
-        tell.sort();
-        tell.dedup();
-        (checked.seq, tell)
+        checked.seq
     }
 
     /// The projects `name` spans, with each one's latest entry: a project
@@ -191,8 +179,7 @@ impl Ledgers {
     pub fn towns_of(&self, directory: &Directory, name: &MachineName) -> Vec<(TownId, u64)> {
         self.towns
             .iter()
-            .filter(|(town, _)| directory.project(town).is_some())
-            .filter(|(_, ledger)| ledger.machines.iter().any(|machine| directory.same(machine, name)))
+            .filter(|(town, _)| directory.member_in_project(name, town))
             .map(|(town, ledger)| (town.clone(), ledger.next - 1))
             .collect()
     }
@@ -212,7 +199,9 @@ impl Ledgers {
         let gone: Vec<TownId> = self
             .towns
             .keys()
-            .filter(|town| book.directory.project(town).is_none() && !book.archived.iter().any(|project| &project.town == *town))
+            .filter(|town| {
+                book.directory.project(town).is_none() && !book.archived.iter().any(|project| &project.town == *town)
+            })
             .cloned()
             .collect();
         for town in &gone {
@@ -235,9 +224,6 @@ impl Ledgers {
 
 impl TownLedger {
     fn add(&mut self, entry: &Entry) {
-        if let Some(machines) = &entry.machines {
-            self.machines = machines.clone();
-        }
         self.paths.extend(entry.files.iter().map(|file| file.path.to_lowercase()));
     }
 
@@ -334,16 +320,13 @@ pub(crate) async fn write(hub: &Arc<Hub>, from: &MachineName, town: TownId, sign
             remove_later(hub, town.clone(), folder);
             return Err(format!("the project {town} was deleted"));
         }
-        let (seq, mut tell) = hub.ledgers.lock().expect("never poisoned").commit(directory, from, &town, checked);
-        tell.extend(
-            directory
-                .members
-                .iter()
-                .filter(|member| directory.member_in_project(&member.name, &town))
-                .map(|member| member.name.clone()),
-        );
-        tell.sort();
-        tell.dedup();
+        let seq = hub.ledgers.lock().expect("never poisoned").commit(&town, checked);
+        let tell: Vec<_> = directory
+            .members
+            .iter()
+            .filter(|member| directory.member_in_project(&member.name, &town))
+            .map(|member| member.name.clone())
+            .collect();
         (seq, tell)
     };
     hub.log.line(format_args!("{from} wrote entry {seq} of {town}"));

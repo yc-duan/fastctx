@@ -57,6 +57,11 @@ pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelop
         reply(&inner, &replier, &message, Kind::Refused, None, serde_json::Value::String(reason)).await;
         return;
     }
+    if matches!(replier, Replier::Peer(..)) && crate::message::project_entry(&message).is_some() {
+        let reason = "a project's entry from another machine must be authorized by its hub";
+        reply(&inner, &replier, &message, Kind::Refused, None, serde_json::Value::String(reason.into())).await;
+        return;
+    }
     // Its time here runs from now, not from when its work begins: what it
     // takes to admit it and bring its bytes in is waited for in it.
     let came = tokio::time::Instant::now();
@@ -222,6 +227,9 @@ async fn work(
         Ok(opened) => opened,
         Err(reason) => return Some(refused(reason)),
     };
+    if matches!(remote, RemoteCall::EnterProject { .. }) && crate::message::project_entry(message).is_none() {
+        return Some(refused("a project entry must be a complete, unstreamed control request".into()));
+    }
     let contract = remote.contract();
     if contract.pool != pool {
         place = match inner.node.place(&caller.machine, &caller.account, contract.pool) {

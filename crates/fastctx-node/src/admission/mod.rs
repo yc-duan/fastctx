@@ -41,7 +41,8 @@ pub struct Asker {
 /// The resident of this machine `call` is about, if it is about one.
 fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
     match call {
-        RemoteCall::Talk { to: who, .. }
+        RemoteCall::EnterProject { resident: who, .. }
+        | RemoteCall::Talk { to: who, .. }
         | RemoteCall::Composer { resident: who, .. }
         | RemoteCall::Watch { resident: who, .. }
         | RemoteCall::Stop { resident: who }
@@ -62,8 +63,9 @@ fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
 }
 
 /// The project `call` is about, if it names one.
-fn town_of(call: &RemoteCall) -> Option<&TownName> {
+pub(crate) fn town_of(call: &RemoteCall) -> Option<&TownName> {
     match call {
+        RemoteCall::EnterProject { town, .. } => Some(town),
         RemoteCall::Run { town, .. }
         | RemoteCall::Write { town, .. }
         | RemoteCall::Ask { town, .. }
@@ -149,6 +151,9 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
         if !allowed {
             return Err(refuse(format!("the account {} may not use the project {town}", caller.account)));
         }
+    }
+    if matches!(call, RemoteCall::EnterProject { .. }) && !view.rights(&caller.account, &caller.machine).hands {
+        return Err(refuse("the requesting job no longer has work permission on its machine".into()));
     }
     let hands = view.rights(&caller.account, &here).hands;
     // A conversation's attachments are seen by the accounts it works for

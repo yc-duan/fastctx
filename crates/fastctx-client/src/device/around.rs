@@ -93,16 +93,9 @@ impl Device {
         }
     }
 
-    /// The machines to ask about `scope`: those its project names, or every
-    /// machine; always only those this device's accounts may use.
-    fn asked(&self, scope: &WhoScope) -> Vec<Reachable> {
-        let reachable = self.reachable_each();
-        match scope {
-            WhoScope::Town { record: Some(record), .. } => {
-                reachable.into_iter().filter(|machine| record.machines.contains(&machine.name)).collect()
-            }
-            _ => reachable,
-        }
+    /// A project can have conversations and jobs on any reachable machine.
+    fn asked(&self, _scope: &WhoScope) -> Vec<Reachable> {
+        self.reachable_each()
     }
 
     pub(super) async fn who(

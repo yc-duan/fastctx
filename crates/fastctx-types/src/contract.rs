@@ -139,7 +139,8 @@ impl RemoteCall {
             | Self::AgentCalls { .. }
             | Self::Offers { .. }
             | Self::Lines { request: Lines::Find { .. } } => Contract::ASKS_AGENT,
-            Self::ReserveAttachment { .. }
+            Self::EnterProject { .. }
+            | Self::ReserveAttachment { .. }
             | Self::CommitAttachment { .. }
             | Self::Composer { .. }
             | Self::PageAction { .. }
