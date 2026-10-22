@@ -125,6 +125,9 @@ pub(super) async fn call(link: &Link, account: &AccountName, mcp: McpCall) -> Re
             let MachineReply::Found { servers } = ask(link, account, &machine, MachineCall::Found).await? else {
                 return Err(failed("the machine did not list import candidates"));
             };
+            if servers.iter().any(|server| matches!(server.server, FoundServer::Remote(_))) {
+                return Err(failed("upgrade the requesting Fastctx to list MCP import candidates privately"));
+            }
             Ok(McpReply::Found { machine, servers })
         }
         McpCall::Candidates { machine } => {

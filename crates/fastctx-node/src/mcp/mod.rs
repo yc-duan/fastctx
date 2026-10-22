@@ -199,6 +199,9 @@ pub(crate) async fn call(
             else {
                 return Err(failed("the machine did not list import candidates"));
             };
+            if servers.iter().any(|server| matches!(server.server, FoundServer::Remote(_))) {
+                return Err(failed("upgrade the requesting Fastctx to list MCP import candidates privately"));
+            }
             Ok(McpReply::Found { machine, servers })
         }
         McpCall::Candidates { machine } => {
@@ -290,24 +293,14 @@ pub(crate) async fn answer(
         MachineCall::Found => Ok(MachineReply::Found { servers: import::legacy(node).map_err(failed)? }),
         MachineCall::Candidates => Ok(MachineReply::Candidates { servers: import::metadata(node).map_err(failed)? }),
         MachineCall::ImportRemote { source, original } => {
-            let server = import::candidates(node)
-                .map_err(failed)?
-                .into_iter()
-                .find(|(found, _)| found.source == source && found.name == original)
-                .map(|(_, server)| server)
-                .ok_or_else(|| failed("the import candidate disappeared"))?;
+            let server = import::selected(node, &source, &original).map_err(failed)?;
             match server {
                 Server::Remote(server) => Ok(MachineReply::ImportedRemote { server }),
                 Server::Command(_) => Err(failed("the selected MCP configuration is no longer a URL server")),
             }
         }
         MachineCall::Import { name, version, source, original } => {
-            let server = import::candidates(node)
-                .map_err(failed)?
-                .into_iter()
-                .find(|(f, _)| f.source == source && f.name == original)
-                .map(|(_, s)| s)
-                .ok_or_else(|| failed("the import candidate disappeared"))?;
+            let server = import::selected(node, &source, &original).map_err(failed)?;
             let Server::Command(server) = server else {
                 return Err(failed("the import candidate is no longer a command"));
             };
