@@ -39,14 +39,47 @@ impl Registration {
     }
 }
 
-pub fn check(root: &Path, app: &Registration, build: &fastctx_types::renewal::Build) -> anyhow::Result<()> {
+#[derive(Debug)]
+struct ProtectedApplication(String);
+impl std::fmt::Display for ProtectedApplication {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+impl std::error::Error for ProtectedApplication {}
+
+pub(super) fn program_build(root: &Path, app: &Registration) -> anyhow::Result<fastctx_types::renewal::Build> {
+    #[cfg(target_os = "linux")]
+    if app.app.target.ends_with("-appimage") {
+        return super::appimage::program(root, app);
+    }
+    let _ = root;
     let program = app.program.as_ref().context("application did not record its carried program")?;
-    ensure!(
-        crate::program::inspect(program)? == *build,
-        "application program {} differs from repair {}",
-        program.display(),
-        build.version
-    );
+    crate::program::inspect(program).with_context(|| format!("checking application program {}", program.display()))
+}
+
+pub fn check(root: &Path, app: &Registration, build: &fastctx_types::renewal::Build) -> anyhow::Result<()> {
+    let actual = program_build(root, app)?;
+    if actual != *build {
+        let forward = crate::program::newer(build, &actual).map_err(|error| {
+            ProtectedApplication(format!("checking application version before replacement: {error:#}"))
+        })?;
+        if !forward {
+            return Err(ProtectedApplication(format!(
+                "application {} carries {} newer than or unordered against repair {}; no application files changed",
+                app.executable()?.display(),
+                actual.version,
+                build.version
+            ))
+            .into());
+        }
+        anyhow::bail!(
+            "application {} carries {}, expected {}",
+            app.executable()?.display(),
+            actual.version,
+            build.version
+        );
+    }
     let executable = app.executable()?;
     let receipt = root.join("updates").join(format!("application-probe-{}.json", std::process::id()));
     let profile = root.join("updates").join(format!("application-probe-{}", std::process::id()));
@@ -62,13 +95,29 @@ pub fn check(root: &Path, app: &Registration, build: &fastctx_types::renewal::Bu
         .with_context(|| format!("probing application {}", executable.display()))?;
     let result = (|| -> anyhow::Result<()> {
         #[cfg(windows)]
-        crate::interactive::probe(root, &executable, &receipt, &profile)?;
+        if let Err(error) = crate::interactive::probe(root, &executable, &receipt, &profile) {
+            let detail = crate::renewal::read_json::<Probe>(&receipt).ok().flatten().and_then(|p| p.error);
+            return Err(error).with_context(|| {
+                format!(
+                    "probing {}: {}",
+                    executable.display(),
+                    detail.as_deref().unwrap_or("no WebView receipt was returned")
+                )
+            });
+        }
         #[cfg(not(windows))]
         {
             let began = Instant::now();
             loop {
                 if let Some(status) = child.try_wait()? {
-                    ensure!(status.success(), "application probe {} exited {status}", executable.display());
+                    if !status.success() {
+                        let reason = crate::renewal::read_json::<Probe>(&receipt)
+                            .ok()
+                            .flatten()
+                            .and_then(|p| p.error)
+                            .unwrap_or_else(|| "no WebView error receipt".into());
+                        anyhow::bail!("application probe {} exited {status}: {reason}", executable.display());
+                    }
                     break;
                 }
                 ensure!(
@@ -81,6 +130,15 @@ pub fn check(root: &Path, app: &Registration, build: &fastctx_types::renewal::Bu
         }
         let probe = crate::renewal::read_json::<Probe>(&receipt)?
             .with_context(|| format!("application {} produced no window receipt", executable.display()))?;
+        if fastctx_types::update::release(&probe.version) > fastctx_types::update::release(&build.version) {
+            return Err(ProtectedApplication(format!(
+                "application {} reports {}, newer than repair {}; no application files changed",
+                executable.display(),
+                probe.version,
+                build.version
+            ))
+            .into());
+        }
         ensure!(
             probe.version == build.version,
             "application {} reports {}, expected {}",
@@ -91,19 +149,38 @@ pub fn check(root: &Path, app: &Registration, build: &fastctx_types::renewal::Bu
         ensure!(probe.error.is_none(), "application {}: {}", executable.display(), probe.error.unwrap_or_default());
         Ok(())
     })();
-    // This is only the directly owned probe child, never a discovered process.
-    #[cfg(not(windows))]
-    if child.try_wait()?.is_none() {
-        child.kill()?;
-        child.wait()?;
+    let cleanup = (|| -> anyhow::Result<()> {
+        // This is only the directly owned probe child, never a discovered process.
+        #[cfg(not(windows))]
+        if child.try_wait()?.is_none() {
+            child.kill()?;
+            child.wait()?;
+        }
+        if receipt.try_exists()? {
+            std::fs::remove_file(&receipt).with_context(|| format!("deleting probe receipt {}", receipt.display()))?;
+        }
+        if profile.try_exists()? {
+            std::fs::remove_dir_all(&profile)
+                .with_context(|| format!("deleting probe profile {}", profile.display()))?;
+        }
+        Ok(())
+    })();
+    match (result, cleanup) {
+        (Err(primary), Err(cleanup)) => Err(anyhow::anyhow!("{primary:#}; probe cleanup also failed: {cleanup:#}")),
+        (Err(error), _) | (_, Err(error)) => Err(error),
+        _ => Ok(()),
     }
-    if receipt.try_exists()? {
-        std::fs::remove_file(&receipt)?;
-    }
-    if profile.try_exists()? {
-        std::fs::remove_dir_all(&profile).with_context(|| format!("deleting probe profile {}", profile.display()))?;
-    }
-    result
+}
+
+/// Serializes application file changes with the shell and background installer.
+pub fn lock(root: &Path) -> anyhow::Result<fastctx_platform::FileLock> {
+    let directory = root.join("updates");
+    fastctx_platform::ensure_private_dir(&directory)
+        .with_context(|| format!("preparing application maintenance directory {}", directory.display()))?;
+    let path = directory.join("application.lock");
+    fastctx_platform::FileLock::try_acquire(&path)
+        .with_context(|| format!("opening application maintenance gate {}", path.display()))?
+        .context("an application installation or repair is already running")
 }
 
 pub async fn repair(
@@ -111,23 +188,26 @@ pub async fn repair(
     build: &fastctx_types::renewal::Build,
     journal: &mut Journal,
 ) -> anyhow::Result<String> {
+    let _application = lock(root)?;
     let path = root.join("updates/app.json");
     let Some(mut app) = crate::renewal::read_json::<Registration>(&path)? else {
         return Ok("no application registered".into());
     };
-    if let Some(program) = &app.program
-        && program.is_file()
-        && let Ok(actual) = crate::program::inspect(program)
-    {
-        ensure!(
-            actual == *build || crate::program::newer(build, &actual)?,
-            "application program {} is newer than repair {}; no application files changed",
-            program.display(),
-            build.version
-        );
-    }
     match check(root, &app, build) {
-        Ok(()) => return Ok("application version, carried program and WebView startup are correct".into()),
+        Ok(()) => {
+            if app.app.version != build.version {
+                journal.action(format!(
+                    "refresh application version in {} from {} to {}",
+                    path.display(),
+                    app.app.version,
+                    build.version
+                ))?;
+                app.app.version = build.version.clone();
+                crate::renewal::write_json(&path, &app)?;
+            }
+            return Ok("application version, carried program and WebView startup are correct".into());
+        }
+        Err(error) if error.is::<ProtectedApplication>() => return Err(error),
         Err(error) => journal.action(format!("reinstall application {}: {error:#}", app.executable()?.display()))?,
     }
     ensure!(
@@ -222,11 +302,7 @@ pub async fn install(
         } else {
             let destination =
                 app.executable.as_ref().context("the AppImage did not record its original executable path")?;
-            ensure!(
-                destination.extension().is_some_and(|e| e == "AppImage"),
-                "{} is not the registered AppImage",
-                destination.display()
-            );
+            ensure!(app.app.target.ends_with("-appimage"), "{} is not the registered AppImage", destination.display());
             crate::renewal::publish_image(installer, destination)
                 .with_context(|| format!("replacing AppImage {}", destination.display()))?;
         }

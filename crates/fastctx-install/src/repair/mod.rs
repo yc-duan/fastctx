@@ -1,6 +1,8 @@
 //! Repair uses the same publication, process identities and service registrations
 //! as renewal. It never deletes lock files or edits the World's user data.
 
+#[cfg(target_os = "linux")]
+mod appimage;
 pub mod application;
 pub mod package;
 pub mod records;

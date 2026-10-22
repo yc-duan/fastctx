@@ -218,6 +218,7 @@ async fn run_installer(installer: &Path, root: &Path, manifest: &Manifest, targe
         let signature = manifest.package(target).ok_or("manifest has no application installer")?.signature.clone();
         let (root, installer, version) = (root.to_owned(), installer.to_owned(), manifest.version.clone());
         tokio::task::spawn_blocking(move || {
+            let _application = fastctx_install::repair::application::lock(&root)?;
             fastctx_install::interactive::install(&root, &installer, &signature, &version, false)
         })
         .await
