@@ -216,12 +216,20 @@ async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
         .identity
         .context("replacement exited before it could prepare")?,
     };
+    let began = std::time::Instant::now();
     loop {
         if !fastctx_platform::is_alive(&candidate)? {
             bail!("replacement exited before preparing; current node was left running");
         }
         if store::read_json::<fastctx_types::ProcessIdentity>(&prepared)?.as_ref() == Some(&candidate) {
             break;
+        }
+        // Preparing takes seconds; a replacement alive that never says it is
+        // ready holds the renewal's gate for nothing, so it is ended and the
+        // renewal tried again on its schedule.
+        if began.elapsed() > STALLED {
+            let _ = fastctx_platform::terminate::terminate(&candidate);
+            bail!("the replacement did not get ready in {} minutes", STALLED.as_secs() / 60);
         }
         tick().await;
     }
@@ -336,7 +344,9 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
     phase(root, plan, Phase::ReturningToService)?;
     let world = WorldDir::under(root);
     renewal::request(&world, Action::Yield).await?;
+    let began = std::time::Instant::now();
     loop {
+        returning(began)?;
         if let Probe::Running(node) = observing(&world).await?
             && !node.bridge
             && node.build.digest == plan.candidate.build.digest
@@ -384,8 +394,11 @@ async fn guard_supervised(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
         return waiting_for_service(root, plan, why);
     }
     // The guardian starting again ends the node it runs: that node goes once
-    // idle first, as at a handover, so no turn under way is cut off; the
-    // guardian brings up the next on the same program meanwhile.
+    // idle first, as at a handover, so no turn under way is cut off. The node
+    // the guardian brings up meanwhile waits at the gate a service node takes
+    // first (`fastctx_node::renewal`), held here till the guardian has
+    // started again, so it takes no turn the restart would cut off.
+    let gate = FileLock::acquire(&store::directory(root).join("manager-gate.lock"))?;
     phase(root, plan, Phase::WaitingForIdle)?;
     let world = WorldDir::under(root);
     if let Some(serving) = settled(renewal::process(&world).await)?.flatten() {
@@ -399,9 +412,12 @@ async fn guard_supervised(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
     phase(root, plan, Phase::UpdatingGuardian)?;
     let (restarting, digest) = (service.clone(), digest.clone());
     tokio::task::spawn_blocking(move || restarting.restart_guardian(&digest)).await??;
+    drop(gate);
     plan.keeper_restarted = true;
     store::save(root, plan)?;
+    let began = std::time::Instant::now();
     loop {
+        returning(began)?;
         if let Probe::Running(node) = observing(&world).await?
             && !node.bridge
             && node.build.digest == plan.candidate.build.digest
@@ -440,7 +456,11 @@ fn follow_hubs(root: &Path, digest: &str) -> anyhow::Result<()> {
             store::installed(root),
             &directory,
         );
-        let _ = follow_hub(&hub, digest);
+        // Where this cannot, the hub follows by itself; why it could not is
+        // still said, for whoever reads the renewal's log.
+        if let Err(error) = follow_hub(&hub, digest) {
+            eprintln!("the hub at {} follows the new program by itself: {error:#}", directory.display());
+        }
     }
     Ok(())
 }
@@ -676,6 +696,23 @@ async fn guardian_apply(root: &Path, user_sid: Option<String>, uid: Option<u32>)
     }
     #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     bail!("this platform has no boot-service handover")
+}
+
+/// How long a step that takes seconds or a minute is waited for before the
+/// renewal takes it for stalled: what holds its gate is let go, the failure
+/// kept with why, and the renewal tried again on its schedule (`world-upgrade.md`,
+/// 没成的，自己再试). A turn under way is never this: it is waited for.
+const STALLED: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Fails a return to the boot service that has not come about in
+/// `STALLED`; the next try finds the node as it is then and goes on.
+fn returning(began: std::time::Instant) -> anyhow::Result<()> {
+    ensure!(
+        began.elapsed() <= STALLED,
+        "the boot service did not start the new program as its node in {} minutes",
+        STALLED.as_secs() / 60
+    );
+    Ok(())
 }
 
 async fn tick() {

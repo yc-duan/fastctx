@@ -147,8 +147,8 @@ pub(crate) mod imp {
     use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED};
     use windows_sys::Win32::System::JobObjects::IsProcessInJob;
     use windows_sys::Win32::System::Threading::{
-        CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
-        DETACHED_PROCESS, PROCESS_INFORMATION, STARTUPINFOW,
+        CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT,
+        CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW,
     };
 
     use super::DetachedProcess;
@@ -182,7 +182,10 @@ pub(crate) mod imp {
         let application = wide(program);
         let mut line = line.to_vec();
         let directory = wide(cwd);
-        let flags = DETACHED_PROCESS
+        // A console of its own that has no window, rather than none: every
+        // console program it starts, and those start in turn, shares that
+        // console instead of opening a window of its own on the desktop.
+        let flags = CREATE_NO_WINDOW
             | CREATE_NEW_PROCESS_GROUP
             | CREATE_UNICODE_ENVIRONMENT
             | if breakaway { CREATE_BREAKAWAY_FROM_JOB } else { 0 };

@@ -12,7 +12,7 @@ use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 use windows_sys::Win32::Security::TOKEN_QUERY;
 use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows_sys::Win32::System::Threading::{
-    CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DETACHED_PROCESS,
+    CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
     DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcessId,
     InitializeProcThreadAttributeList, OpenProcess, OpenProcessToken, PROC_THREAD_ATTRIBUTE_PARENT_PROCESS,
     PROCESS_CREATE_PROCESS, PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, STARTUPINFOEXW,
@@ -80,6 +80,8 @@ pub fn spawn(
     // SAFETY: all strings and the single parent attribute outlive creation;
     // FALSE prevents inheriting handles from either parent. The explicit
     // parent supplies the job, so no node is first born in the caller's job.
+    // Its console has no window, and the console programs it starts share it
+    // (`crate::detach`).
     let mut info: PROCESS_INFORMATION = unsafe { zeroed() };
     if unsafe {
         CreateProcessW(
@@ -88,7 +90,7 @@ pub fn spawn(
             ptr::null(),
             ptr::null(),
             0,
-            DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT,
+            CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT,
             block.as_ptr().cast(),
             directory.as_ptr(),
             &startup.StartupInfo,

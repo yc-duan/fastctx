@@ -14,10 +14,14 @@ import type { UpdateViewWords } from "./update-view-words";
 import type { UpdateWords } from "./update-words";
 import type { SettingsWords } from "./words";
 
+/** How often the World's program here is asked about while the page is open. */
+const SERVICE_MS = 30_000;
+
 export class UpdateLine {
   private readonly stop: () => void;
-  /** What the World's program here is beside the interface's, asked once. */
+  /** What the World's program here is beside the interface's. */
   private service = "";
+  private asking = 0;
 
   constructor(
     private readonly element: HTMLElement,
@@ -36,21 +40,29 @@ export class UpdateLine {
       updates.offered.get();
       this.draw(updates.state.get());
     });
-    void renewing?.state().then(
-      (status) => {
-        const node = status.node?.build ?? null;
-        if (status.mismatch) {
-          const legacy = { version: status.mismatch.node_version, protocol: status.mismatch.node_protocol, digest: "?" };
-          this.service = settings.versionDifferent(buildOrder(status.client, legacy));
-        } else if (node && !sameBuild(status.client, node)) this.service = settings.versionDifferent(buildOrder(status.client, node));
-        this.draw(updates.state.peek());
-      },
-      () => {},
-    );
+    // How this computer's service stands beside the interface, asked again
+    // while the page is open: a change to the new program ends by itself.
+    const ask = (): void => {
+      void renewing?.state().then(
+        (status) => {
+          const node = status.node?.build ?? null;
+          if (status.mismatch) {
+            const legacy = { version: status.mismatch.node_version, protocol: status.mismatch.node_protocol, digest: "?" };
+            this.service = settings.versionDifferent(buildOrder(status.client, legacy));
+          } else if (node && !sameBuild(status.client, node)) this.service = settings.versionDifferent(buildOrder(status.client, node));
+          else this.service = "";
+          this.draw(updates.state.peek());
+        },
+        () => {},
+      );
+    };
+    ask();
+    this.asking = window.setInterval(ask, SERVICE_MS);
   }
 
   leave(): void {
     this.stop();
+    clearInterval(this.asking);
   }
 
   private draw(state: import("../world/updates").UpdateState | null): void {

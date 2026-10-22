@@ -22,8 +22,9 @@ use windows_sys::Win32::Security::Authorization::{ConvertSidToStringSidW, Conver
 use windows_sys::Win32::Security::{
     AdjustTokenPrivileges, AllocateLocallyUniqueId, DuplicateTokenEx, GetTokenInformation, LUID_AND_ATTRIBUTES,
     LookupAccountSidW, LookupPrivilegeValueW, QUOTA_LIMITS, SE_PRIVILEGE_ENABLED, SecurityImpersonation,
-    SetTokenInformation, SidTypeUser, TOKEN_ADJUST_PRIVILEGES, TOKEN_ALL_ACCESS, TOKEN_PRIVILEGES, TOKEN_QUERY,
-    TOKEN_SOURCE, TOKEN_STATISTICS, TOKEN_USER, TokenPrimary, TokenSessionId, TokenStatistics, TokenUser,
+    SetTokenInformation, SidTypeUser, TOKEN_ADJUST_PRIVILEGES, TOKEN_ALL_ACCESS, TOKEN_LINKED_TOKEN, TOKEN_PRIVILEGES,
+    TOKEN_QUERY, TOKEN_SOURCE, TOKEN_STATISTICS, TOKEN_USER, TokenElevationType, TokenElevationTypeLimited,
+    TokenLinkedToken, TokenPrimary, TokenSessionId, TokenStatistics, TokenUser,
 };
 use windows_sys::Win32::System::Environment::{CreateEnvironmentBlock, DestroyEnvironmentBlock};
 use windows_sys::Win32::System::RemoteDesktop::{
@@ -244,12 +245,17 @@ pub(super) fn interactive(
 pub(super) fn login(target: &Target, full: Option<(Identity, OwnedHandle)>) -> anyhow::Result<Login> {
     let (identity, token) = match full {
         Some((identity, original)) => {
+            // Where User Account Control handed the desktop logon a limited
+            // token, give the node the account's full, elevated one instead
+            // (see elevated_counterpart); otherwise the token Windows gave.
+            let elevated = elevated_counterpart(original.as_raw_handle());
+            let base = elevated.as_ref().unwrap_or(&original);
             let mut duplicate = ptr::null_mut();
-            // SAFETY: duplicates the user's primary token without changing
+            // SAFETY: duplicates the chosen primary token without changing
             // its authentication session or asking for UAC elevation.
             if unsafe {
                 DuplicateTokenEx(
-                    original.as_raw_handle(),
+                    base.as_raw_handle(),
                     TOKEN_ALL_ACCESS,
                     ptr::null(),
                     SecurityImpersonation,
@@ -262,7 +268,12 @@ pub(super) fn login(target: &Target, full: Option<(Identity, OwnedHandle)>) -> a
             }
             (identity, unsafe { OwnedHandle::from_raw_handle(duplicate) })
         }
-        None => (Identity::S4u, s4u(target)?),
+        // A logon with nobody at the desktop is given the full token too,
+        // where Windows handed over the limited half.
+        None => {
+            let token = s4u(target)?;
+            (Identity::S4u, elevated_counterpart(token.as_raw_handle()).unwrap_or(token))
+        }
     };
     if token_sid(token.as_raw_handle())? != target.sid {
         bail!("Windows returned a token for a different account");
@@ -413,6 +424,43 @@ fn token_info(token: HANDLE, class: i32) -> anyhow::Result<Vec<usize>> {
         return Err(io::Error::last_os_error().into());
     }
     Ok(buffer)
+}
+
+/// The account's full, elevated token where the one Windows hands a desktop
+/// logon is the limited half User Account Control splits off for an
+/// administrator; `None` for a standard user, who has no such token, and for
+/// a token that is already full. The guardian runs as SYSTEM and holds
+/// SeTcbPrivilege and SeAssignPrimaryTokenPrivilege, so starting the node
+/// from this token needs no User Account Control prompt: the node, and every
+/// job `run` starts under it, then holds this machine's own administrator
+/// rights, which is what an owner's agent is meant to have.
+fn elevated_counterpart(token: HANDLE) -> Option<OwnedHandle> {
+    let mut kind = 0i32;
+    let mut needed = 0;
+    // SAFETY: the buffer is a TOKEN_ELEVATION_TYPE (an i32) of the size given.
+    let known = unsafe {
+        GetTokenInformation(token, TokenElevationType, (&raw mut kind).cast(), size_of::<i32>() as u32, &mut needed)
+    };
+    if known == 0 || kind != TokenElevationTypeLimited {
+        return None;
+    }
+    let mut linked = TOKEN_LINKED_TOKEN { LinkedToken: ptr::null_mut() };
+    // SAFETY: the buffer is a TOKEN_LINKED_TOKEN of the size given; on success
+    // it owns a new token handle, taken over by OwnedHandle below.
+    let got = unsafe {
+        GetTokenInformation(
+            token,
+            TokenLinkedToken,
+            (&raw mut linked).cast(),
+            size_of::<TOKEN_LINKED_TOKEN>() as u32,
+            &mut needed,
+        )
+    };
+    if got == 0 {
+        return None;
+    }
+    // SAFETY: GetTokenInformation handed over ownership of this handle.
+    Some(unsafe { OwnedHandle::from_raw_handle(linked.LinkedToken) })
 }
 
 fn token_sid(token: HANDLE) -> anyhow::Result<String> {

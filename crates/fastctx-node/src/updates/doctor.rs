@@ -12,15 +12,15 @@
 //! themselves. A machine of beta.10 or later takes over such a handover
 //! itself and is left alone.
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use fastctx_types::access::{Acting, Purpose, Written};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
-use fastctx_types::run::{OutputPiece, RunRequest};
+use fastctx_types::run::{ExitStatus, OutputPiece, RunRequest, RunState};
 use fastctx_types::update::{Channel, UpdateCall, release};
-use fastctx_types::{MachineName, ResidentId};
+use fastctx_types::{HubName, MachineName, ResidentId};
 
 use crate::Node;
 
@@ -35,18 +35,22 @@ const LOOK: Duration = Duration::from_secs(60);
 /// Who the help runs as there: the World itself, on the hub's machine.
 const HELPER: &str = "world-0000";
 
-/// Takes the newer release's program out of the package the machine
-/// brought and stages it with that program, which ends a coordinator only
-/// holding the gate and takes over. Run by the machine's own shell (bash,
-/// Git for Windows' on Windows); `@VERSION@` is the release.
+/// Takes the newer release's program out of the package for the machine's
+/// own system, which the machine brought, and stages it with that program,
+/// which ends a coordinator only holding the gate and takes over. Run by the
+/// machine's own shell (bash, Git for Windows' on Windows) in its World's
+/// environment: `FASTCTX_HOME` where the World has one, else the home the
+/// node gives its commands. `@VERSION@` is the release, `@TARGET@` the
+/// package the machine says its World program comes from.
 const SCRIPT: &str = r#"version='@VERSION@'
-root="$HOME/.fastctx"
-dir="$root/updates/packages/v$version"
-name=$(ls "$dir" 2>/dev/null | grep '^fastctx-' | head -n 1)
-if [ -z "$name" ]; then echo "no package of $version here yet"; exit 3; fi
-package="$dir/$name"
-work=$(mktemp -d)
-case "$name" in
+target='@TARGET@'
+root="${FASTCTX_HOME:-$HOME/.fastctx}"
+if command -v cygpath >/dev/null 2>&1; then root=$(cygpath -u "$root"); fi
+package="$root/updates/packages/v$version/$target"
+if [ ! -f "$package" ]; then echo "no package $target of $version here yet"; exit 3; fi
+work=$(mktemp -d) || exit 4
+trap 'rm -rf "$work"' EXIT
+case "$target" in
   *windows*)
     archiver="$(cygpath -u "${SYSTEMROOT:-C:\\Windows}")/System32/tar.exe"
     "$archiver" -xf "$(cygpath -w "$package")" -C "$(cygpath -w "$work")" fastctx.exe || exit 4
@@ -56,27 +60,29 @@ case "$name" in
     program="$work/fastctx" ;;
 esac
 "$program" renew stage --dir "$root" --package "$package"
-status=$?
-rm -rf "$work"
-exit $status
 "#;
 
-/// When each machine was first seen stuck, and when it was last helped.
+/// A machine of one network.
+type Member = (HubName, MachineName);
+
+/// When each machine was first seen stuck, when it was last helped, and the
+/// ones being helped now.
 #[derive(Default)]
 struct Seen {
-    since: BTreeMap<MachineName, Instant>,
-    helped: BTreeMap<MachineName, Instant>,
+    since: BTreeMap<Member, Instant>,
+    helped: BTreeMap<Member, Instant>,
+    helping: BTreeSet<Member>,
 }
 
 /// Looks the network's machines over once a minute while the node runs.
 pub(super) fn start(node: &Arc<Node>) {
     let weak = Arc::downgrade(node);
     tokio::spawn(async move {
-        let mut seen = Seen::default();
+        let seen = Arc::new(Mutex::new(Seen::default()));
         loop {
             tokio::time::sleep(LOOK).await;
             let Some(node) = weak.upgrade() else { return };
-            look(&node, &mut seen).await;
+            look(&node, &seen);
         }
     });
 }
@@ -84,23 +90,31 @@ pub(super) fn start(node: &Arc<Node>) {
 /// A machine to help: where it is, the account it is registered under, and
 /// the release to bring it to.
 struct Stuck {
-    machine: Written,
+    member: Member,
     acting: Acting,
     version: String,
 }
 
-async fn look(node: &Arc<Node>, seen: &mut Seen) {
+/// Starts helping each machine that has waited long enough; each on its
+/// own, so a slow one holds none of the others up.
+fn look(node: &Arc<Node>, seen: &Arc<Mutex<Seen>>) {
     let stuck = stuck(node);
     let now = Instant::now();
-    seen.since.retain(|machine, _| stuck.iter().any(|one| &one.machine.name == machine));
+    let mut state = seen.lock().expect("never poisoned");
+    state.since.retain(|member, _| stuck.iter().any(|one| &one.member == member));
     for one in stuck {
-        let since = *seen.since.entry(one.machine.name.clone()).or_insert(now);
-        let helped = seen.helped.get(&one.machine.name).is_some_and(|at| now.duration_since(*at) < AGAIN);
-        if now.duration_since(since) < PATIENCE || helped {
+        let since = *state.since.entry(one.member.clone()).or_insert(now);
+        let helped = state.helped.get(&one.member).is_some_and(|at| now.duration_since(*at) < AGAIN);
+        if now.duration_since(since) < PATIENCE || helped || state.helping.contains(&one.member) {
             continue;
         }
-        seen.helped.insert(one.machine.name.clone(), now);
-        help(node, &one).await;
+        state.helped.insert(one.member.clone(), now);
+        state.helping.insert(one.member.clone());
+        let (node, seen) = (node.clone(), seen.clone());
+        tokio::spawn(async move {
+            help(&node, &one).await;
+            seen.lock().expect("never poisoned").helping.remove(&one.member);
+        });
     }
 }
 
@@ -130,7 +144,7 @@ fn stuck(node: &Node) -> Vec<Stuck> {
                 continue;
             }
             found.push(Stuck {
-                machine: Written { name: member.name.clone(), hub: None },
+                member: (link.hub_name(), member.name.clone()),
                 acting: Acting::one(link.hub().clone(), owner.clone()),
                 version: offer.version.clone(),
             });
@@ -142,26 +156,40 @@ fn stuck(node: &Node) -> Vec<Stuck> {
 /// Has `stuck` bring its release, which it may stage itself; where its own
 /// staging is refused, stages it there with the release's own program.
 async fn help(node: &Arc<Node>, stuck: &Stuck) {
-    let Stuck { machine, acting, version } = stuck;
+    let Stuck { member: (hub, name), acting, version } = stuck;
+    let machine = Written { name: name.clone(), hub: Some(hub.clone()) };
     let asked = UpdateCall::Kernel { version: Some(version.clone()) };
-    match super::machine(node, acting, machine.clone(), asked).await {
+    // A stuck machine brings the package and then refuses to stage it; the
+    // package its World program comes from is the one it says it updates
+    // from, which it says when asked how it stands.
+    let state = match super::machine(node, acting, machine.clone(), asked).await {
         Ok(state) if state.renewing.as_ref().is_some_and(|renewing| &renewing.version == version) => {
-            node.log.line(format_args!("{machine} takes {version} by itself"));
+            node.log.line(format_args!("{name} takes {version} by itself"));
             return;
         }
-        Ok(_) => {}
-        Err(failure) => node.log.line(format_args!("{machine} did not take {version} by itself: {failure}")),
-    }
+        Ok(state) => Ok(state),
+        Err(failure) => {
+            node.log.line(format_args!("{name} did not take {version} by itself: {failure}"));
+            super::machine(node, acting, machine.clone(), UpdateCall::State).await
+        }
+    };
+    let target = match state {
+        Ok(state) => state.kernel_target,
+        Err(failure) => {
+            node.log.line(format_args!("{name} did not say how it stands, so {version} is not staged there: {failure}"));
+            return;
+        }
+    };
     let resident = ResidentId::try_from(HELPER).expect("a resident id");
     let request = RunRequest {
         call_id: None,
-        script: SCRIPT.replace("@VERSION@", version),
+        script: SCRIPT.replace("@VERSION@", version).replace("@TARGET@", &target),
         cwd: None,
         writes_off: false,
         wait: Some(600),
     };
     let call = RemoteCall::Run { resident, town: None, request };
-    match node.call(acting, machine, Purpose::Hands, call).await {
+    match node.call(acting, &machine, Purpose::Hands, call).await {
         Ok(Ok(RemoteReply::Run(reply))) => {
             let said: String = reply
                 .output
@@ -172,14 +200,16 @@ async fn help(node: &Arc<Node>, stuck: &Stuck) {
                     _ => None,
                 })
                 .collect();
-            node.log.line(format_args!(
-                "staged {version} on {machine} with its own program: {:?}; {}",
-                reply.state,
-                said.trim()
-            ));
+            let outcome = match reply.state {
+                RunState::Ended { status: ExitStatus::Code(0) } | RunState::Exited { status: ExitStatus::Code(0), .. } => {
+                    "staged".to_string()
+                }
+                ref other => format!("did not stage ({other:?})"),
+            };
+            node.log.line(format_args!("{name}: {outcome} {version} with its own program; {}", said.trim()));
         }
-        Ok(Ok(_)) => node.log.line(format_args!("{machine} answered staging {version} with something else")),
-        Ok(Err(failure)) => node.log.line(format_args!("staging {version} on {machine}: {failure}")),
-        Err(failure) => node.log.line(format_args!("staging {version} on {machine}: {failure}")),
+        Ok(Ok(_)) => node.log.line(format_args!("{name} answered staging {version} with something else")),
+        Ok(Err(failure)) => node.log.line(format_args!("staging {version} on {name}: {failure}")),
+        Err(failure) => node.log.line(format_args!("staging {version} on {name}: {failure}")),
     }
 }

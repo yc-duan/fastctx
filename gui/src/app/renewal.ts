@@ -4,9 +4,11 @@
 // record, and this row says where it stands, step by step: asked again
 // every two seconds while a step is under way, as the World is, and every
 // few while it waits for an old version to exit or its turn, so it changes
-// by itself once it is done (`world-upgrade.md`). Its button starts that at
-// once. A node that does not answer while it hands over is asked again;
-// only one silent for long is said to fail.
+// by itself once it is done (`world-upgrade.md`), and every half minute
+// once it is done or failed, as the World tries a failed change again by
+// itself. Its button starts that at once. A node that does not answer
+// while it hands over is asked again; only one silent for long is said to
+// fail.
 
 import { escape } from "../conversation/prose";
 import type { RenewalPhase, RenewalStatus } from "../world/renewal";
@@ -26,6 +28,9 @@ const UNDER_WAY: RenewalPhase[] = ["preparing", "waiting_for_idle", "updating_gu
 const WAITING: RenewalPhase[] = ["staged", "awaiting_administrator", "awaiting_legacy_exit"];
 const UNDER_WAY_MS = 2_000;
 const WAITING_MS = 5_000;
+/** Done or failed, it is still asked now and then: a failed change is tried
+ *  again by the World on its own schedule, and a later one may begin. */
+const SETTLED_MS = 30_000;
 /** How long a node handing over may not answer before that is said. */
 const SILENT_MS = 20_000;
 
@@ -35,6 +40,8 @@ export class RenewalRow {
   /** The kernel's own words for what failed, for the hover. */
   private why = "";
   private busy = false;
+  /** What is said is that the node did not answer. */
+  private unanswered = false;
   private timer = 0;
   private left = false;
   /** Since when the node has not answered, while a change goes on. */
@@ -64,10 +71,13 @@ export class RenewalRow {
         if (this.left) return;
         this.status = status;
         this.silent = null;
+        // What a node that did not answer left said goes once it answers.
+        if (this.unanswered) this.said = "";
+        this.unanswered = false;
         this.draw();
         const phase = status.phase;
-        if (phase && UNDER_WAY.includes(phase)) this.timer = window.setTimeout(() => this.ask(), UNDER_WAY_MS);
-        else if (phase && WAITING.includes(phase)) this.timer = window.setTimeout(() => this.ask(), WAITING_MS);
+        const after = phase && UNDER_WAY.includes(phase) ? UNDER_WAY_MS : phase && WAITING.includes(phase) ? WAITING_MS : SETTLED_MS;
+        this.timer = window.setTimeout(() => this.ask(), after);
       },
       (error: unknown) => {
         if (this.left) return;
@@ -79,7 +89,9 @@ export class RenewalRow {
           return;
         }
         this.said = String(error);
+        this.unanswered = true;
         this.draw();
+        this.timer = window.setTimeout(() => this.ask(), SETTLED_MS);
       },
     );
   }

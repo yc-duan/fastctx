@@ -26,10 +26,12 @@ pub(crate) async fn replaced() -> String {
             if now == seen {
                 continue;
             }
-            seen = now;
-            let asked = path.clone();
-            if let Ok(Some(version)) = tokio::task::spawn_blocking(move || newer(&asked)).await {
-                return version;
+            // A program that could not say what it is is asked again a
+            // minute on, as one that was not there yet.
+            match newer(&path).await {
+                Some(Some(version)) => return version,
+                Some(None) => seen = now,
+                None => {}
             }
         }
     }
@@ -43,19 +45,22 @@ fn shape(path: &std::path::Path) -> Option<(u64, std::time::SystemTime)> {
     Some((metadata.len(), metadata.modified().ok()?))
 }
 
-/// The release the program at `path` is, where it is newer than this hub's.
+/// How long the program is given to say what it is.
 #[cfg(unix)]
-fn newer(path: &std::path::Path) -> Option<String> {
+const IDENTIFY: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The release the program at `path` is, where it is newer than this hub's;
+/// none where it is not, and nothing where it did not say.
+#[cfg(unix)]
+async fn newer(path: &std::path::Path) -> Option<Option<String>> {
     #[derive(serde::Deserialize)]
     struct Identity {
         version: String,
     }
-    let output = std::process::Command::new(path)
-        .args(["renew", "identify"])
-        .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
+    let mut asking = tokio::process::Command::new(path);
+    asking.args(["renew", "identify"]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    asking.kill_on_drop(true);
+    let output = tokio::time::timeout(IDENTIFY, asking.output()).await.ok()?.ok()?;
     let identity: Identity = serde_json::from_slice(&output.stdout).ok().filter(|_| output.status.success())?;
-    fastctx_types::kernel::later(&identity.version, env!("CARGO_PKG_VERSION")).then_some(identity.version)
+    Some(fastctx_types::kernel::later(&identity.version, env!("CARGO_PKG_VERSION")).then_some(identity.version))
 }

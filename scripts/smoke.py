@@ -458,11 +458,36 @@ def service(lab, root):
     until("the service's own node serves alpha's World, and no other", served_by_service, 120)
     code, out = lab.run("alpha", "service", "node", "status", "--dir", home, "--executable", str(installed))
     check("the service says it runs", code == 0 and "running" in out, out)
+    administrator(lab, status)
     command = [*elevate, str(installed), "service", "node", "uninstall", "--dir", home, "--executable", str(installed), *extra]
     done = subprocess.run(command, env=lab.env("alpha"), capture_output=True, text=True)
     check("alpha's startup service is taken away", done.returncode == 0, done.stdout + done.stderr)
     code, out = lab.run("alpha", "service", "node", "status", "--dir", home, "--executable", str(installed))
     check("the service is gone", '"installed": false' in out or "absent" in out, out)
+
+
+def administrator(lab, status):
+    """What the service's node runs holds the machine's own administrator rights: on Windows the account's
+    elevated token, on Linux sudo without a password for an account that may sudo."""
+    if os.name == "nt":
+        try:
+            agent = Agent(lab, "alpha")
+        except Exception as error:  # noqa: BLE001 - reported as the check's failure
+            check("an agent's session starts under the service", False, error)
+            return
+        try:
+            probe = ("[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())"
+                     ".IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)")
+            text, failed = agent.run(f"on alpha <<'RUN'\npowershell -NoProfile -Command '{probe}'\nRUN\n")
+            check("a run under the startup service holds this machine's administrator rights",
+                  not failed and re.search(r"^True\s*$", text, re.M), text)
+        finally:
+            agent.close()
+    elif sys.platform.startswith("linux"):
+        unit = status.get("name", "").removesuffix(".service")
+        rule = subprocess.run(["sudo", "cat", f"/etc/sudoers.d/{unit}"], capture_output=True, text=True)
+        check("the service's rule lets an account that may sudo do so without a password",
+              rule.returncode == 0 and "ALL=(ALL:ALL) NOPASSWD: ALL" in rule.stdout, rule.stdout + rule.stderr)
 
 
 def diagnose(lab, root):

@@ -587,7 +587,17 @@ fn reject_update(
 /// for the interface's; `asker` is who asked from elsewhere.
 async fn kernel(node: &Arc<Node>, version: Option<&str>, asker: Option<Asker>) -> Result<(), String> {
     let offer = match version {
-        Some(version) => manifest_of(node, version).await?,
+        // A release asked for whose manifest did not come is kept as a
+        // failure of that release, to be tried again as any other.
+        Some(version) => match manifest_of(node, version).await {
+            Ok(offer) => offer,
+            Err(why) => {
+                let target = fastctx_update::kernel::target();
+                retry::failed(node, Failed { version: version.to_string(), target, why: why.clone(), reason: None });
+                report(node);
+                return Err(why);
+            }
+        },
         None => {
             state(node).offer.ok_or("no release is known here yet; look again once GitHub or the network answers")?
         }
@@ -841,13 +851,6 @@ fn auto(node: &Arc<Node>) {
     {
         return;
     }
-    // Where GitHub cannot be reached the network is the only source: an
-    // update waits for a hub to be connected, rather than failing while the
-    // line is down and waiting an hour (a room's line comes and goes).
-    let linked = node.links().iter().any(|link| matches!(link.status(), fastctx_net::link::Status::Online { .. }));
-    if !linked && state.looked.github != Some(true) {
-        return;
-    }
     let me = node.machine();
     let running =
         fastctx_types::update::release(state.app.as_ref().map_or(env!("CARGO_PKG_VERSION"), |a| a.version.as_str()));
@@ -867,9 +870,22 @@ fn auto(node: &Arc<Node>) {
             let asked = read_json::<AskedFile>(&dir(node).join("asked.json")).ok().flatten()?;
             Some((version, Asker { by: asked.by, hub: asked.hub, scheduled_at: None }))
         });
+    // Updating by itself decides whether a new release is begun, not whether
+    // one begun and failed is finished: that one is tried again on its
+    // schedule however it was begun (`world-upgrade.md`, 没成的，自己再试).
+    let unfinished = || {
+        let held = node.updates.held.lock().expect("never poisoned");
+        let failed = held.attempt.failed.as_ref()?;
+        let refused = matches!(
+            failed.reason,
+            Some(fastctx_types::update::FailureReason::NoPackage | fastctx_types::update::FailureReason::NotNewer)
+        );
+        (!refused && failed.target == state.kernel_target && fastctx_types::update::release(&failed.version) > running)
+            .then(|| failed.version.clone())
+    };
     let (version, asker) = match due {
         Some((version, asker)) => (version, Some(asker)),
-        None if state.auto && state.app.is_none() => match within(&state) {
+        None if state.app.is_none() => match within(&state).filter(|_| state.auto).or_else(unfinished) {
             Some(version) => (version, None),
             None => return,
         },
@@ -881,6 +897,14 @@ fn auto(node: &Arc<Node>) {
     if state.renewing.as_ref().is_some_and(|renewing| {
         fastctx_types::update::release(&renewing.version) >= fastctx_types::update::release(&version)
     }) {
+        return;
+    }
+    // Where GitHub cannot be reached the network is the only source of a
+    // package not here yet: the update waits for a hub to be connected,
+    // rather than failing while the line is down and waiting an hour (a
+    // room's line comes and goes). One already here goes on.
+    let linked = node.links().iter().any(|link| matches!(link.status(), fastctx_net::link::Status::Online { .. }));
+    if !linked && state.looked.github != Some(true) && cache(node).get(&version, &state.kernel_target).is_none() {
         return;
     }
     let Some(attempt) = retry::begin(node, &version) else { return };

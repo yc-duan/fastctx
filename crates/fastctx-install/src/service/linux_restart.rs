@@ -1,9 +1,12 @@
 //! Restarting a Linux boot service without a password (`world-upgrade.md`,
 //! 换版不要人确认). Installing a system unit takes root once; that install
-//! leaves a sudo rule that lets the user it serves restart that one unit and
-//! nothing else, so a new release takes over by itself afterwards. Where
-//! sudo or its checker is missing, no rule is written, and a renewal waits
-//! for an administrator as before.
+//! leaves a sudo rule that lets the user it serves restart that one unit, so
+//! a new release takes over by itself afterwards. An account that may already
+//! run any command as root with its password is let do so without it in the
+//! same rule: what the World runs for it (`world-run.md`) then holds the
+//! machine's own administrator rights, as a Windows node does, and nothing is
+//! asked at the screen. An account that may not is given nothing more. Where
+//! sudo or its checker is missing, no rule is written.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -40,10 +43,15 @@ pub(super) fn allow(unit: &str, uid: u32) -> anyhow::Result<()> {
     );
     let systemctl = systemctl().context("systemctl is not found; cannot authorize service restart")?;
     let user = user_name(uid)?;
-    let text = format!(
-        "# Written by Fastctx: {user} restarts its own boot service, and nothing else, so a new release takes over.\n{user} ALL=(root) NOPASSWD: {}\n",
+    let mut text = format!(
+        "# Written by Fastctx: {user} restarts its own boot service, so a new release takes over.\n{user} ALL=(root) NOPASSWD: {}\n",
         command(&systemctl, unit)
     );
+    if administrator(&user) {
+        text.push_str(&format!(
+            "# {user} may run any command as root with its password; what Fastctx runs for it does so without.\n{user} ALL=(ALL:ALL) NOPASSWD: ALL\n"
+        ));
+    }
     // Checked where only root writes, under a name sudo passes over for the
     // dot in it, then put in place whole.
     let candidate = Path::new(RULES).join(format!(".{unit}.check"));
@@ -91,6 +99,26 @@ pub(super) fn restart(unit: &str) -> anyhow::Result<()> {
     super::checked(Command::new("sudo").arg("-n").arg(&systemctl).args(["--system", "restart", &service]))
         .context("restarting the system service needs sudo")?;
     Ok(())
+}
+
+/// As root: whether `user` may already run every command as root, as sudo
+/// itself says of it, a password asked or not.
+fn administrator(user: &str) -> bool {
+    let Ok(output) = Command::new("sudo").args(["-n", "-l", "-U", user]).stdin(Stdio::null()).output() else {
+        return false;
+    };
+    output.status.success() && String::from_utf8_lossy(&output.stdout).lines().any(|line| everything(line.trim()))
+}
+
+/// Whether a line `sudo -l` lists lets one run every command as root:
+/// `(ALL) ALL`, `(ALL : ALL) ALL`, `(root) NOPASSWD: ALL` and the like.
+fn everything(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix('(') else { return false };
+    let Some((runas, commands)) = rest.split_once(')') else { return false };
+    let user = runas.split(':').next().unwrap_or_default().trim();
+    let commands = commands.trim();
+    let command = commands.rsplit(": ").next().unwrap_or(commands).trim();
+    matches!(user, "ALL" | "root") && command == "ALL"
 }
 
 /// The account must be representable by one literal sudoers user name.
