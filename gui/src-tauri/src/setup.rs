@@ -160,12 +160,13 @@ pub fn place() -> Result<String, String> {
     Ok(installed.display().to_string())
 }
 
-/// How often, and how far apart, the carried program is offered again while
-/// a renewal busy with a step of its own refuses it for the moment.
-#[cfg(desktop)]
-const TAKE_ATTEMPTS: u32 = 20;
+/// How soon the carried program is offered again while a renewal busy with
+/// a step of its own refuses it, and how far apart at most once it has for
+/// long: as long as the interface is open.
 #[cfg(desktop)]
 const TAKE_AGAIN: std::time::Duration = std::time::Duration::from_secs(30);
+#[cfg(desktop)]
+const TAKE_AGAIN_AT_MOST: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// However this application was updated, the World program it carries
 /// replaces an older one in place by itself, nobody asked
@@ -176,19 +177,18 @@ pub fn take_carried() {
     static TAKING: std::sync::Once = std::sync::Once::new();
     TAKING.call_once(|| {
         std::thread::spawn(|| {
-            for _ in 0..TAKE_ATTEMPTS {
+            let mut again = TAKE_AGAIN;
+            loop {
                 match carried_newer() {
                     Ok(false) => return,
                     Ok(true) => match place() {
                         Ok(_) => return,
                         Err(error) => eprintln!("World: putting the World program it carries in place: {error}"),
                     },
-                    Err(error) => {
-                        eprintln!("World: comparing the World program it carries with the one in place: {error}");
-                        return;
-                    }
+                    Err(error) => eprintln!("World: comparing the World program it carries with the one in place: {error}"),
                 }
-                std::thread::sleep(TAKE_AGAIN);
+                std::thread::sleep(again);
+                again = (again * 2).min(TAKE_AGAIN_AT_MOST);
             }
         });
     });

@@ -362,7 +362,7 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
 /// The guardian takes the program its node runs already, by the program's
 /// own signature, and starts again on it; the node it starts is the
 /// candidate, so the renewal is complete once it serves. A guardian that
-/// will not leaves the renewal to an administrator, no bridge waiting.
+/// will not yet is asked again (`waiting_for_service`), no bridge waiting.
 async fn guard_supervised(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
     let service =
         fastctx_install::service::Service::new(fastctx_install::service::Kind::Node, store::installed(root), root);
@@ -383,12 +383,24 @@ async fn guard_supervised(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
         let why = refused.unwrap_or_else(|| "the boot service has not taken the new program yet".to_string());
         return waiting_for_service(root, plan, why);
     }
+    // The guardian starting again ends the node it runs: that node goes once
+    // idle first, as at a handover, so no turn under way is cut off; the
+    // guardian brings up the next on the same program meanwhile.
+    phase(root, plan, Phase::WaitingForIdle)?;
+    let world = WorldDir::under(root);
+    if let Some(serving) = settled(renewal::process(&world).await)?.flatten() {
+        settled(renewal::request(&world, Action::Yield).await)?;
+        while let Probe::Running(node) = observing(&world).await?
+            && node.process == serving
+        {
+            tick().await;
+        }
+    }
     phase(root, plan, Phase::UpdatingGuardian)?;
     let (restarting, digest) = (service.clone(), digest.clone());
     tokio::task::spawn_blocking(move || restarting.restart_guardian(&digest)).await??;
     plan.keeper_restarted = true;
     store::save(root, plan)?;
-    let world = WorldDir::under(root);
     loop {
         if let Probe::Running(node) = observing(&world).await?
             && !node.bridge

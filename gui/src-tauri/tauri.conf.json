@@ -51,7 +51,7 @@
       "dangerousInsecureTransportProtocol": true,
       "requireSignedVersion": true,
       "windows": {
-        "installMode": "passive"
+        "installMode": "quiet"
       }
     }
   }

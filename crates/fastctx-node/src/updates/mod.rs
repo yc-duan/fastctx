@@ -7,6 +7,7 @@
 //! (`application`). Everything kept is under `<root>/updates`.
 
 mod application;
+mod doctor;
 mod packages;
 mod retry;
 mod schedule;
@@ -148,6 +149,7 @@ pub(crate) fn start(node: &Arc<Node>) {
     if !fastctx_platform::follows_releases() {
         return;
     }
+    doctor::start(node);
     let node = node.clone();
     tokio::spawn(async move {
         let settled = tokio::time::Instant::now() + Duration::from_secs(90);

@@ -222,29 +222,51 @@ pub fn coordinator(root: &Path, digest: &str) -> PathBuf {
 /// process coordinating it holds the gate for as long as the stable node it
 /// started serves, and that node serves on while the service refuses its
 /// program, as an earlier release's guardian refused one without its own
-/// signature. A newer program offered then ends that coordinator, which by
-/// then only holds the gate, its node, detached from it, going on serving;
-/// and takes the gate, which nothing else ever would. The gate once the
-/// coordinator has let it go; none where no such handover holds it.
+/// signature; an earlier release also left its coordinator holding the gate
+/// after it counted its handover complete. A newer program offered, with no
+/// handover going on (the worker's gate is held by this staging), ends every
+/// coordinator still alive for another program, which by then only holds
+/// the gate, its node, detached from it, going on serving; and takes the
+/// gate, which nothing else ever would. The gate once they have let it go;
+/// none where no such handover holds it.
 fn superseded(root: &Path, entry: &Path, source: &Path) -> anyhow::Result<Option<FileLock>> {
-    let Some(plan) = read(root)? else { return Ok(None) };
-    let stuck = matches!(plan.phase, Phase::AwaitingAdministrator | Phase::Failed)
-        || (plan.phase == Phase::UpdatingGuardian && plan.error.is_some());
+    let plan = read(root)?;
+    let stuck = plan.as_ref().is_none_or(|plan| {
+        matches!(plan.phase, Phase::Complete | Phase::AwaitingAdministrator | Phase::Failed)
+            || (plan.phase == Phase::UpdatingGuardian && plan.error.is_some())
+    });
     if !stuck {
         return Ok(None);
     }
-    let Some(holder) = read_json::<fastctx_types::ProcessIdentity>(&coordinator(root, &plan.candidate.build.digest))?
-    else {
-        return Ok(None);
-    };
-    if !fastctx_platform::is_alive(&holder)? {
-        return Ok(None);
-    }
     let offered = crate::program::inspect(source)?;
-    if !crate::program::newer(&offered, &plan.candidate.build)? {
+    if let Some(plan) = &plan
+        && plan.candidate.build != offered
+        && !crate::program::newer(&offered, &plan.candidate.build)?
+    {
         return Ok(None);
     }
-    fastctx_platform::terminate::terminate(&holder)?;
+    let mut holders = Vec::new();
+    for found in fs::read_dir(directory(root))? {
+        let name = found?.file_name();
+        let Some(digest) = name.to_str().and_then(|name| name.strip_prefix("coordinator-")?.strip_suffix(".json"))
+        else {
+            continue;
+        };
+        if digest == offered.digest {
+            continue;
+        }
+        if let Some(holder) = read_json::<fastctx_types::ProcessIdentity>(&coordinator(root, digest))?
+            && fastctx_platform::is_alive(&holder)?
+        {
+            holders.push(holder);
+        }
+    }
+    if holders.is_empty() {
+        return Ok(None);
+    }
+    for holder in &holders {
+        fastctx_platform::terminate::terminate(holder)?;
+    }
     let began = std::time::Instant::now();
     while began.elapsed() < HANDOVER {
         if let Some(lock) = FileLock::try_acquire(entry)? {
