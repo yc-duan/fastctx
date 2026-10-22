@@ -89,10 +89,12 @@ impl Caller {
             return Ok(town);
         }
         Err(Failure::new(match self {
-            Caller::Resident(address) if !node.is_me(&address.machine) => format!(
-                "name the project: this session's project is known on {}, where it runs; `fastctx project list` lists the projects",
-                address.machine
-            ),
+            // The machine the session lives on is not named: for an agent
+            // assisting another account it is its owner's, which that
+            // account is not told of.
+            Caller::Resident(address) if !node.is_me(&address.machine) => {
+                "name the project: this machine does not know which one this session is in; `fastctx project list` lists the projects".to_string()
+            }
             Caller::Resident(_) => {
                 "this session is not in a project yet; name one (`fastctx project list` lists them)".to_string()
             }
