@@ -212,6 +212,12 @@ impl TownView {
     }
 
     /// Whether `machine` answered.
+    /// Whether `machine` is one of those this view was made of: one the
+    /// caller may use, answered or not.
+    pub fn shows(&self, machine: &MachineName) -> bool {
+        self.machines.iter().any(|state| state.machine() == machine)
+    }
+
     pub fn answered(&self, machine: &MachineName) -> bool {
         self.machines.iter().any(|state| matches!(state, MachineState::Answered(answered) if &answered.name == machine))
     }

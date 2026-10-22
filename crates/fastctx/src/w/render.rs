@@ -83,10 +83,18 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
                             " (left)".into()
                         }
                     }
-                    None if !view.answered(&owner.machine) => " (owner's machine did not answer)".into(),
+                    None if view.shows(&owner.machine) && !view.answered(&owner.machine) => {
+                        " (owner's machine did not answer)".into()
+                    }
                     _ => String::new(),
                 };
-                format!("{}{absence}", person(owner, &job.machine))
+                // A machine the caller cannot use is not named: an assisting
+                // agent's conversation lives on its owner's computer.
+                if view.shows(&owner.machine) {
+                    format!("{}{absence}", person(owner, &job.machine))
+                } else {
+                    format!("{}{absence}", owner.resident)
+                }
             }
             None => job.owner.to_string(),
         };
