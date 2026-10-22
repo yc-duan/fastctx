@@ -56,10 +56,14 @@ impl Device {
                 }
             }
         };
-        if matches!(&target, UploadTarget::Sent { files_on: Some(_), .. }) {
+        if !file.media_type.starts_with("image/") || matches!(&target, UploadTarget::Sent { files_on: Some(_), .. }) {
             match session.link.call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts).await {
                 Ok(Ok(RemoteReply::Facts(facts))) if facts.attachment_places => {}
-                Ok(Ok(_)) => return Err(failed("upgrade the conversation machine to select attachment storage")),
+                Ok(Ok(_)) => {
+                    return Err(failed(
+                        "upgrade the conversation machine to keep files on this account's selected machine",
+                    ));
+                }
                 Ok(Err(error)) => return Err(failed(error)),
                 Err(error) => return Err(failed(error)),
             }

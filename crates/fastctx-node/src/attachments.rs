@@ -202,6 +202,16 @@ async fn relay(
 ) -> Result<Uploaded, Failure> {
     let (link, account) = node.speaking(acting, machine, Purpose::Agents).map_err(failure)?;
     let machine = machine.name.clone();
+    if !file.media_type.starts_with("image/") {
+        match link.call(&machine, &account, Purpose::Look, RemoteCall::Facts).await.map_err(broke)?? {
+            RemoteReply::Facts(facts) if facts.attachment_places => {}
+            _ => {
+                return Err(Failure::not_run(
+                    "upgrade the conversation machine to keep assisted files on this account's machines",
+                ));
+            }
+        }
+    }
     let resumes = composer.is_some() && resumes_there(&link, &machine, &account).await?;
     let size = file.size;
     let source_error = Arc::new(Mutex::new(None));
