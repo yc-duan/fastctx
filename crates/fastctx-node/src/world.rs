@@ -583,6 +583,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         attachment_references: true,
         stats: true,
         mcp: true,
+        mcp_import: true,
         shell: shell(),
         form: Some(form()),
         node_lifetime: Some(Box::new(node.lifetime.clone())),

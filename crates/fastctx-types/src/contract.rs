@@ -102,9 +102,13 @@ impl RemoteCall {
     /// What this call is (`Contract`).
     pub fn contract(&self) -> Contract {
         match self {
-            Self::Mcp { mcp: crate::mcp::MachineCall::Status { .. } | crate::mcp::MachineCall::Found } => {
-                Contract::QUERY
-            }
+            Self::Mcp {
+                mcp:
+                    crate::mcp::MachineCall::Status { .. }
+                    | crate::mcp::MachineCall::Found
+                    | crate::mcp::MachineCall::Candidates
+                    | crate::mcp::MachineCall::ImportRemote { .. },
+            } => Contract::QUERY,
             Self::Mcp { mcp: crate::mcp::MachineCall::Keep { .. } | crate::mcp::MachineCall::Import { .. } } => {
                 Contract::CHANGE
             }
@@ -249,7 +253,10 @@ impl Call {
             | Self::MachineLog { .. }
             | Self::CollabRead { .. }
             | Self::ProfileRead { .. }
-            | Self::Mcp { mcp: McpCall::List | McpCall::Test { .. } | McpCall::Found { .. }, .. }
+            | Self::Mcp {
+                mcp: McpCall::List | McpCall::Test { .. } | McpCall::Found { .. } | McpCall::Candidates { .. },
+                ..
+            }
             | Self::Features { .. }
             | Self::WatchFeatures { .. }
             | Self::WorldNow { .. }

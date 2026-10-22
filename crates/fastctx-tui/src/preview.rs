@@ -373,6 +373,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         case_sensitive: false,
         version: "1.0.0".into(),
         mcp: false,
+        mcp_import: false,
         completion_receipts: false,
         upload_resumes: false,
         attachment_references: false,

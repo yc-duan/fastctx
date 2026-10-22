@@ -298,6 +298,7 @@ fn nodes() -> Vec<NodesReply> {
         case_sensitive: os != "windows",
         version: "fixture-version".into(),
         mcp: true,
+        mcp_import: true,
         completion_receipts: false,
         upload_resumes: false,
         attachment_references: false,

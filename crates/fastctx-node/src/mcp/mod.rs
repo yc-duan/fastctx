@@ -84,7 +84,14 @@ async fn machine_call(
     if view.is_me(machine) {
         return answer(node, &link.membership().id, account, mcp).await;
     }
-    supports(node, link, account, machine).await?;
+    if matches!(mcp, MachineCall::Candidates | MachineCall::ImportRemote { .. }) {
+        match link.call(machine, account, Purpose::Look, RemoteCall::Facts).await.map_err(failed)?? {
+            RemoteReply::Facts(facts) if facts.mcp_import => {}
+            _ => return Err(Failure::not_run(format!("upgrade {machine} to import MCP definitions privately"))),
+        }
+    } else {
+        supports(node, link, account, machine).await?;
+    }
     match link.call(machine, account, Purpose::Hands, RemoteCall::Mcp { mcp }).await.map_err(failed)?? {
         RemoteReply::Mcp { result: reply } => Ok(reply),
         _ => Err(failed(format!("{machine} answered something other than MCP configuration"))),
@@ -194,26 +201,51 @@ pub(crate) async fn call(
             };
             Ok(McpReply::Found { machine, servers })
         }
+        McpCall::Candidates { machine } => {
+            let machine = target(
+                node,
+                &link,
+                &account,
+                machine.or_else(|| Some(Written { name: node.machine(), hub: Some(link.hub_name()) })),
+                session,
+            )?;
+            let MachineReply::Candidates { servers } =
+                machine_call(node, &link, &account, &machine, MachineCall::Candidates).await?
+            else {
+                return Err(failed("the machine did not list private import candidates"));
+            };
+            Ok(McpReply::Candidates { machine, servers })
+        }
         McpCall::Import { machine, source, name, as_name } => {
             fastctx_types::profile::name_of(&as_name).map_err(failed)?;
             let machine = target(node, &link, &account, Some(machine), session)?;
-            let MachineReply::Found { servers } =
-                machine_call(node, &link, &account, &machine, MachineCall::Found).await?
+            let MachineReply::Candidates { servers } =
+                machine_call(node, &link, &account, &machine, MachineCall::Candidates).await?
             else {
-                return Err(failed("the machine did not list import candidates"));
+                return Err(failed("the machine did not list private import candidates"));
             };
             let found = servers
                 .into_iter()
                 .find(|f| f.source == source && f.name == name)
                 .ok_or_else(|| failed("the selected MCP configuration no longer exists"))?;
-            let command = matches!(found.server, FoundServer::Command);
-            profile.profile.servers.insert(
-                as_name.clone(),
-                match found.server {
-                    FoundServer::Command => Entry::Command { machine: machine.clone() },
-                    FoundServer::Remote(remote) => Entry::Remote(remote),
-                },
-            );
+            let command = found.kind == ImportKind::Command;
+            let entry = if command {
+                Entry::Command { machine: machine.clone() }
+            } else {
+                let MachineReply::ImportedRemote { server } = machine_call(
+                    node,
+                    &link,
+                    &account,
+                    &machine,
+                    MachineCall::ImportRemote { source: source.clone(), original: name.clone() },
+                )
+                .await?
+                else {
+                    return Err(failed("the machine did not reread the selected URL server"));
+                };
+                Entry::Remote(server)
+            };
+            profile.profile.servers.insert(as_name.clone(), entry);
             let version = link.profile_write(&account, profile.profile).await.map_err(failed)?;
             if command {
                 machine_call(
@@ -255,9 +287,20 @@ pub(crate) async fn answer(
             store::keep(node, hub, account, name, version, server).await.map_err(failed)?;
             Ok(MachineReply::Kept)
         }
-        MachineCall::Found => Ok(MachineReply::Found {
-            servers: import::candidates(node).map_err(failed)?.into_iter().map(|(found, _)| found).collect(),
-        }),
+        MachineCall::Found => Ok(MachineReply::Found { servers: import::legacy(node).map_err(failed)? }),
+        MachineCall::Candidates => Ok(MachineReply::Candidates { servers: import::metadata(node).map_err(failed)? }),
+        MachineCall::ImportRemote { source, original } => {
+            let server = import::candidates(node)
+                .map_err(failed)?
+                .into_iter()
+                .find(|(found, _)| found.source == source && found.name == original)
+                .map(|(_, server)| server)
+                .ok_or_else(|| failed("the import candidate disappeared"))?;
+            match server {
+                Server::Remote(server) => Ok(MachineReply::ImportedRemote { server }),
+                Server::Command(_) => Err(failed("the selected MCP configuration is no longer a URL server")),
+            }
+        }
         MachineCall::Import { name, version, source, original } => {
             let server = import::candidates(node)
                 .map_err(failed)?
