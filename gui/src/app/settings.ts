@@ -33,6 +33,7 @@ import { formerNames } from "./map-of";
 import { link } from "./places";
 import { inNoNetwork, machinesOf } from "./reach";
 import { RenameField, renamerOf } from "./rename";
+import { hubLine, type HubReach } from "./hub-line";
 
 export interface SettingsOptions {
   store: Store;
@@ -210,9 +211,9 @@ export class SettingsPage implements Page {
     const name = inNoNetwork(world)
       ? `<span${formerly}>${escape(here.written)}</span>`
       : `<a class="settings-link" href="${link({ kind: "machine", name: here.written })}"${formerly}><span>${escape(here.written)}</span>${glyph("chevron", 14)}</a>`;
-    const html = `<dt>${escape(this.options.words.machine)}</dt><dd class="settings-name-value">${name}${
-      renamable ? `<button class="text-button quiet-button" type="button" data-rename>${escape(renaming!.words.rename)}</button>` : ""
-    }</dd>`;
+    const html = `<dt>${escape(this.options.words.machine)}</dt><dd class="settings-name-value">${name}</dd>${
+      renamable ? `<dd class="sd-act"><button class="text-button quiet-button" type="button" data-rename>${escape(renaming!.words.rename)}</button></dd>` : ""
+    }`;
     if (this.name.innerHTML !== html) this.name.innerHTML = html;
   }
 
@@ -242,6 +243,9 @@ export class SettingsPage implements Page {
       cancel: end,
     });
     this.renaming = field;
+    // The field takes the row, its own buttons in place of renaming.
+    this.name.querySelector(".sd-act")?.remove();
+    value.classList.add("sd-wide");
     value.replaceChildren(field.element);
     field.focus();
   }
@@ -296,12 +300,15 @@ export class SettingsPage implements Page {
     const inNetwork = loginsOf(this.options.store.world.peek()?.accounts).length > 0;
     const button =
       kept === false && inNetwork
-        ? `<button class="text-button quiet-button" type="button" data-service="keep" title="${escape(words.keepAsks)}"${this.busy ? " disabled" : ""}>${escape(words.keep)}</button>`
+        ? `<dd class="sd-act"><button class="text-button quiet-button" type="button" data-service="keep" title="${escape(words.keepAsks)}"${this.busy ? " disabled" : ""}>${escape(words.keep)}</button></dd>`
         : "";
     this.service.hidden = false;
-    const old = legacySaid(this.setup?.legacy ?? null, words);
-    this.service.innerHTML = `<dt>${escape(words.service)}</dt><dd><span>${escape(state)}</span>${button}${this.said ? `<p class="settings-said">${escape(this.said)}</p>` : ""}</dd>${
-      old ? `<dt>${escape(words.legacy)}</dt><dd class="settings-legacy">${escape(old)}</dd>` : ""
+    const legacy = this.setup?.legacy ?? null;
+    const old = legacySaid(legacy, words);
+    // What became of an old fastctx in a word, the sentence behind it.
+    const done = legacy?.kind === "unreadable" ? words.legacyUnreadable(legacy.why) : legacy?.waiting ? words.legacyBusy(legacy.waiting) : words.legacyDone;
+    this.service.innerHTML = `<dt>${escape(words.service)}</dt><dd><span${kept ? ` title="${escape(words.serviceWhat)}"` : ""}>${escape(state)}</span>${this.said ? `<p class="settings-said">${escape(this.said)}</p>` : ""}</dd>${button}${
+      old ? `<dt>${escape(words.legacy)}</dt><dd class="settings-legacy"><span title="${escape(old)}">${escape(done)}</span></dd>` : ""
     }`;
   }
 
@@ -327,37 +334,39 @@ export class SettingsPage implements Page {
   }
 
   private drawDevice(world: WorldNow | null, now: Date): void {
-    const { words, store } = this.options;
-    if (!store.live || !world) {
+    const { words } = this.options;
+    if (!world) {
       this.device.innerHTML = `<p class="quiet">${escape(words.notInShell)}</p>`;
       return;
     }
     // How this computer or device reaches each hub it is logged in to, and
-    // as whom.
-    const hubs = world.nodes.hubs.map((hub): [string, string, string] => {
+    // as whom: drawn, the hub's name and the accounts beside the line, the
+    // address and since when said when pointed at.
+    const hubs = world.nodes.hubs.map((hub, index) => {
       const link = hub.link;
-      const linked =
-        link.kind === "alone"
-          ? words.alone
-          : link.kind === "online"
-            ? words.online(link.hub, this.options.ago(new Date(link.since), now))
-            : link.kind === "connecting"
-              ? words.connecting(link.last_error)
-              : link.dissolved
-                ? words.dissolved
-                : words.stopped(link.reason);
+      const label = `<dt>${index === 0 ? escape(words.link) : ""}</dt>`;
+      if (link.kind === "alone") return `${label}<dd>${escape(words.alone)}</dd>`;
+      const reach: HubReach = link.kind === "online" ? "online" : link.kind === "connecting" ? "connecting" : "stopped";
+      const said =
+        link.kind === "online"
+          ? words.online(link.hub, this.options.ago(new Date(link.since), now))
+          : link.kind === "connecting"
+            ? words.connecting(link.last_error)
+            : link.dissolved
+              ? words.dissolved
+              : words.stopped(link.reason);
       const why = link.kind === "connecting" ? (link.last_error ?? "") : link.kind === "stopped" ? link.reason : "";
-      return [words.hub(hub.name), [linked, words.as(hub.logins.join(", "))].filter(Boolean).join(" "), why];
+      const logins = hub.logins.join(", ");
+      const pointed = [said, words.as(logins), why].filter(Boolean).join("\n");
+      return `${label}<dd class="sd-hub" title="${escape(pointed)}">${hubLine(reach, hub.name)}<span class="sd-hub-name">${escape(hub.name)}</span>${
+        reach === "online" ? "" : `<span class="sd-state">${escape(said)}</span>`
+      }${logins ? `<span class="sd-login">${glyph("person", 14)}<span>${escape(logins)}</span></span>` : ""}</dd>`;
     });
     // The version is said once, by the local service's own row below; a
     // computer's name has its own row above.
-    const facts: [string, string, string?][] = [
-      ...(this.options.phone ? [[words.phoneName, world.here] as [string, string]] : []),
-      ...(hubs.length ? hubs : [[words.link, words.alone] as [string, string]]),
-    ];
-    this.device.innerHTML = facts
-      .filter(([, value]) => value)
-      .map(([name, value, why]) => `<dt>${escape(name)}</dt><dd${why ? ` title="${escape(why)}"` : ""}>${escape(value)}</dd>`)
-      .join("");
+    this.device.innerHTML = [
+      ...(this.options.phone ? [`<dt>${escape(words.phoneName)}</dt><dd>${escape(world.here)}</dd>`] : []),
+      ...(hubs.length ? hubs : [`<dt>${escape(words.link)}</dt><dd>${escape(words.alone)}</dd>`]),
+    ].join("");
   }
 }

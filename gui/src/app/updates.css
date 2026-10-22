@@ -185,20 +185,6 @@
   margin: var(--space-3) 0 0 calc(-1 * var(--space-3));
 }
 
-/* The settings' one line of it: what to know beside the version. */
-.update-line-said {
-  color: var(--text-2);
-  font-variant-numeric: tabular-nums;
-}
-
-.update-line-said.settings-warn {
-  color: var(--accent);
-}
-
-.update-line-said.settings-wrong {
-  color: var(--wrong);
-}
-
 .update-bar {
   flex: 1;
   height: 8px;

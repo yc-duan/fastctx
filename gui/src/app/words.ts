@@ -392,6 +392,8 @@ export interface SettingsWords {
   data: string;
   dataOpen: string;
   proxy: string;
+  /** The proxy's label among this computer's facts. */
+  proxyShort: string;
   proxyWhat: string;
   proxySystem: string;
   proxyChange: string;
@@ -465,6 +467,8 @@ export interface SettingsWords {
   phoneVendor: Record<"honor" | "xiaomi" | "other", string[]>;
   phoneOpenApp: string;
   serviceOn: string;
+  /** What a startup service does, when its state is pointed at. */
+  serviceWhat: string;
   serviceOff: string;
   keep: string;
   keepAsks: string;
@@ -473,6 +477,9 @@ export interface SettingsWords {
   legacy: string;
   legacyCleaned(tidied: number, archived: number, place: string, waiting: number): string;
   legacyUnreadable(why: string): string;
+  /** What became of an old fastctx, in a word; the sentence is said when pointed at. */
+  legacyDone: string;
+  legacyBusy(waiting: number): string;
 }
 
 export const zhSettings: SettingsWords = {
@@ -495,6 +502,7 @@ export const zhSettings: SettingsWords = {
   data: "本机数据",
   dataOpen: "查看与管理",
   proxy: "连中枢的代理",
+  proxyShort: "代理",
   proxyWhat: "这台电脑要经 HTTP 代理才连得上中枢服务器时填，比如 http://127.0.0.1:7890；清空就跟随系统",
   proxySystem: "跟随系统",
   proxyChange: "修改",
@@ -573,7 +581,8 @@ export const zhSettings: SettingsWords = {
     other: [],
   },
   phoneOpenApp: "应用详情",
-  serviceOn: "已开启，断网后自动重连",
+  serviceOn: "已开启",
+  serviceWhat: "断网后自动重连",
   serviceOff: "未开启",
   keep: "开启",
   keepAsks: "需要管理员确认",
@@ -590,6 +599,8 @@ export const zhSettings: SettingsWords = {
   legacyCleaned: (tidied, archived, place, waiting) =>
     `已清理 ${tidied} 项，归档 ${archived} 项到 ${place}${waiting > 0 ? `，${waiting} 项使用中` : ""}`,
   legacyUnreadable: () => "无法读取清理记录",
+  legacyDone: "已整理",
+  legacyBusy: (waiting) => `${waiting} 项在用`,
 };
 
 export const enSettings: SettingsWords = {
@@ -609,9 +620,10 @@ export const enSettings: SettingsWords = {
   notifyOn: "Notify when waiting or replied",
   notifyOff: "Off",
   retention: "Keep command output",
-  data: "Data on this computer",
+  data: "Data",
   dataOpen: "View and manage",
   proxy: "Proxy to the hub",
+  proxyShort: "Proxy",
   proxyWhat: "Where this computer reaches the hub only through an HTTP proxy, as http://127.0.0.1:7890; emptied, the system's settings again",
   proxySystem: "The system's",
   proxyChange: "Change",
@@ -630,7 +642,7 @@ export const enSettings: SettingsWords = {
   sizeDefault: "Default",
   sizes: { "14": "Small", "15": "Standard", "16": "Large", "17": "Extra large" },
   device: "This device",
-  machine: "Machine name",
+  machine: "Name",
   phoneName: "Phone name",
   alone: "Not in a network",
   link: "Hub",
@@ -690,7 +702,8 @@ export const enSettings: SettingsWords = {
     other: [],
   },
   phoneOpenApp: "App details",
-  serviceOn: "On; reconnects automatically",
+  serviceOn: "On",
+  serviceWhat: "Reconnects by itself after the network drops",
   serviceOff: "Off",
   keep: "Turn on",
   keepAsks: "Needs administrator approval",
@@ -707,6 +720,8 @@ export const enSettings: SettingsWords = {
   legacyCleaned: (tidied, archived, place, waiting) =>
     `Cleaned ${tidied}, archived ${archived} to ${place}${waiting > 0 ? `, ${waiting} in use` : ""}`,
   legacyUnreadable: () => "Couldn't read the cleanup record",
+  legacyDone: "Tidied",
+  legacyBusy: (waiting) => `${waiting} in use`,
 };
 
 export interface ReaderWordsSet {
