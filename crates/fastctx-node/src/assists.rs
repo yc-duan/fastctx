@@ -41,7 +41,8 @@ pub(crate) fn may_turn(node: &Node, id: &fastctx_types::ResidentId, about: &Abou
         if view.logged_in(&here, &account.account) {
             return Ok(());
         }
-        if view.may_use_login(&account.account, &here, &about.host.agent, about.home.as_deref()) {
+        if crate::homes::may_use_login(node, &view, &account.account, &here, &about.host.agent, about.home.as_deref())?
+        {
             if assisting(node, &about.acting) {
                 host::require(node, id)?;
             }

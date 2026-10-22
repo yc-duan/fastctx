@@ -185,7 +185,7 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
     // Of another's machine, an account its agents' logins assist uses
     // those logins alone (`world-network.md`, 共享机器与智能体协助).
     let login = |agent: &fastctx_types::AgentName, home: Option<&std::path::Path>| {
-        if hands || view.may_use_login(&caller.account, &here, agent, home) {
+        if hands || crate::homes::may_use_login(node, &view, &caller.account, &here, agent, home)? {
             return Ok(());
         }
         let login = home.map(|home| home.display().to_string()).unwrap_or_else(|| "default".to_string());

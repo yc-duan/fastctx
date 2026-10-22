@@ -73,14 +73,14 @@ impl UsedUp {
     }
 }
 
-fn assistance(node: &Node, about: &About, account: &HubAccount) -> Option<Assist> {
-    let link = node.link_of(&account.hub)?;
+fn assistance(node: &Node, about: &About, account: &HubAccount) -> Result<Option<Assist>, fastctx_types::ipc::Failure> {
+    let Some(link) = node.link_of(&account.hub) else { return Ok(None) };
     let view = link.view();
-    let here = view.me()?.name.clone();
+    let Some(here) = view.me().map(|member| member.name.clone()) else { return Ok(None) };
     if view.logged_in(&here, &account.account) || view.rights(&account.account, &here).hands {
-        return None;
+        return Ok(None);
     }
-    view.assisting(&account.account, &here).find(|assist| assist.is(&about.host.agent, about.home.as_deref())).cloned()
+    crate::homes::assistance(node, &view, &account.account, &here, &about.host.agent, about.home.as_deref())
 }
 
 pub(super) fn login(node: &Node, about: &About) -> Option<PathBuf> {
@@ -94,7 +94,13 @@ pub(super) fn login(node: &Node, about: &About) -> Option<PathBuf> {
 /// With a model, considers only restrictions on that next request. Without one,
 /// prefers an all-model hold; its expiry will expose any remaining Fable hold.
 pub(crate) fn used_up(node: &Node, about: &About, account: &HubAccount, model: Option<&str>) -> Option<UsedUp> {
-    let assist = assistance(node, about, account)?;
+    let assist = match assistance(node, about, account) {
+        Ok(assist) => assist?,
+        Err(error) => {
+            node.log.line(format_args!("identifying the conversation's assistance: {error}"));
+            return Some(UsedUp::Unavailable);
+        }
+    };
     let agent = about.host.agent.as_str();
     if assist.five_hour.is_none() && (agent != "claude" || (assist.weekly.is_none() && assist.daily.is_none())) {
         return None;

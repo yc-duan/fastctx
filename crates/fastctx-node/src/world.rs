@@ -652,6 +652,10 @@ struct Handler {
 }
 
 impl fastctx_net::link::Node for Handler {
+    fn login_homes(&self, agent: &fastctx_types::AgentName) -> Result<Vec<(std::path::PathBuf, bool)>, String> {
+        let node = self.node.upgrade().ok_or("the node is stopping")?;
+        crate::logins::identities(&node, agent).map_err(|error| error.message)
+    }
     fn place(
         &self,
         machine: &MachineName,

@@ -91,13 +91,49 @@ pub(crate) fn listed(node: &Node, agent: &str, dir: Option<&Path>) -> Result<Opt
     crate::logins::listed(node, agent, dir)
 }
 
-/// Whether an existing session's login may still be used: one born in
-/// another login than the default needs that login still listed, and its
-/// directory still there.
-pub(crate) fn available(node: &Node, about: &fastctx_types::residents::About) -> Result<(), Failure> {
-    if let Some(dir) = &about.home {
-        listed(node, about.host.agent.as_str(), Some(dir))?;
+pub(crate) fn canonical(node: &Node, agent: &str, home: Option<&Path>) -> Result<Option<PathBuf>, Failure> {
+    let Some(home) = home else { return Ok(None) };
+    let context = crate::logins::Context::of(node)?;
+    Ok((!same_dir(home, context.default_of(agent))).then(|| home.to_path_buf()))
+}
+
+pub(crate) fn assistance(
+    node: &Node,
+    view: &fastctx_net::directory::Directory,
+    account: &fastctx_types::AccountName,
+    machine: &fastctx_types::MachineName,
+    agent: &fastctx_types::AgentName,
+    home: Option<&Path>,
+) -> Result<Option<fastctx_net::directory::Assist>, Failure> {
+    let home = canonical(node, agent.as_str(), home)?;
+    for assist in view.assisting(account, machine) {
+        if assist.agent == *agent && canonical(node, agent.as_str(), assist.home.as_deref())? == home {
+            return Ok(Some(assist.clone()));
+        }
     }
+    Ok(None)
+}
+
+pub(crate) fn may_use_login(
+    node: &Node,
+    view: &fastctx_net::directory::Directory,
+    account: &fastctx_types::AccountName,
+    machine: &fastctx_types::MachineName,
+    agent: &fastctx_types::AgentName,
+    home: Option<&Path>,
+) -> Result<bool, Failure> {
+    let Some(member) = view.member(machine) else { return Ok(false) };
+    if member.managed || view.account(account).is_none_or(|account| account.locked) {
+        return Ok(false);
+    }
+    Ok(view.rights(account, machine).hands
+        || (!member.home.as_ref().is_some_and(|owner| view.is_visitor(owner))
+            && assistance(node, view, account, machine, agent, home)?.is_some()))
+}
+
+/// Every existing session needs its login still listed and its directory present.
+pub(crate) fn available(node: &Node, about: &fastctx_types::residents::About) -> Result<(), Failure> {
+    listed(node, about.host.agent.as_str(), about.home.as_deref())?;
     Ok(())
 }
 

@@ -23,8 +23,8 @@ mod program;
 pub(crate) mod refresh;
 pub(crate) mod remote;
 pub(crate) mod scan;
-pub(crate) mod watch;
 mod sign_in;
+pub(crate) mod watch;
 
 use fastctx_types::access::Written;
 use std::collections::HashSet;
@@ -103,6 +103,21 @@ impl Context {
     pub(crate) fn default_of(&self, agent: &str) -> &Path {
         if agent == "codex" { &self.codex_default } else { &self.claude_default }
     }
+}
+
+/// Known identities without credential probes or a system-directory scan.
+pub(crate) fn identities(node: &Node, agent: &AgentName) -> Result<Vec<(PathBuf, bool)>, Failure> {
+    host(agent.as_str())?;
+    let context = Context::of(node)?;
+    let kept = kept::read(node).map_err(|error| Failure::new(error.to_string()))?;
+    let default = context.default_of(agent.as_str());
+    Ok(dirs(node, &context, &kept, agent.as_str())?
+        .into_iter()
+        .map(|(dir, _)| {
+            let is_default = crate::homes::same_dir(&dir, default);
+            (dir, is_default)
+        })
+        .collect())
 }
 
 /// The record of this machine's logins, each login whose sign-in changed

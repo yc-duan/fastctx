@@ -265,6 +265,7 @@ async fn fork(
     let (source, town) = node.residents.about(parent).ok_or_else(|| Failure::new("unknown source resident"))?;
 
     let id = node.residents.new_id(&source.host.agent)?;
+    crate::assists::host::inherit(node, codex.assisted_cwd().is_some(), &id)?;
     crate::session_options::keep(node, &id, &crate::session_options::read(node, parent)?)?;
     crate::focus::open(node, &node.world.conversation(&id), &source.acting, &source.focus).await?;
     let (spec, heard) =
