@@ -163,14 +163,18 @@ impl Jobs {
         // The machines the script names after `on` are reached for whom the
         // job works: its resident here, or the account a resident of
         // another machine sent it for. A page's acts are its own.
-        let acting = match owner.resident() {
-            Some(address) if node.is_me(&address.machine) => {
-                node.residents.about(&address.resident).map(|(about, _)| about.acting)
+        let acting = if let fastctx_types::run::JobOwner::Page { page } = &owner {
+            Some(crate::pages::identity::acting(node, page)?)
+        } else {
+            match owner.resident() {
+                Some(address) if node.is_me(&address.machine) => {
+                    node.residents.about(&address.resident).map(|(about, _)| about.acting)
+                }
+                Some(_) => account
+                    .as_ref()
+                    .map(|account| fastctx_types::access::Acting::one(account.hub.clone(), account.account.clone())),
+                None => None,
             }
-            Some(_) => account
-                .as_ref()
-                .map(|account| fastctx_types::access::Acting::one(account.hub.clone(), account.account.clone())),
-            None => None,
         };
         if let Some(acting) = &acting {
             crate::here::check_named(node, acting, &request.script)?;

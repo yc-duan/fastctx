@@ -494,7 +494,8 @@ pub fn command_peer() -> Peer {
     if let Some(page) = std::env::var_os("FASTCTX_PAGE") {
         let page = page.to_str().expect("FASTCTX_PAGE must be UTF-8");
         let page = serde_json::from_str(page).expect("FASTCTX_PAGE must hold the page identity stamped by the node");
-        return Peer::Page { page };
+        let job = std::env::var("FASTCTX_JOB").ok().and_then(|job| job.parse().ok());
+        return Peer::Page { page, job };
     }
     let resident = std::env::var("FASTCTX_RESIDENT").ok().and_then(|address| address.parse().ok());
     let set = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());

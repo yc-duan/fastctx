@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
-use fastctx_types::pages::{PageInvocation, PageResult, PageSource};
+use fastctx_types::pages::{PageConsent, PageIdentity, PageInvocation, PageResult, PageSource};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::residents::{Delivery, Notice};
 use fastctx_types::session::Speaker;
@@ -22,12 +22,13 @@ use crate::town::caller::Caller;
 pub async fn relay(
     node: &Arc<Node>,
     opened_on: &MachineName,
+    identity: PageIdentity,
     town: TownName,
     page: PageName,
     version: u32,
     action: PageInvocation,
 ) -> Result<PageResult, Failure> {
-    let source = admitted(node, town, page, version, &action, opened_on.clone()).await?;
+    let source = admitted(node, identity, town, page, version, &action, opened_on.clone()).await?;
     let target = match &action {
         PageInvocation::Run { machine, .. } => machine.clone(),
         PageInvocation::Say { to, .. } => to.machine.clone(),
@@ -39,8 +40,17 @@ pub async fn relay(
     }
     // The remote request is issued only after this node's gate, signed as
     // this machine. Devices cannot submit this internal execution call.
+    let acting = super::identity::acting(node, &source)?;
+    match node
+        .call(&acting, &target, Purpose::Look, RemoteCall::Facts)
+        .await
+        .map_err(|e| Failure::new(e.to_string()))??
+    {
+        RemoteReply::Facts(facts) if facts.page_accounts => {}
+        _ => return Err(Failure::not_run(format!("upgrade {target} to execute pages for their consenting account"))),
+    }
     let call = RemoteCall::PageAction { source, action };
-    match node.call(&Acting::Here, &target, Purpose::Hands, call).await.map_err(|e| Failure::new(e.to_string()))?? {
+    match node.call(&acting, &target, call.purpose(), call).await.map_err(|e| Failure::new(e.to_string()))?? {
         RemoteReply::PageAction { result } => Ok(result),
         _ => Err(Failure::new(format!("{target} answered something other than a page action"))),
     }
@@ -52,6 +62,7 @@ pub async fn relay(
 /// what the action runs as, from that publication.
 async fn admitted(
     node: &Arc<Node>,
+    identity: PageIdentity,
     town: TownName,
     page: PageName,
     version: u32,
@@ -73,60 +84,80 @@ async fn admitted(
     if !publication.acts.contains(&act) {
         return Err(Failure::new(format!("page {page} version {version} did not declare this action")));
     }
-    if !stored.consent.as_ref().is_some_and(|consent| consent.acts.contains(&act)) {
-        return Err(Failure::new(format!("the user has not consented to this action by page {page}")));
-    }
-    // The user agrees on some machine, which writes it down for them; what
-    // it wrote counts only as far as that machine could do it itself, as a
-    // member that could only write in the project could write anything.
-    let by = stored.consent_by.clone().ok_or_else(|| Failure::new(format!("page {page}'s consent has no writer")))?;
-    consenter_may(node, &by, action, &town)?;
-    Ok(PageSource { town, page, version, by: Box::new(publication.by.clone()), on: publication.on.clone(), opened_on })
+    let (consent, by) = stored
+        .consents
+        .get(&identity)
+        .filter(|(consent, _)| consent.acts.contains(&act))
+        .ok_or_else(|| Failure::refused(format!("this account has not consented to this action by page {page}")))?;
+    consenter_may(node, &identity, by, consent, action, &town)?;
+    let source = PageSource {
+        identity: Some(identity),
+        town,
+        page,
+        version,
+        by: Box::new(publication.by.clone()),
+        on: publication.on.clone(),
+        opened_on,
+    };
+    super::identity::acting(node, &source)?;
+    Ok(source)
 }
 
 /// Whether the member `by`, which wrote the user's consent, could do
 /// `action` itself, for an account of its that may use `town`.
-fn consenter_may(node: &Node, by: &MachineName, action: &PageInvocation, town: &TownName) -> Result<(), Failure> {
-    let place = crate::ledger::names::place(&node.world, town)
-        .map_err(|error| Failure::new(format!("reading {town}: {error}")))?
-        .ok_or_else(|| Failure::new(format!("there is no project {town} on {}", node.machine())))?;
-    // A project kept on no hub is this computer's own, consented to here.
-    let Some(link) = node.link_of(&place.hub) else {
-        return if node.is_me(by) {
+fn consenter_may(
+    node: &Node,
+    identity: &PageIdentity,
+    by: &MachineName,
+    consent: &PageConsent,
+    action: &PageInvocation,
+    town: &TownName,
+) -> Result<(), Failure> {
+    let PageIdentity::Account { hub, account } = identity else {
+        return if node.is_me(by) && node.is_me(&consent.stamp.on) {
             Ok(())
         } else {
-            Err(Failure::new(format!("the consent was written by {by}, and {town} is kept on this computer alone")))
+            Err(Failure::refused("local page consent was not given here"))
         };
     };
+    let place = crate::ledger::names::place(&node.world, town)
+        .map_err(|error| Failure::new(error.to_string()))?
+        .ok_or_else(|| Failure::refused("the page's project is absent"))?;
+    let link = node.link_of(hub).ok_or_else(|| Failure::refused("the page's hub is not connected"))?;
     let view = link.view();
-    if view.member(by).is_none() {
-        return Err(Failure::new(format!("the consent was written by {by}, which is not a member any more")));
-    }
-    let accounts: Vec<_> =
-        view.acts_for(by).into_iter().filter(|account| view.in_project(account, &place.town)).collect();
-    if accounts.is_empty() {
-        return Err(Failure::new(format!("the consent was written by {by}, which works for no account of {town}")));
+    if place.hub != *hub
+        || view.account(account).is_none_or(|account| account.locked)
+        || !view.in_project(account, &place.town)
+        || !view.may_act_for(account, by)
+        || !view.logged_in(&consent.stamp.on, account)
+    {
+        return Err(Failure::refused("the account's page consent is no longer authorized"));
     }
     let (target, purpose) = match action {
         PageInvocation::Run { machine, .. } => (machine, Purpose::Hands),
         PageInvocation::Say { to, .. } => (&to.machine, Purpose::Words),
         PageInvocation::Journal { .. } => return Ok(()),
     };
-    let refusals: Vec<String> =
-        accounts.iter().filter_map(|account| view.admits(by, account, target, purpose).err()).collect();
-    if refusals.len() < accounts.len() {
-        return Ok(());
-    }
-    Err(Failure::new(format!(
-        "the consent was written by {by}, and {by} may not do this itself: {}",
-        refusals.join("; ")
-    )))
+    view.admits(&view.me, account, target, purpose).map_err(Failure::refused)
 }
 
 /// A page action another machine relayed here: done once this machine has
 /// admitted it itself.
-pub async fn answer(node: &Arc<Node>, source: PageSource, action: PageInvocation) -> Result<PageResult, Failure> {
-    let source = admitted(node, source.town, source.page, source.version, &action, source.opened_on).await?;
+pub async fn answer(
+    node: &Arc<Node>,
+    asker: &crate::admission::Asker,
+    source: PageSource,
+    action: PageInvocation,
+) -> Result<PageResult, Failure> {
+    let identity = source
+        .identity
+        .ok_or_else(|| Failure::refused("upgrade the sending Fastctx and consent to this page again"))?;
+    if super::identity::account(&identity)
+        != Some(fastctx_types::access::HubAccount { hub: asker.hub.clone(), account: asker.account.clone() })
+    {
+        return Err(Failure::refused("the page action's account differs from its sender"));
+    }
+    let source = admitted(node, identity, source.town, source.page, source.version, &action, source.opened_on).await?;
     execute(node, source, action).await
 }
 
@@ -140,10 +171,11 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
                 return Err(Failure::new(format!("this command is for {machine}, not {}", node.machine())));
             }
             let town = Some(source.town.clone());
+            let account = source.identity.as_ref().and_then(super::identity::account);
             let owner = fastctx_types::run::JobOwner::Page { page: source };
             let request =
                 fastctx_types::run::RunRequest { call_id: None, script, cwd: None, writes_off: false, wait: None };
-            let (reply, _) = node.jobs.run(node, owner, town, request, None).await?;
+            let (reply, _) = node.jobs.run(node, owner, town, request, account).await?;
             Ok(PageResult::Run(Box::new(reply)))
         }
         PageInvocation::Say { to, text } => {
@@ -152,6 +184,14 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
                 return Err(Failure::new("the page's recipient lives on another machine"));
             }
             resident(node, &source.town, &to).await?;
+            if let Some(account) = source.identity.as_ref().and_then(super::identity::account)
+                && !node
+                    .residents
+                    .about(&to.resident)
+                    .is_some_and(|(about, _)| node.serves(&about.acting, &account.hub, &account.account))
+            {
+                return Err(Failure::refused("the page's recipient does not work for its account"));
+            }
             let mut bytes = [0u8; 16];
             getrandom::fill(&mut bytes).map_err(|e| Failure::new(e.to_string()))?;
             let suffix: String = bytes.iter().map(|b| format!("{b:02x}")).collect();

@@ -5,16 +5,15 @@ use std::collections::BTreeMap;
 use std::io;
 
 use fastctx_types::layout::WorldDir;
-use fastctx_types::pages::{PageConsent, PageSummary, PageVersion, PageView, consent_path, html_path, version_path};
+use fastctx_types::pages::{
+    PageConsent, PageIdentity, PageSummary, PageVersion, PageView, account_consent_path, html_path, version_path,
+};
 use fastctx_types::{PageName, TownName};
 
 #[derive(Default)]
 pub struct Page {
     pub versions: BTreeMap<u32, (PageVersion, Option<String>)>,
-    pub consent: Option<PageConsent>,
-    /// The machine whose entry holds the consent: what the user agreed to
-    /// counts only as far as that machine could do it.
-    pub consent_by: Option<fastctx_types::MachineName>,
+    pub consents: BTreeMap<PageIdentity, (PageConsent, fastctx_types::MachineName)>,
 }
 
 /// Every page of `town`, from its entries. A file that is not a well-formed
@@ -43,18 +42,18 @@ pub fn all(world: &WorldDir, town: &TownName) -> io::Result<BTreeMap<PageName, P
                     };
                     pages.entry(name).or_default().versions.insert(version.version, (version, html));
                 }
-                ["pages", name, "consent", _] => {
+                ["pages", name, "consent", _, _] => {
                     let Ok(name) = name.parse::<PageName>() else { continue };
                     let Ok(consent) = serde_json::from_slice::<PageConsent>(&file.bytes.0) else { continue };
-                    if file.path != consent_path(&name, consent.version)
+                    let Some(identity) = consent.identity.clone() else { continue };
+                    if file.path != account_consent_path(&name, &identity, consent.version)
                         || consent.stamp.by != fastctx_types::project::Writer::User
                     {
                         continue;
                     }
                     let page = pages.entry(name).or_default();
-                    if page.consent.as_ref().is_none_or(|old| old.version < consent.version) {
-                        page.consent = Some(consent);
-                        page.consent_by = Some(entry.author.clone());
+                    if page.consents.get(&identity).is_none_or(|(old, _)| old.version < consent.version) {
+                        page.consents.insert(identity, (consent, entry.author.clone()));
                     }
                 }
                 _ => {}
@@ -80,7 +79,13 @@ impl Page {
         self.versions.last_key_value().map(|(_, (v, _))| v)
     }
 
-    pub fn view(&self, town: &TownName, page: &PageName, version: Option<u32>) -> Result<PageView, String> {
+    pub fn view(
+        &self,
+        town: &TownName,
+        page: &PageName,
+        version: Option<u32>,
+        identity: Option<&PageIdentity>,
+    ) -> Result<PageView, String> {
         let found = match version {
             Some(version) => self.versions.get(&version),
             None => self.versions.last_key_value().map(|(_, version)| version),
@@ -93,7 +98,7 @@ impl Page {
             page: page.clone(),
             publication: found.0.clone(),
             html: found.1.clone(),
-            consent: self.consent.clone(),
+            consent: identity.and_then(|identity| self.consents.get(identity)).map(|(consent, _)| consent.clone()),
         })
     }
 }

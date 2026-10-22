@@ -299,6 +299,7 @@ fn nodes() -> Vec<NodesReply> {
         version: "fixture-version".into(),
         mcp: true,
         mcp_import: true,
+        page_accounts: true,
         completion_receipts: false,
         upload_resumes: false,
         attachment_references: false,

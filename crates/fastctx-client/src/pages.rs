@@ -19,7 +19,18 @@ impl World {
     }
 
     pub async fn page(&self, town: Option<TownName>, page: PageName, version: Option<u32>) -> Result<PageView, Error> {
-        self.page_view(PageCall::Read { town, page, version }).await
+        self.page_as(town, page, version, None).await
+    }
+
+    pub async fn page_as(
+        &self,
+        town: Option<TownName>,
+        page: PageName,
+        version: Option<u32>,
+        account: Option<fastctx_types::AccountName>,
+    ) -> Result<PageView, Error> {
+        self.require_page_accounts().await?;
+        self.page_view(PageCall::Read { town, page, version, account }).await
     }
 
     pub async fn pages(&self, town: Option<TownName>) -> Result<Vec<PageSummary>, Error> {
@@ -60,7 +71,20 @@ impl World {
         base: Option<u32>,
         acts: Vec<PageAct>,
     ) -> Result<PageConsent, Error> {
-        match self.call(Call::Page(PageCall::Consent { town, page, version, base, acts })).await?.0 {
+        self.consent_page_as(town, page, version, base, acts, None).await
+    }
+
+    pub async fn consent_page_as(
+        &self,
+        town: Option<TownName>,
+        page: PageName,
+        version: u32,
+        base: Option<u32>,
+        acts: Vec<PageAct>,
+        account: Option<fastctx_types::AccountName>,
+    ) -> Result<PageConsent, Error> {
+        self.require_page_accounts().await?;
+        match self.call(Call::Page(PageCall::Consent { town, page, version, base, acts, account })).await?.0 {
             Reply::PageConsent { consent, .. } => Ok(consent),
             other => Err(unexpected(other)),
         }
@@ -73,9 +97,31 @@ impl World {
         version: u32,
         action: PageInvocation,
     ) -> Result<PageResult, Error> {
-        match self.call(Call::Page(PageCall::Act { town, page, version, action })).await?.0 {
+        self.act_page_as(town, page, version, action, None).await
+    }
+
+    pub async fn act_page_as(
+        &self,
+        town: Option<TownName>,
+        page: PageName,
+        version: u32,
+        action: PageInvocation,
+        account: Option<fastctx_types::AccountName>,
+    ) -> Result<PageResult, Error> {
+        self.require_page_accounts().await?;
+        match self.call(Call::Page(PageCall::Act { town, page, version, action, account })).await?.0 {
             Reply::PageAct { result } => Ok(result),
             other => Err(unexpected(other)),
+        }
+    }
+
+    async fn require_page_accounts(&self) -> Result<(), Error> {
+        if self.device().is_some() {
+            return Ok(());
+        }
+        match self.call(Call::Nodes).await?.0 {
+            Reply::Nodes(nodes) if nodes.facts.as_ref().is_some_and(|facts| facts.page_accounts) => Ok(()),
+            _ => Err(Error::Unexpected("upgrade the local Fastctx to keep page consent by account".into())),
         }
     }
 

@@ -584,6 +584,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         stats: true,
         mcp: true,
         mcp_import: true,
+        page_accounts: true,
         shell: shell(),
         form: Some(form()),
         node_lifetime: Some(Box::new(node.lifetime.clone())),
@@ -749,9 +750,11 @@ impl fastctx_net::link::Node for Handler {
                     let stream = stream.ok_or_else(|| Failure::new("MCP requires a data connection"))?;
                     crate::mcp::serve(&node, &hub, &caller.account, &name, stream).await.map(|()| RemoteReply::Set)
                 }
-                RemoteCall::PageAction { source, action } => crate::pages::actions::answer(&node, source, action)
-                    .await
-                    .map(|result| RemoteReply::PageAction { result }),
+                RemoteCall::PageAction { source, action } => {
+                    crate::pages::actions::answer(&node, &asker, source, action)
+                        .await
+                        .map(|result| RemoteReply::PageAction { result })
+                }
                 RemoteCall::Relay { made } => crate::devices::relay(&node, &asker, made).await,
                 // A resident of the calling machine works here (`world-run.md`,
                 // 这里).

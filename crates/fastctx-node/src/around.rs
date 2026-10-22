@@ -86,6 +86,9 @@ pub(crate) fn acting_of(node: &Node, caller: &crate::town::caller::Caller) -> Ac
         crate::town::caller::Caller::Resident(address) => {
             Acting::Accounts { accounts: crate::jobs::running_for(&node.world, &node.names(), address) }
         }
+        crate::town::caller::Caller::Page(page) => {
+            crate::pages::identity::acting(node, page).unwrap_or_else(|_| Acting::Accounts { accounts: Vec::new() })
+        }
         _ => Acting::Here,
     }
 }

@@ -487,6 +487,30 @@ impl Device {
         let mut asked = false;
         for session in self.sessions() {
             for (machine, account) in actors(&session) {
+                if let Call::Page(page) = &call {
+                    if page.account().is_some_and(|selected| selected != &account) {
+                        continue;
+                    }
+                    match session
+                        .link
+                        .call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts)
+                        .await
+                    {
+                        Ok(Ok(RemoteReply::Facts(facts))) if facts.page_accounts => {}
+                        Ok(Ok(_)) => {
+                            unanswered.push(format!("upgrade {machine} to keep page consent by account"));
+                            continue;
+                        }
+                        Ok(Err(error)) => {
+                            unanswered.push(error.to_string());
+                            continue;
+                        }
+                        Err(error) => {
+                            unanswered.push(error.to_string());
+                            continue;
+                        }
+                    }
+                }
                 asked = true;
                 // Heartbeats establish connection liveness, not a deadline
                 // for completing a query or transferring its answer. Only a
@@ -506,7 +530,7 @@ impl Device {
                 }
             }
         }
-        if !asked {
+        if !asked && unanswered.is_empty() {
             return Err(failed(
                 "no machine that may act for this device's accounts is online; a device cannot read a project's ledger itself",
             ));
