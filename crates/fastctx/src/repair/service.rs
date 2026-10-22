@@ -19,6 +19,18 @@ pub(super) fn run(
     }
     let service =
         fastctx_install::service::Service::new(fastctx_install::service::Kind::Node, store::installed(root), root);
+    let mut waiting = std::time::Instant::now();
+    while fastctx_platform::FileLock::try_acquire(&store::directory(root).join("worker.lock"))?.is_none() {
+        if store::read(root)?.is_some_and(|p| p.phase == fastctx_types::renewal::Phase::WaitingForIdle) {
+            waiting = std::time::Instant::now();
+        }
+        anyhow::ensure!(
+            waiting.elapsed() < Duration::from_secs(600),
+            "renewal worker for {} did not finish its service step in ten minutes",
+            root.display()
+        );
+        std::thread::sleep(Duration::from_millis(250));
+    }
     let status = service.status();
     let definition = service.definition_current();
     let guardian = service.guardian_current(&build.digest);
@@ -43,6 +55,20 @@ pub(super) fn run(
         Ok(status) => format!("{} (state {}, enabled {})", status.name, status.state, status.enabled),
         Err(error) => format!("registration for {} (inspection failed: {error:#})", root.display()),
     };
+    let mut adopted = false;
+    if cfg!(windows)
+        && definition.as_ref().is_ok_and(|v| *v)
+        && status.as_ref().is_ok_and(|s| {
+            s.installed && s.enabled && s.state == "running" && s.recovery.as_ref().is_some_and(|r| r.enabled)
+        })
+        && !guardian.as_ref().is_ok_and(|v| *v)
+    {
+        journal.action(format!("ask the signed guardian to adopt {}", build.version))?;
+        match service.adopt_guardian(&build.digest) {
+            Ok(taken) => adopted = taken,
+            Err(error) => journal.action(format!("guardian adoption did not complete: {error:#}"))?,
+        }
+    }
     let disruptive = !definition.as_ref().is_ok_and(|v| *v) || !guardian.as_ref().is_ok_and(|v| *v);
     // Installation verifies ownership again and recovers unfinished manager
     // transactions. An inspection failure is retained, never called absent.
@@ -72,6 +98,12 @@ pub(super) fn run(
             Probe::Legacy { .. } => bail!("legacy node must exit before its service can be repaired"),
             Probe::Absent => {}
         }
+    }
+    if adopted {
+        service
+            .restart_guardian(&build.digest)
+            .with_context(|| format!("restarting adopted guardian for {}", root.display()))?;
+        return Ok("signed guardian adopted the program and restarted".into());
     }
     if !fastctx_platform::elevation::is_elevated()? && !cfg!(target_os = "macos") {
         #[cfg(target_os = "linux")]

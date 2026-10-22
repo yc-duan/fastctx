@@ -144,6 +144,7 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
         dissolved: None,
         updates: Default::default(),
         due: Vec::new(),
+        repairs: Vec::new(),
         package_targets: Default::default(),
     };
     Store::create(dir, &hub, &certificate, &secrets.to_bytes(), &book)?;

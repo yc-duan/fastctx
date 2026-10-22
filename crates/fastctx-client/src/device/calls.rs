@@ -39,6 +39,9 @@ impl Device {
             let (reply, _) = self.call(Call::MachineUpdates { machine: machine.clone(), update: fastctx_types::update::UpdateCall::State }).await?;
             let Reply::Update(current) = reply else { return Err(failed("the machine did not report its repair capability")); };
             if !current.repair_supported { return Err(failed(format!("{machine} runs a version too old to accept repair; arrange repair through a newer hub"))); }
+            if !self.reaching(machine)?.link.versions().is_some_and(|n| n.repair_supported) {
+                return Err(failed("the hub is too old to route repair; update it first"));
+            }
         }
         let preferences = match &call {
             Call::MachineUpdates {

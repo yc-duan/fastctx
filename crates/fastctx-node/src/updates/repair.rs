@@ -21,6 +21,10 @@ struct Pending {
     process: Option<fastctx_types::ProcessIdentity>,
     #[serde(default)]
     program: Option<std::path::PathBuf>,
+    #[serde(default)]
+    origin: Option<fastctx_net::ids::HubId>,
+    #[serde(default)]
+    cancelled: bool,
 }
 
 fn path(node: &Node) -> std::path::PathBuf {
@@ -39,6 +43,17 @@ pub(super) fn snapshot(node: &Node) -> Option<Report> {
 
 /// Explicit requests bypass the delay, but never overwrite a running repair.
 pub(super) fn accept(node: &Arc<Node>, version: Option<String>, id: Option<String>, by: String) -> Result<(), String> {
+    accept_from(node, version, id, by, None)
+}
+
+fn accept_from(
+    node: &Arc<Node>,
+    version: Option<String>,
+    id: Option<String>,
+    by: String,
+    origin: Option<fastctx_net::ids::HubId>,
+) -> Result<(), String> {
+    fastctx_platform::ensure_private_dir(&super::dir(node)).map_err(|e| e.to_string())?;
     let state = super::state(node);
     let mut versions = vec![env!("CARGO_PKG_VERSION").to_string()];
     versions.extend(version);
@@ -58,14 +73,22 @@ pub(super) fn accept(node: &Arc<Node>, version: Option<String>, id: Option<Strin
         observed: None,
         process: None,
         program: None,
+        origin,
+        cancelled: false,
     };
     let _gate = fastctx_platform::FileLock::try_acquire(&super::dir(node).join("repair-request.lock"))
         .map_err(|e| e.to_string())?
         .ok_or("a repair request is being recorded")?;
-    if let Some(existing) = read_json::<Pending>(&path(node)).map_err(|e| e.to_string())?
-        && existing.id == pending.id
-    {
+    if snapshot(node).is_some_and(|r| r.id == pending.id && r.finished.is_some() && r.success) {
         return Ok(());
+    }
+    if let Some(existing) = read_json::<Pending>(&path(node)).map_err(|e| e.to_string())? {
+        if existing.id == pending.id {
+            return Ok(());
+        }
+        if !cleanup(node, &existing)? {
+            return Err("a repair is already running".into());
+        }
     }
     if node.updates.repair_launching.load(Ordering::Acquire) {
         return Err("a repair is already being prepared".into());
@@ -92,7 +115,8 @@ fn log_progress(node: &Node, report: &Report) {
     *previous = mark;
     for step in &report.steps {
         if step.outcome != Outcome::Checking && !earlier.as_ref().is_some_and(|r| r.steps.contains(step)) {
-            node.log.line(format_args!("repair {} {}: {:?}: {}", report.version, step.layer, step.outcome, step.detail));
+            node.log
+                .line(format_args!("repair {} {}: {:?}: {}", report.version, step.layer, step.outcome, step.detail));
         }
     }
 }
@@ -114,6 +138,7 @@ pub(super) fn drive(node: &Arc<Node>) -> bool {
 }
 
 fn drive_checked(node: &Arc<Node>) -> Result<bool, String> {
+    fastctx_platform::ensure_private_dir(&super::dir(node)).map_err(|e| e.to_string())?;
     let _gate = fastctx_platform::FileLock::try_acquire(&super::dir(node).join("repair-request.lock"))
         .map_err(|e| e.to_string())?;
     if _gate.is_none() {
@@ -124,6 +149,24 @@ fn drive_checked(node: &Arc<Node>) -> Result<bool, String> {
         log_progress(node, report);
     }
     let mut pending = read_json::<Pending>(&path(node)).map_err(|e| e.to_string())?;
+    if let Some(request) = pending.as_mut() {
+        if let Some(origin) = &request.origin
+            && let Some(link) = node.links().iter().find(|link| link.hub() == origin).cloned()
+            && let Some(network) = link.current_versions()
+            && !network.repairs.get(&link.name()).is_some_and(|d| d.id == request.id)
+            && !request.cancelled
+            && !report.as_ref().is_some_and(|r| r.id == request.id && r.success)
+        {
+            request.cancelled = true;
+            write_json(&path(node), request).map_err(|e| e.to_string())?;
+        }
+        if request.cancelled {
+            if !cleanup(node, request)? {
+                return Ok(true);
+            }
+            return Ok(!newer_requested(node, &request.version));
+        }
+    }
     if let Some(report) = &report
         && report.finished.is_none()
     {
@@ -191,6 +234,8 @@ fn drive_checked(node: &Arc<Node>) -> Result<bool, String> {
                 observed: Some(report.started),
                 process: None,
                 program: None,
+                origin: None,
+                cancelled: false,
             });
             write_json(&path(node), pending.as_ref().ok_or("repair request disappeared")?)
                 .map_err(|e| e.to_string())?;
@@ -229,26 +274,15 @@ fn drive_checked(node: &Arc<Node>) -> Result<bool, String> {
                 observed: None,
                 process: None,
                 program: None,
+                origin: None,
+                cancelled: false,
             });
             write_json(&path(node), pending.as_ref().ok_or("repair request disappeared")?)
                 .map_err(|e| e.to_string())?;
         }
     }
     let Some(pending) = pending else { return Ok(false) };
-    if !pending.delay.ready(jiff::Timestamp::now()) {
-        let state = super::state(node);
-        let newer = state
-            .automatic
-            .as_ref()
-            .filter(|_| state.auto)
-            .is_some_and(|version| release(version) > release(&pending.version))
-            || node.links().iter().any(|link| {
-                link.versions().is_some_and(|n| {
-                    n.due.get(&link.name()).is_some_and(|d| release(&d.version) > release(&pending.version))
-                })
-            });
-        return Ok(!newer);
-    }
+    if !pending.delay.ready(jiff::Timestamp::now()) { return Ok(!newer_requested(node, &pending.version)); }
     if pending.process.as_ref().is_some_and(|p| fastctx_platform::is_alive(p).unwrap_or(true)) {
         return Ok(true);
     }
@@ -269,6 +303,10 @@ fn launch(node: &Arc<Node>, pending: Pending) {
         let outcome = prepare(&node, &pending).await;
         if let Err(why) = outcome {
             let result = (|| -> anyhow::Result<()> {
+                let Some(_gate) = fastctx_platform::FileLock::try_acquire(&super::dir(&node).join("repair.lock"))?
+                else {
+                    return Ok(());
+                };
                 let mut journal = fastctx_install::repair::Journal::start(
                     &node.root,
                     &pending.version,
@@ -295,6 +333,9 @@ fn launch(node: &Arc<Node>, pending: Pending) {
 }
 
 async fn prepare(node: &Arc<Node>, pending: &Pending) -> Result<(), String> {
+    let _repair = fastctx_platform::FileLock::try_acquire(&super::dir(node).join("repair.lock"))
+        .map_err(|e| e.to_string())?
+        .ok_or("a repair is already running")?;
     {
         let mut journal = fastctx_install::repair::Journal::start(
             &node.root,
@@ -358,6 +399,13 @@ async fn prepare(node: &Arc<Node>, pending: &Pending) -> Result<(), String> {
             archive = Some(path);
         }
     }
+    if let Some(origin) = &pending.origin
+        && let Some(link) = node.links().iter().find(|link| link.hub() == origin).cloned()
+        && let Some(network) = link.current_versions()
+        && !network.repairs.get(&link.name()).is_some_and(|due| due.id == pending.id)
+    {
+        return Err("repair arrangement was withdrawn before execution".into());
+    }
     let archive = archive.ok_or("repair acquired no command-line package")?;
     let root = node.root.clone();
     let pending = pending.clone();
@@ -389,11 +437,20 @@ async fn prepare(node: &Arc<Node>, pending: &Pending) -> Result<(), String> {
                 pending.id.clone().into(),
                 "--package".into(),
                 archive.as_os_str().into(),
+                "--accepted".into(),
             ],
         )
         .map_err(|e| format!("starting repair {}: {e}", program.display()))?
         .identity
         .ok_or("repair process exited during launch")?;
+        let mut receipt =
+            fastctx_install::repair::read(&root).map_err(|e| e.to_string())?.ok_or("repair acceptance disappeared")?;
+        if receipt.id != pending.id {
+            return Err("repair acceptance changed before launch".into());
+        }
+        receipt.process = process.clone();
+        write_json(&root.join("updates/repair.json"), &receipt)
+            .map_err(|e| format!("transferring repair ownership: {e}"))?;
         let mut request = pending;
         request.process = Some(process);
         request.program = Some(program);
@@ -423,4 +480,35 @@ fn cleanup(node: &Node, request: &Pending) -> Result<bool, String> {
         }
     }
     Ok(true)
+}
+
+/// Only the currently authenticated network notice creates a local arrangement.
+pub(super) fn scheduled(node: &Arc<Node>) {
+    for link in node.links() {
+        let Some(network) = link.current_versions() else { continue };
+        let Some(due) = network.repairs.get(&link.name()) else { continue };
+        let result = accept_from(
+            node,
+            Some(due.version.clone()),
+            Some(due.id.clone()),
+            due.by.to_string(),
+            Some(link.hub().clone()),
+        );
+        if let Err(why) = result
+            && !why.contains("already")
+            && !why.contains("being recorded")
+        {
+            node.log.line(format_args!("accepting repair {} from the hub: {why}", due.id));
+        }
+    }
+}
+
+pub(super) fn retry_at(node: &Node) -> Option<jiff::Timestamp> {
+    read_json::<Pending>(&path(node)).ok().flatten().filter(|p| !p.cancelled).and_then(|p| p.delay.next)
+}
+
+fn newer_requested(node: &Node, version: &str) -> bool {
+    let state = super::state(node);
+    state.automatic.as_ref().filter(|_| state.auto).is_some_and(|v| release(v) > release(version))
+        || node.links().iter().any(|link| link.versions().is_some_and(|n| n.due.get(&link.name()).is_some_and(|d| release(&d.version) > release(version))))
 }

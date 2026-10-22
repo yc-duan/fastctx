@@ -80,6 +80,7 @@ pub fn prepare(dir: &Path, id: &str, to: &MachineName, identity: &Identity) -> a
         dissolved: None,
         updates: Default::default(),
         due: Vec::new(),
+        repairs: Vec::new(),
         package_targets: Default::default(),
     };
     let arriving = Arriving {

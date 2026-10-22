@@ -21,6 +21,7 @@ pub async fn manifest(
         .chain(cached.iter())
         .chain(state.network.iter().flat_map(|n| n.stable.iter().chain(n.beta.iter())))
         .chain(state.network.iter().flat_map(|n| n.due.values().filter_map(|d| d.manifest.as_ref())))
+        .chain(state.network.iter().flat_map(|n| n.repairs.values().filter_map(|d| d.manifest.as_ref())))
         .find(|manifest| manifest.version == version);
     if let Some(known) = known {
         return Ok(known.clone());

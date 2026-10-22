@@ -577,6 +577,12 @@ pub fn launch(
     )
 }
 
+/// Keeps a delivery executable without changing the installed name or plan.
+/// The caller holds collection_lock through launching the retained image.
+pub fn keep_image(root: &Path, source: &Path) -> io::Result<PathBuf> {
+    copy_image(root, source)
+}
+
 fn copy_image(root: &Path, source: &Path) -> io::Result<PathBuf> {
     let hash = digest(source)?;
     let folder = directory(root).join("images").join(&hash);

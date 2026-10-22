@@ -31,6 +31,8 @@ pub fn merge(networks: impl IntoIterator<Item = Network>) -> Option<Network> {
         };
         kept.machines.extend(network.machines);
         kept.due.extend(network.due);
+        kept.repairs.extend(network.repairs);
+        kept.repair_supported &= network.repair_supported;
     }
     merged
 }
@@ -102,7 +104,8 @@ pub fn calculate(mut state: State, context: Context) -> State {
 }
 
 fn stage(state: &State, activity: Option<Stage>, running: &str) -> Stage {
-    if let Some(repair) = &state.repair {
+    if let Some(repair) = &state.repair
+        && (repair.finished.is_none() || release(&repair.version) >= release(running)) {
         if repair.finished.is_none() {
             return Stage::Repairing { version: repair.version.clone(), layer: repair.steps.last().map(|s| s.layer.clone()).unwrap_or_else(|| "package".into()) };
         }

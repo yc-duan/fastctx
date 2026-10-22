@@ -8,6 +8,7 @@
 
 mod application;
 mod doctor;
+mod legacy_repair;
 mod packages;
 pub(crate) mod repair;
 mod retry;
@@ -35,6 +36,7 @@ pub(crate) struct Updates {
     packages: fastctx_update::pool::Pool,
     repair_launching: std::sync::atomic::AtomicBool,
     repair_logged: Mutex<String>,
+    doctor: Mutex<doctor::Seen>,
 }
 
 #[derive(Default)]
@@ -246,7 +248,7 @@ pub(crate) fn state(node: &Node) -> State {
                 }
                 Some(Failed { version, target: fastctx_update::kernel::target(), why: plan.error?, reason: None })
             }),
-            retry_at: held.attempt.failed.as_ref().and(held.attempt.delay.next),
+            retry_at: repair::retry_at(node).or_else(|| held.attempt.failed.as_ref().and(held.attempt.delay.next)),
             kept: cache.kept(),
             app: held.app.clone(),
             kernel_target: fastctx_update::kernel::target(),
@@ -766,6 +768,9 @@ pub(crate) async fn machine(
     if matches!(update, UpdateCall::Repair { .. }) {
         let current = Box::pin(self::machine(node, acting, machine.clone(), UpdateCall::State)).await?;
         if !current.repair_supported { return Err(Failure::new(format!("{machine} runs a version too old to accept repair; arrange repair through a newer hub"))); }
+        if !node.locate(&machine)?.iter().any(|link| link.versions().is_some_and(|n| n.repair_supported)) {
+            return Err(Failure::new("the hub is too old to route repair; update it first"));
+        }
     }
     if let UpdateCall::Preferences { auto, relays } = update {
         let current = Box::pin(self::machine(node, acting, machine.clone(), UpdateCall::State)).await?;
@@ -894,6 +899,7 @@ fn auto(node: &Arc<Node>) {
     if !fastctx_platform::follows_releases() || !node.updates.held.lock().expect("never poisoned").started {
         return;
     }
+    repair::scheduled(node);
     if repair::drive(node) { return; }
     schedule::reconcile(node);
     let state = state(node);
@@ -989,4 +995,5 @@ pub(crate) fn within(state: &State) -> Option<String> {
 /// The hubs told of versions anew.
 pub(crate) fn heard(node: &Arc<Node>) {
     auto(node);
+    doctor::heard(node);
 }

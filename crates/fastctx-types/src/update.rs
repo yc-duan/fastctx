@@ -19,6 +19,9 @@ pub use status::*;
 /// The first release accepting selected versions and remote update settings.
 pub const ASKED_SINCE: &str = "1.0.1-beta.3";
 
+/// The first release with the standalone repair entry point.
+pub const REPAIR_SINCE: &str = "1.0.1-beta.11";
+
 /// The repository whose releases are Fastctx's.
 pub const REPOSITORY: &str = "yc-duan/fastctx";
 
@@ -254,6 +257,9 @@ pub struct Running {
     /// It runs the network's hub.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hub_here: bool,
+    #[serde(default)]
+    pub repair_supported: bool,
+
 }
 
 /// What the network's administrators set for updates: the version it asks
@@ -345,6 +351,11 @@ pub struct Network {
     pub due: BTreeMap<MachineName, Due>,
     #[serde(default)]
     pub updates_view: bool,
+    #[serde(default)]
+    pub repair_supported: bool,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub repairs: BTreeMap<MachineName, RepairDue>,
+
 }
 
 impl Network {
@@ -697,4 +708,23 @@ pub enum UpdateCall {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         version: Option<String>,
     },
+}
+
+/// A distinct repair arrangement, never interpreted by an older node as an update.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepairDue {
+    pub id: String,
+    pub version: String,
+    pub by: crate::AccountName,
+    pub at: Timestamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest: Option<Manifest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub problem: Option<Problem>,
+    #[serde(default)]
+    pub attempts: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed: Option<Timestamp>,
 }

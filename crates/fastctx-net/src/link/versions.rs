@@ -201,6 +201,10 @@ impl Link {
         account: &fastctx_types::AccountName,
         request: fastctx_types::update::ViewCall,
     ) -> Result<fastctx_types::update::ViewReply, String> {
+        if matches!(request, fastctx_types::update::ViewCall::Repair { .. } | fastctx_types::update::ViewCall::CancelRepair { .. } | fastctx_types::update::ViewCall::RepairResult { .. })
+            && !self.versions().is_some_and(|network| network.repair_supported) {
+            return Err("this hub is too old to arrange repairs; update the hub first".into());
+        }
         if !self.versions().is_some_and(|network| network.updates_view) {
             return Err("this hub does not support the updates view; update the hub first".into());
         }

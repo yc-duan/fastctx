@@ -43,6 +43,11 @@ enum RenewalAction {
     },
     /// Check and repair this installation without changing user data.
     Repair(crate::repair::RepairArgs),
+    /// Read the last repair, recognizing a repair process that has ended.
+    RepairState {
+        #[arg(long, value_parser = crate::paths::parser())]
+        dir: PathBuf,
+    },
     /// Inspect local versions and renewal progress, even across IPC versions.
     Status {
         #[arg(long, value_parser = crate::paths::parser())]
@@ -107,6 +112,7 @@ pub fn run(args: RenewalArgs) -> anyhow::Result<()> {
         }
         RenewalAction::Status { dir } => println!("{}", serde_json::to_string(&runtime.block_on(status(&dir))?)?),
         RenewalAction::Repair(args) => crate::repair::run(args)?,
+        RenewalAction::RepairState { dir } => println!("{}", serde_json::to_string(&fastctx_install::repair::inspect(&dir)?)?),
         RenewalAction::Now { dir } => store::request(&dir, true)?,
         RenewalAction::Run { dir, retry } => runtime.block_on(worker(&dir, retry))?,
         RenewalAction::Guardian { dir, graphical } => {

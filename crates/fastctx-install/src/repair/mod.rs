@@ -27,7 +27,6 @@ impl Journal {
             && let Some(previous) = read(root)?
             && previous.id == *id
             && previous.finished.is_none()
-            && previous.process != process
         {
             inherited = previous.steps;
             for step in &mut inherited {
@@ -54,6 +53,13 @@ impl Journal {
         };
         journal.save()?;
         Ok(journal)
+    }
+
+    /// Transfers an accepted background repair to its identified child before
+    /// releasing the exclusion gate that child is waiting for.
+    pub fn handoff(&mut self, process: fastctx_types::ProcessIdentity) -> anyhow::Result<()> {
+        self.report.process = process;
+        self.save()
     }
 
     pub fn begin(&mut self, layer: &str) -> anyhow::Result<()> {
@@ -127,12 +133,14 @@ impl Journal {
 
 /// Finalizes an error outside a layer (including a failed bootstrap). A newer
 /// repair or a child repairer's receipt is never overwritten.
-pub fn record_failure(root: &Path, why: &str) -> anyhow::Result<()> {
+pub fn record_failure(root: &Path, id: Option<&str>, why: &str) -> anyhow::Result<()> {
     let Some(_gate) = fastctx_platform::FileLock::try_acquire(&root.join("updates/repair.lock"))? else {
         return Ok(());
     };
     let Some(report) = read(root)? else { return Ok(()) };
-    if report.finished.is_some() || report.process != fastctx_platform::current_identity()? {
+    if report.finished.is_some()
+        || (report.process != fastctx_platform::current_identity()? && id != Some(report.id.as_str()))
+    {
         return Ok(());
     }
     let mut journal = Journal { root: root.to_owned(), report };
@@ -151,4 +159,25 @@ pub fn note(root: &Path, id: &str, description: String) -> anyhow::Result<()> {
         "repair preparation changed owner"
     );
     Journal { root: root.to_owned(), report }.action(description)
+}
+
+/// Reports an interrupted controller only after its identity has ended and its
+/// exclusion gate is free. A live or newly starting repair keeps its own record.
+pub fn inspect(root: &Path) -> anyhow::Result<Option<Report>> {
+    let Some(mut report) = read(root)? else { return Ok(None) };
+    if report.finished.is_none() && !fastctx_platform::is_alive(&report.process)? {
+        let Some(_gate) = fastctx_platform::FileLock::try_acquire(&root.join("updates/repair.lock"))? else {
+            return Ok(Some(report));
+        };
+        report = read(root)?.context("repair record disappeared")?;
+        if report.finished.is_none() && !fastctx_platform::is_alive(&report.process)? {
+            let why = format!("repair process {} ended without a completion receipt", report.process.pid);
+            let mut journal = Journal { root: root.to_owned(), report };
+            journal.begin("controller")?;
+            journal.end(Err(anyhow::anyhow!("{why}")))?;
+            journal.finish()?;
+            report = journal.report;
+        }
+    }
+    Ok(Some(report))
 }

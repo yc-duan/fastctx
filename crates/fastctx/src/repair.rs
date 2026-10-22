@@ -16,7 +16,7 @@ use fastctx_types::{
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-#[derive(Args)]
+#[derive(Args, Clone)]
 pub struct RepairArgs {
     #[arg(long, value_parser = crate::paths::parser())]
     dir: PathBuf,
@@ -29,22 +29,77 @@ pub struct RepairArgs {
     /// An already downloaded command-line package; verified again before use.
     #[arg(long, value_parser = crate::paths::parser())]
     package: Option<PathBuf>,
+    /// Starts an independent repair and returns its request identifier.
+    #[arg(long)]
+    background: bool,
+    #[arg(long, hide = true)]
+    accepted: bool,
 }
 
 pub fn run(args: RepairArgs) -> anyhow::Result<()> {
     let root = args.dir.clone();
-    let result = run_inner(args);
+    let id = args.id.clone();
+    let result = if args.background { background(args) } else { run_inner(args) };
     if let Err(error) = &result {
-        fastctx_install::repair::record_failure(&root, &format!("{error:#}"))?;
+        if let Err(recording) = fastctx_install::repair::record_failure(&root, id.as_deref(), &format!("{error:#}")) {
+            return Err(anyhow::anyhow!("{error:#}; recording repair failure: {recording:#}"));
+        }
     }
     result
+}
+
+fn background(args: RepairArgs) -> anyhow::Result<()> {
+    let root = std::path::absolute(&args.dir)?;
+    fastctx_platform::ensure_private_dir(&root.join("updates"))?;
+    let _gate = fastctx_platform::FileLock::try_acquire(&root.join("updates/repair.lock"))?
+        .context("a repair is already running")?;
+    let mut journal =
+        Journal::start(&root, args.version.as_deref().unwrap_or(env!("CARGO_PKG_VERSION")), &args.by, args.id)?;
+    journal.begin("package")?;
+    let _collection = fastctx_platform::FileLock::acquire(&store::collection_lock(&root))?;
+    let program = store::keep_image(&root, &std::env::current_exe()?)?;
+    let mut words = vec![
+        "renew".into(),
+        "repair".into(),
+        "--dir".into(),
+        root.as_os_str().into(),
+        "--id".into(),
+        journal.report.id.clone().into(),
+        "--by".into(),
+        args.by.into(),
+        "--accepted".into(),
+    ];
+    if let Some(version) = args.version {
+        words.extend(["--version".into(), version.into()]);
+    }
+    if let Some(package) = args.package {
+        words.extend(["--package".into(), package.into_os_string()]);
+    }
+    let process = store::launch(&root, &program, &words)?.identity.context("repair exited during launch")?;
+    if let Err(error) = journal.handoff(process.clone()) {
+        fastctx_platform::terminate::terminate(&process)?;
+        return Err(error);
+    }
+    drop(_gate);
+    println!("{}", serde_json::json!({"id":journal.report.id,"accepted":true,"process":process}));
+    Ok(())
 }
 
 fn run_inner(args: RepairArgs) -> anyhow::Result<()> {
     let root = std::path::absolute(&args.dir)?;
     fastctx_platform::ensure_private_dir(&root.join("updates"))?;
-    let gate = fastctx_platform::FileLock::try_acquire(&root.join("updates/repair.lock"))?
-        .context("a repair is already running")?;
+    let began = Instant::now();
+    let gate = loop {
+        if let Some(gate) = fastctx_platform::FileLock::try_acquire(&root.join("updates/repair.lock"))? {
+            break gate;
+        }
+        ensure!(args.accepted && began.elapsed() < Duration::from_secs(10), "a repair is already running");
+        ensure!(
+            fastctx_install::repair::read(&root)?.is_some_and(|r| Some(r.id.as_str()) == args.id.as_deref()),
+            "repair acceptance changed before launch"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
     let uninstall =
         fastctx_platform::uninstall_gate::Gate::try_acquire(&root)?.context("uninstall is still running")?;
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
@@ -295,6 +350,27 @@ fn node(
             && !node.bridge
             && !node.yielding
         {
+            if world.node_service().try_exists()? {
+                let service = fastctx_install::service::Service::new(
+                    fastctx_install::service::Kind::Node,
+                    store::installed(root),
+                    root,
+                );
+                ensure!(
+                    service.guardian_current(&build.digest)?,
+                    "boot guardian for {} still differs from {}",
+                    root.display(),
+                    build.version
+                );
+                #[cfg(target_os = "linux")]
+                ensure!(
+                    service.main_pid()? == u64::from(node.process.pid),
+                    "node {} is not the boot service's process",
+                    node.process.pid
+                );
+                #[cfg(windows)]
+                ensure!(node.supervised, "node {} is outside its boot guardian", node.process.pid);
+            }
             if connected(root)? {
                 let links = runtime.block_on(async {
                     let mut client = fastctx_client::Client::connect(
