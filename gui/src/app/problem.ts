@@ -30,6 +30,9 @@ export interface ProblemWords {
   serviceDown: string;
   /** This computer's own service is passing its work to its next self. */
   serviceSwitching: string;
+  /** This computer's own service closed or did not take a connection made
+   *  to it here: nothing to do with the hub or the network. */
+  localService: string;
   /** Codex's output limit, shared by every tool, is below what the World's
    *  answers need; raising it is the user's to ask for. */
   outputLimit: string;
@@ -73,6 +76,7 @@ export const zhProblems: ProblemWords = {
   offline: "机器离线",
   serviceDown: "本机服务没有运行",
   serviceSwitching: "本机服务正在切换，请稍后再试",
+  localService: "本机服务没有回应",
   outputLimit: "Codex 的工具输出上限不够",
   allowanceUsed: (reached) => {
     const until = `${reached.until.getMonth() + 1}月${reached.until.getDate()}日 ${clock(reached.until)}`;
@@ -110,6 +114,7 @@ export const enProblems: ProblemWords = {
   offline: "The machine is offline",
   serviceDown: "The local service isn't running",
   serviceSwitching: "The local service is switching over. Try again in a moment",
+  localService: "The local service didn't answer",
   outputLimit: "Codex's tool output limit is too low",
   allowanceUsed: (reached) => {
     const until = `${reached.until.toLocaleString("en", { month: "short", day: "numeric" })} ${clock(reached.until)}`;
@@ -153,6 +158,9 @@ const KNOWN: [RegExp, keyof ProblemWords][] = [
   [/is offline|not online|went offline/i, "offline"],
   [/the node is not running|the node was started but exited/i, "serviceDown"],
   [/handing over to its successor/i, "serviceSwitching"],
+  // A connection to this computer's own service, which the network's words
+  // below would take for the hub's.
+  [/node\.sock|\\\\\.\\pipe\\|socket is not connected|closed the connection as it was made/i, "localService"],
   [/the hub's address .*: (invalid|failed to lookup|no such host|name or service not known|nodename nor servname)|write the hub's address/i, "badAddress"],
   [/connect|timed out|unreachable|refused|no route|dns|resolve|no such host|no answer within|said nothing for/i, "unreachable"],
 ];

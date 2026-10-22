@@ -49,17 +49,47 @@ export function buildLabel(build: NodeBuild | null | undefined): string {
 }
 
 /** Where the node stands against the carried build: newer, older, or of an
- *  order not known. The same version is ordered by when its source was made;
- *  a build that records it is later than one that does not. */
+ *  order not known. Versions are ordered as releases are, a test release
+ *  (`1.0.1-beta.9`) before the release it leads to; the same version is
+ *  ordered by when its source was made, a build that records it later than
+ *  one that does not. */
 export function buildOrder(carried: NodeBuild | null | undefined, node: NodeBuild): "older" | "newer" | "different" {
-  if (carried && /^\d+\.\d+\.\d+$/.test(carried.version) && /^\d+\.\d+\.\d+$/.test(node.version)) {
-    const left = carried.version.split(".").map(BigInt);
-    const right = node.version.split(".").map(BigInt);
-    for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] < right[i] ? "newer" : "older";
-    const [mine, theirs] = [carried.built ?? null, node.built ?? null];
+  const order = carried ? versionOrder(carried.version, node.version) : null;
+  if (order !== null && order !== 0) return order < 0 ? "newer" : "older";
+  if (order === 0) {
+    const [mine, theirs] = [carried!.built ?? null, node.built ?? null];
     if (mine !== theirs) return mine === null ? "newer" : theirs === null || theirs < mine ? "older" : "newer";
   }
   return "different";
+}
+
+/** How release `left` stands to `right`, by semantic versioning: below
+ *  zero, before it; null where either is not a release's version. */
+function versionOrder(left: string, right: string): number | null {
+  const shape = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
+  const [a, b] = [shape.exec(left), shape.exec(right)];
+  if (!a || !b) return null;
+  for (let i = 1; i <= 3; i++) {
+    const [x, y] = [BigInt(a[i]!), BigInt(b[i]!)];
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  const [x, y] = [a[4], b[4]];
+  if (x === y) return 0;
+  // A release comes after every test release of it.
+  if (x === undefined) return 1;
+  if (y === undefined) return -1;
+  const [xs, ys] = [x.split("."), y.split(".")];
+  for (let i = 0; i < Math.max(xs.length, ys.length); i++) {
+    const [p, q] = [xs[i], ys[i]];
+    if (p === undefined) return -1;
+    if (q === undefined) return 1;
+    if (p === q) continue;
+    const [pn, qn] = [/^\d+$/.test(p), /^\d+$/.test(q)];
+    if (pn && qn) return BigInt(p) < BigInt(q) ? -1 : 1;
+    if (pn !== qn) return pn ? -1 : 1;
+    return p < q ? -1 : 1;
+  }
+  return 0;
 }
 export type MaintenanceRequest = { maintenance: 1; action: "status" | "yield" | "cancel" };
 export type MaintenanceResponse = { kind: "status"; node: RunningNode } | { kind: "done" }
