@@ -8,7 +8,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
 
-use fastctx_hosts::claude::{background, startup};
+use fastctx_hosts::claude::{background, exchange, startup};
 use fastctx_types::ipc::Failure;
 use fastctx_types::residents::{Activity, PendingState};
 use fastctx_types::session::{Health, HealthKind};
@@ -207,6 +207,69 @@ fn settled(command: &super::Command, short: &str) -> bool {
 /// How much of the end of Claude Code's daemon log is read for a session.
 const DAEMON_TAIL: u64 = 256 * 1024;
 
+/// How many times words wake a session that ends before taking them, and
+/// how much longer each next time waits first, for its daemon to free what
+/// it was short of.
+const WAKES: u32 = 3;
+const WAKE_AGAIN: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Whether nothing took the words `id` that woke the session `session`:
+/// they still wait as waking, no turn is recorded for them, and the
+/// session's transcript holds nothing submitted since they were sent.
+/// Anything unread or unknown counts as taken, so words never go in twice.
+fn untaken(
+    node: &Node,
+    session: &str,
+    directory: &fastctx_types::layout::ConversationDir,
+    id: &NoticeId,
+) -> std::io::Result<bool> {
+    if crate::delivery::input_turn(directory, id)?.is_some() {
+        return Ok(false);
+    }
+    let Some(since) = crate::inbox::read(directory, id)?
+        .filter(|pending| pending.state == PendingState::Waking)
+        .and_then(|pending| pending.since)
+    else {
+        return Ok(false);
+    };
+    let Ok(Some(transcript)) = exchange::transcript(&exchange::sessions(node.world.path()).join(session)) else {
+        return Ok(false);
+    };
+    Ok(matches!(submitted_since(&transcript, since), Ok(false)))
+}
+
+/// Whether the transcript at `path` holds, at or after `since`, words
+/// submitted to the session: a prompt, or one queued for it.
+fn submitted_since(path: &std::path::Path, since: jiff::Timestamp) -> std::io::Result<bool> {
+    use std::io::{Read as _, Seek as _};
+    let mut file = std::fs::File::open(path)?;
+    let length = file.metadata()?.len();
+    file.seek(std::io::SeekFrom::Start(length.saturating_sub(TRANSCRIPT_TAIL)))?;
+    let mut tail = Vec::new();
+    file.read_to_end(&mut tail)?;
+    Ok(String::from_utf8_lossy(&tail).lines().filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok()).any(
+        |entry| {
+            matches!(entry["type"].as_str(), Some("user" | "queue-operation"))
+                && entry["timestamp"].as_str().and_then(|at| at.parse::<jiff::Timestamp>().ok()).is_some_and(|at| at >= since)
+        },
+    ))
+}
+
+/// How much of the end of a session's transcript is read for what was
+/// submitted lately.
+const TRANSCRIPT_TAIL: u64 = 256 * 1024;
+
+async fn failed(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    directory: &fastctx_types::layout::ConversationDir,
+    id: &NoticeId,
+    why: String,
+) -> std::io::Result<()> {
+    super::failed_wake(node, resident, directory, id, Failure::new(why)).await.map_err(std::io::Error::other)?;
+    Ok(())
+}
+
 fn pending(node: &Node, resident: &ResidentId, id: &NoticeId, waking: bool) -> std::io::Result<bool> {
     if (!waking && super::paired(node, resident)) || node.residents.removed(resident).is_some() {
         return Ok(false);
@@ -251,6 +314,8 @@ async fn watch(
     // A cached list from before this birth cannot establish that its job
     // is missing. Concurrent births share a list begun after their starts.
     let mut after = Some(Instant::now());
+    // How many times the words have woken the session.
+    let mut woken = 1;
     loop {
         let changed = node.claude.changed.notified();
         tokio::pin!(changed);
@@ -320,7 +385,7 @@ async fn watch(
                     // A registration written before the host outcome wins,
                     // including one the filesystem watcher has not seen yet.
                     super::replay(node).await;
-                    let _births = node.claude.births.write().await;
+                    let births = node.claude.births.write().await;
                     if !pending(node, resident, id, waking)? {
                         return Ok(());
                     }
@@ -331,10 +396,37 @@ async fn watch(
                             return Ok(());
                         }
                         let directory = node.world.conversation(resident);
-                        super::failed_wake(node, resident, &directory, id, Failure::new(why))
-                            .await
-                            .map_err(std::io::Error::other)?;
-                        return Ok(());
+                        // Words that woke a session which ended before taking
+                        // them wake it again: Claude Code's daemon, short of
+                        // memory, retires the very worker it just claimed
+                        // for them as one long idle.
+                        let mut why = why;
+                        if waking && woken < WAKES && untaken(node, &session, &directory, id)? {
+                            drop(births);
+                            node.log.line(format_args!(
+                                "waking {resident} again: its session ended before taking the words that woke it ({woken} of {WAKES}): {why}"
+                            ));
+                            tokio::time::sleep(WAKE_AGAIN * woken).await;
+                            if !pending(node, resident, id, waking)? {
+                                return Ok(());
+                            }
+                            match super::wake_again(node, resident, &session, id, command).await {
+                                Ok(()) => {
+                                    woken += 1;
+                                    (process, exited, code, process_ended) = (None, None, None, false);
+                                    (reported_exit, blocked, last_problem) = (None, false, None);
+                                    after = Some(Instant::now());
+                                    continue;
+                                }
+                                Err(error) => why.push_str(&format!("; waking it again failed: {}", error.message)),
+                            }
+                            let _births = node.claude.births.write().await;
+                            if !pending(node, resident, id, waking)? {
+                                return Ok(());
+                            }
+                            return failed(node, resident, &directory, id, why).await;
+                        }
+                        return failed(node, resident, &directory, id, why).await;
                     }
                     // The host's watchdog and a real setup dialog produce the
                     // same blocked state. Preserve the fact without declaring

@@ -1317,6 +1317,32 @@ async fn wake(
     Ok(Landed::Handed { id })
 }
 
+/// Sends the words `id` that woke `resident` again, as they were first
+/// sent, once the session they woke ended before taking them (`startup`).
+async fn wake_again(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    session: &str,
+    id: &fastctx_types::NoticeId,
+    command: &Command,
+) -> Result<(), Failure> {
+    let directory = node.world.conversation(resident);
+    let pending = crate::inbox::read(&directory, id)
+        .map_err(|error| Failure::new(format!("reading what wakes {resident}: {error}")))?
+        .ok_or_else(|| Failure::new(format!("the words that woke {resident} are no longer kept")))?;
+    let (text, as_user) = words(&pending.delivery.notice);
+    let args = background::wake_args(session, &if as_user { text } else { claude::framed(&text) });
+    crate::profile::session::claude(node, resident, false)?;
+    let Command { program, cwd, env } = command.clone();
+    tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+        trust(&[cwd.as_path()], &env).and_then(|()| background::claude(&program, &args, &cwd, &env))
+    }))
+    .await
+    .map_err(|error| Failure::new(format!("waking the session again: {error}")))?
+    .map_err(Failure::new)?;
+    Ok(())
+}
+
 /// Where a session is resumed from: the directory it was opened in, as its
 /// registration says, so its own tools go on working there; the World's
 /// directory where it was opened in the user's home, which Claude Code
