@@ -87,22 +87,29 @@ pub(super) fn start(node: &Arc<Node>) {
     });
 }
 
-/// A machine to help: where it is, the account it is registered under, and
-/// the release to bring it to.
+/// A machine to help: where it is, the account it is registered under, the
+/// release to bring it to, and whether it is online now.
 struct Stuck {
     member: Member,
     acting: Acting,
     version: String,
+    online: bool,
 }
 
 /// Starts helping each machine that has waited long enough; each on its
-/// own, so a slow one holds none of the others up.
+/// own, so a slow one holds none of the others up. A machine is first seen
+/// stuck while online, so one that comes back is left its patience to
+/// update by itself; once seen, the wait goes on while it is away, so one
+/// whose connection keeps dropping is helped the next time it is back.
 fn look(node: &Arc<Node>, seen: &Arc<Mutex<Seen>>) {
     let stuck = stuck(node);
     let now = Instant::now();
     let mut state = seen.lock().expect("never poisoned");
     state.since.retain(|member, _| stuck.iter().any(|one| &one.member == member));
     for one in stuck {
+        if !one.online {
+            continue;
+        }
         let since = *state.since.entry(one.member.clone()).or_insert(now);
         let helped = state.helped.get(&one.member).is_some_and(|at| now.duration_since(*at) < AGAIN);
         if now.duration_since(since) < PATIENCE || helped || state.helping.contains(&one.member) {
@@ -120,7 +127,7 @@ fn look(node: &Arc<Node>, seen: &Arc<Mutex<Seen>>) {
 
 /// The managed machines of an account logged in here, on a network whose
 /// hub runs here, that run a release before `TAKES_OVER` while a newer
-/// release from it on is known on their line, online now.
+/// release from it on is known on their line; one away by what it ran last.
 fn stuck(node: &Node) -> Vec<Stuck> {
     let mut found = Vec::new();
     for link in node.links() {
@@ -132,10 +139,10 @@ fn stuck(node: &Node) -> Vec<Stuck> {
         }
         for member in &view.directory.members {
             let Some(owner) = member.home.as_ref() else { continue };
-            if !member.managed || !member.online || member.name == me || !view.directory.logged_in(&me, owner) {
+            if !member.managed || member.name == me || !view.directory.logged_in(&me, owner) {
                 continue;
             }
-            let Some(running) = network.machines.get(&member.name).filter(|running| !running.away) else { continue };
+            let Some(running) = network.machines.get(&member.name) else { continue };
             if release(&running.kernel) >= release(TAKES_OVER) {
                 continue;
             }
@@ -147,6 +154,7 @@ fn stuck(node: &Node) -> Vec<Stuck> {
                 member: (link.hub_name(), member.name.clone()),
                 acting: Acting::one(link.hub().clone(), owner.clone()),
                 version: offer.version.clone(),
+                online: member.online && !running.away,
             });
         }
     }
@@ -156,7 +164,7 @@ fn stuck(node: &Node) -> Vec<Stuck> {
 /// Has `stuck` bring its release, which it may stage itself; where its own
 /// staging is refused, stages it there with the release's own program.
 async fn help(node: &Arc<Node>, stuck: &Stuck) {
-    let Stuck { member: (hub, name), acting, version } = stuck;
+    let Stuck { member: (hub, name), acting, version, .. } = stuck;
     let machine = Written { name: name.clone(), hub: Some(hub.clone()) };
     let asked = UpdateCall::Kernel { version: Some(version.clone()) };
     // A stuck machine brings the package and then refuses to stage it; the
