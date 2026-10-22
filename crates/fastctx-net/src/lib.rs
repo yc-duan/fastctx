@@ -15,8 +15,9 @@ pub mod again;
 #[cfg(target_os = "android")]
 pub mod android;
 pub mod around;
-pub mod authorization;
 pub mod arrivals;
+pub mod authorization;
+pub mod call_details;
 pub mod cancellable;
 pub mod data;
 pub mod dial;

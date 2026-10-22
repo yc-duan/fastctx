@@ -256,6 +256,7 @@ pub(crate) struct Hub {
 
 /// A member's open control connection.
 pub(crate) struct Session {
+    call_details: bool,
     generation: u64,
     out: outq::Outq,
     since: Timestamp,
@@ -769,6 +770,7 @@ async fn intended(
                 cancels,
                 presence,
                 parts,
+                call_details,
             },
         ) => {
             let said = control::Said {
@@ -790,6 +792,7 @@ async fn intended(
                 cancels,
                 presence,
                 parts,
+                call_details,
             };
             control::session(hub, socket, peer, binding, key, proof, letters, said).await;
         }

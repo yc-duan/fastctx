@@ -14,7 +14,11 @@ pub enum Body {
     Call { call: RemoteCall },
     /// A call too large for a message: it follows over the envelope's data
     /// connection, as the JSON of a `RemoteCall`.
-    LargeCall { carried: Carried },
+    LargeCall {
+        carried: Carried,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        details: Option<crate::call_details::CallDetails>,
+    },
     /// A call that comes with the envelope's data connection, whose source
     /// is the caller: the two ends exchange what the call is about, such as
     /// the files of a copy, while the call waits for its answer.

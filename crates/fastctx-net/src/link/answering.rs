@@ -338,20 +338,24 @@ async fn open_call(
                 .map_err(|error| format!("opening its data connection: {error}"))?;
             Ok((remote, Some(stream), None))
         }
-        Body::LargeCall { carried } => {
+        Body::LargeCall { carried, details } => {
+            let details =
+                details.ok_or("upgrade the sender: its large call carries no verifiable authorization facts")?;
             if from_the_caller()? != carried.stream {
                 return Err("it names one data connection and carries another".to_string());
             }
             let bytes = crate::data::sink_until(endpoint, &inner.key, &carried, opening_deadline)
                 .await
                 .map_err(|error| format!("fetching it, too large for a message: {error}"))?;
-            Ok((
-                serde_json::from_slice(&bytes).map_err(|error| {
-                    format!("it cannot be read: {error}; a newer Fastctx may make calls this one does not know")
-                })?,
-                None,
-                Some(bytes.into_reservation()),
-            ))
+            let remote: RemoteCall = serde_json::from_slice(&bytes).map_err(|error| {
+                format!("it cannot be read: {error}; a newer Fastctx may make calls this one does not know")
+            })?;
+            if details != crate::call_details::CallDetails::of(&call.from, &remote)
+                || call.purpose != Some(details.purpose)
+            {
+                return Err("the large call differs from its authorized control-frame facts".into());
+            }
+            Ok((remote, None, Some(bytes.into_reservation())))
         }
         Body::Answer { .. } | Body::LargeAnswer { .. } => Err("it is not a call".to_string()),
     }

@@ -548,6 +548,9 @@ impl Directory {
 /// One member's view of its hub's directory.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct View {
+    /// The hub authorizes large calls from control-frame facts and requires a verifying receiver.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub call_details: bool,
     /// Whether this hub supports `Question::MachineLog`. Older hubs omit it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub machine_log: bool,
@@ -694,6 +697,7 @@ impl View {
     /// An empty view, before the hub has given one.
     pub fn empty(hub: HubId, hub_name: HubName, me: MachineName) -> Self {
         Self {
+            call_details: false,
             machine_log: false,
             hub,
             hub_name,

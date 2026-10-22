@@ -151,22 +151,6 @@ impl Inner {
         // A phone links directly with a machine only while it has calls to
         // it; the first goes through the hub while the link comes up.
         let _demand = self.demand(to);
-        let via = match self.direct_link_for(to, account, &call) {
-            Some(conn) => {
-                if let Some(resident) = crate::message::worked_for(&self.me(), &call) {
-                    self.direct.note_worked(Worked { to: to.clone(), account: account.clone(), purpose, resident });
-                    if self.connection().is_some() && self.view().direct_links {
-                        let inner = self.clone();
-                        tokio::spawn(async move { super::session::tell_worked(&inner).await });
-                    }
-                }
-                Via::Peer(conn)
-            }
-            None => match self.connected().await {
-                Some(connection) => Via::Hub(connection),
-                None => return Err(CallFailure::NotConnected { reason: self.not_connected() }),
-            },
-        };
         let n = self.number(to)?;
         let ticket = || -> Result<Ticket, CallFailure> {
             let stream = crate::sign::random::<8>().map(u64::from_le_bytes).map_err(|error| {
@@ -186,6 +170,31 @@ impl Inner {
             stream,
             body: serde_json::to_value(body).expect("bodies serialize"),
         };
+        let plain = envelope(&Body::Call { call: call.clone() }, None);
+        let large = feed.is_none()
+            && wire::encode(&Up::Call { id: u64::MAX, message: plain.clone() }).len() > wire::MAX_CONTROL_FRAME;
+        if large && !self.view().call_details {
+            return Err(CallFailure::NotAllowed {
+                name: to.clone(),
+                reason: "upgrade the hub before sending calls too large for its control connection".into(),
+            });
+        }
+        let via = match if large { None } else { self.direct_link_for(to, account, &call) } {
+            Some(conn) => {
+                if let Some(resident) = crate::message::worked_for(&self.me(), &call) {
+                    self.direct.note_worked(Worked { to: to.clone(), account: account.clone(), purpose, resident });
+                    if self.connection().is_some() && self.view().direct_links {
+                        let inner = self.clone();
+                        tokio::spawn(async move { super::session::tell_worked(&inner).await });
+                    }
+                }
+                Via::Peer(conn)
+            }
+            None => match self.connected().await {
+                Some(connection) => Via::Hub(connection),
+                None => return Err(CallFailure::NotConnected { reason: self.not_connected() }),
+            },
+        };
         let (message, side) = if feed.is_some() {
             let ticket = ticket()?;
             let message = envelope(&Body::StreamCall { call }, Some(ticket.clone()));
@@ -195,30 +204,34 @@ impl Inner {
                 let _ = opened.send(Stream::open(&endpoint, &inner.key, ticket.stream, End::Source).await);
             });
             (message, Side::Opening(task, opening))
+        } else if !large {
+            (plain, Side::None)
         } else {
-            let message = envelope(&Body::Call { call: call.clone() }, None);
-            if wire::encode(&Up::Call { id: u64::MAX, message: message.clone() }).len() <= wire::MAX_CONTROL_FRAME {
-                (message, Side::None)
-            } else {
-                // A call too large for the control connection says what
-                // follows over a data connection, which this machine sends
-                // as the source.
-                let bytes = serde_json::to_vec(&call).expect("calls serialize");
-                let ticket = ticket()?;
-                let carried = Carried {
-                    stream: ticket.stream,
-                    bytes: bytes.len() as u64,
-                    sha256: crate::sign::Digest(crate::sign::sha256(&bytes)),
-                };
-                let message = envelope(&Body::LargeCall { carried }, Some(ticket.clone()));
-                let (inner, name, endpoint) = (self.clone(), to.clone(), via.endpoint(self));
-                let task = tokio::spawn(async move {
-                    if let Err(error) = crate::data::source(&endpoint, &inner.key, ticket.stream, &bytes).await {
-                        inner.node.log(format!("sending a large call to {name}: {error}"));
-                    }
+            // A call too large for the control connection says what
+            // follows over a data connection, which this machine sends
+            // as the source.
+            let bytes = serde_json::to_vec(&call).expect("calls serialize");
+            let ticket = ticket()?;
+            let carried = Carried {
+                stream: ticket.stream,
+                bytes: bytes.len() as u64,
+                sha256: crate::sign::Digest(crate::sign::sha256(&bytes)),
+            };
+            let details = Some(crate::call_details::CallDetails::of(&self.me(), &call));
+            let message = envelope(&Body::LargeCall { carried, details }, Some(ticket.clone()));
+            if wire::encode(&Up::Call { id: u64::MAX, message: message.clone() }).len() > wire::MAX_CONTROL_FRAME {
+                return Err(CallFailure::NotAllowed {
+                    name: to.clone(),
+                    reason: "the call's authorization facts are too large for a control frame".into(),
                 });
-                (message, Side::Sending(task))
             }
+            let (inner, name, endpoint) = (self.clone(), to.clone(), via.endpoint(self));
+            let task = tokio::spawn(async move {
+                if let Err(error) = crate::data::source(&endpoint, &inner.key, ticket.stream, &bytes).await {
+                    inner.node.log(format!("sending a large call to {name}: {error}"));
+                }
+            });
+            (message, Side::Sending(task))
         };
         // The answer, a large one fetched too, within the one time the call
         // is waited for.

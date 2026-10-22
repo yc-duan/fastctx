@@ -212,6 +212,9 @@ pub enum Intent {
         /// in parts. One that does not is told such an answer is too large.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         parts: bool,
+        /// The receiver verifies a large call's control-frame authorization facts against its body.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        call_details: bool,
     },
     /// A password login to `account`: the first OPAQUE message. The hub
     /// answers `Down::LoginResponse`; the device finishes with

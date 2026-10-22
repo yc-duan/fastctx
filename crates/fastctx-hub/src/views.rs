@@ -130,6 +130,7 @@ pub(crate) fn view_for(
         })
         .collect();
     View {
+        call_details: true,
         machine_log: true,
         hub: store.hub.id.clone(),
         hub_name: store.hub.name.clone(),
