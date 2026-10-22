@@ -243,9 +243,20 @@ mod imp {
         }
     }
 
+    /// macOS answers a question about the other end of a connection that end
+    /// closed already with ENOTCONN, where Linux still answers it: a
+    /// connection gone before it was looked at was reset.
+    fn gone(error: io::Error) -> io::Error {
+        if error.kind() == io::ErrorKind::NotConnected {
+            io::Error::new(io::ErrorKind::ConnectionReset, "the other end closed the connection as it was made")
+        } else {
+            error
+        }
+    }
+
     fn same_user(stream: &UnixStream) -> io::Result<()> {
         // SAFETY: geteuid has no preconditions.
-        if stream.peer_cred()?.uid() != unsafe { libc::geteuid() } {
+        if stream.peer_cred().map_err(gone)?.uid() != unsafe { libc::geteuid() } {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "the supervisor connection belongs to another user",
@@ -266,20 +277,34 @@ mod imp {
         }
 
         pub async fn accept(&mut self) -> io::Result<Connection> {
-            let (stream, _) = self.socket.accept().await?;
-            if self.address.same_user {
-                same_user(&stream)?;
+            loop {
+                let (stream, _) = self.socket.accept().await?;
+                if self.address.same_user {
+                    match same_user(&stream) {
+                        Ok(()) => {}
+                        // A client that left before it was looked at is
+                        // not served; the next one is waited for.
+                        Err(error) if error.kind() == io::ErrorKind::ConnectionReset => continue,
+                        Err(error) => return Err(error),
+                    }
+                }
+                return Ok(Connection::new(stream));
             }
-            Ok(Connection::new(stream))
         }
     }
 
     pub async fn connect(address: &Address) -> io::Result<Connection> {
         let stream = UnixStream::connect(&address.path).await.map_err(|error| with_place(error, address))?;
         if address.same_user {
-            same_user(&stream)?;
+            same_user(&stream).map_err(|error| with_place(error, address))?;
         }
-        let identity = stream.peer_cred()?.pid().map(|pid| crate::identity_of(pid as u32)).transpose()?.flatten();
+        let identity = stream
+            .peer_cred()
+            .map_err(|error| with_place(gone(error), address))?
+            .pid()
+            .map(|pid| crate::identity_of(pid as u32))
+            .transpose()?
+            .flatten();
         let mut connection = Connection::new(stream);
         connection.server = identity;
         Ok(connection)

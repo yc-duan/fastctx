@@ -69,6 +69,16 @@ impl KernelRelease {
     }
 }
 
+/// Whether release `version` comes after release `than`, in semver order,
+/// a test release before the release it leads to; false where either is
+/// not a release's version.
+pub fn later(version: &str, than: &str) -> bool {
+    match (semver::Version::parse(version), semver::Version::parse(than)) {
+        (Ok(version), Ok(than)) => version > than,
+        _ => false,
+    }
+}
+
 /// A released version: `major.minor.patch`, or a test release of it with a
 /// semver pre-release such as `1.0.1-beta.2`; never build metadata. Each is
 /// also a single safe directory component.

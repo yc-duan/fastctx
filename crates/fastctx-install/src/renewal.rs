@@ -318,16 +318,14 @@ pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Res
     } else {
         None
     };
+    // A plan for another program starts with nothing failed: what went
+    // wrong replacing an earlier one is not this one's to say.
     let mut plan = Plan {
         candidate: Program { path: copied, build },
         previous,
         phase: Phase::Staged,
-        error: old_plan.as_ref().and_then(|plan| plan.error.clone()),
-        error_version: old_plan.as_ref().and_then(|plan| {
-            plan.error
-                .as_ref()
-                .map(|_| plan.error_version.clone().unwrap_or_else(|| plan.candidate.build.version.clone()))
-        }),
+        error: None,
+        error_version: None,
         retry: fastctx_update::retry::Retry::default(),
         keeper_restarted: false,
     };

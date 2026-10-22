@@ -43,7 +43,8 @@ pub async fn image(world: &WorldDir) -> io::Result<Option<std::path::PathBuf>> {
 pub async fn process(world: &WorldDir) -> io::Result<Option<fastctx_types::ProcessIdentity>> {
     match connect(world).await {
         Ok(connection) => Ok(connection.server_process().cloned()),
-        Err(error) if absent(&error) => Ok(None),
+        // Gone, or closing the connection as it was made: none serves now.
+        Err(error) if absent(&error) || broken_pipe(&error) => Ok(None),
         Err(error) => Err(error),
     }
 }

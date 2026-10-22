@@ -227,8 +227,8 @@ async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
     phase(root, plan, Phase::WaitingForIdle)?;
     let mut asked = None;
     if !matches!(current, Probe::Absent | Probe::Legacy { .. }) {
-        asked = renewal::process(&world).await?;
-        renewal::request(&world, Action::Yield).await?;
+        asked = settled(renewal::process(&world).await)?.flatten();
+        settled(renewal::request(&world, Action::Yield).await)?;
     }
     loop {
         let observed = observing(&world).await?;
@@ -258,12 +258,21 @@ async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
         if matches!(observed, Probe::Legacy { .. }) {
             return phase(root, plan, Phase::AwaitingLegacyExit);
         }
-        let serving = renewal::process(&world).await?;
-        if serving.is_some() && serving != asked {
-            renewal::request(&world, Action::Yield).await?;
+        let serving = settled(renewal::process(&world).await)?.flatten();
+        if serving.is_some() && serving != asked && settled(renewal::request(&world, Action::Yield).await)?.is_some() {
             asked = serving;
         }
         tick().await;
+    }
+}
+
+/// What a call to a node that may be leaving came to: its answer, or none
+/// where the node went away as it was asked, to be looked at again.
+fn settled<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
+    match result {
+        Ok(answer) => Ok(Some(answer)),
+        Err(error) if transient(&error) => Ok(None),
+        Err(error) => Err(error),
     }
 }
 
@@ -492,6 +501,8 @@ async fn observing(world: &WorldDir) -> std::io::Result<Probe> {
     }
 }
 
+/// A node going away as it is asked: gone, refusing, closing the
+/// connection, or, on macOS, closed before the connection was looked at.
 fn transient(error: &std::io::Error) -> bool {
     matches!(
         error.kind(),
@@ -500,6 +511,8 @@ fn transient(error: &std::io::Error) -> bool {
             | std::io::ErrorKind::UnexpectedEof
             | std::io::ErrorKind::BrokenPipe
             | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::NotConnected
     )
 }
 

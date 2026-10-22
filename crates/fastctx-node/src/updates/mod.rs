@@ -234,12 +234,13 @@ pub(crate) fn state(node: &Node) -> State {
             fetching: held.fetching.clone(),
             failed: held.attempt.failed.clone().or_else(|| {
                 let plan = fastctx_install::renewal::read(&node.root).ok().flatten()?;
-                Some(Failed {
-                    version: plan.error_version.unwrap_or(plan.candidate.build.version),
-                    target: fastctx_update::kernel::target(),
-                    why: plan.error?,
-                    reason: None,
-                })
+                let version = plan.error_version.unwrap_or(plan.candidate.build.version);
+                // A program this node runs already, or one older, is no
+                // failure to tell now.
+                if !fastctx_types::kernel::later(&version, env!("CARGO_PKG_VERSION")) {
+                    return None;
+                }
+                Some(Failed { version, target: fastctx_update::kernel::target(), why: plan.error?, reason: None })
             }),
             retry_at: held.attempt.failed.as_ref().and(held.attempt.delay.next),
             kept: cache.kept(),
