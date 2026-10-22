@@ -189,9 +189,13 @@ impl Link {
     async fn assist(&self, account: &AccountName, mut assist: Assist, assisting: bool) -> Result<(), String> {
         let homes = if !assisting && self.view().member(&assist.machine).is_some_and(|member| !member.online) {
             let view = self.view();
-            let related: Vec<_> = view.assists.iter().filter(|entry|
-                entry.machine == assist.machine && entry.account == assist.account && entry.agent == assist.agent
-            ).collect();
+            let related: Vec<_> = view
+                .assists
+                .iter()
+                .filter(|entry| {
+                    entry.machine == assist.machine && entry.account == assist.account && entry.agent == assist.agent
+                })
+                .collect();
             if !related.is_empty() && !related.iter().any(|entry| entry.home == assist.home) {
                 return Err("the machine is offline; revoke the listed login by its stored path, or wait for it to identify the default login".into());
             }

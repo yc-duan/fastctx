@@ -32,7 +32,9 @@ pub(super) fn candidates(node: &Node) -> Result<Vec<(Found, Server)>, String> {
 
 pub(super) fn selected(node: &Node, source: &Source, name: &str) -> Result<Server, String> {
     let paths = files(node)?.into_iter().filter(|(known, _)| known == source).collect();
-    read_files(paths)?.into_iter().find(|(found, _)| found.name == name)
+    read_files(paths)?
+        .into_iter()
+        .find(|(found, _)| found.name == name)
         .map(|(_, server)| server)
         .ok_or_else(|| "the import candidate disappeared".into())
 }
