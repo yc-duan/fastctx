@@ -1102,6 +1102,15 @@ pub async fn deliver(
     } else {
         false
     };
+    let current = match node.residents.about(to) {
+        Some((about, _)) => about,
+        None => return Some(Err(crate::authorization::no_subject())),
+    };
+    if let Err(failure) =
+        crate::homes::available(node, &current).and_then(|()| crate::assists::may_turn(node, to, &current))
+    {
+        return Some(Ok(Landed::Waiting { why: Some(failure.message), answered: true }));
+    }
     let user_action =
         matches!(pending.delivery.notice, Notice::Words { from: Speaker::User { .. }, .. } | Notice::Attached { .. });
     if !about.world_started && !stopped_background && !user_action {
@@ -1326,6 +1335,11 @@ async fn wake_again(
     id: &fastctx_types::NoticeId,
     command: &Command,
 ) -> Result<(), Failure> {
+    node.residents.active(resident)?;
+    crate::focus::refresh(node, resident).await?;
+    let (about, _) = node.residents.about(resident).ok_or_else(crate::authorization::no_subject)?;
+    crate::homes::listed(node, about.host.agent.as_str(), about.home.as_deref())?;
+    crate::assists::may_turn(node, resident, &about)?;
     let directory = node.world.conversation(resident);
     let pending = crate::inbox::read(&directory, id)
         .map_err(|error| Failure::new(format!("reading what wakes {resident}: {error}")))?

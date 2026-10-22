@@ -269,6 +269,7 @@ async fn hand_over_locked(
     if let Err(error) = crate::homes::available(node, about).and_then(|()| crate::assists::may_turn(node, to, about)) {
         return Ok(Landed::Waiting { why: Some(error.message), answered: answered(node, to, about) });
     }
+    crate::focus::refresh(node, to).await?;
     if let Some(landed) = crate::claude::deliver(node, to, about, directory, &pending).await {
         return landed;
     }
@@ -453,6 +454,9 @@ async fn submit_thread(
             kept.working = false;
         }
     }
+    let (current, _) = node.residents.about(id).ok_or_else(crate::authorization::no_subject)?;
+    crate::homes::available(node, &current)?;
+    crate::assists::may_turn(node, id, &current)?;
     let mut handover =
         crate::delivery::begin(directory, batch.clone()).map_err(|error| Failure::new(error.to_string()))?;
     let client = Some(format!("{}{}", fastctx_hosts::codex::WORLD_CLIENT, handover.id));

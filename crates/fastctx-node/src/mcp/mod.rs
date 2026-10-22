@@ -342,14 +342,21 @@ pub(crate) async fn serve(
     name: &str,
     stream: fastctx_net::data::Stream,
 ) -> Result<(), Failure> {
+    let mut changes = node.views.subscribe();
+    let mut ways = node.ways.subscribe();
+    let acting = fastctx_types::access::Acting::one(hub.clone(), account.clone());
+    node.authorize_here(&acting)?;
     let server = store::get(node, hub, account, name).map_err(failed)?;
     let mut process = process::start(&server, &node.fastctx, &node.root).map_err(failed)?;
-    let mut changes = node.views.subscribe();
     let revoked = async {
         loop {
-            changes.changed().await.map_err(failed)?;
+            node.authorize_here(&acting)?;
             if store::get(node, hub, account, name).as_ref() != Ok(&server) {
                 return Err(failed("the MCP command was changed or removed"));
+            }
+            tokio::select! {
+                changed = changes.changed() => changed.map_err(failed)?,
+                changed = ways.changed() => changed.map_err(failed)?,
             }
         }
     };
