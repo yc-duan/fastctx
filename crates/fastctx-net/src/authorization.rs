@@ -30,6 +30,14 @@ pub enum Action<'a> {
 }
 
 impl Directory {
+    /// Effective machine rights for calls from this source, without combining different accounts.
+    pub fn call_rights(&self, from: &MachineName, account: &AccountName, to: &MachineName) -> Rights {
+        Rights {
+            hands: self.authorize(account, Action::Call { from, to, purpose: Purpose::Hands }).is_ok(),
+            agents: self.authorize(account, Action::Call { from, to, purpose: Purpose::Agents }).is_ok(),
+        }
+    }
+
     /// Decides an action using one account and this directory's current policy.
     /// Missing and locked accounts are refused before considering ownership or delegation.
     pub fn authorize(&self, account: &AccountName, action: Action<'_>) -> Result<(), Denial> {

@@ -101,13 +101,21 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
     if reached.is_some_and(|owner| !node.is_me(&owner.machine)) {
         return Err(refuse("the attachment names a different holding machine".into()));
     }
-    let view = link.view();
+    let view = crate::authorization::current_view(link)?;
     if let RemoteCall::AttachmentReferences { attachments, .. } = call
         && attachments.iter().any(|file| !view.same(&file.owner.machine, &caller.machine))
     {
         return Err(refuse("only the original holder may query its attachment references".into()));
     }
-    view.admits(&caller.machine, &caller.account, &here, call.purpose()).map_err(refuse)?;
+    view.authorize(
+        &caller.account,
+        fastctx_net::authorization::Action::Call { from: &caller.machine, to: &here, purpose: call.purpose() },
+    )
+    .map_err(|denial| {
+        let mut failure = Failure::from(denial);
+        failure.message = format!("{here} refused {}: {}", caller.machine, failure.message);
+        failure
+    })?;
     let agents_here = matches!(
         call,
         RemoteCall::ScanAgents { .. }

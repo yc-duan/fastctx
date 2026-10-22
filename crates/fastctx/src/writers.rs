@@ -77,7 +77,7 @@ fn input() -> anyhow::Result<String> {
 fn execute(op: WriteOp) -> anyhow::Result<ExitCode> {
     let job = std::env::var("FASTCTX_JOB").ok().map(|job| job.parse()).transpose()?;
     let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
-    let peer = fastctx_client::command_peer();
+    let peer = fastctx_client::command_peer()?;
     // An invalid stamped identity must not fall through to a host-session hint.
     if let Some(address) = std::env::var_os("FASTCTX_RESIDENT") {
         address

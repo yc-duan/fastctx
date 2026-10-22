@@ -45,6 +45,7 @@ pub(crate) async fn open(
         let (reply, lease) = fastctx_net::file_search::open(link, machine.name, account, scope).await?;
         return Ok((reply, Lease::Remote(lease)));
     }
+    node.authorize_here(acting)?;
     let initializing = crate::initializing::take()?;
     let roots = roots(node, &scope, Some(&initializing)).await?;
     let session = initializing.run(move || Session::new(scope, roots)).await?.map_err(failed)?;
@@ -85,6 +86,7 @@ pub(crate) async fn call(
 ) -> Result<FileSearchReply, Failure> {
     let local = node.machine();
     let Some(target) = machine.filter(|machine| !node.is_here(machine)) else {
+        node.authorize_here(acting)?;
         return here(node, local, request).await;
     };
     let call = RemoteCall::FindFiles { request };

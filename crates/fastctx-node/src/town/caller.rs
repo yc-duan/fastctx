@@ -15,7 +15,11 @@ pub enum Caller {
     User,
     /// A resident of this machine or another.
     Resident(Address),
-    /// An agent's session the World has no resident for.
+    /// An unregistered host, retained for legacy attribution but never admitted as an account.
+    #[expect(
+        dead_code,
+        reason = "Legacy attribution remains representable; unknown callers are refused before construction."
+    )]
     Session(AgentName),
 }
 
@@ -25,20 +29,31 @@ pub fn of(node: &Node, peer: &Peer) -> Result<Caller, Failure> {
     let resident = |id| Caller::Resident(Address { machine: here.clone(), resident: id });
     match peer {
         Peer::Page { page } => Ok(Caller::Page(page.clone())),
-        Peer::Command { resident: Some(address), .. } => Ok(Caller::Resident(address.clone())),
-        Peer::Command { resident: None, session: Some(SessionHint::Codex { thread }) } => {
-            Ok(node.residents.resident_of_thread(thread).map(resident).unwrap_or_else(|| agent("codex")))
+        Peer::Command { resident: Some(address), .. } => {
+            if node.is_me(&address.machine) {
+                node.residents.active(&address.resident)?;
+            } else if crate::jobs::running_for(&node.world, &node.names(), address).is_empty() {
+                return Err(unrecognized("the command belongs to no active remote job"));
+            }
+            Ok(Caller::Resident(address.clone()))
         }
-        Peer::Command { resident: None, session: Some(SessionHint::Claude { inbox }) } => {
-            Ok(node.residents.resident_of_inbox(inbox).map(resident).unwrap_or_else(|| agent("claude")))
-        }
+        Peer::Command { resident: None, session: Some(SessionHint::Codex { thread }) } => node
+            .residents
+            .resident_of_thread(thread)
+            .map(resident)
+            .ok_or_else(|| unrecognized("the Codex thread is not registered")),
+        Peer::Command { resident: None, session: Some(SessionHint::Claude { inbox }) } => node
+            .residents
+            .resident_of_inbox(inbox)
+            .map(resident)
+            .ok_or_else(|| unrecognized("the Claude session is not registered")),
         Peer::Command { resident: None, session: None } => Ok(Caller::User),
         Peer::Session { .. } | Peer::Supervisor { .. } => Err(Failure::new("this is asked of the node by a command")),
     }
 }
 
-fn agent(name: &str) -> Caller {
-    Caller::Session(AgentName::try_from(name).expect("a valid agent name"))
+fn unrecognized(message: &str) -> Failure {
+    fastctx_types::authorization::Denial::new(fastctx_types::authorization::DenialReason::NoSubject, message).into()
 }
 
 impl Caller {

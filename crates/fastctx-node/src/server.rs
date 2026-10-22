@@ -773,10 +773,13 @@ async fn taken(
 }
 
 fn active_caller(node: &Node, peer: &Peer) -> Result<(), Failure> {
-    if let Ok(Caller::Resident(address)) = caller::of(node, peer)
-        && node.is_me(&address.machine)
-    {
-        node.residents.active(&address.resident)?;
+    if matches!(peer, Peer::Command { .. }) {
+        let caller = caller::of(node, peer)?;
+        if let Caller::Resident(address) = caller
+            && node.is_me(&address.machine)
+        {
+            node.residents.active(&address.resident)?;
+        }
     }
     Ok(())
 }
@@ -802,7 +805,18 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 let id = hints.tool_use_id.as_deref().filter(|id| !id.is_empty()).ok_or_else(|| {
                     Failure::new("Claude did not supply a tool use id; its session cannot be identified")
                 })?;
-                return crate::claude::identify(node, id).await.map(Reply::Arrived);
+                if let Some(resident) = &hints.resident {
+                    node.residents.active(resident)?;
+                }
+                let whereabouts = crate::claude::identify(node, id).await?;
+                if hints.resident.is_some_and(|resident| resident != whereabouts.resident) {
+                    return Err(fastctx_types::authorization::Denial::new(
+                        fastctx_types::authorization::DenialReason::NoSubject,
+                        "the Claude call belongs to a different conversation",
+                    )
+                    .into());
+                }
+                return Ok(Reply::Arrived(whereabouts));
             }
             let whereabouts = node.residents.arrive(&node.world, &node.machine(), host, hints)?;
             Ok(Reply::Arrived(whereabouts))
@@ -1324,8 +1338,12 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             nodes(node, &acting, here_too).await.map(Reply::Nodes)
         }
         Call::Machines { resident, login, thread } => {
+            let explicit = resident.is_some() || thread.is_some();
             let resident =
                 resident.or_else(|| thread.as_deref().and_then(|thread| node.residents.resident_of_thread(thread)));
+            if explicit && resident.is_none() {
+                return Ok(Reply::Machines { here: None, others: Vec::new(), groups: Vec::new(), collab: None });
+            }
             machines(node, resident.as_ref(), login.as_ref())
         }
         Call::WatchTools { .. } => Err(Failure::new("a tools watch is answered as it goes, not at once")),
@@ -1444,10 +1462,8 @@ async fn run_started(
         (Some(goes_to), request) => crate::here::run(node, &resident, town.clone(), request, &goes_to).await?,
         (None, request) => {
             // Named like any machine, this one runs it only for whom may work on it.
-            let acting = crate::here::acting(node, &resident).unwrap_or_default();
-            if !crate::around::works_here(node, &acting) {
-                return Err(Failure::new(format!("{here} is not one of the machines you can use")));
-            }
+            let acting = crate::authorization::resident(node, &resident)?;
+            node.authorize_here(&acting)?;
             let owner = Address { machine: here.clone(), resident: resident.clone() };
             node.jobs.run(node, owner.into(), town.clone(), request, None).await?.0
         }
@@ -1470,7 +1486,10 @@ async fn run_started(
 
 /// Why a script was not run, with the machines it may name.
 fn unnamed(node: &Node, resident: &ResidentId, why: &str) -> Failure {
-    let acting = crate::here::acting(node, resident).unwrap_or_default();
+    let acting = match crate::authorization::resident(node, resident) {
+        Ok(acting) => acting,
+        Err(failure) => return failure,
+    };
     let machines = usable(node, &acting);
     let example = machines.first().map(String::as_str).unwrap_or("MACHINE");
     let names = if machines.is_empty() { "none yet".to_string() } else { machines.join(", ") };
@@ -1506,8 +1525,8 @@ async fn write(
     // Written here only for an account that may work here, as a run is:
     // an agent assisting another account writes nothing on its owner's
     // computer.
-    let acting = node.residents.about(&resident).map(|(about, _)| about.acting).unwrap_or_default();
-    node.works_here(&acting).map_err(Failure::not_run)?;
+    let acting = crate::authorization::resident(node, &resident)?;
+    node.authorize_here(&acting)?;
     let here = node.machine();
     let started_at = jiff::Timestamp::now();
     let owner = Address { machine: here.clone(), resident: resident.clone() };
@@ -1663,6 +1682,7 @@ async fn nodes(
             .machines()
             .filter(|machine| !view.is_me(&machine.name))
             .filter_map(|machine| {
+                crate::authorization::current_view(&link).ok()?;
                 view.account_for(&logins, &view.me, &machine.name, fastctx_types::access::Purpose::Hands).map(
                     |account| Reachable {
                         link: link.clone(),

@@ -22,6 +22,7 @@ mod assists;
 mod attach;
 mod attachment_files;
 mod attachments;
+mod authorization;
 mod books;
 mod claude;
 pub mod claude_request;

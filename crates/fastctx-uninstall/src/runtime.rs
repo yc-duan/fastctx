@@ -8,7 +8,7 @@ use fastctx_types::{
 pub(crate) async fn stop(installation: &Installation) -> anyhow::Result<Option<fastctx_types::ProcessIdentity>> {
     let world = WorldDir::under(&installation.root);
     let mut identity = None;
-    match fastctx_client::Client::connect(&world, fastctx_client::command_peer()).await {
+    match fastctx_client::Client::connect(&world, fastctx_client::command_peer()?).await {
         Ok(mut node) => {
             identity = Some(
                 node.node_lifetime

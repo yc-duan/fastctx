@@ -1259,6 +1259,8 @@ impl fastctx_net::link::Node for Handler {
         // The machines each session may use are in its tools' descriptions.
         node.tools_changed(None);
         node.views_changed();
+        let contexts = node.clone();
+        tokio::spawn(async move { crate::focus::refresh_all(&contexts).await });
         // A project shared with an account here since is taken to be listed.
         if let Some(link) = node.link_of(&self.hub) {
             tokio::spawn(async move {
@@ -1354,7 +1356,7 @@ pub fn grouped_machines(
     let mut groups: Vec<fastctx_types::world::MachineGroup> = Vec::new();
     let mut keys = Vec::new();
     for link in node.links() {
-        let view = link.view();
+        let Ok(view) = crate::authorization::current_view(&link) else { continue };
         let accounts = node.accounts_on(&link, acting);
         let mut put = |machine: &fastctx_net::directory::Member, written: &str| {
             if let (Some(group), Some(owner)) = (&machine.group, &machine.home) {
@@ -1380,7 +1382,7 @@ pub fn grouped_machines(
                 }
                 continue;
             }
-            if accounts.iter().any(|account| view.rights(account, &machine.name).hands) {
+            if view.account_for(&accounts, &view.me, &machine.name, Purpose::Hands).is_some() {
                 keys.push(machine.key);
                 let written = node.written(&link, &machine.name).to_string();
                 put(machine, &written);

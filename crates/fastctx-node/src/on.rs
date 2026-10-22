@@ -156,7 +156,7 @@ pub(crate) fn acting(node: &Node, origin: &OnOrigin) -> Acting {
     match &origin.account {
         Some(account) => Acting::one(account.hub.clone(), account.account.clone()),
         None if node.is_me(&origin.resident.machine) => {
-            node.residents.about(&origin.resident.resident).map(|(about, _)| about.acting).unwrap_or_default()
+            crate::here::acting(node, &origin.resident.resident).unwrap_or(Acting::Accounts { accounts: Vec::new() })
         }
         None => Acting::Accounts { accounts: Vec::new() },
     }
@@ -296,6 +296,7 @@ async fn here(
     pieces: &Pieces,
     waiting: &Arc<Mutex<crate::on_delivery::Following>>,
 ) -> Result<(), Failure> {
+    node.authorize_here(&acting(node, origin))?;
     let staged = Staged::local(&request.package).await.map_err(|failure| Failure::not_run(failure.message))?;
     let (job, record_path, follower) = start(node, origin, staged, request.package.writes_off, false).await?;
     waiting.lock().expect("never poisoned").started(&job);

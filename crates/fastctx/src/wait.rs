@@ -32,7 +32,7 @@ pub fn run(args: WaitArgs) -> anyhow::Result<ExitCode> {
     let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let mut client =
-        runtime.block_on(Client::connect(&world, command_peer())).context("reaching this machine's node")?;
+        runtime.block_on(Client::connect(&world, command_peer()?)).context("reaching this machine's node")?;
     let parent = std::env::var("FASTCTX_JOB").ok().map(|job| job.parse()).transpose()?;
     let records = match runtime.block_on(client.call(Call::Wait { jobs, receipt: true, parent })) {
         Ok(Reply::Waited { records }) => records,

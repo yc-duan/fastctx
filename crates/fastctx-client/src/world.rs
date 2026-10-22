@@ -196,7 +196,7 @@ impl World {
     /// The World kept for this user on this machine, speaking as whoever
     /// runs the program (`crate::command_peer`).
     pub fn here() -> std::io::Result<Self> {
-        Ok(Self::new(WorldDir::under(&fastctx_platform::fastctx_root()?), crate::command_peer()))
+        Ok(Self::new(WorldDir::under(&fastctx_platform::fastctx_root()?), crate::command_peer()?))
     }
 
     /// The World kept for this user on this machine, as `World::here`,
@@ -204,7 +204,7 @@ impl World {
     /// computer keeps it (`crate::cache::Cache::under`).
     pub fn here_keeping() -> std::io::Result<Self> {
         let root = fastctx_platform::fastctx_root()?;
-        Ok(Self::new(WorldDir::under(&root), crate::command_peer()).keeping(crate::cache::Cache::under(&root)?))
+        Ok(Self::new(WorldDir::under(&root), crate::command_peer()?).keeping(crate::cache::Cache::under(&root)?))
     }
 
     /// The local node's World directory, or the application's private

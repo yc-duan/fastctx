@@ -171,7 +171,8 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
         Happened::TurnEnded { turn, end } => {
             // What a notification of this turn says: its last words, or
             // none, never an earlier turn's.
-            let said = end.last_message.as_deref().map(|said| opening(said, LAST_SAID_CHARS)).filter(|said| !said.is_empty());
+            let said =
+                end.last_message.as_deref().map(|said| opening(said, LAST_SAID_CHARS)).filter(|said| !said.is_empty());
             node.residents.change_now(&node.world, id, |now| {
                 if said.is_some() {
                     now.last_compacted = false;
@@ -481,9 +482,12 @@ pub fn pay<'a>(
             }
         };
         let _told = Told(owing.iter().map(|answer| answer.delivery.id.clone()).collect());
-        let about = node.residents.about(id).map(|(about, _)| about);
-        let colleague = about.as_ref().is_some_and(|about| matches!(about.origin, Origin::Colleague { .. }));
-        let acting = about.map(|about| about.acting).unwrap_or_default();
+        let Some((about, _)) = node.residents.about(id) else {
+            node.log.line(format_args!("answers for {id} wait: its account identity is no longer known"));
+            return;
+        };
+        let colleague = matches!(about.origin, Origin::Colleague { .. });
+        let acting = about.acting;
         for answer in owing {
             let turn = match &answer.delivery.notice {
                 Notice::Answer { turn, .. } => Some(turn.clone()).filter(|turn| !turn.is_empty()),

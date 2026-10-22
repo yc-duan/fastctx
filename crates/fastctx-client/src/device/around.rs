@@ -6,7 +6,6 @@
 //! that acts for the device's account answers from its own copy.
 
 use fastctx_types::access::Written;
-use std::sync::Arc;
 
 use fastctx_net::around::{self, Heard, Reachable};
 use fastctx_types::access::HubAccount;
@@ -24,42 +23,22 @@ use super::{Device, Session, failed};
 use crate::Error;
 
 impl Device {
-    /// The machines this device's accounts may use, on every hub it is on.
-    fn reachable(&self) -> Vec<Reachable> {
-        let mut reachable = Vec::new();
-        let sessions = self.sessions();
-        let links: Vec<_> = sessions.iter().map(|session| session.link.clone()).collect();
-        for session in sessions {
-            let view = session.link.view();
-            let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
-            for machine in view.machines() {
-                if let Some(account) = logins.iter().find(|account| view.rights(account, &machine.name).any()) {
-                    reachable.push(Reachable {
-                        link: session.link.clone(),
-                        name: machine.name.clone(),
-                        key: machine.key,
-                        account: account.clone(),
-                        written: fastctx_net::around::written_among(&links, &session.link, &machine.name),
-                    });
-                }
-            }
-        }
-        reachable
-    }
-
-    /// As `reachable`, each machine once for every account of this device
-    /// that may use it: a machine shows each account the conversations
-    /// working for it alone, so a device logged in to several accounts on a
-    /// hub asks as each and merges what it hears.
+    /// Each machine once for every account of this device that may use it;
+    /// answers are merged by hub, machine and account.
     fn reachable_each(&self) -> Vec<Reachable> {
         let mut reachable = Vec::new();
         let sessions = self.sessions();
         let links: Vec<_> = sessions.iter().map(|session| session.link.clone()).collect();
         for session in sessions {
+            if !matches!(session.link.status(), fastctx_net::link::Status::Online { .. }) {
+                continue;
+            }
             let view = session.link.view();
             let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
             for machine in view.machines() {
-                for account in logins.iter().filter(|account| view.rights(account, &machine.name).any()) {
+                for account in logins.iter().filter(|account| {
+                    view.admits(&view.me, account, &machine.name, fastctx_types::access::Purpose::Look).is_ok()
+                }) {
                     reachable.push(Reachable {
                         link: session.link.clone(),
                         name: machine.name.clone(),
@@ -278,11 +257,22 @@ impl Device {
             let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
             // The machines its accounts may work on; one whose agents only
             // assist them is no machine of theirs to list.
-            let reachable: Vec<Reachable> = self
-                .reachable()
-                .into_iter()
-                .filter(|one| Arc::ptr_eq(&one.link, &link))
-                .filter(|one| logins.iter().any(|account| view.rights(account, &one.name).hands))
+            let reachable: Vec<Reachable> = view
+                .machines()
+                .filter_map(|machine| {
+                    if !matches!(link.status(), fastctx_net::link::Status::Online { .. }) {
+                        return None;
+                    }
+                    let account =
+                        view.account_for(&logins, &view.me, &machine.name, fastctx_types::access::Purpose::Hands)?;
+                    Some(Reachable {
+                        link: link.clone(),
+                        name: machine.name.clone(),
+                        key: machine.key,
+                        account,
+                        written: (&machine.name).into(),
+                    })
+                })
                 .collect();
             let online_known = fresh.is_ok();
             let heard = around::ask_refreshed(reachable, |_| RemoteCall::Facts, fresh).await;

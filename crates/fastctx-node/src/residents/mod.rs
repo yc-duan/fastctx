@@ -440,7 +440,7 @@ impl Residents {
         self.changed.subscribe()
     }
 
-    /// The resident a session is, made now if it is new.
+    /// Reconnects a known session or admits one the local user opened without a World identity.
     pub fn arrive(
         &self,
         world: &WorldDir,
@@ -473,9 +473,13 @@ impl Residents {
             live.connections += 1;
             return Ok(Whereabouts { resident, town: live.town() });
         }
-        if let Some(resident) = hints.was
-            && let Some(live) = state.live.get_mut(&resident)
-        {
+        if let Some(resident) = hints.was {
+            let live = state.live.get_mut(&resident).ok_or_else(|| {
+                fastctx_types::authorization::Denial::new(
+                    fastctx_types::authorization::DenialReason::NoSubject,
+                    "the session's previous resident is not registered",
+                )
+            })?;
             if live.removed.is_some() {
                 return Err(removal::refused(&resident));
             }
@@ -494,7 +498,7 @@ impl Residents {
             session: hints.thread.clone(),
             world_started: false,
             model: None,
-            acting: Default::default(),
+            acting: fastctx_types::access::Acting::Here,
             focus: Default::default(),
             home: None,
             callee: None,
