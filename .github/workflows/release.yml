@@ -1086,6 +1086,72 @@ jobs:
       - name: The guardians take the later release by themselves
         run: python scripts/renewal-drill.py run kernel/fastctx.exe later/fastctx.exe "$LATER"
 
+  # The release a computer runs now, its node kept by its startup service, takes this run's kernel by
+  # the renewal the application starts, with nothing failed and nobody asked (`world-upgrade.md`,
+  # 换版不要人确认): the way every user's machine goes from one release to the next.
+  renewal-earlier:
+    needs: [kernel-windows, kernel-linux, kernel-macos]
+    if: github.ref_type == 'branch'
+    name: renewal from ${{ matrix.target }}'s earlier release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+            program: fastctx.exe
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            program: fastctx
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            program: fastctx
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            program: fastctx
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            program: fastctx
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os == 'Windows'
+        name: Keep the antivirus off the drill's files
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, $env:RUNNER_TEMP
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - if: runner.os == 'Windows'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-${{ matrix.target }}
+          path: kernel
+      - name: Take the earlier release's program
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then package="fastctx-${{ matrix.target }}.zip"; else package="fastctx-${{ matrix.target }}.tar.gz"; fi
+          gh release download "v$EARLIER_RELEASE" --repo "${{ github.repository }}" -p "$package" -D earlier
+          if [ "$RUNNER_OS" = Windows ]; then unzip -q -o "earlier/$package" -d earlier; else tar xzf "earlier/$package" -C earlier; fi
+          chmod +x "earlier/${{ matrix.program }}" "kernel/${{ matrix.program }}"
+          "earlier/${{ matrix.program }}" --version
+          echo "VERSION=$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')" >> "$GITHUB_ENV"
+      - if: runner.os == 'Windows'
+        name: Sign this release's program, as the installer carries it
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx --yes "$TAURI_CLI" signer sign --app-version "$VERSION" kernel/fastctx.exe
+      - name: Its startup service takes this release by itself
+        run: python scripts/renewal-drill.py earlier "earlier/${{ matrix.program }}" "kernel/${{ matrix.program }}" "$VERSION"
+
   manifest:
     needs: [notices, kernel-windows, windows-x64, kernel-linux, kernel-macos, macos-intel, sign-kernels, gui-windows, gui-macos, gui-linux, android, update-windows]
     runs-on: ubuntu-24.04

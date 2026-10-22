@@ -6,17 +6,21 @@ node's own update takes, as a node of an earlier release left it: its release's 
 program and its own signature side by side, kept in the World's updates, and the program staged
 with another signature of that release beside it, which no guardian takes it by. The renewal mends
 the signature from the package; the node takes the program, each protected guardian takes it into
-its own directory by that signature with no administrator asked, the hub follows its machine, and
-both services run it. Nothing outside a fresh temporary directory is used,
+its own directory by that signature with no administrator asked, the hub's guardian, left out of
+the renewal as one its user may not ask, takes it by itself within a minute or two, and both
+services run it. Nothing outside a fresh temporary directory is used,
 except the services the drill installs and removes again. When a check fails, the renewal's state,
 what each guardian said and the logs are shown.
 
     python scripts/renewal-drill.py bump VERSION
     python scripts/renewal-drill.py run PROGRAM LATER VERSION
+    python scripts/renewal-drill.py earlier EARLIER PROGRAM VERSION
 
 `bump` prints a version later than VERSION and sets it as the workspace's, for building the later
 release; `run` drills with this release's PROGRAM and the LATER one of VERSION, its signature beside
-it, and beside that `decoy.sig`, the same release's signature of something else.
+it, and beside that `decoy.sig`, the same release's signature of something else. `earlier` keeps
+the World of the EARLIER release's program by its startup service and hands this release's PROGRAM,
+at VERSION, its signature beside it where it has one, to its renewal as the application does.
 """
 import hashlib
 import json
@@ -97,6 +101,7 @@ def run(program, later, version):
     password = "Renewal-" + uuid.uuid4().hex[:12] + "-7"
     home = root / "alpha"
     installed = home / "bin" / "fastctx.exe"
+    hidden = home / "hub-services.hidden"
     names = {}
     phases = []
 
@@ -154,6 +159,9 @@ def run(program, later, version):
         with zipfile.ZipFile(staged, "w", zipfile.ZIP_DEFLATED) as zipped:
             zipped.write(later, "fastctx.exe")
             zipped.write(Path(later).with_name("decoy.sig"), "fastctx.exe.sig")
+        # The hub follows by itself, as one whose user may not ask its guardian: alpha's renewal is
+        # not told of it.
+        (home / "hub-services.json").rename(hidden)
         code, out = lab.run("alpha", "renew", "stage", "--dir", str(home), "--package", str(staged), timeout=300)
         check("the later release is handed to the renewal, with another signature beside it", code == 0, out)
 
@@ -171,9 +179,9 @@ def run(program, later, version):
         digest = sha256(Path(later))
         until("the node's guardian took it into its own directory",
               lambda: sha256(protected(names["node"]) / "guardian.exe") == digest, 60)
-        until("the hub's guardian and its program took it too",
+        until("the hub's guardian took it by itself, and its program too",
               lambda: sha256(protected(names["hub"]) / "guardian.exe") == digest
-              and sha256(protected(names["hub"]) / "payload.exe") == digest, 120)
+              and sha256(protected(names["hub"]) / "payload.exe") == digest, 180)
         for kind, name in names.items():
             adopted = protected(name) / "adopted.json"
 
@@ -193,8 +201,7 @@ def run(program, later, version):
             return (node.get("build") or {}).get("version") == version and node.get("supervised") and not node.get("bridge")
 
         until("the node service's node runs the later release", serving_later, 120)
-        # Started again by the renewal at once, not by the service's check
-        # at the next minute.
+        # Started again by the service manager at once.
         until("the hub listens again within half a minute", listening, 30)
         for kind in names:
             state = status(kind, home if kind == "node" else home / "hub")
@@ -221,7 +228,122 @@ def run(program, later, version):
             diagnose(lab, root)
         for process in lab.owned:
             process.kill()
+        if hidden.is_file():
+            hidden.rename(home / "hub-services.json")
         cleaner = installed if installed.is_file() else lab.program
+        subprocess.run([str(cleaner), "uninstall", "run", "--everything", "--json"], env=lab.env("alpha"),
+                       capture_output=True, text=True, timeout=300)
+    passed = sum(RESULTS)
+    print(f"\n{passed}/{len(RESULTS)} passed")
+    return 0 if passed == len(RESULTS) else 1
+
+
+def earlier(old, program, version):
+    """The World program of an earlier release, its node kept by the startup service (a system
+    service with its protected guardian, a systemd unit of the user, a LaunchAgent), is replaced by
+    this release as the application hands its carried program over, its signature beside it, and
+    the service's own node runs this release in the end, nothing failed on the way and nobody
+    asked."""
+    from smoke import node_processes, service_process
+
+    windows = os.name == "nt"
+    root = Path(tempfile.mkdtemp(prefix="fastctx-earlier-", dir=os.environ.get("RUNNER_TEMP")))
+    lab = Lab(Path(old).resolve(), root)
+    home = root / "alpha"
+    installed = home / "bin" / lab.program.name
+    program = Path(program).resolve()
+    elevate = ["sudo", "-E"] if sys.platform.startswith("linux") else []
+    extra = ["--uid", str(os.getuid())] if sys.platform.startswith("linux") else []
+    phases = []
+
+    def renewal():
+        done = subprocess.run([str(program), "renew", "status", "--dir", str(home)], env=lab.env("alpha"),
+                              capture_output=True, text=True, timeout=60)
+        try:
+            return json.loads(done.stdout[done.stdout.index("{"):])
+        except ValueError:
+            return {}
+
+    def status():
+        code, out = lab.run("alpha", "service", "node", "status", "--dir", str(home), "--executable", str(installed),
+                            timeout=60)
+        try:
+            return json.loads(out[out.index("{"):])
+        except ValueError:
+            return {}
+
+    try:
+        code, out = lab.run("alpha", "nodes", timeout=180)
+        check("the earlier release places itself and serves", code == 0 and installed.is_file(), out)
+        printed = subprocess.run([str(installed), "--version"], capture_output=True, text=True).stdout.strip()
+        check("its World program is the earlier release", printed.startswith("fastctx ") and version not in printed,
+              printed)
+        if not status().get("installed"):
+            command = [*elevate, str(installed), "service", "node", "install", "--dir", str(home), "--executable",
+                       str(installed), *extra]
+            done = subprocess.run(command, env=lab.env("alpha"), capture_output=True, text=True)
+            check("its node is kept by the startup service", done.returncode == 0, done.stdout + done.stderr)
+        kept = status()
+
+        def served_by_service():
+            if windows:
+                node = renewal().get("node") or {}
+                return node.get("supervised") and not node.get("bridge") and not node.get("yielding")
+            pid = service_process(kept)
+            return pid is not None and node_processes(root, "alpha") == {pid}
+
+        until("the service's own node serves the World", served_by_service, 120)
+        # As the application does with the program it carries, offered again while a step of the
+        # World's own, as the service's node entering, refuses it for the moment.
+        refusals = []
+
+        def staged():
+            done = subprocess.run([str(program), "renew", "stage", "--dir", str(home), "--source", str(program)],
+                                  env=lab.env("alpha"), capture_output=True, text=True, timeout=300)
+            if done.returncode != 0:
+                refusals.append((done.stdout + done.stderr).strip())
+            return done.returncode == 0
+
+        if not until("this release is handed to the renewal", staged, 120):
+            print(f"     {refusals[-1:]}", flush=True)
+
+        def ended():
+            phase = renewal().get("phase")
+            if phase and (not phases or phases[-1] != phase):
+                phases.append(phase)
+            return phase in ("complete", "failed")
+
+        until("the renewal ends", ended, 300)
+        check("it completes", phases[-1:] == ["complete"], phases)
+        check("nothing failed and nobody was waited for on the way",
+              not {"failed", "awaiting_administrator"} & set(phases), phases)
+        printed = subprocess.run([str(installed), "--version"], capture_output=True, text=True).stdout.strip()
+        check("the stable World program is this release", printed.split()[1:2] == [version], printed)
+
+        if windows:
+            until("the node's guardian took it into its own directory",
+                  lambda: sha256(protected(kept["name"]) / "guardian.exe") == sha256(program), 120)
+
+        def serving_this():
+            node = renewal().get("node") or {}
+            return (node.get("build") or {}).get("version") == version and not node.get("bridge") and served_by_service()
+
+        until("the service's own node runs this release, and no other serves", serving_this, 180)
+        check("the renewal kept no error", not renewal().get("error"), renewal())
+    finally:
+        if not all(RESULTS):
+            print("\n--- the renewal", flush=True)
+            print(json.dumps(renewal(), indent=1)[-4000:])
+            print("phases:", phases)
+            for log in sorted(home.glob("**/*.log")):
+                print(f"== {log.relative_to(root)}")
+                print("\n".join(log.read_text(encoding="utf-8", errors="replace").splitlines()[-80:]))
+            diagnose(lab, root)
+        for process in lab.owned:
+            process.kill()
+        cleaner = installed if installed.is_file() else lab.program
+        subprocess.run([*elevate, str(cleaner), "service", "node", "uninstall", "--dir", str(home), "--executable",
+                        str(cleaner), *extra], env=lab.env("alpha"), capture_output=True, text=True, timeout=300)
         subprocess.run([str(cleaner), "uninstall", "run", "--everything", "--json"], env=lab.env("alpha"),
                        capture_output=True, text=True, timeout=300)
     passed = sum(RESULTS)
@@ -235,6 +357,8 @@ def main():
         return 0
     if len(sys.argv) == 5 and sys.argv[1] == "run":
         return run(sys.argv[2], sys.argv[3], sys.argv[4])
+    if len(sys.argv) == 5 and sys.argv[1] == "earlier":
+        return earlier(sys.argv[2], sys.argv[3], sys.argv[4])
     print(__doc__, file=sys.stderr)
     return 2
 
