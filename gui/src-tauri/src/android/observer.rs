@@ -36,6 +36,10 @@ struct Rule {
     when: Transition,
     user_started_only: bool,
     title: Title,
+    /// The body of a turn that compacted the conversation and said nothing
+    /// else, in the page's words.
+    #[serde(default)]
+    compacted: Option<String>,
 }
 
 /// A title, or one for each thing an agent may ask (`AskedFor`, and
@@ -190,7 +194,14 @@ fn observe(who: WorldWho, bridge: &Bridge, observed: &mut Observed) -> Result<()
                     ),
                     Transition::Finished => (
                         format!("{key}:finished"),
-                        resident.now.as_ref().and_then(|now| now.last_said.clone()).unwrap_or_default(),
+                        resident
+                            .now
+                            .as_ref()
+                            .and_then(|now| match (&rule.compacted, now.last_compacted) {
+                                (Some(compacted), true) => Some(compacted.clone()),
+                                _ => now.last_said.clone(),
+                            })
+                            .unwrap_or_default(),
                         resident.now.as_ref().map(|now| now.since.to_string()),
                         vec![],
                     ),

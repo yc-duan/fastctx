@@ -44,6 +44,8 @@ import { folderName, type Focus } from "../world/focus";
 import { answerOf, drawAsk, readAsk, type AskWords } from "./asks";
 import type { Words } from "../words";
 import { glyph } from "./glyphs";
+import { controlName } from "./control-queue";
+import { saidHtml } from "./said";
 import { effortLabel } from "./effort-slider";
 import { isThinking, runsOf, startsAgent, type Activity, type Block, type Entry, type Gap, type SendState, type ShownAttachment } from "./model";
 import { AgentBox } from "./agent-box";
@@ -1117,10 +1119,60 @@ export class ConversationView {
       }
       case "agent-told":
         return this.agentTold(entry);
+      case "command":
+        return this.command(entry);
       case "tool":
       case "activity":
         return "";
     }
+  }
+
+  /** A command the user gave: a breathing mark while it runs; then what
+   *  came of it, in place, or nothing where the conversation shows it
+   *  already (`world-gui.md`, 对话). */
+  private command(entry: Extract<Entry, { kind: "command" }>): string {
+    const { words } = this.context;
+    const row = entry.row;
+    const name = controlName(row);
+    const line = (said: string, mark: string, failed: boolean, title = "") =>
+      `<div class="notice-line command-line${failed ? " failed" : ""}"${title ? ` title="${escape(title)}"` : ""}><span class="notice-mark${failed ? " wrong" : ""}">${mark}</span><span class="notice-said">${escape(said)}</span></div>`;
+    const cross = glyph("cross", 14);
+    if (row.state === "running") return line(words.commandRunning(name), `<span class="pulse"></span>`, false);
+    if (row.state === "failed") return line(words.commandFailed(name), cross, true, row.error ?? "");
+    if (row.state === "uncertain") return line(words.commandUnsure(name), cross, true, row.error ?? "");
+    if (row.state !== "completed") return "";
+    const result = row.result;
+    const control = row.control;
+    switch (result?.kind) {
+      // The host's own words, as it said them.
+      case "refused":
+        return line(result.said, cross, true);
+      case "rewound":
+        return line(words.rewound(result.files_restored), glyph("check", 14), false);
+      case "fork_incomplete":
+        return line(words.forkPartial, cross, true, result.why);
+      case "side_answer": {
+        const reply = result.reply !== null && typeof result.reply === "object" && !Array.isArray(result.reply) ? result.reply : {};
+        const text = typeof reply.text === "string" ? reply.text : JSON.stringify(result.reply, null, 2);
+        return `<div class="prose command-answer">${render(text)}</div>`;
+      }
+      // What shows itself: the model chosen, the fork opened.
+      case "selected":
+      case "model_menu":
+      case "forked":
+      case "agents":
+      case "agent_messages":
+        return "";
+    }
+    // The compaction's line, the new name, the turn a review or a skill
+    // starts: each shows itself.
+    const shows = ["compact", "fork", "rename", "model", "review"].includes(name) || (control.do === "command" && Boolean(control.path));
+    if (shows) return "";
+    const said = (result?.kind === "done" || result?.kind === "reported" ? result.said : null)?.trim();
+    // A short word of the World's is in the hover; a host's output, opened.
+    if (!said || (said.length <= 80 && !said.includes("\n"))) return line(words.commandRan(name), glyph("check", 14), false, said ?? "");
+    const open = this.openRows.has(entry.key);
+    return `<div class="notice-line command-line"><button class="notice-open" type="button" data-open="${escape(entry.key)}" aria-expanded="${open}"><span class="notice-mark">${glyph("check", 14)}</span><span class="notice-said">${escape(words.commandRan(name))}</span>${glyph("chevron", 14)}</button></div><div class="fold-box notice-box"${open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div>`;
   }
 
   /** One of the host's own agents that went on in the background ended,
@@ -2208,6 +2260,12 @@ export class ConversationView {
       this.noticeDetails(entry, content);
       return;
     }
+    if (entry.kind === "command") {
+      const result = entry.row.result;
+      const said = result?.kind === "done" || result?.kind === "reported" ? result.said : null;
+      if (said) content.innerHTML = saidHtml(said);
+      return;
+    }
     if (entry.kind === "agent-told") {
       const words = entry.end.answer ?? entry.end.reason ?? "";
       content.innerHTML = `<div class="prose notice-answer">${render(words)}</div>`;
@@ -2543,7 +2601,7 @@ export class ConversationView {
     }
     const key = target.dataset.open;
     if (!key) return;
-    const row = target.closest<HTMLElement>("[data-row], .block-heard, .block-agent-told");
+    const row = target.closest<HTMLElement>("[data-row], .block-heard, .block-agent-told, .block-command");
     const box = (target.closest(".notice-line")?.nextElementSibling as HTMLElement | null) ?? row?.querySelector<HTMLElement>(":scope > .fold-box") ?? null;
     if (!row || !box) return;
     const open = !this.openRows.has(key);

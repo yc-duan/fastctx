@@ -584,9 +584,6 @@ export class Conversation {
   takeControlsChanged(): boolean {
     return this.live.takeControlsChanged();
   }
-  lastCompaction(): string | null {
-    return this.live.lastCompaction();
-  }
   controlState(id: string): PendingControl | undefined {
     return this.live.controlState(id);
   }

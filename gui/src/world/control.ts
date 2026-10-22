@@ -104,6 +104,9 @@ export interface PendingControl {
 export interface Offers {
   /** The node takes controls to do once a turn ends, and their withdrawal. */
   control_queue?: boolean;
+  /** The node tells each control in its conversation as it begins and ends:
+   *  the conversation shows them, not the line beside the input. */
+  controls_told?: boolean;
   /** Those it holds, waiting or being done. */
   pending_controls?: PendingControl[];
   controls: ControlKind[];

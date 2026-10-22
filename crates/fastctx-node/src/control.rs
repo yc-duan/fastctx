@@ -67,18 +67,15 @@ pub async fn offers(
 pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
     let host = host_of(node, resident)?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
-    if crate::assists::assisting(node, &about.acting) {
-        crate::assists::host::require(node, resident)?;
-        if let Control::Command { name, path, .. } = &control {
-            let allowed = match host {
-                "Claude" => fastctx_hosts::claude::assisted::command_allowed(name),
-                "Codex" => fastctx_hosts::codex::assisted::command_allowed(name),
-                _ => false,
-            };
-            if path.is_some() || !allowed {
-                return Err(Failure::not_run("This command is unavailable in an assisted conversation."));
-            }
+    // Each control is told in its conversation as it begins and ends
+    // (`world-gui.md`, 对话); one refused here is told as it is refused.
+    let told = crate::control_queue::told(&control);
+    if let Err(failure) = allowed(node, resident, &about, host, &control) {
+        if !told {
+            return Err(failure);
         }
+        let row = crate::control_queue::begin(node, resident, &control)?;
+        return crate::control_queue::end(node, resident, row, Err(failure));
     }
     if let Control::CancelControl { id } = &control {
         return crate::control_queue::cancel(node, resident, id).await;
@@ -93,7 +90,31 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
     if let Some(queued) = crate::control_queue::enqueue_if_busy(node, resident, &control).await? {
         return Ok(queued);
     }
-    execute(node, resident, control).await
+    if !told {
+        return execute(node, resident, control).await;
+    }
+    let row = crate::control_queue::begin(node, resident, &control)?;
+    let result = execute(node, resident, control).await;
+    crate::control_queue::end(node, resident, row, result)
+}
+
+/// Whether `control` may be done here: an assisting agent's conversation
+/// takes its host's own commands only where they are safe for the owner.
+fn allowed(node: &Arc<Node>, resident: &ResidentId, about: &fastctx_types::residents::About, host: &str, control: &Control) -> Result<(), Failure> {
+    if crate::assists::assisting(node, &about.acting) {
+        crate::assists::host::require(node, resident)?;
+        if let Control::Command { name, path, .. } = control {
+            let allowed = match host {
+                "Claude" => fastctx_hosts::claude::assisted::command_allowed(name),
+                "Codex" => fastctx_hosts::codex::assisted::command_allowed(name),
+                _ => false,
+            };
+            if path.is_some() || !allowed {
+                return Err(Failure::not_run("This command is unavailable in an assisted conversation."));
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) async fn execute(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
@@ -126,6 +147,7 @@ pub async fn offers_here(node: &Arc<Node>, resident: &ResidentId) -> Result<Offe
     };
     offers.pending_controls = crate::control_queue::pending(node, resident)?;
     offers.control_queue = true;
+    offers.controls_told = true;
     Ok(offers)
 }
 

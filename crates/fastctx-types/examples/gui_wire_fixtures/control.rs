@@ -55,6 +55,7 @@ pub fn fixtures() -> Fixtures {
                     error: None,
                 }],
                 control_queue: true,
+                controls_told: true,
                 checkpoints: None,
                 history_limits: None,
                 automatic_model: None,

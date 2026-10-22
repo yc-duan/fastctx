@@ -22,6 +22,8 @@ export interface PresenceWords {
    *  `waiting` when its host said no more than that it waits. */
   asked(who: string, what: Asked["what"] | "waiting"): string;
   finished(who: string): string;
+  /** What a turn that compacted the conversation and said nothing else says. */
+  compacted: string;
   open: string;
   stop: string;
   /** A device or a machine came into `login`, the account it logged in to. */
@@ -208,7 +210,7 @@ export function startPresence(options: PresenceOptions): void {
         // in an editor or an app is in front of them there.
         void call(`${id}:finished`, {
           title: words.finished(options.someone(r)),
-          body: r.now?.last_said ?? "",
+          body: r.now?.last_compacted ? words.compacted : (r.now?.last_said ?? ""),
           route: talkLink(address),
           actions: [{ id: "open", title: words.open }],
         });

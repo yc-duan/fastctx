@@ -66,6 +66,9 @@ export interface Now {
   /** The start of the last message of the latest turn that ended: what a
    *  notification of that turn says. */
   last_said?: string;
+  /** The latest turn that ended compacted the context and said nothing
+   *  after it: what a notification of that turn says. */
+  last_compacted?: boolean;
   /** What the agent asked the user and has not had answered. */
   asked?: Asked;
 }

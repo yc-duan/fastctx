@@ -130,6 +130,9 @@ export type Entry = {
    *  and the conversation was told of it here: by the host's notice, or,
    *  in Codex, by an item of the turn. */
   | { kind: "agent-told"; key: string; agent: string; end: HostAgentEnd; item?: string; turn?: string }
+  /** A command the user gave it, from when it began: while it runs, and
+   *  what came of it (`world-gui.md`, 对话). */
+  | { kind: "command"; key: string; row: PendingControl }
 );
 
 /** One stretch of what a turn did between things it said: tools and
@@ -615,6 +618,7 @@ export class Fold {
           if (row && typeof row.id === "string") {
             this.controlStates.set(row.id, row);
             this.controlsChanged = true;
+            this.command(row);
           }
           return;
         }
@@ -1062,14 +1066,18 @@ export class Fold {
    *  event said. */
   private readonly controlStates = new Map<string, PendingControl>();
 
-  /** The newest compaction shown, by its key: another one since means the
-   *  context was compacted since. */
-  lastCompaction(): string | null {
-    for (let index = this.entries.length - 1; index >= 0; index--) {
-      const entry = this.entries[index]!;
-      if (entry.kind === "compaction") return entry.key;
+  /** A command as it stands: shown from when it began, one waiting in the
+   *  queue above the input still, one withdrawn never. */
+  private command(row: PendingControl): void {
+    const key = `c:${row.id}`;
+    const entry = this.byKey.get(key);
+    if (entry?.kind === "command") {
+      entry.row = row;
+      this.touch(entry);
+      return;
     }
-    return null;
+    if (row.state === "waiting" || row.state === "cancelled") return;
+    this.add({ kind: "command", key, stamp: 0, at: 0, row });
   }
 
   /** Whether a control the node took moved on since last asked. */

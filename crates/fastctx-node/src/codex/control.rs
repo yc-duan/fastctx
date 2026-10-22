@@ -305,6 +305,7 @@ async fn fork(
         last_tool_at: None,
         first_words: None,
         last_said: None,
+        last_compacted: false,
         asked: None,
     };
     node.residents.create(&node.world, about, town, now).map_err(|error| {

@@ -10623,7 +10623,8 @@
                     "waiting_for_user": false,
                     "waiting_since": "2026-10-04T12:06:07Z",
                     "title": null,
-                    "last_tool_at": "2026-10-04T12:06:07Z"
+                    "last_tool_at": "2026-10-04T12:06:07Z",
+                    "last_compacted": true
                   },
                   "last_action": null,
                   "tools": [
@@ -12156,7 +12157,8 @@
                     "waiting_for_user": false,
                     "waiting_since": "2026-10-04T12:06:07Z",
                     "title": null,
-                    "last_tool_at": "2026-10-04T12:06:07Z"
+                    "last_tool_at": "2026-10-04T12:06:07Z",
+                    "last_compacted": true
                   },
                   "last_action": null,
                   "tools": [
@@ -12688,7 +12690,8 @@
                     "waiting_for_user": false,
                     "waiting_since": "2026-10-04T12:06:07Z",
                     "title": null,
-                    "last_tool_at": "2026-10-04T12:06:07Z"
+                    "last_tool_at": "2026-10-04T12:06:07Z",
+                    "last_compacted": true
                   },
                   "last_action": null,
                   "tools": [

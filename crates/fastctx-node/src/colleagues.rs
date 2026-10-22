@@ -244,6 +244,7 @@ pub async fn ask_here(
         last_tool_at: None,
         first_words: None,
         last_said: None,
+        last_compacted: false,
         asked: None,
     };
     node.residents

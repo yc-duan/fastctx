@@ -329,7 +329,10 @@ export class HomePage {
 
   private cameOf(event: Extract<Happening, { kind: "turn_ended" }>, key: string, r: ResidentNow | undefined): Came {
     const failed = event.how !== "completed";
-    const said = failed ? this.options.words.failed(event.reason ?? event.how) : (event.said ?? r?.now?.last_said ?? "");
+    const words = this.options.words;
+    const said = failed
+      ? words.failed(event.reason ?? event.how)
+      : (event.said ?? (r?.now?.last_compacted ? words.compacted : r?.now?.last_said) ?? "");
     return { key, address: event.who, at: new Date(event.at), failed, said, r };
   }
 

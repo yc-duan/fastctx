@@ -9,7 +9,6 @@ import { escape } from "./prose";
 
 export interface SaidWords {
   model(model: string, effort: string | null): string;
-  compact: string;
   rewind: string;
   review: string;
   skill(name: string): string;
@@ -34,7 +33,7 @@ export function shownOf(name: string, control: Control, said: string | null, wor
     case "model":
       return { kind: "note", text: words.model(control.model ?? "", control.effort) };
     case "compact":
-      return { kind: "note", text: words.compact };
+      return { kind: "note", text: "" };
     case "rewind":
       return { kind: "note", text: words.rewind };
     case "rename":
@@ -62,13 +61,18 @@ export function shownOf(name: string, control: Control, said: string | null, wor
 function asSaid(title: string, said: string): Shown {
   const text = said.trim();
   if (text.length <= 80 && !text.includes("\n")) return { kind: "note", text };
-  let body = text;
+  return { kind: "panel", title, html: saidHtml(text) };
+}
+
+/** A host's output as it is read: JSON laid out, the rest as written. */
+export function saidHtml(said: string): string {
+  let body = said.trim();
   try {
-    body = JSON.stringify(JSON.parse(text), null, 2);
+    body = JSON.stringify(JSON.parse(body), null, 2);
   } catch {
     // Not JSON: shown as the host wrote it.
   }
-  return { kind: "panel", title, html: `<pre class="said-text">${escape(body)}</pre>` };
+  return `<pre class="said-text">${escape(body)}</pre>`;
 }
 
 /** The skills a conversation offers, from what it offered. */

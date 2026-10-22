@@ -185,6 +185,9 @@ pub enum FailureCode {
     /// macOS keeps the place private from Fastctx on that machine: its user
     /// allows Fastctx in System Settings there (`world-gui.md`, 设置).
     MacPrivacy,
+    /// A control's failure, told in its conversation already
+    /// (`Offers::controls_told`): the conversation says it.
+    Told,
     /// A code of a newer version, which this one does not know.
     #[serde(other)]
     Unknown,

@@ -42,6 +42,8 @@ export interface HomeWords {
   present: string;
   /** A turn that ended in an error, and why. */
   failed(reason: string): string;
+  /** A turn that compacted the conversation and said nothing else. */
+  compacted: string;
   /** Between the names in a short list. */
   listSeparator: string;
   /** The World could not be asked, and why. */
@@ -123,6 +125,7 @@ export const zhHome: HomeWords = {
   nothingAway: "没有新动态",
   present: "现在",
   failed: (reason) => `出错：${reason}`,
+  compacted: "对话已压缩",
   listSeparator: "、",
   unreachable: () => "无法连接本机服务",
   oldWorld: (node, client) => `本机服务版本 ${node} 与界面 ${client} 不兼容`,
@@ -177,6 +180,7 @@ export const enHome: HomeWords = {
   nothingAway: "Nothing new",
   present: "now",
   failed: (reason) => `Error: ${reason}`,
+  compacted: "Conversation compacted",
   listSeparator: ", ",
   unreachable: () => "Can't connect to the local service",
   oldWorld: (node, client) => `Local service ${node} isn't compatible with this app (${client})`,

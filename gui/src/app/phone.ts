@@ -23,6 +23,8 @@ interface Rule {
   userStartedOnly: boolean;
   /** One title, or one for each thing an agent may ask. */
   title: string | Record<string, string>;
+  /** The body of a turn that compacted the conversation and said nothing else. */
+  compacted?: string;
 }
 
 const ASKED_FOR = ["answer", "command", "change", "tool", "plan", "form", "other", "waiting"] as const;
@@ -36,7 +38,7 @@ export function configurePhone(words: PresenceWords, enabled: boolean): Promise<
   const who = "{who}";
   const rules: Rule[] = [
     { when: "asked", userStartedOnly: false, title: Object.fromEntries(ASKED_FOR.map((what) => [what, words.asked(who, what)])) },
-    { when: "finished", userStartedOnly: true, title: words.finished(who) },
+    { when: "finished", userStartedOnly: true, title: words.finished(who), compacted: words.compacted },
   ];
   return call("configure", { configuration: { enabled, agentNames: { codex: "Codex", claude: "Claude" }, rules } });
 }

@@ -267,6 +267,10 @@ pub struct Now {
     /// notification of that turn says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_said: Option<String>,
+    /// The latest turn that ended compacted the context and said nothing
+    /// after it: what a notification of that turn says.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub last_compacted: bool,
     /// What the agent asked the user and has not had answered: what a
     /// notification of it says.
     #[serde(default, skip_serializing_if = "Option::is_none")]

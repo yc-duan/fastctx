@@ -755,11 +755,6 @@ export class ConversationPage {
     // The commands it offers changed (a plugin loaded, a description came).
     if (this.options.conversation.takeOffersChanged()) void this.askOffers();
     if (this.options.conversation.takeControlsChanged()) this.syncControls();
-    // A compaction said to be under way is done once the conversation shows it.
-    if (this.compacting && this.options.conversation.lastCompaction() !== this.compacting.since) {
-      if (this.note.textContent === this.options.controls?.words.said.compact) this.say("");
-      this.compacting = null;
-    }
     // A host that keeps a checkpoint per turn (Claude) has one more once a
     // turn ends; nothing else it offers changes with a turn, and what does
     // change is said by the host (commands, above).
@@ -939,8 +934,6 @@ export class ConversationPage {
   /** The controls the node took to do once a turn ends, by their ids. */
   private readonly pendingControls = new Map<string, PendingControl>();
   private offersAsked = 0;
-  /** A compaction said to be under way, and the newest one shown before it. */
-  private compacting: { since: string | null } | null = null;
   private nodeTray: NodeTray | null = null;
   /** This device's last send of the shared words, until the node answers. */
   private sendingShared: Promise<unknown> = Promise.resolve();
@@ -1828,9 +1821,11 @@ export class ConversationPage {
             : command.control === "fork"
               ? { do: "fork", through: null }
               : { do: "command", name: command.name, args, ...(command.path ? { path: command.path } : {}) });
-    if (!quiet) this.say(words.running(command.name));
-    const compacts = what.do === "compact" || (what.do === "command" && what.name === "compact" && !what.path);
-    const since = this.options.conversation.lastCompaction();
+    // A node that tells commands in the conversation shows them there, as
+    // they run and as they end; the line beside the input says only what
+    // never reached it.
+    const told = Boolean(this.offered?.controls_told);
+    if (!quiet && !told) this.say(words.running(command.name));
     try {
       const done = await controls.control(what);
       // Taken to do once the turn ends: its line above the input says so.
@@ -1844,21 +1839,15 @@ export class ConversationPage {
       // nothing else changed for it to be asked again.
       if (quiet && (done.kind === "done" || done.kind === "reported" || done.kind === "selected")) return true;
       if (done.kind === "forked") {
-        this.say(words.done(command.name));
+        this.say("");
         controls.forked(done.resident);
         return true;
       }
       // The fork exists but not all of it came over: it opens, and why is said.
       if (done.kind === "fork_incomplete") {
-        this.say(words.forkIncomplete, done.why, true);
+        if (told) this.say("");
+        else this.say(words.forkIncomplete, done.why, true);
         controls.forked(done.resident);
-        return true;
-      }
-      if (done.kind === "side_answer") {
-        const reply = done.reply !== null && typeof done.reply === "object" && !Array.isArray(done.reply) ? done.reply : {};
-        const text = typeof reply.text === "string" ? reply.text : JSON.stringify(done.reply, null, 2);
-        this.say("");
-        this.showSaid(`/${command.name}`, `<div class="prose">${render(text)}</div>`);
         return true;
       }
       if (done.kind === "agents" || done.kind === "agent_messages") return true;
@@ -1869,39 +1858,37 @@ export class ConversationPage {
         this.modelPanel?.show(true);
         return true;
       }
+      if (told) {
+        this.say("");
+        void this.askOffers();
+        return done.kind !== "refused";
+      }
+      if (done.kind === "side_answer") {
+        const reply = done.reply !== null && typeof done.reply === "object" && !Array.isArray(done.reply) ? done.reply : {};
+        const text = typeof reply.text === "string" ? reply.text : JSON.stringify(done.reply, null, 2);
+        this.say("");
+        this.showSaid(`/${command.name}`, `<div class="prose">${render(text)}</div>`);
+        return true;
+      }
       if (done.kind === "refused") {
         this.say(done.current_model ? words.refusedOn(done.said, done.current_model) : done.said, "", true);
         void this.askOffers();
         return false;
       }
-      if (done.kind === "reported") {
-        const shown = done.said === null ? null : shownOf(command.name, what, done.said, words.said);
-        if (shown?.kind === "panel") {
-          this.say("");
-          this.showSaid(shown.title, shown.html);
-        } else this.say(shown?.text || words.reported(command.name));
-        void this.askOffers();
-        return true;
-      }
       const model = what.do === "model" ? this.offered?.models.find((m) => m.id === what.model) : undefined;
-      const said = done.kind === "done" ? done.said : null;
-      const shown = shownOf(command.name, what.do === "model" && model ? { ...what, model: model.name ?? model.id } : what, said, words.said);
-      if (compacts && shown?.kind === "note" && shown.text === words.said.compact) {
-        // Said under way until the conversation shows it done; one the host
-        // finished before answering is shown done already.
-        if (this.options.conversation.lastCompaction() !== since) this.say("");
-        else {
-          this.say(shown.text);
-          this.compacting = { since };
-        }
-      } else if (shown?.kind === "panel") {
+      const said = done.kind === "done" || done.kind === "reported" ? done.said : null;
+      const shown = said === null && done.kind === "reported" ? null : shownOf(command.name, what.do === "model" && model ? { ...what, model: model.name ?? model.id } : what, said, words.said);
+      if (shown?.kind === "panel") {
         this.say("");
         this.showSaid(shown.title, shown.html);
-      } else this.say(shown?.text ?? words.done(command.name));
+      } else this.say(shown ? shown.text : done.kind === "reported" ? words.reported(command.name) : words.done(command.name));
       void this.askOffers();
       return true;
     } catch (error) {
-      this.say(words.failed(detailOf(error)), detailOf(error), true);
+      // One the node told in the conversation is said there.
+      const failure = typeof error === "object" && error !== null ? (error as { code?: unknown }) : null;
+      if (told && failure?.code === "told") this.say("");
+      else this.say(words.failed(detailOf(error)), detailOf(error), true);
       return false;
     }
   }
@@ -2155,9 +2142,17 @@ export class ConversationPage {
     const name = controlName(row);
     const result = row.result;
     if (row.state === "cancelled") return;
+    // A fork done later opens as one done at once does.
+    if (result?.kind === "forked" || result?.kind === "fork_incomplete") this.options.controls?.forked(result.resident);
+    if (this.offered?.controls_told) {
+      void this.askOffers();
+      return;
+    }
     if (row.state === "failed") this.say(words.failed(row.error ?? ""), row.error ?? "", true);
     else if (row.state === "uncertain") this.say(words.unknownOutcome(name), row.error ?? "", true);
     else if (result?.kind === "refused") this.say(result.said, "", true);
+    else if (result?.kind === "fork_incomplete") this.say(words.forkIncomplete, result.why, true);
+    else if (name === "compact" || result?.kind === "forked") this.say("");
     else if (result?.kind === "reported") this.say(result.said ?? words.reported(name));
     else this.say(words.done(name));
     void this.askOffers();

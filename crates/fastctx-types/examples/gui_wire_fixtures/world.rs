@@ -127,6 +127,7 @@ fn residents() -> Vec<ResidentNow> {
                 last_tool_at: Some(at()),
                 first_words: (i == 1).then(|| "把端口对拍一遍".to_string()),
                 last_said: (i == 1).then(|| "两边一致，共 12 个端口。".to_string()),
+                last_compacted: i == 2,
                 asked: match i {
                     0 => Some(fastctx_types::residents::Asked {
                         id: r#"["codex","r-1"]"#.into(),

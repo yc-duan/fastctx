@@ -164,6 +164,10 @@ pub struct Offers {
     /// This node accepts CancelControl and reports pending_controls.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub control_queue: bool,
+    /// This node tells each control in its conversation as it begins and as
+    /// it ends, there for every device (`fastctx_control` metadata).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub controls_told: bool,
     /// Controls accepted for later execution, including one currently executing.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_controls: Vec<PendingControl>,

@@ -159,6 +159,17 @@ export interface Words {
   /** An open page, as the speaker of what it said. */
   aPage(name: string): string;
   compacted: string;
+  /** A command the user gave the conversation: while it runs; one that
+   *  did not go through, its words in the hover; one whose host did not say
+   *  what came of it; one that ran with nothing else to show; a rewind,
+   *  and whether the files came back with it; a fork that left some of it
+   *  behind. */
+  commandRunning(name: string): string;
+  commandFailed(name: string): string;
+  commandUnsure(name: string): string;
+  commandRan(name: string): string;
+  rewound(files: boolean): string;
+  forkPartial: string;
   /** Turns not held, before everything held and between two parts. */
   turnsEarlier(turns: number): string;
   turnsBetween(turns: number): string;
@@ -436,6 +447,13 @@ export const zh: Words = {
   world: "Fastctx",
   aPage: (name) => `页面「${name}」`,
   compacted: "上下文已压缩",
+  commandRunning: (name) =>
+    ({ compact: "正在压缩…", review: "正在审查…", fork: "正在分叉…", rewind: "正在回退…", rename: "正在改名…", model: "正在换模型…" })[name] ?? `正在运行 /${name}…`,
+  commandFailed: (name) => `/${name} 没成`,
+  commandUnsure: (name) => `/${name} 不确定做成了没有`,
+  commandRan: (name) => `/${name} 已执行`,
+  rewound: (files) => (files ? "已回到这一轮之前" : "已回到这一轮之前，改过的文件没有还原"),
+  forkPartial: "已分叉，部分内容没带过去",
   turnsEarlier: (turns) => (turns > 0 ? `更早的 ${turns} 轮` : "更早的记录"),
   turnsBetween: (turns) => (turns > 0 ? `中间还有 ${turns} 轮` : "中间还有记录"),
   toLatest: "回到最新",
@@ -711,6 +729,13 @@ export const en: Words = {
   world: "Fastctx",
   aPage: (name) => `the page “${name}”`,
   compacted: "Context compacted",
+  commandRunning: (name) =>
+    ({ compact: "Compacting…", review: "Reviewing…", fork: "Forking…", rewind: "Rewinding…", rename: "Renaming…", model: "Changing model…" })[name] ?? `Running /${name}…`,
+  commandFailed: (name) => `/${name} didn't go through`,
+  commandUnsure: (name) => `Not sure whether /${name} went through`,
+  commandRan: (name) => `/${name} ran`,
+  rewound: (files) => (files ? "Back to before this turn" : "Back to before this turn; changed files were not restored"),
+  forkPartial: "Forked; part of it did not come over",
   turnsEarlier: (turns) => (turns === 1 ? "1 earlier turn" : turns > 0 ? `${turns} earlier turns` : "Earlier turns"),
   turnsBetween: (turns) => (turns === 1 ? "1 more turn between" : turns > 0 ? `${turns} more turns between` : "More turns between"),
   toLatest: "Back to latest",

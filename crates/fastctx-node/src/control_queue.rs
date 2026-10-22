@@ -3,10 +3,17 @@
 use crate::Node;
 use fastctx_hosts::claude::control as files;
 use fastctx_platform::doing::{Mutex, Rank};
+use fastctx_types::ipc::FailureCode;
 use fastctx_types::session::control::{Control, ControlState, Controlled, PendingControl};
 use fastctx_types::session::{Happened, SessionChange, SessionEvent};
 use fastctx_types::{ResidentId, ipc::Failure};
 use std::sync::Arc;
+use std::time::Duration;
+
+/// How long a Codex compaction may take before what came of it is not known.
+const COMPACTING: Duration = Duration::from_secs(30 * 60);
+/// How long the turn of a Codex compaction may take to begin.
+const COMPACTION_BEGINS: Duration = Duration::from_secs(2 * 60);
 
 pub(crate) type Actions = crate::leases::Registry<ResidentId, Mutex<()>>;
 
@@ -44,6 +51,110 @@ fn event(node: &Node, id: &ResidentId, row: &PendingControl) -> Result<(), Failu
         node.watchers.publish(id, &event);
     }
     Ok(())
+}
+
+/// Whether a control is told in its conversation as it begins and as it
+/// ends (`world-gui.md`, 对话): all a user does to it, but answering it,
+/// reading what it offers and withdrawing one that waits.
+pub(crate) fn told(control: &Control) -> bool {
+    !matches!(control, Control::Answer { .. } | Control::CancelControl { .. } | Control::Agents | Control::AgentMessages { .. })
+        && !matches!(control, Control::Command { name, args, path: None } if name == "model" && args.trim().is_empty())
+}
+
+/// A control done now, told in its conversation as begun.
+pub(crate) fn begin(node: &Node, id: &ResidentId, control: &Control) -> Result<PendingControl, Failure> {
+    let row = PendingControl {
+        id: crate::speech::new_id("control").to_string(),
+        control: control.clone(),
+        at: jiff::Timestamp::now(),
+        state: ControlState::Running,
+        result: None,
+        error: None,
+    };
+    event(node, id, &row)?;
+    Ok(row)
+}
+
+/// Tells how a control told as begun ended, and gives its result back, a
+/// failure marked as told there.
+pub(crate) fn end(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    row: PendingControl,
+    result: Result<Controlled, Failure>,
+) -> Result<Controlled, Failure> {
+    settle(node, id, row, &result);
+    result.map_err(|mut failure| {
+        failure.code.get_or_insert(FailureCode::Told);
+        failure
+    })
+}
+
+/// Tells how a control ended: at once, or, for a Codex compaction, which
+/// its host only starts, once the turn it began has ended.
+fn settle(node: &Arc<Node>, id: &ResidentId, mut row: PendingControl, result: &Result<Controlled, Failure>) {
+    match result {
+        Ok(done) if compacts_later(node, id, &row.control, done) => {
+            after_compaction(node.clone(), id.clone(), row);
+            return;
+        }
+        Ok(done) => {
+            row.state = ControlState::Completed;
+            row.result = Some(Box::new(done.clone()));
+        }
+        Err(error) => {
+            row.state = ControlState::Failed;
+            row.error = Some(error.message.clone());
+        }
+    }
+    if let Err(error) = event(node, id, &row) {
+        node.log.line(format_args!("telling {id} how its control ended: {}", error.message));
+    }
+}
+
+/// Whether what a control answered is only the start of a compaction that
+/// ends with a turn of its own: Codex's.
+fn compacts_later(node: &Node, id: &ResidentId, control: &Control, done: &Controlled) -> bool {
+    matches!(done, Controlled::Done { .. })
+        && (matches!(control, Control::Compact)
+            || matches!(control, Control::Command { name, path: None, .. } if name == "compact"))
+        && node.residents.about(id).is_some_and(|(about, _)| about.host.agent.as_str() == "codex")
+}
+
+/// Tells the compaction a control started once its turn has ended: done
+/// where it compacted, failed where it did not.
+fn after_compaction(node: Arc<Node>, id: ResidentId, mut row: PendingControl) {
+    tokio::spawn(async move {
+        let began = std::time::Instant::now();
+        let mut seen = false;
+        loop {
+            let Some(now) = node.residents.now(&id) else { return };
+            let compacted = node.residents.last_compaction(&id).is_some_and(|at| at > row.at);
+            seen |= now.turn.is_some() || compacted;
+            if seen && now.turn.is_none() && now.since > row.at {
+                if compacted {
+                    row.state = ControlState::Completed;
+                    row.result = Some(Box::new(Controlled::Done { said: None }));
+                } else {
+                    row.state = ControlState::Failed;
+                    row.error = Some(now.trouble.map(|trouble| trouble.text).unwrap_or_else(|| {
+                        "the compaction's turn ended without compacting the conversation".into()
+                    }));
+                }
+                break;
+            }
+            let waited = began.elapsed();
+            if waited > COMPACTING || (!seen && waited > COMPACTION_BEGINS) {
+                row.state = ControlState::Uncertain;
+                row.error = Some("no end of the compaction was heard from its host".into());
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        if let Err(error) = event(&node, &id, &row) {
+            node.log.line(format_args!("telling {id} how its compaction ended: {}", error.message));
+        }
+    });
 }
 
 pub(crate) fn between_turns(control: &Control) -> bool {
@@ -179,27 +290,14 @@ pub(crate) fn drain<'a>(
             };
             event(node, id, &row)?;
             let result = Box::pin(crate::control::execute(node, id, row.control.clone())).await;
-            let mut row = row;
-            match result {
-                Ok(result) => {
-                    row.state = ControlState::Completed;
-                    row.result = Some(Box::new(result));
-                }
-                Err(error) => {
-                    row.state = ControlState::Failed;
-                    row.error = Some(error.message);
-                }
-            }
             {
                 let _transaction = crate::resident_storage::lock();
                 let mut rows = read(node, id)?;
-                if let Some(saved) = rows.iter_mut().find(|saved| saved.id == row.id) {
-                    *saved = row.clone();
-                }
+                rows.retain(|saved| saved.id != row.id);
                 save(node, id, &rows)?;
             }
-            finish(node, id, &row)?;
             crate::composer::forget_command(node, id, &row.id).await?;
+            settle(node, id, row, &result);
         }
     })
 }

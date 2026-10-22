@@ -396,6 +396,17 @@
   color: var(--pen-clay);
 }
 
+/* A command's words stand where they will stay: its pulse while it runs
+   takes the room of the tick or cross it ends with. */
+.command-line .notice-mark {
+  width: 14px;
+}
+
+/* A question asked on the side, answered: the answer, read as an answer. */
+.command-answer {
+  margin: var(--space-1) 0;
+}
+
 .notice-open > .glyph:last-child {
   color: var(--text-3);
   --turn: -90deg;

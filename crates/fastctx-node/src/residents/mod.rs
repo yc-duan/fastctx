@@ -184,6 +184,9 @@ struct Live {
     /// that started with none of the World's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     instructed: Option<Heard>,
+    /// When its host last told of its context compacted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    compacted_at: Option<Timestamp>,
 }
 
 impl Live {
@@ -204,6 +207,7 @@ impl Live {
             owed,
             heard: None,
             instructed: None,
+            compacted_at: None,
         }
     }
 
@@ -402,6 +406,18 @@ impl Residents {
             let town = live.town();
             live.heard = live.instructed.clone().filter(|heard| heard.town == town);
         }
+    }
+
+    /// Its host told of its context compacted, at `at`.
+    pub fn compacted_at(&self, id: &ResidentId, at: Timestamp) {
+        if let Some(live) = self.lock().live.get_mut(id) {
+            live.compacted_at = Some(at);
+        }
+    }
+
+    /// When its host last told of its context compacted.
+    pub fn last_compaction(&self, id: &ResidentId) -> Option<Timestamp> {
+        self.lock().live.get(id).and_then(|live| live.compacted_at)
     }
 
     /// A tool reply was written. Concurrent replies must not move the
@@ -780,6 +796,7 @@ impl Residents {
         self.with_live(world, id, |_live, now| {
             enter(now, turn);
             now.since = at;
+            now.last_compacted = false;
         })
     }
 
@@ -1009,6 +1026,7 @@ pub fn idle(since: Timestamp) -> Now {
         last_tool_at: None,
         first_words: None,
         last_said: None,
+        last_compacted: false,
         asked: None,
     }
 }

@@ -132,6 +132,7 @@ import { TalkMenu } from "./app/talk-menu";
 import { enTalkMenu, zhTalkMenu } from "./app/talk-menu-words";
 import { TalkToast } from "./app/talk-toast";
 import type { Controlled, PendingControl } from "./world/control";
+import type { JsonValue } from "./world/wire";
 import { escape as escapeText } from "./conversation/prose";
 import {
   enComposer,
@@ -1414,6 +1415,7 @@ function home(): Page {
 
 function specimenTalk(address: Address): KeepablePage {
   let queuedHere: PendingControl[] = [];
+  let toldHere = 0;
   // The shared input kept in the page; `?queued` puts two in its queue.
   let shared: SpecimenComposer | null = null;
   const sharedInput = () =>
@@ -1479,29 +1481,47 @@ function specimenTalk(address: Address): KeepablePage {
       words: composerWords,
       // A compaction asked for here waits for a turn's end, as one asked
       // mid-turn does, so its line above the input can be looked at.
-      offers: async () => ({ ...(sample.agent === "claude" ? specimenClaudeOffers : specimenOffers), control_queue: true, pending_controls: queuedHere }),
+      offers: async () => ({ ...(sample.agent === "claude" ? specimenClaudeOffers : specimenOffers), control_queue: true, controls_told: true, pending_controls: queuedHere }),
       control: async (what) => {
         if (what.do === "cancel_control") {
           queuedHere = queuedHere.filter((row) => row.id !== what.id);
           shared?.forget(what.id);
           return { kind: "done", said: null };
         }
-        // Between turns a compaction is done a moment later, as Codex does it.
-        if ((what.do === "compact" || (what.do === "command" && what.name === "compact")) && !conversation.turning()) {
-          const item = { id: `compact-${Date.now()}`, kind: "compaction" as const };
-          setTimeout(() => {
-            feed?.({ at: new Date().toISOString(), event: "began", turn: "specimen-compact", item });
-            feed?.({ at: new Date().toISOString(), event: "finished", turn: "specimen-compact", item });
-          }, 2500);
-          return { kind: "done", said: null };
-        }
-        if (what.do === "compact" || (what.do === "command" && what.name === "compact")) {
+        const name = what.do === "command" ? what.name : what.do;
+        if (name === "compact" && conversation.turning()) {
           const id = `control-${Date.now()}-${queuedHere.length + 1}-0`;
           queuedHere = [...queuedHere, { id, control: what, at: new Date().toISOString(), state: "waiting" }];
           shared?.place(id);
           return { kind: "reported", said: "Waiting for the current turn to end.", queued: id };
         }
-        return { kind: "done", said: english ? "this is a specimen" : "这是样例，没有连着世界" };
+        // Told in the conversation as it begins and ends, as a node that
+        // tells commands does: a compaction a moment later, `/goal` with an
+        // answer to open, `/init` refused, `/fast` with a word of the World's.
+        const row: PendingControl = { id: `control-${Date.now()}-${(toldHere += 1)}-0`, control: what, at: new Date().toISOString(), state: "running" };
+        const tell = (next: PendingControl) =>
+          feed?.({ at: new Date().toISOString(), event: "changed", turn: null, change: { kind: "metadata", metadata: { fastctx_control: next } as unknown as JsonValue } });
+        tell(row);
+        await new Promise((resolve) => setTimeout(resolve, name === "compact" ? 2500 : 1200));
+        if (name === "init") {
+          const error = "AGENTS.md could not be written: the specimen writes nothing";
+          tell({ ...row, state: "failed", error });
+          throw { message: error, code: "told" };
+        }
+        if (name === "compact") {
+          const item = { id: `compact-${Date.now()}`, kind: "compaction" as const };
+          feed?.({ at: new Date().toISOString(), event: "began", turn: "specimen-compact", item });
+          feed?.({ at: new Date().toISOString(), event: "finished", turn: "specimen-compact", item });
+        }
+        const said =
+          name === "goal"
+            ? JSON.stringify({ goal: { objective: "Ship the overflow fix with its test", status: "active", tokens_used: 41230, started_at: "2026-10-21T09:12:00Z" } })
+            : name === "fast"
+              ? "Service tier priority saved for the next World turn."
+              : null;
+        const done: Controlled = { kind: "done", said };
+        tell({ ...row, state: "completed", result: done });
+        return done;
       },
       forked: () => {},
       open: openOutside,
