@@ -15,25 +15,6 @@
   color: var(--wrong);
 }
 
-/* Stopped for an administrator there: the line its own terminal runs. */
-.fx-admin {
-  display: flex;
-  flex: 1 0 100%;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--size-text);
-  color: var(--text-2);
-}
-
-.fx-admin code {
-  padding: 4px 8px;
-  border-radius: var(--radius-s);
-  background: var(--field);
-  font-size: var(--size-text);
-  color: var(--text);
-}
-
 .fx-bar {
   flex: 1 1 8em;
   align-self: center;

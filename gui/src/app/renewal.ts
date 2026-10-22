@@ -1,13 +1,12 @@
 // Which World this computer runs, beside the interface's carried program.
-// Putting a newer program in place is the user's to start; the program the
-// interface carries does it and keeps its own record, and this row says
-// where it stands, step by step: asked again every two seconds while a
-// step is under way, as the World is, and every few while it waits for an
-// administrator, an old version to exit or its turn, so it changes by
-// itself once it is done (`world-upgrade.md`). A node that does not answer
-// while it hands over is asked again; only one silent for long is said to
-// fail. The one step that needs an administrator is asked for only when it
-// is reached.
+// A newer program the interface carries goes in place by itself when the
+// interface opens (`take_carried`); the program does it and keeps its own
+// record, and this row says where it stands, step by step: asked again
+// every two seconds while a step is under way, as the World is, and every
+// few while it waits for an old version to exit or its turn, so it changes
+// by itself once it is done (`world-upgrade.md`). Its button starts that at
+// once. A node that does not answer while it hands over is asked again;
+// only one silent for long is said to fail.
 
 import { escape } from "../conversation/prose";
 import type { RenewalPhase, RenewalStatus } from "../world/renewal";
@@ -19,9 +18,6 @@ export interface Renewing {
   state(): Promise<RenewalStatus>;
   /** Puts the carried program in place and asks the node to hand over. */
   renew(): Promise<void>;
-  /** The administrator's step: the part that keeps this computer in the
-   *  World after it starts. */
-  guardian(): Promise<void>;
 }
 
 /** Steps the World is taking by itself, after which it is asked again. */
@@ -51,7 +47,7 @@ export class RenewalRow {
   ) {
     element.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-renew]");
-      if (button && !button.disabled) this.act(button.dataset.renew as "renew" | "guardian");
+      if (button && !button.disabled) this.act();
     });
     this.ask();
   }
@@ -88,13 +84,13 @@ export class RenewalRow {
     );
   }
 
-  private act(what: "renew" | "guardian"): void {
+  private act(): void {
     if (this.busy) return;
     this.busy = true;
     this.said = "";
     this.why = "";
     this.draw();
-    (what === "renew" ? this.renewing.renew() : this.renewing.guardian())
+    this.renewing.renew()
       .catch((error: unknown) => {
         this.said = this.words.renewFailed(String(error));
         this.why = String(error);
@@ -129,12 +125,7 @@ export class RenewalRow {
     const differs = node ? !sameBuild(status?.client, node) : Boolean(status?.client && !sameBuild(status.client, status.installed));
     const pending = status?.pending && !sameBuild(status.pending, node ?? status.installed);
     const offer = (mismatch || pending || differs) && (!phase || phase === "staged" || phase === "failed" || phase === "complete");
-    const buttons = [
-      offer ? `<button class="text-button quiet-button" type="button" data-renew="renew"${this.busy ? " disabled" : ""}>${escape(words.renew)}</button>` : "",
-      phase === "awaiting_administrator"
-        ? `<button class="text-button quiet-button" type="button" data-renew="guardian" title="${escape(words.guardianWhy)}"${this.busy ? " disabled" : ""}>${escape(words.guardian)}</button>`
-        : "",
-    ].join("");
+    const buttons = offer ? `<button class="text-button quiet-button" type="button" data-renew="renew"${this.busy ? " disabled" : ""}>${escape(words.renew)}</button>` : "";
     const why = [phase === "failed" ? (status?.error ?? "") : "", this.why].filter(Boolean).join("\n");
     const installed = status?.client && status.installed && !sameBuild(status.client, status.installed);
     const paths = pathFacts(status?.commands, words);

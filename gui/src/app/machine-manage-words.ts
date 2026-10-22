@@ -19,8 +19,6 @@ export interface ManageWords {
   fetching(received: string, total: string | null, network: boolean): string;
   phase: Record<RenewalPhase, string>;
   failed(why: string): string;
-  /** Before the line its own terminal runs, stopped for an administrator. */
-  adminThere: string;
   /** An update asked of a computer an application carries Fastctx on. */
   appTakes(version: string): string;
   appClosed(version: string): string;
@@ -85,7 +83,7 @@ export const zhManage: ManageWords = {
     staged: "新版本已就绪",
     preparing: "正在准备…",
     waiting_for_idle: "等待当前工作告一段落…",
-    awaiting_administrator: "等那台的管理员确认",
+    awaiting_administrator: "正在更新开机服务",
     awaiting_legacy_exit: "等待旧版本退出，那台重启后完成",
     updating_guardian: "正在更新开机服务…",
     returning_to_service: "正在交回开机服务…",
@@ -93,7 +91,6 @@ export const zhManage: ManageWords = {
     failed: "更新失败",
   },
   failed: (why) => `更新失败：${why}`,
-  adminThere: "在那台上运行这一行，它会请求一次管理员权限",
   appTakes: (version) => `应用开着，由应用自己更新到 ${version}`,
   appClosed: (version) => `应用没开，由本机服务装上 ${version}`,
   appOpenThere: (version) => `下次在那台打开 Fastctx 时更新到 ${version}`,
@@ -148,7 +145,7 @@ export const enManage: ManageWords = {
     staged: "Update ready",
     preparing: "Preparing…",
     waiting_for_idle: "Waiting for current work to pause…",
-    awaiting_administrator: "Waiting for an administrator there",
+    awaiting_administrator: "Updating its startup service",
     awaiting_legacy_exit: "Waiting for the old version to exit; finishes after it restarts",
     updating_guardian: "Updating startup service…",
     returning_to_service: "Handing back to the startup service…",
@@ -156,7 +153,6 @@ export const enManage: ManageWords = {
     failed: "Update failed",
   },
   failed: (why) => `Update failed: ${why}`,
-  adminThere: "Run this there; it asks for an administrator once",
   appTakes: (version) => `Its app is open and updates itself to ${version}`,
   appClosed: (version) => `Its app is closed; the local service installs ${version}`,
   appOpenThere: (version) => `Updates to ${version} when Fastctx next opens there`,

@@ -58,7 +58,8 @@ export class UpdateLine {
     const offered = this.updates.offered.peek();
     const stage = state?.stage ? stageMark(state.stage, lineOf(this.updates.version), this.view) : null;
     const [said, tone] = stage ? [stage.said, stage.kind === "failed" ? " settings-wrong" : ""] : offered ? [words.available(offered.manifest.version), ""] : this.service ? [this.service, " settings-warn"] : ["", ""];
-    const html = `<dt>${escape(words.updates)}</dt><dd><span>${escape(words.current(this.updates.version))}</span>${said ? `<span class="update-line-said${tone}">${escape(said)}</span>` : ""}<button class="text-button quiet-button" type="button" data-updates-open>${escape(words.open)}</button></dd>`;
+    const why = stage?.why ? ` title="${escape(stage.why)}"` : "";
+    const html = `<dt>${escape(words.updates)}</dt><dd><span>${escape(words.current(this.updates.version))}</span>${said ? `<span class="update-line-said${tone}"${why}>${escape(said)}</span>` : ""}<button class="text-button quiet-button" type="button" data-updates-open>${escape(words.open)}</button></dd>`;
     if (this.element.innerHTML !== html) this.element.innerHTML = html;
   }
 }

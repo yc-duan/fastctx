@@ -172,7 +172,8 @@ function updateOf(node: MapNode, machines: Map<string, Machine>, updates: Update
 
 /** A mark as a row's cell: what it says, said when pointed at. */
 function markCell(mark: Mark): string {
-  return `<span class="ml-link uv-mark ${mark.kind}"${mark.said ? ` title="${escape(mark.said)}"` : ""}>${mark.html}</span>`;
+  const title = [mark.said, mark.why].filter(Boolean).join("\n");
+  return `<span class="ml-link uv-mark ${mark.kind}"${title ? ` title="${escape(title)}"` : ""}>${mark.html}</span>`;
 }
 
 /** A section: its name, how many and how many online, a hand-drawn line;

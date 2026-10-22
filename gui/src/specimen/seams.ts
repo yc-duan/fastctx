@@ -186,7 +186,6 @@ export function specimenComputer() {
         error: null,
       }),
       renew: () => after(undefined).then(() => Promise.reject(new Error("this is a specimen"))),
-      guardian: () => after(undefined),
     },
   };
 }

@@ -1052,13 +1052,6 @@ async fn renew_here(shell: tauri::State<'_, Shell>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(renewal::now).await.map_err(|error| error.to_string())?
 }
 
-#[cfg(desktop)]
-#[fastctx_gui_command::command]
-async fn renew_guardian_here(shell: tauri::State<'_, Shell>) -> Result<(), String> {
-    shell.connection.local_program()?;
-    tauri::async_runtime::spawn_blocking(renewal::guardian).await.map_err(|error| error.to_string())?
-}
-
 /// Has a system service keep this computer's node, asking once for
 /// administrator rights.
 #[cfg(desktop)]
@@ -1306,7 +1299,6 @@ pub fn run() {
             #[cfg(desktop)]
             renew_here,
             #[cfg(desktop)]
-            renew_guardian_here,
             #[cfg(desktop)]
             apply_hosts,
             #[cfg(desktop)]

@@ -449,8 +449,6 @@ export interface SettingsWords {
   renew: string;
   renewPhase: Record<import("../world/renewal").RenewalPhase, string>;
   renewFailed(why: string): string;
-  guardian: string;
-  guardianWhy: string;
   /** A phone: what it lets the World do in the background. */
   phoneNotices: string;
   phoneNoticesOn: string;
@@ -545,7 +543,7 @@ export const zhSettings: SettingsWords = {
     staged: "新版本已就绪",
     preparing: "正在准备…",
     waiting_for_idle: "等待当前工作告一段落…",
-    awaiting_administrator: "需要管理员确认",
+    awaiting_administrator: "正在更新开机服务…",
     awaiting_legacy_exit: "等待旧版本退出，重启电脑后完成",
     updating_guardian: "正在更新开机服务…",
     returning_to_service: "正在交回开机服务…",
@@ -553,8 +551,6 @@ export const zhSettings: SettingsWords = {
     failed: "更新失败",
   },
   renewFailed: failure(zhProblems, "更新失败"),
-  guardian: "管理员确认",
-  guardianWhy: "更新开机服务，当前工作不受影响",
   phoneNotices: "通知",
   phoneNoticesOn: "已允许",
   phoneNoticesOff: "未允许",
@@ -664,7 +660,7 @@ export const enSettings: SettingsWords = {
     staged: "Update ready",
     preparing: "Preparing…",
     waiting_for_idle: "Waiting for current work to pause…",
-    awaiting_administrator: "Needs administrator approval",
+    awaiting_administrator: "Updating startup service…",
     awaiting_legacy_exit: "Waiting for the old version to exit; finishes after a restart",
     updating_guardian: "Updating startup service…",
     returning_to_service: "Handing back to the startup service…",
@@ -672,8 +668,6 @@ export const enSettings: SettingsWords = {
     failed: "Update failed",
   },
   renewFailed: failure(enProblems, "Update failed"),
-  guardian: "Approve as administrator",
-  guardianWhy: "Updates the startup service; current work continues",
   phoneNotices: "Notifications",
   phoneNoticesOn: "Allowed",
   phoneNoticesOff: "Not allowed",

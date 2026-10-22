@@ -8,7 +8,6 @@
 // is older updates to the newest on its line alone, from here.
 
 import { escape } from "../conversation/prose";
-import { copyButton, copyFrom } from "./copy-button";
 import type { Login } from "../world/accounts";
 import { compareVersions, newestKnown, type UpdateCall, type UpdateState } from "../world/updates";
 import { link } from "./places";
@@ -58,7 +57,6 @@ export interface FastctxSubject {
 const ASKED_SINCE = "1.0.1-beta.3";
 /** What a machine's own terminal runs to hand its boot service the new
  *  program, asking for an administrator once. */
-const ADMIN_LINE = "fastctx renew guardian";
 
 export class FastctxBlock {
   private name: string | null = null;
@@ -153,13 +151,12 @@ export class FastctxBlock {
     const { machine, manages } = subject;
     const bar = (percent: number | null) =>
       `<span class="fx-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"${percent === null ? "" : ` aria-valuenow="${percent}"`}><span style="width:${percent ?? 6}%"></span></span>`;
-    const admin = `<span class="fx-admin"><span>${escape(words.adminThere)}</span><code class="mono">${escape(ADMIN_LINE)}</code>${copyButton(ADMIN_LINE, words.copy, `data-act="fx-copy"`)}</span>`;
     const wrong = (said: string, why = "") => `<span class="fx-wrong"${why ? ` title="${escape(why)}"` : ""}>${escape(said)}</span>`;
     // A node that says how its update stands is said in the update view's words.
     const staged = state?.stage ? stageMark(state.stage, lineOf(running), this.options.view) : null;
     if (machine.here) {
       const go = `<button class="text-button quiet-button" type="button" data-act="fx-here">${escape(words.update)}</button>`;
-      if (staged) return `${staged.kind === "failed" ? wrong(staged.said) : `<span>${escape(staged.said)}</span>`}${go}`;
+      if (staged) return `${staged.kind === "failed" ? wrong(staged.said, staged.why) : `<span>${escape(staged.said)}</span>`}${go}`;
       const offer = state?.offer && running && compareVersions(state.offer.version, running) > 0 ? state.offer.version : null;
       return `<span>${escape(offer ? words.canTake(offer) : words.upToDate)}</span>${go}`;
     }
@@ -182,9 +179,9 @@ export class FastctxBlock {
     if (!state) return `<span class="fx-quiet">${escape(this.problem ?? words.asking)}</span>${go}`;
     if (staged && state.stage) {
       const stage = state.stage;
-      const said = staged.kind === "failed" ? wrong(staged.said) : `<span>${escape(staged.said)}</span>`;
+      const said = staged.kind === "failed" ? wrong(staged.said, staged.why) : `<span>${escape(staged.said)}</span>`;
       if (stage.kind === "fetching") return `${said}${bar(stage.total ? Math.min(100, Math.floor((stage.received / stage.total) * 100)) : null)}`;
-      if (stage.kind === "administrator") return `${said}${admin}`;
+      if (stage.kind === "administrator") return said;
       return `${said}${go}`;
     }
     const megabytes = (bytes: number) => `${(bytes / 1_000_000).toFixed(1)} MB`;
@@ -195,7 +192,6 @@ export class FastctxBlock {
     if (state.renewing) {
       const { version, phase, error } = state.renewing;
       const said = `${version} ${phase === "failed" ? words.failed(error ?? words.phase.failed) : words.phase[phase]}`;
-      if (phase === "awaiting_administrator") return `<span>${escape(said)}</span>${admin}`;
       return phase === "failed" ? `${wrong(said)}${go}` : `<span>${escape(said)}</span>`;
     }
     if (state.failed) return `${wrong(words.failed(state.failed.why), state.failed.why)}${go}`;
@@ -220,9 +216,6 @@ export class FastctxBlock {
     switch (act) {
       case "fx-here":
         this.options.here();
-        return true;
-      case "fx-copy":
-        void copyFrom(target, this.options.words.copied);
         return true;
       case "fx-older":
         this.act(this.options.older(subject.machine.written));

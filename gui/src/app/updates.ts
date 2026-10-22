@@ -118,6 +118,10 @@ export class Updates {
       (error: unknown) => {
         this.installing = false;
         this.failed = { version, step: "install", why: String(error) };
+        // The node keeps it, and when to try it again, past this window.
+        if (this.state.peek()?.progress) {
+          this.seam.progress({ kind: "failed", version, problem: { reason: { kind: "other" }, why: String(error) } }).catch(() => {});
+        }
         this.refresh();
       },
     );
@@ -222,15 +226,19 @@ export class Updates {
         stage: { kind: "fetching", received: fetching.received, total: fetching.total ?? pack.size ?? null, network: fetching.via === "network" },
       };
     }
+    // One that failed here waits for its time to be tried again, its
+    // package kept or not.
+    const failed = state.failed;
+    const ofThis = failed && failed.version === manifest.version && failed.target === target;
+    if (ofThis && state.retry_at && Date.parse(state.retry_at) > Date.now()) {
+      return { ...base, stage: { kind: "failed", why: failed.why, ...(failed.reason ? { reason: failed.reason } : {}) } };
+    }
     if (state.kept?.some((kept) => kept.version === manifest.version && kept.target === target)) {
       if (this.permission) return { ...base, stage: { kind: "permission" } };
       const waits = this.automatic(state) || state.take === manifest.version;
       return { ...base, stage: { kind: waits ? "waiting" : "ready" } };
     }
-    const failed = state.failed;
-    if (failed && failed.version === manifest.version && failed.target === target) {
-      return { ...base, stage: { kind: "failed", why: failed.why, ...(failed.reason ? { reason: failed.reason } : {}) } };
-    }
+    if (ofThis) return { ...base, stage: { kind: "failed", why: failed.why, ...(failed.reason ? { reason: failed.reason } : {}) } };
     return { ...base, stage: { kind: "offered" } };
   }
 }

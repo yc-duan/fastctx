@@ -112,7 +112,7 @@ export function specimenUpdates(params: URLSearchParams, phone: boolean): { seam
       ...(asked && elapsed < TAKES
         ? { fetching: { version: asked.version, target: app ? app.target : `fastctx-${triple}`, via: "network", received: Math.floor((elapsed / TAKES) * 8_500_000), total: 8_500_000 } }
         : {}),
-      ...(asked && elapsed >= TAKES ? { renewing: { version: asked.version, phase: stopped ? "awaiting_administrator" : "waiting_for_idle" } } : {}),
+      ...(asked && elapsed >= TAKES ? { renewing: { version: asked.version, phase: stopped ? "updating_guardian" : "waiting_for_idle" } } : {}),
       ...(app ? { app, open: false, ...(kept.asked ? { take: kept.asked } : {}) } : {}),
       kernel_target: `fastctx-${triple}`,
     };

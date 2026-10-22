@@ -384,10 +384,6 @@ mod desktop {
         if updated.to != env!("CARGO_PKG_VERSION") {
             return;
         }
-        std::thread::spawn(move || {
-            if let Err(error) = crate::setup::place() {
-                eprintln!("World: putting the updated World program in place: {error}");
-            }
-        });
+        crate::setup::take_carried();
     }
 }

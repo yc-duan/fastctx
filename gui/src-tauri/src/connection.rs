@@ -144,6 +144,7 @@ impl Connection {
                     if !program.is_file() && crate::setup::carried().is_some() {
                         crate::setup::place_initial()?;
                     }
+                    crate::setup::take_carried();
                     // The TUI on this computer keeps what it views in the same place.
                     let cache = fastctx_client::cache::Cache::under(&root).map_err(|error| error.to_string())?;
                     let world = World::new(WorldDir::under(&root), Peer::Command { resident: None, session: None })

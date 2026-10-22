@@ -17,6 +17,8 @@ export interface Mark {
   kind: MarkKind;
   html: string;
   said: string;
+  /** What went wrong, in the words of whatever said so, for the hover. */
+  why?: string;
 }
 
 /** What a machine runs: its application where one carries its World
@@ -64,10 +66,12 @@ export function stageMark(stage: UpdateStage, line: string | null, words: Update
       return with_("going", "update", stage.version, words.installing(stage.version));
     case "renewing":
       return with_("going", "update", stage.version, words.renewing(stage.version));
+    // An earlier release's wait for an administrator: its startup service
+    // takes the new program by itself now.
     case "administrator":
-      return with_("going", "shield", stage.version, words.administrator);
+      return with_("going", "update", stage.version, words.administrator);
     case "failed":
-      return with_("failed", "cross", stage.version, words.failed(stage.version, words.failures[stage.problem.reason.kind]));
+      return { ...with_("failed", "cross", stage.version, words.failed(stage.version, words.failures[stage.problem.reason.kind])), why: stage.problem.why };
   }
   return null;
 }
@@ -81,7 +85,7 @@ export function markOf(machine: MachineUpdate, line: string | null, words: Updat
   if (machine.due) {
     const blocked = machine.due.problem;
     return blocked
-      ? with_("failed", "history", machine.due.version, words.dueBlocked(machine.due.version, words.failures[blocked.reason.kind]))
+      ? { ...with_("failed", "history", machine.due.version, words.dueBlocked(machine.due.version, words.failures[blocked.reason.kind])), why: blocked.why }
       : with_("due", "history", machine.due.version, words.due(machine.due.version, machine.due.by));
   }
   if (!runningOf(machine)) return { kind: "quiet", html: "", said: words.unknown };

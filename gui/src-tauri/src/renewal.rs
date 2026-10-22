@@ -9,10 +9,6 @@ fn run(action: &str) -> Result<Vec<u8>, String> {
     let root = fastctx_platform::fastctx_root().map_err(|error| error.to_string())?;
     let mut command = std::process::Command::new(program);
     command.args(["renew", action, "--dir"]).arg(root);
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    if action == "guardian" {
-        command.arg("--graphical");
-    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
@@ -33,8 +29,3 @@ pub fn now() -> Result<(), String> {
     run("now").map(|_| ())
 }
 
-/// Called only after the person chooses to update the boot guardian. The
-/// CLI verifies that a bridge serves before asking Windows for elevation.
-pub fn guardian() -> Result<(), String> {
-    run("guardian").map(|_| ())
-}

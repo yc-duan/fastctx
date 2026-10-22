@@ -209,7 +209,7 @@ import { PageScreen } from "./pages/view";
 import { forgetConversation, manage as manageResident, type Forgetting, type Managed, type Management } from "./world/management";
 import { FileSearch } from "./world/file-search";
 import { configurePhone, onPhone, phoneSeam, routeActivations } from "./app/phone";
-import { renewalState, renewHere, renewGuardianHere, type VersionMismatch } from "./world/renewal";
+import { renewalState, renewHere, type VersionMismatch } from "./world/renewal";
 import { toolsFor } from "./pages/tools";
 import { enPages, zhPages } from "./pages/words";
 import { act as pageAct, consent as pageConsent, pageHistory, readPage, restore as restorePage, withdraw as withdrawPage } from "./world/pages";
@@ -1016,7 +1016,6 @@ const updateCard = new UpdateCard(appUpdates, updateWords, live ? !onComputer() 
             await placeFastctx();
             await renewHere();
           },
-          guardian: renewGuardianHere,
         }
       : null
     : params.has("phone")
@@ -2532,7 +2531,6 @@ function show(next: Place): void {
                     await placeFastctx();
                     await renewHere();
                   },
-                  guardian: renewGuardianHere,
                 },
               }
             : undefined

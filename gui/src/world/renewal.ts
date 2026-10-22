@@ -108,6 +108,4 @@ export function renewHere(): Promise<void> {
 }
 
 /** The administrator's step, once it is reached. */
-export function renewGuardianHere(): Promise<void> {
-  return invoke("renew_guardian_here");
-}
+

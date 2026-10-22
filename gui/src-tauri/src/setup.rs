@@ -160,6 +160,60 @@ pub fn place() -> Result<String, String> {
     Ok(installed.display().to_string())
 }
 
+/// How often, and how far apart, the carried program is offered again while
+/// a renewal busy with a step of its own refuses it for the moment.
+#[cfg(desktop)]
+const TAKE_ATTEMPTS: u32 = 20;
+#[cfg(desktop)]
+const TAKE_AGAIN: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// However this application was updated, the World program it carries
+/// replaces an older one in place by itself, nobody asked
+/// (`world-upgrade.md`, 换版不要人确认): once each time it opens, in the
+/// background. A failed renewal of that program is taken up again too.
+#[cfg(desktop)]
+pub fn take_carried() {
+    static TAKING: std::sync::Once = std::sync::Once::new();
+    TAKING.call_once(|| {
+        std::thread::spawn(|| {
+            for _ in 0..TAKE_ATTEMPTS {
+                match carried_newer() {
+                    Ok(false) => return,
+                    Ok(true) => match place() {
+                        Ok(_) => return,
+                        Err(error) => eprintln!("World: putting the World program it carries in place: {error}"),
+                    },
+                    Err(error) => {
+                        eprintln!("World: comparing the World program it carries with the one in place: {error}");
+                        return;
+                    }
+                }
+                std::thread::sleep(TAKE_AGAIN);
+            }
+        });
+    });
+}
+
+/// Whether the program this application carries is a later release than
+/// the World program in place, or the one a renewal left failed; never
+/// before a first placement, which opening the interface makes.
+#[cfg(desktop)]
+fn carried_newer() -> Result<bool, String> {
+    let places = places()?;
+    let installed = places.installed();
+    if carried().is_none() || !installed.is_file() {
+        return Ok(false);
+    }
+    let offered = fastctx_install::program::inspect(&places.fastctx).map_err(|error| format!("{error:#}"))?;
+    let failed = fastctx_install::renewal::read(&places.root)
+        .map_err(|error| error.to_string())?
+        .is_some_and(|plan| plan.phase == fastctx_types::renewal::Phase::Failed && plan.candidate.build == offered);
+    let current = fastctx_install::program::inspect(&installed).map_err(|error| format!("{error:#}"))?;
+    Ok(failed
+        || (offered != current
+            && fastctx_install::program::newer(&offered, &current).map_err(|error| format!("{error:#}"))?))
+}
+
 /// First placement finishes before the interface makes its first World
 /// calls. The CLI stages an asynchronous handover even on a fresh root.
 /// Where nothing put fastctx in place yet, opening the interface does: a
@@ -179,8 +233,13 @@ pub fn place_initial() -> Result<(), String> {
             Phase::AwaitingLegacyExit => {
                 return Err("the initial executable placement is waiting for an old node to exit".into());
             }
-            Phase::AwaitingAdministrator => {
-                return Err("the initial executable placement needs administrator approval".into());
+            // Published and serving, its boot service still to take it,
+            // which goes on by itself.
+            Phase::AwaitingAdministrator | Phase::UpdatingGuardian | Phase::ReturningToService
+                if fastctx_install::renewal::digest(&fastctx_install::renewal::installed(&root))
+                    .is_ok_and(|digest| digest == plan.candidate.build.digest) =>
+            {
+                return Ok(());
             }
             _ => std::thread::sleep(std::time::Duration::from_millis(20)),
         }
@@ -260,11 +319,15 @@ pub fn after_install() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     fastctx_install::uninstall::delete_file(&places.root.join("uninstall-progress.json"))
         .map_err(|error| error.to_string())?;
-    if !places.installed().is_file() {
+    // An installer run over a World program in place already is an update:
+    // it changes nothing about how the machine is kept, and asks nobody for
+    // anything (`world-upgrade.md`, 换版不要人确认).
+    let first = !places.installed().is_file();
+    if first {
         place()?;
     }
     apply::restore_withdrawn(&places).map_err(|error| error.to_string())?;
-    if !membership::any(&WorldDir::under(&places.root)).map_err(|error| error.to_string())? {
+    if !first || !membership::any(&WorldDir::under(&places.root)).map_err(|error| error.to_string())? {
         return Ok(());
     }
     let (kept, _) = keep_connected(&places).map_err(|error| error.to_string())?;

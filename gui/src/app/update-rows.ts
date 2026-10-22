@@ -78,7 +78,7 @@ export class UpdateRows {
     const said = (text: string, title = "", tone = "") => `<span${tone ? ` class="${tone}"` : ""}${title ? ` title="${escape(title)}"` : ""}>${escape(text)}</span>`;
     if (looked.checking) return said(words.looking);
     const stage = state.stage ? stageMark(state.stage, lineOf(this.updates.version), this.view) : null;
-    if (stage) return said(stage.said, "", stage.kind === "failed" ? "settings-wrong" : "");
+    if (stage) return said(stage.said, stage.why ?? "", stage.kind === "failed" ? "settings-wrong" : "");
     if (offered) return "";
     const next = looked.next ? words.nextCheck(new Date(looked.next)) : "";
     const failure = looked.failure;
