@@ -356,14 +356,9 @@ pub async fn thread_spec(
     }
     let user_mcp = crate::profile::session::codex(node, id, acting, &mut config)?;
     crate::session_options::configure(&mut config, crate::session_options::read(node, id)?);
-    let user_mcp = if assisting {
-        let world = config["mcp_servers"][codex::SERVER_NAME].clone();
-        config["mcp_servers"] = serde_json::json!({ codex::SERVER_NAME: world });
+    if assisting {
         codex::assisted::configure_thread(&mut config);
-        Default::default()
-    } else {
-        user_mcp
-    };
+    }
     let (mut developer_instructions, heard) = instructions(node, id, town, origin, acting, true).await?;
     // The machines and folders the user pointed it at, in the words its
     // thread started with, each time it is resumed (`crate::focus`).
@@ -466,7 +461,8 @@ fn words(id: &ResidentId, town: Option<&TownName>, origin: &Origin, record: bool
     };
     // Where scripts run is said by the machines `run`'s description lists,
     // never by where the session lives (`world-run.md`, 脚本在哪台机器上跑).
-    let runs = "It runs a bash script on one of the machines its description lists, the script written as one `on MACHINE`";
+    let runs =
+        "It runs a bash script on one of the machines its description lists, the script written as one `on MACHINE`";
     format!(
         "You are {id}, an agent session.{place}\n\n{working}\n\nWork through the `run` tool; it is your only shell, editor and image viewer. {runs}; `fastctx view` shows files, images and documents, and `edit` and `write` change files. Its description says how. Paths are absolute, each the path on its own machine, written like C:/Users/me on Windows. A script still running when its call stops waiting (15 seconds by default) goes on by itself in the background; when it ends you are told automatically, with its exit status and last lines, while you work or after you end your turn."
     )

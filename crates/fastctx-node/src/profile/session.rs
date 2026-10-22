@@ -78,9 +78,12 @@ fn servers(
             }
             Entry::Command { machine } => {
                 let Acting::Accounts { accounts } = acting else { continue };
-                let Some(link) = accounts.first().and_then(|account| node.link_of(&account.hub)) else { continue };
+                let [account] = accounts.as_slice() else { continue };
+                let Some(link) = node.link_of(&account.hub) else { continue };
                 let view = link.view();
-                if !view.is_me(&machine) && !view.member(&machine).is_some_and(|m| m.online) {
+                if view.admits(&view.me, &account.account, &machine, fastctx_types::access::Purpose::Hands).is_err()
+                    || (!view.is_me(&machine) && !view.member(&machine).is_some_and(|m| m.online))
+                {
                     continue;
                 }
                 json!({"command":node.fastctx,"args":["mcp-relay",name],"env":{"FASTCTX_HOME":node.root,"FASTCTX_RESIDENT":fastctx_types::Address {machine:node.machine(),resident:id.clone()}.tag()}})
@@ -154,20 +157,20 @@ pub(crate) fn claude(node: &Node, id: &ResidentId, creating: bool) -> Result<std
     )
     .map_err(|e| Failure::new(e.to_string()))?;
     if creating || mcp.is_file() {
-        let servers = if assisting {
-            // Strict MCP mode excludes plugin servers too, including the
-            // World's. Supply that server explicitly under its usual name.
-            json!({"fastctx": {
+        let mut servers = servers(node, id, &about.acting, &options.mcp_off, false);
+        if assisting {
+            // Strict mode excludes login and plugin servers; include the
+            // World's server alongside this account's servers explicitly.
+            servers.insert("fastctx".into(), json!({
                 "command": node.fastctx,
                 "args": ["serve"],
                 "env": {
                     "FASTCTX_HOME": node.root,
+                    "FASTCTX_RESIDENT": fastctx_types::Address { machine: node.machine(), resident: id.clone() }.tag(),
                     "FASTCTX_AGENT_HOME": about.home.as_deref().map(|home| home.to_string_lossy()).unwrap_or_default(),
                 },
-            }})
-        } else {
-            Value::Object(servers(node, id, &about.acting, &options.mcp_off, false))
-        };
+            }));
+        }
         let value = json!({"mcpServers": servers});
         fastctx_platform::publish(
             &mcp,
