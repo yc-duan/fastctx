@@ -14,7 +14,7 @@ mod schedule;
 
 pub(crate) use application::Open;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -687,22 +687,57 @@ async fn take(
     }
     let root = node.root.clone();
     let unpacking = dir(node).join("unpacked");
-    tokio::task::spawn_blocking(move || -> Result<(), String> {
-        // The program's own signature comes out beside it, as an interface's
-        // carried one has it: the Windows guardian takes a program in by it,
-        // with no administrator (`world-upgrade.md`). The package's signature
-        // is over the archive and never goes beside the program.
-        let plan = fastctx_install::renewal::stage_package(&root, &archive, &unpacking)
-            .map_err(|error| format!("{error:#}"))?;
-        if plan.phase != fastctx_types::renewal::Phase::Complete {
-            fastctx_install::renewal::request(&root, true).map_err(|error| error.to_string())?;
-        }
-        Ok(())
-    })
-    .await
-    .map_err(|error| error.to_string())??;
+    tokio::task::spawn_blocking(move || stage_with_its_own_program(&root, &archive, &unpacking))
+        .await
+        .map_err(|error| error.to_string())??;
     node.log.line(format_args!("staged fastctx {} to take over once the turns under way end", offer.version));
     Ok(())
+}
+
+/// How long the release brought is given to stage itself.
+const STAGING: Duration = Duration::from_secs(10 * 60);
+
+/// Stages the release in `archive` with that release's own program, which
+/// decides whether it is taken and takes over a handover left stuck: so a
+/// fault in this release's staging never keeps a later release out, as one
+/// in 1.0.1-beta.4's kept its machines on it (`world-upgrade.md`, 没成的，自己
+/// 再试). The program's own signature comes out beside it, as an interface's
+/// carried one has it; the package's signature is over the archive and never
+/// goes beside the program. Where the program does not start here at all,
+/// this release stages it, and says why it cannot be taken.
+fn stage_with_its_own_program(root: &Path, archive: &Path, unpacking: &Path) -> Result<(), String> {
+    let _ = std::fs::remove_dir_all(unpacking);
+    std::fs::create_dir_all(unpacking).map_err(|error| format!("{}: {error}", unpacking.display()))?;
+    let staged = (|| {
+        let program = fastctx_update::kernel::unpack(archive, unpacking)?;
+        let mut command = std::process::Command::new(&program);
+        command.args(["renew", "stage", "--dir"]).arg(root).arg("--package").arg(archive);
+        command.stdin(std::process::Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt as _;
+            command.creation_flags(0x0800_0000);
+        }
+        match fastctx_platform::bounded::output(command, "the new release staging itself", STAGING) {
+            Ok(output) if output.status.success() => Ok(()),
+            Ok(output) => {
+                let said = String::from_utf8_lossy(&output.stderr);
+                let said = said.trim();
+                Err(if said.is_empty() { format!("the new release did not stage: {}", output.status) } else { said.to_string() })
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::TimedOut => Err(error.to_string()),
+            Err(_) => {
+                let plan = fastctx_install::renewal::stage_package(root, archive, &unpacking.join("here"))
+                    .map_err(|error| format!("{error:#}"))?;
+                if plan.phase != fastctx_types::renewal::Phase::Complete {
+                    fastctx_install::renewal::request(root, true).map_err(|error| error.to_string())?;
+                }
+                Ok(())
+            }
+        }
+    })();
+    let _ = std::fs::remove_dir_all(unpacking);
+    staged
 }
 
 /// Asks `machine`, this machine or another, about its updates. A machine
