@@ -23,47 +23,57 @@ pub(crate) fn assisting(node: &Node, acting: &Acting) -> bool {
     node.works_here(acting).is_err()
 }
 
-/// Whether the session `about` may take a new turn now. One that works for
-/// accounts needs one of them logged in here or allowed to use its login
-/// here, as this machine's view of their hub says at this moment; an
-/// account of a hub that has given this machine no view yet, or that this
-/// machine is no longer on, has nothing to judge by and is passed over.
+/// Whether this account may still use the conversation's login, without applying usage limits.
+pub(crate) fn permitted(
+    node: &Node,
+    about: &About,
+    account: &fastctx_types::access::HubAccount,
+) -> Result<(), Failure> {
+    let link = node.link_of(&account.hub).ok_or_else(|| {
+        Failure::from(fastctx_types::authorization::Denial::new(
+            fastctx_types::authorization::DenialReason::ViewUnavailable,
+            "the conversation's account is no longer connected; its words wait for authority",
+        ))
+    })?;
+    let view = crate::authorization::current_view(&link)?;
+    view.authorize(
+        &account.account,
+        fastctx_net::authorization::Action::Login {
+            machine: &view.me,
+            agent: Some(&about.host.agent),
+            home: about.home.as_deref(),
+        },
+    )
+    .map_err(Failure::from)
+}
+
+/// Whether the session may start a turn under current account authority and usage allowances.
 pub(crate) fn may_turn(node: &Node, id: &fastctx_types::ResidentId, about: &About) -> Result<(), Failure> {
     let Acting::Accounts { accounts } = &about.acting else { return Ok(()) };
+    if accounts.is_empty() {
+        return Err(crate::authorization::no_subject());
+    }
     let options = crate::session_options::read(node, id)?;
     let model = options.model.as_deref().or(about.model.as_deref());
-    let mut refused = Vec::new();
+    let mut refused = None;
     let mut spent = None;
     for account in accounts {
-        let Some(link) = node.link_of(&account.hub) else { continue };
-        let view = link.view();
-        let Some(here) = view.me().map(|me| me.name.clone()) else { continue };
-        if view.logged_in(&here, &account.account) {
-            return Ok(());
+        if let Err(failure) = permitted(node, about, account) {
+            refused = Some(failure);
+            continue;
         }
-        if view.may_use_login(&account.account, &here, &about.host.agent, about.home.as_deref()) {
-            if assisting(node, &about.acting) {
-                host::require(node, id)?;
-            }
-            match crate::usage::used_up(node, about, account, model) {
-                None => return Ok(()),
-                Some(used) => {
-                    spent.get_or_insert(used.said(account));
-                    continue;
-                }
+        if assisting(node, &about.acting) {
+            host::require(node, id)?;
+        }
+        match crate::usage::used_up(node, about, account, model) {
+            None => return Ok(()),
+            Some(used) => {
+                spent.get_or_insert(used.said(account));
             }
         }
-        refused.push(account.account.to_string());
     }
     if let Some(said) = spent {
         return Err(Failure::not_run(said));
     }
-    if refused.is_empty() {
-        return Ok(());
-    }
-    Err(Failure::not_run(format!(
-        "the {} login this conversation runs on no longer assists {}; what is for it waits until it assists them again",
-        about.host.agent,
-        refused.join(", ")
-    )))
+    Err(refused.unwrap_or_else(crate::authorization::no_subject))
 }

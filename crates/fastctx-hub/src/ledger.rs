@@ -212,7 +212,9 @@ impl Ledgers {
         let gone: Vec<TownId> = self
             .towns
             .keys()
-            .filter(|town| book.directory.project(town).is_none() && !book.archived.iter().any(|project| &project.town == *town))
+            .filter(|town| {
+                book.directory.project(town).is_none() && !book.archived.iter().any(|project| &project.town == *town)
+            })
             .cloned()
             .collect();
         for town in &gone {
@@ -306,11 +308,21 @@ pub(crate) async fn write(hub: &Arc<Hub>, from: &MachineName, town: TownId, sign
         hub.ledgers.lock().expect("never poisoned").check(&store, from, &town, &signed)?
     };
     let (path, bytes) = (checked.path.clone(), checked.bytes.clone());
+    let (publishing, author, project) = (hub.clone(), from.clone(), town.clone());
     let published = tokio::task::spawn_blocking(move || {
         let folder = path.parent().expect("an entry has a folder");
-        ensure_private_dir(folder)
-            .map_err(|error| PublishFailure { error, published: false })
-            .and_then(|()| publish_checked(&path, &bytes, Permissions::Private, false, || Ok(())))
+        ensure_private_dir(folder).map_err(|error| PublishFailure { error, published: false }).and_then(|()| {
+            publish_checked(&path, &bytes, Permissions::Private, false, || {
+                let store = publishing.store();
+                publishing
+                    .ledgers
+                    .lock()
+                    .expect("never poisoned")
+                    .check(&store, &author, &project, &signed)
+                    .map_err(|why| io::Error::new(io::ErrorKind::PermissionDenied, why))?;
+                Ok(store)
+            })
+        })
     })
     .await
     .map_err(|error| format!("the hub could not keep the entry: {error}"))?;

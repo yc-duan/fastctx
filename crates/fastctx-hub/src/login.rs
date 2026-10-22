@@ -311,6 +311,9 @@ pub(crate) async fn open_account(
     let outcome = HubSecrets::register_finish(&upload).and_then(|record| {
         let mut store = hub.store();
         let before = store.book.clone();
+        if !store.hub.self_registration {
+            return Err("this hub opens accounts only through its super administrator".to_string());
+        }
         if store.book.directory.account(&account).is_some() {
             return Err(format!("the account {account} exists already"));
         }

@@ -13,7 +13,9 @@ pub(crate) async fn write(
     op: WriteOp,
     job: Option<fastctx_types::JobId>,
 ) -> Result<WriteOutcome, Failure> {
-    let Caller::Resident(owner) = caller::of(node, peer)? else {
+    let caller = caller::of(node, peer)?;
+    node.authorize_here(&crate::around::acting_of(node, &caller))?;
+    let Caller::Resident(owner) = caller else {
         return Err(Failure::new("edit and write work only inside a script run by the run tool"));
     };
     let here = node.names();

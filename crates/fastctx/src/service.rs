@@ -114,7 +114,7 @@ fn hand_over(root: &std::path::Path) {
         tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(anyhow::Error::from).and_then(
             |runtime| {
                 runtime.block_on(async {
-                    match fastctx_client::Client::connect(&world, fastctx_client::command_peer()).await {
+                    match fastctx_client::Client::connect(&world, fastctx_client::command_peer()?).await {
                         Ok(mut client) => match client.call(fastctx_types::Call::HandOver).await? {
                             fastctx_types::Reply::Done => Ok(()),
                             other => Err(anyhow::anyhow!("the node answered {other:?}")),

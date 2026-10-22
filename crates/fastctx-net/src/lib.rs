@@ -16,6 +16,8 @@ pub mod again;
 pub mod android;
 pub mod around;
 pub mod arrivals;
+pub mod authorization;
+pub mod call_details;
 pub mod cancellable;
 pub mod data;
 pub mod dial;

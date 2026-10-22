@@ -181,6 +181,8 @@ async fn copy_once(
     let (from_machine, to_machine) = (at(&from), at(&to));
     let from_here = from.machine.is_none() || node.is_here(&from_machine);
     let to_here = to.machine.is_none() || node.is_here(&to_machine);
+    node.authorize_machine(acting, &from_machine)?;
+    node.authorize_machine(acting, &to_machine)?;
     if from_here && to_here {
         let root = fastctx_platform::local_path(&from.path).map_err(|error| Failure::new(error.to_string()))?;
         let target = to.path;

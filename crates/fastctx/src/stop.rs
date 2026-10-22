@@ -29,7 +29,7 @@ pub fn run(args: StopArgs) -> anyhow::Result<ExitCode> {
     let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let mut client =
-        runtime.block_on(Client::connect(&world, command_peer())).context("reaching this machine's node")?;
+        runtime.block_on(Client::connect(&world, command_peer()?)).context("reaching this machine's node")?;
     let mut failed = false;
     for named in &args.jobs {
         let stopped = match target(named, args.machine.as_deref()) {

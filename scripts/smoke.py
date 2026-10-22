@@ -483,7 +483,9 @@ def administrator(lab, status):
                   not failed and re.search(r"^True\s*$", text, re.M), text)
         finally:
             agent.close()
-    elif sys.platform.startswith("linux"):
+    elif sys.platform.startswith("linux") and os.getuid() != 0:
+        # A root service's node is already root and needs no rule; one for a
+        # user that may sudo gets a passwordless rule, so its run is root too.
         unit = status.get("name", "").removesuffix(".service")
         rule = subprocess.run(["sudo", "cat", f"/etc/sudoers.d/{unit}"], capture_output=True, text=True)
         check("the service's rule lets an account that may sudo do so without a password",

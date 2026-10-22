@@ -32,6 +32,9 @@ pub(super) async fn ready(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failu
         about.session.as_deref().ok_or_else(|| Failure::new("Claude has not identified this conversation yet"))?;
 
     if !super::alive(node, about.home.as_deref(), session).await? {
+        let (current, _) = node.residents.about(id).ok_or_else(crate::authorization::no_subject)?;
+        crate::homes::listed(node, current.host.agent.as_str(), current.home.as_deref())?;
+        crate::assists::may_turn(node, id, &current)?;
         crate::profile::session::claude(node, id, false)?;
         super::management::wake(node, about.home.as_deref(), session).await?;
     }

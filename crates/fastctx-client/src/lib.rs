@@ -490,20 +490,34 @@ impl Watching {
 /// Who a command speaks as, from its environment: a resident, when the
 /// World's `run` started it; an agent's session, when that agent's own
 /// shell did, as its host says; otherwise whoever is at the terminal.
-pub fn command_peer() -> Peer {
-    if let Some(page) = std::env::var_os("FASTCTX_PAGE") {
-        let page = page.to_str().expect("FASTCTX_PAGE must be UTF-8");
-        let page = serde_json::from_str(page).expect("FASTCTX_PAGE must hold the page identity stamped by the node");
-        return Peer::Page { page };
+pub fn command_peer() -> std::io::Result<Peer> {
+    let invalid = |name: &str| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("invalid {name}: the command has no recognized identity"),
+        )
+    };
+    let set = |name: &str| -> std::io::Result<Option<String>> {
+        match std::env::var(name) {
+            Ok(value) if !value.is_empty() => Ok(Some(value)),
+            Err(std::env::VarError::NotPresent) => Ok(None),
+            _ => Err(invalid(name)),
+        }
+    };
+    if let Some(page) = set("FASTCTX_PAGE")? {
+        let page = serde_json::from_str(&page).map_err(|_| invalid("FASTCTX_PAGE"))?;
+        return Ok(Peer::Page { page });
     }
-    let resident = std::env::var("FASTCTX_RESIDENT").ok().and_then(|address| address.parse().ok());
-    let set = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
-    let session = match (set("CODEX_THREAD_ID"), set("CLAUDE_CODE_MESSAGING_SOCKET")) {
+    let resident =
+        set("FASTCTX_RESIDENT")?.map(|value| value.parse().map_err(|_| invalid("FASTCTX_RESIDENT"))).transpose()?;
+    let thread = set("CODEX_THREAD_ID")?;
+    let inbox = set("CLAUDE_CODE_MESSAGING_SOCKET")?;
+    let session = match (thread, inbox) {
         (Some(thread), _) => Some(SessionHint::Codex { thread }),
         (None, Some(inbox)) => Some(SessionHint::Claude { inbox }),
         (None, None) => None,
     };
-    Peer::Command { resident, session }
+    Ok(Peer::Command { resident, session })
 }
 
 /// Starts a node on its own, from `program` or else this binary.

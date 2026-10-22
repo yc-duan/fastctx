@@ -127,6 +127,7 @@ pub(crate) fn check_named(node: &Node, acting: &Acting, script: &str) -> Result<
             |why: String| Failure::not_run(format!("nothing ran: line {line} names {name} after `on`, and {why}"));
         let written = Written::parse(&name).map_err(|error| refuse(error.to_string()))?;
         if node.is_here(&written) {
+            node.authorize_here(acting)?;
             continue;
         }
         let speakers =
@@ -150,7 +151,8 @@ pub(crate) fn check_named(node: &Node, acting: &Acting, script: &str) -> Result<
 /// anything else is refused with why, before anything of it runs.
 pub(crate) fn start(node: &Node, request: RunRequest) -> Result<(Option<Written>, RunRequest), String> {
     let (machine, body) = fastctx_hands::run::preread::on_only(&request.script).map_err(|failure| failure.message)?;
-    let body = body.ok_or("a script is one `on MACHINE`; put the rest inside it, where `on` reaches the other machines")?;
+    let body =
+        body.ok_or("a script is one `on MACHINE`; put the rest inside it, where `on` reaches the other machines")?;
     let machine = Written::parse(&machine).map_err(|error| error.to_string())?;
     let whole = RunRequest { script: body, cwd: None, ..request };
     Ok(((!node.is_here(&machine)).then_some(machine), whole))
@@ -166,7 +168,7 @@ pub(crate) async fn run(
     request: RunRequest,
     to: &Written,
 ) -> Result<RunReply, Failure> {
-    let acting = node.residents.about(resident).map(|(about, _)| about.acting).unwrap_or_default();
+    let acting = crate::authorization::resident(node, resident)?;
     let here = Address { machine: node.machine(), resident: resident.clone() };
     let directory = node.world.conversation(resident);
     // Listening before the call goes, so words that come, or an interrupted
@@ -266,7 +268,13 @@ pub(crate) fn forget(node: &Arc<Node>, resident: &ResidentId, job: &JobId) -> bo
     let Some((to, town)) = take_dispatched(node, resident, job) else {
         return false;
     };
-    let acting = node.residents.about(resident).map(|(about, _)| about.acting).unwrap_or_default();
+    let acting = match crate::authorization::resident(node, resident) {
+        Ok(acting) => acting,
+        Err(failure) => {
+            node.log.line(format_args!("removing a completed job: {failure}"));
+            return true;
+        }
+    };
     let (node, call) = (
         node.clone(),
         RemoteCall::Forget {

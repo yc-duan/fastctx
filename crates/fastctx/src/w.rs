@@ -35,7 +35,7 @@ pub fn run(args: WArgs) -> anyhow::Result<()> {
     let since = args.since.as_deref().map(|text| history::parse(text, now)).transpose()?;
     let world = World::here()?;
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-    let mut client = match runtime.block_on(Client::connect(world.dir(), fastctx_client::command_peer())) {
+    let mut client = match runtime.block_on(Client::connect(world.dir(), fastctx_client::command_peer()?)) {
         Ok(client) => Some(client),
         Err(ConnectError::NoNode { .. }) => None,
         Err(error) => return Err(error.into()),

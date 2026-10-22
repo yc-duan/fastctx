@@ -157,7 +157,9 @@ async fn connections(
     let mut delay = 1u64;
     loop {
         let opening = async {
-            let client = Client::connect(&world, fastctx_client::command_peer()).await.map_err(|e| e.to_string())?;
+            let client = Client::connect(&world, fastctx_client::command_peer().map_err(|error| error.to_string())?)
+                .await
+                .map_err(|e| e.to_string())?;
             client.mcp_relay(name.clone()).await.map_err(|e| e.to_string())
         };
         let opened = tokio::select! {

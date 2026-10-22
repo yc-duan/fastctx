@@ -61,11 +61,7 @@ pub async fn talk(
         return Ok((Address { machine: here, resident: to }, landed));
     }
     let call = RemoteCall::Talk { to: to.clone(), text, attachments, files_on, id };
-    match node
-        .call(&Acting::Here, &machine, Purpose::Agents, call)
-        .await
-        .map_err(|failure| Failure::unanswered(failure.to_string()))?
-    {
+    match node.call(&Acting::Here, &machine, Purpose::Agents, call).await.map_err(crate::authorization::call_failure)? {
         Ok(RemoteReply::Said { landed }) => Ok((Address { machine: machine.name, resident: to }, landed)),
         Ok(_) => Err(Failure::new(format!("{machine} answered something other than a talk"))),
         Err(failure) => Err(failure),

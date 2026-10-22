@@ -67,9 +67,10 @@ pub(crate) fn confirmed(
     delivery: JobDelivery,
     acting: Option<&Acting>,
 ) -> io::Result<()> {
-    let acting = acting
-        .cloned()
-        .unwrap_or_else(|| node.residents.about(&owner.resident).map(|(about, _)| about.acting).unwrap_or_default());
+    let acting = match acting {
+        Some(acting) => acting.clone(),
+        None => crate::authorization::resident(node, &owner.resident).map_err(io::Error::other)?,
+    };
     let gate = node.disk.lock();
     confirmed_under(&gate, node, owner, machine, delivery, Some(&acting))
 }
@@ -90,7 +91,8 @@ pub(crate) fn confirmed_under(
         received_here(node, &owner, &delivery, None, false, None, &mut HashSet::new())?;
     } else {
         let hub = destination.hub;
-        let acting = acting.cloned().unwrap_or_default();
+        let acting =
+            acting.cloned().ok_or_else(|| io::Error::other("the completion receipt has no account identity"))?;
         let key = (owner.resident.clone(), delivery.job.clone());
         enqueue(
             node,

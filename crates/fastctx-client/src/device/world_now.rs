@@ -125,11 +125,14 @@ impl Device {
     fn afoot(&self) -> Vec<MachineWho> {
         let mut machines = Vec::new();
         for session in self.sessions() {
+            if !matches!(session.link.status(), fastctx_net::link::Status::Online { .. }) {
+                continue;
+            }
             let view = session.link.view();
             let told = session.link.afoot();
             let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
             for member in view.machines() {
-                if !logins.iter().any(|account| view.rights(account, &member.name).any()) {
+                if !logins.iter().any(|account| view.call_rights(&view.me, account, &member.name).any()) {
                     continue;
                 }
                 let name = member.name.clone();
@@ -172,12 +175,17 @@ impl Device {
     fn machines_now(self: &Arc<Self>) -> NodesReply {
         let mut hubs = Vec::new();
         for session in self.sessions() {
+            if !matches!(session.link.status(), fastctx_net::link::Status::Online { .. }) {
+                continue;
+            }
             let view = session.link.view();
             let current = matches!(session.link.status(), Status::Online { .. });
             let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
             let mut machines = Vec::new();
             for member in view.machines() {
-                let Some(account) = logins.iter().find(|account| view.rights(account, &member.name).hands) else {
+                let Some(account) =
+                    logins.iter().find(|account| view.call_rights(&view.me, account, &member.name).hands)
+                else {
                     continue;
                 };
                 let facts = self.facts_of(&session.link, member, current.then(|| account.clone()));
@@ -194,7 +202,7 @@ impl Device {
                     group: member.group.clone(),
                     rights: logins
                         .iter()
-                        .map(|account| (account.clone(), view.rights(account, &member.name)))
+                        .map(|account| (account.clone(), view.call_rights(&view.me, account, &member.name)))
                         .collect(),
                 });
             }

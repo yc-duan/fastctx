@@ -358,9 +358,7 @@ impl Directory {
     /// Whether an account may manage a machine's updates: its owner or the
     /// super administrator, except for another account's visitor machines.
     pub fn may_update(&self, account: &AccountName, machine: &MachineName) -> bool {
-        self.member(machine)
-            .and_then(|m| m.home.as_ref())
-            .is_some_and(|owner| owner == account || (self.is_super(account) && !self.is_visitor(owner)))
+        self.authorize(account, crate::authorization::Action::Manage(machine)).is_ok()
     }
 
     /// Whether `account` is a visitor: its machines are its alone, and it
@@ -406,23 +404,11 @@ impl Directory {
     /// machine; the logins assisting it alone on another's; nothing on what
     /// is no machine.
     pub fn rights(&self, account: &AccountName, machine: &MachineName) -> Rights {
-        let Some(member) = self.member(machine) else { return Rights::NONE };
-        let Some(owner) = member.home.as_ref() else { return Rights::NONE };
-        // A visitor's machines are its alone: nobody else is given them,
-        // the super administrator included.
-        let visitors = self.is_visitor(owner);
-        let whole = owner == account || (!visitors && (self.is_super(account) || self.shared(account, &member.name)));
-        // A managed machine is worked on, and its agents work for no one.
-        if member.managed {
-            return Rights { hands: whole, agents: false };
+        use crate::authorization::Action;
+        Rights {
+            hands: self.authorize(account, Action::Work(machine)).is_ok(),
+            agents: self.authorize(account, Action::Login { machine, agent: None, home: None }).is_ok(),
         }
-        if whole {
-            return Rights::ALL;
-        }
-        if visitors {
-            return Rights::NONE;
-        }
-        Rights { hands: false, agents: self.assisting(account, &member.name).next().is_some() }
     }
 
     /// Whether `account` may use `agent`'s login `home` on `machine` (none
@@ -435,14 +421,7 @@ impl Directory {
         agent: &AgentName,
         home: Option<&Path>,
     ) -> bool {
-        let Some(member) = self.member(machine) else { return false };
-        if member.managed {
-            return false;
-        }
-        // A visitor's agents assist no one.
-        let visitors = member.home.as_ref().is_some_and(|owner| self.is_visitor(owner));
-        self.rights(account, machine).hands
-            || (!visitors && self.assisting(account, machine).any(|assist| assist.is(agent, home)))
+        self.authorize(account, crate::authorization::Action::Login { machine, agent: Some(agent), home }).is_ok()
     }
 
     /// Whether `member` may act for `account`: the account is logged in on
@@ -452,10 +431,7 @@ impl Directory {
     /// (`settle_acting`). A managed machine acts for no one: no agent of
     /// its is used, so `rights` gives none there.
     pub fn may_act_for(&self, account: &AccountName, member: &MachineName) -> bool {
-        let member = self.canonical(member);
-        self.logged_in(member, account)
-            || (self.acting.iter().any(|acting| acting.account == *account && acting.machine == *member)
-                && self.rights(account, member).agents)
+        self.authorize(account, crate::authorization::Action::ActFor(member)).is_ok()
     }
 
     /// The accounts `member` may act for.
@@ -463,19 +439,16 @@ impl Directory {
         let member = self.canonical(member);
         let mut accounts: BTreeSet<AccountName> =
             self.member(member).map(|member| member.logins.clone()).unwrap_or_default();
-        accounts.extend(
-            self.acting
-                .iter()
-                .filter(|acting| acting.machine == *member && self.rights(&acting.account, member).agents)
-                .map(|acting| acting.account.clone()),
-        );
+        accounts
+            .extend(self.acting.iter().filter(|acting| acting.machine == *member).map(|acting| acting.account.clone()));
+        accounts.retain(|account| self.may_act_for(account, member));
         accounts
     }
 
     /// Whether a resident of `account` may live on `member`, or be told
     /// things there: the account is logged in on it or may use agents there.
     pub fn hosts(&self, account: &AccountName, member: &MachineName) -> bool {
-        self.logged_in(member, account) || self.rights(account, member).agents
+        (self.logged_in(member, account) && self.may_act_for(account, member)) || self.rights(account, member).agents
     }
 
     /// Whether `member`, acting for `account`, may `use_` `machine`; when
@@ -503,47 +476,8 @@ impl Directory {
         to: &MachineName,
         purpose: Purpose,
     ) -> Result<(), String> {
-        match self.account(account) {
-            None => return Err(format!("there is no account {account}")),
-            Some(found) if found.locked => return Err(format!("the account {account} is locked")),
-            Some(_) => {}
-        }
-        if purpose.acts() {
-            if !self.may_act_for(account, from) {
-                return Err(format!("{from} may not act for the account {account}"));
-            }
-        } else if !(self.logged_in(from, account) || self.rights(account, from).any()) {
-            return Err(format!("{from} is not a machine the account {account} uses"));
-        }
-        let rights = self.rights(account, to);
-        let allowed = match purpose {
-            Purpose::Hands => rights.hands,
-            Purpose::Agents => rights.agents,
-            Purpose::Look => rights.any(),
-            Purpose::Words | Purpose::Echo => self.hosts(account, to),
-        };
-        if allowed {
-            return Ok(());
-        }
-        Err(match self.member(to) {
-            None => format!("there is no machine named {to}"),
-            Some(member)
-                if !member.is_machine() && matches!(purpose, Purpose::Hands | Purpose::Agents | Purpose::Look) =>
-            {
-                format!("{to} is logged in to this hub but not registered as a machine, so no account can use it")
-            }
-            Some(_) => match purpose {
-                Purpose::Hands if rights.agents => {
-                    format!(
-                        "an agent on {to} assists the account {account}, which is not given the machine, so it may not work on {to}"
-                    )
-                }
-                Purpose::Hands => format!("the account {account} may not work on {to}"),
-                Purpose::Agents => format!("the account {account} may not use the agents on {to}"),
-                Purpose::Look => format!("the account {account} may not use {to}"),
-                Purpose::Words | Purpose::Echo => format!("no resident of the account {account} can be on {to}"),
-            },
-        })
+        self.authorize(account, crate::authorization::Action::Call { from, to, purpose })
+            .map_err(|denial| denial.message)
     }
 
     /// Whether `from` may tell a resident of `account` on `to` what came of
@@ -585,7 +519,7 @@ impl Directory {
     /// along, and assisting again needs another use.
     pub fn settle_acting(&mut self) {
         let keep: Vec<bool> =
-            self.acting.iter().map(|acting| self.rights(&acting.account, &acting.machine).agents).collect();
+            self.acting.iter().map(|acting| self.machine_rights(&acting.account, &acting.machine).agents).collect();
         let mut keep = keep.into_iter();
         self.acting.retain(|_| keep.next().expect("one per entry"));
     }
@@ -596,16 +530,12 @@ impl Directory {
 
     /// The project named `name` that `account` may use.
     pub fn project_named(&self, account: &AccountName, name: &TownName) -> Option<&Project> {
-        self.projects.iter().find(|project| project.name == *name && self.in_project_of(account, project))
+        self.projects.iter().find(|project| project.name == *name && self.in_project(account, &project.town))
     }
 
     /// Whether `account` may read and write the records of `town`.
     pub fn in_project(&self, account: &AccountName, town: &TownId) -> bool {
-        self.project(town).is_some_and(|project| self.in_project_of(account, project))
-    }
-
-    fn in_project_of(&self, account: &AccountName, project: &Project) -> bool {
-        project.owner == *account || project.granted.contains(account)
+        self.authorize(account, crate::authorization::Action::Project(town)).is_ok()
     }
 
     /// Whether `member`, acting for any account it may, may read and write
@@ -618,6 +548,9 @@ impl Directory {
 /// One member's view of its hub's directory.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct View {
+    /// The hub authorizes large calls from control-frame facts and requires a verifying receiver.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub call_details: bool,
     /// Whether this hub supports `Question::MachineLog`. Older hubs omit it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub machine_log: bool,
@@ -764,6 +697,7 @@ impl View {
     /// An empty view, before the hub has given one.
     pub fn empty(hub: HubId, hub_name: HubName, me: MachineName) -> Self {
         Self {
+            call_details: false,
             machine_log: false,
             hub,
             hub_name,

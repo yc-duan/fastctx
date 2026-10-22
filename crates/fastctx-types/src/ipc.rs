@@ -156,6 +156,9 @@ pub struct Failure {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<FailureCode>,
+    /// A classified authorization refusal; old peers still read `code: refused`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub denial: Option<crate::authorization::DenialReason>,
     /// The request failed before execution became possible. Absence means
     /// the caller must not infer that nothing ran.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -195,15 +198,16 @@ pub enum FailureCode {
 
 impl Failure {
     pub fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into(), not_run: false, code: None }
+        Self { denial: None, message: message.into(), not_run: false, code: None }
     }
 
     pub fn not_run(message: impl Into<String>) -> Self {
-        Self { message: message.into(), not_run: true, code: None }
+        Self { denial: None, message: message.into(), not_run: true, code: None }
     }
 
     pub fn original_gone() -> Self {
         Self {
+            denial: None,
             message: "the original is gone and its host record holds no recoverable copy".into(),
             not_run: false,
             code: Some(FailureCode::OriginalGone),
@@ -212,19 +216,19 @@ impl Failure {
 
     /// A place macOS keeps private from Fastctx, refused before anything ran.
     pub fn mac_privacy(message: impl Into<String>) -> Self {
-        Self { message: message.into(), not_run: true, code: Some(FailureCode::MacPrivacy) }
+        Self { denial: None, message: message.into(), not_run: true, code: Some(FailureCode::MacPrivacy) }
     }
 
     pub fn output_not_retained(message: impl Into<String>) -> Self {
-        Self { message: message.into(), not_run: false, code: Some(FailureCode::OutputNotRetained) }
+        Self { denial: None, message: message.into(), not_run: false, code: Some(FailureCode::OutputNotRetained) }
     }
 
     pub fn source_missing(message: impl Into<String>) -> Self {
-        Self { message: message.into(), not_run: false, code: Some(FailureCode::SourceMissing) }
+        Self { denial: None, message: message.into(), not_run: false, code: Some(FailureCode::SourceMissing) }
     }
 
     pub fn unanswered(message: impl Into<String>) -> Self {
-        Self { message: message.into(), not_run: false, code: Some(FailureCode::Unanswered) }
+        Self { denial: None, message: message.into(), not_run: false, code: Some(FailureCode::Unanswered) }
     }
 
     /// Whether no answer came: worth asking again, as it was asked.
@@ -233,7 +237,7 @@ impl Failure {
     }
 
     pub fn deleted(message: impl Into<String>) -> Self {
-        Self { message: message.into(), not_run: true, code: Some(FailureCode::Deleted) }
+        Self { denial: None, message: message.into(), not_run: true, code: Some(FailureCode::Deleted) }
     }
 
     /// Whether the conversation asked about was deleted: nothing more will
@@ -243,7 +247,7 @@ impl Failure {
     }
 
     pub fn refused(message: impl Into<String>) -> Self {
-        Self { message: message.into(), not_run: true, code: Some(FailureCode::Refused) }
+        Self { denial: None, message: message.into(), not_run: true, code: Some(FailureCode::Refused) }
     }
 
     /// Whether the machine refused the caller's account: asking again on

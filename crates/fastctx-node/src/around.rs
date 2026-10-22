@@ -15,7 +15,7 @@ pub(crate) fn reachable(node: &Node, acting: &Acting, purpose: Purpose) -> Vec<R
     let mut keys = Vec::new();
     let links = node.links();
     for link in &links {
-        let view = link.view();
+        let Ok(view) = crate::authorization::current_view(link) else { continue };
         let accounts = node.accounts_on(link, acting);
         // This computer as its hub calls it, which a hub that has not
         // followed a rename yet calls it otherwise.
@@ -49,7 +49,7 @@ pub(crate) fn reachable_each(node: &Node, acting: &Acting, purpose: Purpose) -> 
     let mut reachable = Vec::new();
     let links = node.links();
     for link in &links {
-        let view = link.view();
+        let Ok(view) = crate::authorization::current_view(link) else { continue };
         let accounts = node.accounts_on(link, acting);
         for machine in view.machines().filter(|machine| !view.is_me(&machine.name)) {
             for account in &accounts {
@@ -77,7 +77,7 @@ pub(crate) fn reachable_each(node: &Node, acting: &Acting, purpose: Purpose) -> 
 pub(crate) fn acting_of(node: &Node, caller: &crate::town::caller::Caller) -> Acting {
     match caller {
         crate::town::caller::Caller::Resident(address) if node.is_me(&address.machine) => {
-            node.residents.about(&address.resident).map(|(about, _)| about.acting).unwrap_or_default()
+            crate::here::acting(node, &address.resident).unwrap_or(Acting::Accounts { accounts: Vec::new() })
         }
         // A resident of another machine runs commands here only in a job
         // that machine sent for an account: they work for that account, and
@@ -86,7 +86,8 @@ pub(crate) fn acting_of(node: &Node, caller: &crate::town::caller::Caller) -> Ac
         crate::town::caller::Caller::Resident(address) => {
             Acting::Accounts { accounts: crate::jobs::running_for(&node.world, &node.names(), address) }
         }
-        _ => Acting::Here,
+        crate::town::caller::Caller::User | crate::town::caller::Caller::Page(_) => Acting::Here,
+        crate::town::caller::Caller::Session(_) => Acting::Accounts { accounts: Vec::new() },
     }
 }
 

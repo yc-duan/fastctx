@@ -3,6 +3,8 @@
 
 use std::collections::BTreeMap;
 
+mod about;
+
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +43,7 @@ pub struct Hints {
 /// A resident's `about` record: who it is and how it came to be, written
 /// once when it is born.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "about::Stored")]
 pub struct About {
     pub id: ResidentId,
     pub host: Host,
