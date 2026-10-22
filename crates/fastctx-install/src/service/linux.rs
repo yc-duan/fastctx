@@ -221,6 +221,14 @@ pub(super) fn status(service: &Service) -> anyhow::Result<Status> {
     reg.status(reg.read()?.is_some())
 }
 
+pub(super) fn definition_current(service: &Service) -> anyhow::Result<bool> {
+    let reg = Registration::new(service);
+    let content = definition(service, &reg, manager_version()?)?;
+    Ok(reg.read()?.as_deref() == Some(content.as_bytes())
+        && read_link(&reg.executable)?.as_deref() == Some(service.executable.as_path())
+        && reg.watchdog.current(&reg.name, manager_version()?)?)
+}
+
 pub(super) fn main_pid(service: &Service) -> anyhow::Result<u64> {
     let pid = Registration::new(service).property("Service", "MainPID")?;
     pid.as_u64().context("systemd omitted the service's MainPID")

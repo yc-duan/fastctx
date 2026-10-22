@@ -33,6 +33,7 @@ mod program;
 mod project;
 mod proxy;
 mod renew;
+mod repair;
 mod secret;
 mod self_update;
 mod server_install;

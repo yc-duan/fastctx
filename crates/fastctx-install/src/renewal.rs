@@ -32,6 +32,9 @@ pub struct Plan {
     pub retry: fastctx_update::retry::Retry,
     #[serde(default)]
     pub keeper_restarted: bool,
+    /// A repair may replace an unreadable image, after checking all known versions.
+    #[serde(default)]
+    pub repair: bool,
 }
 
 pub fn directory(root: &Path) -> PathBuf {
@@ -229,7 +232,13 @@ pub fn coordinator(root: &Path, digest: &str) -> PathBuf {
 /// the gate, its node, detached from it, going on serving; and takes the
 /// gate, which nothing else ever would. The gate once they have let it go;
 /// none where no such handover holds it.
-fn superseded(root: &Path, entry: &Path, source: &Path) -> anyhow::Result<Option<FileLock>> {
+pub(crate) fn superseded(
+    root: &Path,
+    entry: &Path,
+    source: &Path,
+    repair: bool,
+    mut ending: impl FnMut(&fastctx_types::ProcessIdentity) -> anyhow::Result<()>,
+) -> anyhow::Result<Option<FileLock>> {
     let plan = read(root)?;
     let stuck = plan.as_ref().is_none_or(|plan| {
         matches!(plan.phase, Phase::Complete | Phase::AwaitingAdministrator | Phase::Failed)
@@ -252,7 +261,7 @@ fn superseded(root: &Path, entry: &Path, source: &Path) -> anyhow::Result<Option
         else {
             continue;
         };
-        if digest == offered.digest {
+        if digest == offered.digest && !repair {
             continue;
         }
         if let Some(holder) = read_json::<fastctx_types::ProcessIdentity>(&coordinator(root, digest))?
@@ -265,6 +274,7 @@ fn superseded(root: &Path, entry: &Path, source: &Path) -> anyhow::Result<Option
         return Ok(None);
     }
     for holder in &holders {
+        ending(holder)?;
         fastctx_platform::terminate::terminate(holder)?;
     }
     let began = std::time::Instant::now();
@@ -293,6 +303,16 @@ pub fn stage_package(root: &Path, package: &Path, unpacking: &Path) -> anyhow::R
 /// Stores and checks the new program before publishing either the intent or
 /// the installed name. Repeating an unfinished placement retains its state.
 pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Result<Plan> {
+    stage_inner(root, source, false)
+}
+
+/// Restages a checked repair without discarding the previous durable intent.
+pub fn stage_repair(root: &Path, source: &Path) -> anyhow::Result<Plan> {
+    crate::repair::records::check_version(root, &crate::program::inspect(source)?)?;
+    stage_inner(root, source, true)
+}
+
+fn stage_inner(root: &Path, source: &Path, repair: bool) -> anyhow::Result<Plan> {
     anyhow::ensure!(
         !root.join("uninstalled.json").try_exists()?,
         "this World was uninstalled; reinstall it before placing a program"
@@ -317,7 +337,7 @@ pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Res
         Some(lock) => lock,
         None => match handed_over(root, &entry)? {
             Some(lock) => lock,
-            None => superseded(root, &entry, source)?.ok_or_else(|| {
+            None => superseded(root, &entry, source, false, |_| Ok(()))?.ok_or_else(|| {
                 anyhow::anyhow!(
                     "the node is completing its program handover; it was asked to finish it, and its plan was left unchanged"
                 )
@@ -331,19 +351,25 @@ pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Res
     ensure_private_dir(world.path())?;
     let stable = installed(root);
     let mut source = source;
-    if stable.is_file() {
-        let current = crate::program::inspect(&stable)?;
+    if stable.is_file() && let Some(current) = installed_build(&stable, repair)? {
         let offered = crate::program::inspect(source)?;
         if current != offered && !crate::program::newer(&offered, &current)? {
             source = &stable;
         }
     }
-    let copied = copy_image(root, source)?;
+    let copied = if repair {
+        let digest = digest(source)?;
+        let candidate = directory(root).join("images").join(&digest).join(EXECUTABLE);
+        if candidate.is_file() && self::digest(&candidate)? != digest {
+            publish_image(source, &candidate)?;
+        }
+        copy_image(root, source)?
+    } else { copy_image(root, source)? };
     let build = crate::program::inspect(&copied)?;
     anyhow::ensure!(build.protocol != 0, "the offered program has no World kernel identity");
     let old_plan = read(root)?;
     if let Some(plan) = &old_plan {
-        if plan.candidate.build == build && plan.phase != Phase::Complete {
+        if !repair && plan.candidate.build == build && plan.phase != Phase::Complete {
             return Ok(plan.clone());
         }
         anyhow::ensure!(
@@ -355,8 +381,7 @@ pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Res
     }
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let serving = runtime.block_on(fastctx_client::renewal::probe(&world))?;
-    let installed_build =
-        if installed(root).is_file() { Some(crate::program::inspect(&installed(root))?) } else { None };
+    let installed_build = installed_build(&installed(root), repair)?;
     if let Some(installed) = &installed_build {
         anyhow::ensure!(
             installed == &build || crate::program::newer(&build, installed)?,
@@ -371,7 +396,10 @@ pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Res
         fastctx_client::renewal::Probe::Absent => installed_build.as_ref().map(|_| installed(root)),
     };
     let previous = if let Some(previous_path) = previous_path {
-        let previous = crate::program::inspect(&previous_path)?;
+        let previous = match (&serving, repair) {
+            (fastctx_client::renewal::Probe::Running(node), true) => node.build.clone(),
+            _ => crate::program::inspect(&previous_path)?,
+        };
         if let fastctx_client::renewal::Probe::Running(node) = &serving {
             anyhow::ensure!(
                 previous == node.build,
@@ -398,13 +426,14 @@ pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Res
         error_version: None,
         retry: fastctx_update::retry::Retry::default(),
         keeper_restarted: false,
+        repair,
     };
     save(root, &plan)?;
     if !world.node_service().exists()
         && matches!(serving, fastctx_client::renewal::Probe::Absent)
         && let Some(_world) = FileLock::try_acquire(&world.node_lock())?
     {
-        install(root, &plan.candidate)?;
+        install_plan(root, &plan)?;
         plan.phase = Phase::Complete;
         plan.error = None;
         plan.error_version = None;
@@ -436,12 +465,29 @@ pub fn verify(program: &Program) -> io::Result<()> {
 }
 
 pub fn install(root: &Path, program: &Program) -> io::Result<()> {
+    install_inner(root, program, false)
+}
+
+/// Publishes a plan using the version bounds verified by its staging process.
+pub fn install_plan(root: &Path, plan: &Plan) -> io::Result<()> {
+    install_inner(root, &plan.candidate, plan.repair)
+}
+
+fn installed_build(path: &Path, repair: bool) -> anyhow::Result<Option<Build>> {
+    if !path.try_exists()? { return Ok(None); }
+    match crate::program::inspect(path) {
+        Ok(build) => Ok(Some(build)),
+        Err(_) if repair => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn install_inner(root: &Path, program: &Program, repair: bool) -> io::Result<()> {
     verify(program)?;
     ensure_private_dir(&root.join("bin"))?;
     let _lock = FileLock::acquire(&root.join("apply.lock"))?;
     let installed = installed(root);
-    if installed.is_file() {
-        let current = crate::program::inspect(&installed).map_err(io::Error::other)?;
+    if let Some(current) = installed_build(&installed, repair).map_err(io::Error::other)? {
         if current != program.build && !crate::program::newer(&program.build, &current).map_err(io::Error::other)? {
             return Err(io::Error::other(
                 "the stable World program advanced after staging; no older image was installed",
@@ -581,6 +627,11 @@ pub fn mend_signature(root: &Path, program: &Program) -> io::Result<bool> {
         publish(&beside, signature.as_bytes(), Permissions::Private)?;
     }
     Ok(true)
+}
+
+/// Publishes the checked signature beside an executable.
+pub fn write_signature(path: &Path, signature: &str) -> io::Result<()> {
+    publish(path, signature.as_bytes(), Permissions::Private)
 }
 
 /// Where the official signature of the program at `program` is kept.

@@ -46,6 +46,7 @@ pub mod profile;
 pub mod project;
 pub mod remote;
 pub mod renewal;
+pub mod repair;
 pub mod residents;
 pub mod run;
 pub mod run_facts;

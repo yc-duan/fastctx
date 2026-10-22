@@ -200,6 +200,19 @@ impl Service {
         bail!("fastctx services support Windows, Linux and macOS; this platform is not supported")
     }
 
+    /// Whether the manager's persisted definition still names this installation.
+    pub fn definition_current(&self) -> anyhow::Result<bool> {
+        let service = self.normalized()?;
+        #[cfg(windows)]
+        return windows::definition_current(&service);
+        #[cfg(target_os = "linux")]
+        return linux::definition_current(&service);
+        #[cfg(target_os = "macos")]
+        return macos::definition_current(&service);
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        { let _ = service; Ok(false) }
+    }
+
     /// The process systemd runs the service as, 0 when it runs none.
     #[cfg(target_os = "linux")]
     pub fn main_pid(&self) -> anyhow::Result<u64> {

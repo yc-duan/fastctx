@@ -9,6 +9,8 @@ mod accounts;
 mod android;
 mod collab;
 mod composer;
+#[cfg(desktop)]
+mod repair_probe;
 mod connection;
 #[cfg(desktop)]
 mod data;
@@ -1096,6 +1098,18 @@ pub(crate) const WINDOW_KEPT: tauri_plugin_window_state::StateFlags = tauri_plug
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(desktop)]
+    {
+        let args: Vec<_> = std::env::args_os().collect();
+        if args.get(1).is_some_and(|arg| arg == "--repair-probe") {
+            let result = match (args.get(2), args.get(3)) {
+                (Some(receipt), Some(profile)) => repair_probe::run(receipt.into(), profile.into()),
+                _ => Err("repair probe needs a receipt and an isolated profile".into()),
+            };
+            if let Err(error) = result { eprintln!("{error}"); std::process::exit(1); }
+            return;
+        }
+    }
     #[cfg(all(windows, not(feature = "page-sandbox-probe")))]
     let Some(desktop) = desktop_presence::enter().expect("starting World's desktop presence") else {
         return;

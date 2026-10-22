@@ -1,0 +1,335 @@
+//! Standalone repair. The process carrying this code survives node handovers.
+
+use anyhow::{Context as _, bail, ensure};
+use clap::Args;
+use fastctx_client::renewal::Probe;
+
+mod service;
+use fastctx_install::{
+    renewal as store,
+    repair::{Journal, package, records},
+};
+use fastctx_types::{
+    layout::WorldDir,
+    renewal::{Build, Phase},
+};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+#[derive(Args)]
+pub struct RepairArgs {
+    #[arg(long, value_parser = crate::paths::parser())]
+    dir: PathBuf,
+    #[arg(long)]
+    version: Option<String>,
+    #[arg(long, default_value = "local")]
+    by: String,
+    #[arg(long)]
+    id: Option<String>,
+    /// An already downloaded command-line package; verified again before use.
+    #[arg(long, value_parser = crate::paths::parser())]
+    package: Option<PathBuf>,
+}
+
+pub fn run(args: RepairArgs) -> anyhow::Result<()> {
+    let root = args.dir.clone();
+    let result = run_inner(args);
+    if let Err(error) = &result {
+        fastctx_install::repair::record_failure(&root, &format!("{error:#}"))?;
+    }
+    result
+}
+
+fn run_inner(args: RepairArgs) -> anyhow::Result<()> {
+    let root = std::path::absolute(&args.dir)?;
+    fastctx_platform::ensure_private_dir(&root.join("updates"))?;
+    let gate = fastctx_platform::FileLock::try_acquire(&root.join("updates/repair.lock"))?
+        .context("a repair is already running")?;
+    let uninstall =
+        fastctx_platform::uninstall_gate::Gate::try_acquire(&root)?.context("uninstall is still running")?;
+    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    let source = std::env::current_exe()?;
+    let build = store::build()?;
+    let version = requested(&root, args.version.as_deref(), &build.version)?;
+    let mut journal = Journal::start(&root, &version, &args.by, args.id.clone())?;
+    journal.begin("package")?;
+    let distributed = fastctx_platform::RELEASED || std::env::var_os("FASTCTX_UPDATE_RELEASES").is_some();
+    let manifest = if distributed || args.package.is_some() || version != build.version {
+        match runtime.block_on(package::manifest(&root, &version)) {
+            Ok(manifest) => Some(manifest),
+            Err(error) => {
+                journal.end(Err(error))?;
+                journal.finish()?;
+                bail!("{}", journal.report.error.unwrap_or_default());
+            }
+        }
+    } else {
+        None
+    };
+    let checked = (|| -> anyhow::Result<Option<PathBuf>> {
+        if let Some(manifest) = &manifest {
+            let target = fastctx_update::kernel::target();
+            let archive = if let Some(path) = &args.package {
+                let signature = &manifest.package(&target).context("manifest has no command-line package")?.signature;
+                fastctx_update::verify::file(path, signature, &version).map_err(anyhow::Error::msg)?;
+                path.clone()
+            } else {
+                runtime.block_on(package::obtain(&root, manifest, &target, &mut journal))?
+            };
+            if version == build.version {
+                let signature = fastctx_update::kernel::signature(&archive)
+                    .map_err(anyhow::Error::msg)?
+                    .context("repair package has no executable signature")?;
+                fastctx_update::verify::file(&source, &signature, &version)
+                    .map_err(anyhow::Error::msg)
+                    .with_context(|| format!("checking repair program {} against its release", source.display()))?;
+            }
+            Ok(Some(archive))
+        } else {
+            Ok(None)
+        }
+    })();
+    let archive = match checked {
+        Ok(archive) => {
+            journal.end(Ok(if distributed {
+                "package signature and version checked"
+            } else {
+                "development executable; no release acquisition"
+            }
+            .into()))?;
+            archive
+        }
+        Err(error) => {
+            journal.end(Err(error))?;
+            journal.finish()?;
+            bail!("{}", journal.report.error.unwrap_or_default());
+        }
+    };
+    if version != build.version {
+        let unpacked = root.join("updates").join(format!("repair-bootstrap-{}", std::process::id()));
+        std::fs::create_dir_all(&unpacked)?;
+        let result = (|| -> anyhow::Result<()> {
+            let executable = fastctx_update::kernel::unpack(
+                archive.as_deref().context("repair requires its version's package")?,
+                &unpacked,
+            )
+            .map_err(anyhow::Error::msg)?;
+            let candidate = fastctx_install::program::inspect(&executable)?;
+            ensure!(candidate.version == version, "repair package contains {}, expected {version}", candidate.version);
+            drop(uninstall);
+            drop(gate);
+            let mut command = std::process::Command::new(&executable);
+            command.args(["renew", "repair", "--dir"]).arg(&root).args([
+                "--version",
+                &version,
+                "--by",
+                &args.by,
+                "--id",
+                &journal.report.id,
+            ]);
+            command.env("FASTCTX_HOME", &root).stdin(std::process::Stdio::null());
+            for name in ["FASTCTX_RESIDENT", "FASTCTX_CONVERSATION", "FASTCTX_SESSION"] {
+                command.env_remove(name);
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt as _;
+                command.creation_flags(0x08000000);
+            }
+            let status =
+                command.status().with_context(|| format!("running repair program {}", executable.display()))?;
+            ensure!(status.success(), "repair program {} exited {status}", executable.display());
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&unpacked).with_context(|| format!("removing {}", unpacked.display()))?;
+        return result;
+    }
+    journal.begin("records")?;
+    let cleaned = records::clean(&root, &source, &build, &mut journal);
+    if !journal.end(cleaned)? {
+        journal.finish()?;
+        bail!("{}", journal.report.error.unwrap_or_default());
+    }
+    journal.begin("program")?;
+    let program = program(&root, &source, &build, archive.as_deref(), &runtime, &mut journal);
+    if !journal.end(program)? {
+        journal.finish()?;
+        bail!("{}", journal.report.error.unwrap_or_default());
+    }
+    journal.begin("service")?;
+    let service = service::run(&root, &build, &runtime, &mut journal);
+    journal.end(service)?;
+    journal.begin("application")?;
+    let app = runtime.block_on(fastctx_install::repair::application::repair(&root, &build, &mut journal));
+    journal.end(app)?;
+    journal.begin("node")?;
+    let node = node(&root, &build, &runtime, &mut journal);
+    journal.end(node)?;
+    journal.finish()?;
+    println!("{}", serde_json::to_string(&journal.report)?);
+    ensure!(journal.report.success, "{}", journal.report.error.as_deref().unwrap_or("repair failed"));
+    Ok(())
+}
+
+fn requested(root: &Path, explicit: Option<&str>, running: &str) -> anyhow::Result<String> {
+    let mut versions = vec![running.to_string()];
+    if let Some(version) = explicit {
+        versions.push(version.into());
+    }
+    if let Some(plan) = store::read(root)? {
+        versions.push(plan.candidate.build.version);
+    }
+    for name in ["attempt.json", "take.json"] {
+        if let Some(value) = store::read_json::<serde_json::Value>(&root.join("updates").join(name))?
+            && let Some(version) = value.get("version").and_then(|v| v.as_str())
+        {
+            versions.push(version.into());
+        }
+    }
+    for version in &versions {
+        ensure!(fastctx_types::update::release(version).is_some(), "invalid repair target {version}");
+    }
+    Ok(versions.into_iter().max_by_key(|v| fastctx_types::update::release(v)).context("no repair version")?)
+}
+
+fn program(
+    root: &Path,
+    source: &Path,
+    build: &Build,
+    archive: Option<&Path>,
+    runtime: &tokio::runtime::Runtime,
+    journal: &mut Journal,
+) -> anyhow::Result<String> {
+    let installed = store::installed(root);
+    let current =
+        installed.is_file() && fastctx_install::program::inspect(&installed).is_ok_and(|actual| actual == *build);
+    let plan = store::read(root)?;
+    if !current || plan.as_ref().is_some_and(|p| p.phase != Phase::Complete) {
+        journal.action(format!("stage {} into {} and resume handover", source.display(), installed.display()))?;
+        let staged = records::restage(root, source, journal)?;
+        if staged.phase != Phase::Complete {
+            store::request(root, true)?;
+        }
+        let mut began = Instant::now();
+        loop {
+            let plan = store::read(root)?.context("repair lost its renewal plan")?;
+            ensure!(plan.candidate.build == *build, "renewal target changed during repair");
+            if installed.is_file() && store::digest(&installed)? == build.digest {
+                break;
+            }
+            if plan.phase == Phase::Failed {
+                bail!("publishing {}: {}", installed.display(), plan.error.unwrap_or_default());
+            }
+            if plan.phase == Phase::WaitingForIdle {
+                began = Instant::now();
+            }
+            ensure!(
+                began.elapsed() < Duration::from_secs(600),
+                "publishing {} stalled at {:?}",
+                installed.display(),
+                plan.phase
+            );
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+    if fastctx_platform::RELEASED || archive.is_some() {
+        let signed = store::signature_of(&installed);
+        let valid = std::fs::read_to_string(&signed)
+            .is_ok_and(|sig| fastctx_update::verify::file(&installed, &sig, &build.version).is_ok());
+        if !valid {
+            let signature = if let Some(archive) = archive {
+                fastctx_update::kernel::signature(archive).map_err(anyhow::Error::msg)?
+            } else {
+                std::fs::read_to_string(store::signature_of(source)).ok()
+            }
+            .context("verified program signature is missing")?;
+            fastctx_update::verify::file(&installed, &signature, &build.version).map_err(anyhow::Error::msg)?;
+            journal.action(format!("restore program signature {}", signed.display()))?;
+            store::write_signature(&signed, &signature)?;
+        }
+    }
+    let _ = runtime;
+    Ok(format!("{} matches {}", installed.display(), build.version))
+}
+
+fn connected(root: &Path) -> anyhow::Result<bool> {
+    let net = WorldDir::under(root).net();
+    if net.join("membership.json").try_exists()? {
+        return Ok(true);
+    }
+    if !net.try_exists()? {
+        return Ok(false);
+    }
+    for entry in std::fs::read_dir(&net)? {
+        let path = entry?.path();
+        if path.join("membership.json").try_exists()? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn node(
+    root: &Path,
+    build: &Build,
+    runtime: &tokio::runtime::Runtime,
+    journal: &mut Journal,
+) -> anyhow::Result<String> {
+    let world = WorldDir::under(root);
+    if !connected(root)?
+        && !world.node_service().try_exists()?
+        && matches!(runtime.block_on(crate::renew::observing(&world))?, Probe::Absent)
+    {
+        return Ok("no connected node is required".into());
+    }
+    if let Some(plan) = store::read(root)?
+        && plan.phase != Phase::Complete
+    {
+        journal.action(format!("resume {}", store::directory(root).join("plan.json").display()))?;
+        store::request(root, true)?;
+    }
+    let began = Instant::now();
+    loop {
+        if let Probe::Running(node) = runtime.block_on(crate::renew::observing(&world))?
+            && node.build == *build
+            && !node.bridge
+            && !node.yielding
+        {
+            if connected(root)? {
+                let links = runtime.block_on(async {
+                    let mut client = fastctx_client::Client::connect(
+                        &world,
+                        fastctx_types::ipc::Peer::Command { resident: None, session: None },
+                    )
+                    .await?;
+                    let answer = client.call(fastctx_types::Call::Nodes).await?;
+                    Ok::<_, anyhow::Error>(answer)
+                })?;
+                if let fastctx_types::Reply::Nodes(nodes) = links {
+                    if !nodes.hubs.is_empty()
+                        && nodes
+                            .hubs
+                            .iter()
+                            .all(|hub| matches!(hub.link, fastctx_types::world::LinkState::Online { .. }))
+                    {
+                        return Ok(format!(
+                            "node {} serves {} and its hubs are connected",
+                            node.process.pid, build.version
+                        ));
+                    }
+                } else {
+                    bail!("node returned no network status during repair");
+                }
+            } else {
+                return Ok(format!("node {} serves {}", node.process.pid, build.version));
+            }
+        }
+        ensure!(
+            began.elapsed() < Duration::from_secs(600),
+            "node for {} did not serve {} within ten minutes",
+            root.display(),
+            build.version
+        );
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}

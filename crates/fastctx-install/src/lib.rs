@@ -32,6 +32,7 @@ pub mod plan;
 pub mod program;
 pub mod program_collection;
 pub mod renewal;
+pub mod repair;
 pub mod server;
 pub mod service;
 mod source;

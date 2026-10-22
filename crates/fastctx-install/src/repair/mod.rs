@@ -1,0 +1,121 @@
+//! Repair uses the same publication, process identities and service registrations
+//! as renewal. It never deletes lock files or edits the World's user data.
+
+pub mod application;
+pub mod package;
+pub mod records;
+
+use anyhow::Context as _;
+use fastctx_types::repair::{Outcome, Report, Step};
+use std::path::Path;
+
+pub fn read(root: &Path) -> std::io::Result<Option<Report>> {
+    crate::renewal::read_json(&root.join("updates/repair.json"))
+}
+
+pub struct Journal {
+    root: std::path::PathBuf,
+    pub report: Report,
+}
+
+impl Journal {
+    pub fn start(root: &Path, version: &str, by: &str, id: Option<String>) -> anyhow::Result<Self> {
+        let started = jiff::Timestamp::now();
+        let process = fastctx_platform::current_identity()?;
+        let journal = Self {
+            root: root.to_owned(),
+            report: Report {
+                id: id.unwrap_or_else(|| format!("{}-{}", started.as_millisecond(), process.pid)),
+                version: version.into(),
+                by: by.into(),
+                started,
+                finished: None,
+                process,
+                steps: Vec::new(),
+                success: false,
+                unchanged: false,
+                error: None,
+            },
+        };
+        journal.save()?;
+        Ok(journal)
+    }
+
+    pub fn begin(&mut self, layer: &str) -> anyhow::Result<()> {
+        self.report.steps.push(Step {
+            layer: layer.into(),
+            outcome: Outcome::Checking,
+            detail: String::new(),
+            actions: Vec::new(),
+        });
+        self.save()
+    }
+
+    /// Records the intended mutation before it is attempted.
+    pub fn action(&mut self, description: String) -> anyhow::Result<()> {
+        if let Some(step) = self.report.steps.last_mut() {
+            step.actions.push(description);
+        }
+        self.save()
+    }
+
+    pub fn end(&mut self, result: anyhow::Result<String>) -> anyhow::Result<bool> {
+        let step = self.report.steps.last_mut().context("repair has no active layer")?;
+        let success = result.is_ok();
+        match result {
+            Ok(detail) => {
+                step.outcome = if step.actions.is_empty() { Outcome::Unchanged } else { Outcome::Repaired };
+                step.detail = detail;
+            }
+            Err(error) => {
+                step.outcome = Outcome::Failed;
+                step.detail = format!("{error:#}");
+            }
+        }
+        eprintln!("repair {}: {:?}: {}", step.layer, step.outcome, step.detail);
+        self.save()?;
+        Ok(success)
+    }
+
+    pub fn finish(&mut self) -> anyhow::Result<()> {
+        self.report.finished = Some(jiff::Timestamp::now());
+        self.report.success =
+            self.report.steps.iter().all(|s| matches!(s.outcome, Outcome::Unchanged | Outcome::Repaired));
+        self.report.unchanged =
+            self.report.success && self.report.steps.iter().all(|s| s.outcome == Outcome::Unchanged);
+        self.report.error = (!self.report.success).then(|| {
+            self.report
+                .steps
+                .iter()
+                .filter(|s| s.outcome == Outcome::Failed)
+                .map(|s| format!("{}: {}", s.layer, s.detail))
+                .collect::<Vec<_>>()
+                .join("; ")
+        });
+        self.save()
+    }
+
+    fn save(&self) -> anyhow::Result<()> {
+        let path = self.root.join("updates/repair.json");
+        crate::renewal::write_json(&path, &self.report)
+            .with_context(|| format!("saving repair record {}", path.display()))
+    }
+}
+
+/// Finalizes an error outside a layer (including a failed bootstrap). A newer
+/// repair or a child repairer's receipt is never overwritten.
+pub fn record_failure(root: &Path, why: &str) -> anyhow::Result<()> {
+    let Some(_gate) = fastctx_platform::FileLock::try_acquire(&root.join("updates/repair.lock"))? else {
+        return Ok(());
+    };
+    let Some(report) = read(root)? else { return Ok(()) };
+    if report.finished.is_some() || report.process != fastctx_platform::current_identity()? {
+        return Ok(());
+    }
+    let mut journal = Journal { root: root.to_owned(), report };
+    if journal.report.steps.last().is_none_or(|s| s.outcome != Outcome::Checking) {
+        journal.begin("controller")?;
+    }
+    journal.end(Err(anyhow::anyhow!("{why}")))?;
+    journal.finish()
+}
