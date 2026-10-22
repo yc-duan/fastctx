@@ -35,6 +35,11 @@ impl Device {
         {
             return Err(failed(format!("only an interface on {machine} says what it is or brings packages there")));
         }
+        if let Call::MachineUpdates { machine, update: fastctx_types::update::UpdateCall::Repair { .. } } = &call {
+            let (reply, _) = self.call(Call::MachineUpdates { machine: machine.clone(), update: fastctx_types::update::UpdateCall::State }).await?;
+            let Reply::Update(current) = reply else { return Err(failed("the machine did not report its repair capability")); };
+            if !current.repair_supported { return Err(failed(format!("{machine} runs a version too old to accept repair; arrange repair through a newer hub"))); }
+        }
         let preferences = match &call {
             Call::MachineUpdates {
                 machine,

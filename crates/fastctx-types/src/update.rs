@@ -225,6 +225,11 @@ pub struct Report {
     pub checking: bool,
     #[serde(default)]
     pub updates_view: bool,
+    #[serde(default)]
+    pub repair_supported: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair: Option<crate::repair::Report>,
+
 }
 
 impl Report {
@@ -613,6 +618,15 @@ pub struct State {
     /// Accepts atomic partial preference changes.
     #[serde(default)]
     pub preferences: bool,
+    #[serde(default)]
+    pub repair_supported: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair: Option<crate::repair::Report>,
+
+    /// Can route the distinct repair request to another machine.
+    #[serde(default)]
+    pub repair_routing: bool,
+
 }
 
 /// A change of this machine's World program, as it goes.
@@ -629,6 +643,13 @@ pub struct Renewing {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "do")]
 pub enum UpdateCall {
+    /// Accepts a durable repair and returns before any node handover.
+    Repair {
+        #[serde(default)]
+        version: Option<String>,
+        #[serde(default)]
+        id: Option<String>,
+    },
     /// Changes only the choices named, leaving other choices intact.
     Preferences {
         auto: Option<bool>,
@@ -656,6 +677,8 @@ pub enum UpdateCall {
         /// to the renewal.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         program: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        executable: Option<String>,
     },
     /// Bring the package `target` of `version` here.
     Fetch {

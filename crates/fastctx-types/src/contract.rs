@@ -172,7 +172,8 @@ impl RemoteCall {
                     | UpdateCall::Progress { .. }
                     | UpdateCall::App { .. }
                     | UpdateCall::Fetch { .. }
-                    | UpdateCall::Choose { .. },
+                    | UpdateCall::Choose { .. }
+                    | UpdateCall::Repair { .. },
             } => Contract::CHANGE,
             Self::UpdateWorld | Self::Updates { update: UpdateCall::Kernel { .. } } => Contract::UPDATE,
             Self::Run { .. } => Contract::RUN,

@@ -22,6 +22,21 @@ impl Journal {
     pub fn start(root: &Path, version: &str, by: &str, id: Option<String>) -> anyhow::Result<Self> {
         let started = jiff::Timestamp::now();
         let process = fastctx_platform::current_identity()?;
+        let mut inherited = Vec::new();
+        if let Some(id) = &id
+            && let Some(previous) = read(root)?
+            && previous.id == *id
+            && previous.finished.is_none()
+            && previous.process != process
+        {
+            inherited = previous.steps;
+            for step in &mut inherited {
+                if step.outcome == Outcome::Checking {
+                    step.outcome = if step.actions.is_empty() { Outcome::Unchanged } else { Outcome::Repaired };
+                    step.detail = "verified acquisition handed to this release's repair program".into();
+                }
+            }
+        }
         let journal = Self {
             root: root.to_owned(),
             report: Report {
@@ -31,7 +46,7 @@ impl Journal {
                 started,
                 finished: None,
                 process,
-                steps: Vec::new(),
+                steps: inherited,
                 success: false,
                 unchanged: false,
                 error: None,
@@ -42,6 +57,14 @@ impl Journal {
     }
 
     pub fn begin(&mut self, layer: &str) -> anyhow::Result<()> {
+        if let Some(step) = self.report.steps.last_mut()
+            && step.layer == layer
+            && matches!(step.outcome, Outcome::Unchanged | Outcome::Repaired)
+        {
+            step.outcome = Outcome::Checking;
+            step.detail.clear();
+            return self.save();
+        }
         self.report.steps.push(Step {
             layer: layer.into(),
             outcome: Outcome::Checking,
@@ -118,4 +141,14 @@ pub fn record_failure(root: &Path, why: &str) -> anyhow::Result<()> {
     }
     journal.end(Err(anyhow::anyhow!("{why}")))?;
     journal.finish()
+}
+
+/// Appends an acquisition action while this process still owns preparation.
+pub fn note(root: &Path, id: &str, description: String) -> anyhow::Result<()> {
+    let report = read(root)?.context("repair preparation has no record")?;
+    anyhow::ensure!(
+        report.id == id && report.finished.is_none() && report.process == fastctx_platform::current_identity()?,
+        "repair preparation changed owner"
+    );
+    Journal { root: root.to_owned(), report }.action(description)
 }

@@ -1159,6 +1159,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             updates::update_state,
+            updates::update_repair,
             updates::update_progress,
             updates::update_look,
             updates::update_set,

@@ -191,7 +191,7 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
         let mut held = node.updates.held.lock().expect("never poisoned");
         let mut app = held.app.clone().ok_or("the application's identity disappeared")?;
         app.version = manifest.version.clone();
-        let file = super::AppFile { app: app.clone(), carried: held.carried.clone(), program: held.program.clone() };
+        let file = super::AppFile { app: app.clone(), carried: held.carried.clone(), program: held.program.clone(), executable: held.app_executable.clone() };
         keep(node, "app.json", &file).map_err(|e| Problem::new(FailureReason::Disk, e.to_string()))?;
         held.app = Some(app);
     }

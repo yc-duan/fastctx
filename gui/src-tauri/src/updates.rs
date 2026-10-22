@@ -56,7 +56,7 @@ async fn ask(shell: &Shell, call: UpdateCall) -> Result<State, String> {
     if state.app.as_ref() == Some(&app()) {
         return Ok(state);
     }
-    once(shell, UpdateCall::App { app: app(), carried: CARRIED.get().cloned().flatten(), program: program() }).await
+    once(shell, UpdateCall::App { app: app(), carried: CARRIED.get().cloned().flatten(), program: program(), executable: executable() }).await
 }
 
 async fn once(shell: &Shell, call: UpdateCall) -> Result<State, String> {
@@ -71,7 +71,7 @@ async fn once(shell: &Shell, call: UpdateCall) -> Result<State, String> {
 pub(crate) async fn introduce(shell: &Shell, carried: Option<std::path::PathBuf>) -> Result<(), String> {
     let carried = carried.filter(|dir| dir.is_dir()).map(|dir| dir.display().to_string());
     let _ = CARRIED.set(carried.clone());
-    once(shell, UpdateCall::App { app: app(), carried, program: program() }).await.map(|_| ())
+    once(shell, UpdateCall::App { app: app(), carried, program: program(), executable: executable() }).await.map(|_| ())
 }
 
 /// The World program this application carries, beside its own executable.
@@ -108,6 +108,14 @@ pub(crate) async fn update_progress(
         return Err("this World program does not accept update activity reports".into());
     }
     once(&shell, UpdateCall::Progress { stage }).await
+}
+
+/// Accepts repair without keeping the interface's request open through handover.
+#[fastctx_gui_command::command]
+pub(crate) async fn update_repair(shell: tauri::State<'_, Shell>, version: Option<String>) -> Result<State, String> {
+    let current = ask(&shell, UpdateCall::State).await?;
+    if !current.repair_supported { return Err("this World program is too old or does not support local repair".into()); }
+    once(&shell, UpdateCall::Repair { version, id: None }).await
 }
 
 /// Brings this application's package of `version` here.
@@ -160,6 +168,9 @@ pub(crate) async fn machine_updates(
     let machine = fastctx_types::access::Written::try_from(machine_name).map_err(|error| error.to_string())?;
     if matches!(update, UpdateCall::App { .. } | UpdateCall::Fetch { .. } | UpdateCall::Progress { .. }) {
         return Err("only an interface on that machine says what it is or brings packages there".to_string());
+    }
+    if matches!(update, UpdateCall::Repair { .. }) && !once(&shell, UpdateCall::State).await?.repair_routing {
+        return Err("this device's World program is too old to route repair; update it first".into());
     }
     if let UpdateCall::Preferences { auto, relays } = update {
         let local = once(&shell, UpdateCall::State).await?;
@@ -386,4 +397,11 @@ mod desktop {
         }
         crate::setup::take_carried();
     }
+}
+
+fn executable() -> Option<String> {
+    #[cfg(desktop)]
+    { std::env::var_os("APPIMAGE").map(std::path::PathBuf::from).or_else(|| std::env::current_exe().ok()).map(|p| p.display().to_string()) }
+    #[cfg(mobile)]
+    { None }
 }

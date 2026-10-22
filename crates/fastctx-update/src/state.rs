@@ -102,6 +102,14 @@ pub fn calculate(mut state: State, context: Context) -> State {
 }
 
 fn stage(state: &State, activity: Option<Stage>, running: &str) -> Stage {
+    if let Some(repair) = &state.repair {
+        if repair.finished.is_none() {
+            return Stage::Repairing { version: repair.version.clone(), layer: repair.steps.last().map(|s| s.layer.clone()).unwrap_or_else(|| "package".into()) };
+        }
+        if !repair.success {
+            return Stage::Failed { version: repair.version.clone(), problem: Problem::from(repair.error.clone().unwrap_or_else(|| "repair did not complete".into())) };
+        }
+    }
     if let Some(failed) = &state.failed {
         return Stage::Failed {
             version: failed.version.clone(),

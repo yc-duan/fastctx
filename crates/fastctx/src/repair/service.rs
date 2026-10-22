@@ -1,6 +1,6 @@
 //! Restoring an owned boot registration without interrupting active turns.
 
-use anyhow::{Context as _, bail, ensure};
+use anyhow::{Context as _, bail};
 use fastctx_client::renewal::{self, Probe};
 use fastctx_install::{renewal as store, repair::Journal};
 use fastctx_types::{layout::WorldDir, renewal::Build};
@@ -93,7 +93,7 @@ pub(super) fn run(
                 "restoring boot service without a prompt",
                 Duration::from_secs(120),
             )?;
-            ensure!(
+            anyhow::ensure!(
                 output.status.success(),
                 "repairing {description} requires: sudo {} service node install --dir {} --executable {} --uid {uid}; {}",
                 fastctx_platform::shell_quote::path(&std::env::current_exe()?),
