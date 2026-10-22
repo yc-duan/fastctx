@@ -339,6 +339,12 @@
   color: var(--wrong);
 }
 
+/* 「撤回」 after a choice cleared of every machine, beside what it says. */
+.focus-undo {
+  margin-left: var(--space-2);
+  padding: 0 var(--space-1);
+}
+
 /* Opened down from the head, its content's size; the field stands at its
    top, where it was reached from. */
 .focus-pop {
@@ -453,6 +459,12 @@
 }
 
 @media (max-width: 760px) {
+  /* A phone's head has room for the way back alone, beside the chip that
+     shows nothing is chosen. */
+  .focus-cleared {
+    display: none;
+  }
+
   .talk-pop[data-pop="focus"],
   .focus-pop {
     position: fixed;

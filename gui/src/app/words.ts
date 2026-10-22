@@ -111,6 +111,9 @@ export interface FocusWords {
   more(count: number): string;
   saving: string;
   failed(why: string): string;
+  /** Every machine was taken off, and the way to put them back. */
+  cleared: string;
+  undo: string;
 }
 
 export const zhFolderPicker: FolderPickerWords = {
@@ -161,6 +164,8 @@ export const zhFocus: FocusWords = {
   more: (count) => `+${count}`,
   saving: "保存中…",
   failed: (why) => `没改成：${why}`,
+  cleared: "已清空",
+  undo: "撤回",
 };
 
 export const enFocus: FocusWords = {
@@ -181,6 +186,8 @@ export const enFocus: FocusWords = {
   more: (count) => `+${count}`,
   saving: "Saving…",
   failed: (why) => `Not changed: ${why}`,
+  cleared: "Cleared",
+  undo: "Undo",
 };
 
 export interface NewTalkWords {

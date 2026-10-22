@@ -54,6 +54,9 @@ import { composing } from "../typing";
  *  holds before what comes before its newest turns is let go, down to how
  *  many (`ConversationPage.bound`). */
 const HELD_MOST = 6000;
+/** How long a choice cleared of every machine can be taken back, as long as
+ *  a change on the machines page can. */
+const FOCUS_UNDO_MS = 6_000;
 /** How many screens from what is in view a part may be and still be held,
  *  whatever the page holds: the reader goes on into it. */
 const KEEP_SCREENS = 3;
@@ -910,6 +913,7 @@ export class ConversationPage {
   leave(): void {
     phoneWide.removeEventListener("change", this.placeDial);
     clearTimeout(this.offersAgain);
+    clearTimeout(this.focusUndoTimer);
     cancelAnimationFrame(this.frame);
     this.view.destroy();
     this.badge?.dispose();
@@ -1973,6 +1977,8 @@ export class ConversationPage {
   /** What the panel holds while it is open. */
   private focusDraft: Focus | null = null;
   private focusSaving = false;
+  /** While a choice cleared of every machine can be taken back. */
+  private focusUndoTimer = 0;
 
   /** The strip under the head: the machines and folders it is pointed at,
    *  which open the panel to change them; a change is kept, and told to
@@ -2037,7 +2043,14 @@ export class ConversationPage {
     const next = this.focusDraft;
     this.focusDraft = null;
     if (!before || !next || sameFocus(before, next)) return;
-    const state = strip.querySelector<HTMLElement>(".focus-state")!;
+    // A choice left with no machine at all may be a slip of the hand: it can
+    // be taken back for a moment.
+    this.saveFocus(focus, before, next, before.machines.length > 0 && next.machines.length === 0);
+  }
+
+  private saveFocus(focus: NonNullable<PageOptions["focus"]>, before: Focus, next: Focus, undoable: boolean): void {
+    const state = this.element.querySelector<HTMLElement>(".focus-state")!;
+    clearTimeout(this.focusUndoTimer);
     this.focusSaving = true;
     this.options.someone.focus = next;
     this.drawFocus();
@@ -2046,7 +2059,8 @@ export class ConversationPage {
     focus
       .set(next)
       .then((unfinished) => {
-        state.textContent = unfinished.join(" ");
+        if (undoable && !unfinished.length) this.offerFocusUndo(focus, before, next);
+        else state.textContent = unfinished.join(" ");
       })
       .catch((error: unknown) => {
         this.options.someone.focus = before;
@@ -2057,6 +2071,21 @@ export class ConversationPage {
         this.focusSaving = false;
         this.drawFocus();
       });
+  }
+
+  /** Says the choice was cleared, with the way to take it back, for as long
+   *  as the machines page offers its own. */
+  private offerFocusUndo(focus: NonNullable<PageOptions["focus"]>, before: Focus, cleared: Focus): void {
+    const state = this.element.querySelector<HTMLElement>(".focus-state")!;
+    state.innerHTML = `<span class="focus-cleared">${escape(focus.words.cleared)}</span><button class="text-button focus-undo" type="button">${escape(focus.words.undo)}</button>`;
+    state.querySelector(".focus-undo")!.addEventListener("click", () => {
+      state.textContent = "";
+      if (this.focusSaving) return;
+      this.saveFocus(focus, cleared, before, false);
+    });
+    this.focusUndoTimer = window.setTimeout(() => {
+      if (state.querySelector(".focus-undo")) state.textContent = "";
+    }, FOCUS_UNDO_MS);
   }
 
   /** The strip as the conversation stands: shown where the user may point
