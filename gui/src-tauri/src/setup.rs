@@ -185,7 +185,9 @@ pub fn take_carried() {
                         Ok(_) => return,
                         Err(error) => eprintln!("World: putting the World program it carries in place: {error}"),
                     },
-                    Err(error) => eprintln!("World: comparing the World program it carries with the one in place: {error}"),
+                    Err(error) => {
+                        eprintln!("World: comparing the World program it carries with the one in place: {error}")
+                    }
                 }
                 std::thread::sleep(again);
                 again = (again * 2).min(TAKE_AGAIN_AT_MOST);
@@ -223,10 +225,19 @@ pub fn place_initial() -> Result<(), String> {
     use fastctx_types::renewal::Phase;
     place()?;
     let root = places()?.root;
+    let began = std::time::Instant::now();
     loop {
         let plan = fastctx_install::renewal::read(&root)
             .map_err(|error| error.to_string())?
             .ok_or("the initial executable placement has no renewal record")?;
+        if began.elapsed() >= std::time::Duration::from_secs(60) {
+            return Err(format!(
+                "initial placement {} still at {:?} after 60 seconds: {}",
+                fastctx_install::renewal::directory(&root).join("plan.json").display(),
+                plan.phase,
+                plan.error.as_deref().unwrap_or("no error reported")
+            ));
+        }
         match plan.phase {
             Phase::Complete => return Ok(()),
             Phase::Failed => return Err(plan.error.unwrap_or("the initial executable placement failed".into())),

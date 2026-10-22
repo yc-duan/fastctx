@@ -9,23 +9,34 @@ pub fn run(receipt: PathBuf, profile: PathBuf) -> Result<(), String> {
     let failed_receipt = receipt.clone();
     let result = tauri::Builder::default()
         .setup(move |app| {
-            let receipt = receipt.clone();
-            tauri::WebviewWindowBuilder::new(app, "repair-probe", tauri::WebviewUrl::App("index.html".into()))
-                .visible(false)
-                .data_directory(profile.clone())
-                .on_page_load(move |window, payload| {
-                    if payload.event() == tauri::webview::PageLoadEvent::Finished {
-                        let result = fastctx_install::renewal::write_json(
-                            &receipt,
-                            &fastctx_install::repair::application::Probe {
-                                version: env!("CARGO_PKG_VERSION").into(),
-                                error: None,
-                            },
-                        );
-                        window.app_handle().exit(if result.is_ok() { 0 } else { 1 });
-                    }
-                })
-                .build()?;
+            let page_receipt = receipt.clone();
+            let window =
+                tauri::WebviewWindowBuilder::new(app, "repair-probe", tauri::WebviewUrl::App("index.html".into()))
+                    .visible(false)
+                    .data_directory(profile.clone())
+                    .on_page_load(move |window, payload| {
+                        if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                            let result = fastctx_install::renewal::write_json(
+                                &page_receipt,
+                                &fastctx_install::repair::application::Probe {
+                                    version: env!("CARGO_PKG_VERSION").into(),
+                                    error: None,
+                                },
+                            );
+                            window.app_handle().exit(if result.is_ok() { 0 } else { 1 });
+                        }
+                    })
+                    .build();
+            if let Err(error) = window {
+                let _ = fastctx_install::renewal::write_json(
+                    &receipt,
+                    &fastctx_install::repair::application::Probe {
+                        version: env!("CARGO_PKG_VERSION").into(),
+                        error: Some(format!("opening isolated WebView: {error}")),
+                    },
+                );
+                app.handle().exit(1);
+            }
             Ok(())
         })
         .build(context);

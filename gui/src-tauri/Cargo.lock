@@ -1869,6 +1869,7 @@ version = "1.0.1-beta.10"
 dependencies = [
  "ashpd",
  "base64 0.22.1",
+ "dirs",
  "fastctx-client",
  "fastctx-gui-command",
  "fastctx-hub",
@@ -1876,6 +1877,7 @@ dependencies = [
  "fastctx-net",
  "fastctx-platform",
  "fastctx-types",
+ "fastctx-update",
  "jiff",
  "jni 0.21.1",
  "objc2",

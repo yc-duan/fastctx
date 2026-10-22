@@ -34,6 +34,12 @@ pub struct RepairArgs {
     background: bool,
     #[arg(long, hide = true)]
     accepted: bool,
+    /// Repairs a device-only interface without placing a local node.
+    #[arg(long)]
+    application_only: bool,
+    /// Opens this registered application after a successful repair.
+    #[arg(long, value_parser = crate::paths::parser())]
+    reopen: Option<PathBuf>,
 }
 
 pub fn run(args: RepairArgs) -> anyhow::Result<()> {
@@ -69,6 +75,12 @@ fn background(args: RepairArgs) -> anyhow::Result<()> {
         args.by.into(),
         "--accepted".into(),
     ];
+    if args.application_only {
+        words.push("--application-only".into());
+    }
+    if let Some(reopen) = args.reopen {
+        words.extend(["--reopen".into(), reopen.into_os_string()]);
+    }
     if let Some(version) = args.version {
         words.extend(["--version".into(), version.into()]);
     }
@@ -105,7 +117,11 @@ fn run_inner(args: RepairArgs) -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     let source = std::env::current_exe()?;
     let build = store::build()?;
-    let version = requested(&root, args.version.as_deref(), &build.version)?;
+    let version = if args.application_only {
+        requested_application(&root, args.version.as_deref(), &build.version)?
+    } else {
+        requested(&root, args.version.as_deref(), &build.version)?
+    };
     let mut journal = Journal::start(&root, &version, &args.by, args.id.clone())?;
     journal.begin("package")?;
     let distributed = fastctx_platform::RELEASED || std::env::var_os("FASTCTX_UPDATE_RELEASES").is_some();
@@ -182,6 +198,12 @@ fn run_inner(args: RepairArgs) -> anyhow::Result<()> {
                 "--id",
                 &journal.report.id,
             ]);
+            if args.application_only {
+                command.arg("--application-only");
+            }
+            if let Some(reopen) = &args.reopen {
+                command.arg("--reopen").arg(reopen);
+            }
             command.env("FASTCTX_HOME", &root).stdin(std::process::Stdio::null());
             for name in ["FASTCTX_RESIDENT", "FASTCTX_CONVERSATION", "FASTCTX_SESSION"] {
                 command.env_remove(name);
@@ -199,30 +221,74 @@ fn run_inner(args: RepairArgs) -> anyhow::Result<()> {
         std::fs::remove_dir_all(&unpacked).with_context(|| format!("removing {}", unpacked.display()))?;
         return result;
     }
-    journal.begin("records")?;
-    let cleaned = records::clean(&root, &source, &build, &mut journal);
-    if !journal.end(cleaned)? {
-        journal.finish()?;
-        bail!("{}", journal.report.error.unwrap_or_default());
+    if !args.application_only {
+        journal.begin("records")?;
+        let cleaned = records::clean(&root, &source, &build, &mut journal);
+        if !journal.end(cleaned)? {
+            journal.finish()?;
+            bail!("{}", journal.report.error.unwrap_or_default());
+        }
+        journal.begin("program")?;
+        let program = program(&root, &source, &build, archive.as_deref(), &runtime, &mut journal);
+        if !journal.end(program)? {
+            journal.finish()?;
+            bail!("{}", journal.report.error.unwrap_or_default());
+        }
+        journal.begin("service")?;
+        let service = service::run(&root, &build, &runtime, &mut journal);
+        journal.end(service)?;
     }
-    journal.begin("program")?;
-    let program = program(&root, &source, &build, archive.as_deref(), &runtime, &mut journal);
-    if !journal.end(program)? {
-        journal.finish()?;
-        bail!("{}", journal.report.error.unwrap_or_default());
-    }
-    journal.begin("service")?;
-    let service = service::run(&root, &build, &runtime, &mut journal);
-    journal.end(service)?;
     journal.begin("application")?;
     let app = runtime.block_on(fastctx_install::repair::application::repair(&root, &build, &mut journal));
     journal.end(app)?;
-    journal.begin("node")?;
-    let node = node(&root, &build, &runtime, &mut journal);
-    journal.end(node)?;
+    if !args.application_only {
+        journal.begin("node")?;
+        let node = node(&root, &build, &runtime, &mut journal);
+        journal.end(node)?;
+    }
     journal.finish()?;
+    if journal.report.success
+        && let Some(executable) = &args.reopen
+    {
+        journal.begin("reopen")?;
+        journal.end(reopen(&root, executable).map(|_| "application launch accepted".into()))?;
+        journal.finish()?;
+    }
     println!("{}", serde_json::to_string(&journal.report)?);
     ensure!(journal.report.success, "{}", journal.report.error.as_deref().unwrap_or("repair failed"));
+    Ok(())
+}
+
+fn requested_application(root: &Path, explicit: Option<&str>, running: &str) -> anyhow::Result<String> {
+    let app = store::read_json::<fastctx_install::repair::application::Registration>(&root.join("updates/app.json"))?;
+    let versions = [Some(running), explicit, app.as_ref().map(|a| a.app.version.as_str())];
+    for version in versions.into_iter().flatten() {
+        ensure!(fastctx_types::update::release(version).is_some(), "invalid application repair version {version}");
+    }
+    Ok(versions
+        .into_iter()
+        .flatten()
+        .max_by_key(|v| fastctx_types::update::release(v))
+        .context("no application repair version")?
+        .into())
+}
+
+fn reopen(root: &Path, executable: &Path) -> anyhow::Result<()> {
+    let app = store::read_json::<fastctx_install::repair::application::Registration>(&root.join("updates/app.json"))?
+        .context("no registered application to reopen")?;
+    ensure!(app.executable()? == executable, "application to reopen differs from its registration");
+    let environment: Vec<_> = std::env::vars_os()
+        .filter(|(name, _)| {
+            !["FASTCTX_RESIDENT", "FASTCTX_CONVERSATION", "FASTCTX_SESSION"].iter().any(|key| name == key)
+        })
+        .collect();
+    fastctx_platform::spawn_detached(
+        executable,
+        &[],
+        executable.parent().context("application has no parent")?,
+        &environment,
+    )
+    .with_context(|| format!("reopening application {}", executable.display()))?;
     Ok(())
 }
 
