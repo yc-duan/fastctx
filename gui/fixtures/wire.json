@@ -13060,6 +13060,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13222,6 +13223,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13386,6 +13388,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13550,6 +13553,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13713,6 +13717,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13877,6 +13882,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -14044,6 +14050,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -14212,6 +14219,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -14380,6 +14388,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -14547,6 +14556,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",

@@ -19,7 +19,6 @@ pub mod attachments;
 pub mod cache;
 mod collab;
 pub mod composer;
-pub mod goals;
 pub mod conversation;
 mod data;
 pub mod device;
@@ -28,6 +27,7 @@ pub mod file_read;
 mod file_search;
 mod frozen_lines;
 mod frozen_output;
+pub mod goals;
 pub mod host;
 mod line_rows;
 mod lines;
@@ -116,6 +116,7 @@ pub struct Client {
     pub node_version: String,
     pub profiles: bool,
     pub goal_runtime: bool,
+    pub goal_commands: bool,
     /// The connected node's facts, including when another starter won.
     pub node_lifetime: Option<Box<fastctx_types::node_lifetime::NodeLifetime>>,
 }
@@ -150,9 +151,16 @@ impl Client {
             .map_err(io_error)?
             .ok_or_else(|| io_error(std::io::ErrorKind::UnexpectedEof.into()))?;
         match serde_json::from_slice::<Welcome>(&welcome).map_err(|error| io_error(std::io::Error::other(error)))? {
-            Welcome::Accepted { machine, version, node_lifetime, profiles, goal_runtime } => {
-                Ok(Self { connection, next: 0, machine, node_version: version, node_lifetime, profiles, goal_runtime })
-            }
+            Welcome::Accepted { machine, version, node_lifetime, profiles, goal_runtime, goal_commands } => Ok(Self {
+                connection,
+                next: 0,
+                machine,
+                node_version: version,
+                node_lifetime,
+                profiles,
+                goal_runtime,
+                goal_commands,
+            }),
             Welcome::Refused { reason, mismatch } => {
                 let mismatch = mismatch.or_else(|| renewal::legacy_mismatch(&reason));
                 Err(ConnectError::Refused { reason, mismatch })
@@ -264,6 +272,14 @@ impl Client {
     pub async fn call(&mut self, call: Call) -> Result<Reply, CallError> {
         if !self.goal_runtime && matches!(call, Call::Goal { .. } | Call::GoalCommand { .. }) {
             return Err(CallError::Failed(Failure::not_run(fastctx_types::goals::words::OLDER_NODE)));
+        }
+        if !self.goal_commands
+            && matches!(
+                call,
+                Call::GoalCommand { request: fastctx_types::goals::AgentRequest::ControlColleague { .. }, .. }
+            )
+        {
+            return Err(CallError::Failed(Failure::not_run(fastctx_types::goals::words::OLDER_COMMAND_NODE)));
         }
         if !self.profiles
             && matches!(

@@ -105,7 +105,8 @@ impl RemoteCall {
             Self::Goal { request: crate::goals::Request::Read | crate::goals::Request::History { .. }, .. } => {
                 Contract::QUERY
             }
-            Self::Goal { .. } => Contract::CHANGE,
+            Self::GoalCommand { request: crate::goals::AgentRequest::Read, .. } => Contract::QUERY,
+            Self::Goal { .. } | Self::GoalCommand { .. } => Contract::CHANGE,
             Self::Mcp {
                 mcp:
                     crate::mcp::MachineCall::Status { .. }

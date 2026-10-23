@@ -197,6 +197,24 @@ pub enum Updated {
 pub enum AgentRequest {
     Read,
     Mark { operation: String, mark: Mark },
+    ControlColleague { operation: String, colleague: crate::ResidentId, control: ColleagueControl },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColleagueControl {
+    Pause,
+    Resume,
+}
+
+impl AgentRequest {
+    /// The conversation whose goal this command changes or reads.
+    pub fn resident<'a>(&'a self, actor: &'a crate::Address) -> &'a crate::ResidentId {
+        match self {
+            Self::ControlColleague { colleague, .. } => colleague,
+            Self::Read | Self::Mark { .. } => &actor.resident,
+        }
+    }
 }
 
 pub mod runtime;

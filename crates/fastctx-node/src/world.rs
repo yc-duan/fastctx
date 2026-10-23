@@ -573,6 +573,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         turn_debts: true,
         goal_runtime: node.goals.available(),
         goal_questions: true,
+        goal_commands: true,
         name: node.machine(),
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
@@ -1021,6 +1022,11 @@ impl fastctx_net::link::Node for Handler {
                     crate::town::enter::here(&node, &resident, &town, Some(&account))
                         .await
                         .map(|map| RemoteReply::Entered { town, map: Box::new(map) })
+                }
+                RemoteCall::GoalCommand { actor, turn, request } => {
+                    let account = fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
+                    crate::goals::commands::here(&node, actor, account, turn, request).await
+                        .map(|updated| RemoteReply::Goal { updated: Box::new(updated) })
                 }
                 RemoteCall::Goal { resident, request } => {
                     let account = fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };

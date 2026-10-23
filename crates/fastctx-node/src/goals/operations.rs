@@ -25,7 +25,24 @@ async fn loaded(
     resident: &Address,
     account: &HubAccount,
 ) -> Result<(View, super::archive::Storage), Failure> {
-    let record = bounded(node.goals.records.read(account, KIND, resident.resident.as_str())).await?;
+    let (mut view, storage) = by_id(node, &resident.resident, account).await?;
+    if view.goal.as_ref().is_some_and(|goal| !super::same(node, &goal.resident, resident)) {
+        return Err(Failure::new(words::CONVERSATION_CHANGED));
+    }
+    if node.is_me(&resident.machine) {
+        let hold = super::lifecycle::hold(node, &resident.resident).map_err(failure)?;
+        view.pending = super::lifecycle::pending(node, &resident.resident, &view, hold.as_ref());
+    }
+    Ok((view, storage))
+}
+
+/// Looks up a goal in an already authorized account, including its authoritative home.
+pub(crate) async fn by_id(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    account: &HubAccount,
+) -> Result<(View, super::archive::Storage), Failure> {
+    let record = bounded(node.goals.records.read(account, KIND, resident.as_str())).await?;
     let version = record.as_ref().map(|record| record.version);
     let (goal, storage): (Option<Goal>, _) = match record.and_then(|record| record.body) {
         Some(body) => {
@@ -38,16 +55,11 @@ async fn loaded(
         if goal.account != *account {
             return Err(Failure::new(words::ACCOUNT_CHANGED));
         }
-        if !super::same(node, &goal.resident, resident) {
+        if goal.resident.resident != *resident {
             return Err(Failure::new(words::CONVERSATION_CHANGED));
         }
     }
-    let mut view = View { account: account.clone(), version, goal, pending: None };
-    if node.is_me(&resident.machine) {
-        let hold = super::lifecycle::hold(node, &resident.resident).map_err(failure)?;
-        view.pending = super::lifecycle::pending(node, &resident.resident, &view, hold.as_ref());
-    }
-    Ok((view, storage))
+    Ok((View { account: account.clone(), version, goal, pending: None }, storage))
 }
 
 pub(crate) async fn call(

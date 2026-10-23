@@ -27,6 +27,13 @@ pub enum RemoteCall {
         resident: ResidentId,
         request: crate::goals::Request,
     },
+    /// A node forwards a resident command, including commands from its running jobs,
+    /// to the home that owns the goal's durable effects.
+    GoalCommand {
+        actor: crate::Address,
+        turn: Option<String>,
+        request: crate::goals::AgentRequest,
+    },
     ConversationDebt {
         resident: ResidentId,
         requester: crate::Address,
@@ -512,7 +519,8 @@ impl RemoteCall {
             RemoteCall::Goal {
                 request: crate::goals::Request::Read | crate::goals::Request::History { .. }, ..
             } => Purpose::Look,
-            RemoteCall::Goal { .. } => Purpose::Agents,
+            RemoteCall::GoalCommand { request: crate::goals::AgentRequest::Read, .. } => Purpose::Look,
+            RemoteCall::Goal { .. } | RemoteCall::GoalCommand { .. } => Purpose::Agents,
             Self::EnterProject { .. } => Purpose::Echo,
             RemoteCall::PageAction { action: crate::pages::PageInvocation::Say { .. }, .. } => Purpose::Words,
             RemoteCall::ReadAttachment { attachment: crate::attachments::AttachmentSource::Upload(file), .. }

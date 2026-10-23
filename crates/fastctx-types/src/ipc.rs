@@ -76,6 +76,8 @@ pub enum Welcome {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         goal_runtime: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        goal_commands: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         profiles: bool,
         machine: MachineName,
         version: String,

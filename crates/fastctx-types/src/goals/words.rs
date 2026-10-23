@@ -20,7 +20,7 @@ pub const ARCHIVED: &str = "The conversation was archived or removed.";
 
 pub const DELETE_CHANGED: &str = "The goal changed while its conversation was being deleted; retry the deletion.";
 
-pub const HELP: &str = "fastctx goal                          show the goal and its state\nfastctx goal complete --file <draft>  the goal is done; the draft says what shows each part\nfastctx goal blocked --file <draft>   you cannot go on; the draft says what blocks you\nfastctx goal pause                    only when the user asks you to stop\n\nThe user sets the goal and resumes it; you mark it done, blocked, or paused at their word.";
+pub const HELP: &str = "fastctx goal                          show the goal and its state\nfastctx goal complete --file <draft>  the goal is done; the draft says what shows each part\nfastctx goal blocked --file <draft>   you cannot go on; the draft says what blocks you\nfastctx goal pause                    only when the user asks you to stop\n\nThe user sets the goal and resumes it; you mark it done, blocked, or paused at their word.\n\nFor a colleague you requested:\nfastctx goal pause <colleague>        pause its goal\nfastctx goal resume <colleague>       resume its goal";
 pub const NO_OPERATION: &str = "A goal change needs an operation ID.";
 pub const REUSED_OPERATION: &str = "This goal operation ID already names another change.";
 pub const LOST_REVISION: &str = "The account record lost an accepted goal revision.";
@@ -34,3 +34,5 @@ pub const INVALID_READ: &str = "A goal read returned a mutation conflict.";
 pub const WATCH_ENDED: &str = "The goal watch ended.";
 
 pub const OLDER_HUB: &str = "The hub cannot carry goal controls; update it first.";
+pub const OLDER_COMMAND_HUB: &str = "The hub is too old to forward resident goal commands; update it first.";
+pub const OLDER_COMMAND_NODE: &str = "This node is too old to handle requester goal commands; update it first.";

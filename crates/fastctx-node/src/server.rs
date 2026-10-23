@@ -53,6 +53,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
     }
     let welcome = Welcome::Accepted {
         goal_runtime: node.goals.available(),
+        goal_commands: true,
         profiles: true,
         machine: node.machine(),
         version: env!("CARGO_PKG_VERSION").to_string(),

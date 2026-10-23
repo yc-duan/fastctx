@@ -155,6 +155,7 @@ pub(crate) fn view_for(
         paced_intake: true,
         profiles: true,
         goal_control: true,
+        goal_commands: true,
         subagents: true,
         versions: true,
         package_progress: true,

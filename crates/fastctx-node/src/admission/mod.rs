@@ -41,6 +41,7 @@ pub struct Asker {
 /// The resident of this machine `call` is about, if it is about one.
 fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
     match call {
+        RemoteCall::GoalCommand { actor, request, .. } => Some(request.resident(actor)),
         RemoteCall::Goal { resident: who, .. }
         | RemoteCall::ConversationDebt { resident: who, .. }
         | RemoteCall::EnterProject { resident: who, .. }
@@ -110,6 +111,12 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
         && !view.same(&requester.machine, &caller.machine)
     {
         return Err(refuse("only a requester's own machine may query its outstanding deliveries".into()));
+    }
+    if let RemoteCall::GoalCommand { actor, .. } = call
+        && !view.same(&actor.machine, &caller.machine)
+        && !view.rights(&caller.account, &caller.machine).hands
+    {
+        return Err(refuse("a forwarded goal command requires work permission on its sending machine".into()));
     }
     if let RemoteCall::AttachmentReferences { attachments, .. } = call
         && attachments.iter().any(|file| !view.same(&file.owner.machine, &caller.machine))
