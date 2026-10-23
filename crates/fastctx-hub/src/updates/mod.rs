@@ -376,7 +376,10 @@ fn settle(hub: &Hub, name: &MachineName, kernel: &str, app: Option<&str>, asked:
     let actor = Actor { account: None, authenticated: true, member: Some(name.clone()), peer: None };
     let action = Action::Updated { machine: name.clone(), from: asked.from, to: kernel.to_string(), by: asked.by };
     match crate::machine_log::keep(&mut store, &directory, actor, action, Outcome::Done) {
-        Ok(()) => hub.machine_log_changed.notify_one(),
+        Ok(()) => {
+            hub.machine_log_changed.notify_one();
+            hub.directory_changed.notify_one();
+        }
         Err(error) => hub.log.line(format_args!("{error}")),
     }
 }

@@ -582,6 +582,12 @@ pub struct View {
     pub machine_log: bool,
     pub hub: HubId,
     pub hub_name: HubName,
+    /// Current hub host, only when visible to this member.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub_machine: Option<MachineName>,
+    /// Committed changes delivered to accounts logged in on this device.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub machine_notices: Vec<fastctx_types::sharing::Notice>,
     /// The member this view is for.
     pub me: MachineName,
     /// Whether accounts may be opened by anyone who reaches the hub.
@@ -744,6 +750,8 @@ impl View {
             machine_log: false,
             hub,
             hub_name,
+            hub_machine: None,
+            machine_notices: Vec::new(),
             me,
             self_registration: false,
             direct_links: false,
