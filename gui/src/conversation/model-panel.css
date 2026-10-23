@@ -492,6 +492,46 @@ button.job-what:hover .job-command {
   height: 6px;
 }
 
+/* A sentinel's row: its sentence in the text's own face, how it watches
+   beneath, quiet. */
+.job-item.watching .job-row {
+  align-items: start;
+  padding-block: var(--space-2);
+}
+
+/* The mark and the withdrawal stand by the sentence, its first line. */
+.job-mark,
+.job-item.watching .job-stop {
+  display: inline-grid;
+  place-items: center;
+  height: 1lh;
+  color: var(--text-3);
+}
+
+/* A finger's target, centred on the sentence's line. */
+@media (pointer: coarse) {
+  .job-item.watching .job-stop {
+    height: 44px;
+    margin-block: calc((1lh - 44px) / 2);
+  }
+}
+
+.job-sentence,
+.job-plan {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-sentence {
+  color: var(--text);
+}
+
+.job-plan {
+  color: var(--text-3);
+}
+
 /* Nothing in the panel is text to select: a drag on the slider must not
    paint the labels around it. */
 .model-panel {

@@ -54,3 +54,25 @@ export const sentinels: SentinelSeam = {
   write: (hub, account, expected, settings) => invoke<SettingsReply>("sentinel_settings_write", { hub, account, change: { expected, settings } }),
   setKey: (hub, account, key, value) => invoke<void>("sentinel_key_set", { hub, account, key, value }),
 };
+
+export type SentinelPhase = "starting" | "watching" | "satisfied" | "unable" | "withdrawn" | "unavailable";
+
+/** One sentinel a conversation left, as its home answered. */
+export interface SentinelSummary {
+  definition: { id: string; home: string; condition: string; kind: "local" | "web" | "goal"; owner: { machine: string; resident: string } };
+  phase: SentinelPhase;
+  /** How it watches, in its own words. */
+  plan: string;
+  latest: { at: number; text: string } | null;
+  reason: string | null;
+}
+
+/** The sentinels the conversation at `owner` left, still watching. */
+export function sentinelList(owner: { machine: string; resident: string }): Promise<SentinelSummary[]> {
+  return invoke<{ kind: "listed"; sentinels: SentinelSummary[] }>("sentinel_list", { owner }).then((listed) => listed.sentinels);
+}
+
+/** Withdraws one; its definition is gone even while its home has yet to confirm. */
+export function sentinelStop(id: string, home: string): Promise<void> {
+  return invoke("sentinel_stop", { id, home }).then(() => undefined);
+}

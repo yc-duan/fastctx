@@ -290,6 +290,10 @@ export interface Words {
   stillRunning: string;
   /** Before a job is stopped by the user, and when it could not be. */
   stopJobAsk: string;
+  /** A sentinel the conversation left: withdrawing it, and how it stands. */
+  withdrawSentinel: string;
+  withdrawSentinelAsk: string;
+  sentinelPhase(phase: "starting" | "watching" | "satisfied" | "unable" | "withdrawn" | "unavailable"): string;
   notStopped: string;
   cancel: string;
   /** A job's output opened under its row. */
@@ -600,8 +604,12 @@ export const zh: Words = {
     tools: (n) => `${n} 次工具调用`,
     unknownAgents: (n) => `${n} 个子代理`,
   },
-  stillRunning: "运行中的命令",
+  stillRunning: "还在跑的",
   stopJobAsk: "停下这条命令？会告诉智能体是你停的。",
+  withdrawSentinel: "撤掉",
+  withdrawSentinelAsk: "撤掉这个哨兵？",
+  sentinelPhase: (phase) =>
+    ({ starting: "刚开始", watching: "盯着", satisfied: "已成立", unable: "盯不成", withdrawn: "已撤掉", unavailable: "暂时问不到" })[phase],
   notStopped: "没能停下",
   cancel: "取消",
   jobOutput: (command) => `${command} 的输出`,
@@ -877,8 +885,12 @@ export const en: Words = {
     tools: (n) => (n === 1 ? "1 tool call" : `${n} tool calls`),
     unknownAgents: (n) => (n === 1 ? "1 agent" : `${n} agents`),
   },
-  stillRunning: "Running commands",
+  stillRunning: "Still under way",
   stopJobAsk: "Stop this command? The agent will be told you stopped it.",
+  withdrawSentinel: "Withdraw",
+  withdrawSentinelAsk: "Withdraw this sentinel?",
+  sentinelPhase: (phase) =>
+    ({ starting: "starting", watching: "watching", satisfied: "found it", unable: "can't watch", withdrawn: "withdrawn", unavailable: "can't be asked now" })[phase],
   notStopped: "Couldn't stop it",
   cancel: "Cancel",
   jobOutput: (command) => `Output of ${command}`,

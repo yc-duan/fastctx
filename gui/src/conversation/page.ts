@@ -1954,6 +1954,8 @@ export class ConversationPage {
         title: words.stillRunning,
         stop: words.stop,
         stopAsk: words.stopJobAsk,
+        withdraw: words.withdrawSentinel,
+        withdrawAsk: words.withdrawSentinelAsk,
         notStopped: words.notStopped,
         cancel: this.options.controls?.words.never ?? words.cancel,
         output: words.jobOutput,

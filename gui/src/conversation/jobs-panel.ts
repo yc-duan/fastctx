@@ -20,12 +20,18 @@ export interface Job {
   started_at: string;
   command: string;
   output: string;
+  /** A sentinel the conversation left, in place of a command: how it stands
+   *  in a word, how it watches, and what it saw last. */
+  sentinel?: { phase: string; plan: string; seen: string | null } | undefined;
 }
 
 export interface JobsWords {
   title: string;
   stop: string;
   stopAsk: string;
+  /** Withdrawing a sentinel, and asking before it. */
+  withdraw: string;
+  withdrawAsk: string;
   notStopped: string;
   cancel: string;
   output(command: string): string;
@@ -104,9 +110,10 @@ export class JobsPanel {
         this.list.append(row.element);
       }
       row.job = job;
-      const where = `${job.machine} ${words.lasted(now.getTime() - Date.parse(job.started_at))}`;
+      const where = job.sentinel ? `${job.machine} ${job.sentinel.phase}` : `${job.machine} ${words.lasted(now.getTime() - Date.parse(job.started_at))}`;
       const shown = row.element.querySelector<HTMLElement>(".job-where")!;
       if (shown.textContent !== where) shown.textContent = where;
+      if (job.sentinel) this.watching(row.element, job);
     }
     const count = jobs.length;
     this.button.hidden = this.rows.size === 0;
@@ -117,11 +124,30 @@ export class JobsPanel {
     if (this.button.innerHTML !== html) this.button.innerHTML = html;
   }
 
+  /** A sentinel's sentence, how it watches beneath, and what it saw last
+   *  when pointed at. */
+  private watching(element: HTMLElement, job: Job): void {
+    const plan = element.querySelector<HTMLElement>(".job-plan")!;
+    if (plan.textContent !== job.sentinel!.plan) plan.textContent = job.sentinel!.plan;
+    const said = [job.command, job.sentinel!.plan, job.sentinel!.seen ?? ""].filter(Boolean).join("\n\n");
+    const what = element.querySelector<HTMLElement>(".job-what")!;
+    if (what.title !== said) what.title = said;
+  }
+
   private draw(job: Job): HTMLElement {
     const { words } = this.options;
     const element = document.createElement("li");
     element.className = "job-item";
     element.dataset.job = job.job;
+    if (job.sentinel) {
+      element.classList.add("watching");
+      const stop = this.options.stop
+        ? `<button class="icon-button job-stop" type="button" data-stop title="${escape(words.withdraw)}" aria-label="${escape(words.withdraw)}">${glyph("stop", 14)}</button>`
+        : "";
+      element.innerHTML = `<div class="job-row"><span class="job-mark" aria-hidden="true">${glyph("sentinel", 12)}</span><span class="job-what"><span class="job-sentence">${escape(job.command)}</span><span class="job-where"></span><span class="job-plan"></span></span>${stop}</div>`;
+      this.watching(element, job);
+      return element;
+    }
     const command = job.command.split("\n")[0] ?? "";
     const what = `<span class="job-back" aria-hidden="true">${glyph("chevron", 14)}</span><code class="job-command">${escape(command)}</code><span class="job-where"></span>`;
     element.innerHTML = `<div class="job-row"><span class="pulse" aria-hidden="true"></span>${
@@ -172,7 +198,7 @@ export class JobsPanel {
         .querySelector(".job-row")!
         .insertAdjacentHTML(
           "afterend",
-          `<div class="jobs-confirm"><span>${escape(words.stopAsk)}</span><button class="ask-button" type="button" data-cancel>${escape(words.cancel)}</button><button class="ask-button ask-primary" type="button" data-confirm>${escape(words.stop)}</button></div>`,
+          `<div class="jobs-confirm"><span>${escape(row.job.sentinel ? words.withdrawAsk : words.stopAsk)}</span><button class="ask-button" type="button" data-cancel>${escape(words.cancel)}</button><button class="ask-button ask-primary" type="button" data-confirm>${escape(row.job.sentinel ? words.withdraw : words.stop)}</button></div>`,
         );
       return;
     }

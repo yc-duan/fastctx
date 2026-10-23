@@ -189,7 +189,8 @@ import { MemoryPage } from "./project/memory-page";
 import { enMemory, zhMemory } from "./project/memory-words";
 import { memory as memorySeam, type MemoryAuthor } from "./world/memory";
 import { specimenCatalog, specimenDocument } from "./specimen/memory";
-import { sentinels as liveSentinels } from "./world/sentinels";
+import { sentinelList, sentinelStop, sentinels as liveSentinels, type SentinelSummary } from "./world/sentinels";
+import type { Job as PanelJob } from "./conversation/jobs-panel";
 import { specimenSentinels } from "./specimen/sentinels";
 import { JournalForm } from "./project/journal-form";
 import { ProjectPage } from "./project/page";
@@ -1622,13 +1623,33 @@ function specimenTalk(address: Address): KeepablePage {
     calls: (turn) => void openCalls(known?.about ?? { machine: address.machine, host: { agent: sample.agent } }, address, turn),
   });
   // What it started that still runs, as the specimen World lists it.
+  // With `?sentinels`, a sentinel the conversation left stands beside them.
+  const specimenSentinels: PanelJob[] = params.has("sentinels")
+    ? [
+        {
+          job: "s-a1b2c3",
+          machine: "server",
+          started_at: "",
+          command: english ? "Wake me when the training loss falls below 0.3" : "训练的 loss 降到 0.3 以下时叫醒我",
+          output: "",
+          sentinel: {
+            phase: words.sentinelPhase("watching"),
+            plan: english ? "Reads the last lines of train.log every ten minutes" : "每十分钟读一次 train.log 的最后几行",
+            seen: "step 4200  loss 0.412",
+          },
+        },
+      ]
+    : [];
   const runningJobs = effect(() => {
     const now = store.clock.get();
     page.running(
-      jobsOf(specimen.world).filter((job) => {
-        const owner = ownerResident(job.owner);
-        return owner?.resident === address.resident && owner.machine === address.machine;
-      }),
+      [
+        ...jobsOf(specimen.world).filter((job) => {
+          const owner = ownerResident(job.owner);
+          return owner?.resident === address.resident && owner.machine === address.machine;
+        }),
+        ...specimenSentinels,
+      ],
       now,
     );
   });
@@ -1885,7 +1906,8 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
         });
     },
     stop: () => stop(address),
-    stopJob: (job, machine) => stopJob(job, machine),
+    // A sentinel's row withdraws it, then the list is asked again.
+    stopJob: (job, machine) => (sentinelRows.peek().some((row) => row.job === job) ? sentinelStop(job, machine).then(() => readSentinels()) : stopJob(job, machine)),
     jobOutput: (job) => RemoteLines.open(job.machine, job.output, { kind: "output", job: job.job }),
     lines: (machine, path, decoding) => RemoteLines.open(machine, path, decoding),
     agentRecord: (agent) => agentActivity(address, agent),
@@ -1895,7 +1917,27 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
     },
   });
   let left = false;
-  // What it started that still runs, as the World last answered.
+  // The sentinels it left, as rows beside its jobs; the goal's own sentinel
+  // goes with the goal and is not withdrawn by hand.
+  const sentinelRows = signal<PanelJob[]>([]);
+  const sentinelRow = (one: SentinelSummary): PanelJob => ({
+    job: one.definition.id,
+    machine: one.definition.home,
+    started_at: "",
+    command: one.definition.condition || one.plan,
+    output: "",
+    sentinel: { phase: words.sentinelPhase(one.phase), plan: one.plan, seen: one.latest?.text ?? one.reason },
+  });
+  const readSentinels = (): Promise<void> =>
+    sentinelList(address).then(
+      (listed) => {
+        if (!left) sentinelRows.set(listed.filter((one) => one.definition.kind !== "goal").map(sentinelRow));
+      },
+      // A home that cannot be asked now keeps the rows last seen.
+      () => {},
+    );
+  // What it started that still runs, as the World last answered, and the
+  // sentinels it left.
   const running = effect(() => {
     const world = store.world.get();
     const now = store.clock.get();
@@ -1903,8 +1945,12 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
       const owner = ownerResident(job.owner);
       return owner?.resident === address.resident && owner.machine === address.machine;
     });
-    page.running(jobs, now);
+    page.running([...jobs, ...sentinelRows.get()], now);
   });
+  // The sentinels' homes are asked, not followed: as the page opens, every
+  // half minute while it is open, and after one is withdrawn.
+  const sentinelTimer = window.setInterval(() => void readSentinels(), 30_000);
+  void readSentinels();
   // The conversation as the World's watch reads it (`conversation/source.ts`):
   // the page holds its latest part and reads the rest as the reader comes to
   // it; what is new is shown at once. When the host replaced or removed
@@ -2013,6 +2059,7 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
       left = true;
       named();
       running();
+      clearInterval(sentinelTimer);
       page.leave();
       search.close();
       reading.close();
