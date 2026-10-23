@@ -1469,6 +1469,7 @@ pub async fn open_here(
         origin: Origin::User,
         session: None,
         world_started: true,
+        native_resumed: false,
         model: None,
         acting: opened.acting,
         focus: opened.focus,

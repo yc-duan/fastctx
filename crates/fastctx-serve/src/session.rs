@@ -23,6 +23,7 @@ use crate::protocol::{CLIENT_INFO, VERSION_KEY};
 pub struct Session {
     world: WorldDir,
     host: OnceLock<Host>,
+    host_process: Option<fastctx_types::ProcessIdentity>,
     /// Set when the World started this session as a Codex thread.
     resident: Option<String>,
     /// The conversation a Claude Code session the World started is, named
@@ -71,6 +72,7 @@ impl Session {
         Ok(Self {
             world,
             host: OnceLock::new(),
+            host_process: fastctx_platform::host_process::parent_identity().ok(),
             resident,
             conversation,
             residents: tokio::sync::Mutex::new(HashMap::new()),
@@ -119,6 +121,7 @@ impl Session {
         Arc::new(Self {
             world: self.world.clone(),
             host: OnceLock::new(),
+            host_process: self.host_process.clone(),
             resident: self.resident.clone(),
             conversation: self.conversation.clone(),
             residents: tokio::sync::Mutex::new(HashMap::new()),
@@ -249,7 +252,14 @@ impl Session {
                         .map(str::to_string)
                 }),
                 resident: whereabouts.resident.clone(),
-                request: RunRequest { turn: None, call_id: None, script: command, cwd, writes_off: self.writes_off, wait },
+                request: RunRequest {
+                    turn: None,
+                    call_id: None,
+                    script: command,
+                    cwd,
+                    writes_off: self.writes_off,
+                    wait,
+                },
                 node: None,
             };
             // The node records failures after accepting Run; the one-use host
@@ -583,7 +593,15 @@ impl Session {
             .map_err(|error| error.to_string())?
             .map(|address| address.resident)
             .or_else(|| self.conversation.clone());
-        let hints = Hints { resident, thread: thread.clone(), was, tool_use_id: None };
+        let home = self.login(&host).and_then(|login| login.home);
+        let hints = Hints {
+            resident,
+            thread: thread.clone(),
+            was,
+            tool_use_id: None,
+            home,
+            host_process: self.host_process.clone(),
+        };
         let mut client = self.client_for(host.clone()).await?;
         match client.call(Call::Arrive { host, hints }).await {
             Ok(Reply::Arrived(whereabouts)) => {

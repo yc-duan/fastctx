@@ -25,6 +25,12 @@ pub struct Host {
 /// What a session knows about itself that lets the World recognise it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hints {
+    /// The native Codex login that owns the thread's persisted history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<std::path::PathBuf>,
+    /// OS lifetime of the native host that started this adapter, reported locally.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_process: Option<crate::ProcessIdentity>,
     /// Set by the World when it started the session itself.
     pub resident: Option<ResidentId>,
     /// The thread a Codex call belongs to; one thread is one resident,
@@ -61,6 +67,9 @@ pub struct About {
     /// through its calls of the World's tools.
     #[serde(default)]
     pub world_started: bool,
+    /// A native Codex thread resumed for requested work; birth provenance remains unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub native_resumed: bool,
     /// The model, as the host told the World; `None` when it did not.
     #[serde(default)]
     pub model: Option<String>,
@@ -80,6 +89,13 @@ pub struct About {
     pub home: Option<std::path::PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub callee: Option<String>,
+}
+
+impl About {
+    /// Whether the World has a restoration contract for this conversation.
+    pub fn world_managed(&self) -> bool {
+        self.world_started || self.native_resumed
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,7 +183,10 @@ pub enum Notice {
 impl Notice {
     /// Scheduled work and requested answers resume even a closed foreground conversation.
     pub fn wakes_closed(&self) -> bool {
-        matches!(self, Self::Words { from: Speaker::World, .. } | Self::Words { goal_report: Some(_), .. } | Self::Answer { .. })
+        matches!(
+            self,
+            Self::Words { from: Speaker::World, .. } | Self::Words { goal_report: Some(_), .. } | Self::Answer { .. }
+        )
     }
 
     /// What the World tells when the user changes a conversation's machines

@@ -10520,8 +10520,9 @@
                     "origin": {
                       "kind": "user"
                     },
-                    "session": null,
+                    "session": "native-thread",
                     "world_started": false,
+                    "native_resumed": true,
                     "model": null,
                     "acting": {
                       "kind": "here"
@@ -10818,8 +10819,9 @@
                     "origin": {
                       "kind": "user"
                     },
-                    "session": null,
+                    "session": "native-thread",
                     "world_started": false,
+                    "native_resumed": true,
                     "model": null,
                     "acting": {
                       "kind": "here"
@@ -10936,8 +10938,9 @@
                     "origin": {
                       "kind": "user"
                     },
-                    "session": null,
+                    "session": "native-thread",
                     "world_started": false,
+                    "native_resumed": true,
                     "model": null,
                     "acting": {
                       "kind": "here"
@@ -12054,8 +12057,9 @@
                     "origin": {
                       "kind": "user"
                     },
-                    "session": null,
+                    "session": "native-thread",
                     "world_started": false,
+                    "native_resumed": true,
                     "model": null,
                     "acting": {
                       "kind": "here"
@@ -12352,8 +12356,9 @@
                     "origin": {
                       "kind": "user"
                     },
-                    "session": null,
+                    "session": "native-thread",
                     "world_started": false,
+                    "native_resumed": true,
                     "model": null,
                     "acting": {
                       "kind": "here"
@@ -12470,8 +12475,9 @@
                     "origin": {
                       "kind": "user"
                     },
-                    "session": null,
+                    "session": "native-thread",
                     "world_started": false,
+                    "native_resumed": true,
                     "model": null,
                     "acting": {
                       "kind": "here"
@@ -12587,8 +12593,9 @@
                     "origin": {
                       "kind": "user"
                     },
-                    "session": null,
+                    "session": "native-thread",
                     "world_started": false,
+                    "native_resumed": true,
                     "model": null,
                     "acting": {
                       "kind": "here"
@@ -12885,8 +12892,9 @@
                     "origin": {
                       "kind": "user"
                     },
-                    "session": null,
+                    "session": "native-thread",
                     "world_started": false,
+                    "native_resumed": true,
                     "model": null,
                     "acting": {
                       "kind": "here"
@@ -13003,8 +13011,9 @@
                     "origin": {
                       "kind": "user"
                     },
-                    "session": null,
+                    "session": "native-thread",
                     "world_started": false,
+                    "native_resumed": true,
                     "model": null,
                     "acting": {
                       "kind": "here"

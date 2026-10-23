@@ -20,6 +20,7 @@ use fastctx_types::residents::About;
 use tokio::sync::mpsc;
 
 pub(crate) struct CodexHosts {
+    pub(crate) native_watches: Mutex<std::collections::HashSet<fastctx_types::ResidentId>>,
     default: Arc<CodexHost>,
     others: Mutex<Vec<Arc<CodexHost>>>,
     assisted: Mutex<Vec<Arc<CodexHost>>>,
@@ -61,6 +62,7 @@ impl CodexHosts {
         default.report_said_to(said.clone());
         forward(reports, events.clone());
         let hosts = Self {
+            native_watches: Default::default(),
             default,
             others: Mutex::new(Vec::new()),
             assisted: Mutex::new(Vec::new()),

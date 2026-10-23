@@ -75,6 +75,7 @@ fn resident(
             origin,
             session: None,
             world_started: true,
+            native_resumed: false,
             model: Some(model.to_string()),
             acting: Default::default(),
             focus: Default::default(),
@@ -113,7 +114,8 @@ fn state(now: Timestamp, activity: Activity, since: i64) -> Now {
 
 fn action(now: Timestamp, minutes: i64, on: &str, hand: &str, what: &str, result: &str) -> Action {
     Action {
-        turn: None, at: ago(now, minutes),
+        turn: None,
+        at: ago(now, minutes),
         machine: machine(on),
         hand: hand.to_string(),
         what: what.to_string(),
@@ -364,7 +366,11 @@ fn agents(now: Timestamp) -> fastctx_types::agents::AgentsReply {
 
 fn nodes(now: Timestamp) -> NodesReply {
     let facts = |name: &str, os: &str, home: &str| MachineFacts {
-        turn_debts: false, goal_runtime: false, goal_questions: false, goal_commands: false, goal_reports: false,
+        turn_debts: false,
+        goal_runtime: false,
+        goal_questions: false,
+        goal_commands: false,
+        goal_reports: false,
         name: machine(name),
         os: os.into(),
         arch: "x86_64".into(),
@@ -413,7 +419,10 @@ fn nodes(now: Timestamp) -> NodesReply {
             },
             logins: vec!["me".parse().expect("an account")],
             home: Some("me".parse().expect("an account")),
-            here: vec![("me".parse().expect("an account"), fastctx_types::access::Rights { hands: true, agents: true })],
+            here: vec![(
+                "me".parse().expect("an account"),
+                fastctx_types::access::Rights { hands: true, agents: true },
+            )],
             machines: vec![
                 node("desktop", true, 300, Ok(facts("desktop", "windows", "C:/Users/me"))),
                 node("laptop", true, 180, Ok(facts("laptop", "windows", "C:/Users/me"))),

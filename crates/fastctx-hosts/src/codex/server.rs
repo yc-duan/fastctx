@@ -45,6 +45,7 @@ pub enum Inbound {
 
 pub struct AppServer {
     instance: String,
+    process: Option<fastctx_types::ProcessIdentity>,
     child: Arc<Child>,
     messages: mpsc::UnboundedSender<Message>,
     ended: watch::Receiver<bool>,
@@ -116,7 +117,7 @@ impl AppServer {
         let pending = Arc::new(Mutex::new(Pending::default()));
         let (inbound, receiver) = mpsc::unbounded_channel();
         let (routed, reports, logger) = (pending.clone(), inbound.clone(), log.clone());
-        let transport = transport::spawn(program, args, cwd, env, log, move |bytes| {
+        let transport = transport::spawn(program, args, cwd, env, log.clone(), move |bytes| {
             route(bytes, &routed, &reports, &logger);
         })?;
         let (ended, ending) = watch::channel(false);
@@ -139,8 +140,16 @@ impl AppServer {
             }
             let _ = ended.send(true);
         });
+        let process = match fastctx_platform::identity_of(transport.child.pid()) {
+            Ok(process) => process,
+            Err(error) => {
+                log(format!("recording the Codex process lifetime: {error}"));
+                None
+            }
+        };
         let server = Arc::new(Self {
             instance: format!("{}:{}", transport.child.pid(), jiff::Timestamp::now()),
+            process,
             child: transport.child,
             messages: transport.outgoing,
             ended: ending,
@@ -154,6 +163,11 @@ impl AppServer {
     pub async fn wait(&self) {
         let mut ended = self.ended.clone();
         let _ = ended.wait_for(|ended| *ended).await;
+    }
+
+    /// The process identity remains stable even if its PID is later reused.
+    pub fn process(&self) -> Option<fastctx_types::ProcessIdentity> {
+        self.process.clone()
     }
 
     pub fn pid(&self) -> u32 {

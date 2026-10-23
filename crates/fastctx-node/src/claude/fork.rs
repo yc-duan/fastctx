@@ -90,6 +90,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         origin: Origin::User,
         session: None,
         world_started: true,
+        native_resumed: false,
         model: model.clone(),
         acting: source.acting.clone(),
         focus: source.focus,

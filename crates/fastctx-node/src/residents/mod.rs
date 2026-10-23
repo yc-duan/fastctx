@@ -497,10 +497,11 @@ impl Residents {
             origin: Origin::User,
             session: hints.thread.clone(),
             world_started: false,
+            native_resumed: false,
             model: None,
             acting: fastctx_types::access::Acting::Here,
             focus: Default::default(),
-            home: None,
+            home: hints.home,
             callee: None,
         };
         let places = Places::born(None, about.born_at);
@@ -524,7 +525,7 @@ impl Residents {
         for resident in residents {
             if let Some(live) = state.live.get_mut(resident) {
                 live.connections = live.connections.saturating_sub(1);
-                if !here(live) && !live.about.world_started {
+                if !here(live) && !live.about.world_managed() {
                     gone.push(resident.clone());
                 }
             }
@@ -580,7 +581,7 @@ impl Residents {
         if let Some(live) = self.lock().live.get_mut(id) {
             let was_here = here(live);
             live.claude_here = present;
-            return was_here && !here(live) && !live.about.world_started;
+            return was_here && !here(live) && !live.about.world_managed();
         }
         false
     }
@@ -618,6 +619,40 @@ impl Residents {
         live.about = about;
         state.record_session(prior_session.as_deref(), session);
         state.threads.insert(session.to_string(), id.clone());
+        Ok(())
+    }
+
+    /// Fills the login absent from records made by older native adapters.
+    pub(crate) fn set_native_home(
+        &self,
+        world: &WorldDir,
+        id: &ResidentId,
+        home: Option<std::path::PathBuf>,
+    ) -> io::Result<()> {
+        let Some(home) = home else { return Ok(()) };
+        let mut state = self.lock();
+        let live = state.live.get_mut(id).ok_or_else(|| io::Error::other("unknown conversation"))?;
+        if live.about.world_started || live.about.home.is_some() {
+            return Ok(());
+        }
+        let mut about = live.about.clone();
+        about.home = Some(home);
+        records::write_about(&world.conversation(id), &about)?;
+        live.about = about;
+        Ok(())
+    }
+
+    /// Persists the restoration contract before the first native resumption.
+    pub(crate) fn set_native_resumed(&self, world: &WorldDir, id: &ResidentId) -> io::Result<()> {
+        let mut state = self.lock();
+        let live = state.live.get_mut(id).ok_or_else(|| io::Error::other("unknown conversation"))?;
+        if live.about.native_resumed {
+            return Ok(());
+        }
+        let mut about = live.about.clone();
+        about.native_resumed = true;
+        records::write_about(&world.conversation(id), &about)?;
+        live.about = about;
         Ok(())
     }
 
@@ -989,8 +1024,9 @@ fn here(live: &Live) -> bool {
     if live.removed.is_some() {
         return false;
     }
-    if live.about.world_started {
-        live.now.as_ref().is_none_or(|now| now.activity != Activity::Asleep)
+    if live.about.world_managed() {
+        (live.about.native_resumed && live.connections > 0)
+            || live.now.as_ref().is_none_or(|now| now.activity != Activity::Asleep)
     } else {
         live.claude_here || live.connections > 0
     }
@@ -1072,8 +1108,13 @@ mod lifetime_tests {
         assert!(problems.is_empty());
         let machine = "private-node".parse().unwrap();
         let host = Host { agent: "codex".parse().unwrap(), version: "fixture".into(), client: "fixture".into() };
-        let hints =
-            |index| Hints { resident: None, thread: Some(format!("thread-{index}")), was: None, tool_use_id: None };
+        let hints = |index| Hints {
+            resident: None,
+            thread: Some(format!("thread-{index}")),
+            was: None,
+            tool_use_id: None,
+            ..Default::default()
+        };
         for index in 0..512 {
             let arrived = residents.arrive(&world, &machine, host.clone(), hints(index)).unwrap();
             let id = &arrived.resident;

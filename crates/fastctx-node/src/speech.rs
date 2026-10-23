@@ -277,10 +277,14 @@ async fn hand_over_locked(
     {
         return Ok(Landed::Waiting { why: None, answered: true });
     }
+    let requested = pending.delivery.notice.wakes_closed();
     if let Err(error) = crate::homes::available(node, about)
         .and_then(|()| crate::assists::may_turn(node, to, about))
         .and_then(|()| crate::town::access::current(node, to))
     {
+        if requested {
+            again_later(node, to, about, directory, pending);
+        }
         return Ok(Landed::Waiting { why: Some(error.message), answered: answered(node, to, about) });
     }
     crate::goals::colleagues::incoming(node, to, about, &pending).await?;
@@ -289,15 +293,24 @@ async fn hand_over_locked(
         return landed;
     }
     let mut why = None;
-    if (about.world_started || pending.delivery.notice.wakes_closed())
+    if (about.world_managed() || pending.delivery.notice.wakes_closed())
         && about.host.agent.as_str() == "codex"
         && let Some(thread) = &about.session
     {
-        match into_thread(node, to, thread, directory, pending).await {
+        if !about.world_started && !crate::codex::native::requested(node, about)? {
+            return Ok(Landed::Waiting {
+                why: Some("the native host still runs; this message waits at its next World tool boundary".into()),
+                answered: false,
+            });
+        }
+        match into_thread(node, to, thread, directory, pending.clone()).await {
             Ok(landed) => return Ok(landed),
             Err(failure) => {
                 node.log.line(format_args!("words could not go to {to} now, and wait: {failure}"));
                 why = Some(failure.message);
+                if requested {
+                    again_later(node, to, about, directory, pending);
+                }
             }
         }
     }
@@ -309,7 +322,7 @@ async fn hand_over_locked(
 /// plugin runs in, no others.
 fn answered(node: &Node, to: &ResidentId, about: &About) -> bool {
     match about.host.agent.as_str() {
-        "codex" => about.world_started,
+        "codex" => about.world_managed(),
         "claude" => about.world_started || about.session.is_some() || crate::claude::paired(node, to),
         _ => false,
     }
@@ -346,9 +359,10 @@ pub async fn send_composer(
     node.residents.active(id)?;
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::new("unknown resident"))?;
     let directory = node.world.conversation(id);
-    if about.world_started
+    if about.world_managed()
         && about.host.agent.as_str() == "codex"
         && let Some(thread) = &about.session
+        && (about.world_started || crate::codex::native::requested(node, &about)?)
     {
         let Some(_answering) = node.handoff.call() else {
             return Err(Failure::new(crate::handoff::WAITING));
@@ -702,7 +716,6 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
         | Notice::Answer { .. }
         | Notice::Health { .. }
         | Notice::Question { .. }
-
         | Notice::World { .. } => Some(Box::new(delivery.notice.clone())),
     };
     let event = SessionEvent {
@@ -915,7 +928,7 @@ pub fn resume(node: &Arc<Node>, runtime: &tokio::runtime::Handle) {
         if resident.removed.is_some() {
             continue;
         }
-        if !resident.about.world_started || resident.about.host.agent.as_str() != "codex" {
+        if !resident.about.world_managed() || resident.about.host.agent.as_str() != "codex" {
             continue;
         }
         let node = node.clone();

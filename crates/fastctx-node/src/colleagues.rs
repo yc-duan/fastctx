@@ -65,7 +65,8 @@ pub async fn ask(
     let here = node.machine();
     let (colleague, account) = match chosen.whose {
         Whose::Account { link, account } => {
-            let request = Request { about: &about, turn: turn.clone(), town: town.as_ref(), label: label.clone(), prompt };
+            let request =
+                Request { about: &about, turn: turn.clone(), town: town.as_ref(), label: label.clone(), prompt };
             let colleague = ask_for_account(node, &link, &account, chosen.started, request).await?;
             (colleague, Some(fastctx_types::access::HubAccount { hub: link.membership().id.clone(), account }))
         }
@@ -73,12 +74,22 @@ pub async fn ask(
         // here, for whoever this computer's sessions work for.
         Whose::Computer => {
             let address = Address { machine: here.clone(), resident: asker.clone() };
-            let id = ask_here(node, Requester { address, turn: turn.clone() }, Acting::Here, town.clone(), label.clone(), prompt, chosen.started).await?;
+            let id = ask_here(
+                node,
+                Requester { address, turn: turn.clone() },
+                Acting::Here,
+                town.clone(),
+                label.clone(),
+                prompt,
+                chosen.started,
+            )
+            .await?;
             (Address { machine: here, resident: id }, None)
         }
     };
     let action = Action {
-        turn, at,
+        turn,
+        at,
         machine: colleague.machine.clone(),
         hand: "ask_colleague".to_string(),
         what: label,
@@ -131,7 +142,16 @@ async fn ask_for_account(
     if link.view().is_me(&machine) {
         let acting = Acting::one(link.membership().id.clone(), account.clone());
         let address = Address { machine: here.clone(), resident: request.about.id.clone() };
-        let id = ask_here(node, Requester { address, turn: request.turn }, acting, call_town, request.label, request.prompt, started).await?;
+        let id = ask_here(
+            node,
+            Requester { address, turn: request.turn },
+            acting,
+            call_town,
+            request.label,
+            request.prompt,
+            started,
+        )
+        .await?;
         return Ok(Address { machine: here, resident: id });
     }
     let lives_on = node.written(link, &machine);
@@ -233,6 +253,7 @@ pub async fn ask_here(
         origin,
         session: Some(thread.clone()),
         world_started: true,
+        native_resumed: false,
         model,
         acting,
         focus: Default::default(),
@@ -267,7 +288,10 @@ pub async fn ask_here(
     node.residents.set_instructed(&id, heard);
     crate::codex::claim(node, &thread, &id).await;
     let directory = node.world.conversation(&id);
-    let asked = MessageLine { at: born_at, what: MessageKind::Asked { from: asker.clone(), text: prompt.clone(), requester_turn } };
+    let asked = MessageLine {
+        at: born_at,
+        what: MessageKind::Asked { from: asker.clone(), text: prompt.clone(), requester_turn },
+    };
     if let Err(error) = crate::residents::append_message(&directory, &asked) {
         node.log.line(format_args!("recording what {id} was asked: {error}"));
     }
@@ -277,7 +301,11 @@ pub async fn ask_here(
         delivery: Delivery {
             id: speech::new_id("words"),
             at: born_at,
-            notice: Notice::Words { from: Speaker::Resident { address: asker.clone() }, text: prompt, goal_report: None },
+            notice: Notice::Words {
+                from: Speaker::Resident { address: asker.clone() },
+                text: prompt,
+                goal_report: None,
+            },
         },
         readers: vec![asker],
         state: PendingState::Waiting,
@@ -391,6 +419,7 @@ pub async fn thread_spec(
     developer_instructions.push_str(fastctx_install::briefing::CODEX_EXEC);
     Ok((
         ThreadSpec {
+            native_resume: false,
             user_mcp,
             owner: Address { machine: node.machine(), resident: id.clone() },
             cwd,
@@ -543,7 +572,8 @@ pub async fn message(
         Landed::Uncertain { why } => format!("acceptance unknown: {why}"),
     };
     let action = Action {
-        turn, at,
+        turn,
+        at,
         machine: to.machine.clone(),
         hand: "message_colleague".to_string(),
         what: to.resident.to_string(),

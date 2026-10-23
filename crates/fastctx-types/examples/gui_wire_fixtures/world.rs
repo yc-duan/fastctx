@@ -89,8 +89,9 @@ fn residents() -> Vec<ResidentNow> {
                 } else {
                     Origin::Colleague { asked_by: address(), label: "Check JSON".into() }
                 },
-                session: (i != 0).then(|| "thread-1".into()),
+                session: Some(if i == 0 { "native-thread".into() } else { "thread-1".into() }),
                 world_started: i != 0,
+                native_resumed: i == 0,
                 model: (i != 0).then(|| "model-a".into()),
                 acting: if i == 0 {
                     fastctx_types::access::Acting::Here
@@ -150,7 +151,8 @@ fn residents() -> Vec<ResidentNow> {
                 },
             }),
             last_action: (i == 0).then(|| Action {
-                turn: None, at: at(),
+                turn: None,
+                at: at(),
                 machine: machine(),
                 hand: "run".into(),
                 what: "pwd".into(),
@@ -290,7 +292,11 @@ fn nodes() -> Vec<NodesReply> {
         ms: Some(41),
     });
     let facts = |name: &str, os: &str, lifetime: bool| MachineFacts {
-        turn_debts: false, goal_runtime: false, goal_questions: lifetime, goal_commands: lifetime, goal_reports: lifetime,
+        turn_debts: false,
+        goal_runtime: false,
+        goal_questions: lifetime,
+        goal_commands: lifetime,
+        goal_reports: lifetime,
         name: name.parse().unwrap(),
         os: os.into(),
         arch: if os == "windows" { "x86_64".into() } else { "aarch64".into() },

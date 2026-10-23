@@ -900,6 +900,7 @@ pub async fn open_here(
         origin,
         session: Some(thread.clone()),
         world_started: true,
+        native_resumed: false,
         model,
         acting: opened.acting,
         focus: opened.focus,
