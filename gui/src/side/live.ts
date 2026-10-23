@@ -10,7 +10,8 @@ import type { Store } from "../app/store";
 import { modelName } from "../conversation/view";
 import type { PlanShown, PageSeams } from "../plan/panel";
 import type { PlanWords } from "../plan/words";
-import type { WorldNow } from "../world/bridge";
+import { unwatch, type WorldNow } from "../world/bridge";
+import { planRead, planWrite, watchPlan, type PlanPage } from "../world/plan";
 import type { Address } from "../world/wire";
 import type { ResidentNow } from "../world/world";
 import { goalSamples, teamSample } from "./samples";
@@ -83,11 +84,22 @@ export interface LiveSide {
  *  nodes that keep them. */
 const notYet = () => Promise.reject(new Error("this version of the World keeps no goal"));
 
+/** The plan page's shape, read from the World's stored plan. */
+function planShownOf(page: PlanPage, words: SideWords, now: number): PlanShown | null {
+  const at = page.metadata;
+  if (!at || at.deleted || !page.body) return null;
+  return { source: page.body.markdown, version: at.version, when: words.goal.at(Date.parse(at.at), now) };
+}
+
 export function liveSide(options: LiveSide): SideSeams {
+  const owner = options.address.resident;
   const plan: PageSeams = {
     facts: (id) => planFact(options.store.world.peek(), id, options.planWords, options.took, Date.now()),
     open: (id) => options.openId(id),
-    save: () => {},
+    save: async (source, expected) => {
+      const result = await planWrite(owner, expected, source);
+      return result.result === "page" ? { ok: true } : { ok: false, current: result.current?.version ?? null };
+    },
     answer: () => {},
   };
   return {
@@ -97,8 +109,28 @@ export function liveSide(options: LiveSide): SideSeams {
       words: options.planWords,
       seams: plan,
       watch: (show: (plan: PlanShown | null) => void) => {
-        show(null);
-        return () => {};
+        let alive = true;
+        let watching: number | null = null;
+        const refresh = () => {
+          planRead(owner)
+            .then((page) => {
+              if (alive) show(planShownOf(page, options.words, Date.now()));
+            })
+            .catch((error) => console.error("the plan could not be read", error));
+        };
+        refresh();
+        watchPlan(owner, (piece) => {
+          if (piece.kind === "changed") refresh();
+        })
+          .then((id) => {
+            if (alive) watching = id;
+            else void unwatch(id);
+          })
+          .catch((error) => console.error("the plan could not be watched", error));
+        return () => {
+          alive = false;
+          if (watching != null) void unwatch(watching);
+        };
       },
     },
     goal: {
@@ -129,7 +161,7 @@ export function specimenSide(words: SideWords, planWords: PlanWords, plan: PlanS
     words,
     plan: {
       words: planWords,
-      seams: { facts: plan.facts, save: () => {}, answer: () => {} },
+      seams: { facts: plan.facts, save: async () => ({ ok: true }), answer: () => {} },
       watch: (show) => {
         show(plan);
         return () => {};

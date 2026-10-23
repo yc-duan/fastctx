@@ -6,6 +6,7 @@
 
 import { escape } from "../conversation/prose";
 import type { SidePage } from "../side/panel";
+import { noteElement } from "./blocks";
 import { drawPlan, planElement, type PlanSeams } from "./render";
 import type { PlanWords } from "./words";
 import "./plan.css";
@@ -17,9 +18,14 @@ export interface PlanShown {
   when: string;
 }
 
+/** How a save ended: up as a new version, or met a newer one written
+ *  elsewhere, whose version comes back so the next save can begin from it. */
+export type PlanSaved = { ok: true } | { ok: false; current: number | null };
+
 export interface PageSeams extends Omit<PlanSeams, "words"> {
-  /** The user saved their edit of the plan's text. */
-  save: (source: string) => void;
+  /** The user saved their edit of the plan's text. `expected` is the version
+   *  the edit began at; a newer version in the meantime is a conflict. */
+  save: (source: string, expected: number) => Promise<PlanSaved>;
 }
 
 export class PlanPage implements SidePage {
@@ -30,6 +36,8 @@ export class PlanPage implements SidePage {
   private plan: HTMLElement | null = null;
   private shownPlan: PlanShown | null = null;
   private editing: HTMLTextAreaElement | null = null;
+  /** The version the edit under way began at, for the save's comparison. */
+  private editingVersion = 0;
   private width = 0;
 
   constructor(
@@ -88,6 +96,7 @@ export class PlanPage implements SidePage {
   /** The plan's own text on the same sheet, to change and save. */
   private edit(): void {
     if (this.shownPlan?.source == null) return;
+    this.editingVersion = this.shownPlan.version;
     this.plan = null;
     this.sheet.innerHTML = "";
     const text = document.createElement("textarea");
@@ -109,11 +118,31 @@ export class PlanPage implements SidePage {
   private save(): void {
     const text = this.editing;
     if (!text || !this.shownPlan) return;
-    const changed = text.value !== this.shownPlan.source;
+    const source = text.value;
+    const expected = this.editingVersion;
+    if (source === this.shownPlan.source) {
+      this.drawn();
+      return;
+    }
     // Drawn as saved at once; the version the World keeps comes after.
-    if (changed) this.shownPlan = { ...this.shownPlan, source: text.value };
+    this.shownPlan = { ...this.shownPlan, source };
     this.drawn();
-    if (changed) this.seams.save(text.value);
+    void this.seams
+      .save(source, expected)
+      .then((saved) => {
+        if (!saved.ok) this.conflicted(source, saved.current);
+      })
+      .catch((error) => console.error("the plan could not be saved", error));
+  }
+
+  /** A save met a newer version. The draft is kept and laid out to edit
+   *  again, from that newer version, so saving once more keeps the user's. */
+  private conflicted(source: string, current: number | null): void {
+    if (current != null && this.shownPlan) this.shownPlan = { ...this.shownPlan, version: current };
+    this.edit();
+    if (this.editing) this.editing.value = source;
+    if (current != null) this.editingVersion = current;
+    this.sheet.prepend(noteElement("warn", `<p>${escape(this.words.conflict)}</p>`, "plan-conflict"));
   }
 
   /** The text area as tall as its text, so the page, not it, scrolls. */

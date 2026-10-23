@@ -53,7 +53,7 @@ const dock = page.querySelector<HTMLElement>(".sps-dock")!;
 
 const planPage = new PlanPage(planWords, {
   facts: (id) => sample.facts[id] ?? null,
-  save: () => {},
+  save: async () => ({ ok: true }),
   answer: () => {},
 });
 planPage.show({ source: sample.source, version: sample.version, when: sample.when });
