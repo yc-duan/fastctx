@@ -77,9 +77,22 @@ pub(crate) async fn prepare(
         crate::focus::refresh(node, id).await?;
     }
     local(node, id, town, acting).map_err(|error| Failure::new(error.to_string()))?;
+    plan_guide(node, id, origin).map_err(|error| Failure::new(error.to_string()))?;
     crate::plan::context(node, id, origin, acting).await?;
     map(node, id, town, origin, acting).await?;
     storage::opening(&node.world, id).map_err(|error| Failure::new(error.to_string()))
+}
+
+/// How to keep a plan, for a conversation that keeps its own; a colleague
+/// only reads the plan of the conversation that asked it.
+fn plan_guide(node: &Node, id: &ResidentId, origin: &Origin) -> io::Result<()> {
+    let text = if matches!(origin, Origin::Colleague { .. }) { "" } else { words::PLAN_GUIDE };
+    let change = Change { by: None, version: "", fact: &words::changed("plan-guide", words::USER), full: true };
+    if node.residents.about(id).is_some() {
+        super::set(node, id, "plan-guide", text, change)
+    } else {
+        storage::set(&node.world, id, "plan-guide", text, change)
+    }
 }
 
 /// The project's memory index as the "map" block. The project instructions

@@ -262,7 +262,9 @@ More commands (`--help` on each gives all its options):
 - `fastctx w` shows what runs and who works now, and what happened since your last turn; `fastctx w ID...` shows those sessions or jobs.
 - `fastctx wait JOB...` waits until jobs end and shows how each ended; `fastctx stop ID...` stops jobs and their processes, or a colleague's current turn.
 - `fastctx project` lists the user's projects and shows their records. A fastctx project is not a folder or a repository but a named piece of work that can span several machines; its record says what it is for and where its code and data are on each. `fastctx project enter NAME` makes you work in one; enter one only when the user tells you which project to work on.
-- `fastctx page` publishes an HTML page the user opens in the World app.";
+- `fastctx page` publishes an HTML page the user opens in the World app.
+- `fastctx plan` shows this conversation's plan; `fastctx plan --file DRAFT` puts up its next version.
+- `fastctx sense` leaves a sentinel to wait for something and wake you when it happens.";
 
 fn ask_colleague_definition(collab: &fastctx_types::collab::Offered) -> Value {
     let lives = collab.callees.iter().map(|callee| {
