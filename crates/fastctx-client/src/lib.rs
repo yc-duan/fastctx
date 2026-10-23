@@ -20,6 +20,7 @@ pub mod attachments;
 pub mod cache;
 mod collab;
 pub mod composer;
+pub mod goals;
 pub mod conversation;
 mod data;
 pub mod device;
@@ -119,6 +120,7 @@ pub struct Client {
     pub profiles: bool,
     pub account_records: bool,
     pub conversation_plans: bool,
+    pub goal_runtime: bool,
     /// The connected node's facts, including when another starter won.
     pub node_lifetime: Option<Box<fastctx_types::node_lifetime::NodeLifetime>>,
 }
@@ -153,7 +155,7 @@ impl Client {
             .map_err(io_error)?
             .ok_or_else(|| io_error(std::io::ErrorKind::UnexpectedEof.into()))?;
         match serde_json::from_slice::<Welcome>(&welcome).map_err(|error| io_error(std::io::Error::other(error)))? {
-            Welcome::Accepted { machine, version, node_lifetime, profiles, account_records, conversation_plans } => {
+            Welcome::Accepted { machine, version, node_lifetime, profiles, account_records, conversation_plans, goal_runtime } => {
                 Ok(Self {
                     connection,
                     next: 0,
@@ -163,6 +165,7 @@ impl Client {
                     profiles,
                     account_records,
                     conversation_plans,
+                    goal_runtime,
                 })
             }
             Welcome::Refused { reason, mismatch } => {
@@ -282,6 +285,9 @@ impl Client {
         if !self.account_records && matches!(call, Call::AccountRecords { .. } | Call::WatchAccountRecords { .. }) {
             return Err(CallError::Failed(Failure::not_run(fastctx_types::account_records::words::NODE_OLD)));
         }
+        if !self.goal_runtime && matches!(call, Call::Goal { .. } | Call::GoalCommand { .. }) {
+            return Err(CallError::Failed(Failure::not_run(fastctx_types::goals::words::OLDER_NODE)));
+        }
         if !self.profiles
             && matches!(
                 call,
@@ -354,6 +360,9 @@ impl Client {
 
     /// Sends a `Watch` call; the connection carries the watch from then on.
     pub async fn watch(mut self, call: Call) -> Result<Watching, CallError> {
+        if !self.goal_runtime && matches!(call, Call::Watch { goal: Some(_), .. }) {
+            return Err(CallError::Failed(Failure::not_run(fastctx_types::goals::words::OLDER_NODE)));
+        }
         self.next += 1;
         let id = self.next;
         self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;

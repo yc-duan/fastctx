@@ -52,6 +52,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         return Ok(());
     }
     let welcome = Welcome::Accepted {
+        goal_runtime: node.goals.available(),
         profiles: true,
         account_records: true,
         conversation_plans: true,
@@ -102,7 +103,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         if let Call::McpRelay { name } = call {
             return crate::mcp::local::serve(node, &hello.peer, name, id, reader, writer).await;
         }
-        if let Call::Watch { resident, machine, composer, held, now } = call {
+        if let Call::Watch { resident, machine, composer, held, now, goal } = call {
             // Watching a conversation anywhere is the user's, with this
             // computer's logins.
             if let Err(failure) = users_voice(node, &hello.peer) {
@@ -111,7 +112,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             }
             // A watch keeps the connection until one end leaves.
             let opening = tokio::select! {
-                result = crate::talk::watch(node, resident, machine, composer, held, now) => result,
+                result = crate::talk::watch(node, resident, machine, composer, held, now, goal) => result,
                 _ = reader.recv() => return Ok(()),
             };
             let ended = match opening {
@@ -380,7 +381,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                         .then(|| crate::on::sent_for(node, request.job.as_ref()))
                         .flatten();
                     let origin = fastctx_types::on::OnOrigin {
-                        call_id: None,
+                        turn: None, call_id: None,
                         resident,
                         town,
                         request: None,
@@ -840,6 +841,29 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
     }
     active_caller(node, peer)?;
     match call {
+        Call::Goal { resident, machine, account, request } => {
+            users_voice(node, peer)?;
+            crate::goals::calls::user(node, resident, machine, account, request).await
+                .map(|updated| Reply::Goal { updated: Box::new(updated) })
+        }
+        Call::GoalCommand { hub, account, job, request } => {
+            crate::goals::calls::command(node, peer, hub, account, job, request).await
+                .map(|updated| Reply::Goal { updated: Box::new(updated) })
+        }
+        Call::TurnEvidence { resident, turn, refresh_limits } => {
+            users_voice(node, peer)?;
+            let evidence = crate::turn_evidence::snapshot(node, &resident, turn, refresh_limits).await?;
+            let text = crate::turn_evidence::words::render(&evidence, &node.world.conversation(&resident).actions().to_string_lossy());
+            Ok(Reply::TurnEvidence { evidence: Box::new(evidence), text })
+        }
+        Call::CompactBetweenTurns { resident } => {
+            users_voice(node, peer)?;
+            Ok(Reply::Compacted { result: crate::turn_evidence::compact::between_turns(node, &resident).await })
+        }
+        Call::Timer { timer } => {
+            users_voice(node, peer)?;
+            crate::timers::call(node, timer).await
+        }
         Call::ClaudeSessionDirectory { session, previous, cwd, process, conversation } => {
             if !matches!(peer, Peer::Session { host } if host.agent.as_str() == "claude") {
                 users_voice(node, peer)?;
@@ -1519,10 +1543,11 @@ async fn run(
     call_id: Option<&str>,
 ) -> Result<RunReply, Failure> {
     request.call_id = call_id.map(str::to_owned);
+    request.turn = node.residents.now(&resident).and_then(|now| now.turn);
     let (goes_to, request) = crate::here::start(node, request).map_err(|why| unnamed(node, &resident, &why))?;
     let machine = goes_to.as_ref().map(|place| place.name.clone()).unwrap_or_else(|| node.machine());
     if let Some(id) = call_id {
-        crate::run_facts::begin_for(node, &resident, id, machine)
+        crate::run_facts::begin_for(node, &resident, id, machine, request.turn.clone(), &request.script)
             .map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
     }
     let result = run_started(node, resident.clone(), town, request, goes_to, target, call_id).await;
@@ -1551,6 +1576,7 @@ async fn run_started(
     }
     let here = node.machine();
     let script = request.script.clone();
+    let turn = request.turn.clone();
     let started_at = jiff::Timestamp::now();
     // A script of one `on` goes where it names (`world-run.md`, 这里).
     let reply = match (goes_to, request) {
@@ -1567,12 +1593,13 @@ async fn run_started(
         let kept = if let Some(facts) = &reply.run {
             crate::run_facts::keep_reply(node, &resident, id, facts)
         } else {
-            // An older executor supplied no facts; a pending launch is not its outcome.
-            crate::run_facts::discard_unlaunched(node, &resident, id)
+            // Its script and turn remain known, but missing observations are explicit.
+            crate::run_facts::legacy_reply(node, &resident, id, &reply)
         };
         kept.map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
     }
-    let action = crate::jobs::action(&reply, &script, started_at);
+    let mut action = crate::jobs::action(&reply, &script, started_at);
+    action.turn = turn;
     let world = node.world.clone();
     blocking("recording the action", move || crate::residents::record_action(&world, &resident, &action)).await?;
     node.shown_changed();
@@ -1624,6 +1651,7 @@ async fn write(
     node.authorize_here(&acting)?;
     let here = node.machine();
     let started_at = jiff::Timestamp::now();
+    let turn = node.residents.now(&resident).and_then(|now| now.turn);
     let owner = Address { machine: here.clone(), resident: resident.clone() };
     let caller = Caller::Resident(owner.clone());
     let memory = crate::memory::writing::intercept(node, &caller, &op, None, town.as_ref()).await?;
@@ -1635,7 +1663,8 @@ async fn write(
                 .await?
         }
     };
-    let action = crate::write::action(&op, &outcome, &here, started_at);
+    let mut action = crate::write::action(&op, &outcome, &here, started_at);
+    action.turn = turn;
     let world = node.world.clone();
     blocking("recording the action", move || crate::residents::record_action(&world, &resident, &action)).await?;
     node.shown_changed();

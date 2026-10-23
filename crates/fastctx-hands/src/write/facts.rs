@@ -51,7 +51,7 @@ impl Capture {
                     .collect::<Vec<_>>()
                     .join("; ");
                 return Ok(Box::new(WriteFact {
-                    note: None,
+                    turn: None, note: None,
                     id,
                     machine: self.machine.clone(),
                     path: path.to_string_lossy().into_owned(),
@@ -147,7 +147,7 @@ impl Capture {
         output.flush().map_err(|error| error.to_string())?;
         output.get_ref().sync_all().map_err(|error| error.to_string())?;
         Ok(Box::new(WriteFact {
-            note: None,
+            turn: None, note: None,
             id,
             machine: self.machine.clone(),
             path: path.to_string_lossy().into_owned(),

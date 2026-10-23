@@ -159,6 +159,11 @@ pub enum Notice {
 }
 
 impl Notice {
+    /// Explicitly scheduled work resumes even a closed foreground conversation.
+    pub fn wakes_closed(&self) -> bool {
+        matches!(self, Self::Words { from: Speaker::World, .. })
+    }
+
     /// What the World tells when the user changes a conversation's machines
     /// and folders, or its project: it starts no turn, but goes in with the
     /// next one, or into the one running where it next can; told again
@@ -236,6 +241,9 @@ pub struct Now {
     pub since: Timestamp,
     /// The turn running now, as its host named it.
     pub turn: Option<String>,
+    /// The latest settled turn; late settlement of an older turn cannot replace it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_turn: Option<String>,
     /// For each turn running, whose words went into it: each is owed its
     /// end. Once a turn ends, its answers wait in the `outbox` until each
     /// reader's machine has its own.
@@ -386,7 +394,13 @@ pub struct MessageLine {
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum MessageKind {
     /// The request it was born with.
-    Asked { from: Address, text: String },
+    Asked {
+        from: Address,
+        text: String,
+        /// The requester's initiating turn, not the colleague's first turn.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requester_turn: Option<String>,
+    },
     /// Words that went into one of its turns.
     Heard { from: Speaker, turn: Option<String>, text: String },
     /// A turn ended, owed to `owed`.
@@ -432,6 +446,9 @@ pub struct Seen {
 /// One thing the World saw a resident do: one line of its `actions`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Action {
+    /// The initiating conversation turn, captured before the work starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<String>,
     pub at: Timestamp,
     /// Where it happened, which may be another machine than the resident's.
     pub machine: MachineName,

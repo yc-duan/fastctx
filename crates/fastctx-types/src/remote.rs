@@ -32,6 +32,9 @@ pub enum RemoteCall {
     MemoryFolders {
         town: TownName,
     },
+    Goal { resident: ResidentId, request: crate::goals::Request },
+    ConversationDebt { resident: ResidentId, requester: crate::Address },
+    WaitingJobs { owner: crate::Address },
     /// A running job returns its resident's project selection to its home.
     /// This call is relayed and authorized by a hub supporting project entry.
     EnterProject {
@@ -295,6 +298,8 @@ pub enum RemoteCall {
     /// working for the one account named by the call's envelope.
     Ask {
         asker: ResidentId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requester_turn: Option<String>,
         town: Option<TownName>,
         label: String,
         prompt: String,
@@ -367,6 +372,8 @@ pub enum RemoteCall {
     /// connection until the caller closes it, each piece signed by the
     /// machine that holds the session, naming `watch` and numbered from 0.
     Watch {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        goal: bool,
         resident: ResidentId,
         watch: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -503,6 +510,8 @@ impl RemoteCall {
     /// check it.
     pub fn purpose(&self) -> Purpose {
         match self {
+            Self::Goal { request: crate::goals::Request::Read, .. } => Purpose::Look,
+            Self::Goal { .. } => Purpose::Agents,
             Self::EnterProject { .. } | Self::Plan { .. } => Purpose::Echo,
             RemoteCall::PageAction { action: crate::pages::PageInvocation::Say { .. }, .. } => Purpose::Words,
             RemoteCall::ReadAttachment { attachment: crate::attachments::AttachmentSource::Upload(file), .. }
@@ -571,6 +580,8 @@ impl RemoteCall {
             | RemoteCall::ReadAgentLimits { .. }
             | RemoteCall::AgentUsage { .. }
             | RemoteCall::AgentCalls { .. }
+            | RemoteCall::ConversationDebt { .. }
+            | RemoteCall::WaitingJobs { .. }
             | RemoteCall::Look { .. }
             | RemoteCall::Find { .. }
             | RemoteCall::Who { .. }
@@ -590,6 +601,9 @@ pub enum RemoteReply {
         result: crate::plan::Result,
     },
     MemoryFolders(crate::memory::Folders),
+    Goal { updated: Box<crate::goals::Updated> },
+    ConversationDebt { debt: crate::turn_evidence::ConversationDebt },
+    WaitingJobs { jobs: Vec<crate::turn_evidence::WaitHandle> },
     Entered {
         town: TownName,
         map: Box<crate::project::MapView>,

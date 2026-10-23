@@ -83,6 +83,11 @@ pub(crate) fn job(node: &Node, record_path: &Path, writes: Vec<WriteFact>) -> io
         (None, None)
     };
     let update = JobFacts {
+        record: Some(record_path.to_string_lossy().into_owned()),
+        script: Some(record.script.clone()),
+        started_at: Some(record.started_at),
+        finished_at: record.end.as_ref().map(|end| end.at),
+        turn: record.turn.clone(),
         call_id,
         primary: record.on.is_none(),
         output,

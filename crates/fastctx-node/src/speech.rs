@@ -277,7 +277,7 @@ async fn hand_over_locked(
         return landed;
     }
     let mut why = None;
-    if about.world_started
+    if (about.world_started || pending.delivery.notice.wakes_closed())
         && about.host.agent.as_str() == "codex"
         && let Some(thread) = &about.session
     {
@@ -626,10 +626,12 @@ pub async fn bind(
     }
     // A stop asked for while these words were on their way stops the turn
     // they started, now that it is known.
-    if node.stops.started(id, handover.inputs.iter().map(|input| &input.delivery.id)) {
-        let (node, id) = (node.clone(), id.clone());
+    if let Some(source) = node.stops.started(id, handover.inputs.iter().map(|input| &input.delivery.id)) {
+        crate::turn_evidence::remember(node, id, turn, source).map_err(|error| Failure::new(error.to_string()))?;
+        let (node, id, turn) = (node.clone(), id.clone(), turn.to_string());
         tokio::spawn(async move {
-            if let Err(failure) = crate::talk::stop_here(&node, &id).await {
+            if node.residents.now(&id).and_then(|now| now.turn).as_deref() != Some(&turn) { return; }
+            if let Err(failure) = crate::talk::stop_here_as(&node, &id, source).await {
                 node.log.line(format_args!(
                     "stopping {id}'s turn, asked while its words were on their way: {}",
                     failure.message

@@ -74,6 +74,8 @@ pub enum SessionHint {
 pub enum Welcome {
     Accepted {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        goal_runtime: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         profiles: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         account_records: bool,

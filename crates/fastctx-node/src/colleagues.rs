@@ -40,6 +40,7 @@ pub async fn ask(
     login: Option<&fastctx_types::collab::Caller>,
 ) -> Result<Address, Failure> {
     let at = Timestamp::now();
+    let turn = node.residents.now(&asker).and_then(|now| now.turn);
     let (about, _) =
         node.residents.about(&asker).ok_or_else(|| Failure::not_run(format!("no resident {asker} lives here")))?;
     let choices = crate::collab::require(node, &asker, login)?;
@@ -64,7 +65,7 @@ pub async fn ask(
     let here = node.machine();
     let (colleague, account) = match chosen.whose {
         Whose::Account { link, account } => {
-            let request = Request { about: &about, town: town.as_ref(), label: label.clone(), prompt };
+            let request = Request { about: &about, turn: turn.clone(), town: town.as_ref(), label: label.clone(), prompt };
             let colleague = ask_for_account(node, &link, &account, chosen.started, request).await?;
             (colleague, Some(fastctx_types::access::HubAccount { hub: link.membership().id.clone(), account }))
         }
@@ -72,12 +73,12 @@ pub async fn ask(
         // here, for whoever this computer's sessions work for.
         Whose::Computer => {
             let address = Address { machine: here.clone(), resident: asker.clone() };
-            let id = ask_here(node, address, Acting::Here, town.clone(), label.clone(), prompt, chosen.started).await?;
+            let id = ask_here(node, Requester { address, turn: turn.clone() }, Acting::Here, town.clone(), label.clone(), prompt, chosen.started).await?;
             (Address { machine: here, resident: id }, None)
         }
     };
     let action = Action {
-        at,
+        turn, at,
         machine: colleague.machine.clone(),
         hand: "ask_colleague".to_string(),
         what: label,
@@ -93,6 +94,7 @@ pub async fn ask(
 /// What a resident asks of a colleague.
 struct Request<'a> {
     about: &'a About,
+    turn: Option<String>,
     town: Option<&'a TownName>,
     label: String,
     prompt: String,
@@ -129,12 +131,13 @@ async fn ask_for_account(
     if link.view().is_me(&machine) {
         let acting = Acting::one(link.membership().id.clone(), account.clone());
         let address = Address { machine: here.clone(), resident: request.about.id.clone() };
-        let id = ask_here(node, address, acting, call_town, request.label, request.prompt, started).await?;
+        let id = ask_here(node, Requester { address, turn: request.turn }, acting, call_town, request.label, request.prompt, started).await?;
         return Ok(Address { machine: here, resident: id });
     }
     let lives_on = node.written(link, &machine);
     let call = RemoteCall::Ask {
         asker: request.about.id.clone(),
+        requester_turn: request.turn,
         town: call_town,
         label: request.label,
         prompt: request.prompt,
@@ -155,19 +158,26 @@ async fn ask_for_account(
     }
 }
 
+/// A request keeps its sender's turn while another host is being started.
+pub(crate) struct Requester {
+    pub address: Address,
+    pub turn: Option<String>,
+}
+
 /// Starts a colleague on this machine for `asker`, which may live on
 /// another, with `prompt` as its first words. Returns its id once its
 /// thread exists; the words go in after, as its tools may take a while to
 /// start.
 pub async fn ask_here(
     node: &Arc<Node>,
-    asker: Address,
+    requester: Requester,
     acting: Acting,
     town: Option<TownName>,
     label: String,
     prompt: String,
     started: fastctx_types::collab::Started,
 ) -> Result<ResidentId, Failure> {
+    let Requester { address: asker, turn: requester_turn } = requester;
     node.residents
         .set_departed(&node.world, &asker, false, None)
         .map_err(|error| Failure::not_run(format!("recording that {asker} returned: {error}")))?;
@@ -233,6 +243,7 @@ pub async fn ask_here(
         activity: Activity::Busy,
         since: born_at,
         turn: None,
+        last_turn: None,
         owed: Default::default(),
         answering: vec![asker.clone()],
         trouble: None,
@@ -257,7 +268,7 @@ pub async fn ask_here(
     node.residents.set_instructed(&id, heard);
     crate::codex::claim(node, &thread, &id).await;
     let directory = node.world.conversation(&id);
-    let asked = MessageLine { at: born_at, what: MessageKind::Asked { from: asker.clone(), text: prompt.clone() } };
+    let asked = MessageLine { at: born_at, what: MessageKind::Asked { from: asker.clone(), text: prompt.clone(), requester_turn } };
     if let Err(error) = crate::residents::append_message(&directory, &asked) {
         node.log.line(format_args!("recording what {id} was asked: {error}"));
     }
@@ -469,6 +480,7 @@ pub async fn message(
     let choices = crate::collab::require(node, &from, login)?;
     let here = node.machine();
     let at = Timestamp::now();
+    let turn = node.residents.now(&from).and_then(|now| now.turn);
     let machine = match to_machine {
         Some(machine) => machine,
         None => locate(node, &from, &to).await?,
@@ -518,7 +530,7 @@ pub async fn message(
         Landed::Uncertain { why } => format!("acceptance unknown: {why}"),
     };
     let action = Action {
-        at,
+        turn, at,
         machine: to.machine.clone(),
         hand: "message_colleague".to_string(),
         what: to.resident.to_string(),

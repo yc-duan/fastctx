@@ -63,7 +63,7 @@ fn exercise() -> Result {
     let owner = Address { machine: machine.clone(), resident: "lab-cafe".parse()? }.into();
     let environment = environment(&root, &bash);
     let request =
-        RunRequest { call_id: None, script: String::new(), cwd: Some(display(&root)), writes_off: false, wait: None };
+        RunRequest { turn: None, call_id: None, script: String::new(), cwd: Some(display(&root)), writes_off: false, wait: None };
     let names = Names { me: machine.clone(), was: Vec::new(), renamed: Vec::new() };
     let launch = run::Launch {
         world: &world,
@@ -91,7 +91,7 @@ fn exercise() -> Result {
         let (gate, address) = new_gate()?;
         let script =
             format!("exec 3<&0\n{} child {address} <&3 &\ncat {}\nexit 17\n", quote(&executable), quote(&input));
-        let request = RunRequest { call_id: None, script, cwd: Some(display(&root)), writes_off: false, wait: None };
+        let request = RunRequest { turn: None, call_id: None, script, cwd: Some(display(&root)), writes_off: false, wait: None };
         let launch = run::Launch { request: &request, ..launch };
         let job = run::launch_with_io(&launch, OutputMode::Separate, Some(&input))?;
         let (mut child, identity) = arrived(&gate, &job).await?;
@@ -113,7 +113,7 @@ fn exercise() -> Result {
         println!("separate stdout/stderr, binary stdin and post-main output: passed");
 
         let request = RunRequest {
-            call_id: None,
+            turn: None, call_id: None,
             script: "printf out; printf err >&2; cat\n".into(),
             cwd: Some(display(&root)),
             writes_off: false,
@@ -133,7 +133,7 @@ fn exercise() -> Result {
             let (gate, address) = new_gate()?;
             let script = format!("(exec {} child {address}) &\nexit 23\n", quote(&executable));
             let request =
-                RunRequest { call_id: None, script, cwd: Some(display(&root)), writes_off: false, wait: None };
+                RunRequest { turn: None, call_id: None, script, cwd: Some(display(&root)), writes_off: false, wait: None };
             let launch = run::Launch { request: &request, ..launch };
             let mode = if separate { OutputMode::Separate } else { OutputMode::Merged };
             let job = run::launch_with_io(&launch, mode, None)?;
@@ -168,7 +168,7 @@ fn exercise() -> Result {
 
         let (gate, address) = new_gate()?;
         let request = RunRequest {
-            call_id: None,
+            turn: None, call_id: None,
             script: format!("exec {} child {address}\n", quote(&executable)),
             cwd: Some(display(&root)),
             writes_off: false,
@@ -192,7 +192,7 @@ fn exercise() -> Result {
         {
             let (gate, address) = new_gate()?;
             let request = RunRequest {
-                call_id: None,
+                turn: None, call_id: None,
                 script: format!("exec {} child {address}\n", quote(&executable)),
                 cwd: Some(display(&root)),
                 writes_off: false,
@@ -229,6 +229,7 @@ async fn node(mut listener: Listener, world: WorldDir, machine: MachineName, not
         connection
             .send(
                 &serde_json::to_vec(&Welcome::Accepted {
+                    goal_runtime: false,
                     profiles: false,
                     account_records: false,
                     conversation_plans: false,

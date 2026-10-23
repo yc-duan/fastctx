@@ -846,7 +846,7 @@ async fn ended_for_process(
         };
         let end = fastctx_types::session::TurnEnd {
             facts: None,
-            error: None,
+            error: Some(serde_json::json!({"world":"host_exited"})),
             how: fastctx_types::session::TurnHow::Interrupted,
             reason: Some(why),
             duration_ms: None,
@@ -884,13 +884,13 @@ async fn ended_for_process(
 }
 
 /// Asks the paired mod to stop this resident's current turn.
-pub fn stop(node: &Node, resident: &ResidentId) -> Result<bool, Failure> {
+pub fn stop(node: &Node, resident: &ResidentId, turn: &str) -> Result<bool, Failure> {
     let session: String = node.claude.state.lock().expect("never poisoned").paired.get(resident).ok_or_else(|| {
         Failure::new(format!("{resident}'s session has not been heard from the World's plugin, which is what stops it"))
     })?;
-    let Some(turn) = node.residents.now(resident).and_then(|now| now.turn) else { return Ok(false) };
+    if node.residents.now(resident).and_then(|now| now.turn).as_deref() != Some(turn) { return Ok(false); }
     let directory = exchange::sessions(node.world.path()).join(&session);
-    exchange::stop(&directory, &turn).map_err(|error| Failure::new(format!("asking its plugin to stop: {error}")))?;
+    exchange::stop(&directory, turn).map_err(|error| Failure::new(format!("asking its plugin to stop: {error}")))?;
     Ok(true)
 }
 
@@ -1113,8 +1113,8 @@ pub async fn deliver(
     }
     let user_action =
         matches!(pending.delivery.notice, Notice::Words { from: Speaker::User { .. }, .. } | Notice::Attached { .. });
-    if !about.world_started && !stopped_background && !user_action {
-        // Facts wait for a closed foreground session; only the user resumes it.
+    if !about.world_started && !stopped_background && !user_action && !pending.delivery.notice.wakes_closed() {
+        // Unscheduled facts wait for a closed foreground session.
         return Some(into_inbox(node, to, &session, directory, pending));
     }
     Some(match alive {
@@ -1472,6 +1472,7 @@ pub async fn open_here(
         activity: Activity::Busy,
         since: born_at,
         turn: None,
+        last_turn: None,
         owed: Default::default(),
         answering: Vec::new(),
         trouble: None,

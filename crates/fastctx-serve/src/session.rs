@@ -249,7 +249,7 @@ impl Session {
                         .map(str::to_string)
                 }),
                 resident: whereabouts.resident.clone(),
-                request: RunRequest { call_id: None, script: command, cwd, writes_off: self.writes_off, wait },
+                request: RunRequest { turn: None, call_id: None, script: command, cwd, writes_off: self.writes_off, wait },
                 node: None,
             };
             // The node records failures after accepting Run; the one-use host

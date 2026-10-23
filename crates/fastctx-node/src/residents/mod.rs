@@ -874,6 +874,7 @@ impl Residents {
                 // Words may meanwhile have started the next turn, whose state
                 // stands.
                 if current {
+                    now.last_turn = Some(turn.to_string());
                     now.turn = None;
                     now.waiting_for_user = false;
                     now.waiting_since = None;
@@ -1010,6 +1011,7 @@ pub fn idle(since: Timestamp) -> Now {
         activity: Activity::Idle,
         since,
         turn: None,
+        last_turn: None,
         owed: BTreeMap::new(),
         answering: Vec::new(),
         trouble: None,

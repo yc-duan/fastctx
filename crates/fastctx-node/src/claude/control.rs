@@ -89,6 +89,19 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
     }
 }
 
+/// Reads the running host's current local summary, without waking a closed session.
+pub(crate) async fn usage_now(node: &Arc<Node>, resident: &ResidentId) -> Result<Value, Failure> {
+    if !running(node, resident)? { return Err(Failure::new("the Claude session is not running")); }
+    invoke(node, resident, json!({"do":"usage"})).await
+}
+
+/// The goal's compaction respects the host's automatic compaction setting.
+pub(crate) async fn goal_compact(node: &Arc<Node>, resident: &ResidentId) -> Result<Controlled, Failure> {
+    super::resume::ready(node, resident).await?;
+    let result = invoke_action(node, resident, json!({"do":"goal_compact"})).await?;
+    serde_json::from_value(result).map_err(|error| Failure::new(format!("Claude compaction reply: {error}")))
+}
+
 /// How long a running session's mod is given to say what it offers.
 const OFFERS_WITHIN: std::time::Duration = std::time::Duration::from_secs(5);
 

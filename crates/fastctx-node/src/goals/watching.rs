@@ -1,0 +1,111 @@
+//! Account changes are observed at the conversation's home, including changes made by its remote jobs.
+
+use super::{operations, records::Changed, scope};
+use crate::Node;
+use fastctx_types::access::{Acting, HubAccount};
+use fastctx_types::ipc::Failure;
+use fastctx_types::{Address, ResidentId};
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
+pub(crate) fn start(node: &Arc<Node>) {
+    let node = node.clone();
+    tokio::spawn(async move {
+        let mut views = node.views.subscribe();
+        let mut residents = node.residents.changes();
+        loop {
+            let mut accounts = BTreeSet::new();
+            for link in node.links() {
+                for account in node.accounts_on(&link, &Acting::Here) {
+                    accounts.insert(HubAccount { hub: link.membership().id.clone(), account });
+                }
+            }
+            for record in node.residents.everyone() {
+                if let Acting::Accounts { accounts: serving } = record.about.acting {
+                    accounts.extend(serving);
+                }
+            }
+            for account in accounts {
+                if node.goals.watching.lock().expect("goal watches").insert(account.clone()) {
+                    let node = node.clone();
+                    tokio::spawn(async move { follow(node, account).await });
+                }
+            }
+            tokio::select! {
+                result = views.changed() => { if result.is_err() { return; } },
+                result = residents.changed() => { if result.is_err() { return; } },
+            }
+        }
+    });
+}
+
+async fn follow(node: Arc<Node>, account: HubAccount) {
+    let mut again = crate::again::Again::default();
+    let mut previous = None;
+    loop {
+        let result = consume(&node, &account).await;
+        if let Err(error) = result
+            && previous.as_ref() != Some(&error.message)
+        {
+            node.log.line(format_args!("watching account goals: {}", error.message));
+            previous = Some(error.message);
+        }
+        tokio::time::sleep(again.next()).await;
+    }
+}
+
+async fn consume(node: &Arc<Node>, account: &HubAccount) -> Result<(), Failure> {
+    let mut changes = operations::bounded(node.goals.records.watch(account, operations::KIND)).await?;
+    let rows = operations::bounded(node.goals.records.list(account, operations::KIND)).await?;
+    for row in rows {
+        refresh(node, account, row).await?;
+    }
+    let pinned: Vec<_> = node.residents.everyone().map(|record| record.about.id).collect();
+    for resident in pinned {
+        if scope::pinned(node, &resident)?.as_ref() == Some(account) {
+            refresh(node, account, Changed { key: resident.to_string(), version: 0 }).await?;
+        }
+    }
+    loop {
+        for row in changes.next().await? {
+            refresh(node, account, row).await?;
+        }
+    }
+}
+
+async fn refresh(node: &Arc<Node>, account: &HubAccount, row: Changed) -> Result<(), Failure> {
+    let Ok(resident) = row.key.parse::<ResidentId>() else { return Ok(()) };
+    if !node.residents.knows(&resident) {
+        return Ok(());
+    }
+    if scope::pinned(node, &resident)?.is_some_and(|pinned| &pinned != account) {
+        return Ok(());
+    }
+    if row.version != 0
+        && node
+            .goals
+            .views
+            .lock()
+            .expect("goal views")
+            .get(&resident)
+            .is_some_and(|view| &view.account == account && view.version.is_some_and(|version| version >= row.version))
+    {
+        return Ok(());
+    }
+    let gate = crate::control_queue::gate(node, &resident);
+    let _action = gate.lock().await;
+    let _place = node.places.using(resident.as_str()).await;
+    let Some((about, _)) = node.residents.about(&resident) else { return Ok(()) };
+    if !node.serves(&about.acting, &account.hub, &account.account)
+        || scope::pinned(node, &resident)?.is_some_and(|pinned| &pinned != account)
+    {
+        return Ok(());
+    }
+    let address = Address { machine: node.machine(), resident: resident.clone() };
+    let view = operations::read(node, &address, account).await?;
+    if view.goal.is_none() && scope::pinned(node, &resident)?.is_none() {
+        return Ok(());
+    }
+    scope::keep(node, &resident, account).map_err(|error| Failure::new(error.to_string()))?;
+    operations::apply(node, &resident, &view).await
+}

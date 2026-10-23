@@ -432,7 +432,7 @@ async fn drain(node: &Arc<Node>, thread: &str) {
                             turn,
                             end: fastctx_types::session::TurnEnd {
                                 facts: facts.map(Box::new),
-                                error: None,
+                                error: Some(serde_json::json!({"world":"host_exited"})),
                                 how: fastctx_types::session::TurnHow::Interrupted,
                                 reason: Some(format!("its app-server stopped ({how})")),
                                 duration_ms: None,

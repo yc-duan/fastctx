@@ -173,6 +173,9 @@ pub const SILENT_FOR: std::time::Duration = std::time::Duration::from_secs(30);
 /// Where an `on` was sent from, as the machine running it records it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OnOrigin {
+    /// The initiating conversation turn, captured before the work starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub call_id: Option<String>,
     /// The resident that wrote the `on`, at the machine it lives on; the

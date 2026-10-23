@@ -15,7 +15,7 @@ pub struct Fixtures {
 
 pub fn example() -> RunFacts {
     RunFacts {
-        notes: vec![OutputNoteMatch {
+        turn: None, record: None, notes: vec![OutputNoteMatch {
             note: OutputNote { command: NoteCommand::Write, write: Some("00112233445566778899aabbccddeeff".into()) },
             from: 0,
             to: 42,
@@ -37,7 +37,7 @@ pub fn example() -> RunFacts {
             .into_iter()
             .enumerate()
             .map(|(i, kind)| WriteFact {
-                note: Some(if i == 0 {
+                turn: None, note: Some(if i == 0 {
                     WriteNote::Text {
                         command: NoteCommand::Write,
                         text: "=== write /work/file on gpu (created) ===\n".into(),
@@ -183,7 +183,8 @@ pub fn fixtures() -> Fixtures {
             },
         ],
         updates: vec![JobFacts {
-            notes: None,
+            record: None, script: None, started_at: None, finished_at: None,
+            turn: None, notes: None,
             call_id: "host-call-1".into(),
             primary: true,
             output: example().output,

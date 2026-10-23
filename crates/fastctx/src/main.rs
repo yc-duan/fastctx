@@ -44,6 +44,9 @@ mod service;
 mod service_local_network;
 mod stop;
 mod talk;
+mod timer;
+mod goal;
+mod turn_facts;
 mod uninstall;
 mod update;
 mod view;
@@ -91,6 +94,12 @@ enum Command {
     /// Open the World in this terminal: projects, agents, machines, and a
     /// conversation with any agent on any machine.
     Ui,
+    #[command(hide = true)]
+    Timer(timer::TimerArgs),
+    /// Read or mark this conversation's goal.
+    Goal(goal::GoalArgs),
+    #[command(hide = true)]
+    TurnFacts(turn_facts::TurnFactsArgs),
     #[command(hide = true)]
     HostChange(host_change::HostChangeArgs),
     /// Identifies the process invoking the World mod helper.
@@ -445,6 +454,9 @@ fn main() -> ExitCode {
     }
     let result = match command {
         Command::Ui => ui(),
+        Command::Timer(args) => timer::run(args),
+        Command::Goal(args) => goal::run(args),
+        Command::TurnFacts(args) => turn_facts::run(args),
         Command::HostChange(args) => host_change::run(args),
         Command::ParentProcess => parent_process(),
         Command::ClaudeSubagents { world, session } => claude_subagents::run(&world, session),

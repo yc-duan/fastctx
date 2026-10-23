@@ -238,6 +238,13 @@ async function controlReply($, state, file, request) {
 
 async function controlExecute($, state, control) {
   if (state.closed) throw new Error('this Claude conversation ended')
+  if (control.do === 'usage') return $.session.usage({ breakdown: 'summary' })
+  if (control.do === 'goal_compact') {
+    const automatic = (await $.config.list()).find((row) => row.key === 'autoCompact')
+    if (!automatic) return { kind: 'refused', said: 'Claude did not report its automatic compaction setting.' }
+    if (automatic.value === false) return { kind: 'refused', said: 'Automatic compaction is disabled.' }
+    return controlCompact($, state)
+  }
   if (control.do === 'offers') {
     const commands = await controlCatalog($, state)
     const rows = await $.config.list()

@@ -56,6 +56,11 @@ pub enum Call {
         account: Option<crate::AccountName>,
         enabled: Option<bool>,
     },
+    Goal { resident: ResidentId, machine: Option<crate::access::Written>, account: Option<crate::access::HubAccount>, request: crate::goals::Request },
+    GoalCommand { hub: Option<crate::HubName>, account: Option<crate::AccountName>, job: Option<crate::JobId>, request: crate::goals::AgentRequest },
+    Timer { timer: crate::timers::TimerCall },
+    TurnEvidence { resident: ResidentId, turn: Option<String>, refresh_limits: bool },
+    CompactBetweenTurns { resident: ResidentId },
     /// The selected account's machine changes, before a previous page's
     /// cursor when supplied. The hub checks visibility on every read.
     MachineLog {
@@ -492,6 +497,8 @@ pub enum Call {
     /// and then each event as it happens, for as long as the connection
     /// stays open.
     Watch {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        goal: Option<crate::access::HubAccount>,
         resident: ResidentId,
         machine: Option<Written>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -760,6 +767,10 @@ pub enum Reply {
     },
     Memory(crate::memory::MemoryReply),
     MemorySettings(crate::memory::Settings),
+    Goal { updated: Box<crate::goals::Updated> },
+    Timers { timers: Vec<crate::timers::Timer> },
+    TurnEvidence { evidence: Box<crate::turn_evidence::TurnEvidence>, text: String },
+    Compacted { result: crate::turn_evidence::Compacted },
     /// The HTTP proxy chosen in Fastctx, if one is (`Call::HubProxy`).
     HubProxy {
         url: Option<String>,

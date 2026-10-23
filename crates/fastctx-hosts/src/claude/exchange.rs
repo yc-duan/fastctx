@@ -234,6 +234,8 @@ enum ModEvent {
         aborted: bool,
         reason: Option<String>,
         refusal: Option<Refusal>,
+        #[serde(default)]
+        error: Option<Value>,
         ms: Option<u64>,
         answer: Option<String>,
         #[serde(default)]
@@ -499,7 +501,7 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
         }
         ModEvent::Uncertain { deliveries, text } => vec![Reported::Uncertain { ids: deliveries, text }],
         ModEvent::TurnStart { turn, at } => vec![happened(at, Happened::TurnStarted { turn: turn_of(turn) })],
-        ModEvent::TurnComplete { turn, at, aborted, reason, refusal, ms, answer, streamed, spent } => {
+        ModEvent::TurnComplete { turn, at, aborted, reason, refusal, error, ms, answer, streamed, spent } => {
             let turn = turn_of(turn);
             let mut reported = Vec::new();
             // Legacy mod reports had no completed blocks. Never manufacture
@@ -514,7 +516,11 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
                 };
                 reported.push(happened(at, Happened::Finished { turn: turn.clone(), item }));
             }
+            let error = error.or_else(|| refusal.as_ref().map(|refusal| serde_json::json!({
+                "category": refusal.category.as_deref().unwrap_or("refusal"), "message": refusal.explanation,
+            })));
             let how = match reason.as_deref() {
+                _ if error.is_some() => TurnHow::Failed,
                 Some("answer") => TurnHow::Completed,
                 Some("aborted") => TurnHow::Interrupted,
                 Some("refusal" | "error") => TurnHow::Failed,
@@ -541,7 +547,8 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
             let facts = spent
                 .and_then(Usd::from_dollars)
                 .map(|cost| Box::new(TurnFacts { cost: Some(cost), ..TurnFacts::default() }));
-            let end = TurnEnd { facts, error: None, how, reason, duration_ms: ms, last_message: answer };
+            let reason = error.as_ref().and_then(|error| error["message"].as_str()).map(str::to_owned).or(reason);
+            let end = TurnEnd { facts, error, how, reason, duration_ms: ms, last_message: answer };
             reported.push(happened(at, Happened::TurnEnded { turn, end }));
             reported
         }

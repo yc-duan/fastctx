@@ -121,6 +121,7 @@ fn reached<'a>(node: &Node, call: &'a Call) -> Option<&'a ResidentId> {
         Call::Talk { to: resident, machine, .. }
         | Call::Message { to: resident, machine, .. }
         | Call::Watch { resident, machine, .. }
+        | Call::Goal { resident, machine, .. }
         | Call::Composer { resident, machine, .. }
         | Call::Stop { resident, machine }
         | Call::Control { resident, machine, .. }
@@ -133,7 +134,9 @@ fn reached<'a>(node: &Node, call: &'a Call) -> Option<&'a ResidentId> {
             Some(resident)
         }
         Call::Forget { resident, machine } if node.is_here(machine) => Some(resident),
-        Call::Attach { resident } => Some(resident),
+        Call::Attach { resident }
+        | Call::TurnEvidence { resident, .. }
+        | Call::CompactBetweenTurns { resident } => Some(resident),
         Call::Upload { target, node: machine, .. } => {
             let machine = match target {
                 UploadTarget::Sent { machine, .. } => Some(machine),

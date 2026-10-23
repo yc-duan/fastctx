@@ -13,6 +13,9 @@ use crate::{Address, JobId, MachineName, ProcessIdentity, TownName};
 /// A resident's request to run a bash script.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunRequest {
+    /// The initiating conversation turn, captured before the work starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub call_id: Option<String>,
     /// The script exactly as the resident wrote it.
@@ -217,6 +220,9 @@ impl RunHead {
 /// The record of one job, kept at `jobs/<id>.json`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobRecord {
+    /// The initiating conversation turn, captured before the work starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub call_id: Option<String>,
     pub id: JobId,

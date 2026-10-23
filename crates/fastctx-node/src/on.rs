@@ -175,14 +175,15 @@ pub(crate) fn sent_for(node: &Node, job: Option<&JobId>) -> Option<fastctx_types
 /// the returned channel until its end or a failure; dropping the channel
 /// before the end stops the job.
 pub async fn send(node: &Arc<Node>, mut origin: OnOrigin, request: OnRequest) -> Result<OnFollowing, Failure> {
-    origin.call_id = if let Some(job) = &request.job {
+    if let Some(job) = &request.job {
         let path = node.world.owner(&node.names(), &origin.resident).job_record(job);
-        fastctx_hands::run::record::read(&path)
-            .map_err(|error| Failure::new(format!("reading the on's job: {error}")))?
-            .call_id
-    } else {
-        None
-    };
+        let record = fastctx_hands::run::record::read(&path)
+            .map_err(|error| Failure::new(format!("reading the on's job: {error}")))?;
+        origin.call_id = record.call_id;
+        origin.turn = record.turn;
+    } else if node.is_me(&origin.resident.machine) {
+        origin.turn = node.residents.now(&origin.resident.resident).and_then(|now| now.turn);
+    }
     origin.request = Some(crate::speech::new_id("on"));
     origin.follower = Some(node.machine());
     let (pieces, receiver) = mpsc::channel(QUEUED_PIECES);
@@ -673,7 +674,7 @@ async fn requested(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest) -> 
         return Ok(());
     }
     let action = Action {
-        at: jiff::Timestamp::now(),
+        turn: origin.turn.clone(), at: jiff::Timestamp::now(),
         machine: request.machine.clone(),
         hand: "on".to_string(),
         what: "sending a script".to_string(),
@@ -705,7 +706,7 @@ async fn requested(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest) -> 
 async fn noted(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, job: &JobId) -> Result<(), Failure> {
     let here = node.names();
     let action = Action {
-        at: jiff::Timestamp::now(),
+        turn: origin.turn.clone(), at: jiff::Timestamp::now(),
         machine: request.machine.clone(),
         hand: "on".to_string(),
         what: job.to_string(),
@@ -1135,7 +1136,7 @@ async fn start(
         account: origin.account.clone(),
         piped,
     };
-    let request = RunRequest { call_id: origin.call_id.clone(), script, cwd: None, writes_off, wait: None };
+    let request = RunRequest { turn: origin.turn.clone(), call_id: origin.call_id.clone(), script, cwd: None, writes_off, wait: None };
     let owner = JobOwner::Resident(origin.resident.clone());
     let registration = Arc::new(Mutex::new(None));
     let launched = node

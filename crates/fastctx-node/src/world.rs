@@ -570,6 +570,8 @@ pub fn facts(node: &Node) -> MachineFacts {
         path.map(|path| native(&path)).unwrap_or_else(|error| format!("(not known: {error})"))
     };
     MachineFacts {
+        turn_debts: true,
+        goal_runtime: node.goals.available(),
         name: node.machine(),
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
@@ -841,11 +843,11 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(|record| RemoteReply::JobStopped { record: record.map(Box::new) })
                 }
-                RemoteCall::Ask { asker: resident, town, label, prompt, started } => {
+                RemoteCall::Ask { asker: resident, requester_turn, town, label, prompt, started } => {
                     let acting = Acting::one(hub.clone(), caller.account.clone());
                     let asker = Address { machine: from, resident };
                     let colleague =
-                        crate::colleagues::ask_here(&node, asker, acting, town, label, prompt, started).await?;
+                        crate::colleagues::ask_here(&node, crate::colleagues::Requester { address: asker, turn: requester_turn }, acting, town, label, prompt, started).await?;
                     Ok(RemoteReply::Asked { colleague })
                 }
                 RemoteCall::Talk { to, text, attachments, files_on, id } => {
@@ -853,10 +855,10 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(|landed| RemoteReply::Said { landed })
                 }
-                RemoteCall::Watch { resident, watch, composer, held, now } => {
+                RemoteCall::Watch { resident, watch, composer, held, now, goal } => {
                     let stream = stream
                         .ok_or_else(|| Failure::new("a watch comes with a data connection, and this one had none"))?;
-                    crate::talk::serve_watch(&node, &link, &from, resident, watch, composer, held, now, stream).await
+                    crate::talk::serve_watch(&node, &asker, &link, &from, resident, watch, composer, held, now, goal, stream).await
                 }
                 RemoteCall::Agents => crate::agents::here(&node)
                     .await
@@ -969,6 +971,16 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::Offers { resident } => crate::control::offers_here(&node, &resident)
                     .await
                     .map(|offers| RemoteReply::Offers(Box::new(crate::admission::seen::offers(&asker, offers)))),
+                RemoteCall::WaitingJobs { owner } => {
+                    crate::turn_evidence::waiting::jobs_here(&node, &owner, Some(&asker))
+                        .map(|jobs| RemoteReply::WaitingJobs { jobs })
+                        .map_err(|error| Failure::new(error.to_string()))
+                }
+                RemoteCall::ConversationDebt { resident, requester } => {
+                    crate::turn_evidence::debts::here(&node, &resident, &requester)
+                        .map(|debt| RemoteReply::ConversationDebt { debt })
+                        .map_err(|error| Failure::new(error.to_string()))
+                }
                 RemoteCall::Look { id } => {
                     let (looked, mut jobs) = crate::look::look_here(&node, &id).await?;
                     jobs.retain(|job| crate::admission::seen::job(&node, &asker, job));
@@ -1013,6 +1025,11 @@ impl fastctx_net::link::Node for Handler {
                     crate::town::enter::here(&node, &resident, &town, Some(&account))
                         .await
                         .map(|map| RemoteReply::Entered { town, map: Box::new(map) })
+                }
+                RemoteCall::Goal { resident, request } => {
+                    let account = fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
+                    crate::goals::calls::user_here(&node, resident, account, from, request).await
+                        .map(|updated| RemoteReply::Goal { updated: Box::new(updated) })
                 }
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&node))),
                 RemoteCall::AttachmentReferences { conversation, attachments } => {

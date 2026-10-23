@@ -173,7 +173,7 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
             let account = source.identity.as_ref().and_then(super::identity::account);
             let owner = fastctx_types::run::JobOwner::Page { page: source };
             let request =
-                fastctx_types::run::RunRequest { call_id: None, script, cwd: None, writes_off: false, wait: None };
+                fastctx_types::run::RunRequest { turn: None, call_id: None, script, cwd: None, writes_off: false, wait: None };
             let (reply, _) = node.jobs.run(node, owner, town, request, account).await?;
             Ok(PageResult::Run(Box::new(reply)))
         }

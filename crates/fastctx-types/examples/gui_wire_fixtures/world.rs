@@ -116,6 +116,7 @@ fn residents() -> Vec<ResidentNow> {
                 activity,
                 since: at(),
                 turn: (i == 0).then(|| "turn-1".into()),
+                last_turn: None,
                 owed: if i == 0 { BTreeMap::from([("turn-1".into(), vec![address()])]) } else { BTreeMap::new() },
                 answering: if i == 0 { vec![address()] } else { vec![] },
                 trouble: (i == 2).then(|| Trouble { at: at(), text: "host disconnected".into() }),
@@ -149,7 +150,7 @@ fn residents() -> Vec<ResidentNow> {
                 },
             }),
             last_action: (i == 0).then(|| Action {
-                at: at(),
+                turn: None, at: at(),
                 machine: machine(),
                 hand: "run".into(),
                 what: "pwd".into(),
@@ -289,6 +290,7 @@ fn nodes() -> Vec<NodesReply> {
         ms: Some(41),
     });
     let facts = |name: &str, os: &str, lifetime: bool| MachineFacts {
+        turn_debts: false, goal_runtime: false,
         name: name.parse().unwrap(),
         os: os.into(),
         arch: if os == "windows" { "x86_64".into() } else { "aarch64".into() },

@@ -10,6 +10,11 @@ use crate::usage::Usd;
 /// means the host did not report that fact; it does not mean a default.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnFacts {
+    /// The World's observations, independent of the host's token accounting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world_started_at: Option<jiff::Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world_last_activity_at: Option<jiff::Timestamp>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -65,7 +70,9 @@ pub enum TurnTokens {
 
 impl TurnFacts {
     pub fn is_empty(&self) -> bool {
-        self.models.is_empty()
+        self.world_started_at.is_none()
+            && self.world_last_activity_at.is_none()
+            && self.models.is_empty()
             && self.efforts.is_empty()
             && self.tokens.is_none()
             && self.cost.is_none()

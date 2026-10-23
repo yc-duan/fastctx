@@ -213,6 +213,11 @@ impl Device {
         // chose one.
         let mut chosen = None;
         let (machine, remote, resident) = match call {
+            Call::Goal { resident, machine, account, request } => {
+                chosen = account;
+                let machine = self.find(&resident, machine).await?;
+                (machine, RemoteCall::Goal { resident: resident.clone(), request }, Some(resident))
+            }
             Call::Composer { resident, machine, request } => {
                 let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::Composer { resident: resident.clone(), request }, Some(resident))
@@ -418,6 +423,13 @@ impl Device {
             }
             None => session.account_for(&machine, purpose)?,
         };
+        if matches!(&remote, RemoteCall::Goal { .. }) {
+            if !session.link.view().goal_control { return Err(failed(fastctx_types::goals::words::OLDER_HUB)); }
+            let facts = session.link.call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts).await.map_err(failed)?.map_err(failed)?;
+            if !matches!(facts, RemoteReply::Facts(facts) if facts.goal_runtime) {
+                return Err(failed(fastctx_types::goals::words::OLDER_NODE));
+            }
+        }
         let needs_profile = match &remote {
             RemoteCall::Manage { action: fastctx_types::management::Management::Mcp { .. }, .. } => true,
             RemoteCall::Open { mcp_off, .. } => {
@@ -447,6 +459,7 @@ impl Device {
         .map_err(failed)?;
         let address = resident.map(|resident| Address { machine: machine.clone(), resident });
         let reply = match (remote, answer) {
+            (RemoteCall::Goal { .. }, RemoteReply::Goal { updated }) => Reply::Goal { updated },
             (RemoteCall::Composer { .. }, RemoteReply::Composer(updated)) => Reply::Composer(updated),
             (RemoteCall::FindFiles { .. }, RemoteReply::FilesFound(reply)) => Reply::FilesFound(reply),
             (RemoteCall::Folders { .. }, RemoteReply::Folders(folders)) => Reply::Folders(folders),

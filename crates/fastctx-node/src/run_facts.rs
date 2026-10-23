@@ -4,7 +4,7 @@ mod log;
 mod storage;
 mod updates;
 pub(crate) use storage::{
-    begin as begin_for, discard_unlaunched, failed as failed_for, receive, record_failure, stamp,
+    begin as begin_for, evidence, evidence_all, failed as failed_for, job_updates, legacy_reply, receive, record_failure, stamp,
 };
 pub(crate) use updates::job as update_job;
 
@@ -88,6 +88,8 @@ pub(crate) fn assemble(reply: &RunReply, record: &Path) -> io::Result<RunFacts> 
     }
     let (spans, notes) = fastctx_hands::run::projection::read_with_matches(&reply.output, &writes)?;
     Ok(RunFacts {
+        turn: fastctx_hands::run::record::read(record)?.turn,
+        record: Some(record.to_string_lossy().into_owned()),
         machine: reply.machine.clone(),
         state: reply.state.clone(),
         job: Some(reply.job.clone()),
