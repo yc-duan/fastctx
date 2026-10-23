@@ -855,6 +855,11 @@ impl CodexHost {
         self.lock().threads.get(thread).and_then(|entry| entry.turn.clone())
     }
 
+    /// A submission with no turn ID yet still owns the thread's next work boundary.
+    pub fn busy(&self, thread: &str) -> bool {
+        self.lock().threads.get(thread).is_some_and(|entry| entry.turn.is_some() || entry.submitted)
+    }
+
     fn lock(&self) -> StateGuard<'_> {
         StateGuard(self.state.lock().expect("never poisoned"))
     }

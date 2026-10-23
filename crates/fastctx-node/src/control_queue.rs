@@ -171,7 +171,7 @@ pub(crate) fn busy(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
     if about.host.agent.as_str() == "codex"
         && let Some(thread) = about.session.as_deref()
     {
-        return Ok(node.codex.of(node, &about)?.running_turn(thread).is_some());
+        return Ok(node.codex.of(node, &about)?.busy(thread));
     }
     Ok(false)
 }
