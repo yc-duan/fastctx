@@ -26,13 +26,23 @@ no sentence, it is a plain alarm.
 
 Your sentinels are in `fastctx w`; `fastctx stop <id>` removes one.
 "#;
-pub const NO_HOME: &str = "no sentinel home is configured";
-pub const NO_MODEL: &str = "no sentinel model is configured";
-pub const NO_KEY: &str = "the sentinel model key is not configured";
+pub const NO_HOME: &str =
+    "sentinels are not turned on for this account; the user turns them on in the Fastctx app, under Features > Sentinels";
+pub const NO_MODEL: &str =
+    "sentinels have no model yet; the user chooses one in the Fastctx app, under Features > Sentinels";
+pub const NO_KEY: &str =
+    "the sentinels' model has no key yet; the user enters it in the Fastctx app, under Features > Sentinels";
 pub const NEED_CONVERSATION: &str = "a conversation registers a sentinel for itself";
 pub const CHOOSE_ACCOUNT: &str = "choose the sentinel account with --as and its hub with --hub";
 pub fn home_unavailable(status: &crate::sentinel_settings::HomeStatus) -> String {
-    format!("the sentinel home is unavailable: {status:?}")
+    use crate::sentinel_settings::HomeStatus;
+    match status {
+        HomeStatus::Unset | HomeStatus::Ready => NO_HOME.to_string(),
+        HomeStatus::Forbidden => "this account may no longer use the machine its sentinels live on; the user chooses another in the Fastctx app, under Features > Sentinels".into(),
+        HomeStatus::Offline => "the machine the sentinels live on is offline; a sentinel can be left once it is back".into(),
+        HomeStatus::TooOld => "the machine the sentinels live on runs an earlier release; update it to leave a sentinel".into(),
+        HomeStatus::Unavailable { reason } => format!("the machine the sentinels live on cannot be asked now: {reason}"),
+    }
 }
 pub fn created(summary: &crate::sentinel_control::Summary) -> String {
     let mut text =
