@@ -22,9 +22,7 @@ pub(crate) async fn scoped(
 ) -> Result<Author, Failure> {
     let about = get(node, caller, acting).await?;
     if about.as_ref().is_some_and(|about| matches!(about.origin, Origin::Colleague { .. })) {
-        return Err(Failure::refused(
-            "colleagues read project memory; give findings to the conversation that asked you",
-        ));
+        return Err(Failure::refused(fastctx_types::memory::words::COLLEAGUE_READ_ONLY));
     }
     Ok(Author {
         stamp: Stamp { by: caller.writer(), on: node.machine(), at: jiff::Timestamp::now() },
@@ -44,7 +42,7 @@ async fn get(
         Caller::Resident(address) if node.is_me(&address.machine) => Some(
             node.residents
                 .about(&address.resident)
-                .ok_or_else(|| Failure::refused("the writing conversation no longer exists"))?
+                .ok_or_else(|| Failure::refused(fastctx_types::memory::words::WRITER_GONE))?
                 .0,
         ),
         Caller::Resident(address) => {
@@ -59,17 +57,17 @@ async fn get(
                 .await
                 .map_err(|error| Failure::new(error.to_string()))??;
             let RemoteReply::Who(who) = reply else {
-                return Err(Failure::new("the conversation's machine did not identify its writer"));
+                return Err(Failure::new(fastctx_types::memory::words::WRITER_UNANSWERED));
             };
             Some(
                 who.residents
                     .into_iter()
                     .find(|resident| resident.about.id == address.resident)
-                    .ok_or_else(|| Failure::refused("the remote writing conversation is not visible"))?
+                    .ok_or_else(|| Failure::refused(fastctx_types::memory::words::WRITER_INVISIBLE))?
                     .about,
             )
         }
-        _ => return Err(Failure::refused("only a user or a primary conversation writes project memory")),
+        _ => return Err(Failure::refused(fastctx_types::memory::words::PRIMARY_WRITER)),
     })
 }
 

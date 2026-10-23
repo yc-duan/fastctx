@@ -11,13 +11,11 @@ use fastctx_types::layout::WorldDir;
 use fastctx_types::run::EndedHow;
 use fastctx_types::{Call, JobId, Reply};
 
-/// Stop jobs and everything they started, on whichever machine each runs.
 #[derive(Args)]
+#[command(about = fastctx_types::collab_prompt::STOP_HELP)]
 pub struct StopArgs {
-    /// The jobs, as `fastctx w` shows them, such as j-k3x9a2; j-k3x9a2@laptop
-    /// names the machine it runs on, when jobs on several have this id.
-    #[arg(value_name = "JOB", required = true)]
-    jobs: Vec<String>,
+    #[arg(value_name = "ID", required = true, help = fastctx_types::collab_prompt::STOP_IDS)]
+    targets: Vec<String>,
     /// The machine, written the older way.
     #[arg(long, hide = true)]
     machine: Option<String>,
@@ -31,9 +29,23 @@ pub fn run(args: StopArgs) -> anyhow::Result<ExitCode> {
     let mut client =
         runtime.block_on(Client::connect(&world, command_peer()?)).context("reaching this machine's node")?;
     let mut failed = false;
-    for named in &args.jobs {
+    for named in &args.targets {
         let stopped = match target(named, args.machine.as_deref()) {
-            Ok((job, machine)) => stop(&runtime, &mut client, job, machine)?,
+            Ok((Target::Job(job), machine)) => stop(&runtime, &mut client, job, machine)?,
+            Ok((Target::Colleague(resident), machine)) => {
+                match runtime.block_on(client.call(Call::Stop { resident, machine })) {
+                    Ok(Reply::Stopped { resident, stopped }) => {
+                        println!("{}", fastctx_types::collab_prompt::stopped(&resident, stopped));
+                        true
+                    }
+                    Ok(other) => anyhow::bail!("the node answered something else: {other:?}"),
+                    Err(CallError::Failed(failure)) => {
+                        eprintln!("fastctx stop: {named}: {}", failure.message);
+                        false
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
             Err(error) => {
                 eprintln!("fastctx stop: {named}: {error:#}");
                 false
@@ -44,13 +56,20 @@ pub fn run(args: StopArgs) -> anyhow::Result<ExitCode> {
     Ok(if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS })
 }
 
-fn target(named: &str, machine: Option<&str>) -> anyhow::Result<(JobId, Option<Written>)> {
+enum Target {
+    Job(JobId),
+    Colleague(fastctx_types::ResidentId),
+}
+
+fn target(named: &str, machine: Option<&str>) -> anyhow::Result<(Target, Option<Written>)> {
     let (job, named) = match named.split_once('@') {
         Some((job, machine)) => (job, Some(machine)),
         None => (named, None),
     };
     let machine = named.or(machine).map(Written::parse).transpose()?;
-    Ok((JobId::try_from(job)?, machine))
+    let target =
+        if job.starts_with("codex-") { Target::Colleague(job.try_into()?) } else { Target::Job(job.try_into()?) };
+    Ok((target, machine))
 }
 
 /// Whether the job is no longer running, said in one line either way.

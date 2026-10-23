@@ -23,6 +23,10 @@ use crate::{AgentName, ResidentId, TownName};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum RemoteCall {
+    Collaboration {
+        resident: ResidentId,
+        colleagues: bool,
+    },
     /// Replica paths on an account's own computer, without any document bytes.
     MemoryFolders {
         town: TownName,
@@ -544,7 +548,8 @@ impl RemoteCall {
             | RemoteCall::UpdateWorld
             | RemoteCall::Updates { .. }
             | RemoteCall::Stats { .. } => Purpose::Hands,
-            RemoteCall::AttachmentPlaces { .. }
+            RemoteCall::Collaboration { .. }
+            | RemoteCall::AttachmentPlaces { .. }
             | RemoteCall::ReserveAttachment { .. }
             | RemoteCall::CommitAttachment { .. }
             | RemoteCall::Composer { .. }
@@ -581,6 +586,7 @@ impl RemoteCall {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum RemoteReply {
+    Collaboration(Box<crate::collaboration::Tree>),
     MemoryFolders(crate::memory::Folders),
     Entered {
         town: TownName,

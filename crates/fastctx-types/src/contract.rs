@@ -114,6 +114,7 @@ impl RemoteCall {
             }
             Self::Mcp { mcp: crate::mcp::MachineCall::Test { .. } } => Contract::ASKS_AGENT,
             Self::McpServe { .. } => Contract { cancellable: true, ..Contract::STREAM },
+            Self::Collaboration { .. } => Contract { cancellable: true, ..Contract::ASKS_AGENT },
             Self::MemoryFolders { .. }
             | Self::AttachmentPlaces { .. }
             | Self::Who { .. }
@@ -258,7 +259,9 @@ impl Call {
             Self::Memory(crate::memory::MemoryCall::Save { .. }) | Self::MemorySettings { enabled: Some(_), .. } => {
                 Leaving::Finish
             }
-            Self::WatchMemory { .. } | Self::MemorySettings { enabled: None, .. } => Leaving::Stop,
+            Self::WatchMemory { .. } | Self::MemorySettings { enabled: None, .. } | Self::Collaboration { .. } => {
+                Leaving::Stop
+            }
             Self::AttachmentPlaces { .. }
             | Self::McpRelay { .. }
             | Self::MachineLog { .. }

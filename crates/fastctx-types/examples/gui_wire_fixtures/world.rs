@@ -302,6 +302,7 @@ fn nodes() -> Vec<NodesReply> {
         page_accounts: true,
         attachment_places: true,
         memory_folders: false,
+        collaboration_tree: false,
         completion_receipts: false,
         upload_resumes: false,
         attachment_references: false,

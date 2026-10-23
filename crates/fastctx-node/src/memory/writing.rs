@@ -53,7 +53,7 @@ async fn commit(
         ))
         .map_err(|error| Failure::new(error.to_string()))?;
         if record.owner.resident() != Some(owner) || record.end.is_some() {
-            return Err(Failure::refused("memory write does not belong to an active job"));
+            return Err(Failure::refused(fastctx_types::memory::words::INACTIVE_JOB));
         }
         if let Some(account) = record.account.or_else(|| record.on.and_then(|on| on.account)) {
             acting = fastctx_types::access::Acting::Accounts { accounts: vec![account] };
@@ -76,21 +76,21 @@ async fn commit(
     let old = store.index.latest(&target.name);
     let before = if let Some(evidence) = &target.evidence {
         if store.index.evidence(&target.name).iter().any(|item| fastctx_net::ledger::conflicts(&item.name, evidence)) {
-            return Err(Failure::new("journal evidence already exists and cannot be changed"));
+            return Err(Failure::new(fastctx_types::memory::words::IMMUTABLE_EVIDENCE));
         }
         if !old.is_some_and(|old| old.kind == Kind::Journal) {
-            return Err(Failure::new("evidence needs an existing journal"));
+            return Err(Failure::new(fastctx_types::memory::words::MISSING_JOURNAL));
         }
         if !matches!(op, WriteOp::Write(_)) {
-            return Err(Failure::new("journal evidence can only be created with write"));
+            return Err(Failure::new(fastctx_types::memory::words::EVIDENCE_WRITE));
         }
         None
     } else {
         if target.kind == Kind::Journal && old.is_some() {
-            return Err(Failure::new("journals cannot be changed; write another journal that names the correction"));
+            return Err(Failure::new(fastctx_types::memory::words::IMMUTABLE_JOURNAL));
         }
         if old.is_some_and(|old| old.kind != target.kind) {
-            return Err(Failure::new("this name belongs to a different memory document"));
+            return Err(Failure::new(fastctx_types::memory::words::OTHER_DOCUMENT));
         }
         old.map(|revision| {
             store
@@ -98,7 +98,7 @@ async fn commit(
                 .iter()
                 .find(|file| file.path == revision.path("md"))
                 .map(|file| file.bytes.0.as_slice())
-                .ok_or_else(|| Failure::new("the signed memory text is missing"))
+                .ok_or_else(|| Failure::new(fastctx_types::memory::words::MISSING_SIGNED_TEXT))
         })
         .transpose()?
     };
@@ -109,7 +109,8 @@ async fn commit(
     let (files, after) = match &target.evidence {
         Some(name) => evidence(node, target, name, after, author).await?,
         None => {
-            let text = std::str::from_utf8(&after).map_err(|_| Failure::new("memory Markdown must be UTF-8"))?;
+            let text =
+                std::str::from_utf8(&after).map_err(|_| Failure::new(fastctx_types::memory::words::UTF8_REQUIRED))?;
             let (revision, files) = fastctx_net::memory::revision_files(
                 target.kind,
                 &target.name,
@@ -130,7 +131,7 @@ async fn commit(
     };
     store.index.check(&files).map_err(Failure::new)?;
     super::api::publish(node, &acting, &target.town, files).await?;
-    let text = format!("=== {} {} (project memory saved) ===", op.tool(), path.display());
+    let text = fastctx_types::memory::words::saved(op.tool(), path.display());
     let mut result = WriteResult {
         note_prefix: text.len(),
         text,
@@ -160,8 +161,8 @@ async fn commit(
             record(&world, &here, &owner, &path, before.as_deref(), &after, job.as_ref(), town.as_ref(), result)
         })
         .await
-        .map_err(|error| Failure::new(format!("memory was saved, but recording its change failed: {error}")))?
-        .map_err(|error| Failure::new(format!("memory was saved, but recording its change failed: {error}")))?;
+        .map_err(|error| Failure::new(fastctx_types::memory::words::saved_unrecorded(error)))?
+        .map_err(|error| Failure::new(fastctx_types::memory::words::saved_unrecorded(error)))?;
     }
     Ok(result)
 }
@@ -178,7 +179,7 @@ fn check_seen(node: &Node, owner: &Address, path: &Path, before: &[u8]) -> Resul
                 .map_err(|error| Failure::new(error.to_string()))?,
         };
         if !same {
-            return Err(Failure::new("this spec changed since you viewed it; read its latest version before saving"));
+            return Err(Failure::new(fastctx_types::memory::words::STALE_SPEC));
         }
     }
     Ok(())
@@ -203,7 +204,7 @@ async fn evidence(
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                     if super::copy::fingerprint(&retained)? != (kept.len() as u64, fastctx_net::memory::digest(&kept)) {
-                        return Err(std::io::Error::other("retained evidence has different bytes"));
+                        return Err(std::io::Error::other(fastctx_types::memory::words::RETAINED_BYTES));
                     }
                 }
                 Err(error) => return Err(error),

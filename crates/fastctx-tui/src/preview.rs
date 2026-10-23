@@ -377,6 +377,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         page_accounts: false,
         attachment_places: false,
         memory_folders: false,
+        collaboration_tree: false,
         completion_receipts: false,
         upload_resumes: false,
         attachment_references: false,

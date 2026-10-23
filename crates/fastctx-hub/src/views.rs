@@ -132,6 +132,7 @@ pub(crate) fn view_for(
     View {
         ledger_parts: true,
         project_memory: true,
+        collaboration_tree: true,
         call_details: true,
         machine_log: true,
         hub: store.hub.id.clone(),

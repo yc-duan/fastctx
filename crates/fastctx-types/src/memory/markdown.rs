@@ -13,7 +13,7 @@ pub struct Parsed<'a> {
 /// Names are portable filenames, retaining their original language and case.
 pub fn check_name(name: &str) -> Result<(), String> {
     if name.is_empty() || name.len() > 240 {
-        return Err("a memory name must contain 1 to 240 UTF-8 bytes".into());
+        return Err(crate::memory::words::NAME_LENGTH.into());
     }
     let categories = CodePointMapData::<GeneralCategory>::new();
     let mut letter = false;
@@ -24,7 +24,7 @@ pub fn check_name(name: &str) -> Result<(), String> {
         } else if character == '-' {
             letter = false;
         } else if !(letter && GeneralCategoryGroup::Mark.contains(category)) {
-            return Err("a memory name uses letters, numbers and hyphens; combining marks follow a letter".into());
+            return Err(crate::memory::words::NAME_CHARACTERS.into());
         }
     }
     let upper = name.to_ascii_uppercase();
@@ -33,7 +33,7 @@ pub fn check_name(name: &str) -> Result<(), String> {
             && (upper.starts_with("COM") || upper.starts_with("LPT"))
             && upper.as_bytes()[3].is_ascii_digit())
     {
-        return Err("this memory name is reserved by Windows".into());
+        return Err(crate::memory::words::RESERVED_NAME.into());
     }
     Ok(())
 }
@@ -42,9 +42,9 @@ pub fn check_name(name: &str) -> Result<(), String> {
 pub fn parse<'a>(name: &str, text: &'a str) -> Result<Parsed<'a>, String> {
     check_name(name)?;
     let mut lines = text.split_inclusive('\n');
-    let first = lines.next().ok_or("memory Markdown must start with ---")?;
+    let first = lines.next().ok_or(crate::memory::words::HEADER_START)?;
     if first.trim_end_matches(['\r', '\n']) != "---" {
-        return Err("memory Markdown must start with ---".into());
+        return Err(crate::memory::words::HEADER_START.into());
     }
     let mut offset = first.len();
     let mut stated_name = None;
@@ -54,39 +54,39 @@ pub fn parse<'a>(name: &str, text: &'a str) -> Result<Parsed<'a>, String> {
         let line = raw.trim_end_matches(['\r', '\n']);
         if line == "---" {
             if stated_name.as_deref() != Some(name) {
-                return Err("the header's name must match the Markdown filename".into());
+                return Err(crate::memory::words::HEADER_NAME.into());
             }
-            let description = description.ok_or("the header needs a nonempty one-line description")?;
+            let description = description.ok_or(crate::memory::words::HEADER_DESCRIPTION)?;
             return Ok(Parsed { description, body: &text[offset..] });
         }
-        let (key, value) = line.split_once(':').ok_or("each header field must be key: value on one line")?;
+        let (key, value) = line.split_once(':').ok_or(crate::memory::words::HEADER_FIELD)?;
         match key {
             "name" | "description" => {
                 let value = scalar(value.trim())?;
                 if value.trim().is_empty() || value.chars().any(char::is_control) {
-                    return Err(format!("{key} must be nonempty and on one line"));
+                    return Err(crate::memory::words::header_value(key));
                 }
                 let field = if key == "name" { &mut stated_name } else { &mut description };
                 if field.replace(value).is_some() {
-                    return Err(format!("the header repeats {key}"));
+                    return Err(crate::memory::words::header_repeat(key));
                 }
             }
             "written_at" | "conversation" | "host" | "model" | "machine" => {}
-            _ => return Err(format!("unknown memory header field {key:?}")),
+            _ => return Err(crate::memory::words::header_unknown(key)),
         }
     }
-    Err("the memory header needs a closing ---".into())
+    Err(crate::memory::words::HEADER_END.into())
 }
 
 fn scalar(value: &str) -> Result<String, String> {
     if value.starts_with('"') {
-        return serde_json::from_str::<String>(value).map_err(|error| format!("invalid quoted header field: {error}"));
+        return serde_json::from_str::<String>(value).map_err(crate::memory::words::header_quoted);
     }
     if let Some(value) = value.strip_prefix('\'') {
         return value
             .strip_suffix('\'')
             .map(|value| value.replace("''", "'"))
-            .ok_or_else(|| "a quoted header field needs its closing quote".into());
+            .ok_or_else(|| crate::memory::words::HEADER_QUOTE.into());
     }
     Ok(value.to_string())
 }

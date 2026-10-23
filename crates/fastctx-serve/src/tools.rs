@@ -49,7 +49,7 @@ pub fn list_changed() -> Value {
 pub fn definitions(writes_off: bool, woken: bool, codex: bool, machines: Option<&Machines>) -> Value {
     let mut tools = vec![run_definition(writes_off, woken, codex, machines)];
     if let Some(collab) = machines.and_then(|machines| machines.collab.as_ref()) {
-        tools.push(ask_colleague_definition(woken, collab));
+        tools.push(ask_colleague_definition(collab));
         tools.push(message_colleague_definition());
     }
     for tool in &mut tools {
@@ -75,7 +75,9 @@ pub fn definitions(writes_off: bool, woken: bool, codex: bool, machines: Option<
 fn opening(machines: Option<&Machines>) -> String {
     const NAMED: &str = "Write each script as one `on MACHINE`: `on laptop cargo test` for a command, or for a script\n    on laptop <<'RUN'\n    cd ~/app && cargo test\n    RUN\nIt runs there in a fresh login shell, from that machine's home; inside it, `on` runs parts of it on the other machines. A script that is not one `on` is refused before anything of it runs. This tool is your shell on all of them, with no address, login or key; `fastctx nodes` shows which are online.";
     let Some(machines) = machines else {
-        return format!("This tool runs a bash script on one of the user's machines; `fastctx nodes` lists them. {NAMED}");
+        return format!(
+            "This tool runs a bash script on one of the user's machines; `fastctx nodes` lists them. {NAMED}"
+        );
     };
     if machines.all().is_empty() {
         return "This tool runs a bash script on one of the user's machines, and the user has none connected to fastctx yet: nothing can run. When the work needs a shell, tell the user to connect a machine of theirs.".to_string();
@@ -246,12 +248,11 @@ const RUN_COMMANDS: &str = "\
 More commands (`--help` on each gives all its options):
 - `fastctx nodes` lists the machines, which are online, and what each runs.
 - `fastctx w` shows what runs and who works now, and what happened since your last turn; `fastctx w ID...` shows those sessions or jobs.
-- `fastctx wait JOB...` waits until jobs end and shows how each ended; `fastctx stop JOB...` stops them and everything they started.
+- `fastctx wait JOB...` waits until jobs end and shows how each ended; `fastctx stop ID...` stops jobs and their processes, or a colleague's current turn.
 - `fastctx project` lists the user's projects and shows their records. A fastctx project is not a folder or a repository but a named piece of work that can span several machines; its record says what it is for and where its code and data are on each. `fastctx project enter NAME` makes you work in one; enter one only when the user tells you which project to work on.
 - `fastctx page` publishes an HTML page the user opens in the World app.";
 
-fn ask_colleague_definition(woken: bool, collab: &fastctx_types::collab::Offered) -> Value {
-    let delivered = if woken { "" } else { " with the answer of your next call to a fastctx tool" };
+fn ask_colleague_definition(collab: &fastctx_types::collab::Offered) -> Value {
     let lives = collab.callees.iter().map(|callee| {
         let lives = match &callee.lives_on {
             Some(lives_on) => format!("It lives on {lives_on}, the machine configured for this callee; it runs its scripts on the machines it may use, each one `on MACHINE`, as you do."),
@@ -262,7 +263,7 @@ fn ask_colleague_definition(woken: bool, collab: &fastctx_types::collab::Offered
     }).collect::<Vec<_>>().join("\n\n");
     let mut tool = json!({
         "name": "ask_colleague",
-        "description": format!("{}{lives}\n\n{}", ASK_COLLEAGUE_DESCRIPTION.replace("{delivered}", delivered), collab.prompt),
+        "description": format!("{}\n\n{lives}\n\n{}", fastctx_types::collab_prompt::ASK_DESCRIPTION, collab.prompt),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -294,17 +295,10 @@ fn ask_colleague_definition(woken: bool, collab: &fastctx_types::collab::Offered
     tool
 }
 
-const ASK_COLLEAGUE_DESCRIPTION: &str = "\
-Start a colleague on a part of the work: a GPT agent, run by Codex, that works on its own while you go on. The call returns its id at once.
-
-A colleague is not a subagent inside this conversation. It knows nothing of this conversation, so the prompt must say which machines and paths it works on. It keeps working if you stop, and `fastctx w ID` shows what it is doing. Each time it ends a turn, its last message is delivered to you{delivered}, under a line saying how the turn ended: that message is its answer, or its question to you. Reply, or give it more, with message_colleague.
-
-";
-
 fn message_colleague_definition() -> Value {
     json!({
         "name": "message_colleague",
-        "description": MESSAGE_COLLEAGUE_DESCRIPTION,
+        "description": fastctx_types::collab_prompt::MESSAGE_DESCRIPTION,
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -328,12 +322,6 @@ fn message_colleague_definition() -> Value {
         }
     })
 }
-
-const MESSAGE_COLLEAGUE_DESCRIPTION: &str = "\
-Send a message to a colleague: one you started, or any other that `fastctx w` shows, including one that is idle or asleep.
-- If it is working, the message joins its current turn at its next tool call; otherwise it starts a new turn.
-- The last message of the turn it goes into is delivered to you.
-- A colleague on a machine that is offline gets it when the machine is back.";
 
 /// A tool's answer as MCP carries it.
 pub fn result(content: &[Content], is_error: bool) -> Value {

@@ -566,6 +566,9 @@ pub struct View {
     /// Account-scoped project indices and signed memory reads/writes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub project_memory: bool,
+    /// Relays collaboration-tree calls with their authorization facts.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub collaboration_tree: bool,
     /// The hub authorizes large calls from control-frame facts and requires a verifying receiver.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub call_details: bool,
@@ -720,6 +723,7 @@ impl View {
         Self {
             ledger_parts: false,
             project_memory: false,
+            collaboration_tree: false,
             call_details: false,
             machine_log: false,
             hub,

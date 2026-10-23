@@ -46,7 +46,8 @@ pub(crate) async fn refresh(
     previous: Option<&Cursor>,
     sink: &mut impl ContextBlocks,
 ) -> Result<Option<Cursor>, Failure> {
-    let (about, town) = node.residents.about(id).ok_or_else(|| Failure::refused("unknown conversation"))?;
+    let (about, town) =
+        node.residents.about(id).ok_or_else(|| Failure::refused(fastctx_types::memory::words::UNKNOWN_CONVERSATION))?;
     let me = Address { machine: node.machine(), resident: id.clone() };
     let Some(town) = town else { return hand(&me, None, previous, sink) };
     crate::town::access::ready(node, &about.acting, &town).await?;
@@ -57,7 +58,7 @@ pub(crate) async fn refresh(
     let folders = super::folders::get(node, &town, &about.acting).await;
     let attributes = crate::town::instructions::text(node, &town, &about.acting)
         .map_err(|error| Failure::new(error.to_string()))?
-        .ok_or_else(|| Failure::new("the project record is unavailable"))?;
+        .ok_or_else(|| Failure::new(fastctx_types::memory::words::MISSING_PROJECT_RECORD))?;
     hand(
         &me,
         Some(Snapshot {

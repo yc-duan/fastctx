@@ -18,8 +18,8 @@ pub(crate) fn enabled_for(
         .map(|settings| settings.enabled)
         .map_err(|error| Failure::new(error.to_string()));
     };
-    let account =
-        super::api::account(node, acting, town)?.ok_or_else(|| Failure::refused("the project has no account"))?;
+    let account = super::api::account(node, acting, town)?
+        .ok_or_else(|| Failure::refused(fastctx_types::memory::words::MISSING_ACCOUNT))?;
     link.profile_read(&account).map(|view| view.profile.memory).map_err(Failure::new)
 }
 

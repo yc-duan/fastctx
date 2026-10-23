@@ -20,6 +20,10 @@ use crate::{Address, AgentName, EntryId, JobId, JournalName, MachineName, Notice
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum Call {
+    Collaboration {
+        resident: ResidentId,
+        machine: Option<crate::access::Written>,
+    },
     Memory(crate::memory::MemoryCall),
     WatchMemory {
         town: TownName,
@@ -725,6 +729,7 @@ pub enum Call {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum Reply {
+    Collaboration(Box<crate::collaboration::Tree>),
     Memory(crate::memory::MemoryReply),
     MemorySettings(crate::memory::Settings),
     /// The HTTP proxy chosen in Fastctx, if one is (`Call::HubProxy`).

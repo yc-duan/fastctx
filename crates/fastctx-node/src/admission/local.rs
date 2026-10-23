@@ -118,7 +118,8 @@ fn askers(node: &Node, acting: &Acting) -> Vec<(Arc<Link>, Asker)> {
 fn reached<'a>(node: &Node, call: &'a Call) -> Option<&'a ResidentId> {
     let here = |machine: Option<&fastctx_types::access::Written>| machine.is_none_or(|machine| node.is_here(machine));
     match call {
-        Call::Talk { to: resident, machine, .. }
+        Call::Collaboration { resident, machine }
+        | Call::Talk { to: resident, machine, .. }
         | Call::Message { to: resident, machine, .. }
         | Call::Watch { resident, machine, .. }
         | Call::Composer { resident, machine, .. }

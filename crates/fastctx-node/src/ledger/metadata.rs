@@ -41,7 +41,7 @@ pub(crate) async fn refresh(node: &Arc<Node>, link: &Arc<Link>, wanted: Option<&
         let index = link.project_index(&account, &id).await?;
         let view = link.view();
         if !view.may_act_for(&account, &view.me) || !view.in_project(&account, &id) {
-            return Err("project access ended while its index was read".into());
+            return Err(fastctx_types::memory::words::INDEX_ACCESS_ENDED.into());
         }
         if view.member_keeps_project(&view.me, &id) {
             continue;

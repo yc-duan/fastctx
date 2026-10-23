@@ -835,10 +835,14 @@ impl Residents {
 
     /// Who the resident is working for: those owed the turn it runs, or,
     /// between turns, those its latest turn anyone was owed was for.
+    /// Colleagues incur debt only from explicit messages, never inherited background work.
     pub fn working_for(&self, id: &ResidentId) -> Vec<Address> {
         let mut state = self.lock();
         let Some(live) = state.live.get(id) else { return Vec::new() };
         let Some(now) = &live.now else { return Vec::new() };
+        if matches!(live.about.origin, Origin::Colleague { .. }) {
+            return Vec::new();
+        }
         if now.activity == Activity::Busy
             && let Some(turn) = &now.turn
         {
