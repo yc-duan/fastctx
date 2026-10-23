@@ -10,6 +10,7 @@
 
 import { compareVersions, type Manifest, type Release, type UpdateCall, type UpdateSeam, type UpdateSettings, type UpdateState } from "../world/updates";
 import { runningOn, SPECIMEN_VERSION } from "./versions";
+import type { RepairReport, RepairStep } from "../world/repair";
 
 const TAKES = 6_000;
 const VERSION = SPECIMEN_VERSION;
@@ -55,6 +56,31 @@ export function specimenUpdates(params: URLSearchParams, phone: boolean): { seam
   let settings: UpdateSettings = { auto: false, relays: !phone };
   let chosen: Manifest | null = null;
   let started: number | null = params.get("update") === "ready" ? 0 : null;
+  // `?repair=failed`: the update here did not go through, and a repair is
+  // offered; `?repair=broken`, the repair itself stops short.
+  const repairing = params.get("repair");
+  let repairStarted: number | null = null;
+  const repairReport = (): RepairReport | undefined => {
+    if (repairStarted === null) return undefined;
+    const layers = ["package", "records", "program", "service", "application", "node"];
+    const broken = repairing === "broken";
+    const stop = broken ? layers.indexOf("service") + 1 : layers.length;
+    const done = Math.floor((Date.now() - repairStarted) / 900);
+    const steps: RepairStep[] = layers.slice(0, Math.min(stop, done + 1)).map((layer, at) => {
+      const outcome = at >= done ? "checking" : layer === "program" ? "repaired" : broken && layer === "service" ? "failed" : "unchanged";
+      return { layer, outcome, detail: outcome === "repaired" ? "replaced the damaged program" : outcome === "failed" ? "the service would not start" : "", actions: [] };
+    });
+    const finished = done >= stop;
+    return {
+      id: `repair-${repairStarted}`,
+      version: VERSION,
+      finished: finished ? new Date().toISOString() : null,
+      steps,
+      success: finished && !broken,
+      unchanged: false,
+      error: finished && broken ? "service: systemctl start exited with 1" : null,
+    };
+  };
   const network = (): import("../world/updates").UpdateNetwork => ({
     ...(newest(VERSION) ? { beta: newest(VERSION)! } : {}),
     policy: { channel: "beta" as const, minimum: "1.0.1-beta.2", managed_auto: true },
@@ -84,6 +110,14 @@ export function specimenUpdates(params: URLSearchParams, phone: boolean): { seam
       kept: here && offer ? [{ version: offer.version, target, path: "" }] : [],
       app: { version: VERSION, target },
       kernel_target: "",
+      repair_supported: true,
+      ...(repairing && offer && repairStarted === null ? { failed: { version: offer.version, target, why: "拒绝访问。 (os error 5)" } } : {}),
+      ...(() => {
+        const report = repairReport();
+        if (!report) return {};
+        const now = report.steps[report.steps.length - 1];
+        return { repair: report, ...(report.finished === null && now ? { stage: { kind: "repairing" as const, version: VERSION, layer: now.layer } } : {}) };
+      })(),
     };
   };
   /** How another machine's updates stand, as its node would answer. */
@@ -140,6 +174,11 @@ export function specimenUpdates(params: URLSearchParams, phone: boolean): { seam
     install: async () => {
       await new Promise((done) => setTimeout(done, 1_500));
       return true;
+    },
+    repair: async () => {
+      await new Promise((done) => setTimeout(done, 300));
+      repairStarted = Date.now();
+      return state();
     },
     machine: async (name) => remote(name),
     remote: async (name, call: UpdateCall) => {

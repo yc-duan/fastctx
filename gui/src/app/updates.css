@@ -252,3 +252,29 @@
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
+
+/* A repair followed in the card: how it stands in a line, its layers
+   ticked in place below (`repair-layers.ts`), another try where it stopped
+   short. */
+.update-repair {
+  margin-top: var(--space-4);
+}
+
+.update-repair[hidden],
+.update-repair-acts[hidden] {
+  display: none;
+}
+
+.update-repair-said {
+  margin: 0 0 var(--space-2);
+  font-size: var(--size-text);
+  color: var(--text);
+}
+
+.update-repair-said.update-failed {
+  color: var(--caution);
+}
+
+.update-repair-go {
+  gap: 6px;
+}

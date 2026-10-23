@@ -7,7 +7,8 @@
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { Sketch } from "../pen/sketch";
-import { repairLayers, type RepairStep } from "./layers";
+import { RepairLayers } from "../app/repair-layers";
+import type { RepairStep } from "../world/repair";
 import type { StartupWords } from "./words";
 import "../design/fonts.css";
 import "../design/tokens.css";
@@ -28,6 +29,8 @@ export interface PageActs {
 
 export class StartupPage {
   readonly element: HTMLElement;
+  /** The layers of the repair under way, kept so rows drawn stay put. */
+  private layers: RepairLayers | null = null;
 
   constructor(
     private readonly words: StartupWords,
@@ -53,32 +56,40 @@ export class StartupPage {
     this.element.dataset.state = "failed";
     const said = (failure && this.words.steps[failure.step]) ?? this.words.stepOther;
     const acts = this.acts.repair
-      ? `${this.button("repair", this.words.repair, true)}${this.button("retry", this.words.retry, false)}`
+      ? `${this.button("repair", this.words.repair.repair, true)}${this.button("retry", this.words.retry, false)}`
       : this.button("retry", this.words.retry, true);
     this.frame(this.words.failed, `<p class="su-said"${failure ? ` title="${escape(failure.error)}"` : ""}>${escape(said)}</p><div class="su-acts">${acts}</div>`);
   }
 
   /** A repair under way, its layers as far as it has come. */
   repairing(steps: readonly RepairStep[]): void {
-    this.element.dataset.state = "repairing";
-    const layers = steps.length ? repairLayers(steps, this.words) : "";
-    this.frame(this.words.repairing, `<div class="su-layers" role="status">${layers}</div>`);
+    this.layered("repairing", this.words.repair.repairing, steps, null, "");
   }
 
   /** Repaired: the opening is tried again by itself. */
   repaired(steps: readonly RepairStep[]): void {
-    this.element.dataset.state = "repaired";
-    this.frame(this.words.repaired, `<div class="su-layers" role="status">${repairLayers(steps, this.words)}</div>`);
+    this.layered("repaired", this.words.reopening, steps, null, "");
   }
 
   /** The repair stopped short: what it went through, and its own words. */
   repairFailed(steps: readonly RepairStep[], error: string | null): void {
-    this.element.dataset.state = "broken";
-    const acts = `${this.button("repair", this.words.repairAgain, true)}${this.button("retry", this.words.retry, false)}`;
-    this.frame(
-      this.words.repairFailed,
-      `<div class="su-layers"${error ? ` title="${escape(error)}"` : ""}>${repairLayers(steps, this.words)}</div><div class="su-acts">${acts}</div>`,
-    );
+    const acts = `${this.button("repair", this.words.repair.repairAgain, true)}${this.button("retry", this.words.retry, false)}`;
+    this.layered("broken", this.words.repair.repairFailed, steps, error, `<div class="su-acts">${acts}</div>`);
+  }
+
+  /** The page with a repair's layers: the frame drawn once for each state,
+   *  the layers ticked in place as they come. */
+  private layered(state: string, title: string, steps: readonly RepairStep[], error: string | null, after: string): void {
+    if (this.element.dataset.state !== state || !this.layers) {
+      this.element.dataset.state = state;
+      this.frame(title, `<div class="su-layers" role="status"></div>${after}`);
+      this.layers ??= new RepairLayers(this.words.repair);
+      this.element.querySelector(".su-layers")!.append(this.layers.element);
+    }
+    const holder = this.element.querySelector<HTMLElement>(".su-layers")!;
+    if (error) holder.title = error;
+    else holder.removeAttribute("title");
+    this.layers.update(steps);
   }
 
   private frame(title: string, body: string): void {
@@ -96,7 +107,7 @@ export class StartupPage {
   }
 
   private button(act: string, label: string, main: boolean): string {
-    const mark = act === "repair" ? glyph("tune", 16) : "";
+    const mark = act === "repair" ? glyph("repair", 16) : "";
     return `<button class="${main ? "su-main" : "su-quiet"}" type="button" data-act="${act}">${mark}<span>${escape(label)}</span></button>`;
   }
 }

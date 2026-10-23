@@ -2,7 +2,8 @@
 // version of Fastctx here, and beside it the one thing to know, a new
 // version, an update under way or gone wrong, or the World's program here
 // other than the interface's; 「更新…」 opens the card where all of it is
-// done (`update-card.ts`).
+// done (`update-card.ts`), and where this device is stuck, 「修复」 starts a
+// repair there.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -10,7 +11,7 @@ import { buildOrder, sameBuild } from "../world/renewal";
 import type { Renewing } from "./renewal";
 import { effect } from "./signals";
 import { lineOf, shortVersion, stageMark } from "./update-marks";
-import type { Updates } from "./updates";
+import { troubled, type Updates } from "./updates";
 import type { UpdateViewWords } from "./update-view-words";
 import type { UpdateWords } from "./update-words";
 import type { SettingsWords } from "./words";
@@ -36,6 +37,10 @@ export class UpdateLine {
     element.hidden = false;
     element.addEventListener("click", (event) => {
       if ((event.target as HTMLElement).closest("[data-updates-open]")) open();
+      if ((event.target as HTMLElement).closest("[data-updates-repair]")) {
+        updates.repair();
+        open();
+      }
     });
     this.stop = effect(() => {
       updates.offered.get();
@@ -87,7 +92,8 @@ export class UpdateLine {
       : this.service
         ? `<span class="settings-said settings-warn">${escape(this.service)}</span>`
         : "";
-    const html = `<dt>${escape(this.settings.version)}</dt><dd><span class="sd-version">${escape(this.updates.version)}</span>${beside}</dd><dd class="sd-act"><button class="text-button quiet-button" type="button" data-updates-open>${escape(words.open)}</button></dd>`;
+    const repair = state?.repair_supported && troubled(state, offered) ? `<button class="text-button quiet-button" type="button" data-updates-repair>${escape(words.repair.repair)}</button>` : "";
+    const html = `<dt>${escape(this.settings.version)}</dt><dd><span class="sd-version">${escape(this.updates.version)}</span>${beside}</dd><dd class="sd-act">${repair}<button class="text-button quiet-button" type="button" data-updates-open>${escape(words.open)}</button></dd>`;
     if (this.element.innerHTML !== html) this.element.innerHTML = html;
   }
 }

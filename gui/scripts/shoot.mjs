@@ -141,10 +141,10 @@ for (const session of sessions) {
       const loaded = once("Page.loadEventFired");
       const two = session.endsWith("-2");
       const named = two ? session.slice(0, -2) : session;
-      const shown = named.startsWith("invite-") ? "invite" : named === "stop" ? "claude" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") ? "claude" : named.startsWith("team") ? "stream" : named;
+      const shown = named.startsWith("invite-") ? "invite" : named === "stop" ? "claude" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") ? "claude" : named.startsWith("team") ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named;
       // `welcome` and `create` are a computer's first open, in no World yet.
       const alone = named === "welcome" || named === "create" || named === "created";
-      const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") ? "&start=agents" : "");
+      const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "");
       // A page an agent wrote is its own document, with a stand-in host.
       const written = session === "written";
       const specimen = named === "mapcanvas" ? "mapcanvas-specimen.html" : named === "longview" ? "longview-specimen.html" : written ? "page-specimen.html" : null;
@@ -185,6 +185,24 @@ for (const session of sessions) {
             if (${JSON.stringify(session)} === "page-versions") document.querySelector(".page-versions")?.click();
             return new Promise((r) => setTimeout(r, 900));
           })`,
+        });
+      }
+      // `updates-repair` is the machines' update view with two machines picked,
+      // its bar offering to repair them.
+      if (named === "updates-repair") {
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => { location.hash = "#/updates"; setTimeout(() => { document.querySelector("[data-ml-pick-all]")?.click(); setTimeout(r, 900); }, 1200); })`,
+        });
+      }
+      // `repair-offered` is this device's update card where the update did not
+      // go through; `repair-going`, `repair-done` and `repair-broken` a repair
+      // pressed there, under way, ended well, and stopped short.
+      if (named.startsWith("repair-")) {
+        const wait = named === "repair-going" ? 2200 : named === "repair-offered" ? 0 : 6500;
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => { document.querySelector(".update-place")?.click(); setTimeout(() => { ${named === "repair-offered" ? "" : "document.querySelector('[data-update-repair]')?.click();"} setTimeout(r, ${wait} + 900); }, 600); })`,
         });
       }
       // `team` is a conversation whose host sent agents, the panel open at

@@ -7,6 +7,7 @@
 
 import { signal, type Signal } from "./signals";
 import { compareVersions, majorOf, type FailureReason, type Manifest, type UpdateSeam, type UpdateSettings, type UpdateStage, type UpdateState } from "../world/updates";
+import type { RepairReport } from "../world/repair";
 
 /** What the sidebar's button and the card show. */
 export interface Offered {
@@ -27,12 +28,34 @@ export interface Offered {
   minimum: string | null;
 }
 
+/** A repair started from this interface, followed until it ends: the
+ *  record the device kept before it, to tell its own from that one; its
+ *  newest record since; what kept it from starting. */
+export interface Repairing {
+  before: string | null;
+  report: RepairReport | null;
+  error: string | null;
+}
+
+/** Whether this device is stuck where a repair is what helps: an update
+ *  that did not go through, a World program change stopped short or
+ *  waiting on its startup service, or the World program here and the
+ *  interface on different versions. */
+export function troubled(state: UpdateState | null, offered: Offered | null): boolean {
+  if (!state) return false;
+  if (offered?.stage.kind === "failed" || state.failed || state.renewing?.error) return true;
+  const stage = state.stage?.kind;
+  if (stage === "failed" || stage === "administrator") return true;
+  return !!(state.running && state.app && state.running !== state.app.version);
+}
+
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 
 export class Updates {
   readonly state: Signal<UpdateState | null> = signal<UpdateState | null>(null);
   readonly offered: Signal<Offered | null> = signal<Offered | null>(null, (a, b) => JSON.stringify(a) === JSON.stringify(b));
+  readonly repairing: Signal<Repairing | null> = signal<Repairing | null>(null, (a, b) => JSON.stringify(a) === JSON.stringify(b));
   private installing = false;
   private permission = false;
   /** What failed here, of which release: bringing it, or installing it. */
@@ -80,6 +103,24 @@ export class Updates {
       this.take(state);
       this.go();
     });
+  }
+
+  /** Repairs this device layer by layer, and follows the repair until it
+   *  ends; a repair under way already is followed, not begun again. */
+  repair(): void {
+    const going = this.repairing.peek();
+    if (going && !going.error && going.report?.finished == null) return;
+    const before = this.state.peek()?.repair?.id ?? null;
+    this.repairing.set({ before, report: null, error: null });
+    this.seam.repair().then(
+      (state) => this.take(state),
+      (error: unknown) => this.repairing.set({ before, report: null, error: String(error) }),
+    );
+  }
+
+  /** The repair's end has been seen: the card shows how things stand. */
+  forgetRepair(): void {
+    this.repairing.set(null);
   }
 
   /** Brings the offered version here, or installs it when it is here. */
@@ -141,8 +182,12 @@ export class Updates {
 
   private take(state: UpdateState): void {
     this.state.set(state);
+    const going = this.repairing.peek();
+    if (going && state.repair && state.repair.id !== going.before) this.repairing.set({ ...going, report: state.repair });
     this.refresh();
-    this.later(state.fetching ? 1_000 : this.offered.peek()?.stage.kind === "waiting" ? 5_000 : 60_000);
+    const following = this.repairing.peek();
+    const repairing = following !== null && !following.error && following.report?.finished == null;
+    this.later(state.fetching || repairing ? 1_000 : this.offered.peek()?.stage.kind === "waiting" ? 5_000 : 60_000);
   }
 
   /** What is offered now, and what automatic updates do with it: taken by

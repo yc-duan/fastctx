@@ -69,6 +69,8 @@ export interface ChosenOptions {
         words: UpdateViewWords;
         of(machine: Machine): MachineUpdate | undefined;
         schedule(machines: MachineUpdate[], version: string | null): Promise<void>;
+        /** Has the hub keep a repair for each, or call one kept off. */
+        repair(machines: MachineUpdate[], cancel: boolean): Promise<void>;
         ways(machines: MachineUpdate[], auto: boolean | null, relays: boolean | null): Promise<void>;
         state: Signal<UpdateState | null>;
         versions: VersionWindow;
@@ -123,9 +125,13 @@ export class ChosenBar {
     const to = allowing((update) => update.actions.schedule.allowed);
     const ways = allowing((update) => update.actions.settings.allowed);
     const cancel = allowing((update) => update.actions.cancel.allowed && !!update.due);
+    const repair = allowing((update) => !!update.actions.repair?.allowed);
+    const unrepair = allowing((update) => !!update.actions.repair?.allowed && !!update.repair_due);
     if (to.length) verbs.push({ act: "framed-update-to", label: view.updateTo, word: view.bar.updateTo, icon: "update", reach: to.map(keyOf), primary: true });
     if (ways.length) verbs.push({ act: "framed-ways", label: view.ways, word: view.bar.ways, icon: "tune", reach: ways.map(keyOf) });
     if (cancel.length) verbs.push({ act: "framed-cancel", label: view.cancel, word: view.bar.cancel, icon: "cross", reach: cancel.map(keyOf) });
+    if (repair.length) verbs.push({ act: "framed-repair", label: view.repair, word: view.bar.repair, icon: "repair", reach: repair.map(keyOf) });
+    if (unrepair.length) verbs.push({ act: "framed-unrepair", label: view.cancelRepair, word: view.bar.cancelRepair, icon: "cross", reach: unrepair.map(keyOf) });
     return verbs;
   }
 
@@ -151,6 +157,12 @@ export class ChosenBar {
         return true;
       case "framed-cancel":
         void this.cancel(machines);
+        return true;
+      case "framed-repair":
+        void this.repair(machines, false);
+        return true;
+      case "framed-unrepair":
+        void this.repair(machines, true);
         return true;
       case "framed-remove":
         this.remove(machines.filter((machine) => removerLoginOf(machine, world)), world);
@@ -202,6 +214,13 @@ export class ChosenBar {
   private async cancel(machines: Machine[]): Promise<void> {
     const targets = this.known(machines, (update) => update.actions.cancel.allowed && !!update.due);
     if (targets.length) await this.options.updates?.schedule(targets, null);
+  }
+
+  /** Repairs those of `machines` the hub lets this login repair, or calls
+   *  off the repairs kept for them. */
+  private async repair(machines: Machine[], cancel: boolean): Promise<void> {
+    const targets = this.known(machines, (update) => !!update.actions.repair?.allowed && (!cancel || !!update.repair_due));
+    if (targets.length) await this.options.updates?.repair(targets, cancel);
   }
 
   private remove(machines: Machine[], world: WorldNow): void {

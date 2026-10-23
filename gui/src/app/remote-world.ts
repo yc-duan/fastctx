@@ -22,7 +22,7 @@ import type { LoginWords } from "./account-words";
 import { newPasswordFields, passwordReady, sayPassword } from "./new-password";
 import { plainly } from "./problem";
 import { progressSteps } from "./progress-steps";
-import { mark } from "./removal";
+import { stepMark as mark } from "../pen/step-mark";
 
 export type RemoteAuth = { kind: "password"; password: string } | { kind: "key"; key: string; passphrase: string | null };
 

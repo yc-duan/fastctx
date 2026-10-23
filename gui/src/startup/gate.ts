@@ -8,7 +8,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { inShell, onComputer } from "../world/bridge";
-import type { RepairReport, RepairStep } from "./layers";
+import type { RepairReport, RepairStep } from "../world/repair";
 import { StartupPage, type Failure } from "./page";
 import { enStartup, zhStartup } from "./words";
 

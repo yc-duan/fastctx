@@ -3,6 +3,7 @@
 // policy.
 
 import type { ReachFailure } from "../world/updates";
+import { enRepair, zhRepair, type RepairWords } from "./repair-words";
 
 /** The window of versions (`version-window.ts`). */
 export interface VersionWords {
@@ -141,6 +142,7 @@ export interface UpdateWords {
   go: string;
   restart: string;
   retry: string;
+  repair: RepairWords;
   fetching: string;
   waiting: string;
   installing: string;
@@ -208,6 +210,7 @@ export const zhUpdate: UpdateWords = {
   go: "更新",
   restart: "重启并更新",
   retry: "重试",
+  repair: zhRepair,
   fetching: "下载中",
   waiting: "等手上的活告一段落",
   installing: "正在安装，应用会自己重新打开",
@@ -265,6 +268,7 @@ export const enUpdate: UpdateWords = {
   go: "Update",
   restart: "Restart and update",
   retry: "Try again",
+  repair: enRepair,
   fetching: "Downloading",
   waiting: "Waiting for the work under way",
   installing: "Installing; the app opens again by itself",

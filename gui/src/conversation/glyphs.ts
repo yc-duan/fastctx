@@ -13,14 +13,15 @@ type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "sto
  *  and letting them in, signing up; a conversation's context, the
  *  provider's cache and how long it stays; saving a copy, and a file's
  *  path; the machines as a drawing and as a list; a new version; a
- *  conversation's goal, pausing and resuming it, and the panel beside it. */
+ *  conversation's goal, pausing and resuming it, and the panel beside it;
+ *  a repair. */
 type Frame =
   | "menu" | "plus" | "minus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back" | "sleep" | "wake" | "move"
   | "archive" | "unarchive" | "trash" | "reread" | "scan" | "grip" | "page" | "versions" | "history" | "person" | "key" | "phone"
   | "logout" | "shield" | "lock" | "unlock" | "signup" | "relay" | "save" | "link"
   | "context" | "cache" | "clock" | "tree" | "rows" | "update"
   | "note" | "plug" | "tune"
-  | "goal" | "pause" | "resume" | "panel"
+  | "goal" | "pause" | "resume" | "panel" | "repair"
   | Marks;
 
 /** Which agent and which kind of device, drawn small beside a conversation's
@@ -117,6 +118,8 @@ const paths: Record<Named, string> = {
   goal: '<path d="M6 16.25V3.75"/><path d="M6 4.5h8.5l-2 3.25 2 3.25H6"/>',
   pause: '<path d="M7.5 5.5v9M12.5 5.5v9"/>',
   resume: '<path d="M7 5.1v9.8l7.6-4.9z"/>',
+  /* A wrench: a machine's Fastctx mended layer by layer. */
+  repair: '<path d="M13.2 3.9a3.5 3.5 0 0 0-4.4 4.4l-5 5a1.35 1.35 0 0 0 1.9 1.9l5-5a3.5 3.5 0 0 0 4.4-4.4l-2.1 2.1-1.8-.1-.1-1.8z"/>',
   /* A window with a leaf at its right: the panel beside a conversation. */
   panel: '<rect x="3.75" y="4.75" width="12.5" height="10.5" rx="1.5"/><path d="M11.75 4.75v10.5"/>',
   /* Two sliders: preferences. */

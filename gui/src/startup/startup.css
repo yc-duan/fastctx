@@ -106,8 +106,7 @@
   gap: 5px;
 }
 
-.su-dots > span,
-.rl-pulse {
+.su-dots > span {
   width: 6px;
   height: 6px;
   border-radius: var(--radius-full);
@@ -125,44 +124,12 @@
   animation-delay: calc(var(--breath) / 3);
 }
 
-/* A repair's layers. */
+/* A repair's layers (`app/repair-layers.ts`). */
 .su-layers {
   margin: 0 0 var(--space-6);
 }
 
-.rl-layers {
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.rl-row {
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
-  column-gap: var(--space-3);
-  align-items: center;
-  min-height: 32px;
-  cursor: default;
-}
-
-.rl-mark {
-  display: grid;
-  place-items: center;
-  color: var(--text-2);
-}
-
-.rl-row.repaired .rl-mark {
-  color: var(--accent);
-}
-
-.rl-row.failed .rl-mark {
-  color: var(--wrong);
-}
-
-:root[data-reduced] .su-dots > span,
-:root[data-reduced] .rl-pulse {
+:root[data-reduced] .su-dots > span {
   animation: none;
 }
 
@@ -170,9 +137,5 @@
   .su-main,
   .su-quiet {
     height: 44px;
-  }
-
-  .rl-row {
-    min-height: 40px;
   }
 }

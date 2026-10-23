@@ -364,6 +364,7 @@ export class MachinesPage implements Page {
             words: updating.view,
             of: (machine) => this.updatesByName.get(machine.written),
             schedule: (machines, version) => this.schedule(machines, version),
+            repair: (machines, cancel) => this.arrangeRepair(machines, cancel),
             ways: (machines, auto, relays) => this.setWays(machines, auto, relays),
             state: updating.state,
             versions: updating.versions,
@@ -964,6 +965,39 @@ export class MachinesPage implements Page {
           this.sayOnRow(machine.machine, words.notScheduled(error instanceof Error ? error.message : String(error)));
         }
       });
+    }
+    await this.askUpdates();
+  }
+
+  /** Has each machine's hub keep a repair for it, made at once where it is
+   *  online and once it is back where not; or calls off the repairs kept
+   *  (`dev-notes/2026-10-22-更新的修复-设计.md`, 别的设备替它). */
+  private async arrangeRepair(machines: MachineUpdate[], cancel: boolean): Promise<void> {
+    const updates = this.options.updates;
+    if (!updates) return;
+    const words = updates.view;
+    const byLogin = new Map<string, { login: Login; names: string[] }>();
+    for (const machine of machines) {
+      const login = this.updatesLogin.get(machine.machine);
+      if (!login) continue;
+      const key = `${login.hub}\n${login.account}`;
+      const entry = byLogin.get(key) ?? { login, names: [] };
+      entry.names.push(this.updatesBare.get(machine.machine) ?? machine.machine);
+      byLogin.set(key, entry);
+    }
+    for (const { login, names } of byLogin.values()) {
+      const written = (name: string) =>
+        [...this.updatesBare.entries()].find(([as, one]) => one === name && this.updatesLogin.get(as) === login)?.[0] ?? name;
+      try {
+        const reply = await updates.ask(login.hubName, login.account, cancel ? { do: "cancel_repair", machines: names } : { do: "repair", machines: names, version: null });
+        if (reply.kind !== "scheduled") continue;
+        for (const result of reply.results) {
+          if (result.done) this.updatesSaid.delete(written(result.machine));
+          else this.sayOnRow(written(result.machine), words.notScheduled(result.reason ? words.reasons[result.reason] : (result.why ?? words.reasons.other)));
+        }
+      } catch (error) {
+        for (const name of names) this.sayOnRow(written(name), words.notScheduled(error instanceof Error ? error.message : String(error)));
+      }
     }
     await this.askUpdates();
   }
