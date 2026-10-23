@@ -676,6 +676,8 @@ pub struct View {
     /// The hub understands the account-scoped goal control call.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub goal_control: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub scratch_locations: bool,
     /// The hub accepts account-level Claude subagent changes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub subagents: bool,
@@ -760,6 +762,7 @@ impl View {
             account_records: false,
             conversation_plans: false,
             goal_control: false,
+            scratch_locations: false,
             subagents: false,
             versions: false,
             package_progress: false,

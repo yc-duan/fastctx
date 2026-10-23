@@ -155,6 +155,8 @@ pub struct Former {
 #[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Heard {
     #[serde(default)]
+    pub scratch: Option<crate::scratch::Receipt>,
+    #[serde(default)]
     pub context: Option<crate::context::Receipt>,
     #[serde(default)]
     pub user_prompt: Option<String>,
@@ -1077,7 +1079,8 @@ mod lifetime_tests {
         for index in 0..512 {
             let arrived = residents.arrive(&world, &machine, host.clone(), hints(index)).unwrap();
             let id = &arrived.resident;
-            residents.set_heard(id, Heard { context: None, user_prompt: None, town: None, ledger: index });
+            residents
+                .set_heard(id, Heard { scratch: None, context: None, user_prompt: None, town: None, ledger: index });
             residents.set_inbox(id, format!("old-{index}"));
             residents.set_inbox(id, format!("new-{index}"));
             assert!(residents.resident_of_inbox(&format!("old-{index}")).is_none());

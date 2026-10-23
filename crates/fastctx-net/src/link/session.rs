@@ -245,6 +245,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             profiles: true,
             account_records: true,
             conversation_plans: true,
+            scratch_locations: true,
             left: None,
             cancels: true,
             presence: true,

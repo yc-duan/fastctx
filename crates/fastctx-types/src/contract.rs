@@ -118,6 +118,7 @@ impl RemoteCall {
             Self::McpServe { .. } => Contract { cancellable: true, ..Contract::STREAM },
             Self::Collaboration { .. } => Contract { cancellable: true, ..Contract::ASKS_AGENT },
             Self::MemoryFolders { .. }
+            | Self::Scratch { .. }
             | Self::AttachmentPlaces { .. }
             | Self::Who { .. }
             | Self::Since { .. }

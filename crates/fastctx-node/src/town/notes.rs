@@ -18,5 +18,5 @@ pub fn notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Option<He
             },
         );
     }
-    Ok((notes, Some(Heard { context: Some(receipt), user_prompt: None, town, ledger: 0 })))
+    Ok((notes, Some(Heard { scratch: None, context: Some(receipt), user_prompt: None, town, ledger: 0 })))
 }

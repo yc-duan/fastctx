@@ -470,6 +470,7 @@ pub async fn tell_if_ended(node: &Arc<Node>, record_path: &Path, record: &JobRec
                 record.stderr.as_deref().map(Path::new),
             )?,
             stop: record.stop.as_ref().map(|stop| Box::new(stop.request.clone())),
+            scratch: crate::scratch::jobs::locations(record_path, &record.machine)?,
         };
         match publish_new(&notice_path, &json(&notice)?, Permissions::Private) {
             Err(error) if error.kind() != io::ErrorKind::AlreadyExists => return Err(error),

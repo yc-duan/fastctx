@@ -89,6 +89,8 @@ pub enum OnWord {
     /// The job started, as `job`.
     Started {
         job: JobId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scratch: Option<String>,
     },
     /// `bytes` bytes of standard output follow.
     Out {
@@ -100,13 +102,18 @@ pub enum OnWord {
     },
     /// Nothing new for a while: the connection still stands. Said every
     /// `STILL_EVERY` while the job is quiet.
-    Still,
+    Still {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        scratch: Vec<crate::scratch::Location>,
+    },
     /// Everything it will write has been sent, and this is how it ended.
     /// `lettered` is the older protocol's debt-cleared hint. Completion
     /// receipts are now tracked independently of this hint: a lost TAKEN
     /// can produce a later letter even when this field was false.
     Ended {
         end: OnEnd,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        scratch: Vec<crate::scratch::Location>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         lettered: bool,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]

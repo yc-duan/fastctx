@@ -20388,7 +20388,8 @@
             }
           }
         ],
-        "notes": []
+        "notes": [],
+        "leading_notes": 0
       },
       {
         "kind": "reply",

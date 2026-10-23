@@ -53,7 +53,8 @@ pub fn supervise(world: &Path, record_path: &Path, fastctx_dir: &Path) -> io::Re
 /// The room of the conversation a job is for: the one its record is kept
 /// in. Worked out again from the owner's name it could be another, as the
 /// room of a machine renamed since stays under the name it had.
-fn room(record_path: &Path) -> io::Result<ConversationDir> {
+/// The room whose scratch directory the supervisor gives this job.
+pub fn room(record_path: &Path) -> io::Result<ConversationDir> {
     record_path
         .parent()
         .and_then(Path::parent)

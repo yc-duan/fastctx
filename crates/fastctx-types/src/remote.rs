@@ -23,6 +23,10 @@ use crate::{AgentName, ResidentId, TownName};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum RemoteCall {
+    /// The actual directory this machine would use for this conversation.
+    Scratch {
+        owner: crate::Address,
+    },
     /// A running job returns a plan operation to its resident's home through the hub.
     Plan {
         resident: ResidentId,
@@ -524,6 +528,7 @@ impl RemoteCall {
                 Purpose::Hands
             }
             RemoteCall::MemoryFolders { .. }
+            | RemoteCall::Scratch { .. }
             | RemoteCall::Mcp { .. }
             | RemoteCall::McpServe { .. }
             | RemoteCall::Run { .. }
@@ -602,6 +607,9 @@ impl RemoteCall {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum RemoteReply {
+    Scratch {
+        path: String,
+    },
     Plan {
         result: crate::plan::Result,
     },

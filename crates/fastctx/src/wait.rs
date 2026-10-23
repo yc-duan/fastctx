@@ -73,6 +73,7 @@ fn ended(record: &JobRecord) -> Notice {
         )
         .unwrap_or(None),
         stop: record.stop.as_ref().map(|stop| Box::new(stop.request.clone())),
+        scratch: Vec::new(),
     }
 }
 

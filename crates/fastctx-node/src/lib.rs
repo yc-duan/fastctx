@@ -105,6 +105,7 @@ mod residents;
 mod retention;
 mod run_facts;
 mod goals;
+mod scratch;
 mod server;
 mod server_invitation;
 mod session_live;
@@ -178,6 +179,7 @@ pub(crate) struct Node {
     residents: residents::Residents,
     contexts: context::Updates,
     context_deliveries: context::Deliveries,
+    scratch_deliveries: scratch::Deliveries,
     native_context: codex::native_context::Observers,
     /// This machine's Codex app-server, holding the Codex residents the
     /// World started.
@@ -574,6 +576,7 @@ pub async fn run_prepared(
         job_watches: Default::default(),
         contexts: Default::default(),
         context_deliveries: Default::default(),
+        scratch_deliveries: Default::default(),
         native_context: Default::default(),
         disk: Default::default(),
         places: Default::default(),

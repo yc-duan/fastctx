@@ -751,6 +751,9 @@ pub enum Call {
     /// is on more than one hub; for `resident`, the session's resident when
     /// it is known, also the collaboration its accounts offer it.
     Machines {
+        /// The adapter renders and retains the per-conversation scratch paths.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        scratch: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resident: Option<ResidentId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -902,6 +905,9 @@ pub enum Reply {
     Notices {
         notices: Vec<Delivery>,
         notes: Vec<String>,
+        /// Notes before this index precede command output; the rest follow it.
+        #[serde(default)]
+        leading_notes: usize,
     },
     Who(WorldWho),
     Since(crate::since::WorldSince),
@@ -980,6 +986,8 @@ pub enum Reply {
         groups: Vec<crate::world::MachineGroup>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         collab: Option<crate::collab::Offered>,
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        scratch: crate::scratch::Descriptions,
     },
     /// A job stopped, or found already ended: on `machine`, as its record
     /// now stands.

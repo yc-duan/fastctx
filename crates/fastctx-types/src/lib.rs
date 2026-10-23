@@ -54,6 +54,7 @@ pub mod repair;
 pub mod residents;
 pub mod run;
 pub mod run_facts;
+pub mod scratch;
 pub mod session;
 pub mod since;
 pub mod stats;

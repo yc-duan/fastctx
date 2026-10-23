@@ -56,6 +56,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         profiles: true,
         account_records: true,
         conversation_plans: true,
+        scratch_locations: true,
         machine: node.machine(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         node_lifetime: Some(Box::new(node.lifetime.clone())),
@@ -632,6 +633,7 @@ impl Drop for Arrived<'_> {
         drop(taking);
         for (resident, heard) in &self.notes {
             crate::context::release(self.node, resident, heard);
+            crate::scratch::release(self.node, resident, heard);
         }
         for resident in self.node.residents.left(&self.residents) {
             crate::codex::native_context::forget(self.node, &resident);
@@ -719,9 +721,15 @@ async fn collect_notes(
     collected_notes: &mut Vec<(ResidentId, crate::residents::Heard)>,
 ) -> Result<Reply, Failure> {
     let (reading, id) = (node.clone(), resident.clone());
-    let (mut notes, heard) = blocking("reading the town", move || {
+    let (mut notes, mut leading_notes, heard) = blocking("reading the town", move || {
         let node = &reading;
-        let (mut notes, heard) = crate::town::notes::notes(node, &id)?;
+        let (mut notes, mut heard) = crate::town::notes::notes(node, &id)?;
+        let (paths, scratch) = crate::scratch::collect(node, &id, notes.len())?;
+        notes.extend(paths);
+        if let Some(heard) = &mut heard {
+            heard.scratch = Some(scratch);
+        }
+        let leading_notes = notes.len();
         if let Some(warning) = node.lifetime.warning() {
             notes.push(format!("=== {warning} ==="));
         }
@@ -732,16 +740,21 @@ async fn collect_notes(
             .map(|job| (format!("{} on {}", job.job, job.machine), job.started_at, job.command))
             .collect();
         notes.extend(crate::jobs::still_running(&node.world, &node.names(), &id, answering.as_ref(), elsewhere)?);
-        Ok((notes, heard))
+        Ok((notes, leading_notes, heard))
     })
     .await?;
     if let Some(mut heard) = heard {
+        if let Some(omitted) = crate::scratch::reserve(node, &resident, &mut heard) {
+            leading_notes -= omitted.len();
+            notes.drain(omitted);
+        }
         if let Some(omitted) = crate::context::reserve(node, &resident, &mut heard) {
+            leading_notes -= omitted.len();
             notes.drain(omitted);
         }
         collected_notes.push((resident, heard));
     }
-    Ok(Reply::Notices { notices, notes })
+    Ok(Reply::Notices { notices, notes, leading_notes })
 }
 
 /// What `collect` gave went out with an answer: it went into the turn the
@@ -796,6 +809,7 @@ async fn taken(
     }
     for (owner, heard) in collected_notes.iter_mut().filter(|(owner, _)| *owner == resident) {
         crate::context::acknowledge(node, owner, heard).map_err(|error| Failure::new(error.to_string()))?;
+        crate::scratch::acknowledge(node, owner, heard).map_err(|error| Failure::new(error.to_string()))?;
         node.residents.acknowledge_heard(owner, heard.clone());
     }
     collected_notes.retain(|(owner, _)| *owner != resident);
@@ -1469,14 +1483,20 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let here_too = crate::around::works_here(node, &acting);
             nodes(node, &acting, here_too).await.map(Reply::Nodes)
         }
-        Call::Machines { resident, login, thread } => {
+        Call::Machines { resident, login, thread, scratch } => {
             let explicit = resident.is_some() || thread.is_some();
             let resident =
                 resident.or_else(|| thread.as_deref().and_then(|thread| node.residents.resident_of_thread(thread)));
             if explicit && resident.is_none() {
-                return Ok(Reply::Machines { here: None, others: Vec::new(), groups: Vec::new(), collab: None });
+                return Ok(Reply::Machines {
+                    here: None,
+                    others: Vec::new(),
+                    groups: Vec::new(),
+                    collab: None,
+                    scratch: Default::default(),
+                });
             }
-            machines(node, resident.as_ref(), login.as_ref())
+            machines(node, resident.as_ref(), login.as_ref(), scratch).await
         }
         Call::WatchTools { .. } => Err(Failure::new("a tools watch is answered as it goes, not at once")),
     }
@@ -1588,6 +1608,7 @@ async fn run_started(
     let turn = request.turn.clone();
     let started_at = jiff::Timestamp::now();
     // A script of one `on` goes where it names (`world-run.md`, 这里).
+    let source = goes_to.clone().unwrap_or_else(|| here.clone().into());
     let reply = match (goes_to, request) {
         (Some(goes_to), request) => crate::here::run(node, &resident, town.clone(), request, &goes_to).await?,
         (None, request) => {
@@ -1607,6 +1628,8 @@ async fn run_started(
         };
         kept.map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
     }
+    crate::scratch::observed(node, &resident, &source, &reply.scratch)
+        .map_err(|error| Failure::new(format!("recording scratch locations: {error}")))?;
     let mut action = crate::jobs::action(&reply, &script, started_at);
     action.turn = turn;
     let world = node.world.clone();
@@ -1766,17 +1789,26 @@ async fn who(
 /// For a session here: where its shell starts and the other machines it may
 /// work on, from the hubs' views as they stand, asking none of them; and
 /// where its colleagues live, when it may ask for them.
-fn machines(
+async fn machines(
     node: &Arc<Node>,
     resident: Option<&ResidentId>,
     login: Option<&fastctx_types::collab::Caller>,
+    describe_scratch: bool,
 ) -> Result<Reply, Failure> {
     // A session that names a conversation this computer does not know is
     // told of no machine, never of those of whom the computer is.
     let acting = match resident {
         Some(resident) => match crate::here::acting(node, resident) {
             Some(acting) => acting,
-            None => return Ok(Reply::Machines { here: None, others: Vec::new(), groups: Vec::new(), collab: None }),
+            None => {
+                return Ok(Reply::Machines {
+                    here: None,
+                    others: Vec::new(),
+                    groups: Vec::new(),
+                    collab: None,
+                    scratch: Default::default(),
+                });
+            }
         },
         None => fastctx_types::access::Acting::Here,
     };
@@ -1785,7 +1817,21 @@ fn machines(
     let (here, others, groups) = crate::world::grouped_machines(node, &acting, here_too);
     let here = here_too.then(|| here.to_string());
     let collab = crate::collab::choices(node, resident, login)?.map(|choices| choices.offered);
-    Ok(Reply::Machines { here, others, groups, collab })
+    let scratch = match resident.filter(|_| describe_scratch) {
+        Some(id) => {
+            let paths = crate::scratch::descriptions(
+                node,
+                id,
+                &acting,
+                here.iter().cloned().chain(others.iter().cloned()).collect(),
+            )
+            .await;
+            crate::scratch::described(node, id, paths.clone()).map_err(|error| Failure::new(error.to_string()))?;
+            paths
+        }
+        None => Default::default(),
+    };
+    Ok(Reply::Machines { here, others, groups, collab, scratch })
 }
 
 /// `fastctx nodes`: this computer, and hub by hub the machines whoever asks

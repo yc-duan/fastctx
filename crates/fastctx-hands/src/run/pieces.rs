@@ -122,6 +122,7 @@ mod tests {
 
     fn render(pieces: Vec<OutputPiece>) -> Vec<Content> {
         present(&RunReply {
+            scratch: Vec::new(),
             run: None,
             consumed: None,
             privacy: Vec::new(),

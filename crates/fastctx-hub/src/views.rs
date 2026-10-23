@@ -161,6 +161,7 @@ pub(crate) fn view_for(
         account_records: true,
         conversation_plans: true,
         goal_control: true,
+        scratch_locations: true,
         subagents: true,
         versions: true,
         package_progress: true,

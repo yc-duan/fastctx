@@ -81,6 +81,8 @@ pub enum Welcome {
         account_records: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         conversation_plans: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        scratch_locations: bool,
         machine: MachineName,
         version: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]

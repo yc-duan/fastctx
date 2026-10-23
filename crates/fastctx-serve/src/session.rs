@@ -502,9 +502,9 @@ impl Session {
         };
         let collected = client.call(collect).await.map_err(|error| error.to_string());
         match collected {
-            Ok(Reply::Notices { notices, notes }) => {
+            Ok(Reply::Notices { notices, notes, leading_notes }) => {
                 let messages = notices.into_iter().map(|delivery| (delivery.id, told::told(&delivery.notice)));
-                let ids = match answer::assemble(&self.world, answer, notes, messages) {
+                let ids = match answer::assemble(&self.world, answer, notes, leading_notes, messages) {
                     Ok(ids) => ids,
                     Err(error) => {
                         answer.follow(format!("=== could not prepare words for you: {error} ==="));
@@ -563,7 +563,8 @@ impl Session {
         if let Some(mut known) = residents.remove(&thread) {
             // Check the arrival connection itself before trusting presence. A detached
             // EOF watcher can run after this call has already reached a replacement node.
-            match known.client.call(Call::Machines { resident: None, login: None, thread: None }).await {
+            match known.client.call(Call::Machines { resident: None, login: None, thread: None, scratch: false }).await
+            {
                 Ok(Reply::Machines { .. }) => {
                     let whereabouts = known.whereabouts.clone();
                     residents.insert(thread, known);
@@ -615,11 +616,24 @@ impl Session {
         };
         let thread = meta.and_then(|meta| meta.get("threadId")).and_then(Value::as_str).map(str::to_string);
         match client
-            .call(Call::Machines { resident: self.known_resident(meta), login: self.login(&host), thread })
+            .call(Call::Machines {
+                resident: self.known_resident(meta),
+                login: self.login(&host),
+                thread,
+                scratch: true,
+            })
             .await
         {
-            Ok(Reply::Machines { here, others, groups, collab }) => {
-                Ok(Some(crate::tools::Machines { here, others, groups, collab }))
+            Ok(Reply::Machines { here, others, groups, collab, mut scratch }) => {
+                if !client.scratch_locations {
+                    scratch = here
+                        .iter()
+                        .cloned()
+                        .chain(others.iter().cloned())
+                        .map(|name| (name, Err(fastctx_types::scratch::words::OLD_NODE.into())))
+                        .collect();
+                }
+                Ok(Some(crate::tools::Machines { here, others, groups, collab, scratch }))
             }
             Ok(other) => Err(format!("the node answered something else: {other:?}")),
             Err(error) => Err(error.to_string()),

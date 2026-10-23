@@ -207,6 +207,8 @@ pub enum Intent {
         account_records: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         conversation_plans: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        scratch_locations: bool,
         /// A machine taken off the hub that was to uninstall Fastctx then,
         /// and could not do all of it: what was left, and why. The hub
         /// keeps it for its machine log, and refuses the session as before.
