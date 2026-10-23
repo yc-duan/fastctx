@@ -548,6 +548,9 @@ impl Directory {
 /// One member's view of its hub's directory.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct View {
+    /// The hub takes ledger questions in parts and serves large ledger entries.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ledger_parts: bool,
     /// The hub authorizes large calls from control-frame facts and requires a verifying receiver.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub call_details: bool,
@@ -700,6 +703,7 @@ impl View {
     /// An empty view, before the hub has given one.
     pub fn empty(hub: HubId, hub_name: HubName, me: MachineName) -> Self {
         Self {
+            ledger_parts: false,
             call_details: false,
             machine_log: false,
             hub,

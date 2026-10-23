@@ -101,6 +101,10 @@ pub enum Up {
     Ack { seq: u64 },
     /// A question for the hub itself.
     Ask { id: u64, question: Question },
+    /// A ledger question in ordered JSON parts, only for hubs advertising ledger_parts.
+    QuestionPart { id: u64, index: u32, total: u32, text: String },
+    /// Abandons only an incomplete question; an accepted append still finishes.
+    CancelQuestion { id: u64 },
     /// How what is afoot on this machine changed since it last told this
     /// session (`world-network.md`, 近况); sent only to a hub whose view
     /// says it takes it.

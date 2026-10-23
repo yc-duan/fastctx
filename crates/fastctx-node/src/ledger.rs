@@ -159,21 +159,25 @@ fn write_alone(
         machines,
         files,
     };
+    let mut memory = fastctx_net::memory::Index::default();
+    for (_, previous, _) in &entries {
+        memory.take(previous)?;
+    }
+    memory.check(&entry.files)?;
     check_size(&entry)?;
     let signed = ledger::sign(&key, &entry);
     let seq = entries.last().map(|(seq, _, _)| *seq).unwrap_or(0) + 1;
     apply(world, town, seq, &entry, &signed).map_err(|error| format!("keeping the entry: {error}"))
 }
 
-/// An entry is checked against the one message it must fit in before any
-/// of its files is kept.
+/// Checks the encoded multipart limit before any files are kept.
 fn check_size(entry: &Entry) -> Result<(), String> {
     match ledger::fits(entry) {
         Ok(_) => Ok(()),
         Err(over) => {
-            let limit = fastctx_net::wire::MAX_CONTROL_FRAME;
+            let limit = fastctx_net::wire::PARTS_AT_MOST;
             Err(format!(
-                "the ledger entry is {} bytes as it travels; the limit is {limit} bytes (256 KiB), including its signature and message encoding",
+                "the ledger entry is {} bytes as it travels; the limit is {limit} bytes, including its signature and message encoding",
                 limit + over
             ))
         }
@@ -513,7 +517,8 @@ fn read_all(directory: &TownDir) -> io::Result<Vec<(u64, Entry, Signed)>> {
 fn read_entry(path: &Path) -> io::Result<(Entry, Signed)> {
     let invalid = |error: String| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display()));
     let signed: Signed = serde_json::from_slice(&std::fs::read(path)?).map_err(|error| invalid(error.to_string()))?;
-    let entry: Entry = signed.claim().map_err(|error| invalid(error.to_string()))?;
+    let claimed: Entry = signed.claim().map_err(|error| invalid(error.to_string()))?;
+    let entry = ledger::open(&signed, &claimed.hub, &claimed.town).map_err(invalid)?;
     Ok((entry, signed))
 }
 

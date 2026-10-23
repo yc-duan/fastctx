@@ -35,6 +35,7 @@ pub mod machine_log;
 pub mod management;
 pub mod mcp;
 pub mod mcp_message;
+pub mod memory;
 pub mod names;
 pub mod node_lifetime;
 pub mod observation;

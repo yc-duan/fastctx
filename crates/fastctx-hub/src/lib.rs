@@ -41,6 +41,7 @@ mod moving;
 mod outq;
 mod project_deletions;
 mod project_entry;
+mod question_parts;
 mod records;
 mod releases;
 mod renewal;
