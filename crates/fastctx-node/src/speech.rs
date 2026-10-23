@@ -75,6 +75,9 @@ pub(crate) async fn tell_at(
         }
         return tell_here(node, &to.resident, delivery, owed).await;
     }
+    if matches!(&notice, Notice::Question { .. }) {
+        crate::goals::questions::require_remote(node, acting, machine).await?;
+    }
     let letter = match notice {
         // Words a resident said make it owed the turn they go into, which
         // the receiving machine knows from who sent them.
@@ -679,7 +682,7 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
     let (from, text) = match &delivery.notice {
         Notice::Words { from, text } => (from.clone(), text.clone()),
         Notice::Attached { message, text } => (message.speaker(), text.clone()),
-        Notice::Answer { colleague, .. } => {
+        Notice::Answer { colleague, .. } | Notice::Question { colleague, .. } => {
             (Speaker::Resident { address: colleague.clone() }, told::told(&delivery.notice))
         }
         Notice::JobEnded { .. } | Notice::Health { .. } => (Speaker::World, told::told(&delivery.notice)),
@@ -689,9 +692,11 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
     // answer is the notice itself, not the words written for the model.
     let notice = match &delivery.notice {
         Notice::Words { .. } | Notice::Attached { .. } => None,
-        Notice::JobEnded { .. } | Notice::Answer { .. } | Notice::Health { .. } | Notice::World { .. } => {
-            Some(Box::new(delivery.notice.clone()))
-        }
+        Notice::JobEnded { .. }
+        | Notice::Answer { .. }
+        | Notice::Health { .. }
+        | Notice::Question { .. }
+        | Notice::World { .. } => Some(Box::new(delivery.notice.clone())),
     };
     let event = SessionEvent {
         at: Timestamp::now(),

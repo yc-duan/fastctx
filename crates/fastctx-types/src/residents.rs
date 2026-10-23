@@ -147,6 +147,9 @@ pub enum Notice {
     /// A colleague's host reported something in a turn owed to the resident
     /// that it must hear at once.
     Health { colleague: Address, label: String, health: Health },
+    /// A colleague's question rides with ongoing or later work without starting a turn.
+    /// Its delivery identity keeps different questions from replacing one another.
+    Question { colleague: Address, id: String, text: String },
     /// Words someone said to the resident.
     Words { from: Speaker, text: String },
     /// The user's words and files; the accompanying facts are the World's.
@@ -166,10 +169,11 @@ impl Notice {
     /// next one, or into the one running where it next can; told again
     /// before it went in, only the latest goes (`world-colleagues.md`).
     /// Notices of one kind replace one another.
-    pub fn along(&self) -> Option<&'static str> {
+    pub fn along(&self) -> Option<&str> {
         match self {
             Notice::World { fact: WorldFact::Focus { .. }, .. } => Some("focus"),
             Notice::World { fact: WorldFact::Moved { .. }, .. } => Some("project"),
+            Notice::Question { id, .. } => Some(id),
             _ => None,
         }
     }

@@ -5,6 +5,7 @@ use fastctx_types::goals::{Goal, Owner};
 pub(crate) use fastctx_types::goals::words::*;
 
 pub(crate) const NATIVE_CODEX: &str = "Goals are available only in Codex conversations started by the World.";
+pub(crate) const QUESTION_OLDER_NODE: &str = "The requester's node is too old to receive a question without waking it.";
 
 const BLOCK: &str = r#"THE GOAL
 The user set a goal for this conversation, and it is on:
@@ -32,6 +33,17 @@ While the goal is on, no one is watching; keep going until it is done.
   saying what blocks you and what would clear it. Hard, slow or uncertain is not blocked.
 - Mark it paused (`fastctx goal pause`) only when the user tells you to stop.
 "#;
+
+pub(crate) fn question(colleague: &fastctx_types::Address, item: &fastctx_types::session::Item) -> String {
+    let questions = item
+        .detail
+        .as_ref()
+        .and_then(|detail| detail.pointer("/fastctx_goal_question/questions").or_else(|| detail.get("questions")));
+    format!(
+        "Question from {colleague}:\n{}\nReply with message_colleague; the colleague continues working.",
+        questions.map(ToString::to_string).unwrap_or_default()
+    )
+}
 
 pub(crate) fn context(goal: &Goal) -> String {
     if !goal.active() {

@@ -572,6 +572,7 @@ pub fn facts(node: &Node) -> MachineFacts {
     MachineFacts {
         turn_debts: true,
         goal_runtime: node.goals.available(),
+        goal_questions: true,
         name: node.machine(),
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
@@ -1173,11 +1174,12 @@ impl fastctx_net::link::Node for Handler {
                         if let Notice::JobEnded { job, machine, .. } = &notice {
                             crate::here::ended_elsewhere(&node, &to, machine, job);
                         }
+                        let owed = if matches!(&notice, Notice::Question { .. }) { Owed::Nobody } else { Owed::Working };
                         let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
                         if crate::on_delivery::park_from(&node, &to, &delivery, Some(&identity))? {
                             return Ok(Ok(()));
                         }
-                        match crate::speech::tell_here(&node, &to, delivery, Owed::Working).await {
+                        match crate::speech::tell_here(&node, &to, delivery, owed).await {
                             Ok(_) => Ok(Ok(())),
                             Err(failure) => Err(io::Error::other(failure.message)),
                         }

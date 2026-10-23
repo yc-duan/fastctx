@@ -231,6 +231,13 @@ pub fn session(directory: &ConversationDir, turn: &str) -> io::Result<Option<Str
     optional(&directory.turn_sessions().join(format!("{key}.json")))
 }
 
+/// Whether this event identity has already been durably published.
+pub(crate) fn has_event(directory: &ConversationDir, key: &str) -> io::Result<bool> {
+    let _transaction = crate::resident_storage::lock();
+    let key = crate::speech::fixed_id("event", &[key]);
+    directory.session_events().join(format!("{key}.json")).try_exists()
+}
+
 pub fn event(directory: &ConversationDir, key: &str, event: &SessionEvent) -> io::Result<bool> {
     let _transaction = crate::resident_storage::lock();
     let key = crate::speech::fixed_id("event", &[key]);
