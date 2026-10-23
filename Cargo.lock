@@ -1476,6 +1476,7 @@ version = "1.0.1-beta.10"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "fastctx-agent",
  "fastctx-client",
  "fastctx-file-search",
  "fastctx-hands",
@@ -1485,6 +1486,7 @@ dependencies = [
  "fastctx-net",
  "fastctx-platform",
  "fastctx-ripgrep",
+ "fastctx-sentinel",
  "fastctx-types",
  "fastctx-uninstall",
  "fastctx-update",

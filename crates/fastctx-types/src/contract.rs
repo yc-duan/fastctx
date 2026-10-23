@@ -102,6 +102,8 @@ impl RemoteCall {
     /// What this call is (`Contract`).
     pub fn contract(&self) -> Contract {
         match self {
+            Self::SentinelSettings { change: None } => Contract { within: Some(Duration::from_secs(180)), ..Contract::QUERY },
+            Self::SentinelSettings { change: Some(_) } => Contract::CHANGE,
             Self::Mcp {
                 mcp:
                     crate::mcp::MachineCall::Status { .. }
@@ -251,6 +253,8 @@ impl Call {
     /// (`Leaving`).
     pub fn on_leaving(&self) -> Leaving {
         match self {
+            Self::SentinelSettings { change: None, .. } => Leaving::Stop,
+            Self::SentinelSettings { change: Some(_), .. } => Leaving::Finish,
             Self::AttachmentPlaces { .. }
             | Self::McpRelay { .. }
             | Self::MachineLog { .. }

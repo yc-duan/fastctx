@@ -99,6 +99,7 @@ mod residents;
 mod retention;
 mod run_facts;
 mod server;
+mod sentinels;
 mod server_invitation;
 mod session_live;
 mod session_options;
@@ -156,6 +157,7 @@ pub(crate) struct Node {
     /// hub renames it (`world::follow_rename`).
     machine: RwLock<machine::MachineFile>,
     jobs: jobs::Jobs,
+    sentinels: sentinels::Services,
     mcp_keeping: std::sync::Mutex<()>,
     job_watches: job_watch::Watches,
     disk: ranked::Disk,
@@ -543,6 +545,7 @@ pub async fn run_prepared(
         fastctx,
         machine: RwLock::new(machine),
         jobs: jobs::Jobs::new(),
+        sentinels: Default::default(),
         mcp_keeping: std::sync::Mutex::new(()),
         job_watches: Default::default(),
         disk: Default::default(),

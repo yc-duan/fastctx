@@ -20,6 +20,11 @@ use crate::{Address, AgentName, EntryId, JobId, JournalName, MachineName, Notice
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum Call {
+    SentinelSettings {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        change: Option<crate::sentinel_settings::WriteSettings>,
+    },
     /// The selected account's machine changes, before a previous page's
     /// cursor when supplied. The hub checks visibility on every read.
     MachineLog {
@@ -716,6 +721,7 @@ pub enum Call {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum Reply {
+    SentinelSettings(Box<crate::sentinel_settings::SettingsReply>),
     /// The HTTP proxy chosen in Fastctx, if one is (`Call::HubProxy`).
     HubProxy {
         url: Option<String>,

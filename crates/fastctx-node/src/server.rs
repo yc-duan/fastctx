@@ -52,6 +52,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         return Ok(());
     }
     let welcome = Welcome::Accepted {
+        sentinels: true,
         profiles: true,
         machine: node.machine(),
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -1251,6 +1252,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::Copy { from, to } => {
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
             crate::copy::copy(node, &acting, from, to).await.map(Reply::Copied)
+        }
+        Call::SentinelSettings { hub, account, change } => {
+            if change.is_some() { users_voice(node, peer)?; }
+            let (link, account) = crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
+            crate::sentinels::settings(node, &link, &account, change).await.map(|reply| Reply::SentinelSettings(Box::new(reply)))
         }
         Call::CollabRead { hub, account } => {
             users_voice(node, peer)?;

@@ -578,6 +578,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         path_separator: if cfg!(windows) { ';' } else { ':' },
         case_sensitive: !cfg!(any(windows, target_os = "macos")),
         version: env!("CARGO_PKG_VERSION").to_string(),
+        sentinels: true,
         completion_receipts: true,
         upload_resumes: true,
         attachment_references: true,
@@ -1009,6 +1010,7 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(|map| RemoteReply::Entered { town, map: Box::new(map) })
                 }
+                RemoteCall::SentinelSettings { change } => crate::sentinels::settings(&node, &link, &caller.account, change).await.map(|reply| RemoteReply::SentinelSettings(Box::new(reply))),
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&node))),
                 RemoteCall::AttachmentReferences { conversation, attachments } => {
                     if !node.is_me(&conversation.machine)

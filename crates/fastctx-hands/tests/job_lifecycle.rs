@@ -229,6 +229,7 @@ async fn node(mut listener: Listener, world: WorldDir, machine: MachineName, not
         connection
             .send(
                 &serde_json::to_vec(&Welcome::Accepted {
+                    sentinels: false,
                     profiles: false,
                     machine: machine.clone(),
                     version: "test".into(),

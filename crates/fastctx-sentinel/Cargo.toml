@@ -16,4 +16,4 @@ fastctx-types = { path = "../fastctx-types" }
 url = "2"
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["time", "sync"] }

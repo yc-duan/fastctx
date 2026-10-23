@@ -17,6 +17,7 @@ mod hub_moving;
 mod item_details;
 mod kept;
 mod profile;
+mod sentinels;
 mod transcript;
 mod updates;
 mod world_watch;
@@ -1192,6 +1193,8 @@ pub fn run() {
             accounts::accounts,
             accounts::seen_dissolved,
             accounts::machine_log,
+            sentinels::sentinel_settings_read,
+            sentinels::sentinel_settings_write,
             profile::profile_read,
             profile::profile_subagents,
             profile::profile_write,

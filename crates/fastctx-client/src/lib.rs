@@ -36,6 +36,7 @@ pub mod mcp_relay;
 mod originals;
 pub mod pages;
 mod profile;
+mod sentinels;
 pub mod renewal;
 pub mod shown;
 mod thumbnail;
@@ -114,6 +115,7 @@ pub struct Client {
     /// The node binary's version.
     pub node_version: String,
     pub profiles: bool,
+    pub sentinels: bool,
     /// The connected node's facts, including when another starter won.
     pub node_lifetime: Option<Box<fastctx_types::node_lifetime::NodeLifetime>>,
 }
@@ -148,8 +150,8 @@ impl Client {
             .map_err(io_error)?
             .ok_or_else(|| io_error(std::io::ErrorKind::UnexpectedEof.into()))?;
         match serde_json::from_slice::<Welcome>(&welcome).map_err(|error| io_error(std::io::Error::other(error)))? {
-            Welcome::Accepted { machine, version, node_lifetime, profiles } => {
-                Ok(Self { connection, next: 0, machine, node_version: version, node_lifetime, profiles })
+            Welcome::Accepted { machine, version, node_lifetime, profiles, sentinels } => {
+                Ok(Self { connection, next: 0, machine, node_version: version, node_lifetime, profiles, sentinels })
             }
             Welcome::Refused { reason, mismatch } => {
                 let mismatch = mismatch.or_else(|| renewal::legacy_mismatch(&reason));
@@ -260,6 +262,9 @@ impl Client {
 
     /// Sends `call` and waits for its answer.
     pub async fn call(&mut self, call: Call) -> Result<Reply, CallError> {
+        if !self.sentinels && matches!(call, Call::SentinelSettings { .. }) {
+            return Err(CallError::Failed(Failure::not_run(format!("upgrade {} to use sentinels", self.machine))));
+        }
         if !self.profiles
             && matches!(
                 call,

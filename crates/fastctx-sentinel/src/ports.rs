@@ -24,6 +24,11 @@ pub trait Web: Send + Sync {
 }
 /// Only the sentinel's home receives the secret. It is never part of settings replies.
 pub trait Credentials: Send + Sync {
+    fn status<'a>(
+        &'a self,
+        scope: &'a fastctx_types::access::HubAccount,
+        home: &'a MachineName,
+    ) -> FutureResult<'a, fastctx_types::sentinel_settings::KeyStatus>;
     fn model_key<'a>(&'a self, definition: &'a Definition) -> FutureResult<'a, String>;
     fn search_key<'a>(&'a self, definition: &'a Definition) -> FutureResult<'a, String>;
 }
