@@ -114,8 +114,8 @@ impl Drop for Stop {
 }
 
 pub(crate) async fn admit(node: &Arc<Node>, origin: &OnOrigin) -> Result<(), Failure> {
-    if !fastctx_hands::run::sentinel::available() {
-        return Err(Failure::not_run("the offline read-only sentinel sandbox is not connected"));
+    if let Some(why) = fastctx_hands::run::sentinel::unavailable() {
+        return Err(Failure::not_run(why));
     }
     let probe = origin.sentinel.as_ref().ok_or_else(|| Failure::refused("missing observation identity"))?;
     let scope = origin.account.as_ref().ok_or_else(|| Failure::refused("missing observation account"))?;

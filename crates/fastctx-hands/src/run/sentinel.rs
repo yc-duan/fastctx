@@ -4,19 +4,24 @@ use fastctx_platform::{ProcessTree, tree::TreeOutput};
 use fastctx_types::run::{JobRecord, OutputMode};
 use std::{ffi::OsStr, io, path::Path};
 
-/// Development-only execution until the platform's offline read-only sandbox is
-/// connected here. Released binaries never accept the laboratory switch.
-pub fn available() -> bool {
+/// Development builds may run observations without walls, to try sentinels on
+/// a machine that has none; released binaries never accept the switch. The
+/// node hands the switch on to the supervisors it starts.
+pub fn unwalled() -> bool {
     !fastctx_platform::RELEASED && std::env::var_os("FASTCTX_LAB_UNSANDBOXED_SENTINEL").is_some_and(|v| v == "1")
 }
-/// The sandbox implementation replaces this function; the supervisor retains
-/// ownership, a 30-second deadline, output capture and process-tree cancellation.
-pub fn spawn(shell: &Prepared, record: &JobRecord) -> io::Result<(ProcessTree, TreeOutput)> {
-    if !available() {
-        return Err(io::Error::other("the offline read-only sentinel sandbox is not connected"));
-    }
+
+/// Why this machine cannot run a sentinel's command, if it cannot.
+pub fn unavailable() -> Option<String> {
+    if unwalled() { None } else { super::walls::missing() }
+}
+
+/// Starts the observation's script behind the walls (`walls.rs`): read-only,
+/// offline, the World's directory hidden but for the script. The supervisor
+/// keeps ownership, the deadline, output capture and process-tree cancellation.
+pub fn spawn(shell: &Prepared, record: &JobRecord, world: &Path) -> io::Result<(ProcessTree, TreeOutput)> {
     let script = shell.args.last().ok_or_else(|| io::Error::other("observation has no script"))?;
-    let args = [OsStr::new("--noprofile"), OsStr::new("--norc"), script.as_os_str()];
+    let shell_args = [OsStr::new("--noprofile"), OsStr::new("--norc"), script.as_os_str()];
     let environment: Vec<_> = shell
         .environment
         .iter()
@@ -31,5 +36,17 @@ pub fn spawn(shell: &Prepared, record: &JobRecord) -> io::Result<(ProcessTree, T
         })
         .cloned()
         .collect();
-    ProcessTree::spawn_with_io(&shell.program, &args, Path::new(&record.cwd), &environment, OutputMode::Separate, None)
+    let cwd = Path::new(&record.cwd);
+    if unwalled() {
+        return ProcessTree::spawn_with_io(&shell.program, &shell_args, cwd, &environment, OutputMode::Separate, None);
+    }
+    // Only what lies inside the hidden World goes back, and never the World
+    // whole: a later mount covers an earlier one.
+    let kept: Vec<&Path> =
+        [Path::new(script), cwd].into_iter().filter(|path| path.starts_with(world) && *path != world).collect();
+    let (program, mut args) = super::walls::walls(world, &kept)?;
+    args.push(shell.program.clone().into_os_string());
+    args.extend(shell_args.iter().map(|arg| arg.to_os_string()));
+    let args: Vec<&OsStr> = args.iter().map(|arg| arg.as_os_str()).collect();
+    ProcessTree::spawn_with_io(&program, &args, cwd, &environment, OutputMode::Separate, None)
 }

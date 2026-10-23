@@ -100,7 +100,7 @@ impl Jobs {
             let home = user_home().map_err(|error| failure("finding the home directory", error))?;
             let mut environment =
                 world_process_environment().map_err(|error| failure("reading the user's environment", error))?;
-            if on.as_ref().is_some_and(|(on,_)|on.sentinel.is_some()) && fastctx_hands::run::sentinel::available() {
+            if on.as_ref().is_some_and(|(on,_)|on.sentinel.is_some()) && fastctx_hands::run::sentinel::unwalled() {
                 environment.push(("FASTCTX_LAB_UNSANDBOXED_SENTINEL".into(), "1".into()));
             }
             // An `on` job hands its standard error back apart from its output,

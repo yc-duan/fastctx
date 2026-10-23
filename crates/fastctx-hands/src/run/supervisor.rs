@@ -156,7 +156,7 @@ impl Job {
             }
         }
         let (tree, output) = if self.record.is_sentinel() {
-            super::sentinel::spawn(&shell, &self.record)?
+            super::sentinel::spawn(&shell, &self.record, self.world.path())?
         } else {
             ProcessTree::spawn_with_io(&shell.program,&args,Path::new(&self.record.cwd),&shell.environment,mode,self.record.stdin.as_deref().map(Path::new))?
         };
