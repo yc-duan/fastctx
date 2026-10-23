@@ -3,6 +3,7 @@
 
 import type { FolderPickerWords } from "./folder-picker";
 import { dollars, underCent } from "../world/money";
+import { agentName } from "../world/names";
 import type { AskWords } from "../conversation/asks";
 import type { SaidWords } from "../conversation/said";
 import type { CommandWords } from "../conversation/commands";
@@ -363,6 +364,22 @@ export const zhPresence: PresenceWords = {
   arrivedBody: "如果不是你添加的，请在账号页移除",
   dissolved: (hubs) => `${hubs.join("、")} 已解散`,
   dissolvedBody: "这台电脑已离开，Fastctx 和数据都还在",
+  machineNotice: ({ machine, by, account, action: a }) => {
+    const who = by ?? "中枢";
+    switch (a.kind) {
+      case "rename":
+        return `${who} 把 ${machine} 改名为 ${a.to}`;
+      case "updated":
+        return `${who} 把 ${machine} 更新到 ${a.to}`;
+      case "remove":
+        return `${who} 把 ${machine} 移出了网络${a.then === "uninstall" ? "并卸载了 Fastctx" : a.then === "everything" ? "并彻底移除了 Fastctx" : ""}`;
+      case "share":
+        if (!a.shared && a.to === account) return by ? `${by} 收回了 ${machine} 给你的共享` : `${machine} 跑着中枢，不再共享给你`;
+        return a.shared ? `${who} 把 ${machine} 共享给了 ${a.to}` : `${who} 收回了 ${machine} 给 ${a.to} 的共享`;
+      case "assist":
+        return a.assisting ? `${who} 让 ${machine} 上的 ${agentName(a.agent)} 协助 ${a.to}` : `${who} 结束了 ${machine} 上的 ${agentName(a.agent)} 对 ${a.to} 的协助`;
+    }
+  },
 };
 
 export const enPresence: PresenceWords = {
@@ -377,6 +394,22 @@ export const enPresence: PresenceWords = {
   arrivedBody: "If you didn't add it, remove it on the Account page",
   dissolved: (hubs) => `${hubs.join(", ")} ${hubs.length > 1 ? "were" : "was"} dissolved`,
   dissolvedBody: "This computer has left; Fastctx and your data are untouched",
+  machineNotice: ({ machine, by, account, action: a }) => {
+    const who = by ?? "The hub";
+    switch (a.kind) {
+      case "rename":
+        return `${who} renamed ${machine} to ${a.to}`;
+      case "updated":
+        return `${who} updated ${machine} to ${a.to}`;
+      case "remove":
+        return `${who} took ${machine} off the network${a.then === "uninstall" ? " and uninstalled Fastctx" : a.then === "everything" ? " and removed Fastctx entirely" : ""}`;
+      case "share":
+        if (!a.shared && a.to === account) return by ? `${by} took back ${machine}'s share with you` : `${machine} runs the hub and is no longer shared with you`;
+        return a.shared ? `${who} shared ${machine} with ${a.to}` : `${who} took back ${machine}'s share with ${a.to}`;
+      case "assist":
+        return a.assisting ? `${who} let ${agentName(a.agent)} on ${machine} assist ${a.to}` : `${who} stopped ${agentName(a.agent)} on ${machine} assisting ${a.to}`;
+    }
+  },
 };
 
 export interface SettingsWords {

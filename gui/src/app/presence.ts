@@ -13,6 +13,7 @@ import { replyOf } from "../conversation/async-ask";
 import { connectDesktop, desktopAvailable, dismissDesktopNotice, getWindowPresence, notifyDesktop } from "../world/desktop";
 import type { Address } from "../world/events";
 import type { Asked, ResidentNow } from "../world/world";
+import type { MachineNotice } from "../world/accounts";
 import { link, placeOf, talkLink } from "./places";
 import { effect } from "./signals";
 import { residentsOf, type Store } from "./store";
@@ -34,6 +35,8 @@ export interface PresenceWords {
   /** Networks this computer was on, dissolved by their administrators. */
   dissolved(hubs: string[]): string;
   dissolvedBody: string;
+  /** What another who holds a machine with this account did to it. */
+  machineNotice(notice: MachineNotice): string;
 }
 
 export interface PresenceOptions {
@@ -148,6 +151,29 @@ export function startPresence(options: PresenceOptions): void {
         title: one.arrival.code ? words.arrivedManaged(where) : words.arrived(one.arrival.name, one.arrival.device, where),
         body: words.arrivedBody,
         route: link({ kind: "account" }),
+        actions: [{ id: "open", title: words.open }],
+      });
+    }
+  });
+
+  // What others did to machines an account here holds, each called about
+  // once; the first look only learns.
+  let noticed: Set<string> | null = null;
+  effect(() => {
+    const world = store.world.get();
+    if (!world) return;
+    const now = world.accounts.hubs.flatMap((hub) => (hub.machine_notices ?? []).map((notice) => ({ hub: hub.name, notice })));
+    const key = ({ hub, notice }: (typeof now)[number]) => `${hub}/${notice.account}/${notice.id}`;
+    const before = noticed;
+    noticed = new Set(now.map(key));
+    if (!before || !notifying()) return;
+    for (const one of now.filter((one) => !before.has(key(one)))) {
+      const gone = one.notice.action.kind === "remove" || (one.notice.action.kind === "share" && !one.notice.action.shared && one.notice.action.to === one.notice.account);
+      const name = one.notice.action.kind === "rename" ? one.notice.action.to : one.notice.machine;
+      void call(`machine:${key(one)}`, {
+        title: words.machineNotice(one.notice),
+        body: `${one.hub} ${one.notice.account}`,
+        route: gone ? link({ kind: "machines" }) : link({ kind: "machine", name }),
         actions: [{ id: "open", title: words.open }],
       });
     }
