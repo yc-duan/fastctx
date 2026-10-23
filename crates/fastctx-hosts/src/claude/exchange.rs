@@ -519,20 +519,14 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
             let error = error.or_else(|| refusal.as_ref().map(|refusal| serde_json::json!({
                 "category": refusal.category.as_deref().unwrap_or("refusal"), "message": refusal.explanation,
             })));
+            // Cancellation determines how the turn ended, even when it also carries a diagnostic.
             let how = match reason.as_deref() {
-                _ if error.is_some() => TurnHow::Failed,
-                Some("answer") => TurnHow::Completed,
+                _ if aborted => TurnHow::Interrupted,
                 Some("aborted") => TurnHow::Interrupted,
+                _ if error.is_some() => TurnHow::Failed,
+                Some("answer") | None => TurnHow::Completed,
                 Some("refusal" | "error") => TurnHow::Failed,
                 Some(other) => TurnHow::Other(other.to_string()),
-                // Events already on disk from the previous mod have only this flag.
-                None => {
-                    if aborted {
-                        TurnHow::Interrupted
-                    } else {
-                        TurnHow::Completed
-                    }
-                }
             };
             let reason = match refusal {
                 Some(Refusal { category: Some(category), explanation: Some(explanation) }) => {

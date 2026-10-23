@@ -185,7 +185,7 @@ function event($, context, kind, fields) {
   const { id: name, at } = reserved(context)
   const pending = [...context.unwritten.keys()].map((name) => name + '.json')
   const body = JSON.stringify({ kind, at, ...fields, pending })
-  const goalStop = kind === 'turn_complete' && fields.aborted === true && context.goal?.active === true
+  const goalStop = kind === 'turn_complete' && (fields.aborted === true || fields.reason === 'aborted') && context.goal?.active === true
   if (goalStop) {
     context.goalStopping = true
     context.goalStopReport = name + '.json'
