@@ -27,6 +27,7 @@ mod contract;
 mod control_start;
 mod controls;
 mod history;
+mod compaction_history;
 pub mod identify;
 mod image_position;
 mod items;
@@ -726,7 +727,9 @@ impl CodexHost {
 
     /// Interrupts only the observed turn; a later turn must never inherit this request.
     pub async fn interrupt_turn(self: &Arc<Self>, thread: &str, turn: &str) -> Result<bool, String> {
-        if self.running_turn(thread).as_deref() != Some(turn) { return Ok(false); }
+        if self.running_turn(thread).as_deref() != Some(turn) {
+            return Ok(false);
+        }
         self.server().await?.request("turn/interrupt", json!({"threadId":thread,"turnId":turn})).await?;
         Ok(true)
     }
@@ -861,6 +864,11 @@ impl CodexHost {
 
     pub fn running_turn(&self, thread: &str) -> Option<String> {
         self.lock().threads.get(thread).and_then(|entry| entry.turn.clone())
+    }
+
+    /// A submission with no turn ID yet still owns the thread's next work boundary.
+    pub fn busy(&self, thread: &str) -> bool {
+        self.lock().threads.get(thread).is_some_and(|entry| entry.turn.is_some() || entry.submitted)
     }
 
     fn lock(&self) -> StateGuard<'_> {
@@ -1520,17 +1528,44 @@ impl CodexHost {
                 if entry.submitted {
                     entry.observed_submission = Some(turn.clone());
                     drop(state);
-                    self.end_with(thread, &turn, TurnHow::Failed, Some(message), None, at, None, params.get("error").cloned());
+                    self.end_with(
+                        thread,
+                        &turn,
+                        TurnHow::Failed,
+                        Some(message),
+                        None,
+                        at,
+                        None,
+                        params.get("error").cloned(),
+                    );
                 } else {
                     drop(state);
-                    self.end_with(thread, &turn, TurnHow::Failed, Some(message), None, at, None, params.get("error").cloned());
+                    self.end_with(
+                        thread,
+                        &turn,
+                        TurnHow::Failed,
+                        Some(message),
+                        None,
+                        at,
+                        None,
+                        params.get("error").cloned(),
+                    );
                 }
                 return;
             }
             (awaited, started)
         };
         match (awaited, started) {
-            (true, false) => self.end_with(thread, &turn, TurnHow::Failed, Some(message), None, at, None, params.get("error").cloned()),
+            (true, false) => self.end_with(
+                thread,
+                &turn,
+                TurnHow::Failed,
+                Some(message),
+                None,
+                at,
+                None,
+                params.get("error").cloned(),
+            ),
             (true, true) => {}
             (false, _) => {}
         }

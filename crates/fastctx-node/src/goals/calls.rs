@@ -37,7 +37,8 @@ pub(crate) async fn user(
     {
         return Err(Failure::refused(words::ACCOUNT_MISSING));
     }
-    let purpose = if matches!(request, Request::Read) { Purpose::Look } else { Purpose::Agents };
+    let purpose =
+        if matches!(request, Request::Read | Request::History { .. }) { Purpose::Look } else { Purpose::Agents };
     let mut last = Failure::not_run(words::OLDER_HUB);
     for (link, account) in node.speakers(&acting, &machine, purpose).map_err(failure)? {
         if !link.view().goal_control {
@@ -159,7 +160,7 @@ fn require(node: &Node, request: &Request) -> Result<(), Failure> {
     if !node.goals.records.available() {
         return Err(Failure::not_run(words::RECORDS_MISSING));
     }
-    if !matches!(request, Request::Read) && !node.goals.context.available() {
+    if !matches!(request, Request::Read | Request::History { .. }) && !node.goals.context.available() {
         return Err(Failure::not_run(words::CONTEXT_MISSING));
     }
     Ok(())

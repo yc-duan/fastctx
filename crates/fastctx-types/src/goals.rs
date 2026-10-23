@@ -97,6 +97,10 @@ pub struct Goal {
     pub claim: Option<Claim>,
     pub retired: Option<Retired>,
     pub decisions: Vec<Decision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<HistoryRef>,
+    #[serde(default)]
+    pub runtime: runtime::Runtime,
     /// Identifies the last durable mutation across a lost CAS response.
     pub operation: String,
 }
@@ -105,6 +109,21 @@ impl Goal {
     pub fn active(&self) -> bool {
         self.status == Status::Active && self.retired.is_none()
     }
+}
+
+/// The newest archived page. Each page links to the preceding, older decisions.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryRef {
+    pub key: String,
+    pub count: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryPage {
+    pub goal: String,
+    pub resident: crate::ResidentId,
+    pub previous: Option<HistoryRef>,
+    pub decisions: Vec<Decision>,
 }
 
 /// A deleted record retains its version, so a stale first write cannot resurrect it.
@@ -160,6 +179,7 @@ pub enum Mark {
 #[serde(tag = "request", rename_all = "snake_case")]
 pub enum Request {
     Read,
+    History { page: Option<String> },
     Change { operation: String, expected: Option<u64>, change: UserChange },
     Mark { operation: String, mark: Mark },
 }
@@ -168,6 +188,7 @@ pub enum Request {
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum Updated {
     Goal { view: Box<View> },
+    History { page: Option<Box<HistoryPage>> },
     Conflict { current: Option<u64> },
 }
 
@@ -178,4 +199,5 @@ pub enum AgentRequest {
     Mark { operation: String, mark: Mark },
 }
 
+pub mod runtime;
 pub mod words;

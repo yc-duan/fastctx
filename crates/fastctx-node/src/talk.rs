@@ -107,9 +107,13 @@ pub async fn watch(
     if local || node.is_here(&machine) {
         let mut told = Told::new(node, &resident, now && composer.is_none());
         let (lease, opened) = if let Some(account) = &goal {
-            if !node.serves(&Acting::Here, &account.hub, &account.account) { return Err(Failure::refused(fastctx_types::goals::words::WATCH_ACCOUNT)); }
+            if !node.serves(&Acting::Here, &account.hub, &account.account) {
+                return Err(Failure::refused(fastctx_types::goals::words::WATCH_ACCOUNT));
+            }
             (None, crate::goals::watch::opening(node, &resident, account).await?)
-        } else { opening(node, &resident, composer, held.as_ref()).await? };
+        } else {
+            opening(node, &resident, composer, held.as_ref()).await?
+        };
         let Opening { pieces, mut events, slim } = opened;
         for piece in pieces.into_iter().chain(told.first()) {
             let _ = sender.send(Ok(piece));
@@ -177,8 +181,11 @@ pub async fn watch(
         Some(_) => format!("the watch of {resident}'s shared input on {machine}"),
         None => format!("the watch of {resident} on {machine}"),
     };
-    let acting = goal.as_ref().map(|account| Acting::one(account.hub.clone(), account.account.clone())).unwrap_or(Acting::Here);
-    if let Some(account) = &goal && !node.serves(&Acting::Here, &account.hub, &account.account) {
+    let acting =
+        goal.as_ref().map(|account| Acting::one(account.hub.clone(), account.account.clone())).unwrap_or(Acting::Here);
+    if let Some(account) = &goal
+        && !node.serves(&Acting::Here, &account.hub, &account.account)
+    {
         return Err(Failure::refused(fastctx_types::goals::words::WATCH_ACCOUNT));
     }
     let call = RemoteCall::Watch { resident, watch, composer, held, now, goal: goal.is_some() };
@@ -594,7 +601,9 @@ pub async fn serve_watch(
         if goal {
             let account = fastctx_types::access::HubAccount { hub: asker.hub.clone(), account: asker.account.clone() };
             Ok((None, crate::goals::watch::opening(node, &resident, &account).await?))
-        } else { opening(node, &resident, composer, held.as_ref()).await }
+        } else {
+            opening(node, &resident, composer, held.as_ref()).await
+        }
     };
     let (_lease, opened) = tokio::select! {
         result = open => match result {
@@ -964,9 +973,16 @@ pub async fn stop_here(node: &Arc<Node>, resident: &ResidentId) -> Result<bool, 
     stop_here_as(node, resident, fastctx_types::turn_evidence::StopSource::User).await
 }
 
-pub(crate) async fn stop_here_as(node: &Arc<Node>, resident: &ResidentId, source: fastctx_types::turn_evidence::StopSource) -> Result<bool, Failure> {
+pub(crate) async fn stop_here_as(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    source: fastctx_types::turn_evidence::StopSource,
+) -> Result<bool, Failure> {
     node.residents.stoppable(resident)?;
     let targeted = node.residents.now(resident).and_then(|now| now.turn);
+    if source == fastctx_types::turn_evidence::StopSource::User {
+        crate::goals::holding::stop(node, resident, targeted.clone())?;
+    }
     if let Some(turn) = &targeted {
         crate::turn_evidence::remember(node, resident, turn, source)
             .map_err(|error| Failure::new(format!("recording why the turn is stopped: {error}")))?;
@@ -995,7 +1011,9 @@ pub(crate) async fn stop_here_as(node: &Arc<Node>, resident: &ResidentId, source
         return Ok(true);
     }
     let current = node.residents.now(resident).and_then(|now| now.turn);
-    if targeted.is_some() && targeted != current { return Ok(false); }
+    if targeted.is_some() && targeted != current {
+        return Ok(false);
+    }
     let targeted = targeted.or(current);
     if let Some(turn) = &targeted {
         crate::turn_evidence::remember(node, resident, turn, source)

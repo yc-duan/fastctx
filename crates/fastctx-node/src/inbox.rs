@@ -154,7 +154,8 @@ pub(crate) fn input_states(directory: &ConversationDir) -> io::Result<(Vec<Pendi
     Ok((pending, uncertain))
 }
 
-fn pending_here(directory: &ConversationDir) -> io::Result<Vec<Pending>> {
+/// The caller holds the resident-storage transaction.
+pub(crate) fn pending_here(directory: &ConversationDir) -> io::Result<Vec<Pending>> {
     let mut all = Vec::new();
     for path in entries(&directory.inbox())? {
         // A file being written sits under a hidden temporary name until it

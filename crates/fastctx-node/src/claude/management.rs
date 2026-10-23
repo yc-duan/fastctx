@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::sync::Arc;
 
-async fn run(node: &Arc<Node>, home: Option<&Path>, args: Vec<OsString>) -> Result<String, Failure> {
+pub(super) async fn run(node: &Arc<Node>, home: Option<&Path>, args: Vec<OsString>) -> Result<String, Failure> {
     run_command(super::command(node, home)?, args).await
 }
 

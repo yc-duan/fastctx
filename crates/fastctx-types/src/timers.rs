@@ -28,6 +28,7 @@ pub enum Action {
     Tell { resident: ResidentId, text: String },
     /// A sentinel's wake-up, handed to the sentinel runtime until it acknowledges it.
     Sentinel { action: crate::sentinel::TimerAction },
+    Goal { resident: ResidentId, goal: String, work: NoticeId },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

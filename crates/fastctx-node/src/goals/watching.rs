@@ -28,6 +28,7 @@ pub(crate) fn start(node: &Arc<Node>) {
             for account in accounts {
                 if node.goals.watching.lock().expect("goal watches").insert(account.clone()) {
                     let node = node.clone();
+                    super::archive::start(&node, &account);
                     tokio::spawn(async move { follow(node, account).await });
                 }
             }
@@ -115,5 +116,17 @@ async fn refresh(node: &Arc<Node>, account: &HubAccount, row: Changed) -> Result
         return Ok(());
     }
     scope::keep(node, &resident, account).map_err(|error| Failure::new(error.to_string()))?;
+    let previous = node
+        .goals
+        .views
+        .lock()
+        .expect("goal views")
+        .get(&resident)
+        .and_then(|view| view.goal.as_ref())
+        .map(|goal| goal.id.clone());
+    if view.goal.is_none() || previous.is_some_and(|previous| view.goal.as_ref().is_none_or(|goal| goal.id != previous))
+    {
+        super::archive::for_resident(node, account, &resident).await?;
+    }
     operations::apply(node, &resident, &view).await
 }

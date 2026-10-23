@@ -34,8 +34,13 @@ pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Fai
         TimerCall::Set { action: Action::Sentinel { .. }, .. } => {
             return Err(Failure::refused("sentinel timers are managed by their sentinel"));
         }
+        TimerCall::Set { action: Action::Goal { .. }, .. } => {
+            return Err(Failure::refused("goal timers are managed by the goal runtime"));
+        }
         TimerCall::Set { owner, action: Action::Tell { resident, .. }, .. } => {
-            if owner.conversation() != Some(resident) {
+            if !matches!(owner, fastctx_types::timers::Owner::Conversation { .. })
+                || owner.conversation() != Some(resident)
+            {
                 return Err(Failure::new("a conversation timer must tell its own conversation"));
             }
             resident.clone()
@@ -44,6 +49,7 @@ pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Fai
             Some(timer) => match timer.action {
                 Action::Tell { resident, .. } => resident,
                 Action::Sentinel { .. } => return Err(Failure::refused("sentinel timers are managed by their sentinel")),
+                Action::Goal { .. } => return Err(Failure::refused("goal timers are managed by the goal runtime")),
             },
             None => return Ok(Reply::Done),
         },
@@ -137,6 +143,7 @@ pub(crate) fn start(node: &Arc<Node>) {
 async fn execute(node: &Arc<Node>, store: &Store, timer: &Timer) -> Result<(), String> {
     match &timer.action {
         Action::Sentinel { .. } => crate::sentinels::timers::fire(node, store, timer),
+        Action::Goal { .. } => crate::goals::engine::fire(node, store, timer).await.map_err(|error| error.message),
         Action::Tell { resident, .. } => {
             let gate = crate::control_queue::gate(node, resident);
             let _action = gate.lock().await;

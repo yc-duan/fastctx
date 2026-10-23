@@ -93,6 +93,7 @@ pub(crate) fn jobs_here(
             let bytes = std::fs::metadata(&record.output)?.len();
             result.push(WaitHandle {
                 id: record.id.to_string(),
+                completion: Some(crate::inbox::job_notice_id(&record)),
                 kind: WaitKind::Job,
                 machine: record.machine,
                 since: Some(record.started_at),
@@ -164,6 +165,7 @@ pub(crate) async fn collect(
                 Ok(debt) if debt.since().is_none() => Vec::new(),
                 Ok(debt) => vec![WaitHandle {
                     id: colleague.resident.to_string(),
+                    completion: None,
                     kind: WaitKind::Colleague,
                     machine: colleague.machine,
                     since: debt.since().or(Some(since)),
@@ -226,6 +228,7 @@ pub(crate) async fn collect(
     for timer in crate::timers::table(node)?.list(Some(&Owner::Conversation { resident: resident.clone() })) {
         result.push(WaitHandle {
             id: timer.id,
+            completion: Some(timer.delivery),
             kind: WaitKind::Timer,
             machine: node.machine(),
             since: timer.created_at,
@@ -249,6 +252,7 @@ fn unknown(id: String, kind: WaitKind, machine: MachineName, since: Option<Times
         since,
         liveness: Liveness::Unknown { reason: reason.clone() },
         will_wake: false,
+        completion: None,
         summary: reason,
         output: None,
         output_growth: None,

@@ -345,6 +345,40 @@ fn read_evidence(directory: &ConversationDir, turn: Option<&str>) -> io::Result<
     Ok(result)
 }
 
+#[derive(Serialize)]
+pub(crate) struct ObservedCall {
+    pub call: fastctx_types::turn_evidence::CallEvidence,
+    pub unavailable: Option<String>,
+}
+
+/// Reads each call once, releasing the record transaction between files.
+/// Legacy executors' missing detail is retained as an explicit observation.
+pub(crate) fn observations(directory: &ConversationDir) -> io::Result<Vec<ObservedCall>> {
+    let entries = match std::fs::read_dir(directory.calls()) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut result = Vec::new();
+    for entry in entries {
+        let path = entry?.path();
+        if path.extension().is_none_or(|extension| extension != "json") { continue; }
+        let stored = {
+            let _transaction = crate::resident_storage::lock();
+            loaded(&path)?
+        };
+        let Some(stored) = stored else { continue };
+        result.push(ObservedCall {
+            call: fastctx_types::turn_evidence::CallEvidence {
+                call_id: stored.call_id, script: stored.script, source: path.to_string_lossy().into_owned(), facts: stored.facts,
+            },
+            unavailable: stored.unavailable,
+        });
+    }
+    result.sort_by(|a, b| a.call.call_id.cmp(&b.call.call_id));
+    Ok(result)
+}
+
 pub(crate) fn job_updates(directory: &ConversationDir) -> io::Result<Vec<JobFacts>> {
     let _transaction = crate::resident_storage::lock();
     let mut result = Vec::new();

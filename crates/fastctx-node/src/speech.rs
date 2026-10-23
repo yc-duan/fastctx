@@ -172,6 +172,9 @@ pub(crate) async fn tell_here_locked(
             .map_err(|error| Failure::new(format!("keeping it: {error}")))?
             .map_err(|error| Failure::new(format!("keeping it: {error}")))?
     };
+    if kept {
+        crate::goals::engine::input_changed(node, to);
+    }
     if removed {
         let why = if deleting {
             "the resident is being deleted, and this with it"
@@ -422,8 +425,8 @@ async fn submit_thread(
         }
         return Ok(Some(Landed::Waiting { why: Some(crate::handoff::Handoff::waiting_why(node)), answered: true }));
     };
-    if single {
-        crate::inbox::keep(directory, &pending).map_err(|error| Failure::new(error.to_string()))?;
+    if single && crate::inbox::keep(directory, &pending).map_err(|error| Failure::new(error.to_string()))? {
+        crate::goals::engine::input_changed(node, id);
     }
     let accepted: std::collections::HashSet<_> = crate::delivery::handovers(directory)
         .map_err(|error| Failure::new(error.to_string()))?
@@ -546,7 +549,7 @@ async fn submit_thread(
         Err(SendError::Unknown(why)) => {
             // Whether they went in is not known, and a turn they went into
             // ended as the app-server stopped: each reader hears that.
-            crate::turns::unresolved(node, id, directory, &mut handover, TurnHow::Interrupted, why.clone())
+            crate::turns::unresolved(node, id, directory, &mut handover, TurnHow::Failed, why.clone(), None)
                 .await
                 .map_err(|error| Failure::new(error.to_string()))?;
             return Ok(Some(Landed::Uncertain { why }));
@@ -662,7 +665,9 @@ pub async fn bind(
         crate::turn_evidence::remember(node, id, turn, source).map_err(|error| Failure::new(error.to_string()))?;
         let (node, id, turn) = (node.clone(), id.clone(), turn.to_string());
         tokio::spawn(async move {
-            if node.residents.now(&id).and_then(|now| now.turn).as_deref() != Some(&turn) { return; }
+            if node.residents.now(&id).and_then(|now| now.turn).as_deref() != Some(&turn) {
+                return;
+            }
             if let Err(failure) = crate::talk::stop_here_as(&node, &id, source).await {
                 node.log.line(format_args!(
                     "stopping {id}'s turn, asked while its words were on their way: {}",
@@ -843,8 +848,16 @@ pub async fn recover(node: &Arc<Node>) {
                         node.machine(),
                         resident.id
                     );
-                    crate::turns::unresolved(node, &resident.id, &directory, &mut handover, TurnHow::Interrupted, why)
-                        .await?;
+                    crate::turns::unresolved(
+                        node,
+                        &resident.id,
+                        &directory,
+                        &mut handover,
+                        TurnHow::Interrupted,
+                        why,
+                        Some(serde_json::json!({"world":"node_restarted"})),
+                    )
+                    .await?;
                 }
             }
             // Sending entries from versions without batch records are
@@ -864,6 +877,7 @@ pub async fn recover(node: &Arc<Node>) {
                     &mut handover,
                     TurnHow::Interrupted,
                     "the prior node stopped during a submission; acceptance was not recorded".to_string(),
+                    Some(serde_json::json!({"world":"node_restarted"})),
                 )
                 .await?;
             }

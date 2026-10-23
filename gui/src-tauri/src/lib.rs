@@ -10,11 +10,11 @@ mod android;
 mod collab;
 mod collaboration;
 mod composer;
-mod goals;
 mod connection;
 #[cfg(desktop)]
 mod data;
 mod features;
+mod goals;
 mod hub_moving;
 mod item_details;
 mod kept;
@@ -1298,6 +1298,7 @@ pub fn run() {
             item_details::item_detail,
             item_details::agent_activity,
             goals::goal_read,
+            goals::goal_history,
             goals::goal_update,
             goals::goal_watch,
             composer::composer_read,

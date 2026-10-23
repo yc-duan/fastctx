@@ -525,7 +525,7 @@ impl RemoteCall {
     /// check it.
     pub fn purpose(&self) -> Purpose {
         match self {
-            Self::Goal { request: crate::goals::Request::Read, .. } => Purpose::Look,
+            Self::Goal { request: crate::goals::Request::Read | crate::goals::Request::History { .. }, .. } => Purpose::Look,
             Self::Goal { .. } => Purpose::Agents,
             Self::EnterProject { .. } | Self::Plan { .. } => Purpose::Echo,
             Self::SentinelSettings { .. } | Self::SentinelControl { .. } | Self::SentinelKeys => Purpose::Look,

@@ -4,6 +4,8 @@ use fastctx_types::goals::{Goal, Owner};
 
 pub(crate) use fastctx_types::goals::words::*;
 
+pub(crate) const NATIVE_CODEX: &str = "Goals are available only in Codex conversations started by the World.";
+
 const BLOCK: &str = r#"THE GOAL
 The user set a goal for this conversation, and it is on:
 

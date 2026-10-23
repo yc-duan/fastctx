@@ -5,8 +5,9 @@ pub(crate) mod compact;
 pub(crate) mod debts;
 mod diagnostics;
 mod identity;
-mod quota;
+pub(crate) mod quota;
 mod records;
+pub(crate) mod review;
 mod stopping;
 pub(crate) mod waiting;
 pub(crate) mod words;
@@ -19,6 +20,12 @@ use fastctx_types::session::{SessionEvent, TurnEnd};
 
 pub(crate) fn observe(node: &Node, resident: &ResidentId, event: &SessionEvent) -> std::io::Result<()> {
     node.turn_activity.observe(resident, event);
+    if matches!(
+        event.happened,
+        fastctx_types::session::Happened::TurnStarted { .. } | fastctx_types::session::Happened::Heard { .. }
+    ) {
+        crate::goals::engine::input_changed(node, resident);
+    }
     diagnostics::observe(node, resident, event)
 }
 
@@ -27,6 +34,8 @@ pub(crate) fn freeze(node: &Node, resident: &ResidentId, turn: &str, end: &mut T
         let facts = end.facts.get_or_insert_with(Default::default);
         facts.world_started_at = Some(activity.began);
         facts.world_last_activity_at = Some(activity.last);
+        facts.world_progress = activity.meaningful;
+        facts.world_compacted = activity.compacted;
     }
 }
 
@@ -40,11 +49,22 @@ pub(crate) async fn snapshot(
     requested: Option<String>,
     refresh_limits: bool,
 ) -> Result<fastctx_types::turn_evidence::TurnEvidence, fastctx_types::ipc::Failure> {
+    let _place = node.places.using(resident.as_str()).await;
+    snapshot_locked(node, resident, requested, refresh_limits).await
+}
+
+/// The caller holds the conversation's place gate.
+pub(crate) async fn snapshot_locked(
+    node: &std::sync::Arc<Node>,
+    resident: &ResidentId,
+    requested: Option<String>,
+    refresh_limits: bool,
+) -> Result<fastctx_types::turn_evidence::TurnEvidence, fastctx_types::ipc::Failure> {
     use fastctx_types::ipc::Failure;
     use fastctx_types::session::Happened;
     use fastctx_types::turn_evidence::TurnEvidence;
-    let _place = node.places.using(resident.as_str()).await;
     node.residents.active(resident)?;
+    let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
     let now = node.residents.now(resident);
     let mut turn = requested.or_else(|| now.as_ref().and_then(|now| now.turn.clone().or(now.last_turn.clone())));
     let directory = node.world.conversation(resident);
@@ -68,7 +88,7 @@ pub(crate) async fn snapshot(
             end.error = Some(error);
         }
         let requested = turn.as_deref().map(|turn| source(node, resident, turn)).transpose()?.flatten();
-        let stop = end.as_ref().map(|end| classify(end, requested));
+        let stop = end.as_ref().map(|end| classify(end, requested, about.host.agent.as_str()));
         let activity =
             node.turn_activity.get(resident).filter(|activity| Some(activity.turn.as_str()) == turn.as_deref());
         let facts = end.as_ref().and_then(|end| end.facts.as_deref());
@@ -92,6 +112,7 @@ pub(crate) async fn snapshot(
             turn: turn.clone(),
             started_at,
             ended_at: finished.as_ref().map(|finished| finished.ended_at.unwrap_or(finished.at)),
+            end_recorded_at: finished.as_ref().map(|finished| finished.at),
             last_activity_at,
             end,
             stop,

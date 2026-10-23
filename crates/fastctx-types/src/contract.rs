@@ -102,7 +102,9 @@ impl RemoteCall {
     /// What this call is (`Contract`).
     pub fn contract(&self) -> Contract {
         match self {
-            Self::Goal { request: crate::goals::Request::Read, .. } => Contract::QUERY,
+            Self::Goal { request: crate::goals::Request::Read | crate::goals::Request::History { .. }, .. } => {
+                Contract::QUERY
+            }
             Self::Goal { .. } => Contract::CHANGE,
             Self::SentinelControl { request: crate::sentinel_control::Request::List { .. } | crate::sentinel_control::Request::Help }
             | Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Inspect { .. } } => Contract { within: Some(Duration::from_secs(90)), ..Contract::QUERY },
