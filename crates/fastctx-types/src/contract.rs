@@ -144,7 +144,8 @@ impl RemoteCall {
             | Self::AgentCalls { .. }
             | Self::Offers { .. }
             | Self::Lines { request: Lines::Find { .. } } => Contract::ASKS_AGENT,
-            Self::EnterProject { .. }
+            Self::Plan { .. }
+            | Self::EnterProject { .. }
             | Self::ReserveAttachment { .. }
             | Self::CommitAttachment { .. }
             | Self::Composer { .. }
@@ -251,6 +252,8 @@ impl Call {
     /// (`Leaving`).
     pub fn on_leaving(&self) -> Leaving {
         match self {
+            Self::PlanRead { .. } => Leaving::Stop,
+            Self::Plan { .. } | Self::PlanWrite { .. } => Leaving::Finish,
             Self::AccountRecords {
                 request: crate::account_records::Request::Read { .. } | crate::account_records::Request::List { .. },
                 ..

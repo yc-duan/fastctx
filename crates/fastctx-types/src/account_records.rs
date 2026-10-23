@@ -11,7 +11,7 @@ use crate::{AccountName, MachineName};
 
 pub const MAX_BODY_BYTES: usize = 64 * 1024;
 pub const MAX_ACCOUNT_BYTES: usize = 16 * 1024 * 1024;
-/// Includes deleted keys, whose revision must remain available for comparisons.
+/// Live records of one kind. Tombstones still count toward the account byte limit.
 pub const MAX_KIND_KEYS: usize = 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,8 +41,8 @@ pub enum Request {
     List {
         kind: String,
     },
-    /// `expected == None` requires an absent or deleted key; recreating it still
-    /// advances its last revision. `Some` requires that exact live revision.
+    /// `expected == None` requires a key with no revision. A deleted key still
+    /// has a revision, which must be supplied explicitly to recreate it.
     Write {
         kind: String,
         key: String,
@@ -52,7 +52,8 @@ pub enum Request {
     Delete {
         kind: String,
         key: String,
-        expected: u64,
+        /// None records a tombstone only if this key has never been written.
+        expected: Option<u64>,
     },
 }
 

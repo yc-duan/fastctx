@@ -17,7 +17,7 @@ pub fn body_limit(size: usize) -> String {
     format!("the record body is {size} bytes; the limit is {}", super::MAX_BODY_BYTES)
 }
 pub fn kind_limit() -> String {
-    format!("this record kind has reached its limit of {} keys", super::MAX_KIND_KEYS)
+    format!("this record kind has reached its limit of {} live records", super::MAX_KIND_KEYS)
 }
 pub fn account_limit(size: usize) -> String {
     format!("the account records would occupy {size} bytes; the limit is {}", super::MAX_ACCOUNT_BYTES)

@@ -1002,6 +1002,13 @@ impl fastctx_net::link::Node for Handler {
                         .map(|heads| RemoteReply::Canon { heads })
                         .map_err(|error| Failure::new(format!("reading the canon on {machine}: {error}")))
                 }
+                RemoteCall::Plan { resident, operation } => {
+                    let account =
+                        fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
+                    crate::plan::here(&node, &resident, None, None, Some(&account), operation)
+                        .await
+                        .map(|result| RemoteReply::Plan { result })
+                }
                 RemoteCall::EnterProject { resident, town } => {
                     let account =
                         fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };

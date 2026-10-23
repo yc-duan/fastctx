@@ -112,6 +112,22 @@ impl Device {
                 let view = session.link.profile_subagents(&account, operation).await.map_err(failed)?;
                 return Ok((Reply::ProfileSubagents(Box::new(view)), here()));
             }
+            Call::PlanRead { hub, account, owner } => {
+                let session = self.on_hub(hub.as_ref())?;
+                let account = profile_account(&session, account)?;
+                let page = session.link.plan_read(&account, owner).await.map_err(failed)?;
+                return Ok((Reply::Plan { result: fastctx_types::plan::Result::Page { page } }, here()));
+            }
+            Call::PlanWrite { hub, account, owner, expected, markdown } => {
+                let session = self.on_hub(hub.as_ref())?;
+                let account = profile_account(&session, account)?;
+                let result = session
+                    .link
+                    .plan_write(&account, owner, expected, markdown, fastctx_types::plan::Author::User)
+                    .await
+                    .map_err(failed)?;
+                return Ok((Reply::Plan { result }, here()));
+            }
             Call::AccountRecords { hub, account, request } => {
                 let session = self.on_hub(hub.as_ref())?;
                 let account = profile_account(&session, account)?;

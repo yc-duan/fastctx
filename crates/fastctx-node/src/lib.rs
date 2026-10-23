@@ -85,6 +85,7 @@ mod on_delivery;
 mod on_stop;
 mod own_collab;
 mod pages;
+mod plan;
 mod profile;
 mod program_collection;
 mod proxy_setting;

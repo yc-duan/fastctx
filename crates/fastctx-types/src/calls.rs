@@ -20,6 +20,23 @@ use crate::{Address, AgentName, EntryId, JobId, JournalName, MachineName, Notice
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum Call {
+    Plan {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        operation: crate::plan::Operation,
+    },
+    PlanRead {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        owner: ResidentId,
+    },
+    PlanWrite {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        owner: ResidentId,
+        expected: Option<u64>,
+        markdown: String,
+    },
     AccountRecords {
         hub: Option<crate::HubName>,
         account: Option<crate::AccountName>,
@@ -726,6 +743,9 @@ pub enum Call {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum Reply {
+    Plan {
+        result: crate::plan::Result,
+    },
     AccountRecords {
         response: crate::account_records::Response,
     },

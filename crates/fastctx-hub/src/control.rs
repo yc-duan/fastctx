@@ -56,6 +56,7 @@ pub(crate) struct Said {
     /// Whether it reads the records of profiles written.
     pub profiles: bool,
     pub account_records: bool,
+    pub conversation_plans: bool,
     /// What a machine taken off could not do of the uninstall it was asked.
     pub left: Option<String>,
     /// Whether it reads that a call it answers is over for its caller.
@@ -75,6 +76,7 @@ pub(crate) struct Standing {
     pub to: MachineName,
     pub purpose: Purpose,
     pub project_entry: Option<(fastctx_types::ResidentId, fastctx_types::TownName)>,
+    pub plan: Option<fastctx_types::ResidentId>,
 }
 
 impl Standing {
@@ -89,6 +91,10 @@ impl Standing {
                 Some((resident, town)) => {
                     crate::project_entry::check(&store, &self.from, &self.account, &self.to, resident, town)
                 }
+                None => Ok(()),
+            })
+            .and_then(|()| match &self.plan {
+                Some(resident) => crate::plan_calls::check(hub, &store, &self.from, &self.account, &self.to, resident),
                 None => Ok(()),
             })
             .err()
@@ -559,6 +565,7 @@ fn open(
     let session = Session {
         key,
         account_records: said.account_records,
+        conversation_plans: said.conversation_plans,
         call_details: said.call_details,
         generation,
         out,
@@ -668,19 +675,8 @@ pub(crate) fn cut_calls(hub: &Hub) {
         .iter()
         .map(|(key, pending)| (*key, pending.standing.clone()))
         .collect();
-    let keys: Vec<(u64, String)> = {
-        let store = hub.store();
-        standings
-            .into_iter()
-            .filter_map(|(key, standing)| {
-                let directory = &store.book.directory;
-                directory
-                    .admits(&standing.from, &standing.account, &standing.to, standing.purpose)
-                    .err()
-                    .map(|why| (key, why))
-            })
-            .collect()
-    };
+    let keys: Vec<(u64, String)> =
+        standings.into_iter().filter_map(|(key, standing)| standing.lapsed(hub).map(|why| (key, why))).collect();
     let lapsed: Vec<(u64, Pending, String)> = {
         let mut calls = hub.calls.lock().expect("never poisoned");
         keys.into_iter().filter_map(|(key, why)| calls.remove(&key).map(|pending| (key, pending, why))).collect()
@@ -896,7 +892,11 @@ fn standing(hub: &Hub, message: &Envelope) -> Result<Standing, String> {
     if project_entry.is_some() && purpose != Purpose::Echo {
         return Err("a project entry must return to its conversation as a job request".into());
     }
-    let standing = Standing { from, account: account.clone(), to, purpose, project_entry };
+    let plan = fastctx_net::message::plan_request(message);
+    if plan.is_some() && purpose != Purpose::Echo {
+        return Err(fastctx_types::plan::words::CONTROL.into());
+    }
+    let standing = Standing { from, account: account.clone(), to, purpose, project_entry, plan };
     match standing.lapsed(hub) {
         Some(why) => Err(why),
         None => Ok(standing),

@@ -415,7 +415,10 @@ impl Inner {
         account: &AccountName,
         call: &fastctx_types::remote::RemoteCall,
     ) -> Option<Arc<PeerConn>> {
-        if matches!(call, fastctx_types::remote::RemoteCall::EnterProject { .. }) {
+        if matches!(
+            call,
+            fastctx_types::remote::RemoteCall::EnterProject { .. } | fastctx_types::remote::RemoteCall::Plan { .. }
+        ) {
             return None;
         }
         let conn = self.direct.link(to)?;

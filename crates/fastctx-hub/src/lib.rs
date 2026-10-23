@@ -40,6 +40,7 @@ mod mailbox;
 mod manage;
 mod moving;
 mod outq;
+mod plan_calls;
 mod project_deletions;
 mod project_entry;
 mod records;
@@ -261,6 +262,7 @@ pub(crate) struct Hub {
 pub(crate) struct Session {
     key: PublicKey,
     account_records: bool,
+    conversation_plans: bool,
     call_details: bool,
     generation: u64,
     out: outq::Outq,
@@ -777,6 +779,7 @@ async fn intended(
                 conversation_deletions,
                 profiles,
                 account_records,
+                conversation_plans,
                 left,
                 cancels,
                 presence,
@@ -801,6 +804,7 @@ async fn intended(
                 conversation_deletions,
                 profiles,
                 account_records,
+                conversation_plans,
                 left,
                 cancels,
                 presence,

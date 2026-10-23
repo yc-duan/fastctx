@@ -102,18 +102,26 @@ pub(crate) async fn ask(
         mutation => {
             let (kind, key, expected, body, deleted) = match mutation {
                 Request::Write { kind, key, expected, body } => (kind, key, expected, body, false),
-                Request::Delete { kind, key, expected } => (kind, key, Some(expected), Value::Null, true),
+                Request::Delete { kind, key, expected } => (kind, key, expected, Value::Null, true),
                 _ => unreachable!("read operations handled above"),
             };
             let identity = (kind.clone(), key.clone());
             let before = records.entries.get(&identity);
-            let live = before.filter(|entry| !entry.metadata.deleted).map(|entry| entry.metadata.version);
-            if expected != live {
+            let version = before.map(|entry| entry.metadata.version);
+            if expected != version {
                 return Ok(Told::AccountRecords {
                     response: Response::Conflict { current: before.map(|entry| entry.metadata.clone()) },
                 });
             }
-            if before.is_none() && records.entries.keys().filter(|(found, _)| found == &kind).count() >= MAX_KIND_KEYS {
+            if !deleted
+                && before.is_none_or(|entry| entry.metadata.deleted)
+                && records
+                    .entries
+                    .values()
+                    .filter(|entry| entry.metadata.kind == kind && !entry.metadata.deleted)
+                    .count()
+                    >= MAX_KIND_KEYS
+            {
                 return Err(words::kind_limit());
             }
             let version = before.map_or(0, |entry| entry.metadata.version).checked_add(1).ok_or(words::REVISION)?;

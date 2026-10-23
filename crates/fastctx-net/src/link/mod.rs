@@ -33,6 +33,7 @@ mod login_identity;
 mod machine_log;
 mod moving;
 mod outgoing;
+mod plans;
 mod presence;
 mod profile;
 mod questions;

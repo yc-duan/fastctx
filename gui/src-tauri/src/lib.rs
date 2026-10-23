@@ -16,6 +16,7 @@ mod features;
 mod hub_moving;
 mod item_details;
 mod kept;
+mod plan;
 mod profile;
 mod transcript;
 mod updates;
@@ -1192,6 +1193,9 @@ pub fn run() {
             accounts::accounts,
             accounts::seen_dissolved,
             accounts::machine_log,
+            plan::plan_read,
+            plan::plan_write,
+            plan::plan_watch,
             profile::profile_read,
             profile::profile_subagents,
             profile::profile_write,

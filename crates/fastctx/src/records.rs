@@ -54,7 +54,7 @@ pub(crate) fn run(args: RecordsArgs) -> anyhow::Result<()> {
                 let body = serde_json::from_slice(&std::fs::read(file)?)?;
                 Request::Write { kind, key, expected: version, body }
             }
-            Command::Delete { kind, key, version } => Request::Delete { kind, key, expected: version },
+            Command::Delete { kind, key, version } => Request::Delete { kind, key, expected: Some(version) },
             Command::Watch { kind } => {
                 let mut watch = world.watch_account_records(args.hub, args.account, kind).await?;
                 loop {

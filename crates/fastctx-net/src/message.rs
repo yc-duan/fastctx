@@ -110,6 +110,20 @@ pub fn project_entry(
     }
 }
 
+/// A complete plan operation returned by a remote job to its conversation.
+pub fn plan_request(message: &crate::envelope::Envelope) -> Option<fastctx_types::ResidentId> {
+    if message.kind != crate::envelope::Kind::Call || message.stream.is_some() {
+        return None;
+    }
+    if message.body.get("call").and_then(|call| call.get("call")).and_then(serde_json::Value::as_str) != Some("plan") {
+        return None;
+    }
+    match message.body::<Body>().ok()? {
+        Body::Call { call: RemoteCall::Plan { resident, .. } } => Some(resident),
+        _ => None,
+    }
+}
+
 /// The agent's login a call starts a session of, if it starts one: a
 /// session opened for the user, or a colleague asked; none is the agent's
 /// default login there.
