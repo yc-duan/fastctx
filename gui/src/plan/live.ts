@@ -23,7 +23,9 @@ export interface LiveFact {
 
 export type LiveFacts = (id: string) => LiveFact | null;
 
-const pattern = /\b(?:(?:codex|claude)-[0-9a-z]{4}|[js]-[0-9a-z]{6})\b/g;
+// The World's ids as it writes them: a conversation's four or more hex
+// digits, a job's six letters and digits, a sentinel's up to sixteen.
+const pattern = /\b(?:(?:codex|claude)-[0-9a-z]{4,}|j-[0-9a-z]{6}|s-[0-9a-z]{6,16})\b/g;
 
 /** Replaces each id in the text under `root` with its chip. Code keeps its
  *  ids as written. */

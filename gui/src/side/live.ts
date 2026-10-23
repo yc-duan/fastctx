@@ -20,6 +20,7 @@ import { goalSamples, teamSample } from "./samples";
 import type { SideSeams } from "./seams";
 import type { CollabNode, GoalShown, NodeState } from "./types";
 import type { SideWords } from "./words";
+import { sentinelList, type SentinelSummary } from "../world/sentinels";
 
 /** The colleagues the conversation asked, as the World reports them, each
  *  with its goal and the agents it sent. The conversation's own agents come
@@ -90,8 +91,20 @@ function treeGoal(goal: Branch["goal"]): GoalStatus | null {
   return "Ok" in goal && goal.Ok ? goal.Ok.state : null;
 }
 
-/** How a conversation or a job a plan names stands now. */
-export function planFact(world: WorldNow | null, id: string, words: PlanWords, took: (ms: number) => string, now: number): LiveFact | null {
+/** How a conversation, a job or a sentinel a plan names stands now. */
+export function planFact(
+  world: WorldNow | null,
+  id: string,
+  words: PlanWords,
+  took: (ms: number) => string,
+  now: number,
+  sentinels: SentinelSummary[] = [],
+): LiveFact | null {
+  const sentinel = sentinels.find((one) => one.definition.id === id);
+  if (sentinel) {
+    const label = sentinel.definition.condition || sentinel.plan;
+    return { kind: "sense", label, state: words.live.sense(sentinel.phase), lit: sentinel.phase === "satisfied" || sentinel.phase === "unable" };
+  }
   const resident = residentsOf(world).find((r) => r.about.id === id);
   if (resident) {
     const origin = resident.about.origin.kind === "colleague" ? resident.about.origin.label : null;
@@ -153,8 +166,10 @@ function planShownOf(page: PlanPage, words: SideWords, now: number): PlanShown |
 export function liveSide(options: LiveSide): SideSeams {
   const owner = options.address.resident;
   const at = () => accountOf(options.store, options.address);
+  // The sentinels it left, which their homes are asked about, not followed.
+  let sentinels: SentinelSummary[] = [];
   const plan: Omit<PageSeams, "answer"> = {
-    facts: (id) => planFact(options.store.world.peek(), id, options.planWords, options.took, Date.now()),
+    facts: (id) => planFact(options.store.world.peek(), id, options.planWords, options.took, Date.now(), sentinels),
     open: (id) => options.openId(id),
     save: async (source, expected) => {
       const result = await planWrite(owner, expected, source, at());
@@ -174,13 +189,26 @@ export function liveSide(options: LiveSide): SideSeams {
       watch: (show: (plan: PlanShown | null) => void) => {
         let alive = true;
         let watching: number | null = null;
+        let shown: PlanShown | null = null;
         const refresh = () => {
           planRead(owner, at())
             .then((page) => {
-              if (alive) show(planShownOf(page, options.words, Date.now()));
+              if (alive) show((shown = planShownOf(page, options.words, Date.now())));
             })
             .catch((error) => console.error("the plan could not be read", error));
         };
+        // A sentinel the plan names says how it stands as its home last answered.
+        const ask = () =>
+          sentinelList(options.address).then(
+            (listed) => {
+              const changed = JSON.stringify(listed.map((one) => [one.definition.id, one.phase])) !== JSON.stringify(sentinels.map((one) => [one.definition.id, one.phase]));
+              sentinels = listed;
+              if (alive && changed && shown && /\bs-[0-9a-z]{6,16}\b/.test(shown.source ?? "")) show(shown);
+            },
+            () => {},
+          );
+        void ask();
+        const asking = window.setInterval(() => void ask(), 30_000);
         refresh();
         watchPlan(
           owner,
@@ -196,6 +224,7 @@ export function liveSide(options: LiveSide): SideSeams {
           .catch((error) => console.error("the plan could not be watched", error));
         return () => {
           alive = false;
+          clearInterval(asking);
           if (watching != null) void unwatch(watching);
         };
       },
