@@ -19,7 +19,7 @@ mod first_program;
 mod host_change;
 mod hub_intake;
 mod hub_retire;
-mod journal;
+
 mod keep;
 mod mcp;
 mod mcp_child;
@@ -248,12 +248,7 @@ enum Command {
     /// data are on each; its pages show live facts to the user.
     #[command(subcommand)]
     Project(project::ProjectCommand),
-    /// A project's journals: history, not verdicts. Add an entry, describe
-    /// a journal, read or list them.
-    ///
-    /// Hidden while project memory is not wired in (`world-journals.md`).
-    #[command(subcommand, hide = true, after_long_help = fastctx_hands::town::JOURNALS)]
-    Journal(journal::JournalCommand),
+
     /// A project's pages: HTML the user opens in the World app, showing
     /// live facts of the machines and sessions. Publish, read or list them.
     #[command(subcommand, after_long_help = page::PAGE_HELP)]
@@ -502,7 +497,7 @@ fn main() -> ExitCode {
         Command::Talk(args) => talk::run(args),
         Command::Attach(args) => attach::run(args),
         Command::Project(command) => project::run(command),
-        Command::Journal(command) => journal::run(command),
+
         Command::Page(command) => page::run(command),
         Command::Login(args) => world::login(args),
         Command::Logout(args) => world::logout(args),

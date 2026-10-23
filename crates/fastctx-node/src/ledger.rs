@@ -82,6 +82,25 @@ pub async fn write(
     files: Vec<(String, Vec<u8>)>,
     machines: Option<Vec<MachineName>>,
 ) -> Result<(), Failure> {
+    write_for(node, town, files, machines, None).await
+}
+
+pub(crate) async fn write_memory(
+    node: &Arc<Node>,
+    town: &TownName,
+    files: Vec<File>,
+    account: Option<fastctx_types::AccountName>,
+) -> Result<(), Failure> {
+    write_for(node, town, files.into_iter().map(|file| (file.path, file.bytes.0)).collect(), None, account).await
+}
+
+async fn write_for(
+    node: &Arc<Node>,
+    town: &TownName,
+    files: Vec<(String, Vec<u8>)>,
+    machines: Option<Vec<MachineName>>,
+    account: Option<fastctx_types::AccountName>,
+) -> Result<(), Failure> {
     for (path, _) in &files {
         ledger::check_path(path).map_err(Failure::new)?;
     }
@@ -94,7 +113,11 @@ pub async fn write(
             let entry = link.entry(&place.town, machines, files);
             check_size(&entry).map_err(Failure::new)?;
             let signed = link.sign_entry(&entry);
-            let accepted = link.ledger_write(&place.town, signed).await.map_err(Failure::new)?;
+            let accepted = match account {
+                Some(account) => link.memory_write(&account, &place.town, signed).await,
+                None => link.ledger_write(&place.town, signed).await,
+            }
+            .map_err(Failure::new)?;
             let _syncing = node.syncing.lock().await;
             if link.view().member_keeps_project(&link.view().me, &place.town) {
                 take(node, &link, town, &place.town, accepted).await.map_err(Failure::new)
@@ -117,10 +140,6 @@ pub async fn write(
     }
 }
 
-/// The room an entry has before it no longer fits in one message.
-pub fn fits(entry: &Entry) -> Result<usize, usize> {
-    ledger::fits(entry)
-}
 
 /// A computer on no hub: the entry is checked as the hub would check it,
 /// numbered, and taken here.
@@ -172,7 +191,9 @@ fn write_alone(
     check_size(&entry)?;
     let signed = ledger::sign(&key, &entry);
     let seq = entries.last().map(|(seq, _, _)| *seq).unwrap_or(0) + 1;
-    apply(world, town, seq, &entry, &signed).map_err(|error| format!("keeping the entry: {error}"))
+    apply(world, town, seq, &entry, &signed).map_err(|error| format!("keeping the entry: {error}"))?;
+    crate::memory::projection::restore(world, town).map_err(|error| format!("restoring memory copies: {error}"))?;
+    Ok(())
 }
 
 /// Checks the encoded multipart limit before any files are kept.
@@ -287,6 +308,11 @@ pub(crate) async fn take(
             return Err(format!("the hub ended {name}'s ledger at {after}, before its promised {latest}"));
         }
     }
+    let (world, town) = (node.world.clone(), name.clone());
+    tokio::task::spawn_blocking(move || crate::memory::projection::restore(&world, &town))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -490,6 +516,9 @@ pub fn finish(world: &WorldDir) -> io::Result<Vec<String>> {
             if let Err(error) = finished {
                 problems.push(format!("entry {seq} of {town}: {error}"));
             }
+        }
+        if let Err(error) = crate::memory::projection::restore(world, &town) {
+            problems.push(format!("memory copies of {town}: {error}"));
         }
     }
     Ok(problems)

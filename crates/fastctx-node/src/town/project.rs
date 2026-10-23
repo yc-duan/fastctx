@@ -15,6 +15,9 @@ use crate::town::caller::Caller;
 use crate::town::{map, read};
 
 pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Result<Reply, Failure> {
+    if matches!(call, ProjectCall::New { .. } | ProjectCall::Edit { .. }) {
+        crate::memory::identity::author(node, caller).await?;
+    }
     match call {
         ProjectCall::New { town, fields, account, hub } => new(node, caller, town, fields, account, hub).await,
         ProjectCall::Edit { town, fields } => {

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use fastctx_types::layout::WorldDir;
 use fastctx_types::project::{Description, EntryStamp, JournalSummary, Record, Writer, version_of};
-use fastctx_types::{EntryId, JournalName, TownName};
+use fastctx_types::{JournalName, TownName};
 
 /// Every version of the town's record, oldest first.
 pub fn records(world: &WorldDir, town: &TownName) -> io::Result<Vec<Record>> {
@@ -75,11 +75,6 @@ pub fn entries(world: &WorldDir, town: &TownName, journal: &JournalName) -> io::
     Ok(entries)
 }
 
-/// An entry's text.
-pub fn text(directory: &Path) -> io::Result<String> {
-    std::fs::read_to_string(directory.join("text.md"))
-}
-
 /// One journal in brief.
 pub fn summary(world: &WorldDir, town: &TownName, journal: &JournalName) -> io::Result<JournalSummary> {
     let entries = entries(world, town, journal)?;
@@ -108,16 +103,6 @@ pub fn summaries(world: &WorldDir, town: &TownName) -> io::Result<Vec<JournalSum
         std::cmp::Reverse(written)
     });
     Ok(summaries)
-}
-
-/// The journal holding the entry `id`, when the town has it.
-pub fn find_entry(world: &WorldDir, town: &TownName, id: &EntryId) -> io::Result<Option<JournalName>> {
-    for journal in journal_names(world, town)? {
-        if journal_dir(world, town, &journal).join("entries").join(id.as_str()).join("entry.json").exists() {
-            return Ok(Some(journal));
-        }
-    }
-    Ok(None)
 }
 
 /// How many different writers.

@@ -79,6 +79,7 @@ mod machine;
 mod managed;
 mod management;
 mod mcp;
+mod memory;
 mod on;
 mod on_delivery;
 mod on_stop;

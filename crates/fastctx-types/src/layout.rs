@@ -401,6 +401,15 @@ impl TownDir {
         self.path.join("ledger")
     }
 
+    /// Readable, read-only project-memory projections.
+    pub fn journals(&self) -> PathBuf {
+        self.path.join("journals")
+    }
+
+    pub fn specs(&self) -> PathBuf {
+        self.path.join("specs")
+    }
+
     /// Each entry of the ledger as its author signed it, named by its
     /// number.
     pub fn signed(&self) -> PathBuf {

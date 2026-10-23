@@ -251,6 +251,10 @@ impl Call {
     /// (`Leaving`).
     pub fn on_leaving(&self) -> Leaving {
         match self {
+            Self::Memory(crate::memory::MemoryCall::List { .. } | crate::memory::MemoryCall::Read { .. }) => {
+                Leaving::Stop
+            }
+            Self::Memory(crate::memory::MemoryCall::Save { .. }) => Leaving::Finish,
             Self::AttachmentPlaces { .. }
             | Self::McpRelay { .. }
             | Self::MachineLog { .. }

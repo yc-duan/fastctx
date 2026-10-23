@@ -1145,6 +1145,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|(to, landed)| Reply::Spoken { to, landed, delivery: None })
         }
+        Call::Memory(request) => {
+            let caller = caller::of(node, peer)?;
+            crate::memory::api::call(node, &caller, request).await.map(Reply::Memory)
+        }
         Call::Project(call) => {
             let caller = caller::of(node, peer)?;
             if !matches!(call, fastctx_types::ProjectCall::Enter { .. }) {
@@ -1534,10 +1538,16 @@ async fn write(
     let here = node.machine();
     let started_at = jiff::Timestamp::now();
     let owner = Address { machine: here.clone(), resident: resident.clone() };
+    let caller = Caller::Resident(owner.clone());
+    let memory = crate::memory::writing::intercept(node, &caller, &op, None, town.as_ref()).await?;
     let (world, machine, writing, written) = (node.world.clone(), node.names(), town.clone(), op.clone());
-    let outcome =
-        blocking("writing", move || crate::write::write_here(&world, &machine, &owner, writing.as_ref(), written))
-            .await?;
+    let outcome = match memory {
+        Some(outcome) => outcome,
+        None => {
+            blocking("writing", move || crate::write::write_here(&world, &machine, &owner, writing.as_ref(), written))
+                .await?
+        }
+    };
     let action = crate::write::action(&op, &outcome, &here, started_at);
     let world = node.world.clone();
     blocking("recording the action", move || crate::residents::record_action(&world, &resident, &action)).await?;

@@ -1,0 +1,66 @@
+//! Attribute a memory write to the actual conversation, including remote shell jobs.
+
+use crate::{Node, town::caller::Caller};
+use fastctx_types::{
+    access::Purpose,
+    ipc::Failure,
+    memory::Author,
+    project::Stamp,
+    remote::{RemoteCall, RemoteReply},
+    residents::Origin,
+};
+use std::sync::Arc;
+
+pub(crate) async fn author(node: &Arc<Node>, caller: &Caller) -> Result<Author, Failure> {
+    scoped(node, caller, &crate::around::acting_of(node, caller)).await
+}
+
+pub(crate) async fn scoped(
+    node: &Arc<Node>,
+    caller: &Caller,
+    acting: &fastctx_types::access::Acting,
+) -> Result<Author, Failure> {
+    let about = match caller {
+        Caller::User => None,
+        Caller::Resident(address) if node.is_me(&address.machine) => Some(
+            node.residents
+                .about(&address.resident)
+                .ok_or_else(|| Failure::refused("the writing conversation no longer exists"))?
+                .0,
+        ),
+        Caller::Resident(address) => {
+            let mut machine = crate::reach::Written::from(&address.machine);
+            if let fastctx_types::access::Acting::Accounts { accounts } = acting
+                && let [account] = accounts.as_slice()
+            {
+                machine.hub = node.link_of(&account.hub).map(|link| link.hub_name());
+            }
+            let reply = node
+                .call(acting, &machine, Purpose::Look, RemoteCall::Who { all: true, town: None, since: None })
+                .await
+                .map_err(|error| Failure::new(error.to_string()))??;
+            let RemoteReply::Who(who) = reply else {
+                return Err(Failure::new("the conversation's machine did not identify its writer"));
+            };
+            Some(
+                who.residents
+                    .into_iter()
+                    .find(|resident| resident.about.id == address.resident)
+                    .ok_or_else(|| Failure::refused("the remote writing conversation is not visible"))?
+                    .about,
+            )
+        }
+        _ => return Err(Failure::refused("only a user or a primary conversation writes project memory")),
+    };
+    if about.as_ref().is_some_and(|about| matches!(about.origin, Origin::Colleague { .. })) {
+        return Err(Failure::refused(
+            "colleagues read project memory; give findings to the conversation that asked you",
+        ));
+    }
+    Ok(Author {
+        stamp: Stamp { by: caller.writer(), on: node.machine(), at: jiff::Timestamp::now() },
+        host: about.as_ref().map(|about| about.host.clone()),
+        model: about.as_ref().and_then(|about| about.model.clone()),
+        session: about.and_then(|about| about.session),
+    })
+}
