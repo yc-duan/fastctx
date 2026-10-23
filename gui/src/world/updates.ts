@@ -71,6 +71,8 @@ export interface UpdateNetwork {
   /** The version the hub runs; none from a hub before 1.0.1 beta 3. */
   hub?: string;
   due?: Record<string, Due>;
+  /** Whether the hub arranges a repair for a machine that asks for one. */
+  repair_supported?: boolean;
 }
 
 /** A release as GitHub lists it. */

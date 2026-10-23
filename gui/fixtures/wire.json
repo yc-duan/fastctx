@@ -43,7 +43,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -66,7 +67,9 @@
           "kind": "idle"
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -110,7 +113,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -133,7 +137,9 @@
           "kind": "unknown"
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -177,7 +183,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -204,7 +211,9 @@
           "total": null
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -248,7 +257,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -275,7 +285,9 @@
           "total": 1024
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -319,7 +331,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -343,7 +356,9 @@
           "version": "1.0.2"
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -387,7 +402,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -411,7 +427,9 @@
           "version": "1.0.2"
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -455,7 +473,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -479,7 +498,9 @@
           "version": "1.0.2"
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -523,7 +544,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -547,7 +569,9 @@
           "version": "1.0.2"
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -591,7 +615,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -615,7 +640,9 @@
           "version": "1.0.2"
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -659,7 +686,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -684,7 +712,9 @@
           "phase": "returning_to_service"
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -728,7 +758,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -758,7 +789,9 @@
           }
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       }
     ],
     "checks": [
@@ -1002,10 +1035,12 @@
                   "allowed": true,
                   "reason": null
                 }
-              }
+              },
+              "repair_supported": true
             }
           ],
-          "available": 1
+          "available": 1,
+          "repair_supported": true
         }
       },
       {
