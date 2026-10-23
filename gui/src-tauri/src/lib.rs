@@ -18,6 +18,7 @@ mod item_details;
 mod kept;
 #[cfg(desktop)]
 mod local_repair;
+mod memory;
 mod plan;
 mod profile;
 #[cfg(desktop)]
@@ -1235,6 +1236,13 @@ pub fn run() {
             profile::mcp,
             collab::collab_read,
             collab::collab_write,
+            memory::memory_list,
+            memory::memory_read,
+            memory::memory_save_spec,
+            memory::memory_add_journal,
+            memory::memory_settings_read,
+            memory::memory_settings_set,
+            memory::memory_watch,
             features::features_read,
             features::features_set,
             features::features_language,

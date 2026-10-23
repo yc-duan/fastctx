@@ -43,6 +43,7 @@ mod outq;
 mod plan_calls;
 mod project_deletions;
 mod project_entry;
+mod question_parts;
 mod records;
 mod releases;
 mod renewal;
@@ -539,7 +540,7 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
     let secrets = HubSecrets::from_bytes(&std::fs::read(Store::secrets_file(dir))?).map_err(anyhow::Error::msg)?;
     let tls = releases::http::Tls::of(&certificate).map_err(anyhow::Error::msg)?;
     let account_records = account_records::Records::open(dir, &store.book.directory)?;
-    let mut ledgers = ledger::Ledgers::open(dir)?;
+    let mut ledgers = ledger::Ledgers::open(dir, &store.hub.id)?;
     let swept = ledgers.sweep(&store.book)?;
     let listen = store.hub.listen;
     let kept = bind(kept, listen).await?;

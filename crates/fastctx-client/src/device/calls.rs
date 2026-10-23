@@ -381,11 +381,19 @@ impl Device {
                 return Ok((Reply::AgentLogins(self.agent_logins(machine).await?), here()));
             }
             Call::Nodes => return Ok((Reply::Nodes(self.nodes().await?), here())),
+            Call::Memory(request) => return Ok((Reply::Memory(self.memory(request).await?), here())),
+            Call::MemorySettings { hub, account, enabled } => {
+                let (link, account) = self.project_account(hub.as_ref(), account.as_ref())?;
+                return Ok((
+                    Reply::MemorySettings(link.memory_settings(&account, enabled).await.map_err(failed)?),
+                    here(),
+                ));
+            }
+            Call::Project(request) => return Ok((self.project(request).await?, here())),
             // What only the projects' ledgers hold, one machine answers from
             // its own copy, for what this device's account may use.
-            call @ (Call::Project(_)
-            | Call::Journal(_)
-            | Call::Page(
+            Call::Journal(_) => return Err(failed(fastctx_types::memory::LEGACY)),
+            call @ Call::Page(
                 PageCall::Read { .. }
                 | PageCall::List { .. }
                 | PageCall::History { .. }
@@ -393,7 +401,7 @@ impl Device {
                 | PageCall::Act { .. }
                 | PageCall::Withdraw { .. }
                 | PageCall::Restore { .. },
-            )) => return self.relay(call).await,
+            ) => return self.relay(call).await,
             _ => return Err(failed("this call belongs to a local node, not a device")),
         };
         let session = self.reaching(&machine)?;

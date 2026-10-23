@@ -543,11 +543,29 @@ impl Directory {
     pub fn member_in_project(&self, member: &MachineName, town: &TownId) -> bool {
         self.acts_for(member).iter().any(|account| self.in_project(account, town))
     }
+
+    /// Full project bodies belong only on devices logged into a project account.
+    /// Hosting an assisting agent grants access to the index, not replication.
+    pub fn member_keeps_project(&self, member: &MachineName, town: &TownId) -> bool {
+        self.member(member).is_some_and(|member| {
+            !member.managed
+                && member
+                    .logins
+                    .iter()
+                    .any(|account| self.may_act_for(account, &member.name) && self.in_project(account, town))
+        })
+    }
 }
 
 /// One member's view of its hub's directory.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct View {
+    /// The hub takes ledger questions in parts and serves large ledger entries.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ledger_parts: bool,
+    /// Account-scoped project indices and signed memory reads/writes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub project_memory: bool,
     /// The hub authorizes large calls from control-frame facts and requires a verifying receiver.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub call_details: bool,
@@ -706,6 +724,8 @@ impl View {
     /// An empty view, before the hub has given one.
     pub fn empty(hub: HubId, hub_name: HubName, me: MachineName) -> Self {
         Self {
+            ledger_parts: false,
+            project_memory: false,
             call_details: false,
             machine_log: false,
             hub,

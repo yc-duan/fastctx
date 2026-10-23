@@ -62,6 +62,9 @@ pub struct MachineFacts {
     /// Answers attachment destination queries before receiving any file bytes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub attachment_places: bool,
+    /// Answers an account's replica-directory query without returning bodies.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub memory_folders: bool,
     /// The bash `run` uses there, such as `bash 5.2.37 (Git for Windows,
     /// MSYS)`: on MSYS, arguments shaped like Unix paths are rewritten
     /// before a Windows program sees them (`world-run.md`). Empty when the

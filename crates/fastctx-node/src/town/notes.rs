@@ -1,5 +1,5 @@
 //! What a resident is told of where it lives, in the head of the answers of
-//! the World's tools (`world-projects.md`, `world-map.md`): who and where it
+//! the World's tools (`world-projects.md`): who and where it
 //! is, with its project's record, the first time; and its record again
 //! whenever it changed since it last heard, which replaces the one it was
 //! given.
@@ -79,9 +79,8 @@ fn introduction(node: &Node, id: &ResidentId, town: Option<&TownName>) -> io::Re
 
 /// The town's record, when it changed after `after` other than by `me`;
 /// `None` when it did not. It replaces the record the resident was given,
-/// with the user's instructions in it. Journals are project memory, which
-/// is not wired in until it is finished (`world-journals.md`), so their
-/// news is not told.
+/// with the user's instructions in it. Memory document notices are produced
+/// separately by `memory::context`, without repeating the index.
 fn news(node: &Node, id: &ResidentId, town: &TownName, after: u64, me: &Address) -> io::Result<Option<String>> {
     let world = &node.world;
     let mine = |by: &Writer| matches!(by, Writer::Resident { address } if address == me);

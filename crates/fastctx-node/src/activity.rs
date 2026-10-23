@@ -88,7 +88,7 @@ pub fn who(
             for town in world.towns()? {
                 if let Some(record) = crate::town::read::latest(world, &town)? {
                     towns.push(TownSummary {
-                        journals: crate::town::read::journal_names(world, &town)?.len(),
+                        journals: crate::memory::store::catalog(world, &town)?.journals.len(),
                         town,
                         record,
                     });

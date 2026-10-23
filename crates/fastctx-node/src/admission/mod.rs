@@ -66,7 +66,7 @@ fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
 /// The project `call` is about, if it names one.
 pub(crate) fn town_of(call: &RemoteCall) -> Option<&TownName> {
     match call {
-        RemoteCall::EnterProject { town, .. } => Some(town),
+        RemoteCall::EnterProject { town, .. } | RemoteCall::MemoryFolders { town } => Some(town),
         RemoteCall::Run { town, .. }
         | RemoteCall::Write { town, .. }
         | RemoteCall::Ask { town, .. }

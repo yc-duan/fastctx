@@ -114,7 +114,8 @@ impl RemoteCall {
             }
             Self::Mcp { mcp: crate::mcp::MachineCall::Test { .. } } => Contract::ASKS_AGENT,
             Self::McpServe { .. } => Contract { cancellable: true, ..Contract::STREAM },
-            Self::AttachmentPlaces { .. }
+            Self::MemoryFolders { .. }
+            | Self::AttachmentPlaces { .. }
             | Self::Who { .. }
             | Self::Since { .. }
             | Self::Folders { .. }
@@ -264,6 +265,13 @@ impl Call {
                 request: crate::account_records::Request::Write { .. } | crate::account_records::Request::Delete { .. },
                 ..
             } => Leaving::Finish,
+            Self::Memory(crate::memory::MemoryCall::List { .. } | crate::memory::MemoryCall::Read { .. }) => {
+                Leaving::Stop
+            }
+            Self::Memory(crate::memory::MemoryCall::Save { .. }) | Self::MemorySettings { enabled: Some(_), .. } => {
+                Leaving::Finish
+            }
+            Self::WatchMemory { .. } | Self::MemorySettings { enabled: None, .. } => Leaving::Stop,
             Self::AttachmentPlaces { .. }
             | Self::McpRelay { .. }
             | Self::MachineLog { .. }

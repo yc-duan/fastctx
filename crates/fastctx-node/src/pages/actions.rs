@@ -13,11 +13,10 @@ use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::residents::{Delivery, Notice};
 use fastctx_types::session::Speaker;
 use fastctx_types::town::Looked;
-use fastctx_types::{Address, JournalCall, MachineName, NoticeId, PageName, Reply, TownName};
+use fastctx_types::{Address, MachineName, NoticeId, PageName, TownName};
 
 use crate::Node;
 use crate::speech::Owed;
-use crate::town::caller::Caller;
 
 pub async fn relay(
     node: &Arc<Node>,
@@ -203,24 +202,7 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
             let landed = crate::speech::tell_here(node, &to.resident, delivery, Owed::Nobody).await?;
             Ok(PageResult::Said { to, landed })
         }
-        PageInvocation::Journal { journal, text } => {
-            let town = source.town.clone();
-            let caller = Caller::Page(Box::new(source));
-            let call = JournalCall::Add {
-                town: Some(town),
-                journal,
-                text,
-                description: None,
-                cites: Vec::new(),
-                attach: Vec::new(),
-                model: None,
-            };
-            let reply = crate::town::journal::call(node, &caller, call).await?;
-            match reply {
-                Reply::EntryAdded { journal, id, .. } => Ok(PageResult::EntryAdded { journal, id }),
-                _ => unreachable!("journal add returns the written entry"),
-            }
-        }
+        PageInvocation::Journal { .. } => Err(Failure::not_run(fastctx_types::memory::LEGACY)),
     }
 }
 

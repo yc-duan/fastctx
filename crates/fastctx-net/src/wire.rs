@@ -101,6 +101,10 @@ pub enum Up {
     Ack { seq: u64 },
     /// A question for the hub itself.
     Ask { id: u64, question: Question },
+    /// A ledger question in ordered JSON parts, only for hubs advertising ledger_parts.
+    QuestionPart { id: u64, index: u32, total: u32, text: String },
+    /// Abandons only an incomplete question; an accepted append still finishes.
+    CancelQuestion { id: u64 },
     /// How what is afoot on this machine changed since it last told this
     /// session (`world-network.md`, 近况); sent only to a hub whose view
     /// says it takes it.
@@ -578,6 +582,24 @@ pub enum Question {
         account: AccountName,
         change: Change,
     },
+    /// Metadata only, including for an account whose agent this member hosts.
+    ProjectIndex {
+        town: TownId,
+        account: AccountName,
+    },
+    /// Signed document bytes, only on a device logged into the account.
+    MemoryRead {
+        town: TownId,
+        account: AccountName,
+        name: String,
+        version: Option<u32>,
+    },
+    /// Append project memory explicitly for one account.
+    MemoryWrite {
+        town: TownId,
+        account: AccountName,
+        entry: Signed,
+    },
     /// Keep this entry in the ledger of `town`.
     LedgerWrite {
         town: TownId,
@@ -673,6 +695,11 @@ pub enum Firewall {
 pub enum Change {
     Collab {
         collab: fastctx_types::collab::Collab,
+    },
+    /// Changes only the account's project-memory switch, preserving its other configuration.
+    MemorySettings {
+        version: u64,
+        enabled: bool,
     },
     /// Writes the account's profile over the version it was read at; a
     /// machine that works for the account may (`world-user-config.md`).
@@ -911,6 +938,14 @@ pub enum Change {
 pub enum Told {
     AccountRecords {
         response: fastctx_types::account_records::Response,
+    },
+    ProjectIndex {
+        index: Box<fastctx_types::memory::ProjectIndex>,
+    },
+    MemoryDocument {
+        entry: Signed,
+        versions: Vec<fastctx_types::memory::Revision>,
+        evidence: Vec<fastctx_types::memory::Evidence>,
     },
     NetworkUpdates {
         reply: fastctx_types::update::ViewReply,

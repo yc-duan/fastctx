@@ -376,6 +376,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         mcp_import: false,
         page_accounts: false,
         attachment_places: false,
+        memory_folders: false,
         completion_receipts: false,
         upload_resumes: false,
         attachment_references: false,
@@ -437,6 +438,7 @@ fn map(now: Timestamp) -> MapView {
     let claude = Writer::Resident { address: address("claude-2b1c", "desktop") };
     let codex = Writer::Resident { address: address("codex-7f3a", "laptop") };
     MapView {
+        memory: None,
         pages: Vec::new(),
         town: town("mark50"),
         ledger: "~/.fastctx/world/towns/mark50/ledger".into(),

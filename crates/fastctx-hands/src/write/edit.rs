@@ -109,7 +109,7 @@ fn edit_file(
     })
 }
 
-fn replace(
+pub(super) fn replace(
     document: &mut Source,
     block: &Block<'_>,
     replace_all: bool,

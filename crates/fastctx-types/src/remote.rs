@@ -28,6 +28,10 @@ pub enum RemoteCall {
         resident: ResidentId,
         operation: crate::plan::Operation,
     },
+    /// Replica paths on an account's own computer, without any document bytes.
+    MemoryFolders {
+        town: TownName,
+    },
     /// A running job returns its resident's project selection to its home.
     /// This call is relayed and authorized by a hub supporting project entry.
     EnterProject {
@@ -506,7 +510,8 @@ impl RemoteCall {
             {
                 Purpose::Hands
             }
-            RemoteCall::Mcp { .. }
+            RemoteCall::MemoryFolders { .. }
+            | RemoteCall::Mcp { .. }
             | RemoteCall::McpServe { .. }
             | RemoteCall::Run { .. }
             | RemoteCall::WordsCame { .. }
@@ -584,6 +589,7 @@ pub enum RemoteReply {
     Plan {
         result: crate::plan::Result,
     },
+    MemoryFolders(crate::memory::Folders),
     Entered {
         town: TownName,
         map: Box<crate::project::MapView>,

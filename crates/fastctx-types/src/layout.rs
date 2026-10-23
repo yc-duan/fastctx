@@ -313,7 +313,7 @@ impl WorldDir {
         let mut towns = Vec::new();
         for path in self.town_directories()? {
             if let Some(town) = path.file_name().and_then(|name| TownName::try_from(name.to_str()?).ok())
-                && self.town(&town).signed().is_dir()
+                && (self.town(&town).signed().is_dir() || self.town(&town).path().join("index.json").is_file())
             {
                 towns.push(town);
             }
@@ -399,6 +399,15 @@ impl TownDir {
     /// journals.
     pub fn ledger(&self) -> PathBuf {
         self.path.join("ledger")
+    }
+
+    /// Readable, read-only project-memory projections.
+    pub fn journals(&self) -> PathBuf {
+        self.path.join("journals")
+    }
+
+    pub fn specs(&self) -> PathBuf {
+        self.path.join("specs")
     }
 
     /// Each entry of the ledger as its author signed it, named by its

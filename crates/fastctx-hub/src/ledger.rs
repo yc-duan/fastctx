@@ -38,7 +38,9 @@ use fastctx_types::access::TownId;
 use crate::Hub;
 use crate::store::Store;
 
+mod page_index;
 mod reading;
+pub(crate) mod requests;
 pub(crate) use reading::ask;
 
 /// What the hub knows of one project's ledger.
@@ -50,6 +52,8 @@ pub struct TownLedger {
     /// Every path written, in lower case, as a system that ignores case
     /// would compare them.
     paths: BTreeSet<String>,
+    memory: fastctx_net::memory::Index,
+    sequences: BTreeMap<String, u64>,
 }
 
 #[derive(Default)]
@@ -62,16 +66,22 @@ pub struct Ledgers {
 
 /// An entry checked to be kept: its number, and its file and bytes, written
 /// off any lock before it is kept (`Ledgers::commit`).
+struct Prepared {
+    entry: Entry,
+    mutation: Option<fastctx_net::memory::Mutation>,
+    account: Option<fastctx_types::AccountName>,
+    bytes: Vec<u8>,
+}
+
 pub struct Checked {
     seq: u64,
-    entry: Entry,
+    prepared: Arc<Prepared>,
     path: PathBuf,
-    bytes: Vec<u8>,
 }
 
 impl Ledgers {
     /// Reads every project's ledger under `hub`.
-    pub fn open(hub: &Path) -> io::Result<Self> {
+    pub fn open(hub: &Path, identity: &fastctx_net::ids::HubId) -> io::Result<Self> {
         let dir = hub.join("ledger");
         let mut towns = BTreeMap::new();
         let entries = match std::fs::read_dir(&dir) {
@@ -93,10 +103,10 @@ impl Ledgers {
             let mut ledger = TownLedger { next: 1, ..TownLedger::default() };
             for (seq, file) in numbered(&path)? {
                 let signed: Signed = read(&file)?;
-                let entry: Entry = signed.claim().map_err(|error| {
-                    io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", file.display()))
-                })?;
-                ledger.add(&entry);
+                let entry = fastctx_net::ledger::open(&signed, identity, &id)
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                ledger.memory.take(&entry).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                ledger.add(&entry, seq);
                 ledger.next = seq + 1;
             }
             towns.insert(id, ledger);
@@ -107,14 +117,25 @@ impl Ledgers {
     /// Checks an entry of `town` from `from`, and numbers it: nothing is
     /// kept yet (`commit`), and only one entry of a project is checked and
     /// kept at a time (`write`).
-    pub fn check(&self, store: &Store, from: &MachineName, town: &TownId, signed: &Signed) -> Result<Checked, String> {
+    fn check(
+        &self,
+        store: &Store,
+        from: &MachineName,
+        town: &TownId,
+        prepared: &Arc<Prepared>,
+    ) -> Result<Checked, String> {
         let directory = &store.book.directory;
         let member = directory.member(from).ok_or_else(|| format!("{from} is not a member"))?;
         let project = directory.project(town).ok_or_else(|| format!("there is no project {town} on this hub"))?;
         if !directory.member_in_project(from, town) {
             return Err(format!("{from} acts for no account that may write in the project {}", project.name));
         }
-        let entry = fastctx_net::ledger::open(signed, &store.hub.id, town)?;
+        if let Some(account) = &prepared.account {
+            requests::authorize(directory, from, account, town, false)?;
+        } else if prepared.mutation.is_some() {
+            return Err("project memory writes require an explicit account and a current client".into());
+        }
+        let entry = &prepared.entry;
         // An entry made before its author was renamed is its all the same.
         if !directory.same(&entry.author, from) || entry.key != member.key {
             return Err(format!("the entry is by {}, sent by {from}", entry.author));
@@ -130,6 +151,12 @@ impl Ledgers {
             if let Some(stranger) = machines.iter().find(|machine| !directory.rights(&project.owner, machine).hands) {
                 return Err(format!("the account {} may not work on {stranger}", project.owner));
             }
+        }
+        if let Some(mutation) = &prepared.mutation {
+            ledger
+                .map(|ledger| &ledger.memory)
+                .unwrap_or(&fastctx_net::memory::Index::default())
+                .check_mutation(mutation)?;
         }
         let mut seen = BTreeSet::new();
         for file in &entry.files {
@@ -149,24 +176,18 @@ impl Ledgers {
                 ));
             }
         }
-        // It must fit in the answer that hands it to a machine later.
-        let size = fastctx_net::ledger::handed_size(signed);
-        if size > wire::MAX_CONTROL_FRAME {
-            return Err(format!(
-                "the entry is {size} bytes, more than one message holds ({})",
-                wire::MAX_CONTROL_FRAME
-            ));
-        }
         let seq = self.towns.get(town).map_or(1, |ledger| ledger.next);
         let path = self.dir.join(town.as_str()).join(format!("{seq:020}.json"));
-        let bytes = json(signed).map_err(|error| format!("the hub could not keep the entry: {error}"))?;
-        Ok(Checked { seq, entry, path, bytes })
+        Ok(Checked { seq, prepared: prepared.clone(), path })
     }
 
     /// Keeps an entry checked and written and returns its number.
     pub fn commit(&mut self, town: &TownId, checked: Checked) -> u64 {
         let ledger = self.towns.entry(town.clone()).or_insert_with(|| TownLedger { next: 1, ..TownLedger::default() });
-        ledger.add(&checked.entry);
+        if let Some(mutation) = &checked.prepared.mutation {
+            ledger.memory.append(mutation.clone());
+        }
+        ledger.add(&checked.prepared.entry, checked.seq);
         ledger.next = checked.seq + 1;
         checked.seq
     }
@@ -223,8 +244,9 @@ impl Ledgers {
 }
 
 impl TownLedger {
-    fn add(&mut self, entry: &Entry) {
+    fn add(&mut self, entry: &Entry, seq: u64) {
         self.paths.extend(entry.files.iter().map(|file| file.path.to_lowercase()));
+        self.sequences.extend(entry.files.iter().map(|file| (file.path.clone(), seq)));
     }
 
     /// Whether `path`, in lower case, cannot join the paths written: it is
@@ -285,24 +307,50 @@ fn json(value: &impl serde::Serialize) -> io::Result<Vec<u8>> {
 /// current (`world-network.md`, 隔着网络也要顺手). One entry of a project at
 /// a time.
 pub(crate) async fn write(hub: &Arc<Hub>, from: &MachineName, town: TownId, signed: Signed) -> Result<Told, String> {
+    write_as(hub, from, town, signed, None).await
+}
+
+pub(crate) async fn write_as(
+    hub: &Arc<Hub>,
+    from: &MachineName,
+    town: TownId,
+    signed: Signed,
+    account: Option<fastctx_types::AccountName>,
+) -> Result<Told, String> {
+    let (hub_id, project) = (hub.store().hub.id.clone(), town.clone());
+    let prepared = tokio::task::spawn_blocking(move || {
+        let size = fastctx_net::ledger::handed_size(&signed);
+        if size > wire::PARTS_AT_MOST {
+            return Err(format!("the entry is {size} bytes, more than the multipart limit ({})", wire::PARTS_AT_MOST));
+        }
+        let entry = fastctx_net::ledger::open(&signed, &hub_id, &project)?;
+        let mutation = fastctx_net::memory::decode(&entry.files)?;
+        let bytes = json(&signed).map_err(|error| error.to_string())?;
+        if account.is_some() && mutation.is_none() {
+            return Err("a memory write must contain a memory revision or evidence".into());
+        }
+        Ok(Arc::new(Prepared { entry, mutation, account, bytes }))
+    })
+    .await
+    .map_err(|error| format!("checking the ledger entry: {error}"))??;
     let writing = hub.ledgers.lock().expect("never poisoned").writing.entry(town.clone()).or_default().clone();
     let _one = writing.lock().await;
     let checked = {
         let store = hub.store();
-        hub.ledgers.lock().expect("never poisoned").check(&store, from, &town, &signed)?
+        hub.ledgers.lock().expect("never poisoned").check(&store, from, &town, &prepared)?
     };
-    let (path, bytes) = (checked.path.clone(), checked.bytes.clone());
+    let (path, proposed) = (checked.path.clone(), prepared.clone());
     let (publishing, author, project) = (hub.clone(), from.clone(), town.clone());
     let published = tokio::task::spawn_blocking(move || {
         let folder = path.parent().expect("an entry has a folder");
         ensure_private_dir(folder).map_err(|error| PublishFailure { error, published: false }).and_then(|()| {
-            publish_checked(&path, &bytes, Permissions::Private, false, || {
+            publish_checked(&path, &proposed.bytes, Permissions::Private, false, || {
                 let store = publishing.store();
                 publishing
                     .ledgers
                     .lock()
                     .expect("never poisoned")
-                    .check(&store, &author, &project, &signed)
+                    .check(&store, &author, &project, &proposed)
                     .map_err(|why| io::Error::new(io::ErrorKind::PermissionDenied, why))?;
                 Ok(store)
             })

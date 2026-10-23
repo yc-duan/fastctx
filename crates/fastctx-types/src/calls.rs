@@ -47,6 +47,15 @@ pub enum Call {
         account: Option<crate::AccountName>,
         kind: String,
     },
+    Memory(crate::memory::MemoryCall),
+    WatchMemory {
+        town: TownName,
+    },
+    MemorySettings {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        enabled: Option<bool>,
+    },
     /// The selected account's machine changes, before a previous page's
     /// cursor when supplied. The hub checks visibility on every read.
     MachineLog {
@@ -749,6 +758,8 @@ pub enum Reply {
     AccountRecords {
         response: crate::account_records::Response,
     },
+    Memory(crate::memory::MemoryReply),
+    MemorySettings(crate::memory::Settings),
     /// The HTTP proxy chosen in Fastctx, if one is (`Call::HubProxy`).
     HubProxy {
         url: Option<String>,

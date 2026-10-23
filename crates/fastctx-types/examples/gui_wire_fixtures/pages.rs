@@ -146,6 +146,7 @@ pub fn fixtures() -> Fixtures {
         PageResult::EntryAdded { journal, id: "20261004T120000Z-desktop".parse().unwrap() },
     ];
     let map = fastctx_types::project::MapView {
+        memory: None,
         town: town.clone(),
         ledger: "C:/world/towns/mark50/ledger".into(),
         record: fastctx_types::project::Record {

@@ -270,9 +270,17 @@ pub(crate) async fn session(
 
     // Whether the writer still has a refusal to deliver before closing.
     let mut heard = tokio::time::Instant::now();
+    let mut uploads = crate::question_parts::Uploads::default();
+    let mut upload_clock = tokio::time::interval(HEARTBEAT);
     let (ended, refusing) = loop {
         let next = tokio::select! {
             next = stream.next() => next,
+            _ = upload_clock.tick() => {
+                for id in uploads.expired() {
+                    let _ = out.send(Out::Frame(Down::Told { id, answer: Err("the ledger upload exceeded 60 seconds".into()) }));
+                }
+                continue;
+            }
             // A frame still coming in shows it is there, as one come whole
             // does.
             () = tokio::time::sleep_until(heard + SILENCE) => {
@@ -322,7 +330,22 @@ pub(crate) async fn session(
         if let Up::Ping { took: Some(took), .. } = &frame {
             pulse.told(*took);
         }
-        if let Err(reason) = handle(&hub, &name, key, generation, &out, pulse.taken(), frame) {
+        let (frame, reservation) = match frame {
+            Up::QuestionPart { id, index, total, text } => match uploads.push(id, index, total, &text) {
+                Ok(Some(complete)) => (Up::Ask { id, question: complete.question }, Some(complete.reservation)),
+                Ok(None) => continue,
+                Err(why) => {
+                    let _ = out.send(Out::Frame(Down::Told { id, answer: Err(why) }));
+                    continue;
+                }
+            },
+            Up::CancelQuestion { id } => {
+                uploads.cancel(id);
+                continue;
+            }
+            frame => (frame, None),
+        };
+        if let Err(reason) = handle(&hub, &name, key, generation, &out, pulse.taken(), frame, reservation) {
             let _ = out.send(Out::End(reason.clone()));
             break (Some(reason.to_string()), true);
         }
@@ -699,6 +722,7 @@ fn handle(
     out: &Outq,
     took: u64,
     frame: Up,
+    reservation: Option<fastctx_net::reassembly::Reservation>,
 ) -> Result<(), Refusal> {
     let reply = |frame: Down| {
         let _ = out.send(Out::Frame(frame));
@@ -751,6 +775,18 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
+        Up::Ask { id, question: question @ (Question::ProjectIndex { .. } | Question::MemoryRead { .. }) } => {
+            crate::ledger::requests::ask(hub, name, out, id, question);
+        }
+        Up::Ask { id, question: Question::MemoryWrite { town, account, entry } } => {
+            let (hub, writer, out) = (hub.clone(), name.clone(), out.clone());
+            let held = crate::moving::Moving::hold(&hub);
+            tokio::spawn(async move {
+                let (_held, _reservation) = (held, reservation);
+                let answer = crate::ledger::write_as(&hub, &writer, town, entry, Some(account)).await;
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
+        }
         Up::Ask { id, question: Question::LedgerRead { town, after } } => {
             crate::ledger::ask(hub, name, out, id, town, after);
         }
@@ -760,6 +796,7 @@ fn handle(
             let held = crate::moving::Moving::hold(&hub);
             tokio::spawn(async move {
                 let _held = held;
+                let _reservation = reservation;
                 let answer = crate::ledger::write(&hub, &writer, town, entry).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
@@ -845,6 +882,7 @@ fn handle(
             let answer = ask(hub, name, question);
             reply(Down::Told { id, answer });
         }
+        Up::QuestionPart { .. } | Up::CancelQuestion { .. } => unreachable!("assembled by the connection"),
         Up::Hello { .. } => {
             return Err(Refusal::Broken { reason: "a second hello on one connection".to_string() });
         }
@@ -1350,7 +1388,12 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
         Question::Directory => Ok(Told::Directory { view: Box::new(hub.view_for(name)) }),
         Question::ProjectDeleted { town } => crate::project_deletions::finished(hub, name, &town),
         Question::Manage { .. } => Err("changes are made as they come".into()),
-        Question::LedgerWrite { .. } => Err("ledger entries are written as they come".into()),
+        Question::LedgerWrite { .. } | Question::MemoryWrite { .. } => {
+            Err("ledger entries are written as they come".into())
+        }
+        Question::ProjectIndex { .. } | Question::MemoryRead { .. } => {
+            Err("project reads are dispatched asynchronously".into())
+        }
         Question::LedgerTowns => {
             let store = hub.store();
             let towns = hub.ledgers.lock().expect("never poisoned").towns_of(&store.book.directory, name);

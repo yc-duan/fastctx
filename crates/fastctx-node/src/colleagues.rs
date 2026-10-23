@@ -439,7 +439,10 @@ pub(crate) async fn instructions(
         words
     };
     let text = match town {
-        Some(town) if record => format!("{words}\n\n{}", crate::town::map::brief(node, town, acting).await?),
+        Some(town) if record => format!(
+            "{words}\n\n{}",
+            crate::town::map::brief_for(node, town, acting, matches!(origin, Origin::Colleague { .. })).await?
+        ),
         _ => words,
     };
     Ok((text, heard))

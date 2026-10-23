@@ -31,6 +31,7 @@ mod letters;
 mod line;
 mod login_identity;
 mod machine_log;
+mod memory;
 mod moving;
 mod outgoing;
 mod plans;
@@ -1106,18 +1107,24 @@ impl Inner {
     async fn ask_on(&self, connection: Connection, question: Question) -> Result<Option<Told>, String> {
         let within = within(&question);
         let id = self.next_id();
+        let frames = crate::question_parts::frames(id, question, self.view().ledger_parts)?;
+        let multipart = frames.len() > 1;
         let (answer, answered) = oneshot::channel();
         self.asks.insert(id, connection.generation, answer, None);
-        struct Waiting<'a>(&'a Inner, u64);
+        struct Waiting<'a>(&'a Inner, u64, Option<outgoing::Outgoing>);
         impl Drop for Waiting<'_> {
             fn drop(&mut self) {
                 self.0.asks.remove(self.1);
+                if let Some(up) = &self.2 {
+                    let _ = up.send(crate::wire::Up::CancelQuestion { id: self.1 });
+                }
             }
         }
-        let _waiting = Waiting(self, id);
-        if connection.up.send(crate::wire::Up::Ask { id, question }).is_err() {
-            self.asks.remove(id);
-            return Ok(None);
+        let _waiting = Waiting(self, id, multipart.then(|| connection.up.clone()));
+        for frame in frames {
+            if connection.up.send(frame).is_err() {
+                return Ok(None);
+            }
         }
         // The answer, or the end of the connection, which drops the sender.
         match fastctx_platform::doing::outside("the hub's answer", within, answered).await {

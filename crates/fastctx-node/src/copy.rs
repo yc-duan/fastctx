@@ -187,10 +187,13 @@ async fn copy_once(
     if from_here && to_here {
         let root = fastctx_platform::local_path(&from.path).map_err(|error| Failure::new(error.to_string()))?;
         let target = to.path;
-        return tokio::task::spawn_blocking(move || fastctx_hands::copy::local::copy(&root, &target, &here))
-            .await
-            .map_err(|error| Failure::new(format!("copying {}: {error}", from.path)))?
-            .map_err(|error| Failure::new(format!("copying {}: {error}", from.path)));
+        let world = node.world.clone();
+        return tokio::task::spawn_blocking(move || {
+            fastctx_hands::copy::local::copy_protected(&root, &target, &here, world.path())
+        })
+        .await
+        .map_err(|error| Failure::new(format!("copying {}: {error}", from.path)))?
+        .map_err(|error| Failure::new(format!("copying {}: {error}", from.path)));
     }
     if !from_here && !to_here && same_machine(node, &from_machine, &to_machine)? {
         let to = Place { machine: Some(to_machine.name.clone()), hub: to_machine.hub.clone(), path: to.path };
@@ -646,7 +649,7 @@ async fn take_files(
     }
     let manifest: Manifest =
         serde_json::from_slice(&json).map_err(|error| Failure::new(format!("the manifest cannot be read: {error}")))?;
-    let receiver = match Receiver::new(&to, manifest) {
+    let receiver = match Receiver::new(&to, manifest).and_then(|receiver| receiver.protect(node.world.path())) {
         Ok(receiver) => receiver,
         Err(reason) => {
             let _ = stream.say(&Answer::Refused { reason: reason.clone() }).await;

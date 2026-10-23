@@ -82,7 +82,7 @@ pub(crate) fn write_job(
 
 /// The latest of what a resident saw of each file, by the file's canonical
 /// path, as the writing core looks files up.
-fn load_seen(path: &Path) -> io::Result<SeenFiles> {
+pub(crate) fn load_seen(path: &Path) -> io::Result<SeenFiles> {
     let file = match std::fs::File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(SeenFiles::new()),

@@ -155,6 +155,42 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         if let Call::WatchAccountRecords { hub, account, kind } = call {
             return crate::account_records::watch(node, &hello.peer, hub, account, kind, id, reader, writer).await;
         }
+        if let Call::WatchMemory { town } = &call {
+            if let Err(failure) = users_voice(node, &hello.peer) {
+                writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
+                return writer.drain().await;
+            }
+            let mut changes = node.memory_changes.subscribe();
+            let mut views = node.views.subscribe();
+            let mut told = None;
+            let ready = crate::town::access::ready(node, &fastctx_types::access::Acting::Here, town).await;
+            if let Err(failure) = ready {
+                writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
+                return writer.drain().await;
+            }
+            loop {
+                changes.borrow_and_update();
+                views.borrow_and_update();
+                match crate::memory::api::catalog(node, &Caller::User, town).await {
+                    Ok(catalog) if told.as_ref() != Some(&catalog) => {
+                        let reply =
+                            Reply::Memory(fastctx_types::memory::MemoryReply::Catalog { catalog: catalog.clone() });
+                        writer.send(&json(&NodeFrame::Reply { id, reply: Ok(reply) })).await?;
+                        told = Some(catalog);
+                    }
+                    Ok(_) => {}
+                    Err(failure) => {
+                        writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
+                        return writer.drain().await;
+                    }
+                }
+                tokio::select! {
+                    changed = changes.changed() => if changed.is_err() { return Ok(()) },
+                    changed = views.changed() => if changed.is_err() { return Ok(()) },
+                    _ = reader.recv() => return Ok(()),
+                }
+            }
+        }
         if let Call::WatchFeatures = call {
             // An interface follows the switches for as long as it is open:
             // as they are first, then after each change.
@@ -1150,6 +1186,15 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|(to, landed)| Reply::Spoken { to, landed, delivery: None })
         }
+        Call::MemorySettings { hub, account, enabled } => {
+            users_voice(node, peer)?;
+            crate::memory::settings::call(node, hub, account, enabled).await.map(Reply::MemorySettings)
+        }
+        Call::WatchMemory { .. } => Err(Failure::new("a memory watch is answered as it changes")),
+        Call::Memory(request) => {
+            let caller = caller::of(node, peer)?;
+            crate::memory::api::call(node, &caller, request).await.map(Reply::Memory)
+        }
         Call::Project(call) => {
             let caller = caller::of(node, peer)?;
             if !matches!(call, fastctx_types::ProjectCall::Enter { .. }) {
@@ -1157,11 +1202,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             }
             crate::town::project::call(node, &caller, call).await
         }
-        Call::Journal(call) => {
-            let caller = caller::of(node, peer)?;
-            named_town(node, &caller, call.town()).await?;
-            crate::town::journal::call(node, &caller, call).await
-        }
+        Call::Journal(_) => Err(Failure::not_run(fastctx_types::memory::LEGACY)),
         Call::Page(call) => {
             let caller = caller::of(node, peer)?;
             named_town(node, &caller, call.town()).await?;
@@ -1572,10 +1613,16 @@ async fn write(
     let here = node.machine();
     let started_at = jiff::Timestamp::now();
     let owner = Address { machine: here.clone(), resident: resident.clone() };
+    let caller = Caller::Resident(owner.clone());
+    let memory = crate::memory::writing::intercept(node, &caller, &op, None, town.as_ref()).await?;
     let (world, machine, writing, written) = (node.world.clone(), node.names(), town.clone(), op.clone());
-    let outcome =
-        blocking("writing", move || crate::write::write_here(&world, &machine, &owner, writing.as_ref(), written))
-            .await?;
+    let outcome = match memory {
+        Some(outcome) => outcome,
+        None => {
+            blocking("writing", move || crate::write::write_here(&world, &machine, &owner, writing.as_ref(), written))
+                .await?
+        }
+    };
     let action = crate::write::action(&op, &outcome, &here, started_at);
     let world = node.world.clone();
     blocking("recording the action", move || crate::residents::record_action(&world, &resident, &action)).await?;
