@@ -277,7 +277,7 @@ pub async fn ask_here(
         delivery: Delivery {
             id: speech::new_id("words"),
             at: born_at,
-            notice: Notice::Words { from: Speaker::Resident { address: asker.clone() }, text: prompt },
+            notice: Notice::Words { from: Speaker::Resident { address: asker.clone() }, text: prompt, goal_report: None },
         },
         readers: vec![asker],
         state: PendingState::Waiting,
@@ -531,7 +531,7 @@ pub async fn message(
             ));
         }
     }
-    let notice = Notice::Words { from: Speaker::Resident { address: sender.clone() }, text };
+    let notice = Notice::Words { from: Speaker::Resident { address: sender.clone() }, text, goal_report: None };
     let landed =
         speech::tell_at(node, &acting, &to, &machine, speech::new_id("words"), notice, Owed::Speaker(sender)).await?;
     let result = match &landed {

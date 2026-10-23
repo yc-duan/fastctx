@@ -6,6 +6,9 @@ pub(crate) use fastctx_types::goals::words::*;
 
 pub(crate) const NATIVE_CODEX: &str = "Goals are available only in Codex conversations started by the World.";
 pub(crate) const REQUESTER_PAUSED: &str = "The requesting conversation paused the goal.";
+pub(crate) const REPORT_CHANGED: &str = "The goal conclusion differs from its immutable report identity.";
+pub(crate) const REPORT_MISSING: &str = "The settled goal has no conclusion text.";
+pub(crate) const REPORT_OLDER_NODE: &str = "The requester's node is too old to receive goal conclusions; update it first.";
 pub(crate) const QUESTION_OLDER_NODE: &str = "The requester's node is too old to receive a question without waking it.";
 
 const BLOCK: &str = r#"THE GOAL

@@ -378,6 +378,21 @@ pub fn fixtures() -> Fixtures {
             text: "Question from a colleague: which output format?".into(),
         })),
     }));
+    events.push(event(Happened::Heard {
+        delivery: Some("goal-result-1".parse().unwrap()),
+        turn: Some(turn.clone()),
+        from: Some(Speaker::Resident { address: address() }),
+        text: "=== colleague codex-ab12 on desktop (goal complete, 2h14m) ===\nOriginal report.\n=== what it did: fastctx w codex-ab12 ===".into(),
+        message: None,
+        notice: Some(Box::new(fastctx_types::residents::Notice::Words {
+            from: Speaker::Resident { address: address() },
+            text: "=== colleague codex-ab12 on desktop (goal complete, 2h14m) ===\nOriginal report.\n=== what it did: fastctx w codex-ab12 ===".into(),
+            goal_report: Some(Box::new(fastctx_types::goals::ReportDelivery {
+                id: "goal-result-1".parse().unwrap(), colleague: address(),
+                account: fastctx_types::access::HubAccount { hub: "w-0123456789abcdef".parse().unwrap(), account: "ada".parse().unwrap() },
+            })),
+        })),
+    }));
     let mut question = item("goal-question-card", What::Message { text: "Which output format?".into() });
     question.detail = Some(json!({
         "delivery":"async",

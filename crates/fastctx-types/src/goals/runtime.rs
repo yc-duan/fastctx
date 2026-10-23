@@ -25,6 +25,16 @@ pub struct Runtime {
     pub owner_input: Option<String>,
     /// The local stop explicitly observed by a later owner resume, never an earlier in-flight resume.
     pub clears_stop: Option<String>,
+    /// The first accepted conclusion of this unchanged outcome, retained across later metadata edits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conclusion: Option<Conclusion>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Conclusion {
+    pub operation: String,
+    pub at: Timestamp,
+    pub fingerprint: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

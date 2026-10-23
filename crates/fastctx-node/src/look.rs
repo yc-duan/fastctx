@@ -134,6 +134,7 @@ pub(crate) fn read_here(
             actions_total,
             asked,
             answers,
+            goal_reports: crate::goals::reports::recent(&directory)?,
             jobs,
         }))))
     } else {

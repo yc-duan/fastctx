@@ -574,6 +574,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         goal_runtime: node.goals.available(),
         goal_questions: true,
         goal_commands: true,
+        goal_reports: true,
         name: node.machine(),
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
@@ -1180,7 +1181,7 @@ impl fastctx_net::link::Node for Handler {
                         if let Notice::JobEnded { job, machine, .. } = &notice {
                             crate::here::ended_elsewhere(&node, &to, machine, job);
                         }
-                        let owed = if matches!(&notice, Notice::Question { .. }) { Owed::Nobody } else { Owed::Working };
+                        let owed = if matches!(&notice, Notice::Question { .. } | Notice::Words { goal_report: Some(_), .. }) { Owed::Nobody } else { Owed::Working };
                         let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
                         if crate::on_delivery::park_from(&node, &to, &delivery, Some(&identity))? {
                             return Ok(Ok(()));
@@ -1193,7 +1194,7 @@ impl fastctx_net::link::Node for Handler {
                     Letter::Speak { to, from: speaker, text, .. } => {
                         let address = Address { machine: from, resident: speaker };
                         node.residents.set_departed(&node.world, &address, false, Some((hub.as_str(), &identity)))?;
-                        let notice = Notice::Words { from: Speaker::Resident { address: address.clone() }, text };
+                        let notice = Notice::Words { from: Speaker::Resident { address: address.clone() }, text, goal_report: None };
                         let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
                         match crate::speech::tell_here(&node, &to, delivery, Owed::Speaker(address)).await {
                             Ok(_) => Ok(Ok(())),

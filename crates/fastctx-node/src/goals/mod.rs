@@ -13,6 +13,7 @@ pub(crate) mod operations;
 pub(crate) mod questions;
 pub(crate) mod records;
 mod recovery;
+pub(crate) mod reports;
 pub(crate) mod reviewer;
 mod scope;
 mod state;
@@ -83,6 +84,11 @@ pub(crate) fn visible(
     looker: crate::admission::seen::Looker<'_>,
     event: &fastctx_types::session::SessionEvent,
 ) -> bool {
+    if let fastctx_types::session::Happened::Heard { notice: Some(notice), .. } = &event.happened
+        && let fastctx_types::residents::Notice::Words { goal_report: Some(report), .. } = notice.as_ref()
+    {
+        return looker.sees_account(node, &report.account);
+    }
     let fastctx_types::session::Happened::Changed {
         change: fastctx_types::session::SessionChange::Goal { goal }, ..
     } = &event.happened

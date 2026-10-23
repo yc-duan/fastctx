@@ -131,6 +131,7 @@ fn activate(goal: &mut Goal, at: Timestamp) {
 }
 
 pub(crate) fn remember(goal: &mut Goal, change: Change<'_>, kind: &str, reason: String) {
+    super::reports::remember(goal, change.operation, change.at);
     goal.operation = change.operation.to_string();
     goal.changed_at = change.at;
     goal.decisions.push(Decision {

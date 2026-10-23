@@ -40,6 +40,17 @@ pub fn admit(node: &Node, hub: &HubId, caller: &Caller, purpose: Purpose, letter
             (to, Purpose::Words)
         }
         Letter::Notice { to, notice } => match notice.as_ref() {
+            Notice::Words { from: Speaker::Resident { address }, goal_report: Some(report), .. }
+                if *address == report.colleague
+                    && sender(&address.machine)
+                    && report.account.hub == *hub
+                    && report.account.account == caller.account =>
+            {
+                (to, Purpose::Echo)
+            }
+            Notice::Words { goal_report: Some(_), .. } => {
+                return Err(format!("{from} sent a goal report of another machine or account"));
+            }
             Notice::Words { from: Speaker::Resident { address }, .. } if sender(&address.machine) => {
                 (to, Purpose::Words)
             }
@@ -56,6 +67,7 @@ pub fn admit(node: &Node, hub: &HubId, caller: &Caller, purpose: Purpose, letter
             {
                 (to, Purpose::Echo)
             }
+
             Notice::JobEnded { machine, .. } if sender(machine) => (to, Purpose::Echo),
             Notice::Answer { .. } | Notice::Health { .. } | Notice::Question { .. } | Notice::JobEnded { .. } => {
                 return Err(format!("{from} told of something that happened on another machine"));

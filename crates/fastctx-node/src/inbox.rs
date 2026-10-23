@@ -360,6 +360,7 @@ fn parse_pending(directory: &ConversationDir, path: &Path, bytes: &[u8]) -> io::
     // Before durable handovers the inbox contained Delivery directly.
     let delivery: fastctx_types::residents::Delivery = serde_json::from_value(value).map_err(io::Error::other)?;
     let (readers, working) = match &delivery.notice {
+        Notice::Words { goal_report: Some(_), .. } => (Vec::new(), false),
         Notice::Words { from: fastctx_types::session::Speaker::Resident { address }, .. } => {
             (vec![address.clone()], false)
         }

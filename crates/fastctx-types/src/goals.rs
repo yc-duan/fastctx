@@ -217,5 +217,40 @@ impl AgentRequest {
     }
 }
 
+/// A settled goal's immutable report to the conversation that requested it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Report {
+    pub id: crate::NoticeId,
+    pub goal: String,
+    pub colleague: crate::Address,
+    pub account: HubAccount,
+    pub label: String,
+    pub status: Status,
+    pub started_at: Timestamp,
+    pub ended_at: Timestamp,
+    pub resume_at: Option<Timestamp>,
+    pub text: String,
+}
+
+/// Metadata on an ordinary resident message. Older readers retain its sender and full text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReportDelivery {
+    pub id: crate::NoticeId,
+    pub colleague: crate::Address,
+    pub account: HubAccount,
+}
+
+/// A short entry for `w`; the report file retains the complete immutable text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReportSummary {
+    pub id: crate::NoticeId,
+    pub account: HubAccount,
+    pub status: Status,
+    pub ended_at: Timestamp,
+    pub elapsed_seconds: u64,
+    pub preview: String,
+    pub path: String,
+}
+
 pub mod runtime;
 pub mod words;

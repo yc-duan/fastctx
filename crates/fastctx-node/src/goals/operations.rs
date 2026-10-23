@@ -270,6 +270,9 @@ pub(crate) async fn finish(node: &Arc<Node>, intent: &mut Intent) -> Result<Upda
     if current.version.is_none_or(|current| current < version) {
         return Err(Failure::new(fastctx_types::goals::words::LOST_REVISION));
     }
+    if let Some(goal) = &intent.proposed {
+        super::reports::keep(node, goal)?;
+    }
     super::archive::close(node, &intent.account, &intent.resident.resident, &intent.operation).await?;
     if intent.proposed.is_none() && current.goal.is_none() {
         super::archive::for_resident(node, &intent.account, &intent.resident.resident).await?;
@@ -288,6 +291,9 @@ pub(crate) async fn finish(node: &Arc<Node>, intent: &mut Intent) -> Result<Upda
 }
 
 pub(crate) async fn apply(node: &Arc<Node>, resident: &ResidentId, view: &View) -> Result<(), Failure> {
+    if let Some(goal) = &view.goal {
+        super::reports::keep(node, goal)?;
+    }
     let mut installed = None;
     loop {
         let (text, accepted) = {
