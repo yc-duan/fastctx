@@ -19,10 +19,6 @@ use crate::Node;
 /// The record of `town` as a session working for `acting` reads it, from
 /// this machine's copy of its ledger, naming only the machines it may work
 /// on; none when this machine has no record of it.
-pub(crate) fn text(node: &Node, town: &TownName, acting: &Acting) -> io::Result<Option<String>> {
-    Ok(current(node, town, acting)?.map(|(text, _)| text))
-}
-
 pub(crate) fn current(
     node: &Node,
     town: &TownName,

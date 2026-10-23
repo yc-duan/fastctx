@@ -78,7 +78,33 @@ pub(crate) async fn prepare(
     }
     local(node, id, town, acting).map_err(|error| Failure::new(error.to_string()))?;
     crate::plan::context(node, id, origin, acting).await?;
+    map(node, id, town, origin, acting).await?;
     storage::opening(&node.world, id).map_err(|error| Failure::new(error.to_string()))
+}
+
+/// The project's memory index as the "map" block. The project instructions
+/// ride the "project" block, so this carries only the journals and decisions
+/// the project keeps; it is empty when memory is off or there is no project.
+pub(crate) async fn map(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    town: Option<&TownName>,
+    origin: &Origin,
+    acting: &Acting,
+) -> Result<(), Failure> {
+    let read_only = matches!(origin, Origin::Colleague { .. });
+    let body = match town {
+        Some(town) => crate::memory::context::text(node, town, acting, read_only).await?,
+        None => None,
+    };
+    super::set(
+        node,
+        id,
+        "map",
+        body.as_deref().unwrap_or(""),
+        Change { by: None, version: "", fact: &words::changed("map", words::USER), full: true },
+    )
+    .map_err(|error| Failure::new(error.to_string()))
 }
 
 pub(super) fn observed(node: &Node, id: &ResidentId, receipt: &Receipt) -> io::Result<()> {

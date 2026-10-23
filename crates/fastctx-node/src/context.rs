@@ -54,7 +54,7 @@ pub(crate) fn set(node: &Node, id: &ResidentId, name: &str, text: &str, change: 
     storage::set(&node.world, id, name, text, change)
 }
 
-pub(crate) use sources::{plan, plan_unavailable, prepare, refresh_local};
+pub(crate) use sources::{map, plan, plan_unavailable, prepare, refresh_local};
 
 pub(crate) fn instructed(node: &Node, id: &ResidentId, heard: &crate::residents::Heard) -> io::Result<()> {
     if let Some(receipt) = &heard.context {

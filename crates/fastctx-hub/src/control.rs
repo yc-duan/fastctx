@@ -714,6 +714,7 @@ pub(crate) fn cut_calls(hub: &Hub) {
 
 /// Does what the member's frame asks; `took`, how many bytes of this
 /// connection the hub took from it, goes back with its heartbeat.
+#[allow(clippy::too_many_arguments)]
 fn handle(
     hub: &Arc<Hub>,
     name: &MachineName,

@@ -33,10 +33,11 @@ pub(crate) async fn refresh(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
         pending.revision
     };
     node.residents.active(id)?;
-    let (about, _) = node.residents.about(id).ok_or_else(|| Failure::new(super::words::UNKNOWN))?;
+    let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new(super::words::UNKNOWN))?;
     crate::focus::refresh(node, id).await?;
     super::refresh_local(node, id).map_err(|error| Failure::new(error.to_string()))?;
     crate::plan::context(node, id, &about.origin, &about.acting).await?;
+    super::map(node, id, town.as_ref(), &about.origin, &about.acting).await?;
     node.contexts.0.lock().expect("never poisoned").entry(id.clone()).or_default().loaded = revision;
     Ok(())
 }
@@ -91,11 +92,13 @@ pub(crate) fn start(node: &Arc<Node>) {
     tokio::spawn(async move {
         let mut views = node.views.subscribe();
         let mut ways = node.ways.subscribe();
+        let mut memory = node.memory_changes.subscribe();
         loop {
             request_all(&node);
             tokio::select! {
                 _ = views.changed() => {},
                 _ = ways.changed() => {},
+                _ = memory.changed() => {},
                 _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {},
             }
         }
