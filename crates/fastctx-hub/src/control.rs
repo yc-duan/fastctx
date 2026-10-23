@@ -57,6 +57,7 @@ pub(crate) struct Said {
     pub profiles: bool,
     pub account_records: bool,
     pub conversation_plans: bool,
+    pub scratch_locations: bool,
     /// What a machine taken off could not do of the uninstall it was asked.
     pub left: Option<String>,
     /// Whether it reads that a call it answers is over for its caller.
@@ -566,6 +567,7 @@ fn open(
         key,
         account_records: said.account_records,
         conversation_plans: said.conversation_plans,
+        scratch_locations: said.scratch_locations,
         call_details: said.call_details,
         generation,
         out,
@@ -895,6 +897,11 @@ fn standing(hub: &Hub, message: &Envelope) -> Result<Standing, String> {
     let plan = fastctx_net::message::plan_request(message);
     if plan.is_some() && purpose != Purpose::Echo {
         return Err(fastctx_types::plan::words::CONTROL.into());
+    }
+    if message.body.get("call").and_then(|call| call.get("call")).and_then(serde_json::Value::as_str) == Some("scratch")
+        && hub.sessions().get(&to).is_some_and(|session| !session.scratch_locations)
+    {
+        return Err(fastctx_types::scratch::words::OLD_NODE.into());
     }
     let standing = Standing { from, account: account.clone(), to, purpose, project_entry, plan };
     match standing.lapsed(hub) {

@@ -64,6 +64,7 @@ struct ReceiptContext {
     parent: Option<PathBuf>,
     origin: OnOrigin,
     destination: crate::reach::Written,
+    scratch_hub: Option<fastctx_types::access::HubId>,
     acting: Acting,
     job: Option<JobId>,
     consumed: Vec<fastctx_types::NoticeId>,
@@ -81,6 +82,32 @@ impl Pieces {
         context.consumed = consumed;
         context.through_exit = through_exit;
         Self(self.0.clone(), self.1.clone(), Arc::new(Mutex::new(context)))
+    }
+
+    fn scratch(&self, mut locations: Vec<fastctx_types::scratch::Location>) -> Result<(), String> {
+        if locations.is_empty() {
+            return Ok(());
+        }
+        let context = self.2.lock().expect("never poisoned").clone();
+        for location in &mut locations {
+            if location.hub.is_none() {
+                location.hub = context.scratch_hub.clone();
+                location.machine = context.destination.name.clone();
+            }
+        }
+        if let Some(parent) = &context.parent {
+            crate::scratch::jobs::add(parent, locations.clone()).map_err(|error| error.to_string())?;
+        }
+        if context.node.is_me(&context.origin.resident.machine) {
+            crate::scratch::observed(
+                &context.node,
+                &context.origin.resident.resident,
+                &context.destination,
+                &locations,
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 
     fn fact(&self, fact: &fastctx_types::run_facts::WriteFact) -> Result<(), String> {
@@ -192,6 +219,7 @@ pub async fn send(node: &Arc<Node>, mut origin: OnOrigin, request: OnRequest) ->
         .as_ref()
         .map(|job| node.world.job_owner(&node.names(), &origin.resident.clone().into()).job_record(job));
     let context = ReceiptContext {
+        scratch_hub: None,
         node: node.clone(),
         parent,
         acting: acting(node, &origin),
@@ -341,7 +369,11 @@ async fn there(
     // Recorded here under its project; there, under it only on its hub.
     let local_origin = origin;
     let origin = &OnOrigin { town: node.town_across(&link, origin.town.as_ref())?, ..origin.clone() };
-    pieces.2.lock().expect("never poisoned").origin = origin.clone();
+    {
+        let mut context = pieces.2.lock().expect("never poisoned");
+        context.origin = origin.clone();
+        context.scratch_hub = Some(link.membership().id);
+    }
     let sizes = sizes(&request.package).await.map_err(|failure| Failure::not_run(failure.message))?;
     requested(node, local_origin, request).await?;
     let followed = Arc::new(Mutex::new(Followed::default()));
@@ -554,7 +586,12 @@ fn feed(
                         followed.lock().expect("never poisoned").refused = Some(failure);
                         return stream.say(&TAKEN).await;
                     }
-                    OnWord::Started { job } => {
+                    OnWord::Started { job, scratch } => {
+                        pieces.scratch(vec![fastctx_types::scratch::Location {
+                            hub: None,
+                            machine: machine.clone(),
+                            path: scratch.ok_or_else(|| fastctx_types::scratch::words::OLD_NODE.into()),
+                        }])?;
                         followed.lock().expect("never poisoned").job = Some(job.clone());
                         if let Some(started) = &started
                             && let Err(error) = started(job.clone()).await
@@ -597,8 +634,11 @@ fn feed(
                             bytes -= count;
                         }
                     }
-                    OnWord::Still => {}
-                    OnWord::Ended { end, consumed, through_exit, .. } => {
+                    OnWord::Still { scratch } => {
+                        pieces.scratch(scratch)?;
+                    }
+                    OnWord::Ended { end, consumed, through_exit, scratch, .. } => {
+                        pieces.scratch(scratch)?;
                         let handed = pieces.receipt(consumed, through_exit);
                         let mut receipt = offer_end(&followed, &handed, &waiting, end);
                         let taken = loop {
@@ -787,7 +827,13 @@ pub async fn serve_on(
         }
     };
     let handed = async {
-        stream.say(&OnWord::Started { job: job.clone() }).await?;
+        let room = fastctx_hands::run::supervisor::room(&record_path).map_err(|error| error.to_string())?;
+        stream
+            .say(&OnWord::Started {
+                job: job.clone(),
+                scratch: Some(fastctx_hands::run::present::display_path(&room.scratch().to_string_lossy())),
+            })
+            .await?;
         let mut sink = Sink::Stream(&mut stream);
         hand_over(node, &job, &record_path, 0, 0, &mut sink).await
     }
@@ -821,7 +867,7 @@ async fn take_piped(
             }
             () = tokio::time::sleep(STILL_EVERY) => {
                 stream
-                    .say(&OnWord::Still)
+                    .say(&OnWord::Still { scratch: Vec::new() })
                     .await
                     .map_err(|error| Failure::new(format!("telling the sender its input is coming: {error}")))?;
             }
@@ -1244,9 +1290,16 @@ impl Sink<'_> {
         }
     }
 
+    async fn scratch(&mut self, scratch: Vec<fastctx_types::scratch::Location>) -> Result<(), String> {
+        match self {
+            Sink::Stream(stream) => stream.say(&OnWord::Still { scratch }).await,
+            Sink::Local(pieces) => pieces.scratch(scratch),
+        }
+    }
+
     async fn still(&mut self) -> Result<(), String> {
         match self {
-            Sink::Stream(stream) => stream.say(&OnWord::Still).await,
+            Sink::Stream(stream) => stream.say(&OnWord::Still { scratch: Vec::new() }).await,
             Sink::Local(_) => Ok(()),
         }
     }
@@ -1258,10 +1311,11 @@ impl Sink<'_> {
         lettered: bool,
         consumed: Vec<fastctx_types::NoticeId>,
         through_exit: bool,
+        scratch: Vec<fastctx_types::scratch::Location>,
     ) -> Result<bool, String> {
         match self {
             Sink::Stream(stream) => {
-                stream.say(&OnWord::Ended { end, lettered, consumed, through_exit }).await?;
+                stream.say(&OnWord::Ended { end, lettered, consumed, through_exit, scratch }).await?;
                 loop {
                     match tokio::time::timeout(SILENT_FOR, stream.hear::<String>()).await {
                         Ok(Ok(word)) if word == WAITING => continue,
@@ -1271,7 +1325,10 @@ impl Sink<'_> {
                     }
                 }
             }
-            Sink::Local(pieces) => pieces.receipt(consumed, through_exit).ended(end).await,
+            Sink::Local(pieces) => {
+                pieces.scratch(scratch)?;
+                pieces.receipt(consumed, through_exit).ended(end).await
+            }
         }
     }
 
@@ -1296,11 +1353,18 @@ async fn hand_over(
 ) -> Result<Handed, String> {
     let mut changes = node.jobs.subscribe();
     let mut facts_cursor = 0;
+    let mut known_scratch = Vec::new();
     let mut quiet_since = Instant::now();
     loop {
         // The record first: whatever it says has ended had written its
         // last byte before, so reading the logs after it misses nothing.
         let record = crate::jobs::read(record_path).await.map_err(|failure| failure.message)?;
+        let scratch =
+            crate::scratch::jobs::locations(record_path, &record.machine).map_err(|error| error.to_string())?;
+        if known_scratch != scratch {
+            sink.scratch(scratch.clone()).await?;
+            known_scratch = scratch;
+        }
         sink.facts(crate::run_facts::read_since(record_path, &mut facts_cursor).map_err(|error| error.to_string())?)
             .await?;
         let errors = record.stderr.clone();
@@ -1339,7 +1403,10 @@ async fn hand_over(
                     .await
                     .map_err(|error| error.to_string())?
                     .map_err(|error| error.to_string())?;
-            return sink.ended(end, lettered, consumed, !complete).await.map(|taken| Handed { taken, complete });
+            return sink
+                .ended(end, lettered, consumed, !complete, known_scratch)
+                .await
+                .map(|taken| Handed { taken, complete });
         }
         if quiet_since.elapsed() >= STILL_EVERY {
             sink.still().await?;

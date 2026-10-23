@@ -1016,6 +1016,7 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(|map| RemoteReply::Entered { town, map: Box::new(map) })
                 }
+                RemoteCall::Scratch { owner } => Ok(RemoteReply::Scratch { path: crate::scratch::here(&node, &owner) }),
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&node))),
                 RemoteCall::AttachmentReferences { conversation, attachments } => {
                     if !node.is_me(&conversation.machine)
@@ -1160,7 +1161,13 @@ impl fastctx_net::link::Node for Handler {
                     }
                     Letter::Notice { to, notice } => {
                         let notice = *notice;
-                        if let Notice::JobEnded { job, machine, .. } = &notice {
+                        if let Notice::JobEnded { job, machine, scratch, .. } = &notice {
+                            if !scratch.is_empty() {
+                                let link = node
+                                    .link_of(&hub)
+                                    .ok_or_else(|| io::Error::other("the sending hub is no longer connected"))?;
+                                crate::scratch::observed(&node, &to, &node.written(&link, &from), scratch)?;
+                            }
                             crate::here::ended_elsewhere(&node, &to, machine, job);
                         }
                         let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };

@@ -211,6 +211,8 @@ impl Held {
                         stderr: record.stderr.clone(),
                         last: None,
                         stop: record.stop.as_ref().map(|stop| Box::new(stop.request.clone())),
+                        scratch: crate::scratch::jobs::locations(path, &record.machine)
+                            .map_err(|error| Failure::new(error.to_string()))?,
                     };
                     let account =
                         record.on.as_ref().and_then(|on| on.account.clone()).or_else(|| record.account.clone());

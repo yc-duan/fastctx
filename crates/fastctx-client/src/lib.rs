@@ -118,6 +118,7 @@ pub struct Client {
     pub profiles: bool,
     pub account_records: bool,
     pub conversation_plans: bool,
+    pub scratch_locations: bool,
     /// The connected node's facts, including when another starter won.
     pub node_lifetime: Option<Box<fastctx_types::node_lifetime::NodeLifetime>>,
 }
@@ -152,18 +153,25 @@ impl Client {
             .map_err(io_error)?
             .ok_or_else(|| io_error(std::io::ErrorKind::UnexpectedEof.into()))?;
         match serde_json::from_slice::<Welcome>(&welcome).map_err(|error| io_error(std::io::Error::other(error)))? {
-            Welcome::Accepted { machine, version, node_lifetime, profiles, account_records, conversation_plans } => {
-                Ok(Self {
-                    connection,
-                    next: 0,
-                    machine,
-                    node_version: version,
-                    node_lifetime,
-                    profiles,
-                    account_records,
-                    conversation_plans,
-                })
-            }
+            Welcome::Accepted {
+                machine,
+                version,
+                node_lifetime,
+                profiles,
+                account_records,
+                conversation_plans,
+                scratch_locations,
+            } => Ok(Self {
+                connection,
+                next: 0,
+                machine,
+                node_version: version,
+                node_lifetime,
+                profiles,
+                account_records,
+                conversation_plans,
+                scratch_locations,
+            }),
             Welcome::Refused { reason, mismatch } => {
                 let mismatch = mismatch.or_else(|| renewal::legacy_mismatch(&reason));
                 Err(ConnectError::Refused { reason, mismatch })

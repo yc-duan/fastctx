@@ -99,6 +99,7 @@ pub(crate) async fn here(
     }
     let map = super::map::view(node, town, requesting_actor.as_ref().unwrap_or(acting)).await?;
     let ledger = crate::ledger::seq(&node.world, town).map_err(|error| Failure::new(error.to_string()))?;
-    node.residents.set_heard(id, Heard { context: None, user_prompt: None, town: Some(town.clone()), ledger });
+    node.residents
+        .set_heard(id, Heard { scratch: None, context: None, user_prompt: None, town: Some(town.clone()), ledger });
     Ok(map)
 }

@@ -125,6 +125,12 @@ impl Inner {
         // (`fastctx_types::contract`), from now, a connection to send it on
         // waited for included: past that it is given up, and the machine
         // answering it told so.
+        if matches!(call, RemoteCall::Scratch { .. }) && !self.view().scratch_locations {
+            return Err(CallFailure::NotAllowed {
+                name: to.clone(),
+                reason: fastctx_types::scratch::words::OLD_HUB.into(),
+            });
+        }
         let within = call.contract().within;
         let what = format!("{to}'s answer to {}", call.kind());
         let calling = self.calling(to, account, purpose, call, feed);
@@ -179,7 +185,11 @@ impl Inner {
                 reason: "upgrade the hub before sending calls too large for its control connection".into(),
             });
         }
-        let via = match if large { None } else { self.direct_link_for(to, account, &call) } {
+        let via = match if large || matches!(call, RemoteCall::Scratch { .. }) {
+            None
+        } else {
+            self.direct_link_for(to, account, &call)
+        } {
             Some(conn) => {
                 if let Some(resident) = crate::message::worked_for(&self.me(), &call) {
                     if self.view().project_entry && !self.view().may_act_for(account, to) {

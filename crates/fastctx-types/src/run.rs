@@ -71,6 +71,9 @@ pub struct StopRequested {
 /// and a window onto its output.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunReply {
+    /// Actual scratch locations observed while this script ran.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scratch: Vec<crate::scratch::Location>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<Box<crate::run_facts::RunFacts>>,
     /// Completion notices taken by waits of this owner on the executing node.

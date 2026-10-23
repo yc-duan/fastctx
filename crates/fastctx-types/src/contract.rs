@@ -114,7 +114,8 @@ impl RemoteCall {
             }
             Self::Mcp { mcp: crate::mcp::MachineCall::Test { .. } } => Contract::ASKS_AGENT,
             Self::McpServe { .. } => Contract { cancellable: true, ..Contract::STREAM },
-            Self::AttachmentPlaces { .. }
+            Self::Scratch { .. }
+            | Self::AttachmentPlaces { .. }
             | Self::Who { .. }
             | Self::Since { .. }
             | Self::Folders { .. }

@@ -157,6 +157,7 @@ pub(crate) fn view_for(
         profiles: true,
         account_records: true,
         conversation_plans: true,
+        scratch_locations: true,
         subagents: true,
         versions: true,
         package_progress: true,

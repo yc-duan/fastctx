@@ -393,7 +393,7 @@ pub fn heard_now(node: &Node, town: Option<&TownName>) -> std::io::Result<Heard>
         Some(town) => crate::ledger::seq(&node.world, town)?,
         None => 0,
     };
-    Ok(Heard { context: None, user_prompt: None, town: town.cloned(), ledger })
+    Ok(Heard { scratch: None, context: None, user_prompt: None, town: town.cloned(), ledger })
 }
 
 /// The town's bookkeeping directory, where a resident the World starts

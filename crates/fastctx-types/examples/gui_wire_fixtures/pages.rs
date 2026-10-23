@@ -124,6 +124,7 @@ pub fn fixtures() -> Fixtures {
         .collect();
     let results = vec![
         PageResult::Run(Box::new(RunReply {
+            scratch: Vec::new(),
             run: None,
             consumed: None,
             privacy: Vec::new(),

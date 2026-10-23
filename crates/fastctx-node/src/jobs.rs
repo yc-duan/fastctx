@@ -269,7 +269,10 @@ impl Jobs {
         } else {
             Vec::new()
         };
+        let scratch = crate::scratch::jobs::locations(&launched.record, machine)
+            .map_err(|error| failure("reading scratch locations", error))?;
         let mut reply = RunReply {
+            scratch,
             run: None,
             machine: machine.clone(),
             job: launched.job,
@@ -379,6 +382,7 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
         path.with_extension("writes.jsonl"),
         record::lock_path(path),
         path.with_extension("on"),
+        path.with_extension("scratch"),
         path.with_extension("waited"),
     ];
     files.extend(record.stderr.as_deref().map(PathBuf::from));

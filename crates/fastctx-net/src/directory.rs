@@ -652,6 +652,8 @@ pub struct View {
     /// Plan operations and their authorized return from remote jobs.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub conversation_plans: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub scratch_locations: bool,
     /// The hub accepts account-level Claude subagent changes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub subagents: bool,
@@ -732,6 +734,7 @@ impl View {
             profiles: false,
             account_records: false,
             conversation_plans: false,
+            scratch_locations: false,
             subagents: false,
             versions: false,
             package_progress: false,
