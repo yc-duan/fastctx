@@ -134,9 +134,7 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
                 && about.host.agent.as_str() == "codex"
                 && about.world_started
             {
-                node.residents.compacted(id);
-                let (node, id, compaction) = (node.clone(), id.clone(), item.id.clone());
-                tokio::spawn(async move { crate::focus::compacted(&node, &id, &compaction).await });
+                crate::context::compacted(node, id, &item.id)?;
             }
         }
         Happened::TurnEnded { .. } => crate::asked::settle(node, id, |asked| asked.waits)?,

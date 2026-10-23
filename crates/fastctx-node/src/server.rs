@@ -629,7 +629,11 @@ impl Drop for Arrived<'_> {
             taking.remove(&(resident.clone(), id.clone()));
         }
         drop(taking);
+        for (resident, heard) in &self.notes {
+            crate::context::release(self.node, resident, heard);
+        }
         for resident in self.node.residents.left(&self.residents) {
+            crate::codex::native_context::forget(self.node, &resident);
             crate::colleagues::left(self.node, resident);
         }
     }
@@ -645,7 +649,10 @@ async fn collect(
     collected_notes: &mut Vec<(ResidentId, crate::residents::Heard)>,
 ) -> Result<Reply, Failure> {
     let gate = node.residents.management(&resident)?;
-    let _collecting = gate.read().await;
+    let _collecting = gate.write().await;
+    crate::codex::native_context::observe(node, &resident).await?;
+    crate::context::plugin_heard(node, &resident).map_err(|error| Failure::new(error.to_string()))?;
+    crate::context::refresh(node, &resident).await?;
     if native_delivery(node, &resident) {
         return collect_notes(node, resident, answering, Vec::new(), collected_notes).await;
     }
@@ -710,14 +717,15 @@ async fn collect_notes(
     notices: Vec<fastctx_types::residents::Delivery>,
     collected_notes: &mut Vec<(ResidentId, crate::residents::Heard)>,
 ) -> Result<Reply, Failure> {
-    let (node, id) = (node.clone(), resident.clone());
-    let (notes, heard) = blocking("reading the town", move || {
-        let (mut notes, heard) = crate::town::notes::notes(&node, &id)?;
+    let (reading, id) = (node.clone(), resident.clone());
+    let (mut notes, heard) = blocking("reading the town", move || {
+        let node = &reading;
+        let (mut notes, heard) = crate::town::notes::notes(node, &id)?;
         if let Some(warning) = node.lifetime.warning() {
             notes.push(format!("=== {warning} ==="));
         }
         // Those it left running where it works, too.
-        let elsewhere = crate::here::running_elsewhere(&node, &id)
+        let elsewhere = crate::here::running_elsewhere(node, &id)
             .into_iter()
             .filter(|job| Some(&job.job) != answering.as_ref())
             .map(|job| (format!("{} on {}", job.job, job.machine), job.started_at, job.command))
@@ -726,7 +734,10 @@ async fn collect_notes(
         Ok((notes, heard))
     })
     .await?;
-    if let Some(heard) = heard {
+    if let Some(mut heard) = heard {
+        if let Some(omitted) = crate::context::reserve(node, &resident, &mut heard) {
+            notes.drain(omitted);
+        }
         collected_notes.push((resident, heard));
     }
     Ok(Reply::Notices { notices, notes })
@@ -782,13 +793,11 @@ async fn taken(
         collected.retain(|(owner, notice, _)| *owner != resident || *notice != id);
         node.taking.lock().expect("never poisoned").remove(&(resident.clone(), id));
     }
-    collected_notes.retain(|(owner, heard)| {
-        if *owner != resident {
-            return true;
-        }
+    for (owner, heard) in collected_notes.iter_mut().filter(|(owner, _)| *owner == resident) {
+        crate::context::acknowledge(node, owner, heard).map_err(|error| Failure::new(error.to_string()))?;
         node.residents.acknowledge_heard(owner, heard.clone());
-        false
-    });
+    }
+    collected_notes.retain(|(owner, _)| *owner != resident);
     if let Some(completed) = completed {
         let owner = fastctx_types::Address { machine: node.machine(), resident: resident.clone() };
         crate::retention::confirmed(
@@ -860,6 +869,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 return Ok(Reply::Arrived(whereabouts));
             }
             let whereabouts = node.residents.arrive(&node.world, &node.machine(), host, hints)?;
+            if let Err(error) = crate::codex::native_context::observe(node, &whereabouts.resident).await {
+                node.log.line(format_args!("initializing {}'s context observation: {error}", whereabouts.resident));
+            }
             Ok(Reply::Arrived(whereabouts))
         }
         Call::Run { resident, request, node: target, call_id } => {

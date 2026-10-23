@@ -319,6 +319,7 @@ async fn fork(
         codex.history(&fork, &Address { machine: node.machine(), resident: id.clone() }).await.map_err(Failure::new)?;
     crate::attachments::inherit(node, parent, &id, &inherited)?;
     drop(source_guard);
+    crate::context::instructed(node, &id, &heard).map_err(|error| Failure::new(error.to_string()))?;
     node.residents.set_instructed(&id, heard);
     let event = SessionEvent {
         at,

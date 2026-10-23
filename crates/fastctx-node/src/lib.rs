@@ -33,6 +33,7 @@ mod collab;
 mod colleagues;
 mod composer;
 mod consent;
+pub mod context;
 mod control;
 mod control_queue;
 mod copy;
@@ -168,6 +169,9 @@ pub(crate) struct Node {
     disk_due: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     job_readers: std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>,
     residents: residents::Residents,
+    contexts: context::Updates,
+    context_deliveries: context::Deliveries,
+    native_context: codex::native_context::Observers,
     /// This machine's Codex app-server, holding the Codex residents the
     /// World started.
     codex: codex::hosts::CodexHosts,
@@ -554,6 +558,9 @@ pub async fn run_prepared(
         jobs: jobs::Jobs::new(),
         mcp_keeping: std::sync::Mutex::new(()),
         job_watches: Default::default(),
+        contexts: Default::default(),
+        context_deliveries: Default::default(),
+        native_context: Default::default(),
         disk: Default::default(),
         places: Default::default(),
         disk_changed: Default::default(),
@@ -659,6 +666,7 @@ pub async fn run_prepared(
     on_delivery::resume(&node);
     retention::start(&node).context("starting command artifact retention")?;
     profile::session::start(&node);
+    context::start(&node);
     updates::start(&node);
     afoot::start(&node);
     usage::watch(&node);

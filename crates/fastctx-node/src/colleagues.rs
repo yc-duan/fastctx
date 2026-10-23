@@ -253,6 +253,7 @@ pub async fn ask_here(
     node.residents
         .create(&node.world, about.clone(), town.clone(), now)
         .map_err(|error| Failure::new(format!("recording the colleague: {error}")))?;
+    crate::context::instructed(node, &id, &heard).map_err(|error| Failure::new(error.to_string()))?;
     node.residents.set_instructed(&id, heard);
     crate::codex::claim(node, &thread, &id).await;
     let directory = node.world.conversation(&id);
@@ -363,13 +364,7 @@ pub async fn thread_spec(
         codex::assisted::configure_thread(&mut config);
     }
     let (mut developer_instructions, heard) = instructions(node, id, town, origin, acting, true).await?;
-    // The machines and folders the user pointed it at, in the words its
-    // thread started with, each time it is resumed (`crate::focus`).
-    if let Some(opening) = crate::focus::opening_for(node, id, acting).await?.filter(|opening| !opening.note.is_empty())
-    {
-        developer_instructions.push_str("\n\n");
-        developer_instructions.push_str(&opening.note);
-    }
+
     if let Some(started) = started.filter(|started| !started.rules.is_empty()) {
         developer_instructions.push_str("\n\n");
         developer_instructions.push_str(&started.rules);
@@ -398,7 +393,7 @@ pub fn heard_now(node: &Node, town: Option<&TownName>) -> std::io::Result<Heard>
         Some(town) => crate::ledger::seq(&node.world, town)?,
         None => 0,
     };
-    Ok(Heard { user_prompt: None, town: town.cloned(), ledger })
+    Ok(Heard { context: None, user_prompt: None, town: town.cloned(), ledger })
 }
 
 /// The town's bookkeeping directory, where a resident the World starts
@@ -431,20 +426,9 @@ pub(crate) async fn instructions(
     let mut heard =
         heard_now(node, town).map_err(|error| Failure::new(format!("reading the town's ledger: {error}")))?;
     let words = words(id, town, origin, record);
-    let prompt = crate::profile::session::prompt(node, acting);
-    heard.user_prompt = Some(crate::profile::session::hash(&prompt));
-    let words = if record && !prompt.is_empty() {
-        format!("{}\n\n{words}", crate::profile::session::text(&prompt))
-    } else {
-        words
-    };
-    let text = match town {
-        Some(town) if record => format!(
-            "{words}\n\n{}",
-            crate::town::map::brief_for(node, town, acting, matches!(origin, Origin::Colleague { .. })).await?
-        ),
-        _ => words,
-    };
+    let (context, receipt) = crate::context::prepare(node, id, town, origin, acting).await?;
+    heard.context = Some(receipt);
+    let text = if record && !context.is_empty() { format!("{words}\n\n{context}") } else { words };
     Ok((text, heard))
 }
 
