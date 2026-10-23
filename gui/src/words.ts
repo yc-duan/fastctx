@@ -10,6 +10,7 @@ import type { QueueWords } from "./conversation/queue";
 
 import type { FindWords } from "./conversation/find";
 import type { OutputWords } from "./conversation/run-output";
+import type { DeedWords } from "./conversation/deeds/types";
 import { enQuestions, zhQuestions, type QuestionWords } from "./conversation/question-card";
 
 export type Tense = "running" | "done" | "failed";
@@ -221,6 +222,8 @@ export interface Words {
    *  its machine beside it, and what is said when either is gone. */
   /** What a run did through the World, row by row (`conversation/trip.ts`). */
   trip: TripWords;
+  /** What a run did, drawn (`conversation/deeds`). */
+  deeds: DeedWords;
   output: OutputWords & {
     /** What a call was given, and what it gave back, as their boxes are named. */
     input: string;
@@ -507,6 +510,63 @@ export const zh: Words = {
     copied: (files, size) => `${files} 个文件，${size}`,
     problems: "没复制成的",
   },
+  deeds: {
+    raw: "原文",
+    tests: (passed, failed, ignored) => [`${passed} 个通过`, failed ? `${failed} 个失败` : "", ignored ? `${ignored} 个跳过` : ""].filter(Boolean).join("，"),
+    failed: (n) => `${n} 个失败`,
+    passed: (n) => `${n} 个通过`,
+    skippedTests: (n) => `${n} 个跳过`,
+    searches: (n) => `搜索 ${n} 次`,
+    pushedTo: (branch) => `推到 ${branch}`,
+    commandsRun: (n) => `${n} 条命令`,
+    world: { wait: "等待", stop: "停止", publish: "发布", enter: "进入", plan: "更新", sense: "盯着", look: "查看" },
+    thePlan: "计划",
+    goal: {
+      complete: { verb: "完成", object: "目标", said: "目标完成了" },
+      blocked: { verb: "标记", object: "目标受阻", said: "目标受阻" },
+      pause: { verb: "暂停", object: "目标", said: "目标暂停了" },
+    },
+    ago: (said) => {
+      const match = /^(\d+) (second|minute|hour|day)s? ago$/.exec(said.trim());
+      if (!match) return said;
+      return `${match[1]} ${{ second: "秒", minute: "分钟", hour: "小时", day: "天" }[match[2] as "second"]}前`;
+    },
+    ended: (how) => {
+      if (how === "exit 0") return "跑完了";
+      const exit = /^exit (\d+)$/.exec(how);
+      if (exit) return `退出 ${exit[1]}`;
+      if (how === "stopped by the user") return "被你停下";
+      if (how.startsWith("stopped") || how.startsWith("already stopped")) return "已停止";
+      if (how.startsWith("interrupted")) return "中断了";
+      if (how.startsWith("had already ended")) return "早已结束";
+      return "没有跑完";
+    },
+    version: (n) => `第 ${n} 版`,
+    page: (n) => `第 ${n} 页`,
+    copied: (files, size) => [files !== null ? `${files} 个文件` : "", size ?? ""].filter(Boolean).join(" "),
+    same: (n) => `${n} 个已经一样`,
+    notCopied: (n) => `${n} 个没复制`,
+    inBackground: "在后台继续",
+    entered: "从现在起在这个项目里工作",
+    watching: "一有动静就叫醒",
+    looked: (n) => `查看 ${n} 次`,
+    errors: (n) => `${n} 个错误`,
+    warnings: (n) => `${n} 个警告`,
+    clean: "没有错误和警告",
+    files: (n) => `${n} 个文件`,
+    noChanges: "没有改动",
+    upToDate: "已是最新",
+    rejected: "被拒绝",
+    hits: (n, files) => (files > 1 ? `${files} 个文件中 ${n} 处` : `${n} 处`),
+    more: (n) => `还有 ${n} 处`,
+    skipped: (n) => `省略 ${n} 行`,
+    lines: (first, last, of) => (of ? `第 ${first}–${last} 行，共 ${of} 行` : `第 ${first}–${last} 行`),
+    states: { modified: "已修改", added: "新文件", deleted: "已删除", renamed: "已重命名", untracked: "未跟踪", conflict: "冲突" },
+    verbs: { search: "搜索", read: "读取", test: "测试", check: "检查", build: "构建", commit: "提交", push: "推送", status: "查看", log: "查看", run: "运行" },
+    tree: "工作区",
+    history: "提交历史",
+    commits: (n) => `${n} 次提交`,
+  },
   output: {
     input: "输入",
     printed: "输出",
@@ -788,6 +848,59 @@ export const en: Words = {
     to: "To",
     copied: (files, size) => `${files} ${files === 1 ? "file" : "files"}, ${size}`,
     problems: "Not copied",
+  },
+  deeds: {
+    raw: "Raw output",
+    tests: (passed, failed, ignored) => [`${passed} passed`, failed ? `${failed} failed` : "", ignored ? `${ignored} skipped` : ""].filter(Boolean).join(", "),
+    failed: (n) => `${n} failed`,
+    passed: (n) => `${n} passed`,
+    skippedTests: (n) => `${n} skipped`,
+    searches: (n) => `${n} search${n === 1 ? "" : "es"}`,
+    pushedTo: (branch) => `pushed to ${branch}`,
+    commandsRun: (n) => `${n} command${n === 1 ? "" : "s"}`,
+    world: { wait: "Waited for", stop: "Stopped", publish: "Published", enter: "Entered", plan: "Updated", sense: "Watching", look: "Looked at" },
+    thePlan: "the plan",
+    goal: {
+      complete: { verb: "Completed", object: "the goal", said: "The goal is complete" },
+      blocked: { verb: "Marked", object: "the goal blocked", said: "The goal is blocked" },
+      pause: { verb: "Paused", object: "the goal", said: "The goal is paused" },
+    },
+    ago: (said) => said.trim(),
+    ended: (how) => {
+      if (how === "exit 0") return "finished";
+      const exit = /^exit (\d+)$/.exec(how);
+      if (exit) return `exit ${exit[1]}`;
+      if (how === "stopped by the user") return "stopped by you";
+      if (how.startsWith("stopped") || how.startsWith("already stopped")) return "stopped";
+      if (how.startsWith("interrupted")) return "interrupted";
+      if (how.startsWith("had already ended")) return "had already ended";
+      return "didn't finish";
+    },
+    version: (n) => `version ${n}`,
+    page: (n) => `page ${n}`,
+    copied: (files, size) => [files !== null ? `${files} file${files === 1 ? "" : "s"}` : "", size ?? ""].filter(Boolean).join(", "),
+    same: (n) => `${n} already the same`,
+    notCopied: (n) => `${n} not copied`,
+    inBackground: "Goes on in the background",
+    entered: "Works in this project from now on",
+    watching: "Wakes the conversation when it happens",
+    looked: (n) => `${n} look${n === 1 ? "" : "s"}`,
+    errors: (n) => `${n} error${n === 1 ? "" : "s"}`,
+    warnings: (n) => `${n} warning${n === 1 ? "" : "s"}`,
+    clean: "No errors or warnings",
+    files: (n) => `${n} file${n === 1 ? "" : "s"}`,
+    noChanges: "Nothing changed",
+    upToDate: "Up to date",
+    rejected: "Rejected",
+    hits: (n, files) => (files > 1 ? `${n} in ${files} files` : `${n} match${n === 1 ? "" : "es"}`),
+    more: (n) => `${n} more`,
+    skipped: (n) => `${n} line${n === 1 ? "" : "s"} left out`,
+    lines: (first, last, of) => (of ? `Lines ${first}–${last} of ${of}` : `Lines ${first}–${last}`),
+    states: { modified: "Modified", added: "New", deleted: "Deleted", renamed: "Renamed", untracked: "Untracked", conflict: "Conflict" },
+    verbs: { search: "Searched", read: "Read", test: "Tested", check: "Checked", build: "Built", commit: "Committed", push: "Pushed", status: "Looked at", log: "Looked at", run: "Ran" },
+    tree: "the working tree",
+    history: "the history",
+    commits: (n) => `${n} commit${n === 1 ? "" : "s"}`,
   },
   output: {
     input: "Input",

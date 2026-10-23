@@ -5,6 +5,7 @@
 // count that cannot be read from it is not guessed.
 
 import { tripItems } from "./trip";
+import { scriptSaid } from "./deeds/script";
 import type { Change, Tool } from "../world/events";
 import type { WriteFact } from "../world/run-facts";
 import type { Act, Tally, TallyPart, Tense, Words } from "../words";
@@ -47,7 +48,7 @@ function firstLine(text: string): string {
  *  `fastctx view` of named files: the World's own way to read, so it reads
  *  as reading. Anything more (a pipe, a substitution, a second command, a
  *  range, a pattern) is a command and shown as one. */
-function viewing(command: string): string[] | null {
+export function viewing(command: string): string[] | null {
   const words = simpleWords(command.trim());
   if (!words || words[0] !== "fastctx" || words[1] !== "view") return null;
   const rest = words.slice(2);
@@ -111,7 +112,9 @@ export function headline(tool: Tool, ended: { use: Use } | null, words: Words, n
       return {
         glyph: "command",
         action: say("command"),
-        object: input(tool, "description") ?? firstLine(tool.does.command),
+        // A script is named by its first command that does work, what an
+        // `on` to its own machine wraps read as its own.
+        object: input(tool, "description") ?? scriptSaid(tool.does.command, tool.machine ?? null) ?? firstLine(tool.does.command),
         added: null,
         removed: null,
       };

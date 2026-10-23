@@ -1481,7 +1481,7 @@ function specimenTalk(address: Address): KeepablePage {
   const name = address.resident;
   const sample: Specimen & { later?: SessionEvent[]; rate?: number; timed?: boolean } = name.startsWith("stream")
     ? streamSpecimen(params)
-    : (specimens[name === "codex-a51c" ? "asking" : name === "claude-5teps" ? "steps" : name === "trips-1" ? "trips" : name === "claude-t0ur" ? "tour" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
+    : (specimens[name === "codex-a51c" ? "asking" : name === "claude-5teps" ? "steps" : name === "trips-1" ? "trips" : name === "deeds-1" ? "deeds" : name === "claude-t0ur" ? "tour" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
   const conversation = new Conversation();
   conversation.thoughtWords = sample.agent !== "codex";
   // A specimen keeps its whole history as a shell would, and its page holds
@@ -2862,6 +2862,8 @@ function specimenPlace(): Place | null {
       return { kind: "talk", address: { resident: "claude-5teps", machine: "laptop" } };
     case "trips":
       return { kind: "talk", address: { resident: "trips-1", machine: "desktop" } };
+    case "deeds":
+      return { kind: "talk", address: { resident: "deeds-1", machine: "laptop" } };
     case "tour":
       return { kind: "talk", address: { resident: "claude-t0ur", machine: "laptop" } };
     case "decision":

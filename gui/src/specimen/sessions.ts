@@ -6,6 +6,7 @@ import { requestEvents } from "./requests";
 import { run, Script, sent, text } from "./script";
 import { steps } from "./steps";
 import { trips } from "./trips";
+import { deeds } from "./deeds";
 import type { SessionEvent, Speaker } from "../world/events";
 import { cut, hunk, leftOut, noted, printed, put, ran, same, wrote } from "./run-facts";
 import { tour } from "./tour";
@@ -924,4 +925,4 @@ function asking(): Specimen {
   };
 }
 
-export const specimens: Record<string, () => Specimen> = { claude, codex, asking, steps, trips, tour };
+export const specimens: Record<string, () => Specimen> = { claude, codex, asking, steps, trips, tour, deeds };
