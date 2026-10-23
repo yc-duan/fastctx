@@ -12,6 +12,7 @@
 //! that runs no node, keeping its identity and network connection in the
 //! application's own directory.
 
+pub mod account_records;
 mod address;
 pub mod again;
 mod artifact_sink;
@@ -114,6 +115,7 @@ pub struct Client {
     /// The node binary's version.
     pub node_version: String,
     pub profiles: bool,
+    pub account_records: bool,
     /// The connected node's facts, including when another starter won.
     pub node_lifetime: Option<Box<fastctx_types::node_lifetime::NodeLifetime>>,
 }
@@ -148,9 +150,15 @@ impl Client {
             .map_err(io_error)?
             .ok_or_else(|| io_error(std::io::ErrorKind::UnexpectedEof.into()))?;
         match serde_json::from_slice::<Welcome>(&welcome).map_err(|error| io_error(std::io::Error::other(error)))? {
-            Welcome::Accepted { machine, version, node_lifetime, profiles } => {
-                Ok(Self { connection, next: 0, machine, node_version: version, node_lifetime, profiles })
-            }
+            Welcome::Accepted { machine, version, node_lifetime, profiles, account_records } => Ok(Self {
+                connection,
+                next: 0,
+                machine,
+                node_version: version,
+                node_lifetime,
+                profiles,
+                account_records,
+            }),
             Welcome::Refused { reason, mismatch } => {
                 let mismatch = mismatch.or_else(|| renewal::legacy_mismatch(&reason));
                 Err(ConnectError::Refused { reason, mismatch })
@@ -260,6 +268,9 @@ impl Client {
 
     /// Sends `call` and waits for its answer.
     pub async fn call(&mut self, call: Call) -> Result<Reply, CallError> {
+        if !self.account_records && matches!(call, Call::AccountRecords { .. } | Call::WatchAccountRecords { .. }) {
+            return Err(CallError::Failed(Failure::not_run(fastctx_types::account_records::words::NODE_OLD)));
+        }
         if !self.profiles
             && matches!(
                 call,
@@ -288,7 +299,8 @@ impl Client {
             NodeFrame::Reply { id: answered, .. } => {
                 Err(broken(format!("the node answered call {answered}, not {id}")))
             }
-            NodeFrame::McpOpened { .. }
+            NodeFrame::AccountRecords { .. }
+            | NodeFrame::McpOpened { .. }
             | NodeFrame::McpLine { .. }
             | NodeFrame::Watched { .. }
             | NodeFrame::On { .. }

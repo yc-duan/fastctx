@@ -53,6 +53,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
     }
     let welcome = Welcome::Accepted {
         profiles: true,
+        account_records: true,
         machine: node.machine(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         node_lifetime: Some(Box::new(node.lifetime.clone())),
@@ -149,6 +150,9 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                     _ = reader.recv() => return Ok(()),
                 }
             }
+        }
+        if let Call::WatchAccountRecords { hub, account, kind } = call {
+            return crate::account_records::watch(node, &hello.peer, hub, account, kind, id, reader, writer).await;
         }
         if let Call::WatchFeatures = call {
             // An interface follows the switches for as long as it is open:
@@ -1299,6 +1303,15 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|configuration| Reply::ClaudeSubagents { configuration })
         }
+        Call::AccountRecords { hub, account, request } => {
+            let (link, account) =
+                crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
+            link.account_records(&account, request)
+                .await
+                .map(|response| Reply::AccountRecords { response })
+                .map_err(Failure::new)
+        }
+        Call::WatchAccountRecords { .. } => Err(Failure::new(fastctx_types::account_records::words::WATCH_CONNECTION)),
         Call::ProfileRead { hub, account } => {
             let (link, account) =
                 crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;

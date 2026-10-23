@@ -251,6 +251,15 @@ impl Call {
     /// (`Leaving`).
     pub fn on_leaving(&self) -> Leaving {
         match self {
+            Self::AccountRecords {
+                request: crate::account_records::Request::Read { .. } | crate::account_records::Request::List { .. },
+                ..
+            }
+            | Self::WatchAccountRecords { .. } => Leaving::Stop,
+            Self::AccountRecords {
+                request: crate::account_records::Request::Write { .. } | crate::account_records::Request::Delete { .. },
+                ..
+            } => Leaving::Finish,
             Self::AttachmentPlaces { .. }
             | Self::McpRelay { .. }
             | Self::MachineLog { .. }

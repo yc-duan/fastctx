@@ -198,6 +198,9 @@ pub enum Intent {
         /// page with one.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         profiles: bool,
+        /// Reads account record invalidations independently of the directory.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        account_records: bool,
         /// A machine taken off the hub that was to uninstall Fastctx then,
         /// and could not do all of it: what was left, and why. The hub
         /// keeps it for its machine log, and refuses the session as before.
@@ -393,6 +396,7 @@ pub enum Down {
     Ready,
     /// A project this member may use has new entries in its ledger.
     LedgerChanged { town: TownId },
+    AccountRecordChanged { changed: fastctx_types::account_records::Changed },
     /// How what is afoot on `machine` changed as this member may see it,
     /// since this session was last told of it; and, to the machine's owner
     /// alone, how many agents are at work or waiting there now.
@@ -537,6 +541,10 @@ pub enum CallStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Question {
+    AccountRecords {
+        account: AccountName,
+        request: fastctx_types::account_records::Request,
+    },
     NetworkUpdates {
         account: AccountName,
         request: fastctx_types::update::ViewCall,
@@ -899,6 +907,9 @@ pub enum Change {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Told {
+    AccountRecords {
+        response: fastctx_types::account_records::Response,
+    },
     NetworkUpdates {
         reply: fastctx_types::update::ViewReply,
     },

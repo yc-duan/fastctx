@@ -142,6 +142,7 @@ fn now(hub: &Hub) -> serde_json::Value {
         },
         "keeping_a_letter_ms": percentiles(kept),
         "packages": crate::updates::health(hub),
+        "account_records": hub.account_records.health(),
     })
 }
 

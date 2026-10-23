@@ -57,6 +57,7 @@ pub(crate) fn view_for(
     // administrator's own included.
     for account in &mut directory.accounts {
         if !mine.contains(&account.name) {
+            account.collab = None;
             account.profile = account.profile.as_ref().map(|profile| profile.located(|machine| all.same(machine, me)));
         }
     }
@@ -154,6 +155,7 @@ pub(crate) fn view_for(
         lan_relays: true,
         paced_intake: true,
         profiles: true,
+        account_records: true,
         subagents: true,
         versions: true,
         package_progress: true,

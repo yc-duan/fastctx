@@ -8,6 +8,7 @@
 //! is written to disk and what travels on the wire is their serde form.
 
 pub mod access;
+pub mod account_records;
 pub mod accounts;
 pub mod agents;
 pub mod attachments;

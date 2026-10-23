@@ -112,6 +112,12 @@ impl Device {
                 let view = session.link.profile_subagents(&account, operation).await.map_err(failed)?;
                 return Ok((Reply::ProfileSubagents(Box::new(view)), here()));
             }
+            Call::AccountRecords { hub, account, request } => {
+                let session = self.on_hub(hub.as_ref())?;
+                let account = profile_account(&session, account)?;
+                let response = session.link.account_records(&account, request).await.map_err(failed)?;
+                return Ok((Reply::AccountRecords { response }, here()));
+            }
             Call::ProfileRead { hub, account } => {
                 let session = self.on_hub(hub.as_ref())?;
                 let account = profile_account(&session, account)?;
@@ -611,7 +617,7 @@ fn actors(session: &Session) -> Vec<(MachineName, fastctx_types::AccountName)> {
         .collect()
 }
 
-fn profile_account(
+pub(super) fn profile_account(
     session: &Session,
     account: Option<fastctx_types::AccountName>,
 ) -> Result<fastctx_types::AccountName, Error> {
