@@ -273,12 +273,7 @@ async fn fork(
             .await?;
     // Until it is claimed below, reports of threads nobody claims are kept.
     let _starting = crate::codex::starting(node);
-    let destination = node.codex.conversation(
-        &id,
-        source.home.as_deref(),
-        crate::assists::host::kept(node, &id)?.unwrap_or(false),
-    )?;
-    let (fork, model) = codex.fork_into(&destination, thread, through.as_deref(), spec).await.map_err(Failure::new)?;
+    let (fork, model) = codex.fork(thread, through.as_deref(), spec).await.map_err(Failure::new)?;
     let at = Timestamp::now();
     let about = About {
         forked_from: Some(Address { machine: node.machine(), resident: parent.clone() }),
@@ -321,10 +316,8 @@ async fn fork(
     node.residents.create(&node.world, about, town, now).map_err(|error| {
         Failure::new(format!("Codex created thread {fork}, but recording its resident {id} failed: {error}"))
     })?;
-    let inherited = destination
-        .history(&fork, &Address { machine: node.machine(), resident: id.clone() })
-        .await
-        .map_err(Failure::new)?;
+    let inherited =
+        codex.history(&fork, &Address { machine: node.machine(), resident: id.clone() }).await.map_err(Failure::new)?;
     crate::attachments::inherit(node, parent, &id, &inherited)?;
     drop(source_guard);
     node.residents.set_instructed(&id, heard);

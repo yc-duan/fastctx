@@ -65,8 +65,7 @@ pub async fn ask(
     let here = node.machine();
     let (colleague, account) = match chosen.whose {
         Whose::Account { link, account } => {
-            let request =
-                Request { about: &about, turn: turn.clone(), town: town.as_ref(), label: label.clone(), prompt };
+            let request = Request { about: &about, turn: turn.clone(), town: town.as_ref(), label: label.clone(), prompt };
             let colleague = ask_for_account(node, &link, &account, chosen.started, request).await?;
             (colleague, Some(fastctx_types::access::HubAccount { hub: link.membership().id.clone(), account }))
         }
@@ -74,22 +73,12 @@ pub async fn ask(
         // here, for whoever this computer's sessions work for.
         Whose::Computer => {
             let address = Address { machine: here.clone(), resident: asker.clone() };
-            let id = ask_here(
-                node,
-                Requester { address, turn: turn.clone() },
-                Acting::Here,
-                town.clone(),
-                label.clone(),
-                prompt,
-                chosen.started,
-            )
-            .await?;
+            let id = ask_here(node, Requester { address, turn: turn.clone() }, Acting::Here, town.clone(), label.clone(), prompt, chosen.started).await?;
             (Address { machine: here, resident: id }, None)
         }
     };
     let action = Action {
-        turn,
-        at,
+        turn, at,
         machine: colleague.machine.clone(),
         hand: "ask_colleague".to_string(),
         what: label,
@@ -142,16 +131,7 @@ async fn ask_for_account(
     if link.view().is_me(&machine) {
         let acting = Acting::one(link.membership().id.clone(), account.clone());
         let address = Address { machine: here.clone(), resident: request.about.id.clone() };
-        let id = ask_here(
-            node,
-            Requester { address, turn: request.turn },
-            acting,
-            call_town,
-            request.label,
-            request.prompt,
-            started,
-        )
-        .await?;
+        let id = ask_here(node, Requester { address, turn: request.turn }, acting, call_town, request.label, request.prompt, started).await?;
         return Ok(Address { machine: here, resident: id });
     }
     let lives_on = node.written(link, &machine);
@@ -236,7 +216,7 @@ pub async fn ask_here(
     let _starting = crate::codex::starting(node);
     let (thread, model) = node
         .codex
-        .conversation(&id, home.as_deref(), crate::assists::host::kept(node, &id)?.unwrap_or(false))?
+        .session(home.as_deref(), crate::assists::host::kept(node, &id)?.unwrap_or(false))?
         .start_thread(spec)
         .await
         .map_err(|error| {
@@ -287,10 +267,7 @@ pub async fn ask_here(
     node.residents.set_instructed(&id, heard);
     crate::codex::claim(node, &thread, &id).await;
     let directory = node.world.conversation(&id);
-    let asked = MessageLine {
-        at: born_at,
-        what: MessageKind::Asked { from: asker.clone(), text: prompt.clone(), requester_turn },
-    };
+    let asked = MessageLine { at: born_at, what: MessageKind::Asked { from: asker.clone(), text: prompt.clone(), requester_turn } };
     if let Err(error) = crate::residents::append_message(&directory, &asked) {
         node.log.line(format_args!("recording what {id} was asked: {error}"));
     }
@@ -362,7 +339,7 @@ pub async fn thread_spec(
     let here = node.machine();
     crate::profile::session::ready(node, acting).await?;
     let assisting = crate::assists::host::starting(node, id, acting)?;
-    let host = node.codex.conversation(id, home, assisting)?;
+    let host = node.codex.session(home, assisting)?;
     let cwd = match host.assisted_cwd() {
         Some(cwd) => cwd.to_path_buf(),
         None => standing(node, town)?,
@@ -566,8 +543,7 @@ pub async fn message(
         Landed::Uncertain { why } => format!("acceptance unknown: {why}"),
     };
     let action = Action {
-        turn,
-        at,
+        turn, at,
         machine: to.machine.clone(),
         hand: "message_colleague".to_string(),
         what: to.resident.to_string(),

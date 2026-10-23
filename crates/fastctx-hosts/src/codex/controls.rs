@@ -115,11 +115,9 @@ impl CodexHost {
         Ok(())
     }
 
-    /// Forks stored history into the destination conversation's process,
-    /// preserving the source's choices and leaving its runtime in place.
-    pub async fn fork_into(
+    /// Forks history with a new resident's instructions and tool identity.
+    pub async fn fork(
         self: &Arc<Self>,
-        destination: &Arc<Self>,
         source: &str,
         through: Option<&str>,
         spec: ThreadSpec,
@@ -135,12 +133,7 @@ impl CodexHost {
                 service_tier: entry.selection.service_tier.clone().or_else(|| entry.service_tier.clone()),
             }
         };
-        destination.check_conversation(&spec)?;
-        if self.session_home() != destination.session_home() {
-            return Err("a Codex fork must remain in its source session store".into());
-        }
-        let server = destination.server().await?;
-        let effective = super::user_config::effective(&server, &spec, destination.assisted.is_some()).await?;
+        let effective = super::user_config::effective(&server, &spec, self.assisted.is_some()).await?;
         let mut config = effective.config;
         if let Some(effort) = &selection.effort {
             config["model_reasoning_effort"] = json!(effort);
@@ -163,8 +156,7 @@ impl CodexHost {
             .ok_or("thread/fork answered without a thread ID")?
             .to_string();
         let model = answer.get("model").and_then(Value::as_str).map(str::to_string);
-        server.persist_new_thread(&thread).await?;
-        let mut state = destination.lock();
+        let mut state = self.lock();
         let current = matches!(&state.server, Some((current, _)) if Arc::ptr_eq(current, &server));
         let entry = state.threads.entry(thread.clone()).or_default();
         let choices = spec.choices.clone();
@@ -235,7 +227,6 @@ impl CodexHost {
             }
             "thread/reverted" => entry.accounting.reloaded(),
             "thread/started" => {
-                entry.loaded = true;
                 entry.metadata = metadata(&params["thread"]);
                 // A thread Codex spawned for another names its model and
                 // effort only here; one started here already has them.

@@ -1,4 +1,5 @@
-//! Codex sessions held by the node, with independent processes for conversations.
+//! Codex residents: threads of the one long-lived `codex app-server` this
+//! machine's node holds (`world-colleagues.md`, 世界怎样拉起 GPT 同事).
 //!
 //! The host turns the app-server's protocol into what the World does with a
 //! session: start a thread, get it ready for words, send it words, stop its
@@ -13,7 +14,6 @@
 
 mod account;
 pub mod assisted;
-mod conversation;
 pub use account::{LimitsHow, LimitsReport, buckets, limits_of, merge};
 mod accounting;
 mod requests;
@@ -284,7 +284,6 @@ pub use fastctx_types::residents::ASYNC_REPLY_TAG;
 pub struct CodexHost {
     codex_home: PathBuf,
     assisted: Option<assisted::Assisted>,
-    conversation: Option<fastctx_types::ResidentId>,
     /// The home whose desktop app's program this host runs, when its own
     /// records none (`launch::discover_for`).
     program_home: Option<PathBuf>,
@@ -426,7 +425,6 @@ impl CodexHost {
         let host = Arc::new(Self {
             codex_home,
             assisted: None,
-            conversation: None,
             program_home,
             workdir,
             env,
@@ -481,7 +479,6 @@ impl CodexHost {
     /// any event of its first turn. Persists the empty thread before returning
     /// its ID and model, so an idle app-server replacement can resume it.
     pub async fn start_thread(self: &Arc<Self>, spec: ThreadSpec) -> Result<(String, Option<String>), String> {
-        self.check_conversation(&spec)?;
         let server = self.server().await?;
         let effective = user_config::effective(&server, &spec, self.assisted.is_some()).await?;
         let answer = server
@@ -792,16 +789,10 @@ impl CodexHost {
 
     /// Whose agent the thread is, where Codex spawned it for another thread
     /// (`multi_agent`): that thread, and the nickname and role Codex gave
-    /// it. None for a thread no other spawned. Reads only the current process;
-    /// inspecting a report never starts a new app-server.
+    /// it. None for a thread no other spawned.
     pub async fn spawned_by(self: &Arc<Self>, thread: &str) -> Result<Option<Spawned>, String> {
-        let server = {
-            let mut state = self.lock();
-            let server = state.server.as_ref().ok_or("the reporting Codex process has stopped")?.0.clone();
-            state.server_users += 1;
-            ServerUse::new(server, self.clone())
-        };
-        let answer = server.request("thread/read", json!({"threadId": thread, "includeTurns": false})).await?;
+        let answer =
+            self.server().await?.request("thread/read", json!({"threadId": thread, "includeTurns": false})).await?;
         let found = &answer["thread"];
         let text =
             |key: &str| found.get(key).and_then(Value::as_str).map(str::to_string).filter(|text| !text.is_empty());
