@@ -30,12 +30,19 @@ pub(crate) fn protected(hub: &Hub, store: &Store, machine: &MachineName) -> bool
 pub(crate) fn settle(hub: &Hub) -> Result<(), String> {
     let mut store = hub.store();
     let Some(machine) = current(hub, &store) else { return Ok(()) };
-    let shares: Vec<_> = store.book.directory.shares.iter().filter(|share| share.machine == machine).cloned().collect();
+    let shares: Vec<_> = store
+        .book
+        .directory
+        .shares
+        .iter()
+        .filter(|share| store.book.directory.same(&share.machine, &machine))
+        .cloned()
+        .collect();
     if shares.is_empty() {
         return Ok(());
     }
     let before = store.book.clone();
-    store.book.directory.shares.retain(|share| share.machine != machine);
+    store.book.directory.shares.retain(|share| !before.directory.same(&share.machine, &machine));
     store.book.directory.settle_acting();
     let actor = Actor { account: None, authenticated: true, member: None, peer: None };
     let result = (|| {
