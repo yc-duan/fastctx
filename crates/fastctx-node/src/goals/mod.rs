@@ -7,6 +7,8 @@ pub(crate) mod lifecycle;
 pub(crate) mod operations;
 pub(crate) mod records;
 mod recovery;
+mod wiring;
+pub(crate) use wiring::connected;
 mod scope;
 mod state;
 pub(crate) mod watch;

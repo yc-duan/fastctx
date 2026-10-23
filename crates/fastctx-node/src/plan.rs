@@ -270,6 +270,15 @@ pub(crate) fn records_allowed(
     request: &fastctx_types::account_records::Request,
 ) -> Result<(), Failure> {
     use fastctx_types::account_records::Request;
+    // A goal changes only through the goal command's restricted state entry; a
+    // resident or page writing the record directly would bypass that (the goal
+    // runtime's own provider reaches the record below this gate, not through it).
+    if request.kind() == crate::goals::operations::KIND
+        && matches!(request, Request::Write { .. } | Request::Delete { .. })
+        && matches!(caller, Caller::Resident(_) | Caller::Page(_))
+    {
+        return Err(Failure::refused(fastctx_types::goals::words::DIRECT_RECORD));
+    }
     if request.kind() != plan::KIND || matches!(request, Request::Read { .. } | Request::List { .. }) {
         return Ok(());
     }

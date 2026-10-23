@@ -557,7 +557,9 @@ pub async fn run_prepared(
         Arc::new(move |line| codex_log.line(line)),
     );
     let claude = claude::Claude::new(&world)?;
-    let node = Arc::new(Node {
+    // Built cyclically so the goal services can hold a weak handle back to the
+    // node they reach account records and context through.
+    let node = Arc::new_cyclic(|weak: &std::sync::Weak<Node>| Node {
         root: fastctx_root.to_path_buf(),
         world,
         fastctx,
@@ -565,7 +567,7 @@ pub async fn run_prepared(
         jobs: jobs::Jobs::new(),
         timers: Default::default(),
         turn_activity: Default::default(),
-        goals: Default::default(),
+        goals: goals::connected(weak.clone()),
         sentinel_waits: Arc::new(turn_evidence::waiting::NoSentinels),
         mcp_keeping: std::sync::Mutex::new(()),
         job_watches: Default::default(),
