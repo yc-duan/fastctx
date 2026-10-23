@@ -9,6 +9,7 @@ pub mod files;
 pub mod folders;
 pub mod image;
 pub mod lines;
+pub mod memory;
 pub mod memory_path;
 pub mod outline;
 pub mod pages;

@@ -15,6 +15,9 @@ use crate::town::caller::Caller;
 use crate::town::{map, read};
 
 pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Result<Reply, Failure> {
+    if matches!(&call, ProjectCall::New { fields, .. } | ProjectCall::Edit { fields, .. } if fields.canon.is_some()) {
+        return Err(Failure::not_run(fastctx_types::memory::LEGACY));
+    }
     if matches!(call, ProjectCall::New { .. } | ProjectCall::Edit { .. }) {
         crate::memory::identity::author(node, caller).await?;
     }
@@ -40,7 +43,8 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
         ProjectCall::Map { town } => {
             let town = caller.town_or(node, town)?;
             map::query(node, &town).await?;
-            let mut map = map::view(node, &town, &crate::around::acting_of(node, caller)).await?;
+            let read_only = crate::memory::identity::read_only(node, caller).await?;
+            let mut map = map::view_for(node, &town, &crate::around::acting_of(node, caller), read_only).await?;
             seen(node, caller, &town, &mut map.record)?;
             Ok(Reply::Map { map: Box::new(map) })
         }

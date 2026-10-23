@@ -586,6 +586,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         mcp_import: true,
         page_accounts: true,
         attachment_places: true,
+        memory_folders: true,
         shell: shell(),
         form: Some(form()),
         node_lifetime: Some(Box::new(node.lifetime.clone())),
@@ -995,12 +996,9 @@ impl fastctx_net::link::Node for Handler {
                         reply,
                     ))
                 }),
-                RemoteCall::Canon { path } => {
-                    tokio::task::spawn_blocking(move || crate::town::map::heads(std::path::Path::new(&path)))
-                        .await
-                        .map_err(|error| Failure::new(error.to_string()))?
-                        .map(|heads| RemoteReply::Canon { heads })
-                        .map_err(|error| Failure::new(format!("reading the canon on {machine}: {error}")))
+                RemoteCall::Canon { .. } => Err(Failure::not_run(fastctx_types::memory::LEGACY)),
+                RemoteCall::MemoryFolders { town } => {
+                    crate::memory::folders::here_for(&node, &asker, &town).map(RemoteReply::MemoryFolders)
                 }
                 RemoteCall::EnterProject { resident, town } => {
                     let account =

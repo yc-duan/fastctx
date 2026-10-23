@@ -2,6 +2,9 @@
 
 pub mod markdown;
 
+/// Compatibility refusal for the retired journal and external canon protocols.
+pub const LEGACY: &str = "This journal interface was retired; use project memory Markdown files.";
+
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -78,9 +81,20 @@ pub struct Catalog {
     pub specs: Vec<Revision>,
 }
 
+/// Real replica directories, returned by the computer that keeps them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Folders {
+    pub machine: crate::MachineName,
+    pub journals: String,
+    pub specs: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectIndex {
     pub seq: u64,
+    /// Existing project-page metadata, without the published HTML.
+    #[serde(default)]
+    pub pages: Vec<crate::pages::PageSummary>,
     pub record: crate::project::Record,
     pub opened: Stamp,
     pub catalog: Catalog,

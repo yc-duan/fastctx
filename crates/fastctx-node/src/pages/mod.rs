@@ -243,11 +243,7 @@ async fn validate_acts(node: &Arc<Node>, town: &TownName, acts: &[PageAct]) -> R
                 }
             }
             PageAct::Say { to } => actions::resident(node, town, to).await?,
-            PageAct::Journal { journal } => {
-                if !crate::town::read::journal_names(&node.world, town).map_err(io_failure)?.contains(journal) {
-                    return Err(Failure::new(format!("{town} has no journal {journal}")));
-                }
-            }
+            PageAct::Journal { .. } => return Err(Failure::not_run(fastctx_types::memory::LEGACY)),
         }
     }
     Ok(())

@@ -38,6 +38,7 @@ use fastctx_types::access::TownId;
 use crate::Hub;
 use crate::store::Store;
 
+mod page_index;
 mod reading;
 pub(crate) mod requests;
 pub(crate) use reading::ask;

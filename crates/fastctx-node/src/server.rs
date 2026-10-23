@@ -1197,11 +1197,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             }
             crate::town::project::call(node, &caller, call).await
         }
-        Call::Journal(call) => {
-            let caller = caller::of(node, peer)?;
-            named_town(node, &caller, call.town()).await?;
-            crate::town::journal::call(node, &caller, call).await
-        }
+        Call::Journal(_) => Err(Failure::not_run(fastctx_types::memory::LEGACY)),
         Call::Page(call) => {
             let caller = caller::of(node, peer)?;
             named_town(node, &caller, call.town()).await?;

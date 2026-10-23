@@ -46,20 +46,21 @@ pub(crate) async fn catalog(
     caller: &Caller,
     town: &TownName,
 ) -> Result<fastctx_types::memory::Catalog, Failure> {
-    crate::town::access::check(node, &crate::around::acting_of(node, caller), town)?;
+    catalog_for(node, &crate::around::acting_of(node, caller), town).await
+}
+
+pub(crate) async fn catalog_for(
+    node: &Arc<Node>,
+    acting: &Acting,
+    town: &TownName,
+) -> Result<fastctx_types::memory::Catalog, Failure> {
+    crate::town::access::check(node, acting, town)?;
     let (world, name) = (node.world.clone(), town.clone());
-    let catalog = tokio::task::spawn_blocking(move || {
-        if !world.town(&name).signed().is_dir()
-            && let Some(index) = crate::ledger::metadata::read(&world, &name)?
-        {
-            return Ok(index.catalog);
-        }
-        super::store::read(&world, &name).map(|store| store.index.catalog())
-    })
-    .await
-    .map_err(|error| Failure::new(error.to_string()))?
-    .map_err(|error: std::io::Error| Failure::new(error.to_string()))?;
-    crate::town::access::check(node, &crate::around::acting_of(node, caller), town)?;
+    let catalog = tokio::task::spawn_blocking(move || super::store::catalog(&world, &name))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error: std::io::Error| Failure::new(error.to_string()))?;
+    crate::town::access::check(node, acting, town)?;
     Ok(catalog)
 }
 

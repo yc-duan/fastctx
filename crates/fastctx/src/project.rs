@@ -14,17 +14,8 @@ use crate::ask;
 pub enum ProjectCommand {
     /// The projects this machine is part of.
     List,
-    /// A project's record: the user's instructions for it, its machines,
-    /// where things are.
+    /// A project's attributes and enabled memory index.
     Show {
-        /// The project; without it, the one you work in.
-        #[arg(value_name = "NAME")]
-        town: Option<String>,
-    },
-    /// A project's map: its record, then each journal, page and decision
-    /// document in a line.
-    #[command(hide = true)]
-    Map {
         /// The project; without it, the one you work in.
         #[arg(value_name = "NAME")]
         town: Option<String>,
@@ -81,10 +72,6 @@ pub struct Fields {
     /// absolute path. Given once or more, it replaces the whole book.
     #[arg(long, num_args = 3, value_names = ["WHAT", "MACHINE", "PATH"], action = ArgAction::Append)]
     place: Vec<String>,
-    /// Where the documents of decisions settled with the user are: the
-    /// machine and its directory.
-    #[arg(long, num_args = 2, value_names = ["MACHINE", "PATH"], hide = true)]
-    canon: Vec<String>,
 }
 
 pub fn run(command: ProjectCommand) -> anyhow::Result<()> {
@@ -96,8 +83,7 @@ pub fn run(command: ProjectCommand) -> anyhow::Result<()> {
     };
     let call = match command {
         ProjectCommand::List => ProjectCall::List,
-        ProjectCommand::Show { town: given } => ProjectCall::Show { town: town(given)? },
-        ProjectCommand::Map { town: given } => ProjectCall::Map { town: town(given)? },
+        ProjectCommand::Show { town: given } => ProjectCall::Map { town: town(given)? },
         ProjectCommand::Enter { town } => ProjectCall::Enter { town: TownName::try_from(town)? },
         ProjectCommand::New { town, fields, account, hub } => {
             ProjectCall::New { town: TownName::try_from(town)?, fields: fields.into_fields()?, account, hub }
@@ -155,11 +141,7 @@ impl Fields {
                 .collect();
             Some(places?)
         };
-        let canon = match self.canon.as_slice() {
-            [machine, path] => Some(Location { machine: MachineName::try_from(machine.as_str())?, path: path.clone() }),
-            _ => None,
-        };
-        Ok(RecordFields { name: self.name, what: self.what, machines, places, canon })
+        Ok(RecordFields { name: self.name, what: self.what, machines, places, canon: None })
     }
 }
 

@@ -207,7 +207,7 @@ async fn summaries(node: &Arc<Node>, towns: Vec<TownName>) -> Result<Vec<TownSum
             let record = read::latest(&world, &town)?
                 .ok_or_else(|| std::io::Error::other(format!("{town} has no project record in its ledger")))?;
 
-            let journals = read::journal_names(&world, &town)?.len();
+            let journals = crate::memory::store::catalog(&world, &town)?.journals.len();
             listed.push(TownSummary { town, record, journals });
         }
         std::io::Result::Ok(listed)

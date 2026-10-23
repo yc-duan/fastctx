@@ -36,8 +36,18 @@ pub(super) fn authorize(
 }
 
 enum Plan {
-    Index { seq: u64, catalog: Catalog, first: (String, PathBuf), last: (String, PathBuf) },
-    Document { path: PathBuf, versions: Vec<Revision>, evidence: Vec<Evidence> },
+    Index {
+        seq: u64,
+        catalog: Catalog,
+        first: (String, PathBuf),
+        last: (String, PathBuf),
+        pages: Vec<(String, PathBuf)>,
+    },
+    Document {
+        path: PathBuf,
+        versions: Vec<Revision>,
+        evidence: Vec<Evidence>,
+    },
 }
 
 pub(crate) fn ask(hub: &Arc<Hub>, from: &MachineName, out: &Outq, id: u64, question: Question) {
@@ -79,6 +89,12 @@ pub(crate) fn ask(hub: &Arc<Hub>, from: &MachineName, out: &Outq, id: u64, quest
                 catalog: ledger.memory.catalog(),
                 first: (first.clone(), first_path.clone()),
                 last: (last.clone(), last_path.clone()),
+                pages: ledger
+                    .sequences
+                    .iter()
+                    .filter(|(file, _)| file.starts_with("pages/") && file.ends_with("/page.json"))
+                    .map(|(file, seq)| (file.clone(), path(*seq)))
+                    .collect(),
             }
         };
         Ok::<_, String>((plan, store.hub.id.clone()))
@@ -120,7 +136,7 @@ impl Plan {
             Ok::<_, String>((signed, opened))
         };
         match self {
-            Self::Index { seq, catalog, first, last } => {
+            Self::Index { seq, catalog, first, last, pages } => {
                 let record = |(file, path): &(String, PathBuf)| {
                     let (_, entry) = entry(path)?;
                     let bytes = &entry
@@ -135,7 +151,13 @@ impl Plan {
                 let first = record(&first)?;
                 let opened = Stamp { by: first.by, on: first.on, at: first.at };
                 Ok(Told::ProjectIndex {
-                    index: Box::new(ProjectIndex { seq, record: record(&last)?, opened, catalog }),
+                    index: Box::new(ProjectIndex {
+                        seq,
+                        record: record(&last)?,
+                        opened,
+                        catalog,
+                        pages: super::page_index::read(pages, hub, town)?,
+                    }),
                 })
             }
             Self::Document { path, versions, evidence } => {

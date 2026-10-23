@@ -23,6 +23,10 @@ use crate::{AgentName, ResidentId, TownName};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum RemoteCall {
+    /// Replica paths on an account's own computer, without any document bytes.
+    MemoryFolders {
+        town: TownName,
+    },
     /// A running job returns its resident's project selection to its home.
     /// This call is relayed and authorized by a hub supporting project entry.
     EnterProject {
@@ -501,7 +505,8 @@ impl RemoteCall {
             {
                 Purpose::Hands
             }
-            RemoteCall::Mcp { .. }
+            RemoteCall::MemoryFolders { .. }
+            | RemoteCall::Mcp { .. }
             | RemoteCall::McpServe { .. }
             | RemoteCall::Run { .. }
             | RemoteCall::WordsCame { .. }
@@ -576,6 +581,7 @@ impl RemoteCall {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum RemoteReply {
+    MemoryFolders(crate::memory::Folders),
     Entered {
         town: TownName,
         map: Box<crate::project::MapView>,

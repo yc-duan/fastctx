@@ -7,7 +7,7 @@ pub mod caller;
 pub(crate) mod enter;
 pub mod guard;
 pub(crate) mod instructions;
-pub mod journal;
+
 pub(crate) mod machines;
 pub mod map;
 pub mod notes;

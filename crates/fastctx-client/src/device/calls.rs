@@ -362,8 +362,8 @@ impl Device {
             Call::Project(request) => return Ok((self.project(request).await?, here())),
             // What only the projects' ledgers hold, one machine answers from
             // its own copy, for what this device's account may use.
-            call @ (Call::Journal(_)
-            | Call::Page(
+            Call::Journal(_) => return Err(failed(fastctx_types::memory::LEGACY)),
+            call @ Call::Page(
                 PageCall::Read { .. }
                 | PageCall::List { .. }
                 | PageCall::History { .. }
@@ -371,7 +371,7 @@ impl Device {
                 | PageCall::Act { .. }
                 | PageCall::Withdraw { .. }
                 | PageCall::Restore { .. },
-            )) => return self.relay(call).await,
+            ) => return self.relay(call).await,
             _ => return Err(failed("this call belongs to a local node, not a device")),
         };
         let session = self.reaching(&machine)?;

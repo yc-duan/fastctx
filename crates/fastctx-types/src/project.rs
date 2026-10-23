@@ -188,6 +188,9 @@ pub struct CanonHead {
 /// What a town's map is made of (`world-map.md`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MapView {
+    /// Generated project-memory block. Absent when the account has disabled it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<String>,
     pub town: TownName,
     /// The town's ledger on the machine that made the map.
     pub ledger: String,

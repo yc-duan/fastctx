@@ -20,7 +20,26 @@ pub(crate) async fn scoped(
     caller: &Caller,
     acting: &fastctx_types::access::Acting,
 ) -> Result<Author, Failure> {
-    let about = match caller {
+    let about = get(node, caller, acting).await?;
+    if about.as_ref().is_some_and(|about| matches!(about.origin, Origin::Colleague { .. })) {
+        return Err(Failure::refused(
+            "colleagues read project memory; give findings to the conversation that asked you",
+        ));
+    }
+    Ok(Author {
+        stamp: Stamp { by: caller.writer(), on: node.machine(), at: jiff::Timestamp::now() },
+        host: about.as_ref().map(|about| about.host.clone()),
+        model: about.as_ref().and_then(|about| about.model.clone()),
+        session: about.and_then(|about| about.session),
+    })
+}
+
+async fn get(
+    node: &Arc<Node>,
+    caller: &Caller,
+    acting: &fastctx_types::access::Acting,
+) -> Result<Option<fastctx_types::residents::About>, Failure> {
+    Ok(match caller {
         Caller::User => None,
         Caller::Resident(address) if node.is_me(&address.machine) => Some(
             node.residents
@@ -51,16 +70,15 @@ pub(crate) async fn scoped(
             )
         }
         _ => return Err(Failure::refused("only a user or a primary conversation writes project memory")),
-    };
-    if about.as_ref().is_some_and(|about| matches!(about.origin, Origin::Colleague { .. })) {
-        return Err(Failure::refused(
-            "colleagues read project memory; give findings to the conversation that asked you",
-        ));
-    }
-    Ok(Author {
-        stamp: Stamp { by: caller.writer(), on: node.machine(), at: jiff::Timestamp::now() },
-        host: about.as_ref().map(|about| about.host.clone()),
-        model: about.as_ref().and_then(|about| about.model.clone()),
-        session: about.and_then(|about| about.session),
     })
+}
+
+pub(crate) async fn read_only(node: &Arc<Node>, caller: &Caller) -> Result<bool, Failure> {
+    match caller {
+        Caller::User => Ok(false),
+        Caller::Resident(_) => Ok(get(node, caller, &crate::around::acting_of(node, caller))
+            .await?
+            .is_some_and(|about| matches!(about.origin, Origin::Colleague { .. }))),
+        _ => Ok(true),
+    }
 }

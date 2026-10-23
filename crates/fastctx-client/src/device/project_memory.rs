@@ -64,6 +64,10 @@ impl Device {
     }
 
     pub(super) async fn project(&self, request: ProjectCall) -> Result<Reply, Error> {
+        if matches!(&request, ProjectCall::New { fields, .. } | ProjectCall::Edit { fields, .. } if fields.canon.is_some())
+        {
+            return Err(failed(fastctx_types::memory::LEGACY));
+        }
         let map = matches!(&request, ProjectCall::Map { .. });
         match request {
             ProjectCall::List => {
@@ -99,12 +103,13 @@ impl Device {
                 if map {
                     Ok(Reply::Map {
                         map: Box::new(MapView {
+                            memory: None,
                             town,
                             ledger: String::new(),
                             record,
                             opened: index.opened,
                             journals: Vec::new(),
-                            pages: Vec::new(),
+                            pages: index.pages,
                             canon: None,
                         }),
                     })

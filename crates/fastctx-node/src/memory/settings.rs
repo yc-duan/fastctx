@@ -4,6 +4,25 @@ use crate::{Node, town::caller::Caller};
 use fastctx_types::{AccountName, HubName, ipc::Failure, memory::Settings};
 use std::sync::Arc;
 
+pub(crate) fn enabled_for(
+    node: &Node,
+    acting: &fastctx_types::access::Acting,
+    town: &fastctx_types::TownName,
+) -> Result<bool, Failure> {
+    let place = crate::ledger::names::place(&node.world, town).map_err(|error| Failure::new(error.to_string()))?;
+    let Some(link) = place.and_then(|place| node.link_of(&place.hub)) else {
+        return fastctx_net::link::state::read_or::<Settings>(
+            &node.world.path().join("memory.json"),
+            Settings::default(),
+        )
+        .map(|settings| settings.enabled)
+        .map_err(|error| Failure::new(error.to_string()));
+    };
+    let account =
+        super::api::account(node, acting, town)?.ok_or_else(|| Failure::refused("the project has no account"))?;
+    link.profile_read(&account).map(|view| view.profile.memory).map_err(Failure::new)
+}
+
 pub(crate) async fn call(
     node: &Arc<Node>,
     hub: Option<HubName>,
