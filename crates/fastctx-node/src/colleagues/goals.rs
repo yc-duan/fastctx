@@ -38,41 +38,6 @@ pub(crate) trait ColleagueGoals: Send + Sync {
     ) -> BoxFuture<'a, Result<Option<fastctx_types::collab::GoalSummary>, Failure>>;
 }
 
-/// Explicitly unavailable until the embedding node supplies its goal runtime.
-pub(crate) struct Unavailable;
-impl ColleagueGoals for Unavailable {
-    fn ready(&self) -> Result<(), Failure> {
-        Err(Failure::not_run(fastctx_types::collab_prompt::GOAL_RUNTIME_REQUIRED))
-    }
-    fn open<'a>(
-        &'a self,
-        _: &'a Arc<Node>,
-        _: &'a ResidentId,
-        _: &'a Address,
-        _: &'a str,
-    ) -> BoxFuture<'a, Result<(), Failure>> {
-        Box::pin(async { self.ready() })
-    }
-    fn reopen_blocked<'a>(
-        &'a self,
-        _: &'a Arc<Node>,
-        _: &'a ResidentId,
-        _: &'a fastctx_types::NoticeId,
-    ) -> BoxFuture<'a, Result<(), Failure>> {
-        Box::pin(async { self.ready() })
-    }
-    fn state<'a>(
-        &'a self,
-        _: &'a Arc<Node>,
-        _: &'a ResidentId,
-    ) -> BoxFuture<'a, Result<Option<fastctx_types::collab::GoalSummary>, Failure>> {
-        Box::pin(async {
-            self.ready()?;
-            Ok(None)
-        })
-    }
-}
-
 pub(crate) async fn incoming(
     node: &Arc<Node>,
     id: &ResidentId,

@@ -8,7 +8,7 @@ pub(crate) mod operations;
 pub(crate) mod records;
 mod recovery;
 mod wiring;
-pub(crate) use wiring::connected;
+pub(crate) use wiring::{colleagues, connected};
 mod scope;
 mod state;
 pub(crate) mod watch;
