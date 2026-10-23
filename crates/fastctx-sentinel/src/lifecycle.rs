@@ -62,7 +62,17 @@ pub async fn list(
     scope: &HubAccount,
     owner: Option<&Address>,
 ) -> Result<Vec<Summary>, Error> {
-    tokio::time::timeout(std::time::Duration::from_secs(60), list_inner(records, homes, scope, owner))
+    list_where(records, homes, scope, &|candidate| owner.is_none_or(|owner| owner == candidate)).await
+}
+/// Applies owner identity resolution before contacting homes. The node supplies
+/// its directory's machine-alias comparison without changing account scope.
+pub async fn list_where(
+    records: &dyn Records,
+    homes: &dyn Homes,
+    scope: &HubAccount,
+    include: &(dyn Fn(&Address) -> bool + Sync),
+) -> Result<Vec<Summary>, Error> {
+    tokio::time::timeout(std::time::Duration::from_secs(60), list_inner(records, homes, scope, include))
         .await
         .map_err(|_| Error::Unavailable("listing sentinels exceeded 60 seconds".into()))?
 }
@@ -70,7 +80,7 @@ async fn list_inner(
     records: &dyn Records,
     homes: &dyn Homes,
     scope: &HubAccount,
-    owner: Option<&Address>,
+    include: &(dyn Fn(&Address) -> bool + Sync),
 ) -> Result<Vec<Summary>, Error> {
     let heads = tokio::time::timeout(std::time::Duration::from_secs(60), records.list(scope, KIND))
         .await
@@ -79,7 +89,7 @@ async fn list_inner(
     for head in heads {
         let id = head.key.parse().map_err(|e: fastctx_types::NameError| Error::Unavailable(e.to_string()))?;
         let Some((_, registration)) = get(records, scope, &id).await? else { continue };
-        if !registration.active || owner.is_some_and(|owner| *owner != registration.definition.owner) {
+        if !registration.active || !include(&registration.definition.owner) {
             continue;
         }
         let summary = match tokio::time::timeout(std::time::Duration::from_secs(15), homes.inspect(&registration)).await

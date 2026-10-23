@@ -27,6 +27,7 @@ mod profile;
 mod repair_probe;
 mod startup;
 mod sentinels;
+mod sentinel_controls;
 mod transcript;
 mod updates;
 mod world_watch;
@@ -1233,6 +1234,8 @@ pub fn run() {
             plan::plan_read,
             plan::plan_write,
             plan::plan_watch,
+            sentinel_controls::sentinel_list,
+            sentinel_controls::sentinel_stop,
             sentinels::sentinel_settings_read,
             sentinels::sentinel_settings_write,
             profile::profile_read,

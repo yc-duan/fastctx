@@ -77,11 +77,23 @@ impl Create {
 pub enum HomeRequest {
     Begin { id: SentinelId, version: u64, owner: Address },
     Inspect { id: SentinelId },
+    Judge { request: Box<GoalRequest> },
     Withdraw { id: SentinelId },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HomeReply {
+    Judged { judgment: crate::sentinel::Judgment },
     Summary { sentinel: Box<Summary> },
     Withdrawn,
+}
+
+/// A stable engine request ID is scoped by the sentinel generation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoalRequest {
+    pub id: SentinelId,
+    pub generation: u64,
+    pub owner: Address,
+    pub request_id: String,
+    pub review: crate::sentinel::GoalReview,
 }

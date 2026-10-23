@@ -89,6 +89,7 @@ pub fn worked_for(from: &fastctx_types::MachineName, call: &RemoteCall) -> Optio
         RemoteCall::Run { resident, .. } | RemoteCall::Place { resident, .. } => Some(address(resident)),
         RemoteCall::Ask { asker, .. } => Some(address(asker)),
         RemoteCall::SentinelHome {request:fastctx_types::sentinel_control::HomeRequest::Begin {owner,..}} => Some(owner.clone()),
+        RemoteCall::SentinelHome {request:fastctx_types::sentinel_control::HomeRequest::Judge {request}} => Some(request.owner.clone()),
         _ => None,
     }
 }

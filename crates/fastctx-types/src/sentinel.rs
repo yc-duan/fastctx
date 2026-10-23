@@ -84,7 +84,7 @@ pub enum Conclusion {
     Goal { judgment: Judgment },
     NotJudged { reason: String },
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Judgment {
     Sound { reason: String },
@@ -99,7 +99,7 @@ pub enum GoalTrigger {
     Blocked,
     Paused,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoalReview {
     pub trigger: GoalTrigger,
     pub suggestions_left: u8,
@@ -114,7 +114,7 @@ pub struct GoalReview {
     pub machines: Vec<MachineName>,
     pub now: i64,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionFact {
     pub at: i64,
     pub machine: MachineName,

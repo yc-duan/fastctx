@@ -25,7 +25,7 @@ pub(crate) fn scope(
     }
     Ok(choices.pop().expect("one account"))
 }
-fn scopes(
+pub(super) fn scopes(
     node: &Node,
     caller: &Caller,
     hub: Option<&HubName>,
@@ -91,9 +91,12 @@ pub(crate) async fn control(
             let Caller::Resident(owner) = caller else {
                 return Err(Failure::refused(words::NEED_CONVERSATION));
             };
-            if node.is_me(&owner.machine) && let Some((about,_))=node.residents.about(&owner.resident)
-                && about.host.agent.as_str()=="codex" && !about.world_started {
-                crate::codex::native_lifetime::processes(&node.world,&owner.resident).map_err(Failure::not_run)?;
+            if node.is_me(&owner.machine)
+                && let Some((about, _)) = node.residents.about(&owner.resident)
+                && about.host.agent.as_str() == "codex"
+                && !about.world_started
+            {
+                crate::codex::native_lifetime::processes(&node.world, &owner.resident).map_err(Failure::not_run)?;
             }
             let now = jiff::Timestamp::now().as_millisecond();
             request.validate(now).map_err(Failure::not_run)?;
@@ -146,31 +149,38 @@ pub(crate) async fn control(
                     .map_err(fail)?;
             Ok(Reply::Created { sentinel: Box::new(sentinel) })
         }
-        Request::List { owner } => Ok(Reply::Listed {
-            sentinels: fastctx_sentinel::lifecycle::list(records, &homes, &scope, owner.as_ref())
-                .await
-                .map_err(fail)?,
-            unavailable: Vec::new(),
-        }),
+        Request::List { owner } => {
+            let view = crate::authorization::current_view(link)?;
+            let include = |candidate: &fastctx_types::Address| {
+                owner.as_ref().is_none_or(|owner| {
+                    owner.resident == candidate.resident && view.same(&owner.machine, &candidate.machine)
+                })
+            };
+            Ok(Reply::Listed {
+                sentinels: fastctx_sentinel::lifecycle::list_where(records, &homes, &scope, &include)
+                    .await
+                    .map_err(fail)?,
+                unavailable: Vec::new(),
+            })
+        }
         Request::Stop { id, home } => {
-            if let Some(home) = home {
-                let Some((_, registration)) =
-                    fastctx_sentinel::lifecycle::get(records, &scope, &id).await.map_err(fail)?
-                else {
-                    return Err(Failure::not_run("sentinel not found"));
-                };
-                let view = crate::authorization::current_view(link)?;
-                if home != registration.definition.home
-                    && view
-                        .member(&home)
-                        .zip(view.member(&registration.definition.home))
-                        .is_none_or(|(a, b)| a.key != b.key)
-                {
-                    return Err(Failure::not_run("the sentinel lives on a different machine"));
-                }
+            let Some((_, registration)) = fastctx_sentinel::lifecycle::get(records, &scope, &id).await.map_err(fail)?
+            else {
+                return Err(Failure::not_run("sentinel not found"));
+            };
+            let view = crate::authorization::current_view(link)?;
+            if home.as_ref().is_some_and(|home| !view.same(home, &registration.definition.home)) {
+                return Err(Failure::not_run("the sentinel lives on a different machine"));
             }
             let owner = match caller {
-                Caller::Resident(owner) => Some(owner),
+                Caller::Resident(owner) => {
+                    if owner.resident != registration.definition.owner.resident
+                        || !view.same(&owner.machine, &registration.definition.owner.machine)
+                    {
+                        return Err(Failure::refused("this conversation does not own the sentinel"));
+                    }
+                    Some(&registration.definition.owner)
+                }
                 Caller::User => None,
                 _ => return Err(Failure::refused(words::NEED_CONVERSATION)),
             };
