@@ -69,7 +69,7 @@ import { fly, type Departure } from "./flight";
 import { estimate } from "./estimate";
 import { Heights } from "./heights";
 import { FindContent, displayedDiff, toolText } from "./find-content";
-import { clockSays, sections, stretchSays, thoughtOnly, thoughtText, thoughtTook } from "./stretch-says";
+import { clockSays, stretchSays, thoughtHeads, thoughtOnly, thoughtText, thoughtTook } from "./stretch-says";
 import { displayedText, htmlText as displayedTextHtml, type TextMatch } from "./find-text";
 import { GAP, type FindChanges, type FindMatch, type FindPart } from "./find-index";
 import { composing } from "../typing";
@@ -1806,8 +1806,8 @@ export class ConversationView {
     const { words } = this.context;
     const writing = run.some((entry) => entry.writing);
     const took = writing ? null : thoughtTook(run);
-    const titles = sections(thoughtText(run));
-    const title = writing ? titles.at(-1) : titles[0];
+    const titles = thoughtHeads(run);
+    const title = writing ? titles.at(-1) : thoughtText(run).trim() ? titles[0] : undefined;
     const tokens = writing ? null : this.conversation.thinkingTokens(run);
     return [writing ? words.thinking : took === null ? words.thought : words.thoughtFor(took), title ?? "", tokens === null ? "" : words.thinkingTokens(tokens)].filter(Boolean).join(" ");
   }
@@ -2020,7 +2020,8 @@ export class ConversationView {
   /** A run of thinking as one row: "Thinking…" while it goes, "Thought for
    *  4s" once over where the host said how long, "Thought" where not; the title of its words'
    *  section after it, the tokens it took at the end. It opens only where
-   *  the host gave words; none are made up. */
+   *  the host gave words to show; none are made up. GPT's are titles only:
+   *  the one it is in shows while it thinks, and nothing opens. */
   private thinkingRow(run: readonly ProseEntry[], enter: string): string {
     const { words } = this.context;
     const key = run[0]!.key;
@@ -2031,9 +2032,10 @@ export class ConversationView {
     const took = writing ? null : thoughtTook(run);
     const said = writing ? words.thinking : took === null ? words.thought : words.thoughtFor(took);
     // A summary comes in sections, each under a bold title of the host's:
-    // the row says the latest while it thinks, the first after.
-    const titles = sections(text);
-    const title = writing ? titles.at(-1) : titles[0];
+    // the row says the latest while it thinks, the first after where its
+    // words can be opened.
+    const titles = thoughtHeads(run);
+    const title = writing ? titles.at(-1) : has ? titles[0] : undefined;
     const tokens = writing ? null : this.conversation.thinkingTokens(run);
     const figures = tokens === null ? "" : `<span class="row-figures">${escape(words.thinkingTokens(tokens))}</span>`;
     const chevron = has ? `<span class="row-chevron">${glyph("chevron", 16)}</span>` : "";

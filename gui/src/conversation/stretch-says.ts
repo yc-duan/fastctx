@@ -67,7 +67,7 @@ export function stretchSays(
     const now = tool.run?.steps?.length && tool.does.as === "command" ? tripNow(tool.does.command, tool.run.steps, tool.run.writes, words) : null;
     title = now ? `${now.action} ${now.object}` : [line.action, object].filter(Boolean).join(" ");
   } else if (writing) {
-    const last = sections(writing.text).at(-1);
+    const last = thoughtHeads([writing]).at(-1);
     title = last ? words.thinkingAbout(last) : words.thinking;
   } else if (only) {
     const took = thoughtTook(thinking);
@@ -159,6 +159,11 @@ export function thoughtTook(run: readonly ProseEntry[]): number | null {
 
 /** The titles a summary of thinking puts its sections under, in bold on a
  *  line of their own. */
+/** The titles a run of thinking said it was in, its words shown or not. */
+export function thoughtHeads(run: readonly ProseEntry[]): string[] {
+  return sections(run.map((entry) => entry.text || entry.heads || "").join("\n"));
+}
+
 export function sections(text: string): string[] {
   return [...text.matchAll(/^\*\*(.+?)\*\*\s*$/gm)].map((match) => match[1]!);
 }

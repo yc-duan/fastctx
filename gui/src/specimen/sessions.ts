@@ -640,6 +640,16 @@ function asking(): Specimen {
         },
       });
       break;
+    case "thinking":
+      // GPT thinking at length: the row says the section it is in.
+      s.say(
+        "t2",
+        "thinking",
+        "**Reading the migration**\n\nThe batches table is in; what remains is the offline query cache.\n\n**Checking whether the batch size survives a replay after a crash**\n\nA smaller batch replays faster after a crash but commits more often.",
+        2,
+        true,
+      );
+      break;
     case "goal-question": {
       // A goal is on: Claude's question goes in without stopping its work.
       const asked = [

@@ -106,6 +106,9 @@ export type Entry = {
       began?: number;
       /** Thinking: how long it took, where the host said. */
       took?: number;
+      /** Thinking whose words are not shown (GPT's): what it said, kept only
+       *  for the title of the section it is in while it thinks. */
+      heads?: string;
       /** Thinking: the model response it was part of, whose thinking
        *  tokens `Fold.thinkingTokens` knows where they were told. */
       response?: string;
@@ -513,7 +516,12 @@ export class Fold {
         if (this.halted?.has(event.turn) && !this.replaying) return;
         const shown = this.find(event.turn, event.item);
         if (shown?.kind === "prose" && event.part === "text") {
-          if (shown.prose === "thinking" && !this.thoughtWords) return;
+          if (shown.prose === "thinking" && !this.thoughtWords) {
+            shown.heads = (shown.heads ?? "") + event.text;
+            shown.version += 1;
+            this.touch(shown);
+            return;
+          }
           shown.text += event.text;
           shown.version += 1;
           this.touch(shown);
@@ -761,6 +769,7 @@ export class Fold {
           turn,
           prose: native.kind,
           text: native.kind === "thinking" && !this.thoughtWords ? "" : native.text,
+          ...(native.kind === "thinking" && !this.thoughtWords && native.text ? { heads: native.text } : {}),
           writing: !finished,
           version: 0,
           ...(native.kind === "thinking" ? { began: startedAt, ...(native.duration_ms !== undefined ? { took: native.duration_ms } : {}) } : {}),
