@@ -47,10 +47,14 @@ pub(crate) async fn refresh(node: &Arc<Node>, link: &Arc<Link>, wanted: Option<&
             continue;
         }
         let town = super::local_name(node, link, &id)?;
+        if read(&node.world, &town).map_err(|error| error.to_string())?.as_ref() == Some(&index) {
+            continue;
+        }
         let (node, world) = (node.clone(), node.world.clone());
         tokio::task::spawn_blocking(move || {
             fastctx_net::link::state::write(&world.town(&town).path().join("index.json"), &index)?;
             crate::town::instructions::refresh(&node, &town);
+            node.memory_changed();
             io::Result::Ok(())
         })
         .await

@@ -33,6 +33,7 @@ mod lines;
 mod lines_read;
 mod management;
 pub mod mcp_relay;
+pub mod memory;
 mod originals;
 pub mod pages;
 mod profile;
@@ -356,6 +357,16 @@ impl Client {
         let id = self.next;
         self.connection
             .send(&to_json(&ClientFrame::Call { id, call: Call::WatchWorld }))
+            .await
+            .map_err(CallError::Broken)?;
+        Ok((self, id))
+    }
+
+    pub(crate) async fn watch_memory(mut self, town: fastctx_types::TownName) -> Result<(Client, u64), CallError> {
+        self.next += 1;
+        let id = self.next;
+        self.connection
+            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchMemory { town } }))
             .await
             .map_err(CallError::Broken)?;
         Ok((self, id))

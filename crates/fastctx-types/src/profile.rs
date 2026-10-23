@@ -21,6 +21,9 @@ pub use subagents::{
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
     pub version: u64,
+    /// Whether conversations receive their project's memory map.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub memory: bool,
     /// What the account writes to every agent that works for it.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub prompt: String,

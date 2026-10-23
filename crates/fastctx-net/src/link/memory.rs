@@ -10,6 +10,32 @@ use crate::wire::{Question, Told};
 use super::Link;
 
 impl Link {
+    /// Reads the account's map switch, or changes just that field with profile CAS.
+    pub async fn memory_settings(
+        &self,
+        account: &AccountName,
+        enabled: Option<bool>,
+    ) -> Result<fastctx_types::memory::Settings, String> {
+        self.memory_supported()?;
+        self.refresh().await?;
+        let mut profile = self.profile_read(account)?.profile;
+        if let Some(enabled) = enabled {
+            let answer = self
+                .inner
+                .ask(Question::Manage {
+                    account: account.clone(),
+                    change: crate::wire::Change::MemorySettings { version: profile.version, enabled },
+                })
+                .await?;
+            let Told::ProfileWritten { version } = answer else {
+                return Err("the hub did not confirm the memory setting".into());
+            };
+            profile.memory = enabled;
+            self.confirm_profile(account, profile, version).await?;
+        }
+        Ok(fastctx_types::memory::Settings { enabled: self.profile_read(account)?.profile.memory })
+    }
+
     fn memory_supported(&self) -> Result<(), String> {
         if self.view().project_memory {
             Ok(())

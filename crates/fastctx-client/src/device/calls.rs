@@ -351,10 +351,18 @@ impl Device {
                 return Ok((Reply::AgentLogins(self.agent_logins(machine).await?), here()));
             }
             Call::Nodes => return Ok((Reply::Nodes(self.nodes().await?), here())),
+            Call::Memory(request) => return Ok((Reply::Memory(self.memory(request).await?), here())),
+            Call::MemorySettings { hub, account, enabled } => {
+                let (link, account) = self.project_account(hub.as_ref(), account.as_ref())?;
+                return Ok((
+                    Reply::MemorySettings(link.memory_settings(&account, enabled).await.map_err(failed)?),
+                    here(),
+                ));
+            }
+            Call::Project(request) => return Ok((self.project(request).await?, here())),
             // What only the projects' ledgers hold, one machine answers from
             // its own copy, for what this device's account may use.
-            call @ (Call::Project(_)
-            | Call::Journal(_)
+            call @ (Call::Journal(_)
             | Call::Page(
                 PageCall::Read { .. }
                 | PageCall::List { .. }

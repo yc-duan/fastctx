@@ -36,8 +36,31 @@ pub(crate) async fn publish(
     crate::town::access::check(node, acting, town)?;
     let account = account(node, acting, town)?;
     crate::ledger::write_memory(node, town, files, account).await?;
-    node.shown_changed();
+    node.memory_changed();
     Ok(())
+}
+
+/// Reads an already synchronized catalog without creating another hub refresh.
+pub(crate) async fn catalog(
+    node: &Arc<Node>,
+    caller: &Caller,
+    town: &TownName,
+) -> Result<fastctx_types::memory::Catalog, Failure> {
+    crate::town::access::check(node, &crate::around::acting_of(node, caller), town)?;
+    let (world, name) = (node.world.clone(), town.clone());
+    let catalog = tokio::task::spawn_blocking(move || {
+        if !world.town(&name).signed().is_dir()
+            && let Some(index) = crate::ledger::metadata::read(&world, &name)?
+        {
+            return Ok(index.catalog);
+        }
+        super::store::read(&world, &name).map(|store| store.index.catalog())
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
+    .map_err(|error: std::io::Error| Failure::new(error.to_string()))?;
+    crate::town::access::check(node, &crate::around::acting_of(node, caller), town)?;
+    Ok(catalog)
 }
 
 pub(crate) async fn call(node: &Arc<Node>, caller: &Caller, request: MemoryCall) -> Result<MemoryReply, Failure> {
@@ -56,6 +79,8 @@ pub(crate) async fn call(node: &Arc<Node>, caller: &Caller, request: MemoryCall)
         .await
         .map_err(|error| Failure::new(error.to_string()))?
         .map_err(|error| Failure::new(error.to_string()))?;
+    crate::town::access::check(node, &acting, request.town())?;
+    node.authorize_here(&acting)?;
     match request {
         MemoryCall::List { .. } => Ok(MemoryReply::Catalog { catalog: store.index.catalog() }),
         MemoryCall::Read { name, version, .. } => Ok(MemoryReply::Document {

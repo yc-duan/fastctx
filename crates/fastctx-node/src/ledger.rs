@@ -140,7 +140,6 @@ async fn write_for(
     }
 }
 
-
 /// A computer on no hub: the entry is checked as the hub would check it,
 /// numbered, and taken here.
 fn write_alone(
@@ -313,6 +312,7 @@ pub(crate) async fn take(
         .await
         .map_err(|error| error.to_string())?
         .map_err(|error| error.to_string())?;
+    node.memory_changed();
     Ok(())
 }
 

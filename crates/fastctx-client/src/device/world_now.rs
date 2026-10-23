@@ -100,8 +100,8 @@ impl Device {
             towns.listing = true;
             let device = self.clone();
             tokio::spawn(async move {
-                let listed = match device.relay(Call::Project(ProjectCall::List)).await {
-                    Ok((Reply::Towns { towns }, _)) => Some(towns),
+                let listed = match device.project(ProjectCall::List).await {
+                    Ok(Reply::Towns { towns }) => Some(towns),
                     Ok(_) => None,
                     // Listed again when a hub next says they changed, or the
                     // device connects again.

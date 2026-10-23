@@ -147,6 +147,11 @@ pub fn decode(files: &[File]) -> Result<Option<Mutation>, String> {
         let evidence: Evidence = serde_json::from_slice(&metadata.bytes.0).map_err(|error| error.to_string())?;
         markdown::check_name(&evidence.journal)?;
         crate::ledger::check_path(&evidence.name)?;
+        if evidence.sha256.len() != 64
+            || !evidence.sha256.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err("evidence needs a lowercase SHA-256 digest".into());
+        }
         if metadata.path != evidence.path() {
             return Err("the evidence metadata path does not match its name".into());
         }

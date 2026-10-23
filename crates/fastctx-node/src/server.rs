@@ -150,6 +150,42 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 }
             }
         }
+        if let Call::WatchMemory { town } = &call {
+            if let Err(failure) = users_voice(node, &hello.peer) {
+                writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
+                return writer.drain().await;
+            }
+            let mut changes = node.memory_changes.subscribe();
+            let mut views = node.views.subscribe();
+            let mut told = None;
+            let ready = crate::town::access::ready(node, &fastctx_types::access::Acting::Here, town).await;
+            if let Err(failure) = ready {
+                writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
+                return writer.drain().await;
+            }
+            loop {
+                changes.borrow_and_update();
+                views.borrow_and_update();
+                match crate::memory::api::catalog(node, &Caller::User, town).await {
+                    Ok(catalog) if told.as_ref() != Some(&catalog) => {
+                        let reply =
+                            Reply::Memory(fastctx_types::memory::MemoryReply::Catalog { catalog: catalog.clone() });
+                        writer.send(&json(&NodeFrame::Reply { id, reply: Ok(reply) })).await?;
+                        told = Some(catalog);
+                    }
+                    Ok(_) => {}
+                    Err(failure) => {
+                        writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
+                        return writer.drain().await;
+                    }
+                }
+                tokio::select! {
+                    changed = changes.changed() => if changed.is_err() { return Ok(()) },
+                    changed = views.changed() => if changed.is_err() { return Ok(()) },
+                    _ = reader.recv() => return Ok(()),
+                }
+            }
+        }
         if let Call::WatchFeatures = call {
             // An interface follows the switches for as long as it is open:
             // as they are first, then after each change.
@@ -1145,6 +1181,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|(to, landed)| Reply::Spoken { to, landed, delivery: None })
         }
+        Call::MemorySettings { hub, account, enabled } => {
+            users_voice(node, peer)?;
+            crate::memory::settings::call(node, hub, account, enabled).await.map(Reply::MemorySettings)
+        }
+        Call::WatchMemory { .. } => Err(Failure::new("a memory watch is answered as it changes")),
         Call::Memory(request) => {
             let caller = caller::of(node, peer)?;
             crate::memory::api::call(node, &caller, request).await.map(Reply::Memory)

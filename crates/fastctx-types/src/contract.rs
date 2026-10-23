@@ -254,7 +254,10 @@ impl Call {
             Self::Memory(crate::memory::MemoryCall::List { .. } | crate::memory::MemoryCall::Read { .. }) => {
                 Leaving::Stop
             }
-            Self::Memory(crate::memory::MemoryCall::Save { .. }) => Leaving::Finish,
+            Self::Memory(crate::memory::MemoryCall::Save { .. }) | Self::MemorySettings { enabled: Some(_), .. } => {
+                Leaving::Finish
+            }
+            Self::WatchMemory { .. } | Self::MemorySettings { enabled: None, .. } => Leaving::Stop,
             Self::AttachmentPlaces { .. }
             | Self::McpRelay { .. }
             | Self::MachineLog { .. }

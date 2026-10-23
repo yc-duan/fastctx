@@ -21,6 +21,14 @@ use crate::{Address, AgentName, EntryId, JobId, JournalName, MachineName, Notice
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum Call {
     Memory(crate::memory::MemoryCall),
+    WatchMemory {
+        town: TownName,
+    },
+    MemorySettings {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        enabled: Option<bool>,
+    },
     /// The selected account's machine changes, before a previous page's
     /// cursor when supplied. The hub checks visibility on every read.
     MachineLog {
@@ -718,6 +726,7 @@ pub enum Call {
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum Reply {
     Memory(crate::memory::MemoryReply),
+    MemorySettings(crate::memory::Settings),
     /// The HTTP proxy chosen in Fastctx, if one is (`Call::HubProxy`).
     HubProxy {
         url: Option<String>,

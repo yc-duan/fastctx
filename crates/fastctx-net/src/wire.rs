@@ -686,6 +686,11 @@ pub enum Change {
     Collab {
         collab: fastctx_types::collab::Collab,
     },
+    /// Changes only the account's project-memory switch, preserving its other configuration.
+    MemorySettings {
+        version: u64,
+        enabled: bool,
+    },
     /// Writes the account's profile over the version it was read at; a
     /// machine that works for the account may (`world-user-config.md`).
     Profile {

@@ -196,6 +196,7 @@ pub(crate) struct Node {
     /// Moves whenever what an interface shows of the World may have changed,
     /// beyond the residents and jobs here (`shown`).
     shown: tokio::sync::watch::Sender<u64>,
+    memory_changes: tokio::sync::watch::Sender<u64>,
     /// What the other machines said of themselves (`facts`).
     facts: facts::Facts,
     /// Deletions of conversations still to be asked of hubs (`forget`).
@@ -279,6 +280,11 @@ impl Node {
     }
 
     /// What an interface shows of the World may have changed.
+    pub(crate) fn memory_changed(&self) {
+        self.memory_changes.send_modify(|value| *value = value.wrapping_add(1));
+        self.shown_changed();
+    }
+
     pub(crate) fn shown_changed(&self) {
         self.shown.send_modify(|changes| *changes = changes.wrapping_add(1));
     }
@@ -568,6 +574,7 @@ pub async fn run_prepared(
         ways: tokio::sync::watch::channel(0).0,
         views: tokio::sync::watch::channel(0).0,
         shown: tokio::sync::watch::channel(0).0,
+        memory_changes: tokio::sync::watch::channel(0).0,
         facts: facts::Facts::default(),
         forget_asks: forget::Asks::default(),
         stuck: Default::default(),
