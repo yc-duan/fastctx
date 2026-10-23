@@ -41,7 +41,7 @@ const FASTCTX = __FASTCTX_COMMAND__
 // How soon what failed is tried again, and how long an answer to whether
 // fastctx is being removed is kept.
 const LOOK_MS = __FASTCTX_LOOK_MS__
-const NATIVE_GOAL_DISABLED = 'Use the conversation goal in Fastctx.'
+
 // Claude Code limits each fs read/write to 4 MiB of UTF-8.
 const FILE_BYTES = 4 * 1024 * 1024
 // How long a session whose start failed waits before an event tries again.
@@ -73,7 +73,7 @@ async function removed($, fresh = false) {
 
 __FASTCTX_CONTROLS__
 __FASTCTX_COMMANDS__
-
+__FASTCTX_NATIVE_GOAL__
 __FASTCTX_ASSISTED__
 __FASTCTX_ACCOUNT_AGENTS__
 __FASTCTX_SELECTION__
@@ -1034,7 +1034,7 @@ export function register(on) {
     await refreshAccountAgents($, context)
     context.heardAccountAgents = context.accountAgentRevision
     await startControls($)
-
+    scheduleNativeGoalClear($, context)
     return next(e)
   }).catch(($, e, next) => continueWithoutWorld($, 'session.start', e, next))
   on('agent.offer', async ($, e, next) => {
@@ -1050,7 +1050,10 @@ export function register(on) {
   }).catch(($, e, next) => continueWithoutWorld($, 'turn.start', e, next))
   on('turn.complete', async ($, e, next) => {
     if (await removed($)) return next(e)
-    return completeTurn($, await route($, registry, 'turn.complete', e), e, next)
+    const context = await route($, registry, 'turn.complete', e)
+    const result = await completeTurn($, context, e, next)
+    await clearNativeGoal($, context)
+    return result
   }).catch(($, e, next) => continueWithoutWorld($, 'turn.complete', e, next))
   on('turn.step', async function* ($, e, next) {
     if (await removed($)) {
@@ -1174,7 +1177,7 @@ export function register(on) {
   }).catch(($, e, next) => continueWithoutWorld($, 'classic.Elicitation', e, next))
   on('command.run', async ($, e, next) => {
     if (await removed($)) return next(e)
-    if (e.command === 'goal') return { text: NATIVE_GOAL_DISABLED, exitCode: 1 }
+    if (e.command === 'goal') return internalGoalClear($, e) ? next(e) : { text: NATIVE_GOAL_DISABLED, exitCode: 1 }
     if (await assistedCommand($, e.command)) return { text: assistedCommandReason, exitCode: 1 }
     if (e.command === 'model' && await assistedSession($)) {
       const result = await controlSelection($, await controlBegin($, sessions), e.args.trim(), null)
