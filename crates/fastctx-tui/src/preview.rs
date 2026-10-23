@@ -113,7 +113,7 @@ fn state(now: Timestamp, activity: Activity, since: i64) -> Now {
 
 fn action(now: Timestamp, minutes: i64, on: &str, hand: &str, what: &str, result: &str) -> Action {
     Action {
-        at: ago(now, minutes),
+        turn: None, at: ago(now, minutes),
         machine: machine(on),
         hand: hand.to_string(),
         what: what.to_string(),
@@ -364,6 +364,7 @@ fn agents(now: Timestamp) -> fastctx_types::agents::AgentsReply {
 
 fn nodes(now: Timestamp) -> NodesReply {
     let facts = |name: &str, os: &str, home: &str| MachineFacts {
+        turn_debts: false,
         name: machine(name),
         os: os.into(),
         arch: "x86_64".into(),

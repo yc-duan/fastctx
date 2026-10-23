@@ -123,6 +123,8 @@ impl RemoteCall {
             | Self::Canon { .. }
             | Self::Find { .. }
             | Self::Look { .. }
+            | Self::ConversationDebt { .. }
+            | Self::WaitingJobs { .. }
             | Self::ItemDetail { .. }
             | Self::AgentActivity { .. }
             | Self::Stats { .. }
@@ -298,6 +300,8 @@ impl Call {
                 ..
             }
             | Self::Timer { .. }
+            | Self::TurnEvidence { .. }
+            | Self::CompactBetweenTurns { .. }
             | Self::CollabWrite { .. }
             | Self::ProfileWrite { .. }
             | Self::ProfileSubagents { .. }

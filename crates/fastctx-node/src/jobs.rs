@@ -458,7 +458,7 @@ fn refused_something(output: &OutputWindow) -> bool {
 /// The action a `run` was, as its resident's `actions` record it.
 pub fn action(reply: &RunReply, script: &str, at: jiff::Timestamp) -> Action {
     Action {
-        at,
+        turn: None, at,
         machine: reply.machine.clone(),
         hand: "run".to_string(),
         what: first_line(script),

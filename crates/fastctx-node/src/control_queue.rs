@@ -11,9 +11,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// How long a Codex compaction may take before what came of it is not known.
-const COMPACTING: Duration = Duration::from_secs(30 * 60);
+pub(crate) const COMPACTING: Duration = Duration::from_secs(30 * 60);
 /// How long the turn of a Codex compaction may take to begin.
-const COMPACTION_BEGINS: Duration = Duration::from_secs(2 * 60);
+pub(crate) const COMPACTION_BEGINS: Duration = Duration::from_secs(2 * 60);
 
 pub(crate) type Actions = crate::leases::Registry<ResidentId, Mutex<()>>;
 
@@ -163,7 +163,7 @@ pub(crate) fn between_turns(control: &Control) -> bool {
             if matches!(name.as_str(), "compact" | "review" | "code-review" | "fork"))
 }
 
-fn busy(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
+pub(crate) fn busy(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
     if node.residents.now(id).is_some_and(|now| now.turn.is_some()) {
         return Ok(true);
     }

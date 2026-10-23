@@ -88,6 +88,9 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
             _ => break,
         }
     }
+    if !matches!(event.happened, Happened::TurnStarted { .. }) {
+        crate::turn_evidence::observe(node, id, &event)?;
+    }
     crate::run_facts::attach(&directory, &mut event)?;
     if let Happened::Changed { change: SessionChange::Status { waiting_for_user: Some(waiting), .. }, .. } =
         &event.happened
@@ -199,6 +202,7 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
                         return Ok(());
                     }
                     node.residents.turn_started(&node.world, id, turn, event.at)?;
+                    crate::turn_evidence::observe(node, id, &event)?;
                     // What waited to ride with the next turn goes into this one.
                     let (node, id) = (node.clone(), id.clone());
                     tokio::spawn(async move { crate::speech::along(&node, &id).await });
@@ -303,6 +307,7 @@ async fn finish_at(
     {
         end.facts.get_or_insert_with(Default::default).limits = Some(limits);
     }
+    crate::turn_evidence::freeze(node, id, turn, &mut end);
     let mut readers = node.residents.readers(id, turn);
     readers.extend_from_slice(additional);
     let accepted: Vec<_> = crate::delivery::handovers(&directory)?
@@ -342,6 +347,7 @@ async fn finish_at(
         (how, None) => Some(Trouble { at: finished.at, text: format!("turn {how}") }),
     };
     node.residents.take_owed(&node.world, id, turn, &node.machine(), trouble)?;
+    crate::turn_evidence::ended(node, id, turn);
     for handover in &accepted {
         for input in &handover.inputs {
             crate::speech::heard(node, id, &input.delivery, turn);
@@ -755,7 +761,7 @@ async fn recover_one(node: &Arc<Node>, id: &ResidentId, turn: &str) -> std::io::
     }
     let end = TurnEnd {
         facts: None,
-        error: None,
+        error: Some(serde_json::json!({"world":"node_restarted"})),
         how: TurnHow::Interrupted,
         reason: Some(format!("the node on {} restarted while it ran", node.machine())),
         duration_ms: None,

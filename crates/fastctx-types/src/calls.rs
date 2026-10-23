@@ -21,6 +21,8 @@ use crate::{Address, AgentName, EntryId, JobId, JournalName, MachineName, Notice
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum Call {
     Timer { timer: crate::timers::TimerCall },
+    TurnEvidence { resident: ResidentId, turn: Option<String>, refresh_limits: bool },
+    CompactBetweenTurns { resident: ResidentId },
     /// The selected account's machine changes, before a previous page's
     /// cursor when supplied. The hub checks visibility on every read.
     MachineLog {
@@ -718,6 +720,8 @@ pub enum Call {
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum Reply {
     Timers { timers: Vec<crate::timers::Timer> },
+    TurnEvidence { evidence: Box<crate::turn_evidence::TurnEvidence>, text: String },
+    Compacted { result: crate::turn_evidence::Compacted },
     /// The HTTP proxy chosen in Fastctx, if one is (`Call::HubProxy`).
     HubProxy {
         url: Option<String>,

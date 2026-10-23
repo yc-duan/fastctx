@@ -570,6 +570,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         path.map(|path| native(&path)).unwrap_or_else(|error| format!("(not known: {error})"))
     };
     MachineFacts {
+        turn_debts: true,
         name: node.machine(),
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
@@ -840,11 +841,11 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(|record| RemoteReply::JobStopped { record: record.map(Box::new) })
                 }
-                RemoteCall::Ask { asker: resident, town, label, prompt, started } => {
+                RemoteCall::Ask { asker: resident, requester_turn, town, label, prompt, started } => {
                     let acting = Acting::one(hub.clone(), caller.account.clone());
                     let asker = Address { machine: from, resident };
                     let colleague =
-                        crate::colleagues::ask_here(&node, asker, acting, town, label, prompt, started).await?;
+                        crate::colleagues::ask_here(&node, crate::colleagues::Requester { address: asker, turn: requester_turn }, acting, town, label, prompt, started).await?;
                     Ok(RemoteReply::Asked { colleague })
                 }
                 RemoteCall::Talk { to, text, attachments, files_on, id } => {
@@ -968,6 +969,16 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::Offers { resident } => crate::control::offers_here(&node, &resident)
                     .await
                     .map(|offers| RemoteReply::Offers(Box::new(crate::admission::seen::offers(&asker, offers)))),
+                RemoteCall::WaitingJobs { owner } => {
+                    crate::turn_evidence::waiting::jobs_here(&node, &owner, Some(&asker))
+                        .map(|jobs| RemoteReply::WaitingJobs { jobs })
+                        .map_err(|error| Failure::new(error.to_string()))
+                }
+                RemoteCall::ConversationDebt { resident, requester } => {
+                    crate::turn_evidence::debts::here(&node, &resident, &requester)
+                        .map(|debt| RemoteReply::ConversationDebt { debt })
+                        .map_err(|error| Failure::new(error.to_string()))
+                }
                 RemoteCall::Look { id } => {
                     let (looked, mut jobs) = crate::look::look_here(&node, &id).await?;
                     jobs.retain(|job| crate::admission::seen::job(&node, &asker, job));

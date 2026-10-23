@@ -24,6 +24,9 @@ impl crate::tolerant::Tolerant for Form {
 /// it (`world-run.md`, 路径与各个系统的不同).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MachineFacts {
+    /// Reports a requester's pending inputs, running turns and undelivered answers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub turn_debts: bool,
     pub name: MachineName,
     /// `windows`, `linux` or `macos`.
     pub os: String,

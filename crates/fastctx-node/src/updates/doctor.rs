@@ -190,7 +190,7 @@ async fn help(node: &Arc<Node>, stuck: &Stuck) {
     };
     let resident = ResidentId::try_from(HELPER).expect("a resident id");
     let request = RunRequest {
-        call_id: None,
+        turn: None, call_id: None,
         script: SCRIPT.replace("@VERSION@", version).replace("@TARGET@", &target),
         cwd: None,
         writes_off: false,

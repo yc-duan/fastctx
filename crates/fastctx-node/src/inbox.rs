@@ -135,6 +135,26 @@ pub fn target(directory: &ConversationDir, id: &NoticeId, session: &str) -> io::
 /// Everything on its way into the resident's session, oldest first.
 pub fn pending(directory: &ConversationDir) -> io::Result<Vec<Pending>> {
     let _transaction = crate::resident_storage::lock();
+    pending_here(directory)
+}
+
+/// Reads both input states atomically: reconciliation can move uncertain words back to pending.
+pub(crate) fn input_states(directory: &ConversationDir) -> io::Result<(Vec<Pending>, Vec<Pending>)> {
+    let _transaction = crate::resident_storage::lock();
+    let pending = pending_here(directory)?;
+    let mut uncertain = Vec::new();
+    for path in entries(&directory.uncertain())? {
+        if path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
+            || path.extension().is_none_or(|extension| extension != "json")
+        {
+            continue;
+        }
+        uncertain.push(serde_json::from_slice(&std::fs::read(path)?)?);
+    }
+    Ok((pending, uncertain))
+}
+
+fn pending_here(directory: &ConversationDir) -> io::Result<Vec<Pending>> {
     let mut all = Vec::new();
     for path in entries(&directory.inbox())? {
         // A file being written sits under a hidden temporary name until it

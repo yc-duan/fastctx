@@ -295,6 +295,7 @@ async fn fork(
         activity: Activity::Idle,
         since: at,
         turn: None,
+        last_turn: None,
         owed: Default::default(),
         answering: Vec::new(),
         trouble: None,

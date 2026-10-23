@@ -879,6 +879,7 @@ pub async fn open_here(
         activity: Activity::Idle,
         since: born_at,
         turn: None,
+        last_turn: None,
         owed: Default::default(),
         answering: Vec::new(),
         trouble: None,
@@ -936,7 +937,16 @@ pub async fn stop(
 /// whose plugin is paired with the World, through its mod. A Codex session
 /// of the user's own belongs to the program it is open in.
 pub async fn stop_here(node: &Arc<Node>, resident: &ResidentId) -> Result<bool, Failure> {
+    stop_here_as(node, resident, fastctx_types::turn_evidence::StopSource::User).await
+}
+
+pub(crate) async fn stop_here_as(node: &Arc<Node>, resident: &ResidentId, source: fastctx_types::turn_evidence::StopSource) -> Result<bool, Failure> {
     node.residents.stoppable(resident)?;
+    let targeted = node.residents.now(resident).and_then(|now| now.turn);
+    if let Some(turn) = &targeted {
+        crate::turn_evidence::remember(node, resident, turn, source)
+            .map_err(|error| Failure::new(format!("recording why the turn is stopped: {error}")))?;
+    }
     let (about, _) = node
         .residents
         .about(resident)
@@ -957,12 +967,25 @@ pub async fn stop_here(node: &Arc<Node>, resident: &ResidentId) -> Result<bool, 
         .filter(|pending| pending.delivery.notice.along().is_none())
         .map(|pending| pending.delivery.id)
         .collect();
-    if node.stops.coming(node, resident, coming) {
+    if targeted.is_none() && node.stops.coming(node, resident, coming, source) {
         return Ok(true);
     }
+    let current = node.residents.now(resident).and_then(|now| now.turn);
+    if targeted.is_some() && targeted != current { return Ok(false); }
+    let targeted = targeted.or(current);
+    if let Some(turn) = &targeted {
+        crate::turn_evidence::remember(node, resident, turn, source)
+            .map_err(|error| Failure::new(format!("recording why the turn is stopped: {error}")))?;
+    }
     match (about.host.agent.as_str(), about.world_started, &about.session) {
-        ("codex", true, Some(thread)) => node.codex.of(node, &about)?.interrupt(thread).await.map_err(Failure::new),
-        ("claude", _, _) => crate::claude::stop(node, resident),
+        ("codex", true, Some(thread)) => match targeted {
+            Some(turn) => node.codex.of(node, &about)?.interrupt_turn(thread, &turn).await.map_err(Failure::new),
+            None => node.codex.of(node, &about)?.interrupt(thread).await.map_err(Failure::new),
+        },
+        ("claude", _, _) => match targeted {
+            Some(turn) => crate::claude::stop(node, resident, &turn),
+            None => Ok(false),
+        },
         _ => Err(Failure::new(format!("{resident} is a session the World does not hold; stop it where it is open"))),
     }
 }
@@ -975,7 +998,7 @@ pub async fn stop_and_wait(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fail
     if !running(node) {
         return Ok(());
     }
-    stop_here(node, id).await?;
+    stop_here_as(node, id, fastctx_types::turn_evidence::StopSource::Lifecycle).await?;
     while running(node) {
         changes.changed().await.map_err(|_| Failure::new("the node is stopping"))?;
     }

@@ -74,8 +74,18 @@ impl Store {
         if id.is_empty() {
             return Err(io::Error::other("a timer needs an id"));
         }
-        let timer =
-            Timer { id, owner, due, action, delivery, attempts: 0, next_attempt: due, fired_at: None, error: None };
+        let timer = Timer {
+            id,
+            created_at: Some(Timestamp::now()),
+            owner,
+            due,
+            action,
+            delivery,
+            attempts: 0,
+            next_attempt: due,
+            fired_at: None,
+            error: None,
+        };
         let mut index = self.index.lock();
         self.save(&timer)?;
         if let Some(old) = index.rows.insert(timer.id.clone(), timer.clone()) {

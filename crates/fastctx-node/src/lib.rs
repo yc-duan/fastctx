@@ -11,6 +11,7 @@
 
 pub mod activity;
 pub mod timers;
+mod turn_evidence;
 mod admission;
 mod admitted;
 mod afoot;
@@ -158,6 +159,8 @@ pub(crate) struct Node {
     machine: RwLock<machine::MachineFile>,
     jobs: jobs::Jobs,
     timers: std::sync::OnceLock<Arc<timers::store::Store>>,
+    turn_activity: turn_evidence::Activities,
+    sentinel_waits: Arc<dyn turn_evidence::waiting::SentinelWaits>,
     mcp_keeping: std::sync::Mutex<()>,
     job_watches: job_watch::Watches,
     disk: ranked::Disk,
@@ -546,6 +549,8 @@ pub async fn run_prepared(
         machine: RwLock::new(machine),
         jobs: jobs::Jobs::new(),
         timers: Default::default(),
+        turn_activity: Default::default(),
+        sentinel_waits: Arc::new(turn_evidence::waiting::NoSentinels),
         mcp_keeping: std::sync::Mutex::new(()),
         job_watches: Default::default(),
         disk: Default::default(),

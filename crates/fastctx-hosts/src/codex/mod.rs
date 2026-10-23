@@ -721,6 +721,13 @@ impl CodexHost {
         Ok(true)
     }
 
+    /// Interrupts only the observed turn; a later turn must never inherit this request.
+    pub async fn interrupt_turn(self: &Arc<Self>, thread: &str, turn: &str) -> Result<bool, String> {
+        if self.running_turn(thread).as_deref() != Some(turn) { return Ok(false); }
+        self.server().await?.request("turn/interrupt", json!({"threadId":thread,"turnId":turn})).await?;
+        Ok(true)
+    }
+
     /// The thread's history so far, as session events, its user pictures
     /// addressed as `owner`'s. A turn still running is not ended in it,
     /// whatever the record says. The thread need not be one this host
@@ -1059,18 +1066,6 @@ impl CodexHost {
     }
 
     /// Records that a turn ended and reports it with its last message.
-    fn end(
-        &self,
-        thread: &str,
-        turn: &str,
-        how: TurnHow,
-        reason: Option<String>,
-        duration_ms: Option<u64>,
-        at: Timestamp,
-    ) {
-        self.end_with(thread, turn, how, reason, duration_ms, at, None, None);
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn end_with(
         &self,
@@ -1520,17 +1515,17 @@ impl CodexHost {
                 if entry.submitted {
                     entry.observed_submission = Some(turn.clone());
                     drop(state);
-                    self.end(thread, &turn, TurnHow::Failed, Some(message), None, at);
+                    self.end_with(thread, &turn, TurnHow::Failed, Some(message), None, at, None, params.get("error").cloned());
                 } else {
                     drop(state);
-                    self.end(thread, &turn, TurnHow::Failed, Some(message), None, at);
+                    self.end_with(thread, &turn, TurnHow::Failed, Some(message), None, at, None, params.get("error").cloned());
                 }
                 return;
             }
             (awaited, started)
         };
         match (awaited, started) {
-            (true, false) => self.end(thread, &turn, TurnHow::Failed, Some(message), None, at),
+            (true, false) => self.end_with(thread, &turn, TurnHow::Failed, Some(message), None, at, None, params.get("error").cloned()),
             (true, true) => {}
             (false, _) => {}
         }

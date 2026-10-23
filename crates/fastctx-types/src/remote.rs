@@ -23,6 +23,8 @@ use crate::{AgentName, ResidentId, TownName};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum RemoteCall {
+    ConversationDebt { resident: ResidentId, requester: crate::Address },
+    WaitingJobs { owner: crate::Address },
     /// A running job returns its resident's project selection to its home.
     /// This call is relayed and authorized by a hub supporting project entry.
     EnterProject {
@@ -286,6 +288,8 @@ pub enum RemoteCall {
     /// working for the one account named by the call's envelope.
     Ask {
         asker: ResidentId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requester_turn: Option<String>,
         town: Option<TownName>,
         label: String,
         prompt: String,
@@ -561,6 +565,8 @@ impl RemoteCall {
             | RemoteCall::ReadAgentLimits { .. }
             | RemoteCall::AgentUsage { .. }
             | RemoteCall::AgentCalls { .. }
+            | RemoteCall::ConversationDebt { .. }
+            | RemoteCall::WaitingJobs { .. }
             | RemoteCall::Look { .. }
             | RemoteCall::Find { .. }
             | RemoteCall::Who { .. }
@@ -576,6 +582,8 @@ impl RemoteCall {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum RemoteReply {
+    ConversationDebt { debt: crate::turn_evidence::ConversationDebt },
+    WaitingJobs { jobs: Vec<crate::turn_evidence::WaitHandle> },
     Entered {
         town: TownName,
         map: Box<crate::project::MapView>,

@@ -42,6 +42,7 @@ mod service_local_network;
 mod stop;
 mod talk;
 mod timer;
+mod turn_facts;
 mod uninstall;
 mod update;
 mod view;
@@ -87,6 +88,8 @@ enum Command {
     Ui,
     #[command(hide = true)]
     Timer(timer::TimerArgs),
+    #[command(hide = true)]
+    TurnFacts(turn_facts::TurnFactsArgs),
     #[command(hide = true)]
     HostChange(host_change::HostChangeArgs),
     /// Identifies the process invoking the World mod helper.
@@ -445,6 +448,7 @@ fn main() -> ExitCode {
     let result = match command {
         Command::Ui => ui(),
         Command::Timer(args) => timer::run(args),
+        Command::TurnFacts(args) => turn_facts::run(args),
         Command::HostChange(args) => host_change::run(args),
         Command::ParentProcess => parent_process(),
         Command::ClaudeSubagents { world, session } => claude_subagents::run(&world, session),

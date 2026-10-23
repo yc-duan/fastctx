@@ -141,7 +141,7 @@ fn exercise() -> anyhow::Result<()> {
             names: &Names { me: machine.clone(), was: Vec::new(), renamed: Vec::new() },
             owner: &owner.clone().into(),
             town: None,
-            request: &RunRequest { call_id: None, script, cwd: Some(display(&root)), writes_off: false, wait: None },
+            request: &RunRequest { turn: None, call_id: None, script, cwd: Some(display(&root)), writes_off: false, wait: None },
             home: &root,
             executable: &old_program,
             environment: &environment,

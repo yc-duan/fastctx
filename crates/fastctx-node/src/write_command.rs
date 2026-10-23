@@ -28,10 +28,13 @@ pub(crate) async fn write(
     };
     let world = node.world.clone();
     let record_path = job.as_ref().map(|job| node.world.job_record(&here, town.as_ref(), &owner.clone().into(), job));
+    let action_record = record_path.clone();
     let result = tokio::task::spawn_blocking(move || {
         let at = jiff::Timestamp::now();
+        let turn = action_record.as_deref().map(fastctx_hands::run::record::read).transpose()?.and_then(|record| record.turn);
         let outcome = crate::write::write_job(&world, &here, &owner, town.as_ref(), op.clone(), job.as_ref())?;
-        let action = crate::write::action(&op, &outcome, &here.me, at);
+        let mut action = crate::write::action(&op, &outcome, &here.me, at);
+        action.turn = turn;
         let recorded = crate::residents::record_owned_action(&world, &here, &owner, &action);
         std::io::Result::Ok((outcome, recorded))
     })

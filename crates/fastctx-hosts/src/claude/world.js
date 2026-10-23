@@ -79,6 +79,7 @@ __FASTCTX_REWIND__
 __FASTCTX_OBSERVATIONS__
 __FASTCTX_USAGE__
 __FASTCTX_FAILURES__
+__FASTCTX_TURN_FAILURES__
 
 // /clear may replace even the same session ID. Keep the old object alive for
 // its timers, queued writes and late turn/tool results; never reset it in place.
@@ -788,6 +789,7 @@ async function startTurn($, context, e, next) {
   await startControlTurn($, e)
   context.busy = true
   context.turn = e.turnId
+  noteTurnPrompt(context, e)
   // The session's cost total as the turn begins: what it has risen by at
   // the turn's end is what the turn cost (`completeTurn`).
   const usage = await sessionUsage($)
@@ -841,6 +843,7 @@ async function completeTurn($, context, e, next) {
     aborted: e.isAborted,
     reason: e.reason,
     refusal: e.reason === 'refusal' ? e.refusal : null,
+    error: completedFailure(context, e),
     ms: e.durationMs,
     answer: e.answer ?? null,
     streamed: true,
@@ -1230,9 +1233,19 @@ export function register(on) {
   }).catch(($, e, next) => continueWithoutWorld($, 'classic.SubagentStop', e, next))
   on('classic.UserPromptSubmit', async ($, e, next) => {
     if (await removed($)) return next(e)
-    await observeTitle($, await session($, registry, await $.session.id()), e)
+    const context = await session($, registry, await $.session.id())
+    notePrompt(context, e)
+    await observeTitle($, context, e)
     return next(e)
   }).catch(($, e, next) => continueWithoutWorld($, 'classic.UserPromptSubmit', e, next))
+  on('classic.StopFailure', async ($, e, next) => {
+    // Capture identity before the first await; a new turn may start while the report is written.
+    const failure = captureStopFailure(registry.sessions.get(e.session_id), e)
+    if (await removed($)) return next(e)
+    const context = await session($, registry, e.session_id)
+    await reportTurnFailure($, context, failure)
+    return next(e)
+  }).catch(($, e, next) => continueWithoutWorld($, 'classic.StopFailure', e, next))
   on('session.measure', async ($, e, next) => {
     if (await removed($)) return next(e)
     const context = await route($, registry, 'session.measure', e)

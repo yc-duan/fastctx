@@ -41,7 +41,8 @@ pub struct Asker {
 /// The resident of this machine `call` is about, if it is about one.
 fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
     match call {
-        RemoteCall::EnterProject { resident: who, .. }
+        RemoteCall::ConversationDebt { resident: who, .. }
+        | RemoteCall::EnterProject { resident: who, .. }
         | RemoteCall::Talk { to: who, .. }
         | RemoteCall::Composer { resident: who, .. }
         | RemoteCall::Watch { resident: who, .. }
@@ -104,6 +105,11 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
         return Err(refuse("the attachment names a different holding machine".into()));
     }
     let view = crate::authorization::current_view(link)?;
+    if let RemoteCall::ConversationDebt { requester, .. } | RemoteCall::WaitingJobs { owner: requester } = call
+        && !view.same(&requester.machine, &caller.machine)
+    {
+        return Err(refuse("only a requester's own machine may query its outstanding deliveries".into()));
+    }
     if let RemoteCall::AttachmentReferences { attachments, .. } = call
         && attachments.iter().any(|file| !view.same(&file.owner.machine, &caller.machine))
     {
