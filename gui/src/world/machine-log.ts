@@ -51,6 +51,7 @@ export type MachineLogAction =
   | { change: "delete_project"; town: string; name: string | null }
   | { change: "joined"; name: MachineName; kind: MemberKind; registered: boolean; via: "password" | "token"; managed?: boolean }
   | { change: "allow_acting"; machine: MachineName; agent: string; home: string | null }
+  | { change: "allow_sentinel_home"; machine: MachineName }
   | { change: "acting_stopped"; machine: MachineName; account: AccountName }
   | { change: "left"; name: MachineName; account: AccountName; kind: MemberKind; unregistered: boolean; reason: string }
   /** A conversation the user deleted everywhere; then each member's part

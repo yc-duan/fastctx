@@ -162,6 +162,12 @@ pub(crate) async fn ask(
             if let Some(why) = failure {
                 return Err(words::durability(version, why));
             }
+            if !record.metadata.deleted
+                && record.metadata.kind == fastctx_types::sentinel_settings::RECORD_KIND
+                && record.metadata.key == fastctx_types::sentinel_settings::RECORD_KEY
+            {
+                crate::sentinel_home::chosen(hub, &from, &account, &record.body);
+            }
             Response::Written { metadata: record.metadata }
         }
     };

@@ -88,6 +88,8 @@ pub const REPORT: &str =
     "Report watching, satisfied with evidence IDs, or unable with an obstacle and reason; include plan and notes.";
 pub const GOAL_REPORT: &str = "Report whether the stop is sound, or what you looked at, saw, and think may be missing.";
 pub const NEED_WAKE: &str = "Install a reflex or a future wake time before sleeping.";
+pub const DIRECT_RECORD: &str =
+    "Sentinels are registered and withdrawn with `fastctx sense`; their account records cannot be written directly.";
 pub const NEED_EVIDENCE: &str = "Read current evidence and cite its observation IDs before reporting satisfied.";
 pub const NO_WAKE: &str = "The sentinel did not leave a reflex or wake time after being asked.";
 pub const ALARM_PLAN: &str = "Wake the owner at each registered time.";

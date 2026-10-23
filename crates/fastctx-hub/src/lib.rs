@@ -46,6 +46,7 @@ mod project_entry;
 mod question_parts;
 mod records;
 mod releases;
+mod sentinel_home;
 mod renewal;
 mod store;
 pub mod third;

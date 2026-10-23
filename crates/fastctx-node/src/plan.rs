@@ -279,6 +279,14 @@ pub(crate) fn records_allowed(
     {
         return Err(Failure::refused(fastctx_types::goals::words::DIRECT_RECORD));
     }
+    // Sentinels and their settings change only through the sentinel command and
+    // the user's settings; their home is the account's word that a machine may act for it.
+    if [fastctx_sentinel::lifecycle::KIND, fastctx_types::sentinel_settings::RECORD_KIND].contains(&request.kind())
+        && matches!(request, Request::Write { .. } | Request::Delete { .. })
+        && matches!(caller, Caller::Resident(_) | Caller::Page(_))
+    {
+        return Err(Failure::refused(fastctx_sentinel::words::DIRECT_RECORD));
+    }
     if request.kind() != plan::KIND || matches!(request, Request::Read { .. } | Request::List { .. }) {
         return Ok(());
     }
