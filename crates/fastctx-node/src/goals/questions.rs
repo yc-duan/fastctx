@@ -1,0 +1,75 @@
+//! Nonblocking questions retain their cards and route to the goal's actual owner.
+
+use crate::Node;
+use fastctx_types::goals::Owner;
+use fastctx_types::residents::{Delivery, Notice, Origin, Owing};
+use fastctx_types::session::Item;
+use fastctx_types::{Address, ResidentId};
+use jiff::Timestamp;
+use std::io;
+use std::sync::Arc;
+
+/// A durable question identity prevents replay from reviving an answered card.
+/// Claude's synthetic cards also need this record because its transcript has no such message.
+pub(crate) fn key(turn: &str, item: &Item) -> Option<String> {
+    crate::asked::of_item(item, Timestamp::UNIX_EPOCH).map(|_| format!("async-question:{turn}:{}", item.id))
+}
+
+/// Older recipients cannot preserve the non-waking delivery contract.
+pub(crate) async fn require_remote(
+    node: &Arc<Node>,
+    acting: &fastctx_types::access::Acting,
+    machine: &fastctx_types::access::Written,
+) -> Result<(), fastctx_types::ipc::Failure> {
+    use fastctx_types::access::Purpose;
+    use fastctx_types::ipc::Failure;
+    use fastctx_types::remote::{RemoteCall, RemoteReply};
+    let answer = node
+        .call(acting, machine, Purpose::Look, RemoteCall::Facts)
+        .await
+        .map_err(|error| Failure::new(error.to_string()))??;
+    if matches!(answer, RemoteReply::Facts(facts) if facts.goal_questions) {
+        Ok(())
+    } else {
+        Err(Failure::not_run(super::words::QUESTION_OLDER_NODE))
+    }
+}
+
+/// Returns true when a requesting conversation owns this question instead of the user.
+/// Publication precedes delivery; the existing outbox recovers across restart and disconnection.
+pub(crate) fn route(node: &Arc<Node>, id: &ResidentId, item: &Item, at: Timestamp) -> io::Result<bool> {
+    let owner = node
+        .goals
+        .views
+        .lock()
+        .expect("goal views")
+        .get(id)
+        .and_then(|view| view.goal.as_ref())
+        .filter(|goal| goal.retired.is_none())
+        .map(|goal| goal.owner.clone());
+    let requester = match owner {
+        Some(Owner::Conversation { address }) => Some(address),
+        Some(Owner::User) => None,
+        None => node.residents.about(id).and_then(|(about, _)| match about.origin {
+            Origin::Colleague { asked_by, .. } => Some(asked_by),
+            Origin::User => None,
+        }),
+    };
+    let Some(requester) = requester else { return Ok(false) };
+    let colleague = Address { machine: node.machine(), resident: id.clone() };
+    let delivery = crate::speech::fixed_id("goal-question", &[&colleague.key(), &item.id, &requester.key()]);
+    let text = super::words::question(&colleague, item);
+    let owing = Owing {
+        to: requester,
+        delivery: Delivery {
+            id: delivery.clone(),
+            at,
+            notice: Notice::Question { colleague, id: delivery.to_string(), text },
+        },
+    };
+    let directory = node.world.conversation(id);
+    crate::inbox::owe(&directory, &owing)?;
+    let (node, id) = (node.clone(), id.clone());
+    tokio::spawn(async move { crate::turns::pay(&node, &id, &directory).await });
+    Ok(true)
+}

@@ -32,7 +32,7 @@ pub(crate) fn here(node: &Node, resident: &ResidentId, requester: &Address) -> i
         .collect();
     let answers = crate::inbox::owing(&directory)?
         .into_iter()
-        .filter(|owing| super::identity::same(&names, &owing.to, requester))
+        .filter(|owing| super::identity::same(&names, &owing.to, requester) && owing.delivery.notice.along().is_none())
         .map(|owing| (owing.delivery.id.to_string(), owing.delivery.at))
         .collect();
     Ok(ConversationDebt { observed_at: Timestamp::now(), pending, running, answers, uncertain })

@@ -14,7 +14,10 @@ pub(super) async fn quiet(node: &Arc<Node>, id: &ResidentId) -> Result<bool, Fai
         return Ok(false);
     }
     let (pending, uncertain) = crate::inbox::input_states(&node.world.conversation(id)).map_err(failure)?;
-    Ok(pending.is_empty() && uncertain.is_empty() && crate::control_queue::pending(node, id)?.is_empty())
+    // Facts that ride along cannot start a turn or prevent the goal from starting one.
+    Ok(pending.iter().all(|input| input.delivery.notice.along().is_some())
+        && uncertain.is_empty()
+        && crate::control_queue::pending(node, id)?.is_empty())
 }
 
 pub(super) fn assistance(node: &Node, goal: &Goal) -> Result<Option<policy::QuotaHold>, Failure> {

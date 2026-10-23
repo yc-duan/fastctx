@@ -291,7 +291,7 @@ fn nodes() -> Vec<NodesReply> {
         ms: Some(41),
     });
     let facts = |name: &str, os: &str, lifetime: bool| MachineFacts {
-        turn_debts: false, goal_runtime: false,
+        turn_debts: false, goal_runtime: false, goal_questions: lifetime,
         sentinels: false,
         sentinel_look: false,
         name: name.parse().unwrap(),

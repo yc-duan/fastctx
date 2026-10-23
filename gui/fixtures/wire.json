@@ -4555,6 +4555,65 @@
       },
       {
         "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "heard",
+        "delivery": "goal-question-1",
+        "turn": "turn-1",
+        "from": {
+          "kind": "world"
+        },
+        "text": "Question from a colleague: which output format?",
+        "notice": {
+          "kind": "question",
+          "colleague": {
+            "machine": "desktop",
+            "resident": "codex-ab12"
+          },
+          "id": "goal-question-1",
+          "text": "Question from a colleague: which output format?"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "goal-question-card",
+          "detail": {
+            "delivery": "async",
+            "fastctx_goal_question": {
+              "agent_id": null,
+              "questions": [
+                {
+                  "options": [
+                    {
+                      "label": "Text"
+                    },
+                    {
+                      "label": "Table"
+                    }
+                  ],
+                  "question": "Which output format?"
+                }
+              ],
+              "tool_use_id": "question-tool"
+            },
+            "questions": [
+              {
+                "multiSelect": false,
+                "options": [
+                  "Text",
+                  "Table"
+                ],
+                "title": "Which output format?"
+              }
+            ]
+          },
+          "kind": "message",
+          "text": "Which output format?"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
         "event": "began",
         "turn": "turn-1",
         "item": {
@@ -13049,6 +13108,7 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_questions": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13210,6 +13270,7 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_questions": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13373,6 +13434,7 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_questions": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13536,6 +13598,7 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_questions": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13698,6 +13761,7 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_questions": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13861,6 +13925,7 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_questions": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -14027,6 +14092,7 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_questions": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -14194,6 +14260,7 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_questions": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -14361,6 +14428,7 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_questions": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -14527,6 +14595,7 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_questions": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",

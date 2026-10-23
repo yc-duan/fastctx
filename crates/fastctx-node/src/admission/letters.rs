@@ -49,12 +49,16 @@ pub fn admit(node: &Node, hub: &HubId, caller: &Caller, purpose: Purpose, letter
             Notice::Words { .. } | Notice::Attached { .. } | Notice::World { .. } => {
                 return Err(format!("{from} sent words as the user, a page or the World, which no letter carries"));
             }
-            Notice::Answer { colleague, .. } | Notice::Health { colleague, .. } if sender(&colleague.machine) => {
+            Notice::Answer { colleague, .. }
+            | Notice::Health { colleague, .. }
+            | Notice::Question { colleague, .. }
+                if sender(&colleague.machine) =>
+            {
                 (to, Purpose::Echo)
             }
             Notice::JobEnded { machine, .. } if sender(machine) => (to, Purpose::Echo),
             Notice::Sentinel {observation} if sender(&observation.machine) => (to, Purpose::Echo),
-            Notice::Answer { .. } | Notice::Health { .. } | Notice::JobEnded { .. } | Notice::Sentinel { .. } => {
+            Notice::Answer { .. } | Notice::Health { .. } | Notice::Question { .. } | Notice::JobEnded { .. } | Notice::Sentinel { .. } => {
                 return Err(format!("{from} told of something that happened on another machine"));
             }
         },

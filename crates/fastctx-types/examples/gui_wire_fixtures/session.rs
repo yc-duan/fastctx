@@ -366,6 +366,26 @@ pub fn fixtures() -> Fixtures {
             })),
         }));
     }
+    events.push(event(Happened::Heard {
+        delivery: Some("goal-question-1".parse().unwrap()),
+        turn: Some(turn.clone()),
+        from: Some(Speaker::World),
+        text: "Question from a colleague: which output format?".into(),
+        message: None,
+        notice: Some(Box::new(fastctx_types::residents::Notice::Question {
+            colleague: address(),
+            id: "goal-question-1".into(),
+            text: "Question from a colleague: which output format?".into(),
+        })),
+    }));
+    let mut question = item("goal-question-card", What::Message { text: "Which output format?".into() });
+    question.detail = Some(json!({
+        "delivery":"async",
+        "questions":[{"title":"Which output format?","options":["Text","Table"],"multiSelect":false}],
+        "fastctx_goal_question":{"tool_use_id":"question-tool","agent_id":null,
+            "questions":[{"question":"Which output format?","options":[{"label":"Text"},{"label":"Table"}]}]}
+    }));
+    events.push(event(Happened::Finished { turn: turn.clone(), item: question }));
     let mut items = vec![
         item("message", What::Message { text: "hello".into() }),
         item("thinking", What::Thinking { text: "thinking".into(), duration_ms: Some(4_200) }),

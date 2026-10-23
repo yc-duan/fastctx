@@ -83,6 +83,7 @@ __FASTCTX_USAGE__
 __FASTCTX_FAILURES__
 __FASTCTX_TURN_FAILURES__
 __FASTCTX_GOAL__
+__FASTCTX_GOAL_QUESTIONS__
 
 // /clear may replace even the same session ID. Keep the old object alive for
 // its timers, queued writes and late turn/tool results; never reset it in place.
@@ -1122,7 +1123,7 @@ export function register(on) {
     }
     const shown = e.agentId === undefined ? context.shown : agentPresentation(context, e.agentId)
     const reported = e.agentId === undefined ? reports($, context) : agentReports(reports($, context), e.agentId)
-    const result = await shown.call(reported, e, (input) => controlCall($, input, next))
+    const result = await shown.call(reported, e, (input) => goalQuestion($, context, input, (question) => controlCall($, question, next)))
     registry.provedCalls.delete(e.tool_use_id)
     return result
   }).catch(($, e, next) => continueToolWithoutWorld($, registry, e, next))

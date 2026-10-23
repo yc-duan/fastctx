@@ -52,6 +52,15 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
         return Ok(());
     }
     let directory = node.world.conversation(id);
+    let question_key = match &event.happened {
+        Happened::Finished { turn, item } => crate::goals::questions::key(turn, item),
+        _ => None,
+    };
+    if let Some(key) = &question_key
+        && crate::delivery::has_event(&directory, key)?
+    {
+        return Ok(());
+    }
     if about.host.agent.as_str() == "claude" {
         crate::claude::turn_facts::observe(&directory, &event.happened)?;
     }
@@ -121,7 +130,9 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
             crate::asked::settle(node, id, |asked| asked.waits && asked.id == request_id)?;
         }
         Happened::Finished { item, .. } => {
-            if let Some(asked) = crate::asked::of_item(item, event.at) {
+            if let Some(asked) = crate::asked::of_item(item, event.at)
+                && !crate::goals::questions::route(node, id, item, event.at)?
+            {
                 crate::asked::ask(node, id, asked)?;
             }
             // A Codex thread keeps its first instructions through compacting
@@ -206,6 +217,7 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
                     tokio::spawn(async move { crate::speech::along(&node, &id).await });
                     format!("started:{turn}")
                 }
+                Happened::Finished { .. } if question_key.is_some() => question_key.expect("known question"),
                 _ => serde_json::to_string(&event).map_err(std::io::Error::other)?,
             };
             if crate::delivery::event(&directory, &key, &event)? {
@@ -236,7 +248,9 @@ pub fn opening(text: &str, chars: usize) -> String {
 fn recorded(agent: &str, happened: &Happened) -> bool {
     match happened {
         happened if !happened.kept() => false,
-        Happened::Finished { .. } => !matches!(agent, "codex" | "claude"),
+        Happened::Finished { turn, item } => {
+            crate::goals::questions::key(turn, item).is_some() || !matches!(agent, "codex" | "claude")
+        }
         _ => true,
     }
 }
@@ -507,13 +521,15 @@ pub fn pay<'a>(
                 _ => None,
             };
             // Telling can lead back here, as a reader's turn ends at once.
+            let owed =
+                if matches!(&answer.delivery.notice, Notice::Question { .. }) { Owed::Nobody } else { Owed::Working };
             let landed = Box::pin(speech::tell(
                 node,
                 &acting,
                 &answer.to,
                 answer.delivery.id.clone(),
                 answer.delivery.notice.clone(),
-                Owed::Working,
+                owed,
             ))
             .await;
             if let Err(failure) = &landed {

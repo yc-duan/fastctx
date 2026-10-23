@@ -75,6 +75,9 @@ pub(crate) async fn tell_at(
         }
         return tell_here(node, &to.resident, delivery, owed).await;
     }
+    if matches!(&notice, Notice::Question { .. }) {
+        crate::goals::questions::require_remote(node, acting, machine).await?;
+    }
     let letter = match notice {
         // Words a resident said make it owed the turn they go into, which
         // the receiving machine knows from who sent them.
@@ -199,10 +202,6 @@ pub(crate) async fn tell_here_locked(
     // What rides with the next turn waits while none runs; a Claude
     // session's mod holds it for the next one (`along`).
     if pending.delivery.notice.along().is_some() {
-        let running = node.residents.now(to).is_some_and(|now| now.turn.is_some());
-        if !running && about.host.agent.as_str() != "claude" {
-            return Ok(Landed::Waiting { why: None, answered: true });
-        }
         return hand_over_locked(node, to, &about, &directory, pending).await;
     }
     // The end of the resident's own job waits for whatever call is waiting
@@ -276,6 +275,12 @@ async fn hand_over_locked(
     if matches!(pending.delivery.notice,Notice::Sentinel {..}) && crate::inbox::read(directory,&pending.delivery.id)
         .map_err(|e|Failure::new(e.to_string()))?.is_none_or(|current|current.state != PendingState::Waiting) {
         return Ok(Landed::Waiting {why:None,answered:answered(node,to,about)});
+    }
+    if pending.delivery.notice.along().is_some()
+        && about.host.agent.as_str() != "claude"
+        && node.residents.now(to).is_none_or(|now| now.turn.is_none())
+    {
+        return Ok(Landed::Waiting { why: None, answered: true });
     }
     if let Err(error) = crate::homes::available(node, about)
         .and_then(|()| crate::assists::may_turn(node, to, about))
@@ -531,8 +536,22 @@ async fn submit_thread(
     for kept in &batch {
         set_state(directory, &kept.delivery.id, PendingState::Sending).await?;
     }
-    let sent = match codex.send(thread, input, client).await {
-        Ok(sent) => sent,
+    let along_only = batch.iter().all(|input| input.delivery.notice.along().is_some());
+    let sending = if along_only {
+        let Input::Text(text) = input else { unreachable!("non-waking notices are text facts") };
+        codex.send_to_running(thread, text, client).await
+    } else {
+        codex.send(thread, input, client).await.map(Some)
+    };
+    let sent = match sending {
+        Ok(Some(sent)) => sent,
+        Ok(None) => {
+            crate::delivery::refused(directory, &mut handover).map_err(|error| Failure::new(error.to_string()))?;
+            for kept in &batch {
+                set_state(directory, &kept.delivery.id, PendingState::Waiting).await?;
+            }
+            return Ok(Some(Landed::Waiting { why: None, answered: true }));
+        }
         Err(SendError::NotSent(why)) => {
             crate::delivery::refused(directory, &mut handover).map_err(|error| Failure::new(error.to_string()))?;
             for kept in &batch {
@@ -543,6 +562,9 @@ async fn submit_thread(
                     .map_err(|error| Failure::new(error.to_string()))?;
             } else {
                 again_later(node, id, &about, directory, pending.clone());
+            }
+            if along_only {
+                return Ok(Some(Landed::Waiting { why: Some(why), answered: true }));
             }
             return Err(Failure::new(why));
         }
@@ -692,7 +714,7 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
     let (from, text) = match &delivery.notice {
         Notice::Words { from, text } => (from.clone(), text.clone()),
         Notice::Attached { message, text } => (message.speaker(), text.clone()),
-        Notice::Answer { colleague, .. } => {
+        Notice::Answer { colleague, .. } | Notice::Question { colleague, .. } => {
             (Speaker::Resident { address: colleague.clone() }, told::told(&delivery.notice))
         }
         Notice::JobEnded { .. } | Notice::Health { .. } | Notice::Sentinel { .. } => (Speaker::World, told::told(&delivery.notice)),
@@ -702,9 +724,12 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
     // answer is the notice itself, not the words written for the model.
     let notice = match &delivery.notice {
         Notice::Words { .. } | Notice::Attached { .. } => None,
-        Notice::JobEnded { .. } | Notice::Answer { .. } | Notice::Health { .. } | Notice::World { .. } | Notice::Sentinel { .. } => {
-            Some(Box::new(delivery.notice.clone()))
-        }
+        Notice::JobEnded { .. }
+        | Notice::Answer { .. }
+        | Notice::Health { .. }
+        | Notice::Question { .. }
+        | Notice::World { .. }
+        | Notice::Sentinel { .. } => Some(Box::new(delivery.notice.clone())),
     };
     let event = SessionEvent {
         at: Timestamp::now(),
@@ -881,9 +906,13 @@ pub async fn recover(node: &Arc<Node>) {
                 )
                 .await?;
             }
-            let pending=crate::inbox::pending(&directory)?;
-            let waiting=pending.iter().find(|input| input.state==PendingState::Waiting && matches!(input.delivery.notice,Notice::Sentinel {..}))
-                .or_else(||pending.iter().find(|input|input.state==PendingState::Waiting)).cloned();
+            // What can open a turn first, a sentinel's finding before the rest.
+            let waiting = crate::inbox::pending(&directory)?
+                .into_iter()
+                .filter(|input| input.state == PendingState::Waiting)
+                .min_by_key(|input| {
+                    (input.delivery.notice.along().is_some(), !matches!(input.delivery.notice, Notice::Sentinel { .. }))
+                });
             Ok::<_, std::io::Error>(waiting)
         }
         .await;
@@ -925,8 +954,10 @@ pub fn resume(node: &Arc<Node>, runtime: &tokio::runtime::Handle) {
             let result = async {
                 let Some(speaking) = node.residents.speaking(&resident.id) else { return Ok(()) };
                 let guard = speaking.lock().await;
-                let waiting =
-                    crate::inbox::pending(&directory)?.into_iter().find(|input| input.state == PendingState::Waiting);
+                let waiting = crate::inbox::pending(&directory)?
+                    .into_iter()
+                    .filter(|input| input.state == PendingState::Waiting)
+                    .min_by_key(|input| input.delivery.notice.along().is_some());
                 drop(guard);
                 if let Some(input) = waiting {
                     hand_over(&node, &resident.id, &resident.about, &directory, input)

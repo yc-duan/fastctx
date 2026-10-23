@@ -26,6 +26,9 @@ impl crate::tolerant::Tolerant for Form {
 pub struct MachineFacts {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub goal_runtime: bool,
+    /// Receives colleague questions without waking an idle conversation.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub goal_questions: bool,
     /// Reports a requester's pending inputs, running turns and undelivered answers.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub turn_debts: bool,

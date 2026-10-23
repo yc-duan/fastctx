@@ -56,6 +56,7 @@ pub fn told(notice: &Notice) -> String {
             "=== colleague {} on {} (in its turn) ===\n{}\n=== what it is doing: fastctx w {} ===",
             colleague.resident, colleague.machine, health.text, colleague.resident
         ),
+        Notice::Question { text, .. } => text.clone(),
         Notice::Words { from, text } => words(from, text),
         Notice::Attached { message, text } => message.render(text),
         Notice::World { text, .. } => words(&Speaker::World, text),
