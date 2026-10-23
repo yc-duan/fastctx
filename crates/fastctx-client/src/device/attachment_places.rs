@@ -1,4 +1,4 @@
-//! Choose account-owned storage before a new conversation has a host.
+//! Choose storage on a held machine before a new conversation has a host.
 
 use fastctx_types::access::{HubAccount, Purpose, Written};
 use fastctx_types::attachments::AttachmentPlaces;
@@ -26,7 +26,7 @@ impl Device {
                 }
                 identities.push(identity);
                 for machine in
-                    view.machines().filter(|machine| machine.online && machine.home.as_ref() == Some(account))
+                    view.machines().filter(|machine| machine.online && view.holds(account, &machine.name))
                 {
                     if view.admits(&view.me, account, &machine.name, Purpose::Hands).is_ok() {
                         machines.push(Written { name: machine.name.clone(), hub: Some(session.link.hub_name()) });

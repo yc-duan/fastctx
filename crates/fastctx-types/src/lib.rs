@@ -62,6 +62,7 @@ pub mod sentinel_control;
 pub mod sentinel_words;
 pub mod session;
 pub mod since;
+pub mod sharing;
 pub mod stats;
 pub mod thumbnail;
 pub mod timers;

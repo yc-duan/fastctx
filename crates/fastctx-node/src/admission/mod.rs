@@ -135,27 +135,22 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
             | RemoteCall::SetAgentTitle { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }
+            | RemoteCall::ClaudeConsent { .. }
     );
     // A managed machine's agents work for no one: nobody scans them or puts
     // the World's tools in them, its owner neither (`world-network.md`, 受管机器).
-    if (agents_here || matches!(call, RemoteCall::ClaudeConsent { .. })) && view.me().is_some_and(|me| me.managed) {
+    if agents_here && view.me().is_some_and(|me| me.managed) {
         return Err(refuse(format!("{here} is a managed machine, whose agents work for no one")));
     }
-    // Which logins this machine lists, and what is put into them, is its
-    // owner's alone (`world-agent-logins.md`): shared or administered, the
-    // machine is not another account's to scan or change.
-    if agents_here && view.member(&here).and_then(|member| member.home.as_ref()) != Some(&caller.account) {
-        return Err(refuse(format!(
-            "only {here}'s owner scans it or changes its agents, not the account {}",
-            caller.account
-        )));
+    // Login management belongs to holders (`world-network.md`, 共享机器与智能体协助).
+    if agents_here {
+        view.authorize(&caller.account, fastctx_net::authorization::Action::Hold(&here))
+            .map_err(Failure::from)?;
     }
-    // Which version a machine runs is its owner's to choose, and the
-    // network's super administrator's but for a visitor's machine
-    // (`world-upgrade.md`, 谁来更新).
+    // Updates use general machine management authority (`world-upgrade.md`, 谁来更新).
     if matches!(call, RemoteCall::UpdateWorld | RemoteCall::Updates { .. }) && !view.may_update(&caller.account, &here)
     {
-        return Err(refuse(format!("only {here}'s owner updates it, not the account {}", caller.account)));
+        return Err(refuse(fastctx_types::sharing::MANAGER_REQUIRED.into()));
     }
     crate::devices::admit(&view, &caller.machine, call)?;
     let hub = link.membership().id.clone();

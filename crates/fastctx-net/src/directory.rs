@@ -355,10 +355,15 @@ impl Directory {
         self.account(account).is_some_and(Account::is_super)
     }
 
-    /// Whether an account may manage a machine's updates: its owner or the
-    /// super administrator, except for another account's visitor machines.
+    /// Managing a machine has the same authority as working on it
+    /// (`world-network.md`, 共享机器与智能体协助).
     pub fn may_update(&self, account: &AccountName, machine: &MachineName) -> bool {
         self.authorize(account, crate::authorization::Action::Manage(machine)).is_ok()
+    }
+
+    /// Whether this account holds a machine, rather than merely administering it.
+    pub fn holds(&self, account: &AccountName, machine: &MachineName) -> bool {
+        self.authorize(account, crate::authorization::Action::Hold(machine)).is_ok()
     }
 
     /// Whether `account` is a visitor: its machines are its alone, and it

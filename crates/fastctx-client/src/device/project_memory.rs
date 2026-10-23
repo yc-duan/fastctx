@@ -141,9 +141,9 @@ impl Device {
                     return Err(failed("update the hub to create projects directly from this device"));
                 }
                 let machines = fields.machines.clone().unwrap_or_else(|| {
-                    link.view()
-                        .machines()
-                        .filter(|member| member.home.as_ref() == Some(&account) && !member.managed)
+                    let view = link.view();
+                    view.machines()
+                        .filter(|member| view.holds(&account, &member.name) && !member.managed)
                         .map(|member| member.name.clone())
                         .collect()
                 });

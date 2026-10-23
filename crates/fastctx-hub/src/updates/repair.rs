@@ -23,9 +23,8 @@ pub(super) async fn request(
             let directory = &store.book.directory;
             super::view::authenticate(directory, asker, account)?;
             let target = directory.member(&machine).ok_or("repair target no longer exists")?;
-            let owner = target.home.as_ref().ok_or("a phone has no standalone repair")?;
-            if account != owner || !directory.logged_in(asker, owner) || !directory.may_update(account, &machine) {
-                return Err("the repair helper is not acting as this machine's logged-in owner".into());
+            if !directory.may_update(account, &machine) {
+                return Err(fastctx_types::sharing::MANAGER_REQUIRED.into());
             }
             let helper = directory.member(asker).ok_or("repair helper no longer exists")?;
             let updates = hub.updates.lock().expect("repair helper identity");
