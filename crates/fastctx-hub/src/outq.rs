@@ -109,6 +109,7 @@ struct State {
 enum Notice {
     Directory,
     Ledger(TownId),
+    AccountRecord(fastctx_types::AccountName, String, String),
     Versions,
     Afoot(MachineName),
     Presence(MachineName),
@@ -392,6 +393,9 @@ fn notice(frame: &Down) -> Option<Notice> {
     Some(match frame {
         Down::DirectoryChanged => Notice::Directory,
         Down::LedgerChanged { town } => Notice::Ledger(town.clone()),
+        Down::AccountRecordChanged { changed } => {
+            Notice::AccountRecord(changed.account.clone(), changed.metadata.kind.clone(), changed.metadata.key.clone())
+        }
         Down::Versions { .. } => Notice::Versions,
         Down::Afoot { machine, .. } => Notice::Afoot(machine.clone()),
         Down::Presence { machine, .. } => Notice::Presence(machine.clone()),

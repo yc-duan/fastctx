@@ -75,6 +75,10 @@ pub enum Welcome {
     Accepted {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         profiles: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        account_records: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        conversation_plans: bool,
         machine: MachineName,
         version: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -101,6 +105,10 @@ pub enum ClientFrame {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum NodeFrame {
+    AccountRecords {
+        id: u64,
+        event: crate::account_records::Watched,
+    },
     McpOpened {
         id: u64,
     },

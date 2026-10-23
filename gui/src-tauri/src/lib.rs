@@ -18,6 +18,7 @@ mod item_details;
 mod kept;
 #[cfg(desktop)]
 mod local_repair;
+mod plan;
 mod profile;
 #[cfg(desktop)]
 mod repair_probe;
@@ -1225,6 +1226,9 @@ pub fn run() {
             accounts::accounts,
             accounts::seen_dissolved,
             accounts::machine_log,
+            plan::plan_read,
+            plan::plan_write,
+            plan::plan_watch,
             profile::profile_read,
             profile::profile_subagents,
             profile::profile_write,

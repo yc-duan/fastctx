@@ -20,6 +20,33 @@ use crate::{Address, AgentName, EntryId, JobId, JournalName, MachineName, Notice
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum Call {
+    Plan {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        operation: crate::plan::Operation,
+    },
+    PlanRead {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        owner: ResidentId,
+    },
+    PlanWrite {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        owner: ResidentId,
+        expected: Option<u64>,
+        markdown: String,
+    },
+    AccountRecords {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        request: crate::account_records::Request,
+    },
+    WatchAccountRecords {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        kind: String,
+    },
     /// The selected account's machine changes, before a previous page's
     /// cursor when supplied. The hub checks visibility on every read.
     MachineLog {
@@ -716,6 +743,12 @@ pub enum Call {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum Reply {
+    Plan {
+        result: crate::plan::Result,
+    },
+    AccountRecords {
+        response: crate::account_records::Response,
+    },
     /// The HTTP proxy chosen in Fastctx, if one is (`Call::HubProxy`).
     HubProxy {
         url: Option<String>,

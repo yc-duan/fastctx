@@ -249,6 +249,7 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
     node.residents
         .remove(&node.world, id)
         .map_err(|error| Stop::Failed(format!("recording deletion in progress: {error}")))?;
+    crate::plan::delete(node, &resident.about).await.map_err(|failure| Stop::Failed(failure.message))?;
     // Whatever its sessions reported and is being applied is applied to its
     // end first, in the order applying takes these locks: a Claude session's
     // reading, a Codex thread's worker, then speaking.

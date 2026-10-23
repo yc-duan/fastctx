@@ -243,6 +243,8 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             project_entry: true,
             conversation_deletions: true,
             profiles: true,
+            account_records: true,
+            conversation_plans: true,
             left: None,
             cancels: true,
             presence: true,
@@ -591,6 +593,9 @@ async fn connected(
                 });
             }
             Down::LedgerChanged { town } => inner.node.ledger_changed(Some(town)),
+            Down::AccountRecordChanged { changed } => {
+                let _ = inner.record_changes.send(Some(changed));
+            }
             Down::Afoot { machine, busy, change } => inner.heard_afoot(machine, busy, *change),
             Down::Forget { forgetting } => {
                 let (inner, up) = (inner.clone(), up.clone());

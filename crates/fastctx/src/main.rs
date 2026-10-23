@@ -28,10 +28,12 @@ mod on;
 mod output;
 mod page;
 mod paths;
+mod plan;
 mod profile;
 mod program;
 mod project;
 mod proxy;
+mod records;
 mod renew;
 mod repair;
 mod secret;
@@ -75,6 +77,10 @@ enum Command {
     Mcp(mcp::McpArgs),
     /// Read or change the account's instructions and host settings.
     Profile(profile::ProfileArgs),
+    #[command(about = fastctx_types::plan::words::HELP)]
+    Plan(plan::PlanArgs),
+    #[command(hide = true)]
+    Records(records::RecordsArgs),
     #[command(hide = true)]
     McpRelay { name: String },
     #[command(hide = true)]
@@ -400,6 +406,8 @@ fn main() -> ExitCode {
             | Command::Hub(world::HubCommand::Serve { .. })
             | Command::Mcp(_)
             | Command::Profile(_)
+            | Command::Plan(_)
+            | Command::Records(_)
             | Command::McpRelay { .. }
             | Command::McpChild { .. }
             | Command::Serve { .. }
@@ -487,6 +495,8 @@ fn main() -> ExitCode {
         Command::ServiceCheck { name } => fastctx_install::service::check_guardian(&name),
         Command::Mcp(args) => mcp::run(args),
         Command::Profile(args) => profile::run(args),
+        Command::Plan(args) => plan::run(args),
+        Command::Records(args) => records::run(args),
         Command::McpRelay { name } => mcp_relay::run(name),
         Command::McpChild { args } => mcp_child::run(args),
         Command::Serve { writer: _, writes } => serve(writes == "off"),

@@ -23,6 +23,11 @@ use crate::{AgentName, ResidentId, TownName};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum RemoteCall {
+    /// A running job returns a plan operation to its resident's home through the hub.
+    Plan {
+        resident: ResidentId,
+        operation: crate::plan::Operation,
+    },
     /// A running job returns its resident's project selection to its home.
     /// This call is relayed and authorized by a hub supporting project entry.
     EnterProject {
@@ -494,7 +499,7 @@ impl RemoteCall {
     /// check it.
     pub fn purpose(&self) -> Purpose {
         match self {
-            Self::EnterProject { .. } => Purpose::Echo,
+            Self::EnterProject { .. } | Self::Plan { .. } => Purpose::Echo,
             RemoteCall::PageAction { action: crate::pages::PageInvocation::Say { .. }, .. } => Purpose::Words,
             RemoteCall::ReadAttachment { attachment: crate::attachments::AttachmentSource::Upload(file), .. }
                 if file.owner != *file.conversation() =>
@@ -576,6 +581,9 @@ impl RemoteCall {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum RemoteReply {
+    Plan {
+        result: crate::plan::Result,
+    },
     Entered {
         town: TownName,
         map: Box<crate::project::MapView>,

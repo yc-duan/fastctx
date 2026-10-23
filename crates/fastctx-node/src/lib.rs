@@ -9,6 +9,7 @@
 //! it records what happened while it was away, such as jobs whose
 //! supervisor did not survive a restart of the machine.
 
+mod account_records;
 pub mod activity;
 mod admission;
 mod admitted;
@@ -84,6 +85,7 @@ mod on_delivery;
 mod on_stop;
 mod own_collab;
 mod pages;
+mod plan;
 mod profile;
 mod program_collection;
 mod proxy_setting;

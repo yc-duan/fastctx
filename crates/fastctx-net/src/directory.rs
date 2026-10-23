@@ -646,6 +646,12 @@ pub struct View {
     /// would end the session of a member that sent one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub profiles: bool,
+    /// Account-scoped records, fetched separately from this view.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub account_records: bool,
+    /// Plan operations and their authorized return from remote jobs.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub conversation_plans: bool,
     /// The hub accepts account-level Claude subagent changes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub subagents: bool,
@@ -724,6 +730,8 @@ impl View {
             lan_relays: false,
             paced_intake: false,
             profiles: false,
+            account_records: false,
+            conversation_plans: false,
             subagents: false,
             versions: false,
             package_progress: false,

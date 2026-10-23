@@ -14,6 +14,7 @@
 //! the account it names (`crate::directory`). The node checks again what
 //! each call asks.
 
+pub mod account_records;
 mod accounts;
 mod addresses;
 mod afoot;
@@ -32,6 +33,7 @@ mod login_identity;
 mod machine_log;
 mod moving;
 mod outgoing;
+mod plans;
 mod presence;
 mod profile;
 mod questions;
@@ -299,6 +301,7 @@ pub(crate) struct Inner {
     /// How many refreshes of the view began.
     refreshes: AtomicU64,
     status: watch::Sender<Status>,
+    record_changes: tokio::sync::broadcast::Sender<Option<fastctx_types::account_records::Changed>>,
     connection: Mutex<Option<Connection>>,
     calls: Mutex<HashMap<u64, Waiter>>,
     /// The calls of other machines this one is answering (`answers`).
@@ -471,6 +474,7 @@ impl Link {
             refreshing: tokio::sync::Mutex::new(Refreshed::default()),
             refreshes: AtomicU64::new(0),
             status,
+            record_changes: tokio::sync::broadcast::channel(1024).0,
             connection: Mutex::new(None),
             calls: Mutex::new(HashMap::new()),
             answers: answers::Answers::default(),

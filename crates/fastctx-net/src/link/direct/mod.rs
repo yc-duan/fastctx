@@ -209,6 +209,7 @@ impl Inner {
     /// Brings listening, linking and the calls being answered over links in
     /// line with the roster: run at the start and whenever the view changes.
     pub(crate) fn follow_view(self: &Arc<Self>) {
+        let _ = self.record_changes.send(None);
         let view = self.view();
         self.follow_listening(&view);
         self.follow_keepers(&view);
@@ -414,7 +415,10 @@ impl Inner {
         account: &AccountName,
         call: &fastctx_types::remote::RemoteCall,
     ) -> Option<Arc<PeerConn>> {
-        if matches!(call, fastctx_types::remote::RemoteCall::EnterProject { .. }) {
+        if matches!(
+            call,
+            fastctx_types::remote::RemoteCall::EnterProject { .. } | fastctx_types::remote::RemoteCall::Plan { .. }
+        ) {
             return None;
         }
         let conn = self.direct.link(to)?;
