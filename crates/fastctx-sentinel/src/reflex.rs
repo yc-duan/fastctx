@@ -97,9 +97,17 @@ async fn evaluate_inner(
         Ok(result)
     });
     match result.and_then(|result| matches(reflex, &result).map(|trigger| (result, trigger))) {
-        Ok((result, true)) => {
-            Evaluation::Wake(WakeReason::Reflex { id: reflex.id.clone(), material: bounded(&result.text, 4096) })
-        }
+        Ok((result, true)) => Evaluation::Wake(WakeReason::Reflex {
+            id: reflex.id.clone(),
+            observation: Observation {
+                id: format!("reflex-{}-{now}", reflex.id),
+                at: now,
+                source: serde_json::to_string(&reflex.probe).expect("reflex probe serializes"),
+                text: result.text,
+                exit_code: result.exit_code,
+                full_path: result.full_path,
+            },
+        }),
         Ok((_, false)) => Evaluation::Quiet,
         Err(reason) => Evaluation::Wake(WakeReason::Broken { id: reflex.id.clone(), reason: bounded(&reason, 4096) }),
     }

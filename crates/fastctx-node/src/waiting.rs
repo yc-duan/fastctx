@@ -53,6 +53,7 @@ pub async fn wait(
             held.jobs.push((job.clone(), path.clone()));
             let owner = caller.as_ref().expect("checked owner");
             let origin = fastctx_types::on::OnOrigin {
+                        sentinel: None,
                 call_id: None,
                 resident: owner.clone(),
                 town: record.town.clone(),

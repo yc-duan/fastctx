@@ -649,6 +649,7 @@ pub async fn run_prepared(
     node.effects_changed.notify_waiters();
     composer::resume(&node);
     recovery::start(&node, jobs_reconciled);
+    sentinels::start(&node);
     on_delivery::resume(&node);
     retention::start(&node).context("starting command artifact retention")?;
     profile::session::start(&node);

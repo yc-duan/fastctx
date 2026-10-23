@@ -10,3 +10,4 @@ pub mod web;
 pub mod words;
 pub use fastctx_types::sentinel::*;
 pub use wake::wake;
+pub mod resident;

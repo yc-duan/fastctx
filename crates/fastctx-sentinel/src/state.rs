@@ -26,6 +26,8 @@ pub struct State {
     pub obstacle: Option<String>,
     pub obstacle_count: u32,
     pub finished: bool,
+    #[serde(default)]
+    pub completed_at: i64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WakeIntent {
@@ -54,6 +56,7 @@ impl State {
             obstacle: None,
             obstacle_count: 0,
             finished: false,
+            completed_at: 0,
         }
     }
 }
@@ -89,6 +92,9 @@ impl Store {
                 let recovered: State = load(&path)?.ok_or("sentinel history disappeared")?;
                 if recovered.sequence != sequence || recovered.pending.is_some() {
                     return Err("invalid completed sentinel snapshot".into());
+                }
+                if current.as_ref().is_some_and(|s| s.sequence == sequence && s.pending.as_ref().is_some_and(|p| p.id != recovered.wake_id)) {
+                    continue;
                 }
                 current = Some(recovered);
             }

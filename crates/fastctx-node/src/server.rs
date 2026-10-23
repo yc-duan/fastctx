@@ -340,6 +340,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                         .then(|| crate::on::sent_for(node, request.job.as_ref()))
                         .flatten();
                     let origin = fastctx_types::on::OnOrigin {
+                        sentinel: None,
                         call_id: None,
                         resident,
                         town,

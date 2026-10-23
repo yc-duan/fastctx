@@ -296,6 +296,8 @@ pub struct OutputDrained {
 /// standard input and standard error are the record's `stdin` and `stderr`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OnJob {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sentinel: Option<crate::on::SentinelProbe>,
     /// The sending script's own state, which the prelude restores first.
     pub state: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -423,4 +425,8 @@ pub enum EndedHow {
     Interrupted { reason: String },
     /// Starting or supervising failed; processes already started may remain.
     Failed { error: String },
+}
+
+impl JobRecord {
+    pub fn is_sentinel(&self) -> bool { self.on.as_ref().is_some_and(|on| on.sentinel.is_some()) }
 }

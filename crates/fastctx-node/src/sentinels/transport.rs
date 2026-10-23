@@ -1,7 +1,7 @@
 //! Sentinel calls travel as their authenticated account, never an invented resident.
 use crate::Node;
 use fastctx_agent::FutureResult;
-use fastctx_sentinel::lifecycle::Homes;
+use fastctx_sentinel::{lifecycle::Homes, ports::ResidentHost};
 use fastctx_types::{
     access::HubAccount,
     remote::{RemoteCall, RemoteReply},
@@ -79,6 +79,6 @@ pub(crate) async fn home_call(
     scope: &HubAccount,
     request: &HomeRequest,
 ) -> Result<HomeReply, String> {
-    let host = node.sentinels.host.get().ok_or("the sentinel resident worker is not connected")?;
+    let host = super::worker::engine(node)?;
     host.call(scope, request).await
 }

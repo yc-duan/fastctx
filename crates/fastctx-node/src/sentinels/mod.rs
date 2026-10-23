@@ -1,7 +1,11 @@
 //! Account-scoped sentinel services and their integration ports.
 mod control;
+mod effects;
+mod worker;
+pub(crate) use worker::start;
 pub(crate) mod deletion;
 mod settings;
+pub(crate) mod look;
 mod transport;
 pub(crate) use control::{control, list_all, scope};
 use fastctx_sentinel::{ports::Credentials, records::Records};
@@ -16,7 +20,8 @@ pub(crate) use transport::home_call;
 pub(crate) struct Services {
     pub records: OnceLock<Arc<dyn Records>>,
     pub credentials: OnceLock<Arc<dyn Credentials>>,
-    pub host: OnceLock<Arc<dyn fastctx_sentinel::ports::ResidentHost>>,
+    pub timers: OnceLock<Arc<dyn fastctx_sentinel::ports::Timers>>,
+    worker: worker::Worker,
 }
 impl Services {
     pub fn records(&self) -> Result<&dyn Records, Failure> {

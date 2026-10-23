@@ -68,7 +68,7 @@ pub struct Observation {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WakeReason {
     Initial,
-    Reflex { id: String, material: String },
+    Reflex { id: String, observation: Observation },
     Time { id: String, due: i64 },
     Broken { id: String, reason: String },
     Withdrawn,

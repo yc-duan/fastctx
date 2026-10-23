@@ -29,8 +29,8 @@ pub trait Credentials: Send + Sync {
         scope: &'a fastctx_types::access::HubAccount,
         home: &'a MachineName,
     ) -> FutureResult<'a, fastctx_types::sentinel_settings::KeyStatus>;
-    fn model_key<'a>(&'a self, definition: &'a Definition) -> FutureResult<'a, String>;
-    fn search_key<'a>(&'a self, definition: &'a Definition) -> FutureResult<'a, String>;
+    fn model_key<'a>(&'a self, scope: &'a fastctx_types::access::HubAccount, definition: &'a Definition) -> FutureResult<'a, String>;
+    fn search_key<'a>(&'a self, scope: &'a fastctx_types::access::HubAccount, definition: &'a Definition) -> FutureResult<'a, String>;
 }
 
 /// A node's resident worker. It verifies the authoritative account record and
@@ -46,18 +46,22 @@ pub trait ResidentHost: Send + Sync {
 /// Durable timer adapter supplied by the node's scheduler. Reusing an ID replaces
 /// its time/action. A firing is delivered at least once with its original due time.
 pub trait Timers: Send + Sync {
+    /// Subscribe before reconciliation; unacknowledged firings are retried by the scheduler.
+    fn subscribe(&self) -> FutureResult<'_, tokio::sync::broadcast::Receiver<Fired>>;
+    /// Acknowledge exactly this firing, never a later replacement of its timer ID.
+    fn acknowledge<'a>(&'a self, fired: &'a Fired) -> FutureResult<'a, ()>;
     fn set<'a>(&'a self, timer: &'a Timer) -> FutureResult<'a, ()>;
     fn cancel<'a>(&'a self, id: &'a str) -> FutureResult<'a, ()>;
     fn list<'a>(&'a self, owner: &'a str) -> FutureResult<'a, Vec<Timer>>;
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Timer {
     pub id: String,
     pub owner: String,
     pub at: i64,
     pub action: TimerAction,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TimerAction {
     WakeSentinel {
@@ -73,7 +77,7 @@ pub enum TimerAction {
         reflex: String,
     },
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ScheduledWake {
     OwnerAlarm { index: usize },

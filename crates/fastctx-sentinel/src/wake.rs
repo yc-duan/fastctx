@@ -26,12 +26,16 @@ pub async fn wake(
     store: &Store,
     mut state: State,
     wake_id: &str,
-    reason: WakeReason,
+    mut reason: WakeReason,
     now: i64,
     environment: &Environment<'_>,
 ) -> Result<State, String> {
     let Environment { model, look, web, limits } = *environment;
     if state.wake_id == wake_id || state.finished {
+        if state.pending.as_ref().is_some_and(|pending|pending.id==wake_id) {
+            state.pending=None;
+            store.checkpoint(&state)?;
+        }
         return Ok(state);
     }
     state.sequence += 1;
@@ -40,11 +44,25 @@ pub async fn wake(
     if matches!(reason, WakeReason::Withdrawn) {
         state.conclusion = Conclusion::Withdrawn;
         state.finished = true;
+        state.completed_at = now;
         state.reflexes.clear();
         state.wake_id = wake_id.into();
         state.pending = None;
         store.commit(&state)?;
         return Ok(state);
+    }
+    let mut observations = Vec::new();
+    if let WakeReason::Reflex { observation, .. } = &mut reason {
+        if observation.text.len() > 65_536 { return Err("reflex evidence is too large".into()); }
+        if observation.full_path.is_none() {
+            let path = store.directory().join("evidence").join(format!("reflex-{}.txt",state.sequence));
+            std::fs::create_dir_all(path.parent().expect("evidence directory")).map_err(|e|e.to_string())?;
+            fastctx_platform::publish(&path,observation.text.as_bytes(),fastctx_platform::Permissions::Private).map_err(|e|e.to_string())?;
+            observation.full_path=Some(path.to_string_lossy().into_owned());
+        }
+        observation.text=bounded(&observation.text,8192);
+        observations.push(observation.clone());
+        if state.definition.kind==Kind::Web { observation.full_path=None; }
     }
     let recent: Vec<_> = state.recent.iter().map(|o| json!({"id":o.id,"at":o.at,"source":bounded(&o.source,256),"text":bounded(&o.text,1024),"full_path":if state.definition.kind==Kind::Web { None } else { o.full_path.as_ref() }})).collect();
     let reflexes: Vec<_> = state.reflexes.iter().map(|r| json!({"id":r.id,"at":r.at,"every_ms":r.every_ms})).collect();
@@ -60,14 +78,15 @@ pub async fn wake(
         look,
         web,
         directory: store.directory().to_path_buf(),
-        observations: Vec::new(),
+        observations,
         missing_wake: false,
         obstacle_recorded: false,
         invalid_reports: 0,
     };
+    let system = if goal { words::GOAL } else if app.state.definition.kind == Kind::Web { words::WATCH_WEB } else { words::WATCH };
     let path = store.run_path(app.state.sequence);
     let run =
-        fastctx_agent::run(model, &mut app, if goal { words::GOAL } else { words::WATCH }.into(), input, limits, &path)
+        fastctx_agent::run(model, &mut app, system.into(), input, limits, &path)
             .await;
     let run = run?;
     if let Some(value) = run.result {
@@ -80,6 +99,7 @@ pub async fn wake(
     app.state.unreported_requests = run.unreported_requests;
     app.state.reserved_tokens = run.reserved_tokens;
     app.state.elapsed_ms = run.elapsed_ms;
+    app.state.completed_at = now.saturating_add(run.elapsed_ms.min(i64::MAX as u64) as i64);
     app.state.finished = matches!(
         app.state.conclusion,
         Conclusion::Satisfied { .. } | Conclusion::Unable { .. } | Conclusion::Withdrawn
@@ -99,7 +119,7 @@ pub async fn wake(
     Ok(app.state)
 }
 
-fn retry_reflex(now: i64) -> Reflex {
+pub(crate) fn retry_reflex(now: i64) -> Reflex {
     Reflex {
         id: "retry".into(),
         at: now.saturating_add(300_000),

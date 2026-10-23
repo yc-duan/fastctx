@@ -579,6 +579,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         case_sensitive: !cfg!(any(windows, target_os = "macos")),
         version: env!("CARGO_PKG_VERSION").to_string(),
         sentinels: true,
+        sentinel_look: true,
         completion_receipts: true,
         upload_resumes: true,
         attachment_references: true,
@@ -824,11 +825,15 @@ impl fastctx_net::link::Node for Handler {
                         .map(|(taken, following)| RemoteReply::OnReceipt { taken, following })
                         .map_err(|error| Failure::new(format!("reading the on receipt: {error}")))
                 }
-                RemoteCall::Follow { origin, job, out_from, err_from } => {
+                RemoteCall::Follow { mut origin, job, out_from, err_from } => {
+                    if origin.sentinel.is_some() { origin.account = Some(HubAccount {hub:hub.clone(),account:caller.account.clone()}); }
                     let stream = stream.ok_or_else(|| Failure::new("following an on needs a data connection"))?;
                     crate::on::serve_follow(&node, origin, job, out_from, err_from, stream).await
                 }
-                RemoteCall::StopOn { origin, job } => crate::on_stop::serve(&node, origin, job).await,
+                RemoteCall::StopOn { mut origin, job } => {
+                    if origin.sentinel.is_some() { origin.account = Some(HubAccount {hub:hub.clone(),account:caller.account.clone()}); }
+                    crate::on_stop::serve(&node, origin, job).await
+                },
                 RemoteCall::StopJob { job, by } => {
                     // The user is the user on whichever of their machines they
                     // asked; an agent is named with where it lives.

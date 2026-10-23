@@ -51,7 +51,7 @@ impl Jobs {
         let record = read(&path).await.inspect_err(|_| {
             crate::inbox::retry_job(node, &path);
         })?;
-        let writes = if record.end.is_some() {
+        let writes = if record.end.is_some() && !record.is_sentinel() {
             crate::run_facts::writes(&path).map_err(|error| failure("reading write facts", error))?
         } else {
             Vec::new()
@@ -98,8 +98,11 @@ impl Jobs {
         let launched = tokio::task::spawn_blocking(move || -> Result<run::Launched, Failure> {
             let _collecting = registering.disk.lock();
             let home = user_home().map_err(|error| failure("finding the home directory", error))?;
-            let environment =
+            let mut environment =
                 world_process_environment().map_err(|error| failure("reading the user's environment", error))?;
+            if on.as_ref().is_some_and(|(on,_)|on.sentinel.is_some()) && fastctx_hands::run::sentinel::available() {
+                environment.push(("FASTCTX_LAB_UNSANDBOXED_SENTINEL".into(), "1".into()));
+            }
             // An `on` job hands its standard error back apart from its output,
             // and reads the input that came with it (`world-run.md`).
             let (on, mode, input) = match on {
@@ -121,7 +124,7 @@ impl Jobs {
             let launched = run::launch::launch_with_io_registered(&launch, mode, input.as_deref(), |path| {
                 if let Some(registration) = registration {
                     *registration.lock().expect("never poisoned") =
-                        Some(crate::on::Follower::reserved(&registering, path));
+                        Some(crate::on::Follower::reserved(&registering, path, on.as_ref().is_some_and(|on|on.sentinel.is_some())));
                 }
             })?;
             crate::job_watch::start(&registering, &launched.record, launched.supervisor.clone());

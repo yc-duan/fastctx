@@ -173,6 +173,9 @@ pub const SILENT_FOR: std::time::Duration = std::time::Duration::from_secs(30);
 /// Where an `on` was sent from, as the machine running it records it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OnOrigin {
+    /// Internal observations retain their identity through execution and recovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sentinel: Option<SentinelProbe>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub call_id: Option<String>,
     /// The resident that wrote the `on`, at the machine it lives on; the
@@ -259,4 +262,11 @@ pub enum OnPiece {
     Ended {
         end: OnEnd,
     },
+}
+
+/// An internal observation, distinct from the owner's ordinary shell work.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SentinelProbe {
+    pub id: crate::SentinelId,
+    pub generation: u64,
 }

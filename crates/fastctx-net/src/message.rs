@@ -85,7 +85,7 @@ pub fn worked_for(from: &fastctx_types::MachineName, call: &RemoteCall) -> Optio
         resident: resident.clone(),
     };
     match call {
-        RemoteCall::On { origin, .. } | RemoteCall::Follow { origin, .. } => Some(origin.resident.clone()),
+        RemoteCall::On { origin, .. } | RemoteCall::Follow { origin, .. } => origin.sentinel.is_none().then(||origin.resident.clone()),
         RemoteCall::Run { resident, .. } | RemoteCall::Place { resident, .. } => Some(address(resident)),
         RemoteCall::Ask { asker, .. } => Some(address(asker)),
         _ => None,

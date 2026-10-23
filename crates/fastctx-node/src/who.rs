@@ -139,7 +139,7 @@ pub(crate) fn running_jobs(jobs: &Path, running: &mut Vec<RunningJob>) -> io::Re
             continue;
         }
         let job = record::read(&path)?;
-        if job.end.is_none() {
+        if job.end.is_none() && !job.is_sentinel() {
             let account = job.on.and_then(|on| on.account).or(job.account);
             running.push(RunningJob {
                 source: None,
