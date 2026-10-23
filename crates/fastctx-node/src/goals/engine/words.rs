@@ -18,12 +18,23 @@ pub(super) const RETRY_LIMIT: &str = "The goal has failed for six hours while th
 pub(super) const QUOTA_RECOVERED: &str = "The goal's usage pause has ended.";
 pub(super) const QUOTA_UNKNOWN: &str = "The host has not confirmed that ordinary usage is allowed.";
 
+/// Why the previous turn stopped, as the host's category and its own words
+/// where it gave them, for the turn that tries again.
 pub(super) fn stopped(stop: &StopReason) -> String {
-    let category = stop.category.as_ref().map(ToString::to_string).unwrap_or_else(|| format!("{:?}", stop.kind));
-    format!(
-        "The previous turn stopped: {category}.\n{}",
-        stop.message.as_deref().unwrap_or("No host message was reported.")
-    )
+    // A category is a name, or an object of one name: `{"world": "host_exited"}`.
+    let category = match &stop.category {
+        Some(serde_json::Value::String(category)) => category.clone(),
+        Some(serde_json::Value::Object(one)) if one.len() == 1 => {
+            let (name, value) = one.iter().next().expect("one entry");
+            value.as_str().map_or_else(|| name.clone(), str::to_owned)
+        }
+        Some(category) => category.to_string(),
+        None => serde_json::to_value(stop.kind).ok().and_then(|kind| kind.as_str().map(str::to_owned)).unwrap_or_default(),
+    };
+    match stop.message.as_deref().map(str::trim).filter(|message| !message.is_empty()) {
+        Some(message) => format!("The previous turn stopped with an error ({category}). The host said:\n{message}"),
+        None => format!("The previous turn stopped with an error ({category})."),
+    }
 }
 
 pub(super) fn review(cause: ReviewCause, verdict: &Verdict) -> String {
@@ -52,23 +63,28 @@ pub(super) fn reminder(
         "The goal is still on, and you have been waiting {} min on:\n",
         now.duration_since(since).as_secs().max(0) / 60
     );
+    use fastctx_types::turn_evidence::{Liveness, WaitKind};
     for handle in waiting {
-        let elapsed = handle
-            .since
-            .map(|at| format!("{} min", now.duration_since(at).as_secs().max(0) / 60))
-            .unwrap_or_else(|| "duration unknown".into());
-        let output = handle
-            .output
-            .as_ref()
-            .map(|output| format!("{} bytes; complete output and latest lines: {}", output.bytes, output.path))
-            .unwrap_or_else(|| "no output file reported".into());
-        let growth =
-            handle.output_growth.map(|growth| format!("+{growth} bytes")).unwrap_or_else(|| "growth unknown".into());
-        let _ = writeln!(
-            text,
-            "- {} on {} · {:?} · {} · {:?} · {}; {}; {}",
-            handle.id, handle.machine, handle.kind, handle.summary, handle.liveness, elapsed, growth, output
-        );
+        let kind = match handle.kind {
+            WaitKind::Job => "job",
+            WaitKind::Colleague => "colleague",
+            WaitKind::Sentinel => "sentinel",
+            WaitKind::Timer => "timer",
+        };
+        let state = match &handle.liveness {
+            Liveness::Alive => "alive".to_string(),
+            Liveness::Ended => "ended".to_string(),
+            Liveness::Unknown { reason } => format!("not known now ({reason})"),
+        };
+        let mut line = format!("- {} on {} · {kind} · {} · {state}", handle.id, handle.machine, handle.summary);
+        if let Some(at) = handle.since {
+            let _ = write!(line, " · {} min", now.duration_since(at).as_secs().max(0) / 60);
+        }
+        let growth = handle.output_growth.map(|growth| format!(", +{growth}")).unwrap_or_default();
+        if let Some(output) = &handle.output {
+            let _ = write!(line, " · output {} ({} bytes{growth})", output.path, output.bytes);
+        }
+        let _ = writeln!(text, "{line}");
     }
     text.push_str("If they are moving, say so in a line and keep waiting. If one has stopped or is no longer\nneeded, it is yours to deal with.");
     text
