@@ -1,6 +1,8 @@
 //! The account-editable collaboration guidance and fixed World tool text.
 
 pub const GOAL_RUNTIME_REQUIRED: &str = "The colleague goal runtime is not connected.";
+/// A colleague works toward a goal, and goals are kept with an account on its hub.
+pub const GOAL_NEEDS_NETWORK: &str = "Colleagues need this computer to be in a network, where their goals are kept.";
 pub const NOT_YOUR_COLLEAGUE: &str = "A conversation stops only colleagues it asked for.";
 pub const NO_NESTING: &str = "Colleagues do not ask for colleagues.";
 pub const TREE_HUB_OLD: &str = "Update the hub to read collaboration trees.";

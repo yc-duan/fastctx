@@ -69,20 +69,15 @@ pub async fn ask(
             ));
         }
     };
-    let here = node.machine();
     let (colleague, account) = match chosen.whose {
         Whose::Account { link, account } => {
             let request = Request { about: &about, turn: turn.clone(), town: town.as_ref(), label: label.clone(), prompt };
             let colleague = ask_for_account(node, &link, &account, chosen.started, request).await?;
             (colleague, Some(fastctx_types::access::HubAccount { hub: link.membership().id.clone(), account }))
         }
-        // This computer's own settings, in no network: the colleague is born
-        // here, for whoever this computer's sessions work for.
-        Whose::Computer => {
-            let address = Address { machine: here.clone(), resident: asker.clone() };
-            let id = ask_here(node, Requester { address, turn: turn.clone() }, Acting::Here, town.clone(), label.clone(), prompt, chosen.started).await?;
-            (Address { machine: here, resident: id }, None)
-        }
+        // This computer's own settings, in no network: the colleague would be
+        // born here, but no account keeps the goal it works toward.
+        Whose::Computer => return Err(Failure::not_run(fastctx_types::collab_prompt::GOAL_NEEDS_NETWORK)),
     };
     let action = Action {
         turn, at,

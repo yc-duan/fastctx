@@ -139,11 +139,15 @@ pub fn decode(files: &[File]) -> Result<Option<Mutation>, String> {
     for file in files {
         crate::ledger::check_path(&file.path)?;
     }
+    // `memory/<name>/vNNNNNN.json` is a revision, `memory/<journal>/evidence/<file>.json`
+    // evidence and `memory/<journal>/files/<file>` its bytes: told apart by position,
+    // so a document may itself be called `files` or `evidence`.
+    let folder = |path: &str| path.split('/').nth(2).filter(|_| path.split('/').count() >= 4).map(str::to_owned);
     let metadata = files
         .iter()
-        .find(|file| file.path.ends_with(".json") && !file.path.contains("/files/"))
+        .find(|file| file.path.ends_with(".json") && folder(&file.path).as_deref() != Some("files"))
         .ok_or(fastctx_types::memory::words::MISSING_METADATA)?;
-    if metadata.path.contains("/evidence/") {
+    if folder(&metadata.path).as_deref() == Some("evidence") {
         let evidence: Evidence = serde_json::from_slice(&metadata.bytes.0).map_err(|error| error.to_string())?;
         markdown::check_name(&evidence.journal)?;
         crate::ledger::check_path(&evidence.name)?;

@@ -21,6 +21,7 @@ struct Index {
 
 /// Disk changes finish before their in-memory counterpart becomes visible.
 /// The mutex covers only local records and is never held across an await.
+/// Every row has exactly one due entry, at its `next_attempt`, unless claimed.
 pub struct Store {
     directory: PathBuf,
     index: SyncMutex<Index>,
@@ -112,13 +113,17 @@ impl Store {
     /// Reserves one due row in memory. The effect must call `begin` after taking its owner's gate.
     pub fn claim(&self, now: Timestamp) -> Option<Timer> {
         let mut index = self.index.lock();
-        let (at, id) = index.due.first()?.clone();
-        if at > now {
-            return None;
+        loop {
+            let (at, id) = index.due.first()?.clone();
+            if at > now {
+                return None;
+            }
+            index.due.remove(&(at, id.clone()));
+            // An entry of a row replaced since is not that row's turn.
+            if let Some(timer) = index.rows.get(&id).filter(|row| row.next_attempt == at) {
+                return Some(timer.clone());
+            }
         }
-        index.due.remove(&(at, id.clone()));
-        let timer = index.rows.get(&id)?.clone();
-        Some(timer)
     }
 
     /// Freezes the first firing and records this attempt before any external effect.
@@ -167,8 +172,11 @@ impl Store {
     /// A disk failure must not strand a claimed timer in memory until the next restart.
     pub fn release(&self, timer: &Timer, now: Timestamp) {
         let mut index = self.index.lock();
-        if let Some(row) = index.rows.get(&timer.id).filter(|row| row.delivery == timer.delivery).cloned() {
-            index.due.insert((now.checked_add(Duration::from_secs(60)).unwrap_or(now), row.id));
+        if let Some(row) = index.rows.get_mut(&timer.id).filter(|row| row.delivery == timer.delivery) {
+            // In memory only, as the disk refused it; the record on disk stays due earlier.
+            row.next_attempt = now.checked_add(Duration::from_secs(60)).unwrap_or(now);
+            let entry = (row.next_attempt, row.id.clone());
+            index.due.insert(entry);
         }
         drop(index);
         self.changed.notify_one();
