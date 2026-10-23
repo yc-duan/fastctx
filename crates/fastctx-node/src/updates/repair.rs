@@ -145,7 +145,7 @@ fn drive_checked(node: &Arc<Node>) -> Result<bool, String> {
         if let Some(origin) = &request.origin
             && let Some(link) = node.links().iter().find(|link| link.hub() == origin).cloned()
             && let Some(network) = link.current_versions()
-            && !network.repairs.get(&link.name()).is_some_and(|d| d.id == request.id)
+            && network.repairs.get(&link.name()).is_none_or(|d| d.id != request.id)
             && !request.cancelled
             && !report.as_ref().is_some_and(|r| r.id == request.id && r.success)
         {
@@ -430,7 +430,7 @@ async fn prepare(node: &Arc<Node>, pending: &Pending) -> Result<(), String> {
     if let Some(origin) = &pending.origin
         && let Some(link) = node.links().iter().find(|link| link.hub() == origin).cloned()
         && let Some(network) = link.current_versions()
-        && !network.repairs.get(&link.name()).is_some_and(|due| due.id == pending.id)
+        && network.repairs.get(&link.name()).is_none_or(|due| due.id != pending.id)
     {
         return Err("repair arrangement was withdrawn before execution".into());
     }

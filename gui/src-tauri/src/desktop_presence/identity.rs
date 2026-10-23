@@ -81,6 +81,18 @@ pub fn install() -> Result<(), String> {
         properties.Commit().map_err(|e| e.to_string())?;
         let file: IPersistFile = link.cast().map_err(|e| e.to_string())?;
         file.Save(&HSTRING::from(shortcut()?.as_path()), true).map_err(|e| e.to_string())?;
+    }
+    // The repair shortcut is a convenience beside the identity notifications
+    // need; an installation goes on without it, and says why in its details.
+    if let Err(error) = repair_link() {
+        eprintln!("the Repair Fastctx shortcut was not created: {error}");
+    }
+    unsafe { shell_changed() }
+}
+
+/// A Start menu shortcut that opens this program's own repair.
+fn repair_link() -> Result<(), String> {
+    unsafe {
         let repair: IShellLinkW =
             CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).map_err(|e| e.to_string())?;
         repair
@@ -91,10 +103,8 @@ pub fn install() -> Result<(), String> {
             .SetDescription(&HSTRING::from("Repair Fastctx program files; keep user data"))
             .map_err(|e| e.to_string())?;
         let file: IPersistFile = repair.cast().map_err(|e| e.to_string())?;
-        file.Save(&HSTRING::from(repair_shortcut()?.as_path()), true).map_err(|e| e.to_string())?;
-        shell_changed()?;
+        file.Save(&HSTRING::from(repair_shortcut()?.as_path()), true).map_err(|e| e.to_string())
     }
-    Ok(())
 }
 
 /// Refuses to remove another installation's handler.

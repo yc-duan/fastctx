@@ -46,10 +46,10 @@ pub fn run(args: RepairArgs) -> anyhow::Result<()> {
     let root = args.dir.clone();
     let id = args.id.clone();
     let result = if args.background { background(args) } else { run_inner(args) };
-    if let Err(error) = &result {
-        if let Err(recording) = fastctx_install::repair::record_failure(&root, id.as_deref(), &format!("{error:#}")) {
-            return Err(anyhow::anyhow!("{error:#}; recording repair failure: {recording:#}"));
-        }
+    if let Err(error) = &result
+        && let Err(recording) = fastctx_install::repair::record_failure(&root, id.as_deref(), &format!("{error:#}"))
+    {
+        return Err(anyhow::anyhow!("{error:#}; recording repair failure: {recording:#}"));
     }
     result
 }

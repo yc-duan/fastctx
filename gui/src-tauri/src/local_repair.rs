@@ -89,7 +89,7 @@ pub fn launch(directory: Option<PathBuf>, reopen: bool) -> Result<Accepted, Stri
     }
     let prepared = prepare(&root)?;
     let program = &prepared.program;
-    let mut command = std::process::Command::new(&program);
+    let mut command = std::process::Command::new(program);
     command
         .args(["renew", "repair", "--background", "--dir"])
         .arg(&root)
@@ -135,10 +135,10 @@ struct Prepared {
 }
 
 fn prepare(root: &Path) -> Result<Prepared, String> {
-    if let Some(program) = crate::setup::carried() {
-        if fastctx_install::program::inspect(&program).is_ok() {
-            return Ok(Prepared { program, id: None, _directory: None });
-        }
+    if let Some(program) = crate::setup::carried()
+        && fastctx_install::program::inspect(&program).is_ok()
+    {
+        return Ok(Prepared { program, id: None, _directory: None });
     }
     let stable = fastctx_install::renewal::installed(root);
     if fastctx_install::program::inspect(&stable).is_ok_and(|build| {

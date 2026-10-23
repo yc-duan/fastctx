@@ -31,7 +31,12 @@ impl Journal {
             && previous.id == *id
             && previous.finished.is_none()
         {
+            // Only the package step is handed over unfinished: the earlier
+            // program obtained and checked the package, and this one goes on
+            // from it. Any other step left checking was cut off, and is
+            // checked again from the start.
             inherited = previous.steps;
+            inherited.retain(|step| step.outcome != Outcome::Checking || step.layer == "package");
             for step in &mut inherited {
                 if step.outcome == Outcome::Checking {
                     step.outcome = if step.actions.is_empty() { Outcome::Unchanged } else { Outcome::Repaired };

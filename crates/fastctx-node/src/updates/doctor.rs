@@ -88,10 +88,11 @@ pub(super) fn heard(node: &Arc<Node>) {
                 continue;
             }
             let Some(running) = network.machines.get(&member.name) else { continue };
+            let key = (link.hub().clone(), member.key);
             if running.repair_supported {
+                changed |= forget(&mut state.observed, &key);
                 continue;
             }
-            let key = (link.hub().clone(), member.key);
             if let Some(due) = network.repairs.get(&member.name) {
                 if !member.online
                     || running.away
@@ -150,6 +151,9 @@ pub(super) fn heard(node: &Arc<Node>) {
             }
             let Some(offer) = network.on(Channel::of(&running.kernel)) else { continue };
             if release(&offer.version) < release(REPAIR_SINCE) || release(&offer.version) <= release(&running.kernel) {
+                // A machine that caught up waits its full patience again
+                // when a later release finds it stuck.
+                changed |= forget(&mut state.observed, &key);
                 continue;
             }
             let at = match state.observed.iter().position(|o| o.hub == key.0 && o.key == key.1) {
@@ -192,4 +196,11 @@ pub(super) fn heard(node: &Arc<Node>) {
     if changed && let Err(error) = fastctx_install::renewal::write_json(&file, &state.observed) {
         node.log.line(format_args!("saving {}: {error}", file.display()));
     }
+}
+
+/// Drops what was observed of a machine no longer stuck; true when there was.
+fn forget(observed: &mut Vec<Observed>, key: &Member) -> bool {
+    let before = observed.len();
+    observed.retain(|o| !(o.hub == key.0 && o.key == key.1));
+    observed.len() != before
 }

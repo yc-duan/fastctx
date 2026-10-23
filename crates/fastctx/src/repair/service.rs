@@ -7,6 +7,9 @@ use fastctx_types::{layout::WorldDir, renewal::Build};
 use std::path::Path;
 use std::time::Duration;
 
+/// How long a repair waits for the serving node to hand the World over.
+const YIELDING: Duration = Duration::from_secs(30 * 60);
+
 pub(super) fn run(
     root: &Path,
     build: &Build,
@@ -90,8 +93,17 @@ pub(super) fn run(
                 {
                     return Err(error.into());
                 }
+                // The node hands over once no turn is running; a repair waits
+                // for that as long as an update does, and then says so.
+                let asked = std::time::Instant::now();
                 while matches!(runtime.block_on(crate::renew::observing(&world))?, Probe::Running(current) if current.process == node.process)
                 {
+                    anyhow::ensure!(
+                        asked.elapsed() < YIELDING,
+                        "the node serving {} did not hand over within {} minutes; turns may still be running",
+                        root.display(),
+                        YIELDING.as_secs() / 60
+                    );
                     std::thread::sleep(Duration::from_millis(250));
                 }
             }

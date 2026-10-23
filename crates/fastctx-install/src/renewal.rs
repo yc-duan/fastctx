@@ -509,12 +509,11 @@ fn install_inner(root: &Path, program: &Program, repair: bool) -> io::Result<()>
     ensure_private_dir(&root.join("bin")).map_err(|e| at("preparing executable directory", &root.join("bin"), e))?;
     let _lock = FileLock::acquire(&root.join("apply.lock"))?;
     let installed = installed(root);
-    if let Some(current) = installed_build(&installed, repair).map_err(io::Error::other)? {
-        if current != program.build && !crate::program::newer(&program.build, &current).map_err(io::Error::other)? {
-            return Err(io::Error::other(
-                "the stable World program advanced after staging; no older image was installed",
-            ));
-        }
+    if let Some(current) = installed_build(&installed, repair).map_err(io::Error::other)?
+        && current != program.build
+        && !crate::program::newer(&program.build, &current).map_err(io::Error::other)?
+    {
+        return Err(io::Error::other("the stable World program advanced after staging; no older image was installed"));
     }
     publish_image(&program.path, &installed)?;
     // The installed program's signature is its own, or none.
