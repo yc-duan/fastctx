@@ -84,8 +84,12 @@ pub(crate) async fn control(
     match request {
         Request::Help => {
             let (_, settings) = fastctx_sentinel::settings::read(records, &scope).await.map_err(fail)?;
-            let home = settings.home.map(|home| home.to_string()).unwrap_or_else(|| words::NO_HOME.into());
-            Ok(Reply::Help { text: words::HELP.replace("<machine>", &home) })
+            // Without a home the help still reads true, and says what is missing first.
+            let text = match settings.home {
+                Some(home) => words::HELP.replace("<machine>", home.as_str()),
+                None => format!("{}.\n\n{}", words::NO_HOME, words::HELP.replace("<machine>", "the machine the user chooses for them")),
+            };
+            Ok(Reply::Help { text })
         }
         Request::Create { mut request } => {
             let Caller::Resident(owner) = caller else {
