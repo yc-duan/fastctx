@@ -199,6 +199,8 @@ export interface MachineFacts {
   page_accounts?: boolean;
   /** It says where an attached file may be kept before any of it comes. */
   attachment_places?: boolean;
+  /** It takes a colleague's question without being woken by it. */
+  goal_questions?: boolean;
   name: MachineName;
   os: string;
   arch: string;

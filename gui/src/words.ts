@@ -259,6 +259,8 @@ export interface Words {
   /** A colleague handed back its answer: "GPT 交回　14 分钟". */
   answered(label: string, took: string | null): string;
   answerFailed(label: string): string;
+  /** A colleague asked the conversation that asked it something. */
+  colleagueAsks(question: string): string;
   /** The watch on the session ended: the node ended it, or the connection
    *  to it broke. */
   watchEnded(why: string | null): string;
@@ -546,6 +548,7 @@ export const zh: Words = {
   regenerate: "重新回答",
   answered: (label, took) => (took ? `${label} 交回　${took}` : `${label} 交回`),
   answerFailed: (label) => `${label} 本轮失败`,
+  colleagueAsks: (question) => `同事问：${question}`,
   watchEnded: () => "已停止同步",
   watchRefused: "你的账号看不了这段对话",
   watchInterrupted: () => "连接中断，正在重连…",
@@ -827,6 +830,7 @@ export const en: Words = {
   regenerate: "Answer again",
   answered: (label, took) => (took ? `${label} handed back after ${took}` : `${label} handed back`),
   answerFailed: (label) => `${label}: turn failed`,
+  colleagueAsks: (question) => `A colleague asks: ${question}`,
   watchEnded: () => "Sync stopped",
   watchRefused: "Your account can't see this conversation",
   watchInterrupted: () => "Disconnected, reconnecting…",

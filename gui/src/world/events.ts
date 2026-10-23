@@ -282,6 +282,9 @@ export type Notice =
     }
   | { kind: "answer"; colleague: Address; label: string; turn: string; end: TurnEnd }
   | { kind: "health"; colleague: Address; label: string; health: Health }
+  /** A question a colleague working toward a goal asked the conversation
+   *  that asked it; it waits for that one's next turn. */
+  | { kind: "question"; colleague: Address; id: string; text: string }
   | { kind: "words"; from: Speaker; text: string }
   | { kind: "attached"; message: JsonValue; text: string }
   | { kind: "world"; fact: WorldFact; text: string };

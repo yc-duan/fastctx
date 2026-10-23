@@ -640,6 +640,50 @@ function asking(): Specimen {
         },
       });
       break;
+    case "goal-question": {
+      // A goal is on: Claude's question goes in without stopping its work.
+      const asked = [
+        {
+          question: "批量提交的大小定多少？",
+          header: "批量",
+          multiSelect: false,
+          options: [
+            { label: "1000", description: "回放快，提交多" },
+            { label: "5000", description: "现在的做法" },
+            { label: "20000", description: "提交少，出错时回放多" },
+          ],
+        },
+        {
+          question: "这次改动要在哪些机器上验证？",
+          header: "机器",
+          multiSelect: true,
+          options: [
+            { label: "laptop", description: "Windows，本地 Postgres" },
+            { label: "lab", description: "Linux，跑整套集成测试" },
+            { label: "server", description: "线上的副本" },
+          ],
+        },
+      ];
+      // A colleague working toward its own goal asked this conversation too.
+      const question = "迁移脚本里旧的 ingest_files 要不要顺手删掉？\n删掉的话回滚要重新导入。";
+      s.heard("t2", { kind: "world" }, question, 2, { kind: "question", colleague: { machine: "lab", resident: "codex-77a1" }, id: "q-1", text: question });
+      s.say("t2", "message", "我先按 5000 接着做，下面两件你有空再定。", 2);
+      s.push({
+        event: "finished",
+        turn: "t2",
+        item: {
+          id: JSON.stringify(["fastctx_goal_question", "session-9c1e", "toolu_02"]),
+          kind: "message",
+          text: asked.map((one) => one.question).join("\n"),
+          detail: {
+            delivery: "async",
+            questions: asked.map((one) => ({ title: one.question, options: one.options.map((option) => option.label), multiSelect: one.multiSelect })),
+            fastctx_goal_question: { tool_use_id: "toolu_02", agent_id: null, questions: asked },
+          },
+        },
+      });
+      break;
+    }
     case "claude-question":
       s.say("t2", "message", "提交之前有两件事想问你。", 2);
       s.push({

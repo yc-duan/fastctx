@@ -505,6 +505,17 @@
   margin: 0;
 }
 
+/* Said after a question that takes several answers, on its last line. */
+.question-title p:has(+ .question-many) {
+  display: inline;
+}
+
+.question-many {
+  margin-left: var(--space-2);
+  font-size: var(--size-fine);
+  color: var(--text-3);
+}
+
 .question-card .ask-options {
   display: flex;
   flex-wrap: wrap;

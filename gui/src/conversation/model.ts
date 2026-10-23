@@ -1533,16 +1533,29 @@ export function runsOf(members: readonly Entry[]): Entry[][] {
 }
 
 /** The questions of an agent's message asked without waiting, where it is
- *  one: Codex marks it with `questions` beside its words. */
+ *  one: Codex marks it with `questions` beside its words, and a goal's
+ *  Claude question keeps Claude's own questions too, with what each answer
+ *  means and whether several may be chosen. */
 function questionsOf(detail: JsonValue | undefined): AsyncQuestion[] | null {
   const raw = property(detail ?? null, "questions");
   if (!Array.isArray(raw) || !raw.length) return null;
+  const claude = property(property(detail ?? null, "fastctx_goal_question") ?? null, "questions");
   const questions: AsyncQuestion[] = [];
-  for (const one of raw) {
+  for (const [index, one] of raw.entries()) {
     const title = property(one, "title");
     if (typeof title !== "string" || !title.trim()) return null;
     const options = property(one, "options");
-    questions.push({ title, options: Array.isArray(options) ? options.filter((o): o is string => typeof o === "string") : null });
+    const question: AsyncQuestion = { title, options: Array.isArray(options) ? options.filter((o): o is string => typeof o === "string") : null };
+    if (property(one, "multiSelect") === true) question.multiple = true;
+    const offered = Array.isArray(claude) ? property(claude[index] ?? null, "options") : null;
+    if (Array.isArray(offered)) {
+      const notes = offered.map((option) => {
+        const note = property(option, "description");
+        return typeof note === "string" && note.trim() ? note : null;
+      });
+      if (notes.some((note) => note !== null)) question.notes = notes;
+    }
+    questions.push(question);
   }
   return questions;
 }

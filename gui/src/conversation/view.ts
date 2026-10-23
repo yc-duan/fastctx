@@ -328,7 +328,8 @@ export class ConversationView {
       if (!this.own(event)) return;
       // Words of one's own answer a question instead of an option.
       const free = (event.target as HTMLElement).closest<HTMLInputElement>("[data-question-free]");
-      if (!free?.value.trim()) return;
+      // Where several may be chosen, they are kept beside the words.
+      if (!free?.value.trim() || free.closest("fieldset")?.hasAttribute("data-multiple")) return;
       for (const option of free.closest("fieldset")?.querySelectorAll<HTMLElement>("[data-question-pick]") ?? []) option.setAttribute("aria-pressed", "false");
     });
     // On a touch screen every answer has its actions under it; the user's
@@ -1387,7 +1388,7 @@ export class ConversationView {
   private noticeOf(entry: HeardEntry): Notice | null {
     const notice = entry.notice;
     if (!notice || entry.from?.kind === "user") return null;
-    return notice.kind === "answer" || notice.kind === "health" || notice.kind === "world" ? notice : null;
+    return notice.kind === "answer" || notice.kind === "health" || notice.kind === "question" || notice.kind === "world" ? notice : null;
   }
 
   private heardEntry(entry: HeardEntry): string {
@@ -1437,6 +1438,10 @@ export class ConversationView {
         ok = false;
         said = `${notice.label}: ${healthSaid(notice.health, words)}`;
         break;
+      case "question":
+        said = words.colleagueAsks(notice.text.trim().split("\n")[0] ?? "");
+        more = "text";
+        break;
       case "world": {
         const fact = notice.fact;
         said =
@@ -1457,7 +1462,7 @@ export class ConversationView {
       default:
         said = "";
     }
-    const mark = ok ? glyph("check", 14) : glyph("cross", 14);
+    const mark = notice.kind === "question" ? glyph("ask", 14) : ok ? glyph("check", 14) : glyph("cross", 14);
     const line = `<span class="notice-mark${ok ? "" : " wrong"}">${mark}</span><span class="notice-said">${escape(said)}</span>`;
     if (!more) return `<div class="notice-line${ok ? "" : " failed"}">${line}</div>`;
     const open = this.openRows.has(entry.key);
@@ -1473,6 +1478,8 @@ export class ConversationView {
       into.innerHTML = `<div class="prose notice-answer">${render(notice.end.last_message)}</div>`;
     } else if (notice.kind === "world") {
       into.innerHTML = `<div class="told-plain">${plain(entry.text)}</div>`;
+    } else if (notice.kind === "question") {
+      into.innerHTML = `<div class="told-plain">${plain(notice.text)}</div>`;
     }
   }
 
@@ -2527,6 +2534,11 @@ export class ConversationView {
     if (target.dataset.questionPick !== undefined) {
       const fieldset = target.closest("fieldset");
       const pressed = target.getAttribute("aria-pressed") !== "true";
+      // Several may be chosen together; otherwise one, in place of words.
+      if (fieldset?.hasAttribute("data-multiple")) {
+        target.setAttribute("aria-pressed", String(pressed));
+        return;
+      }
       for (const other of fieldset?.querySelectorAll<HTMLElement>("[data-question-pick]") ?? []) other.setAttribute("aria-pressed", "false");
       target.setAttribute("aria-pressed", String(pressed));
       const free = fieldset?.querySelector<HTMLInputElement>("[data-question-free]");

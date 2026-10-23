@@ -10,6 +10,11 @@ export interface AsyncQuestion {
   title: string;
   /** The answers offered; a question without them takes free words. */
   options: string[] | null;
+  /** What each answer offered means, where the agent said; told when the
+   *  pointer rests on it. */
+  notes?: (string | null)[];
+  /** Several answers may be chosen together. */
+  multiple?: boolean;
 }
 
 export const REPLY_TAG = "send_user_message_question_reply";
