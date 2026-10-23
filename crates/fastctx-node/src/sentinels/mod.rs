@@ -1,8 +1,9 @@
 //! Account-scoped sentinel services and their integration ports.
 mod control;
 mod effects;
+mod delivery;
 mod worker;
-pub(crate) use worker::start;
+pub(crate) use worker::{start,report};
 pub(crate) mod deletion;
 mod settings;
 pub(crate) mod look;
@@ -19,6 +20,7 @@ pub(crate) use transport::home_call;
 #[derive(Default)]
 pub(crate) struct Services {
     pub records: OnceLock<Arc<dyn Records>>,
+    pub native_watches: std::sync::Mutex<std::collections::HashSet<fastctx_types::ResidentId>>,
     pub credentials: OnceLock<Arc<dyn Credentials>>,
     pub timers: OnceLock<Arc<dyn fastctx_sentinel::ports::Timers>>,
     worker: worker::Worker,

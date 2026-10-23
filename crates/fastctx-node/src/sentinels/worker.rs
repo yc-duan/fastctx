@@ -192,6 +192,7 @@ async fn enqueue(node: &Arc<Node>, scope: HubAccount, id: SentinelId, fired: Opt
             } else {
                 host.reconcile(&scope, &id).await?;
             }
+            super::delivery::pending(&node, &host, &scope, &id).await?;
             Ok::<(), String>(())
         }
         .await;
@@ -223,7 +224,7 @@ async fn delete_if_owner_deleted(node: &Node, host: &Host, scope: &HubAccount, i
     }
     Ok(())
 }
-fn report(node: &Node, key: &str, error: Option<String>) {
+pub(crate) fn report(node: &Node, key: &str, error: Option<String>) {
     let changed = {
         let mut errors = node.sentinels.worker.errors.lock().expect("never poisoned");
         match error {

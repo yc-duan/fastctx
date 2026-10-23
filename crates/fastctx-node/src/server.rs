@@ -593,6 +593,7 @@ impl Drop for Arrived<'_> {
         for resident in self.node.residents.left(&self.residents) {
             crate::colleagues::left(self.node, resident);
         }
+        for resident in &self.residents { crate::codex::native::left(self.node,resident); }
     }
 }
 
@@ -639,7 +640,7 @@ async fn collect(
                     .and_then(|now| now.turn)
                     .or_else(|| {
                         node.residents.about(&resident).and_then(|(about, _)| {
-                            if about.world_started && about.host.agent.as_str() == "codex" {
+                            if about.world_managed() && about.host.agent.as_str() == "codex" {
                                 let codex = node.codex.of(node, &about).ok()?;
                                 about.session.and_then(|thread| codex.running_turn(&thread))
                             } else {
@@ -660,7 +661,9 @@ fn native_delivery(node: &Node, resident: &ResidentId) -> bool {
     // response cannot deliver the parent's words to the intended thread;
     // sessions with a native channel exclusively use that channel.
     node.residents.about(resident).is_some_and(|(about, _)| {
-        (about.world_started && about.host.agent.as_str() == "codex") || crate::claude::paired(node, resident)
+        (about.host.agent.as_str() == "codex" && (about.world_started || about.session.as_ref().is_some_and(|thread| {
+            node.codex.of(node,&about).is_ok_and(|host|host.loaded(thread))
+        }))) || crate::claude::paired(node, resident)
     })
 }
 
@@ -820,7 +823,13 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 }
                 return Ok(Reply::Arrived(whereabouts));
             }
+            let codex = host.agent.as_str() == "codex";
+            let process = hints.host_process.clone();
             let whereabouts = node.residents.arrive(&node.world, &node.machine(), host, hints)?;
+            if codex && node.residents.about(&whereabouts.resident).is_some_and(|(about,_)|!about.world_started)
+                && let Err(error)=crate::codex::native_lifetime::record(&node.world,&whereabouts.resident,process) {
+                node.log.line(format_args!("recording the native host of {}: {error}",whereabouts.resident));
+            }
             Ok(Reply::Arrived(whereabouts))
         }
         Call::Run { resident, request, node: target, call_id } => {

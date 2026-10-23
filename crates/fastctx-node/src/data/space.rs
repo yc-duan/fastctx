@@ -439,7 +439,7 @@ fn describe(
                 let busy = now.is_some_and(|now| now.activity == Activity::Busy || now.turn.is_some());
                 let held = if busy {
                     Some("it is working; stop it first".to_string())
-                } else if resident.here && !resident.about.world_started {
+                } else if resident.here && !resident.about.world_managed() {
                     Some(format!("it is open in {}; close it there first", host_name(&resident.about.host.agent)))
                 } else {
                     running

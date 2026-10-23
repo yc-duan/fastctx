@@ -91,6 +91,7 @@ fn residents() -> Vec<ResidentNow> {
                 },
                 session: (i != 0).then(|| "thread-1".into()),
                 world_started: i != 0,
+            native_resumed: false,
                 model: (i != 0).then(|| "model-a".into()),
                 acting: if i == 0 {
                     fastctx_types::access::Acting::Here

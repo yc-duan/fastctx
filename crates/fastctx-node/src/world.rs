@@ -1177,7 +1177,8 @@ impl fastctx_net::link::Node for Handler {
                         if crate::on_delivery::park_from(&node, &to, &delivery, Some(&identity))? {
                             return Ok(Ok(()));
                         }
-                        match crate::speech::tell_here(&node, &to, delivery, Owed::Working).await {
+                        let owed = if matches!(delivery.notice, Notice::Sentinel { .. }) { Owed::Nobody } else { Owed::Working };
+                        match crate::speech::tell_here(&node, &to, delivery, owed).await {
                             Ok(_) => Ok(Ok(())),
                             Err(failure) => Err(io::Error::other(failure.message)),
                         }

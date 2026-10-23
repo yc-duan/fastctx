@@ -69,3 +69,23 @@ pub fn row(summary: &crate::sentinel_control::Summary) -> String {
         condition
     )
 }
+
+/// The event remains stable on disk; lateness is calculated when it is read.
+pub fn notification(observation: &crate::sentinel_notice::SentinelNotice, now: jiff::Timestamp) -> String {
+    use crate::sentinel_notice::Event;
+    let (what, reason, evidence) = match &observation.event {
+        Event::Alarm { .. } => ("alarm time reached", "", &[][..]),
+        Event::Satisfied {reason,evidence} => ("condition satisfied", reason.as_str(), evidence.as_slice()),
+        Event::Unable {reason} => ("unable to watch",reason.as_str(), &[][..]),
+    };
+    let late=now.as_millisecond().saturating_sub(observation.due.as_millisecond()).max(0)/1000;
+    let mut text=format!("=== sentinel {} on {}: {what} at {}; {late}s late ===\n",observation.sentinel,observation.machine,observation.at);
+    if !observation.condition.is_empty() {text.push_str(&format!("Watching: {}\n",observation.condition));}
+    if !observation.tell.is_empty() {text.push_str(&format!("Your note: {}\n",observation.tell));}
+    if !reason.is_empty() {text.push_str(reason);text.push('\n');}
+    for seen in evidence {
+        text.push_str(&format!("{} at {}: {}\n",seen.source,seen.at,seen.text.chars().take(2048).collect::<String>()));
+        if let Some(path)=&seen.full_path {text.push_str(&format!("Full observation on {}: {path}\n",observation.machine));}
+    }
+    text
+}

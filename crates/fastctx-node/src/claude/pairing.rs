@@ -243,6 +243,7 @@ pub(super) fn resident(node: &Node, registration: &Registration) -> io::Result<R
                 origin: Origin::User,
                 session: Some(first.session.clone()),
                 world_started: false,
+            native_resumed: false,
                 model: first.model_name(),
                 acting: Default::default(),
                 focus: Default::default(),

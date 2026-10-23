@@ -1,0 +1,85 @@
+//! Stable sentinel events enter the same durable inbox and letters as other answers.
+use crate::Node;
+use fastctx_sentinel::{
+    lifecycle,
+    resident::{Event, Host, Notification},
+};
+use fastctx_types::{
+    SentinelId,
+    access::{Acting, HubAccount, Purpose, Written},
+    remote::{RemoteCall, RemoteReply},
+    residents::Notice,
+    sentinel_notice::{Event as NoticeEvent, SentinelNotice},
+};
+use std::sync::Arc;
+
+pub(super) async fn pending(node: &Arc<Node>, host: &Host, scope: &HubAccount, id: &SentinelId) -> Result<(), String> {
+    for notification in host.notifications(scope, id).await? {
+        // Withdrawal or reassignment wins over an observation waiting to be delivered.
+        let Some((_, current)) = lifecycle::get(host.records.as_ref(), scope, id).await.map_err(|e| e.to_string())?
+        else {
+            return Ok(());
+        };
+        if current.definition != notification.registration.definition {
+            return Ok(());
+        }
+        send(node, &notification).await?;
+        host.delivered(&notification).await?;
+    }
+    Ok(())
+}
+async fn send(node: &Arc<Node>, notification: &Notification) -> Result<(), String> {
+    let registration = &notification.registration;
+    let definition = &registration.definition;
+    let scope = &registration.scope;
+    let link = node.link_of(&scope.hub).ok_or("the sentinel account's hub is not connected")?;
+    let destination = Written { name: definition.owner.machine.clone(), hub: Some(link.hub_name()) };
+    if !node.is_here(&destination) {
+        let view = crate::authorization::current_view(&link).map_err(|e| e.message)?;
+        if !view.member(&destination.name).is_some_and(|m| m.online) {
+            return Err("the owner is offline; the sentinel's observation is kept for it".into());
+        }
+        match link
+            .call(&destination.name, &scope.account, Purpose::Look, RemoteCall::Facts)
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.message)?
+        {
+            RemoteReply::Facts(facts) if facts.sentinels => {}
+            _ => return Err("upgrade the owner's machine to receive sentinel observations".into()),
+        }
+    }
+    let event = match &notification.event {
+        Event::Alarm { index } => NoticeEvent::Alarm { index: *index },
+        Event::Satisfied { reason, evidence } => {
+            NoticeEvent::Satisfied { reason: reason.clone(), evidence: evidence.clone() }
+        }
+        Event::Unable { reason } => NoticeEvent::Unable { reason: reason.clone() },
+    };
+    let notice = Notice::Sentinel {
+        observation: Box::new(SentinelNotice {
+            sentinel: definition.id.clone(),
+            generation: definition.generation,
+            machine: definition.home.clone(),
+            at: jiff::Timestamp::from_millisecond(notification.at).map_err(|e| e.to_string())?,
+            due: jiff::Timestamp::from_millisecond(notification.due).map_err(|e| e.to_string())?,
+            condition: definition.condition.clone(),
+            tell: definition.tell.clone(),
+            event,
+        }),
+    };
+    let identity = crate::speech::fixed_id("sentinel", &[&notification.id]);
+    let acting = Acting::one(scope.hub.clone(), scope.account.clone());
+    crate::speech::tell_at(
+        node,
+        &acting,
+        &definition.owner,
+        &destination,
+        identity,
+        notice,
+        crate::speech::Owed::Nobody,
+    )
+    .await
+    .map_err(|e| e.message)?;
+    Ok(())
+}

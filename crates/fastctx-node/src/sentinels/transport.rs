@@ -14,7 +14,7 @@ impl Homes for Transport {
     fn begin<'a>(&'a self, registration: &'a Registration, version: u64) -> FutureResult<'a, Summary> {
         Box::pin(async move {
             match self
-                .send(registration, HomeRequest::Begin { id: registration.definition.id.clone(), version })
+                .send(registration, HomeRequest::Begin { id: registration.definition.id.clone(), version, owner: registration.definition.owner.clone() })
                 .await?
             {
                 HomeReply::Summary { sentinel } if sentinel.definition == registration.definition => Ok(*sentinel),

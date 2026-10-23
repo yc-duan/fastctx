@@ -73,3 +73,4 @@ pub use names::{
     NoticeId, PageName, ResidentId, SentinelId, TownName,
 };
 pub use process::ProcessIdentity;
+pub mod sentinel_notice;

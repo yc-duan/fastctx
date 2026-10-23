@@ -1113,8 +1113,8 @@ pub async fn deliver(
     }
     let user_action =
         matches!(pending.delivery.notice, Notice::Words { from: Speaker::User { .. }, .. } | Notice::Attached { .. });
-    if !about.world_started && !stopped_background && !user_action {
-        // Facts wait for a closed foreground session; only the user resumes it.
+    if !about.world_started && !stopped_background && !user_action && !matches!(pending.delivery.notice, Notice::Sentinel { .. }) {
+        // Unrequested facts do not reopen a native foreground session.
         return Some(into_inbox(node, to, &session, directory, pending));
     }
     Some(match alive {
@@ -1462,6 +1462,7 @@ pub async fn open_here(
         origin: Origin::User,
         session: None,
         world_started: true,
+            native_resumed: false,
         model: None,
         acting: opened.acting,
         focus: opened.focus,

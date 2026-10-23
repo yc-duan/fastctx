@@ -75,7 +75,7 @@ impl Create {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HomeRequest {
-    Begin { id: SentinelId, version: u64 },
+    Begin { id: SentinelId, version: u64, owner: Address },
     Inspect { id: SentinelId },
     Withdraw { id: SentinelId },
 }

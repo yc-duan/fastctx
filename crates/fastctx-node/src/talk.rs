@@ -273,7 +273,7 @@ pub(crate) fn subscribe(
     match &about.session {
         Some(thread) if about.host.agent.as_str() == "codex" => {
             let codex = node.codex.of(node, &about)?;
-            let pending = if about.world_started { codex.requests(thread) } else { Vec::new() };
+            let pending = if about.world_managed() { codex.requests(thread) } else { Vec::new() };
             Ok((crate::codex::watch::requests(codex, thread.clone(), events), pending))
         }
         _ => Ok((events, Vec::new())),
@@ -362,7 +362,7 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRea
         crate::run_facts::attach(&directory, event).map_err(|error| Failure::new(error.to_string()))?;
     }
     let pending = match &about.session {
-        Some(thread) if about.world_started && about.host.agent.as_str() == "codex" => {
+        Some(thread) if about.world_managed() && about.host.agent.as_str() == "codex" => {
             node.codex.of(node, &about)?.requests(thread)
         }
         _ => Vec::new(),
@@ -869,6 +869,7 @@ pub async fn open_here(
         origin,
         session: Some(thread.clone()),
         world_started: true,
+            native_resumed: false,
         model,
         acting: opened.acting,
         focus: opened.focus,
@@ -960,7 +961,7 @@ pub async fn stop_here(node: &Arc<Node>, resident: &ResidentId) -> Result<bool, 
     if node.stops.coming(node, resident, coming) {
         return Ok(true);
     }
-    match (about.host.agent.as_str(), about.world_started, &about.session) {
+    match (about.host.agent.as_str(), about.world_managed(), &about.session) {
         ("codex", true, Some(thread)) => node.codex.of(node, &about)?.interrupt(thread).await.map_err(Failure::new),
         ("claude", _, _) => crate::claude::stop(node, resident),
         _ => Err(Failure::new(format!("{resident} is a session the World does not hold; stop it where it is open"))),

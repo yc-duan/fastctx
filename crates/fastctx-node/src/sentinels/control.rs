@@ -91,6 +91,10 @@ pub(crate) async fn control(
             let Caller::Resident(owner) = caller else {
                 return Err(Failure::refused(words::NEED_CONVERSATION));
             };
+            if node.is_me(&owner.machine) && let Some((about,_))=node.residents.about(&owner.resident)
+                && about.host.agent.as_str()=="codex" && !about.world_started {
+                crate::codex::native_lifetime::processes(&node.world,&owner.resident).map_err(Failure::not_run)?;
+            }
             let now = jiff::Timestamp::now().as_millisecond();
             request.validate(now).map_err(Failure::not_run)?;
             let (_, settings) = fastctx_sentinel::settings::read(records, &scope).await.map_err(fail)?;

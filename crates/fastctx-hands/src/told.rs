@@ -15,6 +15,7 @@ use crate::run::present::{display_path, status_text};
 /// A notice as one block of text.
 pub fn told(notice: &Notice) -> String {
     match notice {
+        Notice::Sentinel { observation } => fastctx_types::sentinel_words::notification(observation, jiff::Timestamp::now()),
         Notice::JobEnded { job, machine, how, status, at, output, stderr, last, stop, .. } => {
             let how = match (how, status) {
                 (EndedHow::Finished, Some(status)) => status_text(*status),

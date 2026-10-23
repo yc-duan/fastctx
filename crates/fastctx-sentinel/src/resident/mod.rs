@@ -245,13 +245,14 @@ impl ResidentHost for Host {
                 HomeRequest::Inspect { id } => {
                     self.inspect(scope, id).await.map(|sentinel| HomeReply::Summary { sentinel: Box::new(sentinel) })
                 }
-                HomeRequest::Begin { id, version } => {
+                HomeRequest::Begin { id, version, owner } => {
                     let gate = self.gate(scope, id);
                     let _guard = gate.lock().await;
                     let current = lifecycle::get(self.records.as_ref(), scope, id)
                         .await
                         .map_err(|e| e.to_string())?
                         .ok_or("sentinel not found")?;
+                    if current.1.definition.owner != *owner { return Err("sentinel owner does not match its record".into()); }
                     if current.0 < *version {
                         return Err("sentinel home has not seen this definition version".into());
                     }

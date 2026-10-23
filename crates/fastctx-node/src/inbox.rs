@@ -342,7 +342,7 @@ fn parse_pending(directory: &ConversationDir, path: &Path, bytes: &[u8]) -> io::
         Notice::Words { from: fastctx_types::session::Speaker::Resident { address }, .. } => {
             (vec![address.clone()], false)
         }
-        Notice::Words { from: fastctx_types::session::Speaker::User { .. }, .. } => (Vec::new(), false),
+        Notice::Words { from: fastctx_types::session::Speaker::User { .. }, .. } | Notice::Sentinel { .. } => (Vec::new(), false),
         _ => (Vec::new(), true),
     };
     let about: fastctx_types::residents::About = parse(&directory.about(), &std::fs::read(directory.about())?)?;

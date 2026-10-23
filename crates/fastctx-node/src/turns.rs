@@ -42,7 +42,7 @@ fn deleted(id: &ResidentId) -> std::io::Error {
 pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -> std::io::Result<()> {
     let Some((about, _)) = node.residents.about(id) else { return Err(deleted(id)) };
     if let Happened::Heard { message: Some(message), .. } = &event.happened
-        && (about.host.agent.as_str() == "codex" && about.world_started && message.detail["type"] == "userMessage"
+        && (about.host.agent.as_str() == "codex" && about.world_managed() && message.detail["type"] == "userMessage"
             || about.host.agent.as_str() == "claude" && message.detail["uuid"].is_string())
     {
         return crate::user_images::live(node, id, event).await;

@@ -32,7 +32,7 @@ pub fn who(
         // a session the user opened elsewhere once it has done something here.
         // A first World run is already work before it has an action result.
         let participated = last_action.is_some()
-            || resident.about.world_started
+            || resident.about.world_managed()
             || matches!(resident.about.origin, fastctx_types::residents::Origin::Colleague { .. })
             || resident.now.as_ref().is_some_and(|now| now.last_tool_at.is_some() || now.desk || !now.owed.is_empty())
             || read_dir(&world.conversation(&resident.id).jobs())?

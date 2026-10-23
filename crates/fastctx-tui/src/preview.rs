@@ -75,6 +75,7 @@ fn resident(
             origin,
             session: None,
             world_started: true,
+            native_resumed: false,
             model: Some(model.to_string()),
             acting: Default::default(),
             focus: Default::default(),
