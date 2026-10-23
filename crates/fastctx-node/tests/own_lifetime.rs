@@ -208,7 +208,16 @@ fn exercise() -> anyhow::Result<()> {
         })
     );
     anyhow::ensure!(root.canonicalize()?.parent() == Some(base.canonicalize()?.as_path()));
-    fs::remove_dir_all(&root)?;
+    // Windows lets go of a program a moment after it exits; the test is done
+    // by then, and only its own folder waits to go.
+    let mut attempts = 0;
+    while let Err(error) = fs::remove_dir_all(&root) {
+        attempts += 1;
+        if attempts == 50 || error.kind() != std::io::ErrorKind::PermissionDenied && error.raw_os_error() != Some(32) {
+            return Err(error.into());
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
     Ok(())
 }
 
