@@ -403,6 +403,9 @@ pub(crate) async fn sink_until(
     if Digest(sha256(&bytes)) != carried.sha256 {
         return Err("the bytes are not the ones the source said it sent".to_string());
     }
-    stream.done().await?;
+    // The bytes are whole and the ones the source said it sent: a receipt
+    // that cannot be said once the connection is already over leaves only
+    // the source unsure, which it says itself, and loses nothing here.
+    let _ = stream.done().await;
     Ok(bytes)
 }
