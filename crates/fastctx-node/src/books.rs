@@ -1,8 +1,8 @@
 //! A conversation's bookkeeping (`books/` in its directory: what keeps it from
 //! being told the same thing twice, the settings of its host session, what
 //! it saw of files) is only of use while the conversation can still be
-//! spoken to. Once the user removed it, and nothing it owes is still on its
-//! way, nobody reads it again and it goes. Its own records stay.
+//! spoken to or its account records still need cleanup. Once the user removed
+//! it and neither obligation remains, the books go. Its own records stay.
 
 use std::io;
 
@@ -62,6 +62,10 @@ pub fn retire(node: &Node) -> io::Result<()> {
 /// do not have yet, a job of its that runs here or whose end it is still
 /// owed, or a job it left running on another machine.
 fn owes(node: &Node, owner: &Address, directory: &ConversationDir) -> io::Result<bool> {
+    // Goal bindings still identify records that deletion must collect (2026-10-23).
+    if crate::goals::lifecycle::keeps_books(node, &owner.resident).map_err(|error| io::Error::other(error.message))? {
+        return Ok(true);
+    }
     for queue in ["job-deliveries", "on-deliveries", "on-stops"] {
         if crate::retention::entries(&directory.book(queue))?
             .iter()
