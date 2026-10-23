@@ -1,6 +1,6 @@
 // The composer's two menus. Typing `/` at the start of the words opens the
 // conversation's commands: the few the World does to any conversation it
-// holds (compact, change the model, rename, fork, stop), each offered only
+// holds (compact, change the model, rename, fork, stop, set its goal), each offered only
 // where the conversation takes it, and its host's own, as the host lists
 // them now. A World control stands for its name, so the same command does
 // the same thing on every host; the host's command of that name is kept
@@ -20,11 +20,14 @@ export interface CommandWords {
   rename: string;
   fork: string;
   stop: string;
+  goal: string;
   noCommands: string;
   effort: string;
   current: string;
   /** What rename takes, as a usage hint. */
   renameArgs: string;
+  /** What a goal takes, as a usage hint. */
+  goalArgs: string;
   /** A command that takes words was sent without them. */
   needsArgs(usage: string): string;
   /** Codex's commands the World carries out, said in the interface's
@@ -39,7 +42,7 @@ export interface MenuCommand {
   args: string | null;
   arguments: CommandArguments;
   /** The World's control it stands for, when it is one of the World's. */
-  control: ControlKind | "stop" | null;
+  control: ControlKind | "stop" | "goal" | null;
   source: string | null;
   /** The host's own identity for it, handed back when it runs. */
   path?: string | undefined;
@@ -51,7 +54,7 @@ export interface MenuCommand {
  *  it takes, then its host's under the names left. */
 /** What `/` offers. While a turn runs, compaction (and Codex's review, which
  *  starts a turn of its own) waits for it to end, so it is not offered. */
-export function commandsOf(offers: Offers | null, words: CommandWords, moving = false): MenuCommand[] {
+export function commandsOf(offers: Offers | null, words: CommandWords, moving = false, goal = false): MenuCommand[] {
   // A node that keeps them until the turn ends takes them at any time.
   const waits = (name: string) => moving && !offers?.control_queue && (name === "compact" || name === "review");
   const own: MenuCommand[] = (offers?.commands ?? []).filter((command) => command.path || !waits(command.name)).map((command: CommandOffer) => ({
@@ -63,7 +66,8 @@ export function commandsOf(offers: Offers | null, words: CommandWords, moving = 
     source: command.source,
     path: command.path,
   }));
-  const controls = new Set<ControlKind | "stop">([...(offers?.controls ?? []), "stop"]);
+  // Setting a goal is the World's own, where the page carries the goal.
+  const controls = new Set<ControlKind | "stop" | "goal">([...(offers?.controls ?? []), "stop", ...(goal ? (["goal"] as const) : [])]);
   // A skill keeps its own name even where it is a control's: it is the
   // host's file, not the command.
   const hostOf = (name: string) => own.find((command) => command.name === name && !command.path);
@@ -74,6 +78,7 @@ export function commandsOf(offers: Offers | null, words: CommandWords, moving = 
       { name: "rename", description: words.rename, args: words.renameArgs, arguments: "required", control: "rename" },
       { name: "fork", description: words.fork, args: null, arguments: "none", control: "fork" },
       { name: "stop", description: words.stop, args: null, arguments: "none", control: "stop" },
+      { name: "goal", description: words.goal, args: words.goalArgs, arguments: "required", control: "goal" },
     ] as const
   )
     .filter((command) => controls.has(command.control) && !waits(command.name))

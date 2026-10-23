@@ -15,6 +15,10 @@
   fill: var(--pen-clay);
 }
 
+.sk-accent {
+  fill: var(--accent-wash);
+}
+
 .sk-graphite {
   fill: var(--pen-graphite);
 }

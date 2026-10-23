@@ -66,16 +66,11 @@ export interface Tally {
 
 /** The host's own agents, as a conversation shows them (`agents.ts`). */
 export interface AgentWords {
-  /** The panel of them, and its mark beside the input. */
-  title: string;
-  /** How many still work, beside the title and on the mark. */
-  running(n: number): string;
   /** How one stands where its row does not say it by its mark. */
   failed: string;
   stopped: string;
   waiting: string;
-  /** What it was asked, at the head of what it did; opened in full. */
-  asked: string;
+  /** What it was asked, at the head of what it did, opened in full. */
   more: string;
   less: string;
   /** Its own record, read from its conversation's machine. */
@@ -89,10 +84,6 @@ export interface AgentWords {
   stoppedTold(task: string | null): string;
   /** What it used, at the foot of what it did. */
   tools(n: number): string;
-  /** Each of them in the panel: goes to it in the conversation. */
-  goTo: string;
-  /** The panel's clock ends now while one of them works. */
-  now: string;
   /** A call that names agents the conversation does not hold. */
   unknownAgents(n: number): string;
 }
@@ -595,12 +586,9 @@ export const zh: Words = {
   },
   openColleague: "查看",
   agents: {
-    title: "子代理",
-    running: (n) => `${n} 个在工作`,
     failed: "失败",
     stopped: "已停止",
     waiting: "在等",
-    asked: "任务",
     more: "展开",
     less: "收起",
     reading: "正在读取…",
@@ -610,8 +598,6 @@ export const zh: Words = {
     failedTold: (task) => (task ? `子代理失败：${task}` : "子代理失败"),
     stoppedTold: (task) => (task ? `子代理已停止：${task}` : "子代理已停止"),
     tools: (n) => `${n} 次工具调用`,
-    goTo: "转到它",
-    now: "现在",
     unknownAgents: (n) => `${n} 个子代理`,
   },
   stillRunning: "运行中的命令",
@@ -877,12 +863,9 @@ export const en: Words = {
   },
   openColleague: "Open",
   agents: {
-    title: "Agents",
-    running: (n) => `${n} working`,
     failed: "failed",
     stopped: "stopped",
     waiting: "waiting",
-    asked: "Task",
     more: "Show all",
     less: "Show less",
     reading: "Reading…",
@@ -892,8 +875,6 @@ export const en: Words = {
     failedTold: (task) => (task ? `Agent failed: ${task}` : "Agent failed"),
     stoppedTold: (task) => (task ? `Agent stopped: ${task}` : "Agent stopped"),
     tools: (n) => (n === 1 ? "1 tool call" : `${n} tool calls`),
-    goTo: "Go to it",
-    now: "now",
     unknownAgents: (n) => (n === 1 ? "1 agent" : `${n} agents`),
   },
   stillRunning: "Running commands",

@@ -201,7 +201,7 @@
 
   /* A sheet risen from the bottom lays a shade over the rest, as every
      sheet on a phone does: a tap on the shade only puts the sheet away. */
-  .composer-dock:has(.model-panel:not([hidden]), .jobs-pop:not([hidden]), .agents-pop:not([hidden]), .usage-pop:not([hidden]))::after {
+  .composer-dock:has(.model-panel:not([hidden]), .jobs-pop:not([hidden]), .usage-pop:not([hidden]))::after {
     content: "";
     position: fixed;
     inset: 0;

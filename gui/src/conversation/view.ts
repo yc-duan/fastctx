@@ -84,6 +84,9 @@ export interface Context {
   residentMachine: MachineName;
   /** The region the conversation scrolls in. */
   scroller: HTMLElement;
+  /** Opens one of the host's agents in the panel beside the conversation,
+   *  rather than under the row that sent it; false where it cannot. */
+  openAgent?: ((id: string) => boolean) | undefined;
   /** The reader opened or closed something: the page stops keeping the
    *  newest in view, so nothing moves under their hand. */
   reading(): void;
@@ -2599,6 +2602,11 @@ export class ConversationView {
     }
     const key = target.dataset.open;
     if (!key) return;
+    const sent = this.conversation.get(key);
+    if (sent?.kind === "tool" && startsAgent(sent.tool) && this.context.openAgent) {
+      const run = this.conversation.agentOf(sent);
+      if (run && this.context.openAgent(run.id)) return;
+    }
     const row = target.closest<HTMLElement>("[data-row], .block-heard, .block-agent-told, .block-command");
     const box = (target.closest(".notice-line")?.nextElementSibling as HTMLElement | null) ?? row?.querySelector<HTMLElement>(":scope > .fold-box") ?? null;
     if (!row || !box) return;

@@ -219,6 +219,10 @@ import type { Address, SessionEvent } from "./world/events";
 import type { MachineLogins } from "./world/logins";
 import { ownerResident, type ResidentNow } from "./world/world";
 import { agentName, titleOf } from "./world/names";
+import { liveSide, specimenSide } from "./side/live";
+import { enSide, zhSide } from "./side/words";
+import { enPlan, zhPlan } from "./plan/words";
+import { samples as planSamples } from "./plan/specimen-samples";
 import { foldedOf, MachineMap, MAP_ORDER, type MachineMapScene } from "./app/machine-map";
 import { mapOf } from "./app/map-of";
 import {
@@ -327,6 +331,8 @@ const words = english ? en : zh;
 const homeWords = english ? enHome : zhHome;
 const agentHomeWords = english ? enHomes : zhHomes;
 const projectWords = english ? enProject : zhProject;
+const sideWords = english ? enSide : zhSide;
+const planWords = english ? enPlan : zhPlan;
 const pageWords = english ? enPages : zhPages;
 const presenceWords = english ? enPresence : zhPresence;
 const shellWords = english ? enShell : zhShell;
@@ -1467,6 +1473,7 @@ function specimenTalk(address: Address): KeepablePage {
     head,
     link: talkLink,
     conversation,
+    side: specimenSide(sideWords, planWords, { ...planSamples.blog!, facts: (id) => planSamples.blog!.facts[id] ?? null }, english),
     focus: {
       words: focusWords,
       places: () =>
@@ -1690,7 +1697,9 @@ function someoneOf(world: ReturnType<typeof store.world.peek>, address: Address)
   };
 }
 
-function liveTalk(address: Address): KeepablePage {
+/** A conversation's page; `inPanel` is a colleague's, opened in the panel
+ *  beside the conversation that asked it, under the panel's own head. */
+function liveTalk(address: Address, inPanel = false): KeepablePage {
   const world = store.world.peek();
   const listed = someoneOf(world, address);
   const someone: Someone = listed ?? { agent: address.resident, machine: address.machine, model: null, project: null };
@@ -1709,9 +1718,21 @@ function liveTalk(address: Address): KeepablePage {
     words,
     here: here ?? "",
     someone,
-    head,
+    head: inPanel ? quietHead : head,
     link: talkLink,
     conversation,
+    side: liveSide({
+      words: sideWords,
+      planWords,
+      store,
+      address,
+      bare: inPanel,
+      open: (colleague) => {
+        const page = liveTalk(colleague, true);
+        page.resume();
+        return { element: page.element, leave: () => page.leave() };
+      },
+    }),
     controls: {
       words: composerWords,
       offers: () => offers(address),
@@ -1951,6 +1972,12 @@ function liveTalk(address: Address): KeepablePage {
       reading.close();
     },
   };
+}
+
+/** The head of a colleague's page opened in the panel: the panel's own
+ *  head names it, so the page's is held but not shown. */
+function quietHead(title: string, actions = ""): string {
+  return `<div class="cp-quiet-head" hidden>${title}<div>${actions}</div></div>`;
 }
 
 /** How long a page whose machine does not tell what holds of it now hears

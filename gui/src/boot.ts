@@ -65,6 +65,13 @@ function tooOld(): void {
   document.getElementById("app")?.replaceWith(page);
 }
 
-// The language is settled first: the interface reads it as it starts.
-if (canDraw()) void import("./language").then(({ settleLanguage }) => settleLanguage()).then(() => import("./main"));
+// Inside the shell the World on this device opens after the window does:
+// the interface loads once it has (`startup/gate.ts`). The language is
+// settled next: the interface reads it as it starts.
+if (canDraw())
+  void import("./startup/gate")
+    .then(({ untilStarted }) => untilStarted())
+    .then(() => import("./language"))
+    .then(({ settleLanguage }) => settleLanguage())
+    .then(() => import("./main"));
 else tooOld();

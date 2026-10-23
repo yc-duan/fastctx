@@ -26,7 +26,9 @@ import { effortLabel } from "./effort-slider";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
 import { FileLinks } from "./file-links";
 import { JobsPanel, type Job, type OutputLines } from "./jobs-panel";
-import { AgentsPanel } from "./agents-panel";
+import { AgentBox } from "./agent-box";
+import { SideMount } from "../side/mount";
+import type { SideSeams } from "../side/seams";
 import type { AgentActivity, Tool } from "../world/events";
 import { Pictures, type PictureSeams } from "./pictures";
 import type { HeldRead } from "../world/reads";
@@ -182,6 +184,9 @@ export interface PageOptions {
   agentRecord?: ((agent: string) => Promise<AgentActivity>) | undefined;
   /** A turn's requests one by one, on its login's usage page. */
   calls?: ((turn: string) => void) | undefined;
+  /** The panel beside the conversation: its plan, its goal, and who works
+   *  with it (`side/mount.ts`). */
+  side?: SideSeams | undefined;
 }
 
 /** How many times what a conversation offers is asked again after asking
@@ -303,12 +308,12 @@ export class ConversationPage {
         <p class="composer-gone" hidden></p>
         <div class="composer-queue"></div>
         <form class="composer">
-          <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div><div class="composer-menu said-pop" role="dialog" hidden></div><div class="jobs-pop" role="dialog" hidden></div><div class="agents-pop" role="dialog" hidden></div></div>
+          <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div><div class="composer-menu said-pop" role="dialog" hidden></div><div class="jobs-pop" role="dialog" hidden></div></div>
           <div class="composer-confirm" hidden></div>
           <div class="composer-tray"></div>
           <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}" aria-label="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
           <div class="composer-row">
-            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="icon-button composer-photo" type="button" hidden></button><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button><button class="composer-agents" type="button" hidden></button><button class="composer-jobs" type="button" hidden></button></div>
+            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="icon-button composer-photo" type="button" hidden></button><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button><button class="composer-jobs" type="button" hidden></button></div>
             <span class="composer-note" aria-live="polite"></span>
             <button class="composer-context" type="button" hidden></button>
             <button class="composer-action" type="submit" aria-label="${escape(words.send)}"></button>
@@ -469,15 +474,30 @@ export class ConversationPage {
       lines: options.lines,
       agentRecord: options.agentRecord,
       turnCalls: options.calls,
+      openAgent: options.side && !options.side.bare ? (id) => this.side?.openAgent(id) ?? false : undefined,
     });
-    // The host's own agents as one picture (`agents-panel.ts`): a lane
-    // pressed brings the row of the call that started it into view.
-    this.agents = new AgentsPanel(this.element.querySelector<HTMLButtonElement>(".composer-agents")!, this.element.querySelector<HTMLElement>(".agents-pop")!, {
-      words,
-      show: (run) => {
-        if (this.view.openAgent(run.id)) this.following = false;
-      },
-    });
+    // The panel beside it (`side/mount.ts`): the plan, the goal, and who
+    // works with it, the host's own agents among them.
+    if (options.side) {
+      this.side = new SideMount(this.element, {
+        host: markOf(someone.agent) === "codex" ? "codex" : "claude",
+        seams: options.side,
+        say: (text, detail) => this.say(text, detail ?? ""),
+        agentBox: (run) =>
+          new AgentBox(run, {
+            words,
+            english: words.english,
+            here: options.here,
+            residentMachine: someone.machine,
+            ...(options.lines ? { lines: options.lines } : {}),
+            ...(options.agentRecord ? { record: options.agentRecord } : {}),
+            reading: () => {},
+          }),
+        jump: (id) => {
+          if (this.view.openAgent(id)) this.following = false;
+        },
+      });
+    }
     // For how long a way has been broken, and why, as the note says it.
     const broken = (since: number, why: string) => words.brokenFor(words.took(Date.now() - since), why);
     if (options.opening) {
@@ -793,7 +813,7 @@ export class ConversationPage {
     this.bound();
   }
 
-  private agents: AgentsPanel;
+  private side: SideMount | null = null;
   private agentsSeen = "";
 
   /** The host's own agents, as the conversation now knows them, to their
@@ -803,7 +823,7 @@ export class ConversationPage {
     const seen = `${conversation.agentStamp}|${conversation.bounds().join(";")}`;
     if (seen === this.agentsSeen) return;
     this.agentsSeen = seen;
-    this.agents.update(conversation.agents());
+    this.side?.agents(conversation.agents());
   }
 
   /** Where the reader was, kept while the page is out of view: following
@@ -917,7 +937,7 @@ export class ConversationPage {
     cancelAnimationFrame(this.frame);
     this.view.destroy();
     this.badge?.dispose();
-    this.agents.destroy();
+    this.side?.leave();
     this.finder.destroy();
     this.left = true;
     document.removeEventListener("keydown", this.findKey);
@@ -1494,7 +1514,7 @@ export class ConversationPage {
     const space = text.indexOf(" ");
     const name = (space < 0 ? text.slice(1) : text.slice(1, space)).trim();
     const args = space < 0 ? "" : text.slice(space + 1).trim();
-    const find = (moving: boolean) => commandFor(commandsOf(this.offered, controls.words.commands, moving), name, args);
+    const find = (moving: boolean) => commandFor(commandsOf(this.offered, controls.words.commands, moving, this.side !== null), name, args);
     if (!find(this.options.conversation.moving())) await this.askOffers();
     if (this.left) return;
     if (!this.offered) {
@@ -1708,7 +1728,7 @@ export class ConversationPage {
     const typed = /^\/(\S*)$/.exec(this.input.value);
     if (!typed) return menu.hide();
     const prefix = typed[1]!.toLowerCase();
-    const found = commandsOf(this.offered, this.options.controls.words.commands, this.options.conversation.moving()).filter((command) =>
+    const found = commandsOf(this.offered, this.options.controls.words.commands, this.options.conversation.moving(), this.side !== null).filter((command) =>
       command.name.toLowerCase().startsWith(prefix),
     );
     menu.show(found, this.options.controls.words.commands.noCommands);
@@ -1809,6 +1829,10 @@ export class ConversationPage {
     const words = controls.words;
     if (command.control === "stop") {
       this.stop();
+      return true;
+    }
+    if (command.control === "goal") {
+      this.side?.setGoal(args);
       return true;
     }
     if (command.control === "model" && !given && !args) {

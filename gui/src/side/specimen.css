@@ -1,0 +1,113 @@
+/* The side panel's specimen: a stand-in conversation beside the panel. */
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+}
+
+.sps-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+}
+
+.sps-page.open {
+  grid-template-columns: minmax(0, 1fr) var(--side-width);
+}
+
+.sps-talk {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+}
+
+.sps-head {
+  flex: none;
+}
+
+.sps-toggle {
+  position: relative;
+}
+
+.sps-toggle[aria-pressed="true"] {
+  background: var(--fill);
+  color: var(--text);
+}
+
+.sps-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
+.sps-toggle.news .sps-dot {
+  display: block;
+}
+
+.sps-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-6) var(--gutter);
+}
+
+.sps-said {
+  max-width: var(--column);
+  margin: 0 auto;
+}
+
+.sps-user {
+  margin-left: auto;
+  width: fit-content;
+  max-width: 80%;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-l);
+  background: var(--bubble);
+  color: var(--on-bubble);
+}
+
+.sps-dock {
+  flex: none;
+  padding: 0 var(--gutter) calc(var(--space-4) + var(--safe-bottom));
+}
+
+.sps-composer {
+  display: flex;
+  align-items: center;
+  max-width: var(--column);
+  min-height: 92px;
+  margin: 0 auto;
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  box-sizing: border-box;
+  align-items: flex-start;
+  border-radius: var(--radius-l);
+  background: var(--field);
+}
+
+.sps-placeholder {
+  flex: 1;
+  color: var(--text-3);
+}
+
+.sps-send {
+  align-self: flex-end;
+  color: var(--text-3);
+}
+
+@media (max-width: 760px) {
+  .sps-page.open {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

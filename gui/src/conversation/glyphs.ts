@@ -12,13 +12,15 @@ type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "sto
  *  password, a phone, logging out, trust and a relay; locking a person out
  *  and letting them in, signing up; a conversation's context, the
  *  provider's cache and how long it stays; saving a copy, and a file's
- *  path; the machines as a drawing and as a list; a new version. */
+ *  path; the machines as a drawing and as a list; a new version; a
+ *  conversation's goal, pausing and resuming it, and the panel beside it. */
 type Frame =
   | "menu" | "plus" | "minus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back" | "sleep" | "wake" | "move"
   | "archive" | "unarchive" | "trash" | "reread" | "scan" | "grip" | "page" | "versions" | "history" | "person" | "key" | "phone"
   | "logout" | "shield" | "lock" | "unlock" | "signup" | "relay" | "save" | "link"
   | "context" | "cache" | "clock" | "tree" | "rows" | "update"
   | "note" | "plug" | "tune"
+  | "goal" | "pause" | "resume" | "panel"
   | Marks;
 
 /** Which agent and which kind of device, drawn small beside a conversation's
@@ -111,6 +113,12 @@ const paths: Record<Named, string> = {
   note: '<path d="M5.25 3.75h6.25l3.25 3.25v9.25h-9.5z"/><path d="M11.5 3.75V7h3.25"/><path d="M7.75 10.25h4.5M7.75 13h3"/>',
   /* A plug on its cord: an MCP server. */
   plug: '<path d="M7.75 3.75V6.5M12.25 3.75V6.5"/><path d="M5.75 6.5h8.5v2.25a4.25 4.25 0 0 1-8.5 0z"/><path d="M10 13v3.25"/>',
+  /* A pennant on its staff: a goal the conversation keeps working at. */
+  goal: '<path d="M6 16.25V3.75"/><path d="M6 4.5h8.5l-2 3.25 2 3.25H6"/>',
+  pause: '<path d="M7.5 5.5v9M12.5 5.5v9"/>',
+  resume: '<path d="M7 5.1v9.8l7.6-4.9z"/>',
+  /* A window with a leaf at its right: the panel beside a conversation. */
+  panel: '<rect x="3.75" y="4.75" width="12.5" height="10.5" rx="1.5"/><path d="M11.75 4.75v10.5"/>',
   /* Two sliders: preferences. */
   tune: '<path d="M3.75 6.75h6.5M14.75 6.75h1.5M3.75 13.25h1.5M9.75 13.25h6.5"/><circle cx="12.5" cy="6.75" r="2"/><circle cx="7.5" cy="13.25" r="2"/>',
   // A cylinder: what the provider keeps of the prompt.
