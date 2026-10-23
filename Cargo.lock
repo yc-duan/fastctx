@@ -1272,6 +1272,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastctx-agent"
+version = "1.0.1-beta.10"
+dependencies = [
+ "fastctx-net",
+ "fastctx-platform",
+ "fastctx-types",
+ "httpdate",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "fastctx-client"
 version = "1.0.1-beta.10"
 dependencies = [
@@ -1542,6 +1555,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastctx-sentinel"
+version = "1.0.1-beta.10"
+dependencies = [
+ "fastctx-agent",
+ "fastctx-net",
+ "fastctx-platform",
+ "fastctx-types",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "fastctx-serve"
 version = "1.0.1-beta.10"
 dependencies = [
@@ -1792,6 +1819,15 @@ dependencies = [
  "memmap2",
  "slotmap",
  "tinyvec",
+]
+
+[[package]]
+name = "form_urlencoded"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
+dependencies = [
+ "percent-encoding",
 ]
 
 [[package]]
@@ -4722,6 +4758,18 @@ name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
+
+[[package]]
+name = "url"
+version = "2.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed"
+dependencies = [
+ "form_urlencoded",
+ "idna",
+ "percent-encoding",
+ "serde",
+]
 
 [[package]]
 name = "utf8_iter"

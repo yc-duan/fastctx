@@ -6685,6 +6685,7 @@ Used by:
 - find-msvc-tools 0.1.14 (https://github.com/rust-lang/cc-rs)
 - flate2 1.1.10 (https://github.com/rust-lang/flate2-rs)
 - fnv 1.0.7 (https://github.com/servo/rust-fnv)
+- form_urlencoded 1.2.2 (https://github.com/servo/rust-url)
 - fraction 0.15.4 (https://github.com/dnsl48/fraction.git)
 - futures-lite 2.6.1 (https://github.com/smol-rs/futures-lite)
 - group 0.13.0 (https://github.com/zkcrypto/group)
@@ -6757,6 +6758,7 @@ Used by:
 - unicode-segmentation 1.13.3 (https://github.com/unicode-rs/unicode-segmentation)
 - unicode-truncate 2.0.1 (https://github.com/Aetf/unicode-truncate)
 - unicode-width 0.2.2 (https://github.com/unicode-rs/unicode-width)
+- url 2.5.8 (https://github.com/servo/rust-url)
 - uuid 1.27.0 (https://github.com/uuid-rs/uuid)
 - version_check 0.9.5 (https://github.com/SergioBenitez/version_check)
 - x509-parser 0.18.1 (https://github.com/rusticata/x509-parser.git)
@@ -9492,6 +9494,7 @@ limitations under the License.
 Used by:
 
 - fastctx 1.0.1-beta.10 (https://github.com/yc-duan/fastctx)
+- fastctx-agent 1.0.1-beta.10 (https://github.com/yc-duan/fastctx)
 - fastctx-client 1.0.1-beta.10 (https://github.com/yc-duan/fastctx)
 - fastctx-file-search 1.0.1-beta.10 (https://github.com/yc-duan/fastctx)
 - fastctx-hands 1.0.1-beta.10 (https://github.com/yc-duan/fastctx)
@@ -9504,6 +9507,7 @@ Used by:
 - fastctx-pdf 1.0.1-beta.10 (https://github.com/yc-duan/fastctx)
 - fastctx-platform 1.0.1-beta.10 (https://github.com/yc-duan/fastctx)
 - fastctx-ripgrep 1.0.1-beta.10 (https://github.com/yc-duan/fastctx)
+- fastctx-sentinel 1.0.1-beta.10 (https://github.com/yc-duan/fastctx)
 - fastctx-serve 1.0.1-beta.10 (https://github.com/yc-duan/fastctx)
 - fastctx-tui 1.0.1-beta.10 (https://github.com/yc-duan/fastctx)
 - fastctx-types 1.0.1-beta.10 (https://github.com/yc-duan/fastctx)
@@ -86105,6 +86109,7 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - font-types 0.12.6: https://static.crates.io/crates/font-types/font-types-0.12.6.crate
 - fontconfig-parser 0.5.8: https://static.crates.io/crates/fontconfig-parser/fontconfig-parser-0.5.8.crate
 - fontdb 0.24.0: https://static.crates.io/crates/fontdb/fontdb-0.24.0.crate
+- form_urlencoded 1.2.2: https://static.crates.io/crates/form_urlencoded/form_urlencoded-1.2.2.crate
 - fraction 0.15.4: https://static.crates.io/crates/fraction/fraction-0.15.4.crate
 - fsevent-sys 4.1.0: https://static.crates.io/crates/fsevent-sys/fsevent-sys-4.1.0.crate
 - futures-core 0.3.34: https://static.crates.io/crates/futures-core/futures-core-0.3.34.crate
@@ -86397,6 +86402,7 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - unicode-truncate 2.0.1: https://static.crates.io/crates/unicode-truncate/unicode-truncate-2.0.1.crate
 - unicode-width 0.2.2: https://static.crates.io/crates/unicode-width/unicode-width-0.2.2.crate
 - untrusted 0.9.0: https://static.crates.io/crates/untrusted/untrusted-0.9.0.crate
+- url 2.5.8: https://static.crates.io/crates/url/url-2.5.8.crate
 - utf8_iter 1.0.4: https://static.crates.io/crates/utf8_iter/utf8_iter-1.0.4.crate
 - utf8parse 0.2.2: https://static.crates.io/crates/utf8parse/utf8parse-0.2.2.crate
 - uuid 1.27.0: https://static.crates.io/crates/uuid/uuid-1.27.0.crate
@@ -86489,4 +86495,4 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - zvariant_derive 5.15.0: https://static.crates.io/crates/zvariant_derive/zvariant_derive-5.15.0.crate
 - zvariant_utils 4.2.0: https://static.crates.io/crates/zvariant_utils/zvariant_utils-4.2.0.crate
 
-<!-- fastctx-notices-inputs: 6aaad803ca4ea075b52e16954b1829bdb850e74b4561b332a93441a38dea9fef -->
+<!-- fastctx-notices-inputs: 6c49b78352026f5d7cf21d503282d895af2305f565f513361af104cb271e1bb0 -->

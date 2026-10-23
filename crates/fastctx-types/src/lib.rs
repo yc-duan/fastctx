@@ -9,6 +9,7 @@
 
 pub mod access;
 pub mod accounts;
+pub mod agent;
 pub mod agents;
 pub mod attachments;
 pub mod authorization;
@@ -49,6 +50,7 @@ pub mod renewal;
 pub mod residents;
 pub mod run;
 pub mod run_facts;
+pub mod sentinel;
 pub mod session;
 pub mod since;
 pub mod stats;
@@ -65,6 +67,6 @@ pub mod write;
 pub use calls::{Attach, Call, JournalCall, ProjectCall, Reply};
 pub use names::{
     AccountName, Address, AgentName, EntryId, HubName, JobId, JournalName, MachineName, NameError, NameProblem,
-    NoticeId, PageName, ResidentId, TownName,
+    NoticeId, PageName, ResidentId, SentinelId, TownName,
 };
 pub use process::ProcessIdentity;

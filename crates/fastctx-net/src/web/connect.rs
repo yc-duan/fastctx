@@ -15,7 +15,10 @@ pub(super) async fn connect(host: &str, port: u16) -> Result<TcpStream, Failure>
         .await
         .map_err(|_| Failure::new(ReachFailure::Dns, format!("resolving {host} timed out")))?
         .map_err(|e| Failure::new(ReachFailure::Dns, format!("resolving {host}: {e}")))?;
-    let mut addresses: Vec<SocketAddr> = resolved.collect();
+    addresses(host, port, resolved.collect()).await
+}
+
+pub(super) async fn addresses(host: &str, port: u16, mut addresses: Vec<SocketAddr>) -> Result<TcpStream, Failure> {
     addresses.dedup();
     let v6_first = addresses.first().is_some_and(SocketAddr::is_ipv6);
     let (mut first, mut second): (VecDeque<_>, VecDeque<_>) =
