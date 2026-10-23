@@ -12,7 +12,7 @@ pub fn frames(id: u64, question: Question, supported: bool) -> Result<Vec<Up>, S
         return Err("this hub is too old to receive large ledger entries; update it".into());
     }
     let Up::Ask { question, .. } = whole else { unreachable!() };
-    if !matches!(question, Question::LedgerWrite { .. }) {
+    if !matches!(question, Question::LedgerWrite { .. } | Question::MemoryWrite { .. }) {
         return Err("this question is larger than one control message".into());
     }
     let text = serde_json::to_string(&question).map_err(|error| error.to_string())?;

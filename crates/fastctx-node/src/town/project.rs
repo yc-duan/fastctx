@@ -28,12 +28,9 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
         ProjectCall::Show { town } => {
             let town = caller.town_or(node, town)?;
             map::query(node, &town).await?;
-            let records = blocking(node, &town, read::records).await?;
-            let (Some(first), Some(record)) = (records.first(), records.last()) else {
+            let Some((mut record, opened)) = blocking(node, &town, read::current).await? else {
                 return Err(map::no_ledger(node, &town));
             };
-            let opened = Stamp { by: first.by.clone(), on: first.on.clone(), at: first.at };
-            let mut record = record.clone();
             seen(node, caller, &town, &mut record)?;
             Ok(Reply::Record { town, record: Box::new(record), opened })
         }
@@ -100,8 +97,7 @@ async fn edit(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordF
         return Err(Failure::new("nothing to change: give what the next version says"));
     }
     map::query(node, &town).await?;
-    let records = blocking(node, &town, read::records).await?;
-    let (Some(first), Some(latest)) = (records.first(), records.last()) else {
+    let Some((latest, opened)) = blocking(node, &town, read::current).await? else {
         return Err(map::no_ledger(node, &town));
     };
     let record = Record {
@@ -127,7 +123,6 @@ async fn edit(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordF
             failure
         }
     })?;
-    let opened = Stamp { by: first.by.clone(), on: first.on.clone(), at: first.at };
     Ok(Reply::Record { town, record: Box::new(record), opened })
 }
 

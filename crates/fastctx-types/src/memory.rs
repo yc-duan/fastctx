@@ -79,6 +79,14 @@ pub struct Catalog {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectIndex {
+    pub seq: u64,
+    pub record: crate::project::Record,
+    pub opened: Stamp,
+    pub catalog: Catalog,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Document {
     pub revision: Revision,
     pub text: String,

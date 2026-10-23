@@ -11,7 +11,7 @@ use std::io;
 use std::path::Path;
 
 use fastctx_types::access::Acting;
-use fastctx_types::project::Stamp;
+
 use fastctx_types::{ResidentId, TownName};
 
 use crate::Node;
@@ -23,10 +23,7 @@ pub(crate) fn text(node: &Node, town: &TownName, acting: &Acting) -> io::Result<
     if !super::access::permits(node, acting, town).map_err(io::Error::other)? {
         return Ok(None);
     }
-    let records = super::read::records(&node.world, town)?;
-    let (Some(first), Some(record)) = (records.first(), records.last()) else { return Ok(None) };
-    let opened = Stamp { by: first.by.clone(), on: first.on.clone(), at: first.at };
-    let mut record = record.clone();
+    let Some((mut record, opened)) = super::read::current(&node.world, town)? else { return Ok(None) };
     crate::ledger::query::seen(node, acting, town, &mut record)?;
     Ok(Some(fastctx_hands::town::record_of(town, &record, &opened)))
 }

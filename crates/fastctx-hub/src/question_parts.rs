@@ -77,7 +77,7 @@ impl Uploads {
         let partial = self.pending.remove(&id).expect("complete upload");
         let question: Question =
             serde_json::from_slice(&partial.text).map_err(|error| format!("invalid ledger upload: {error}"))?;
-        if !matches!(question, Question::LedgerWrite { .. }) {
+        if !matches!(question, Question::LedgerWrite { .. } | Question::MemoryWrite { .. }) {
             return Err("only ledger appends can be uploaded in parts".into());
         }
         Ok(Some(Complete { question, reservation: partial.text.into_reservation() }))

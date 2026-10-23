@@ -37,6 +37,7 @@ use names::Place;
 
 pub(crate) mod deletion;
 pub(crate) mod letgo;
+pub(crate) mod metadata;
 pub(crate) mod names;
 pub(crate) mod query;
 pub(crate) mod third;
@@ -95,7 +96,11 @@ pub async fn write(
             let signed = link.sign_entry(&entry);
             let accepted = link.ledger_write(&place.town, signed).await.map_err(Failure::new)?;
             let _syncing = node.syncing.lock().await;
-            take(node, &link, town, &place.town, accepted).await.map_err(Failure::new)
+            if link.view().member_keeps_project(&link.view().me, &place.town) {
+                take(node, &link, town, &place.town, accepted).await.map_err(Failure::new)
+            } else {
+                metadata::refresh(node, &link, Some(&place.town)).await.map_err(Failure::new)
+            }
         }
         None if place.hub == alone(&node.world).map_err(|error| Failure::new(error.to_string()))? => {
             let (world, here, town) = (node.world.clone(), node.machine(), town.clone());
@@ -128,7 +133,7 @@ fn write_alone(
     machines: Option<Vec<MachineName>>,
 ) -> Result<(), String> {
     let directory = world.town(town);
-    let entries = read_all(&directory).map_err(|error| format!("reading {town}'s ledger: {error}"))?;
+    let entries = read_all(world, &directory).map_err(|error| format!("reading {town}'s ledger: {error}"))?;
     if entries.is_empty() && machines.is_none() {
         return Err(format!("the project {town} has no record yet; its first version says which machines it spans"));
     }
@@ -196,6 +201,9 @@ pub async fn sync(node: &Arc<Node>, hub: &HubId, town: Option<TownId>) -> Result
     let _syncing = node.syncing.lock().await;
     let mut problems = Vec::new();
     for (id, latest) in link.ledger_catalog().await? {
+        if !link.view().member_keeps_project(&link.view().me, &id) {
+            continue;
+        }
         if town.as_ref().is_some_and(|town| *town != id) {
             continue;
         }
@@ -207,6 +215,9 @@ pub async fn sync(node: &Arc<Node>, hub: &HubId, town: Option<TownId>) -> Result
             }
             Err(error) => problems.push(error),
         }
+    }
+    if let Err(error) = metadata::refresh(node, &link, town.as_ref()).await {
+        problems.push(error);
     }
     if problems.is_empty() { Ok(()) } else { Err(problems.join("; ")) }
 }
@@ -241,6 +252,9 @@ pub(crate) async fn take(
     town: &TownId,
     latest: u64,
 ) -> Result<(), String> {
+    if !link.view().member_keeps_project(&link.view().me, town) {
+        return Err("an assisting host keeps only the project index".into());
+    }
     let directory = node.world.town(name);
     let mut refused = refused(&directory).map_err(|error| format!("reading {name}'s ledger: {error}"))?;
     let mut after = cursor(&directory, &refused).map_err(|error| format!("reading {name}'s ledger: {error}"))?;
@@ -248,6 +262,9 @@ pub(crate) async fn take(
         let (items, more) = link.ledger_read(town, after).await?;
         if items.is_empty() {
             return Err(format!("the hub promised {latest} entries of {name}, but stopped after {after}"));
+        }
+        if !link.view().member_keeps_project(&link.view().me, town) {
+            return Err("project replication permission ended during the read".into());
         }
         for taken in items {
             let seq = taken.seq;
@@ -322,7 +339,7 @@ pub(crate) async fn carry(node: &Arc<Node>, hub: &HubId) -> Vec<String> {
             }
         };
         let directory = node.world.town(&town);
-        let entries = match read_all(&directory) {
+        let entries = match read_all(&node.world, &directory) {
             Ok(entries) => entries,
             Err(error) => {
                 problems.push(format!("reading {town}'s ledger: {error}"));
@@ -392,10 +409,18 @@ async fn carry_town(
             };
             files.push(File { path: file.path.clone(), bytes });
         }
+        if ours {
+            crate::town::rename::memory(&mut files, old, &here)?;
+        }
         let mut carried =
             link.entry(id, entry.machines.as_ref().map(|machines| machines.iter().map(renamed).collect()), files);
         carried.at = entry.at;
-        if let Err(error) = link.ledger_write(id, link.sign_entry(&carried)).await {
+        let written_entry = if fastctx_net::memory::has_memory(&carried.files) {
+            link.memory_write(home, id, link.sign_entry(&carried)).await
+        } else {
+            link.ledger_write(id, link.sign_entry(&carried)).await
+        };
+        if let Err(error) = written_entry {
             written = latest(link.ledger_catalog().await?);
             if written > index {
                 continue;
@@ -461,7 +486,7 @@ pub fn finish(world: &WorldDir) -> io::Result<Vec<String>> {
     for town in world.towns()? {
         let directory = world.town(&town);
         for (seq, path) in numbered(&directory.signed())? {
-            let finished = read_entry(&path).and_then(|(entry, _)| write_files(&directory, &entry));
+            let finished = read_entry(world, &path).and_then(|(entry, _)| write_files(&directory, &entry));
             if let Err(error) = finished {
                 problems.push(format!("entry {seq} of {town}: {error}"));
             }
@@ -473,6 +498,17 @@ pub fn finish(world: &WorldDir) -> io::Result<Vec<String>> {
 /// The number of the latest entry this machine has of `town`; 0 when none.
 pub fn seq(world: &WorldDir, town: &TownName) -> io::Result<u64> {
     let directory = world.town(town);
+    if !directory.signed().is_dir()
+        && let Some(index) = metadata::read(world, town)?
+    {
+        return Ok(index.seq);
+    }
+    replica_seq(world, town)
+}
+
+/// The full copy's cursor; an index-only cache is never a replicated entry.
+pub(crate) fn replica_seq(world: &WorldDir, town: &TownName) -> io::Result<u64> {
+    let directory = world.town(town);
     cursor(&directory, &refused(&directory)?)
 }
 
@@ -482,7 +518,7 @@ pub fn entries_after(world: &WorldDir, town: &TownName, after: u64) -> io::Resul
     let mut entries = Vec::new();
     for (seq, path) in numbered(&world.town(town).signed())? {
         if seq > after {
-            entries.push((seq, read_entry(&path)?.0));
+            entries.push((seq, read_entry(world, &path)?.0));
         }
     }
     Ok(entries)
@@ -505,20 +541,45 @@ fn set_refused(directory: &TownDir, refused: &BTreeMap<u64, String>) -> io::Resu
 
 /// Every entry this machine has of a project, in order, as its author
 /// claims it: each was checked when it was taken.
-fn read_all(directory: &TownDir) -> io::Result<Vec<(u64, Entry, Signed)>> {
+fn read_all(world: &WorldDir, directory: &TownDir) -> io::Result<Vec<(u64, Entry, Signed)>> {
     let mut entries = Vec::new();
     for (seq, path) in numbered(&directory.signed())? {
-        let (entry, signed) = read_entry(&path)?;
+        let (entry, signed) = read_entry(world, &path)?;
         entries.push((seq, entry, signed));
     }
     Ok(entries)
 }
 
-fn read_entry(path: &Path) -> io::Result<(Entry, Signed)> {
+fn read_entry(world: &WorldDir, path: &Path) -> io::Result<(Entry, Signed)> {
     let invalid = |error: String| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display()));
     let signed: Signed = serde_json::from_slice(&std::fs::read(path)?).map_err(|error| invalid(error.to_string()))?;
     let claimed: Entry = signed.claim().map_err(|error| invalid(error.to_string()))?;
-    let entry = ledger::open(&signed, &claimed.hub, &claimed.town).map_err(invalid)?;
+    let town = path
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .and_then(|name| TownName::try_from(name).ok())
+        .ok_or_else(|| invalid("the signed entry is outside a project directory".into()))?;
+    let place = names::place(world, &town)?.ok_or_else(|| invalid("the project has no ledger identity".into()))?;
+    if claimed.hub != place.hub || claimed.town != place.town {
+        return Err(invalid("the signed entry belongs to another project or hub".into()));
+    }
+    // Network-v3 imports used a zero author key but were signed by this device (2026-10-23).
+    let entry = if claimed.key == fastctx_net::sign::PublicKey::from_bytes([0; 32])
+        && !fastctx_net::memory::has_memory(&claimed.files)
+    {
+        let key = SecretKey::load(&world.device_key())?;
+        let entry: Entry = signed
+            .open(&key.public(), fastctx_net::sign::Domain::Ledger)
+            .map_err(|error| invalid(error.to_string()))?;
+        for file in &entry.files {
+            ledger::check_path(&file.path).map_err(&invalid)?;
+        }
+        entry
+    } else {
+        ledger::open(&signed, &claimed.hub, &claimed.town).map_err(invalid)?
+    };
     Ok((entry, signed))
 }
 

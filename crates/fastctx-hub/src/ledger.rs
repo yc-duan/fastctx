@@ -39,6 +39,7 @@ use crate::Hub;
 use crate::store::Store;
 
 mod reading;
+pub(crate) mod requests;
 pub(crate) use reading::ask;
 
 /// What the hub knows of one project's ledger.
@@ -51,6 +52,7 @@ pub struct TownLedger {
     /// would compare them.
     paths: BTreeSet<String>,
     memory: fastctx_net::memory::Index,
+    sequences: BTreeMap<String, u64>,
 }
 
 #[derive(Default)]
@@ -66,6 +68,7 @@ pub struct Ledgers {
 struct Prepared {
     entry: Entry,
     mutation: Option<fastctx_net::memory::Mutation>,
+    account: Option<fastctx_types::AccountName>,
     bytes: Vec<u8>,
 }
 
@@ -77,7 +80,7 @@ pub struct Checked {
 
 impl Ledgers {
     /// Reads every project's ledger under `hub`.
-    pub fn open(hub: &Path) -> io::Result<Self> {
+    pub fn open(hub: &Path, identity: &fastctx_net::ids::HubId) -> io::Result<Self> {
         let dir = hub.join("ledger");
         let mut towns = BTreeMap::new();
         let entries = match std::fs::read_dir(&dir) {
@@ -99,13 +102,10 @@ impl Ledgers {
             let mut ledger = TownLedger { next: 1, ..TownLedger::default() };
             for (seq, file) in numbered(&path)? {
                 let signed: Signed = read(&file)?;
-                let entry: Entry = signed.claim().map_err(|error| {
-                    io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", file.display()))
-                })?;
-                let entry = fastctx_net::ledger::open(&signed, &entry.hub, &id)
+                let entry = fastctx_net::ledger::open(&signed, identity, &id)
                     .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
                 ledger.memory.take(&entry).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-                ledger.add(&entry);
+                ledger.add(&entry, seq);
                 ledger.next = seq + 1;
             }
             towns.insert(id, ledger);
@@ -128,6 +128,11 @@ impl Ledgers {
         let project = directory.project(town).ok_or_else(|| format!("there is no project {town} on this hub"))?;
         if !directory.member_in_project(from, town) {
             return Err(format!("{from} acts for no account that may write in the project {}", project.name));
+        }
+        if let Some(account) = &prepared.account {
+            requests::authorize(directory, from, account, town, false)?;
+        } else if prepared.mutation.is_some() {
+            return Err("project memory writes require an explicit account and a current client".into());
         }
         let entry = &prepared.entry;
         // An entry made before its author was renamed is its all the same.
@@ -181,7 +186,7 @@ impl Ledgers {
         if let Some(mutation) = &checked.prepared.mutation {
             ledger.memory.append(mutation.clone());
         }
-        ledger.add(&checked.prepared.entry);
+        ledger.add(&checked.prepared.entry, checked.seq);
         ledger.next = checked.seq + 1;
         checked.seq
     }
@@ -238,8 +243,9 @@ impl Ledgers {
 }
 
 impl TownLedger {
-    fn add(&mut self, entry: &Entry) {
+    fn add(&mut self, entry: &Entry, seq: u64) {
         self.paths.extend(entry.files.iter().map(|file| file.path.to_lowercase()));
+        self.sequences.extend(entry.files.iter().map(|file| (file.path.clone(), seq)));
     }
 
     /// Whether `path`, in lower case, cannot join the paths written: it is
@@ -300,6 +306,16 @@ fn json(value: &impl serde::Serialize) -> io::Result<Vec<u8>> {
 /// current (`world-network.md`, 隔着网络也要顺手). One entry of a project at
 /// a time.
 pub(crate) async fn write(hub: &Arc<Hub>, from: &MachineName, town: TownId, signed: Signed) -> Result<Told, String> {
+    write_as(hub, from, town, signed, None).await
+}
+
+pub(crate) async fn write_as(
+    hub: &Arc<Hub>,
+    from: &MachineName,
+    town: TownId,
+    signed: Signed,
+    account: Option<fastctx_types::AccountName>,
+) -> Result<Told, String> {
     let (hub_id, project) = (hub.store().hub.id.clone(), town.clone());
     let prepared = tokio::task::spawn_blocking(move || {
         let size = fastctx_net::ledger::handed_size(&signed);
@@ -309,7 +325,10 @@ pub(crate) async fn write(hub: &Arc<Hub>, from: &MachineName, town: TownId, sign
         let entry = fastctx_net::ledger::open(&signed, &hub_id, &project)?;
         let mutation = fastctx_net::memory::decode(&entry.files)?;
         let bytes = json(&signed).map_err(|error| error.to_string())?;
-        Ok(Arc::new(Prepared { entry, mutation, bytes }))
+        if account.is_some() && mutation.is_none() {
+            return Err("a memory write must contain a memory revision or evidence".into());
+        }
+        Ok(Arc::new(Prepared { entry, mutation, account, bytes }))
     })
     .await
     .map_err(|error| format!("checking the ledger entry: {error}"))??;

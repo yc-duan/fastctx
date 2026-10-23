@@ -9,7 +9,7 @@ use fastctx_net::link::CallFailure;
 use fastctx_types::TownName;
 use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
-use fastctx_types::project::{CanonHead, Location, MapView, Stamp};
+use fastctx_types::project::{CanonHead, Location, MapView};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 
 use crate::Node;
@@ -20,7 +20,7 @@ pub async fn view(node: &Arc<Node>, town: &TownName, acting: &Acting) -> Result<
     super::access::ready(node, acting, town).await?;
     let (world, name) = (node.world.clone(), town.clone());
     let (records, journals, pages) = tokio::task::spawn_blocking(move || {
-        let records = read::records(&world, &name)?;
+        let records = read::current(&world, &name)?;
         let journals = read::summaries(&world, &name)?;
         let pages = crate::pages::read::summaries(&world, &name)?;
         io::Result::Ok((records, journals, pages))
@@ -28,11 +28,9 @@ pub async fn view(node: &Arc<Node>, town: &TownName, acting: &Acting) -> Result<
     .await
     .map_err(|error| Failure::new(format!("reading {town}'s ledger: {error}")))?
     .map_err(|error| Failure::new(format!("reading {town}'s ledger: {error}")))?;
-    let (Some(first), Some(record)) = (records.first(), records.last()) else {
+    let Some((mut record, opened)) = records else {
         return Err(no_ledger(node, town));
     };
-    let opened = Stamp { by: first.by.clone(), on: first.on.clone(), at: first.at };
-    let mut record = record.clone();
     crate::ledger::query::seen(node, acting, town, &mut record).map_err(|error| Failure::new(error.to_string()))?;
     let canon = match &record.canon {
         Some(location) => Some(canon(node, town, location, acting).await),

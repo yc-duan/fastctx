@@ -16,7 +16,22 @@ pub fn records(world: &WorldDir, town: &TownName) -> io::Result<Vec<Record>> {
 /// The town's record as its latest version says; `None` when this machine
 /// keeps no ledger of the town.
 pub fn latest(world: &WorldDir, town: &TownName) -> io::Result<Option<Record>> {
-    Ok(records(world, town)?.pop())
+    if let Some(record) = records(world, town)?.pop() {
+        return Ok(Some(record));
+    }
+    Ok(crate::ledger::metadata::read(world, town)?.map(|index| index.record))
+}
+
+/// The current record and its opening attribution, including an index-only copy.
+pub fn current(world: &WorldDir, town: &TownName) -> io::Result<Option<(Record, fastctx_types::project::Stamp)>> {
+    let records = records(world, town)?;
+    if let (Some(first), Some(last)) = (records.first(), records.last()) {
+        return Ok(Some((
+            last.clone(),
+            fastctx_types::project::Stamp { by: first.by.clone(), on: first.on.clone(), at: first.at },
+        )));
+    }
+    Ok(crate::ledger::metadata::read(world, town)?.map(|index| (index.record, index.opened)))
 }
 
 /// The journals of a town, by name.

@@ -31,8 +31,10 @@ pub(super) struct Page {
 /// Answers a ledger read on this session's queue, independently of its
 /// next frame and of every project's writer.
 pub(crate) fn ask(hub: &Arc<Hub>, name: &MachineName, out: &Outq, id: u64, town: TownId, after: u64) {
-    if !hub.store().book.directory.member_in_project(name, &town) {
-        let answer = Err(format!("{name} acts for no account that may read {town}"));
+    if !hub.store().book.directory.member_keeps_project(name, &town) {
+        let answer = Err(format!(
+            "{name} has no logged-in account that may keep the bodies of {town}; assisting hosts must use project indices (update older clients)"
+        ));
         let _ = out.send(Out::Frame(Down::Told { id, answer }));
         return;
     }
@@ -72,10 +74,12 @@ pub(crate) fn ask(hub: &Arc<Hub>, name: &MachineName, out: &Outq, id: u64, town:
         };
         drop(reader);
         // Permission may have been withdrawn while the disk was being read.
-        let answer = if hub.store().book.directory.member_in_project(&name, &town) {
+        let answer = if hub.store().book.directory.member_keeps_project(&name, &town) {
             answer
         } else {
-            Err(format!("{name} acts for no account that may read {town}"))
+            Err(format!(
+                "{name} has no logged-in account that may keep the bodies of {town}; assisting hosts must use project indices (update older clients)"
+            ))
         };
         let _ = out.send(Out::Frame(Down::Told { id, answer }));
     });
@@ -115,7 +119,7 @@ impl Page {
 }
 
 /// A damaged file must not make a read allocate beyond the multipart limit.
-fn entry(path: &Path) -> io::Result<Signed> {
+pub(super) fn entry(path: &Path) -> io::Result<Signed> {
     let mut bytes = Vec::new();
     std::fs::File::open(path)?.take(wire::PARTS_AT_MOST as u64 + 1).read_to_end(&mut bytes)?;
     if bytes.len() > wire::PARTS_AT_MOST {

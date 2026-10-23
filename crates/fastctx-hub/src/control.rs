@@ -763,6 +763,18 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
+        Up::Ask { id, question: question @ (Question::ProjectIndex { .. } | Question::MemoryRead { .. }) } => {
+            crate::ledger::requests::ask(hub, name, out, id, question);
+        }
+        Up::Ask { id, question: Question::MemoryWrite { town, account, entry } } => {
+            let (hub, writer, out) = (hub.clone(), name.clone(), out.clone());
+            let held = crate::moving::Moving::hold(&hub);
+            tokio::spawn(async move {
+                let (_held, _reservation) = (held, reservation);
+                let answer = crate::ledger::write_as(&hub, &writer, town, entry, Some(account)).await;
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
+        }
         Up::Ask { id, question: Question::LedgerRead { town, after } } => {
             crate::ledger::ask(hub, name, out, id, town, after);
         }
@@ -1343,7 +1355,12 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
         Question::Directory => Ok(Told::Directory { view: Box::new(hub.view_for(name)) }),
         Question::ProjectDeleted { town } => crate::project_deletions::finished(hub, name, &town),
         Question::Manage { .. } => Err("changes are made as they come".into()),
-        Question::LedgerWrite { .. } => Err("ledger entries are written as they come".into()),
+        Question::LedgerWrite { .. } | Question::MemoryWrite { .. } => {
+            Err("ledger entries are written as they come".into())
+        }
+        Question::ProjectIndex { .. } | Question::MemoryRead { .. } => {
+            Err("project reads are dispatched asynchronously".into())
+        }
         Question::LedgerTowns => {
             let store = hub.store();
             let towns = hub.ledgers.lock().expect("never poisoned").towns_of(&store.book.directory, name);

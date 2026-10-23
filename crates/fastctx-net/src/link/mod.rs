@@ -30,6 +30,7 @@ mod letters;
 mod line;
 mod login_identity;
 mod machine_log;
+mod memory;
 mod moving;
 mod outgoing;
 mod presence;

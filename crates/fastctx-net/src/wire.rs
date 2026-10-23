@@ -572,6 +572,24 @@ pub enum Question {
         account: AccountName,
         change: Change,
     },
+    /// Metadata only, including for an account whose agent this member hosts.
+    ProjectIndex {
+        town: TownId,
+        account: AccountName,
+    },
+    /// Signed document bytes, only on a device logged into the account.
+    MemoryRead {
+        town: TownId,
+        account: AccountName,
+        name: String,
+        version: Option<u32>,
+    },
+    /// Append project memory explicitly for one account.
+    MemoryWrite {
+        town: TownId,
+        account: AccountName,
+        entry: Signed,
+    },
     /// Keep this entry in the ledger of `town`.
     LedgerWrite {
         town: TownId,
@@ -903,6 +921,14 @@ pub enum Change {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Told {
+    ProjectIndex {
+        index: Box<fastctx_types::memory::ProjectIndex>,
+    },
+    MemoryDocument {
+        entry: Signed,
+        versions: Vec<fastctx_types::memory::Revision>,
+        evidence: Vec<fastctx_types::memory::Evidence>,
+    },
     NetworkUpdates {
         reply: fastctx_types::update::ViewReply,
     },
