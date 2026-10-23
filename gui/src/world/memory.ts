@@ -1,0 +1,80 @@
+// A project's memory (`world-memory.md`): its journals, each written once
+// and never changed, and its decisions, each kept in all its versions, as
+// Markdown under a header of a name and a one-line description. Who wrote
+// a version, when and where, is the World's stamp beside it, never the
+// text's own word.
+
+import { invoke } from "@tauri-apps/api/core";
+import type { Writer } from "./world";
+
+export type MemoryKind = "journal" | "spec";
+
+export interface MemoryAuthor {
+  by: Writer;
+  /** The machine it was written on. */
+  on: string;
+  at: string;
+  host?: { agent: string; client?: string; version?: string } | null;
+  model?: string | null;
+  session?: string | null;
+}
+
+export interface MemoryRevision {
+  kind: MemoryKind;
+  name: string;
+  description: string;
+  version: number;
+  author: MemoryAuthor;
+}
+
+export interface MemoryCatalog {
+  journals: MemoryRevision[];
+  specs: MemoryRevision[];
+}
+
+export interface MemoryDocument {
+  revision: MemoryRevision;
+  /** The Markdown as written, its header first. */
+  text: string;
+  /** Every version, the first first. */
+  versions: MemoryRevision[];
+}
+
+/** The header's description and what follows it; text without a header
+ *  is all body. */
+export function splitHeader(text: string): { description: string | null; body: string } {
+  const lines = text.split("\n");
+  if (lines[0]?.trim() !== "---") return { description: null, body: text };
+  let description: string | null = null;
+  for (let at = 1; at < lines.length; at++) {
+    const line = lines[at]!.replace(/\r$/, "");
+    if (line === "---") return { description, body: lines.slice(at + 1).join("\n").replace(/^\n+/, "") };
+    const colon = line.indexOf(":");
+    if (colon > 0 && line.slice(0, colon) === "description") description = line.slice(colon + 1).trim();
+  }
+  return { description: null, body: text };
+}
+
+/** A document's text, as the World keeps it: the header, then the body. */
+export function composeText(name: string, description: string, body: string): string {
+  return `---\nname: ${name}\ndescription: ${description.replace(/\s+/g, " ").trim()}\n---\n\n${body.replace(/^\n+/, "")}`;
+}
+
+export interface MemorySeam {
+  catalog(town: string): Promise<MemoryCatalog>;
+  read(town: string, name: string, version: number | null): Promise<MemoryDocument>;
+  /** Writes a new journal, or the next version of a decision after
+   *  `expected`; fails where another version came first. */
+  save(town: string, kind: MemoryKind, name: string, text: string, expected: number | null): Promise<MemoryRevision>;
+  /** Whether project memory is on for the account. */
+  enabled(): Promise<boolean>;
+  setEnabled(on: boolean): Promise<void>;
+}
+
+export const memory: MemorySeam = {
+  catalog: (town) => invoke<MemoryCatalog>("memory_list", { town }),
+  read: (town, name, version) => invoke<MemoryDocument>("memory_read", { town, name, version }),
+  save: (town, kind, name, text, expected) => invoke<MemoryRevision>("memory_save", { town, kind, name, text, expected }),
+  enabled: () => invoke<{ enabled: boolean }>("memory_settings").then((settings) => settings.enabled),
+  setEnabled: (on) => invoke<void>("memory_set_settings", { settings: { enabled: on } }),
+};

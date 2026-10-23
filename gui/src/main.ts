@@ -185,11 +185,14 @@ import { installPresses } from "./app/press";
 import { installPointerHints } from "./app/pointer-hint";
 import { installPens } from "./pen/filters";
 import { installRules } from "./pen/rules";
-import { JournalPage } from "./project/journal";
+import { MemoryPage } from "./project/memory-page";
+import { enMemory, zhMemory } from "./project/memory-words";
+import { memory as memorySeam, type MemoryAuthor } from "./world/memory";
+import { specimenCatalog, specimenDocument } from "./specimen/memory";
 import { JournalForm } from "./project/journal-form";
 import { ProjectPage } from "./project/page";
 import { enProject, zhProject } from "./project/words";
-import { specimenJournal, specimenMap } from "./specimen/project";
+import { specimenMap } from "./specimen/project";
 import { markdownOf } from "./conversation/export";
 import { specimens, type Specimen } from "./specimen/sessions";
 import { answering, playLater, playTimed, streamSpecimen } from "./specimen/streams";
@@ -265,7 +268,6 @@ import {
   remoteProbe,
   remoteWithdraw,
   journal as readJournal,
-  journalAdd,
   projectEdit,
   projectNew,
   agents,
@@ -414,7 +416,7 @@ let place: Place = { kind: "home" };
 /** The pages one comes into from another, which have a way back in their
  *  head (`world-gui.md`, 界面的结构); the sidebar's own pages have none. */
 function inner(at: Place): boolean {
-  return ["feature", "data", "journal", "page", "file", "login", "talks", "archived", "machine", "usage", "subagents"].includes(at.kind);
+  return ["feature", "data", "memory", "page", "file", "login", "talks", "archived", "machine", "usage", "subagents"].includes(at.kind);
 }
 
 /** Where a page's back goes when it was not come into from another page,
@@ -431,7 +433,7 @@ function parentOf(at: Place): Place {
       return { kind: "settings" };
     case "machine":
       return { kind: "machines" };
-    case "journal":
+    case "memory":
     case "page":
       return { kind: "project", town: at.town };
     case "archived":
@@ -757,15 +759,32 @@ const removal = (() => {
   return removing ? new RemovalSheet(english ? enRemoval : zhRemoval, removing) : undefined;
 })();
 
+const memoryWords = english ? enMemory : zhMemory;
 const journalForm = new JournalForm({
-  words: projectWords,
-  write: (town, journal, text, description) => (live ? journalAdd(town, journal, text, description) : notLive()),
-  written(town, journal) {
-    const there = link({ kind: "journal", town, journal });
+  words: memoryWords,
+  close: projectWords.close,
+  write: async (town, name, text) => {
+    if (!live) return notLive();
+    await memorySeam.save(town, "journal", name, text, null);
+  },
+  written(town, name) {
+    const there = link({ kind: "memory", town, name });
     if (location.hash === there) show(placeOf(there));
     else location.hash = there;
   },
 });
+
+/** Whether project memory is on for the account, as last read: the
+ *  specimen's with `?memory`. */
+let memoryOn = !live && params.has("memory");
+if (live) void memorySeam.enabled().then((on) => (memoryOn = on), () => (memoryOn = false));
+const memorySwitch = {
+  enabled: async () => (live ? (memoryOn = await memorySeam.enabled()) : memoryOn),
+  set: async (on: boolean) => {
+    if (live) await memorySeam.setEnabled(on);
+    memoryOn = on;
+  },
+};
 
 /** What the user does to conversations from their "⋯", and the line that
  *  says what was just done (`app/talk-acts.ts`). */
@@ -784,7 +803,7 @@ const projectActs = new ProjectActs({
   deleted: (town) => {
     // A page of the project deleted is left for the front page.
     const at = placeOf(location.hash);
-    if ((at.kind === "project" || at.kind === "journal" || at.kind === "page") && at.town === town) replacePlace(link({ kind: "home" }));
+    if ((at.kind === "project" || at.kind === "memory" || at.kind === "page") && at.town === town) replacePlace(link({ kind: "home" }));
   },
 });
 const talkToast = new TalkToast({ undo: talkMenuWords.undo }, () => shell.footBox());
@@ -2032,6 +2051,12 @@ function projectPage(town: string): Page {
     link: talkLink,
     pageWords,
     pageLink: (town, page) => link({ kind: "page", town, page, version: null }),
+    memory: {
+      words: memoryWords,
+      link: (town, name) => link({ kind: "memory", town, name }),
+      write: (town) => journalForm.open(town),
+      writer: (author) => memoryWriter(author).name,
+    },
     more: {
       label: projectActsWords.more,
       shown: (town) => projectActs.acts(town).length > 0,
@@ -2042,6 +2067,17 @@ function projectPage(town: string): Page {
       },
     },
   });
+  // Its memory, where the feature is on, read as the page opens and as
+  // the page is asked again.
+  const readMemory = () => {
+    if (!memoryOn) return page.showMemory(null);
+    if (!live) return page.showMemory(specimenCatalog(specimen.now));
+    memorySeam.catalog(town).then(
+      (catalog) => page.showMemory(catalog),
+      () => page.showMemory(null),
+    );
+  };
+  readMemory();
   if (!live) {
     const map = specimenMap();
     page.update(map, { machine: specimen.world.here, scope: { kind: "town", town, record: null }, machines: specimen.world.who.machines.map((machine) => machine.kind === "answered" ? { ...machine, reply: { ...machine.reply, residents: machine.reply.residents.filter((r) => r.town === town) } } : machine) }, specimen.now);
@@ -2076,22 +2112,33 @@ function projectPage(town: string): Page {
   };
 }
 
-function journalPage(town: string, name: string): Page {
+function memoryPage(town: string, name: string): Page {
   const project = store.world.peek()?.towns.find((t) => t.town === town)?.record.name ?? town;
-  const page = new JournalPage({
-    words: projectWords,
-    project: { href: link({ kind: "project", town }), name: project },
-    journal: name,
+  const page = new MemoryPage({
+    words: memoryWords,
     head,
-    write: () => journalForm.open(town, name),
-    earlier: (before) => (live ? readJournal(town, name, before) : Promise.reject(new Error("specimen"))),
+    project: { href: link({ kind: "project", town }), name: project },
+    name,
+    read: (version) => (live ? memorySeam.read(town, name, version) : Promise.resolve(specimenDocument(name, version, specimen.now))),
+    save: (text, expected) => (live ? memorySeam.save(town, "spec", name, text, expected) : Promise.reject(new Error("specimen"))),
+    writer: (author) => memoryWriter(author),
+    now: () => (live ? new Date() : specimen.now),
   });
-  if (!live) page.show(specimenJournal());
-  else
-    readJournal(town, name, null)
-      .then((view) => page.show(view))
-      .catch((error: unknown) => page.unreachable(String(error)));
   return { element: page.element, title: name };
+}
+
+/** Who wrote a version of a document, and where their conversation is. */
+function memoryWriter(author: MemoryAuthor): { name: string; href: string | null } {
+  const by = author.by;
+  if (by.kind === "user") return { name: memoryWords.you, href: null };
+  if (by.kind === "resident") {
+    const known = residentsOf(live ? store.world.peek() : specimen.world).find((r) => sameAddress(addressOf(r), by.address));
+    // A conversation gone from the World is still named by its host.
+    const agent = agentName(known?.about.host.agent ?? author.host?.agent ?? "");
+    return { name: known ? someoneSaid(known, homeWords) : homeWords.someone(agent, by.address.machine), href: talkLink(by.address) };
+  }
+  if (by.kind === "page") return { name: by.page.page, href: null };
+  return { name: agentName(by.agent), href: null };
 }
 
 /** The page open now, to hear the theme change. */
@@ -2213,8 +2260,8 @@ function show(next: Place): void {
     case "project":
       page = projectPage(next.town);
       break;
-    case "journal":
-      page = journalPage(next.town, next.journal);
+    case "memory":
+      page = memoryPage(next.town, next.name);
       break;
     case "page":
       page = pageScreen(next.town, next.page, next.version);
@@ -2452,7 +2499,7 @@ function show(next: Place): void {
       break;
     case "features":
     case "feature":
-      page = new FeaturesPage({ store, words: english ? enFeatures : zhFeatures, homeWords: agentHomeWords, english, head, feature: next.kind === "feature" ? next.feature : null, agents: () => agentsOn(null), confirm: accountConfirm });
+      page = new FeaturesPage({ store, words: english ? enFeatures : zhFeatures, homeWords: agentHomeWords, english, head, feature: next.kind === "feature" ? next.feature : null, agents: () => agentsOn(null), confirm: accountConfirm, memory: memorySwitch });
       break;
     case "login": {
       // The World's drawing, for the moment this computer is in it.
@@ -2676,8 +2723,9 @@ function specimenPlace(): Place | null {
       return { kind: "home" };
     case "project":
       return { kind: "project", town: "mark50" };
+    // `?s=journal&memory`: a decision of the project, its versions beside it.
     case "journal":
-      return { kind: "journal", town: "mark50", journal: "q16-fixed-point" };
+      return { kind: "memory", town: "mark50", name: "定点数格式" };
     case "page":
       return { kind: "page", town: "mark50", page: "tuning", version: null };
     case "machines":

@@ -411,7 +411,7 @@ export class Sidebar {
         const shut = folded.has(town);
         const asking = inside.some((r) => r.now?.waiting_for_user);
         const working = inside.some((r) => r.now?.activity === "busy");
-        const current = (place.kind === "project" || place.kind === "journal" || place.kind === "page") && place.town === town;
+        const current = (place.kind === "project" || place.kind === "memory" || place.kind === "page") && place.town === town;
         const shutMark = asking ? "mark-ask" : working ? "mark-busy" : "";
         // Pressed, the folder opens and closes; its overview and the rest
         // are in its "⋯". Shut, it says whether something in it waits or

@@ -1,8 +1,8 @@
 // A project's overview, on one screen: what it is, who is in it now, the
 // pages its residents wrote and where its things are, as its record has
-// them. Journals and decisions are project memory, not shown until it is
-// finished (`world-journals.md`). Its "⋯" shares it and hands it on, where
-// the reader may (`../app/project-acts.ts`).
+// them; where project memory is on, its decisions and journals beside its
+// record (`world-memory.md`). Its "⋯" shares it and hands it on, where the
+// reader may (`../app/project-acts.ts`).
 // Side by side where there is room, each column scrolling on its own;
 // behind tabs on a narrow screen. Like the front page, every line is the
 // World's record, nothing summarised.
@@ -21,6 +21,8 @@ import { fileLink } from "../app/places";
 import { worksFor } from "../app/store";
 import { accountTag } from "../home/page";
 import { agentName, titleOf } from "../world/names";
+import type { MemoryAuthor, MemoryCatalog, MemoryRevision } from "../world/memory";
+import type { MemoryWords } from "./memory-words";
 
 export interface ProjectOptions {
   words: ProjectWords;
@@ -41,9 +43,12 @@ export interface ProjectOptions {
   /** The project's "⋯": whether it has anything for the reader, opening
    *  it, and whose the project is where it is another's. */
   more?: { label: string; shown(town: string): boolean; open(town: string, name: string, anchor: HTMLElement): void; sharedBy(town: string): string | null };
+  /** The project's memory, where the feature is on: where a document is
+   *  read, and writing a journal. */
+  memory?: { words: MemoryWords; link(town: string, name: string): string; write(town: string): void; writer(author: MemoryAuthor): string };
 }
 
-type Tab = "here" | "instructions" | "pages" | "places";
+type Tab = "here" | "instructions" | "specs" | "journals" | "pages" | "places";
 
 export class ProjectPage {
   readonly element: HTMLElement;
@@ -56,6 +61,9 @@ export class ProjectPage {
   /** What runs in the town for other accounts than the reader's. */
   private others: WhoFor[] | undefined;
   private drawn = "";
+  /** Its memory as last read; none while the feature is off or unread. */
+  private catalog: MemoryCatalog | null = null;
+  private last: { map: MapView; who: WorldWho; now: Date } | null = null;
 
   constructor(private readonly options: ProjectOptions) {
     this.element = document.createElement("div");
@@ -80,6 +88,9 @@ export class ProjectPage {
     this.element.querySelector(".revise")!.addEventListener("click", () => {
       if (this.record) options.revise(options.town, this.record);
     });
+    this.element.addEventListener("click", (event) => {
+      if ((event.target as HTMLElement).closest("[data-write-journal]")) options.memory?.write(options.town);
+    });
     this.tabs.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-tab]");
       if (!button) return;
@@ -88,7 +99,14 @@ export class ProjectPage {
     });
   }
 
+  /** The project's memory, read again; null where it is off. */
+  showMemory(catalog: MemoryCatalog | null): void {
+    this.catalog = catalog;
+    if (this.last) this.update(this.last.map, this.last.who, this.last.now);
+  }
+
   update(map: MapView, who: WorldWho, now: Date): void {
+    this.last = { map, who, now };
     const { words } = this.options;
     // Archived ones are still named where something of theirs runs on.
     const known = who.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : []));
@@ -128,6 +146,7 @@ export class ProjectPage {
           ? `<p class="project-instructions">${escape(record.what.trim())}</p>`
           : `<p class="quiet">${escape(words.noInstructions)}</p>`,
       ],
+      ...this.memorySections(map.town, now),
       ["pages", this.options.pageWords.pages, this.pages(map.town, map.pages, now)],
       ["places", words.places, record.places.length ? this.places(map) : `<p class="quiet">${escape(words.noPlaces)}</p>`],
     ];
@@ -194,6 +213,39 @@ export class ProjectPage {
         </a></li>`;
       })
       .join("")}</ul>`;
+  }
+
+  /** Its decisions, then its journals, the latest written first. */
+  private memorySections(town: string, now: Date): [Tab, string, string][] {
+    const memory = this.options.memory;
+    const catalog = this.catalog;
+    if (!memory || !catalog) return [];
+    const words = memory.words;
+    const list = (revisions: MemoryRevision[], icon: "spec" | "journal", empty: string) => {
+      if (!revisions.length) return `<p class="quiet">${escape(empty)}</p>`;
+      const sorted = [...revisions].sort((a, b) => Date.parse(b.author.at) - Date.parse(a.author.at));
+      return `<ul class="page-links">${sorted
+        .map((one) => {
+          const facts = [
+            ...(one.kind === "spec" ? [words.version(one.version)] : []),
+            this.options.pageWords.written(memory.writer(one.author), this.options.home.ago(now.getTime() - Date.parse(one.author.at))),
+          ];
+          return `<li><a class="page-link" href="${escape(memory.link(town, one.name))}">
+          <span class="page-link-glyph">${glyph(icon, 18)}</span>
+          <span class="page-link-body">
+            <span class="page-link-title">${escape(one.name)}</span>
+            <span class="page-link-about">${escape(one.description)}</span>
+            <span class="page-link-facts">${facts.map(escape).join(`<span class="sep"></span>`)}</span>
+          </span>
+        </a></li>`;
+        })
+        .join("")}</ul>`;
+    };
+    const write = `<button class="text-button start-journal" type="button" data-write-journal>${glyph("plus", 16)}<span>${escape(words.newJournal)}</span></button>`;
+    return [
+      ["specs", words.specs, list(catalog.specs, "spec", words.noSpecs)],
+      ["journals", words.journals, list(catalog.journals, "journal", words.noJournals) + write],
+    ];
   }
 
   private someone(r: ResidentNow, now: Date): string {

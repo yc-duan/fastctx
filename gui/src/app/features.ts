@@ -16,8 +16,9 @@
 // chooses by, whether it may use the screen), the text the callers are given
 // and the rules every callee is given. It is in development: its card says
 // so, and its page is its film and what it gives, with nothing to turn on,
-// until `COLLABORATION_READY`. Project memory is in development too: its
-// card says so and its page says nothing else.
+// until `COLLABORATION_READY`. Project memory: for the whole account, a
+// project's journal and decisions shown with it and given to its
+// conversations; it has no settings.
 
 import { EffortSlider, effortLabel } from "../conversation/effort-slider";
 import { glyph } from "../conversation/glyphs";
@@ -38,6 +39,7 @@ import { effect } from "./signals";
 import { residentsOf, type Store } from "./store";
 import { deviceFeatures } from "./device-features";
 import { collaboration } from "../film/collaboration";
+import { memoryFilm } from "../film/memory";
 import { Film } from "../film/film";
 import type { Built, Shape } from "../film/reel";
 
@@ -57,6 +59,8 @@ export interface FeaturesOptions {
   agents(): Promise<WorldAgents>;
   /** Asks before a feature is turned off. */
   confirm: Confirm;
+  /** Project memory's switch, for the account. */
+  memory: { enabled(): Promise<boolean>; set(on: boolean): Promise<void> };
 }
 
 /** A login an agent can work in, as the settings name it, with what the
@@ -98,7 +102,7 @@ export class FeaturesPage implements Page {
     });
     if (feature === null) this.cards();
     else if (feature === "conversations") this.conversations();
-    else if (feature === "memory") this.body.innerHTML = `<p class="feature-coming">${glyph("info", 18)}<span>${escape(words.coming)}</span></p>`;
+    else if (feature === "memory") this.memory();
     else this.collaboration();
   }
 
@@ -225,18 +229,28 @@ export class FeaturesPage implements Page {
           <span class="feature-card-art">${glyph("codex", 22)}${glyph("claude", 22)}</span>
           <span class="feature-card-name">${escape(words.collaboration.name)}</span>
           <span class="feature-card-line">${escape(words.collaboration.line)}</span>${COLLABORATION_READY ? tag(on) : coming}</a></li>
-        <li><a class="feature-card coming" href="${link({ kind: "feature", feature: "memory" })}">
-          <span class="feature-card-art">${glyph("folder", 22)}</span>
-          <span class="feature-card-name">${escape(words.memory.name)}</span>${coming}</a></li>
+        <li><a class="feature-card" href="${link({ kind: "feature", feature: "memory" })}">
+          <span class="feature-card-art">${glyph("journal", 22)}${glyph("spec", 22)}</span>
+          <span class="feature-card-name">${escape(words.memory.name)}</span>
+          <span class="feature-card-line">${escape(words.memory.line)}</span>${tag(memoryOn)}</a></li>
       </ul>`;
     };
+    let memoryOn: boolean | null = null;
     draw(null);
+    this.options.memory.enabled().then(
+      (on) => {
+        memoryOn = on;
+        draw(collabOn);
+      },
+      () => {},
+    );
+    let collabOn: boolean | null = null;
     if (!COLLABORATION_READY) return;
     // In no network, this computer keeps its own settings.
     const [first] = loginsOf(this.options.store.world.peek()?.accounts);
     readCollab(first?.hubName ?? null, first?.account ?? null)
-      .then((view) => draw(view.collab.on))
-      .catch(() => draw(false));
+      .then((view) => draw((collabOn = view.collab.on)))
+      .catch(() => draw((collabOn = false)));
   }
 
   /** The workbench: its film and its switch; on, a still of the film
@@ -270,6 +284,46 @@ export class FeaturesPage implements Page {
         () => {
           draw();
           this.celebrate(label, words.conversations.after, make);
+        },
+        (error: unknown) => {
+          turn.disabled = false;
+          turn.title = detailOf(error);
+        },
+      );
+    });
+  }
+
+  /** Project memory: its film and its switch, for the account; on, a still
+   *  of the film waits at the top. */
+  private memory(): void {
+    const { words } = this.options;
+    const seam = this.options.memory;
+    const make = (shape: Shape) => memoryFilm(words.memory.film, shape);
+    const label = words.memory.name;
+    this.replayFilm = () => this.watch(make, label);
+    const draw = (on: boolean) => {
+      this.dropFilms();
+      this.body.classList.toggle("features-film", !on);
+      this.body.classList.toggle("features-on", on);
+      this.body.innerHTML = on
+        ? this.onTop(words.memory.after, true) + this.offWay(label)
+        : `<div class="feature-intro"><div class="feature-film"></div><button class="sheet-go feature-turn" type="button" data-turn="1">${escape(words.turnOn)}</button></div>`;
+      this.film(this.body.querySelector(on ? ".feature-still" : ".feature-film"), make, label, on);
+    };
+    seam.enabled().then(draw, () => draw(false));
+    this.body.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement;
+      if (target.closest("[data-act='turn-off']")) {
+        this.askOff(label, words.memory.offWhat, () => seam.set(false), () => draw(false));
+        return;
+      }
+      const turn = target.closest<HTMLButtonElement>("[data-turn]");
+      if (!turn || turn.disabled) return;
+      turn.disabled = true;
+      void seam.set(true).then(
+        () => {
+          draw(true);
+          this.celebrate(label, words.memory.after, make);
         },
         (error: unknown) => {
           turn.disabled = false;
