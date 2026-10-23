@@ -74,6 +74,19 @@ pub(crate) async fn call(
     let _action = gate.lock().await;
     let place = if node.is_me(&resident.machine) { resident.resident.to_string() } else { resident.key() };
     let _place = node.places.using(&place).await;
+    call_held(node, resident, account, author, turn, request).await
+}
+
+/// The caller already holds the conversation's action gate and a lifetime gate.
+/// This entry point must not reacquire either gate during message handover.
+pub(crate) async fn call_held(
+    node: &Arc<Node>,
+    resident: Address,
+    account: HubAccount,
+    mut author: Author,
+    turn: Option<String>,
+    request: Request,
+) -> Result<Updated, Failure> {
     if node.is_me(&resident.machine) {
         node.residents.active(&resident.resident)?;
         if matches!(&request, Request::Change { change: UserChange::Open { .. } | UserChange::Resume, .. })
@@ -106,12 +119,12 @@ pub(crate) async fn call(
     let current = read(node, &resident, &account).await?;
     let mut proposed = current.goal.clone();
     let at = Timestamp::now();
+    if let Request::Change { change, .. } = &request {
+        super::colleagues::authorize(node, &resident, current.goal.as_ref(), &mut author, change)?;
+    }
     let change = state::Change { operation, author: author.clone(), turn, at };
     match &request {
         Request::Change { expected, change: requested, .. } => {
-            if !matches!(author, Author::User { .. }) {
-                return Err(Failure::refused(words::OWNER_ONLY));
-            }
             if *expected != current.version {
                 return Ok(Updated::Conflict { current: current.version });
             }

@@ -2,6 +2,7 @@
 
 mod archive;
 pub(crate) mod calls;
+pub(crate) mod colleagues;
 pub(crate) mod context;
 pub(crate) mod engine;
 pub(crate) mod holding;

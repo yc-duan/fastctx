@@ -56,7 +56,9 @@ impl Hold {
             || (view.version > self.base
                 && goal.decisions.last().is_some_and(|decision| {
                     decision.operation == goal.operation
-                        && matches!(decision.by, Author::User { .. })
+                        && (matches!(decision.by, Author::User { .. })
+                            || matches!((&decision.by, &goal.owner),
+                                (Author::Resident { address }, fastctx_types::goals::Owner::Conversation { address: owner }) if address == owner))
                         && matches!(decision.kind.as_str(), "opened" | "resumed" | "paused")
                         && (!matches!(self.kind, HoldKind::UserStop)
                             || decision.kind == "paused"
