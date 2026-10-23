@@ -40,7 +40,7 @@ impl Homes for Transport {
     }
 }
 impl Transport {
-    async fn send(&self, registration: &Registration, request: HomeRequest) -> Result<HomeReply, String> {
+    pub(super) async fn send(&self, registration: &Registration, request: HomeRequest) -> Result<HomeReply, String> {
         let link = self.0.link_of(&registration.scope.hub).ok_or("the sentinel account's network is not connected")?;
         let home = &registration.definition.home;
         let view = crate::authorization::current_view(&link).map_err(|e| e.message)?;

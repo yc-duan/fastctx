@@ -25,7 +25,7 @@ pub(crate) fn scope(
     }
     Ok(choices.pop().expect("one account"))
 }
-fn scopes(
+pub(super) fn scopes(
     node: &Node,
     caller: &Caller,
     hub: Option<&HubName>,

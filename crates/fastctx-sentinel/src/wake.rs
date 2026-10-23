@@ -66,8 +66,8 @@ pub async fn wake(
     }
     let recent: Vec<_> = state.recent.iter().map(|o| json!({"id":o.id,"at":o.at,"source":bounded(&o.source,256),"text":bounded(&o.text,1024),"full_path":if state.definition.kind==Kind::Web { None } else { o.full_path.as_ref() }})).collect();
     let reflexes: Vec<_> = state.reflexes.iter().map(|r| json!({"id":r.id,"at":r.at,"every_ms":r.every_ms})).collect();
-    let input = json!({"condition":state.definition.condition,"kind":state.definition.kind,"at":state.definition.at,"plan_claim":state.plan,"notes_claim":state.notes,"recent":recent,
-        "reflexes":reflexes,"wake":reason,"now":now}).to_string();
+    let input = if let WakeReason::Goal { review } = &reason { crate::goal::input(review)?.to_string() } else { json!({"condition":state.definition.condition,"kind":state.definition.kind,"at":state.definition.at,"plan_claim":state.plan,"notes_claim":state.notes,"recent":recent,
+        "reflexes":reflexes,"wake":reason,"now":now}).to_string() };
     let goal = state.definition.kind == Kind::Goal;
     if goal != matches!(reason, WakeReason::Goal { .. }) {
         return Err("goal wake and sentinel kind disagree".into());
