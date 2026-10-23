@@ -173,6 +173,13 @@ pub(super) fn uninstall(service: &Service) -> anyhow::Result<Status> {
     )
 }
 
+pub(super) fn definition_current(service: &Service) -> anyhow::Result<bool> {
+    let config = Config::new(service)?;
+    let path = config.root()?.join("config.json");
+    let Some(actual) = crate::renewal::read_json::<Config>(&path)? else { return Ok(false) };
+    Ok(serde_json::to_value(actual)? == serde_json::to_value(config)?)
+}
+
 pub(super) fn status(service: &Service) -> anyhow::Result<Status> {
     let config = Config::new(service)?;
     transaction::require_complete(&config.root()?.join("transaction.json"))?;

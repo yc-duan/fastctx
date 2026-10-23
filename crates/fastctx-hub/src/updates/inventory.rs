@@ -223,6 +223,7 @@ pub(crate) fn prune(hub: &Hub) {
             .filter(|due| store.book.directory.by_key(&due.key).is_some())
             .map(|due| due.due.version.clone()),
     );
+    keep.extend(store.hub.repairs.iter().filter(|due| store.book.directory.by_key(&due.key).is_some()).map(|due| due.due.version.clone()));
     keep.extend(updates.obtaining.keys().map(|held| held.version.clone()));
     keep.extend(updates.requests.values().map(|(held, _)| held.version.clone()));
     keep.extend(updates.serving.keys().map(|held| held.version.clone()));
@@ -254,7 +255,7 @@ pub(crate) fn prune(hub: &Hub) {
 pub(crate) fn prefetch(hub: &Arc<Hub>) {
     let (policy, due) = {
         let store = hub.store();
-        (store.hub.updates.clone(), store.hub.due.iter().map(|due| due.due.version.clone()).collect::<BTreeSet<_>>())
+        (store.hub.updates.clone(), store.hub.due.iter().map(|due| due.due.version.clone()).chain(store.hub.repairs.iter().map(|due| due.due.version.clone())).collect::<BTreeSet<_>>())
     };
     let (network, manifests, cache) = {
         let updates = hub.updates.lock().expect("never poisoned");
@@ -283,6 +284,7 @@ pub(crate) fn prefetch(hub: &Arc<Hub>) {
                 .find(|due| due.due.version == version)
                 .and_then(|due| store.book.directory.by_key(&due.key))
                 .map(|member| member.name.clone())
+                .or_else(|| store.hub.repairs.iter().find(|r| r.due.version == version).and_then(|r| store.book.directory.by_key(&r.key)).map(|m| m.name.clone()))
         };
         if start && let Some(machine) = machine {
             let hub = hub.clone();
@@ -371,7 +373,8 @@ pub(crate) async fn prepare_update(hub: &Arc<Hub>, name: &MachineName, version: 
     let targets = {
         let store = hub.store();
         let member = store.book.directory.member(name).ok_or_else(|| format!("there is no machine {name}"))?;
-        if !store.hub.due.iter().any(|due| due.key == member.key && due.due.version == version) {
+        if !store.hub.due.iter().any(|due| due.key == member.key && due.due.version == version)
+            && !store.hub.repairs.iter().any(|due| due.key == member.key && due.due.version == version) {
             return Err(format!("no update to {version} is queued for {name}"));
         }
         store.hub.package_targets.get(&member.key).cloned().unwrap_or_default()
@@ -403,6 +406,9 @@ pub(crate) async fn prepare_update(hub: &Arc<Hub>, name: &MachineName, version: 
             if due.due.version == version {
                 due.due.manifest = Some(manifest.clone());
             }
+        }
+        for due in &mut store.hub.repairs {
+            if due.due.version == version { due.due.manifest = Some(manifest.clone()); }
         }
         store.save_hub().map_err(|e| e.to_string())?;
     }

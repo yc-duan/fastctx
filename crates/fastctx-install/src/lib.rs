@@ -32,6 +32,9 @@ pub mod plan;
 pub mod program;
 pub mod program_collection;
 pub mod renewal;
+pub mod repair;
+#[cfg(windows)]
+pub mod interactive;
 pub mod server;
 pub mod service;
 mod source;

@@ -8,7 +8,9 @@
 
 mod application;
 mod doctor;
+mod legacy_repair;
 mod packages;
+pub(crate) mod repair;
 mod retry;
 mod schedule;
 
@@ -32,6 +34,9 @@ use crate::Node;
 pub(crate) struct Updates {
     held: Mutex<Held>,
     packages: fastctx_update::pool::Pool,
+    repair_launching: std::sync::atomic::AtomicBool,
+    repair_logged: Mutex<String>,
+    doctor: Mutex<doctor::Seen>,
 }
 
 #[derive(Default)]
@@ -45,6 +50,7 @@ struct Held {
     carried: Option<PathBuf>,
     /// The World program the application carries.
     program: Option<PathBuf>,
+    app_executable: Option<PathBuf>,
     /// The release someone asked from elsewhere that the application take.
     take: Option<String>,
     origin: Option<schedule::Origin>,
@@ -80,14 +86,7 @@ pub(crate) struct Asker {
 }
 
 /// What the interface here keeps of itself for the node.
-#[derive(serde::Serialize, serde::Deserialize)]
-struct AppFile {
-    app: App,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    carried: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    program: Option<PathBuf>,
-}
+type AppFile = fastctx_install::repair::application::Registration;
 
 fn dir(node: &Node) -> PathBuf {
     node.root.join("updates")
@@ -121,10 +120,11 @@ pub(crate) fn start(node: &Arc<Node>) {
         held.looked = read_json(&dir.join("looked.json")).ok().flatten().unwrap_or_default();
         held.looked.checking = false;
         held.github_speed = read_json(&dir.join(GITHUB_SPEED)).ok().flatten();
-        if let Ok(Some(AppFile { app, carried, program })) = read_json::<AppFile>(&dir.join("app.json")) {
+        if let Ok(Some(AppFile { app, carried, program, executable })) = read_json::<AppFile>(&dir.join("app.json")) {
             held.app = Some(app);
             held.carried = carried;
             held.program = program;
+            held.app_executable = executable;
         }
         if let Ok(Some(take)) = read_json::<application::Take>(&dir.join("take.json")) {
             held.take = Some(take.version);
@@ -248,13 +248,16 @@ pub(crate) fn state(node: &Node) -> State {
                 }
                 Some(Failed { version, target: fastctx_update::kernel::target(), why: plan.error?, reason: None })
             }),
-            retry_at: held.attempt.failed.as_ref().and(held.attempt.delay.next),
+            retry_at: repair::retry_at(node).or_else(|| held.attempt.failed.as_ref().and(held.attempt.delay.next)),
             kept: cache.kept(),
             app: held.app.clone(),
             kernel_target: fastctx_update::kernel::target(),
             renewing: renewing(node),
             take: held.take.clone(),
             open: application::open(),
+            repair_supported: true,
+            repair_routing: true,
+            repair: repair::snapshot(node),
             ..State::default()
         },
         context,
@@ -336,6 +339,8 @@ pub(crate) fn report(node: &Node) {
         checked_at: held.looked.at,
         checking: held.looked.checking,
         updates_view: true,
+        repair_supported: true,
+        repair: state.repair,
     };
     drop(held);
     let hubs = hubs_here(node);
@@ -393,6 +398,7 @@ pub(crate) async fn call(node: &Arc<Node>, call: UpdateCall) -> Result<State, St
             drop(held);
             report(node);
         }
+        UpdateCall::Repair { version, id } => repair::accept(node, version, id, "local".into())?,
         UpdateCall::State => {}
         UpdateCall::Look => {
             look(node);
@@ -406,17 +412,18 @@ pub(crate) async fn call(node: &Arc<Node>, call: UpdateCall) -> Result<State, St
             report(node);
             auto(node);
         }
-        UpdateCall::App { app, carried, program } => {
+        UpdateCall::App { app, carried, program, executable } => {
             application::took(node, &app.version);
             let file =
-                AppFile { app: app.clone(), carried: carried.map(PathBuf::from), program: program.map(PathBuf::from) };
+                AppFile { app: app.clone(), carried: carried.map(PathBuf::from), program: program.map(PathBuf::from), executable: executable.map(PathBuf::from) };
             let mut held = node.updates.held.lock().expect("never poisoned");
-            if held.app.as_ref() != Some(&app) || held.carried != file.carried || held.program != file.program {
+            if held.app.as_ref() != Some(&app) || held.carried != file.carried || held.program != file.program || held.app_executable != file.executable {
                 keep(node, "app.json", &file).map_err(|error| error.to_string())?;
                 held.app = Some(file.app);
                 held.activity = None;
                 held.carried = file.carried;
                 held.program = file.program;
+                held.app_executable = file.executable;
                 drop(held);
                 report(node);
             }
@@ -532,6 +539,7 @@ fn prune(node: &Arc<Node>, ready: Option<&str>) {
     keep.extend(held.activity.as_ref().and_then(Stage::version).map(str::to_owned));
     drop(held);
     keep.extend(renewing(node).map(|r| r.version));
+    keep.extend(repair::snapshot(node).filter(|r| !r.success).map(|r| r.version));
     if let Some(ready) = ready {
         keep.push(ready.to_string());
     } else if let Some(ready) = cache(node).manifests().first() {
@@ -757,6 +765,13 @@ pub(crate) async fn machine(
     if matches!(update, UpdateCall::App { .. } | UpdateCall::Fetch { .. } | UpdateCall::Progress { .. }) {
         return Err(Failure::new("only an interface on that machine says what it is or brings packages there"));
     }
+    if matches!(update, UpdateCall::Repair { .. }) {
+        let current = Box::pin(self::machine(node, acting, machine.clone(), UpdateCall::State)).await?;
+        if !current.repair_supported { return Err(Failure::new(format!("{machine} runs a version too old to accept repair; arrange repair through a newer hub"))); }
+        if !node.locate(&machine)?.iter().any(|link| link.versions().is_some_and(|n| n.repair_supported)) {
+            return Err(Failure::new("the hub is too old to route repair; update it first"));
+        }
+    }
     if let UpdateCall::Preferences { auto, relays } = update {
         let current = Box::pin(self::machine(node, acting, machine.clone(), UpdateCall::State)).await?;
         update = if current.preferences {
@@ -812,6 +827,10 @@ pub(crate) async fn machine(
 /// update asked of a machine an application carries the World program of
 /// is the application's to take (`application`).
 pub(crate) async fn remote(node: &Arc<Node>, asker: Asker, update: Option<UpdateCall>) -> Result<State, String> {
+    if let Some(UpdateCall::Repair { version, id }) = update {
+        repair::accept(node, version, id, asker.by.to_string())?;
+        return Ok(state(node));
+    }
     let app = node.updates.held.lock().expect("never poisoned").app.clone();
     let version = match &update {
         None => Some(None),
@@ -880,6 +899,8 @@ fn auto(node: &Arc<Node>) {
     if !fastctx_platform::follows_releases() || !node.updates.held.lock().expect("never poisoned").started {
         return;
     }
+    repair::scheduled(node);
+    if repair::drive(node) { return; }
     schedule::reconcile(node);
     let state = state(node);
     if state.fetching.is_some() || application::busy() || (state.take.is_some() && (application::open() || !cfg!(windows)))
@@ -974,4 +995,5 @@ pub(crate) fn within(state: &State) -> Option<String> {
 /// The hubs told of versions anew.
 pub(crate) fn heard(node: &Arc<Node>) {
     auto(node);
+    doctor::heard(node);
 }

@@ -35,7 +35,7 @@ pub async fn prepare(root: &Path, digest: &str) -> anyhow::Result<()> {
         let activation = fastctx_install::placement::activation(&root)?;
         let plan = store::read(&root)?.context("replacement has no plan")?;
         ensure!(plan.candidate.build == build, "replacement plan changed before publication");
-        store::install(&root, &plan.candidate)?;
+        store::install_plan(&root, &plan)?;
         let child = store::launch(
             &root,
             &store::installed(&root),

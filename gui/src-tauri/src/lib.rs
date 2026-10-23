@@ -16,7 +16,12 @@ mod features;
 mod hub_moving;
 mod item_details;
 mod kept;
+#[cfg(desktop)]
+mod local_repair;
 mod profile;
+#[cfg(desktop)]
+mod repair_probe;
+mod startup;
 mod transcript;
 mod updates;
 mod world_watch;
@@ -1096,43 +1101,64 @@ pub(crate) const WINDOW_KEPT: tauri_plugin_window_state::StateFlags = tauri_plug
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(desktop)]
+    {
+        let args: Vec<_> = std::env::args_os().collect();
+        if args.get(1).is_some_and(|arg| arg == "--repair") {
+            if let Err(error) = local_repair::launch(None, true) {
+                startup::persist("launch_repair", &error);
+                std::process::exit(1);
+            }
+            return;
+        }
+        if args.get(1).is_some_and(|arg| arg == "--repair-probe") {
+            let result = match (args.get(2), args.get(3)) {
+                (Some(receipt), Some(profile)) => repair_probe::run(receipt.into(), profile.into()),
+                _ => Err("repair probe needs a receipt and an isolated profile".into()),
+            };
+            if let Err(error) = result {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+            return;
+        }
+    }
     #[cfg(all(windows, not(feature = "page-sandbox-probe")))]
-    let Some(desktop) = desktop_presence::enter().expect("starting World's desktop presence") else {
-        return;
+    let (desktop, desktop_error) = match desktop_presence::enter() {
+        Ok(Some(instance)) => (Some(instance), None),
+        Ok(None) => return,
+        Err(error) => (None, Some(error)),
     };
     let builder = tauri::Builder::default()
+        .manage(startup::Startup::default())
         .plugin(tauri_plugin_world_pages::init())
         // Its script also sends every link that opens a new window to the
         // system's browser, where the webview alone would drop it.
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let directory = app.path().app_data_dir()?;
-            let connection = tauri::async_runtime::block_on(async { connection::Connection::open(directory) })
-                .map_err(std::io::Error::other)?;
-            app.manage(Shell {
-                connection,
-                watches: Arc::default(),
-                transcripts: Arc::default(),
-                next: AtomicU64::new(0),
-                page: AtomicU64::new(0),
-                line_requests: Default::default(),
-                held_reads: Default::default(),
-            });
             #[cfg(desktop)]
             app.manage(removal::State::default());
             #[cfg(desktop)]
             app.manage(remote_world::Sessions::default());
-            #[cfg(desktop)]
-            updates::after_update(app.handle());
-            // The node or the device learns which application this is, for
-            // its updates and the network's.
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                let carried = handle.path().resource_dir().ok().map(|dir| dir.join("linux"));
-                if let Err(error) = updates::introduce(&handle.state::<Shell>(), carried).await {
-                    eprintln!("World: telling the World which application this is: {error}");
+            if let Some(window) = app.get_webview_window("main") {
+                #[cfg(windows)]
+                if window.hwnd().is_ok_and(|handle| unsafe {
+                    !windows::Win32::UI::WindowsAndMessaging::IsWindowVisible(windows::Win32::Foundation::HWND(
+                        handle.0,
+                    ))
+                    .as_bool()
+                }) {
+                    // A hidden launcher can override the first ShowWindow call;
+                    // reset tao's visibility cache before asking it to show again.
+                    if let Err(error) = window.hide() {
+                        startup::warning(app.handle(), "show_window", error.to_string());
+                    }
                 }
-            });
+                if let Err(error) = window.show() {
+                    startup::warning(app.handle(), "show_window", error.to_string());
+                }
+            }
+            startup::open(app.handle().clone());
             Ok(())
         })
         .on_page_load(|webview, payload| {
@@ -1144,7 +1170,14 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            startup::startup_state,
+            startup::startup_retry,
+            #[cfg(desktop)]
+            local_repair::repair_here,
+            #[cfg(desktop)]
+            local_repair::repair_state,
             updates::update_state,
+            updates::update_repair,
             updates::update_progress,
             updates::update_look,
             updates::update_set,
@@ -1318,7 +1351,7 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().with_state_flags(WINDOW_KEPT).build())
         .plugin(tauri_plugin_updater::Builder::new().build());
     #[cfg(all(windows, not(feature = "page-sandbox-probe")))]
-    let builder = builder.plugin(desktop_presence::plugin(desktop));
+    let builder = builder.plugin(desktop_presence::plugin(desktop, desktop_error));
     #[cfg(windows)]
     let builder = builder.plugin(titlebar::plugin());
     #[cfg(target_os = "android")]
@@ -1326,5 +1359,7 @@ pub fn run() {
     let context = tauri::generate_context!();
     #[cfg(windows)]
     let context = titlebar::configure(context);
-    builder.run(context).expect("running the World's window");
+    if let Err(error) = builder.run(context) {
+        startup::persist("open_window", &error.to_string());
+    }
 }

@@ -52,6 +52,7 @@ use crate::again::Again;
 use crate::learned::Holding;
 
 mod accepting;
+pub(crate) mod update;
 
 /// A new caller's optional stream acknowledges business admission before filesystem work.
 pub(crate) async fn accept(stream: Option<Stream>) -> Result<Option<Stream>, Failure> {
