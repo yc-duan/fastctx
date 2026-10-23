@@ -486,9 +486,16 @@ async fn submit_thread(
         taken.insert(0, words);
     }
     let mut batch = taken;
+    let audience = if batch.iter().any(|pending| pending.working)
+        && crate::goals::replies::inherits(node, id).map_err(|error| Failure::new(error.to_string()))?
+    {
+        node.residents.working_for(id)
+    } else {
+        Vec::new()
+    };
     for kept in &mut batch {
         if kept.working {
-            kept.readers = node.residents.working_for(id);
+            kept.readers = audience.clone();
             kept.working = false;
         }
     }

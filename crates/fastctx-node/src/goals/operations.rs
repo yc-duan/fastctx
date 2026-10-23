@@ -270,6 +270,9 @@ pub(crate) async fn finish(node: &Arc<Node>, intent: &mut Intent) -> Result<Upda
     if current.version.is_none_or(|current| current < version) {
         return Err(Failure::new(fastctx_types::goals::words::LOST_REVISION));
     }
+    if node.is_me(&intent.resident.machine) {
+        super::replies::remember(node, &intent.resident.resident, &current).map_err(failure)?;
+    }
     if let Some(goal) = &intent.proposed {
         super::reports::keep(node, goal)?;
     }
@@ -291,6 +294,7 @@ pub(crate) async fn finish(node: &Arc<Node>, intent: &mut Intent) -> Result<Upda
 }
 
 pub(crate) async fn apply(node: &Arc<Node>, resident: &ResidentId, view: &View) -> Result<(), Failure> {
+    super::replies::remember(node, resident, view).map_err(failure)?;
     if let Some(goal) = &view.goal {
         super::reports::keep(node, goal)?;
     }
