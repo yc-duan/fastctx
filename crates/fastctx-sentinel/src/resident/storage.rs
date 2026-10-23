@@ -129,7 +129,8 @@ impl Host {
         }
         let store = self.store(&registration);
         if let Some(mut state) = store.load()? {
-            if !matches!(state.conclusion, Conclusion::Withdrawn) {
+            // A sentinel that finished on its own keeps the conclusion it reached.
+            if !state.finished {
                 state.finished = true;
                 state.completed_at = self.runtime.now();
                 state.conclusion = Conclusion::Withdrawn;
@@ -140,7 +141,11 @@ impl Host {
             }
             self.synchronize(&registration, &state, &Ledger::load(&store)?).await?;
         }
-        Ok(())
+        // Nothing acts for it here any more; its generations keep what it saw.
+        match std::fs::remove_file(self.assignment(scope, id)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+            _ => Ok(()),
+        }
     }
 }
 pub(super) fn summary(state: &State) -> Summary {

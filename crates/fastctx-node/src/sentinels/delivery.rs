@@ -26,6 +26,21 @@ pub(super) async fn pending(node: &Arc<Node>, host: &Host, scope: &HubAccount, i
         send(node, &notification).await?;
         host.delivered(&notification).await?;
     }
+    // A finished sentinel's definition goes once all it found has reached its
+    // owner, and only its home knows that.
+    let Some((version, current)) = lifecycle::get(host.records.as_ref(), scope, id).await.map_err(|e| e.to_string())?
+    else {
+        return Ok(());
+    };
+    if !current.active && node.is_me(&current.definition.home) && host.notifications(scope, id).await?.is_empty() {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            host.records.compare_exchange(scope, lifecycle::KIND, id.as_str(), Some(version), None),
+        )
+        .await
+        .map_err(|_| "removing a finished sentinel timed out")?
+        .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 async fn send(node: &Arc<Node>, notification: &Notification) -> Result<(), String> {

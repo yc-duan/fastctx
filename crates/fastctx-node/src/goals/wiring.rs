@@ -137,14 +137,14 @@ impl Context for NamedContext {
     fn set<'a>(&'a self, resident: &'a ResidentId, name: &'a str, text: &'a str) -> Reply<'a, ()> {
         Box::pin(async move {
             let node = self.node.upgrade().ok_or_else(|| Failure::new("the node has gone"))?;
-            crate::context::set(
-                &node,
-                resident,
-                name,
-                text,
-                crate::context::Change { by: None, version: "", fact: GOAL_CONTEXT_CHANGED, full: true },
-            )
-            .map_err(|error| Failure::new(error.to_string()))
+            let change = crate::context::Change { by: None, version: "", fact: GOAL_CONTEXT_CHANGED, full: true };
+            // An archived conversation still has its goal block taken down.
+            let result = if text.is_empty() {
+                crate::context::clear(&node, resident, name, change)
+            } else {
+                crate::context::set(&node, resident, name, text, change)
+            };
+            result.map_err(|error| Failure::new(error.to_string()))
         })
     }
 }
@@ -230,9 +230,9 @@ impl ColleagueGoals for ColleagueRuntime {
                 expected: current.version,
                 change: UserChange::Resume,
             };
-            super::operations::call(node, address, account, Author::User { machine: node.machine() }, None, request)
-                .await
-                .map(drop)
+            // The handover delivering that message holds the colleague's action and management gates.
+            let author = Author::User { machine: node.machine() };
+            super::operations::call_held(node, address, account, author, None, request).await.map(drop)
         })
     }
 

@@ -59,6 +59,24 @@ pub(crate) async fn call(
     let _action = gate.lock().await;
     let place = if node.is_me(&resident.machine) { resident.resident.to_string() } else { resident.key() };
     let _place = node.places.using(&place).await;
+    call_held(node, resident, account, author, turn, request).await
+}
+
+/// `call` for a caller that already holds the conversation's action gate and
+/// keeps it from being deleted meanwhile, such as a handover holding its
+/// management gate while it reopens a blocked colleague's goal. It takes
+/// neither gate again.
+pub(crate) async fn call_held(
+    node: &Arc<Node>,
+    resident: Address,
+    account: HubAccount,
+    author: Author,
+    turn: Option<String>,
+    request: Request,
+) -> Result<Updated, Failure> {
+    if matches!(request, Request::Read) {
+        return read(node, &resident, &account).await.map(|view| Updated::Goal { view: Box::new(view) });
+    }
     if node.is_me(&resident.machine) {
         node.residents.active(&resident.resident)?;
     }

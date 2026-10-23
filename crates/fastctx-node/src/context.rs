@@ -54,6 +54,15 @@ pub(crate) fn set(node: &Node, id: &ResidentId, name: &str, text: &str, change: 
     storage::set(&node.world, id, name, text, change)
 }
 
+/// Removes a named block from a conversation that still has its record here,
+/// an archived one included. A deleted conversation has nothing left to clear.
+pub(crate) fn clear(node: &Node, id: &ResidentId, name: &str, change: Change<'_>) -> io::Result<()> {
+    if node.residents.about(id).is_none() {
+        return Err(io::Error::other(format!("no resident {id} lives here")));
+    }
+    storage::set(&node.world, id, name, "", change)
+}
+
 pub(crate) use sources::{map, plan, plan_unavailable, prepare, refresh_local};
 
 pub(crate) fn instructed(node: &Node, id: &ResidentId, heard: &crate::residents::Heard) -> io::Result<()> {

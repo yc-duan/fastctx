@@ -97,13 +97,14 @@ pub(crate) async fn map(
         Some(town) => crate::memory::context::text(node, town, acting, read_only).await?,
         None => None,
     };
-    super::set(
-        node,
-        id,
-        "map",
-        body.as_deref().unwrap_or(""),
-        Change { by: None, version: "", fact: &words::changed("map", words::USER), full: true },
-    )
+    let text = body.as_deref().unwrap_or("");
+    let change = Change { by: None, version: "", fact: &words::changed("map", words::USER), full: true };
+    // Opening instructions are prepared before the conversation is born.
+    if node.residents.about(id).is_some() {
+        super::set(node, id, "map", text, change)
+    } else {
+        storage::set(&node.world, id, "map", text, change)
+    }
     .map_err(|error| Failure::new(error.to_string()))
 }
 
