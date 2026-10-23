@@ -1519,7 +1519,7 @@ export class ConversationPage {
     const space = text.indexOf(" ");
     const name = (space < 0 ? text.slice(1) : text.slice(1, space)).trim();
     const args = space < 0 ? "" : text.slice(space + 1).trim();
-    const find = (moving: boolean) => commandFor(commandsOf(this.offered, controls.words.commands, moving, this.side !== null), name, args);
+    const find = (moving: boolean) => commandFor(commandsOf(this.offered, controls.words.commands, moving, this.side?.goals ?? false), name, args);
     if (!find(this.options.conversation.moving())) await this.askOffers();
     if (this.left) return;
     if (!this.offered) {
@@ -1733,7 +1733,7 @@ export class ConversationPage {
     const typed = /^\/(\S*)$/.exec(this.input.value);
     if (!typed) return menu.hide();
     const prefix = typed[1]!.toLowerCase();
-    const found = commandsOf(this.offered, this.options.controls.words.commands, this.options.conversation.moving(), this.side !== null).filter((command) =>
+    const found = commandsOf(this.offered, this.options.controls.words.commands, this.options.conversation.moving(), this.side?.goals ?? false).filter((command) =>
       command.name.toLowerCase().startsWith(prefix),
     );
     menu.show(found, this.options.controls.words.commands.noCommands);

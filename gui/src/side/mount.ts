@@ -94,7 +94,8 @@ export class SideMount {
       clear: () => void this.act(seams.goal.clear(version())),
     });
     this.collab = new CollabPage(words.collab, words.goal, (node) => this.openNode(node));
-    this.panel = new SidePanel(words, { plan: this.planPage, goal: this.goalPage, collab: this.collab }, { changed: () => this.drawToggle() });
+    const pages = { plan: this.planPage, ...(seams.noGoal ? {} : { goal: this.goalPage }), collab: this.collab };
+    this.panel = new SidePanel(words, pages, { changed: () => this.drawToggle() });
     this.bar = new GoalBar(words.goal, {
       pause: () => void this.act(seams.goal.pause(version())),
       resume: () => void this.act(seams.goal.resume(version())),
@@ -156,6 +157,11 @@ export class SideMount {
     this.panel.show("collab");
     this.openNode(nodeOf(run, this.context.host, new Map(), Date.now()));
     return true;
+  }
+
+  /** Whether a goal may be set here, from the input among others. */
+  get goals(): boolean {
+    return !this.context.seams.noGoal;
   }
 
   /** The goal set from the input (`/goal`): it opens at once. */

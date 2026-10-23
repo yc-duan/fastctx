@@ -130,6 +130,8 @@ export interface LiveSide {
   address: Address;
   /** A colleague's page, for its own panel: only its goal's bar is drawn. */
   bare?: boolean;
+  /** No goal is set here (`SideSeams.noGoal`). */
+  noGoal?: boolean;
   /** A colleague's conversation, to talk with it in the panel. */
   open(address: Address): { element: HTMLElement; leave(): void };
   /** A span of time, short. */
@@ -183,6 +185,7 @@ export function liveSide(options: LiveSide): SideSeams {
   return {
     words: options.words,
     ...(options.bare ? { bare: true } : {}),
+    ...(options.noGoal ? { noGoal: true } : {}),
     plan: {
       words: options.planWords,
       seams: plan,

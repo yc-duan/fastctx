@@ -29,7 +29,7 @@ export class SidePanel {
 
   constructor(
     words: SideWords,
-    private readonly pages: Record<SidePageName, SidePage>,
+    private readonly pages: { plan: SidePage; goal?: SidePage; collab: SidePage },
     private readonly seams: {
       /** The panel opened or shut, or a page has news: the switch redraws. */
       changed: () => void;
@@ -41,14 +41,14 @@ export class SidePanel {
     this.element.className = "sp-panel";
     this.element.hidden = true;
     this.element.setAttribute("aria-label", words.panel);
-    const names: SidePageName[] = ["plan", "goal", "collab"];
+    const names = (["plan", "goal", "collab"] as const).filter((name) => this.pages[name]);
     this.element.innerHTML = `<div class="sp-margin" aria-hidden="true"></div><header class="sp-head"><nav class="sp-tabs" role="tablist">${names
       .map((name) => `<button class="sp-tab" type="button" role="tab" data-page="${name}"><span data-label="${escape(words.pages[name])}">${escape(words.pages[name])}</span><span class="sp-dot" aria-hidden="true"></span></button>`)
       .join("")}</nav><button class="icon-button sp-close" type="button" aria-label="${escape(words.close)}" title="${escape(words.close)}">${glyph("close", 18)}</button></header><div class="sp-body"></div>`;
     this.body = this.element.querySelector(".sp-body")!;
     this.margin = this.element.querySelector(".sp-margin")!;
     for (const name of names) {
-      const page = this.pages[name];
+      const page = this.pages[name]!;
       page.element.classList.add("sp-page");
       page.element.setAttribute("role", "tabpanel");
       page.element.hidden = true;
@@ -98,17 +98,18 @@ export class SidePanel {
   }
 
   select(page: SidePageName): void {
+    if (!this.pages[page]) page = "plan";
     this.current = page;
     this.fresh.delete(page);
     for (const [name, shown] of Object.entries(this.pages) as [SidePageName, SidePage][]) shown.element.hidden = name !== page;
     this.drawTabs();
-    if (this.open) this.pages[page].shown?.();
+    if (this.open) this.pages[page]?.shown?.();
     this.seams.changed();
   }
 
   /** A page has something new; said by a dot until it is looked at. */
   news(page: SidePageName): void {
-    if (this.open && this.current === page) return;
+    if (!this.pages[page] || (this.open && this.current === page)) return;
     this.fresh.add(page);
     this.drawTabs();
     this.seams.changed();

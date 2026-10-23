@@ -74,7 +74,8 @@ const goalPage = new GoalPage(words.goal, {
 const collabPage = new CollabPage(words.collab, words.goal, () => {});
 collabPage.show({ agent: "claude", name: "" }, params.get("collab") === "none" ? [] : collab);
 
-const panel = new SidePanel(words, { plan: planPage, goal: goalPage, collab: collabPage }, { changed: () => drawToggle() }, (params.get("page") as SidePageName | null) ?? "plan");
+// `nogoal`: a Codex conversation opened in Codex's own app, which takes no goal.
+const panel = new SidePanel(words, { plan: planPage, ...(params.has("nogoal") ? {} : { goal: goalPage }), collab: collabPage },{ changed: () => drawToggle() }, (params.get("page") as SidePageName | null) ?? "plan");
 
 const bar = new GoalBar(words.goal, {
   pause: () => setStatus("paused"),

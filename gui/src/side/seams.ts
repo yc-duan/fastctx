@@ -12,6 +12,10 @@ export interface SideSeams {
   /** A colleague's page in another's panel: only its goal's bar, no panel
    *  of its own. */
   bare?: boolean;
+  /** No goal is set here: a Codex conversation the user opened in Codex's
+   *  own app, editor or command line, whose turns the World neither sees
+   *  nor starts (`world-goal.md`). */
+  noGoal?: boolean;
   plan: {
     words: PlanWords;
     /** The plan's seams but its answers, which go in as the user's words. */

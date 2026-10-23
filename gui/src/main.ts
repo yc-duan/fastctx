@@ -1768,6 +1768,10 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
   const world = store.world.peek();
   const listed = someoneOf(world, address);
   const someone: Someone = listed ?? { agent: address.resident, machine: address.machine, model: null, project: null };
+  // Codex's own app, editor or command line holds a conversation the user
+  // opened there: the World cannot drive a goal in it.
+  const known = residentAt(world, address);
+  const noGoal = !!known && /^codex/i.test(known.about.host.agent) && !known.about.world_started;
   const here = world?.here ?? null;
   const conversation = new Conversation();
   // The agent by its name, or, not yet listed, its resident's id.
@@ -1792,6 +1796,7 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
       store,
       address,
       bare: inPanel,
+      noGoal,
       took: (ms) => words.took(ms),
       openId: (id) => openWorldId(id),
       open: (colleague) => {
