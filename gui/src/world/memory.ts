@@ -72,9 +72,13 @@ export interface MemorySeam {
 }
 
 export const memory: MemorySeam = {
-  catalog: (town) => invoke<MemoryCatalog>("memory_list", { town }),
-  read: (town, name, version) => invoke<MemoryDocument>("memory_read", { town, name, version }),
-  save: (town, kind, name, text, expected) => invoke<MemoryRevision>("memory_save", { town, kind, name, text, expected }),
-  enabled: () => invoke<{ enabled: boolean }>("memory_settings").then((settings) => settings.enabled),
-  setEnabled: (on) => invoke<void>("memory_set_settings", { settings: { enabled: on } }),
+  catalog: (project) => invoke<MemoryCatalog>("memory_list", { project }),
+  read: (project, name, version) => invoke<MemoryDocument>("memory_read", { project, name, version }),
+  // A decision is the next version after `expected`; a journal is written once.
+  save: (project, kind, name, text, expected) =>
+    kind === "spec"
+      ? invoke<MemoryRevision>("memory_save_spec", { project, name, text, expected })
+      : invoke<MemoryRevision>("memory_add_journal", { project, name, text }),
+  enabled: () => invoke<{ enabled: boolean }>("memory_settings_read", {}).then((settings) => settings.enabled),
+  setEnabled: (on) => invoke<{ enabled: boolean }>("memory_settings_set", { enabled: on }).then(() => undefined),
 };
