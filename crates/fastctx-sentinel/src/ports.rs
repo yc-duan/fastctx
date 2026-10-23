@@ -9,6 +9,13 @@ pub struct ReadResult {
     pub exit_code: Option<i32>,
     pub full_path: Option<String>,
 }
+/// A machine a sentinel may look at: one its account can work on, as the
+/// home sees it now, like the machines a World agent is given.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Machine {
+    pub name: MachineName,
+    pub online: bool,
+}
 /// Implementations enforce current account authority and a read-only offline sandbox.
 pub trait Look: Send + Sync {
     fn look<'a>(

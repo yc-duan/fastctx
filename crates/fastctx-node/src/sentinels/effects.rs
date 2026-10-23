@@ -69,8 +69,18 @@ impl Runtime for Effects {
                             directory: directory.to_path_buf(),
                         }),
                     }),
+                    machines: Vec::new(),
                 })
             } else {
+                // Every machine its account works on, as the agents of that account are given them.
+                let link = node.link_of(&registration.scope.hub).ok_or("the observation account's hub is not connected")?;
+                let view = crate::authorization::current_view(&link).map_err(|e| e.message)?;
+                let account = &registration.scope.account;
+                let machines = view
+                    .machines()
+                    .filter(|member| view.rights(account, &member.name).hands)
+                    .map(|member| fastctx_sentinel::ports::Machine { name: member.name.clone(), online: member.online })
+                    .collect();
                 Ok(Capabilities {
                     look: Box::new(super::look::MachineLook {
                         node,
@@ -78,6 +88,7 @@ impl Runtime for Effects {
                         directory: directory.join("observations"),
                     }),
                     web: Box::new(Disabled),
+                    machines,
                 })
             }
         })

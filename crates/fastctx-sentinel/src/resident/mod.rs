@@ -23,6 +23,8 @@ use tokio::sync::{Mutex as Gate, Semaphore};
 pub struct Capabilities {
     pub look: Box<dyn Look>,
     pub web: Box<dyn Web>,
+    /// Where it may look this wake; none for a sentinel of the public web.
+    pub machines: Vec<crate::ports::Machine>,
 }
 /// The node checks current account authority and assignment before each effect.
 /// Model clients are constructed on the home, never transported to another node.
@@ -156,6 +158,7 @@ impl Host {
                                 model: model.as_ref(),
                                 look: capabilities.look.as_ref(),
                                 web: capabilities.web.as_ref(),
+                                machines: &capabilities.machines,
                                 limits: &Limits::default(),
                             },
                         )

@@ -1,6 +1,6 @@
 //! One wake, one bounded conversation, one atomic conclusion.
 use crate::{
-    ports::{Look, ReadResult, Web},
+    ports::{Look, Machine, ReadResult, Web},
     state::{State, Store},
     words,
 };
@@ -18,6 +18,8 @@ pub struct Environment<'a> {
     pub model: &'a dyn Model,
     pub look: &'a dyn Look,
     pub web: &'a dyn Web,
+    /// The machines it may look at this wake.
+    pub machines: &'a [Machine],
     pub limits: &'a Limits,
 }
 
@@ -30,7 +32,7 @@ pub async fn wake(
     now: i64,
     environment: &Environment<'_>,
 ) -> Result<State, String> {
-    let Environment { model, look, web, limits } = *environment;
+    let Environment { model, look, web, machines, limits } = *environment;
     if state.wake_id == wake_id || state.finished {
         if state.pending.as_ref().is_some_and(|pending|pending.id==wake_id) {
             state.pending=None;
@@ -67,7 +69,7 @@ pub async fn wake(
     let recent: Vec<_> = state.recent.iter().map(|o| json!({"id":o.id,"at":o.at,"source":bounded(&o.source,256),"text":bounded(&o.text,1024),"full_path":if state.definition.kind==Kind::Web { None } else { o.full_path.as_ref() }})).collect();
     let reflexes: Vec<_> = state.reflexes.iter().map(|r| json!({"id":r.id,"at":r.at,"every_ms":r.every_ms})).collect();
     let input = if let WakeReason::Goal { review } = &reason { crate::goal::input(review)?.to_string() } else { json!({"condition":state.definition.condition,"kind":state.definition.kind,"at":state.definition.at,"plan_claim":state.plan,"notes_claim":state.notes,"recent":recent,
-        "reflexes":reflexes,"wake":reason,"now":now}).to_string() };
+        "reflexes":reflexes,"machines":machines,"wake":reason,"now":now}).to_string() };
     let goal = state.definition.kind == Kind::Goal;
     if goal != matches!(reason, WakeReason::Goal { .. }) {
         return Err("goal wake and sentinel kind disagree".into());
@@ -75,6 +77,7 @@ pub async fn wake(
     let mut app = Sentinel {
         state,
         now,
+        machines,
         look,
         web,
         directory: store.directory().to_path_buf(),
@@ -132,6 +135,7 @@ pub(crate) fn retry_reflex(now: i64) -> Reflex {
 struct Sentinel<'a> {
     state: State,
     now: i64,
+    machines: &'a [Machine],
     look: &'a dyn Look,
     web: &'a dyn Web,
     directory: std::path::PathBuf,
@@ -150,11 +154,21 @@ fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> 
 fn string() -> Value {
     json!({"type":"string"})
 }
+impl Sentinel<'_> {
+    /// A machine parameter that names one of the machines it may look at.
+    fn machine(&self) -> Value {
+        if self.machines.is_empty() {
+            return string();
+        }
+        let names: Vec<_> = self.machines.iter().map(|machine| machine.name.as_str()).collect();
+        json!({"type":"string","enum":names})
+    }
+}
 impl Application for Sentinel<'_> {
     fn tools(&self) -> Vec<Tool> {
         let mut tools = match self.state.definition.kind {
             Kind::Local | Kind::Goal => {
-                vec![tool("look", words::LOOK, json!({"machine":string(),"command":string()}), &["machine", "command"])]
+                vec![tool("look", words::LOOK, json!({"machine":self.machine(),"command":string()}), &["machine", "command"])]
             }
             Kind::Web => vec![
                 tool("fetch_web", words::FETCH, json!({"url":string()}), &["url"]),
@@ -165,7 +179,7 @@ impl Application for Sentinel<'_> {
             let probe = if self.state.definition.kind == Kind::Web {
                 json!({"type":"object","properties":{"kind":{"const":"web"},"url":string()},"required":["kind","url"],"additionalProperties":false})
             } else {
-                json!({"type":"object","properties":{"kind":{"const":"look"},"machine":string(),"command":string()},"required":["kind","machine","command"],"additionalProperties":false})
+                json!({"type":"object","properties":{"kind":{"const":"look"},"machine":self.machine(),"command":string()},"required":["kind","machine","command"],"additionalProperties":false})
             };
             tools.push(tool("install_reflex",words::REFLEX, json!({
                 "id":string(),"at":{"type":"integer"},"every_ms":{"type":["integer","null"]},

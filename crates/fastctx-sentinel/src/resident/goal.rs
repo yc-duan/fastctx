@@ -93,6 +93,7 @@ impl Host {
                             model: model.as_ref(),
                             look: capabilities.look.as_ref(),
                             web: capabilities.web.as_ref(),
+                            machines: &capabilities.machines,
                             limits: &Limits::default(),
                         },
                     )

@@ -16,9 +16,10 @@ pub fn unavailable() -> Option<String> {
     if unwalled() { None } else { super::walls::missing() }
 }
 
-/// Starts the observation's script behind the walls (`walls.rs`): read-only,
-/// offline, the World's directory hidden but for the script. The supervisor
-/// keeps ownership, the deadline, output capture and process-tree cancellation.
+/// Starts the observation's script behind the walls (`walls.rs`) where the
+/// machine has them: read-only, offline, the World's directory hidden but for
+/// the script. The supervisor keeps ownership, the deadline, output capture
+/// and process-tree cancellation.
 pub fn spawn(shell: &Prepared, record: &JobRecord, world: &Path) -> io::Result<(ProcessTree, TreeOutput)> {
     let script = shell.args.last().ok_or_else(|| io::Error::other("observation has no script"))?;
     let shell_args = [OsStr::new("--noprofile"), OsStr::new("--norc"), script.as_os_str()];
@@ -44,7 +45,9 @@ pub fn spawn(shell: &Prepared, record: &JobRecord, world: &Path) -> io::Result<(
     // whole: a later mount covers an earlier one.
     let kept: Vec<&Path> =
         [Path::new(script), cwd].into_iter().filter(|path| path.starts_with(world) && *path != world).collect();
-    let (program, mut args) = super::walls::walls(world, &kept)?;
+    let Some((program, mut args)) = super::walls::walls(world, &kept)? else {
+        return ProcessTree::spawn_with_io(&shell.program, &shell_args, cwd, &environment, OutputMode::Separate, None);
+    };
     args.push(shell.program.clone().into_os_string());
     args.extend(shell_args.iter().map(|arg| arg.to_os_string()));
     let args: Vec<&OsStr> = args.iter().map(|arg| arg.as_os_str()).collect();

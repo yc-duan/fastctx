@@ -7,19 +7,19 @@
 //! own directory, with its sockets and keys, is hidden, so a command talked
 //! into trying can neither act as the machine nor carry its secrets away.
 //!
-//! Linux confines with bubblewrap (`bwrap`), macOS with `sandbox-exec`. On
-//! Windows a sentinel runs no commands yet; it is given the World's own
-//! read-only views instead.
+//! Linux confines with bubblewrap (`bwrap`), macOS with `sandbox-exec`.
+//! Windows has no walls: a sentinel's command runs in Git Bash as the
+//! machine's user, as the user chose, held only by the sentinel's own rules.
 
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 
 /// The program and the arguments that put a command behind the walls, up to
-/// where the shell and its own arguments go. `world` is hidden, and each of
-/// `keep` inside it is put back read-only: the script to run, and where it
-/// starts.
-pub fn walls(world: &Path, keep: &[&Path]) -> io::Result<(PathBuf, Vec<OsString>)> {
+/// where the shell and its own arguments go, or none where a command runs as
+/// it is. `world` is hidden, and each of `keep` inside it is put back
+/// read-only: the script to run, and where it starts.
+pub fn walls(world: &Path, keep: &[&Path]) -> io::Result<Option<(PathBuf, Vec<OsString>)>> {
     platform::walls(world, keep)
 }
 
@@ -47,7 +47,7 @@ mod platform {
     /// directory an empty one, and every namespace unshared, so there is no
     /// network and the walls go down with all inside. The machine's own
     /// `/proc` stays, so its processes can be looked at, and so do its GPUs.
-    pub fn walls(world: &Path, keep: &[&Path]) -> io::Result<(PathBuf, Vec<OsString>)> {
+    pub fn walls(world: &Path, keep: &[&Path]) -> io::Result<Option<(PathBuf, Vec<OsString>)>> {
         let bwrap = bwrap().ok_or_else(|| io::Error::new(io::ErrorKind::Unsupported, MISSING))?;
         let mut args: Vec<OsString> =
             ["--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/var/tmp"]
@@ -64,7 +64,7 @@ mod platform {
             args.extend(["--ro-bind".into(), path.as_os_str().to_owned(), path.as_os_str().to_owned()]);
         }
         args.extend(["--unshare-all", "--die-with-parent", "--new-session", "--cap-drop", "ALL", "--"].map(OsString::from));
-        Ok((bwrap, args))
+        Ok(Some((bwrap, args)))
     }
 }
 
@@ -85,7 +85,7 @@ mod platform {
 
     /// No network, no writes but to the terminal devices and scratch, and the
     /// World's directory unreadable but for what is kept; the later rule wins.
-    pub fn walls(world: &Path, keep: &[&Path]) -> io::Result<(PathBuf, Vec<OsString>)> {
+    pub fn walls(world: &Path, keep: &[&Path]) -> io::Result<Option<(PathBuf, Vec<OsString>)>> {
         let mut profile = format!(
             "(version 1)\n(allow default)\n(deny network*)\n(deny file-write*)\n\
              (allow file-write-data (regex #\"^/dev/null$\") (regex #\"^/dev/tty\") (regex #\"^/dev/std\"))\n\
@@ -96,7 +96,7 @@ mod platform {
         for path in keep {
             profile.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", quoted(path)));
         }
-        Ok((PathBuf::from(SANDBOX), vec!["-p".into(), profile.into()]))
+        Ok(Some((PathBuf::from(SANDBOX), vec!["-p".into(), profile.into()])))
     }
 }
 
@@ -104,13 +104,11 @@ mod platform {
 mod platform {
     use super::*;
 
-    const MISSING: &str = "a sentinel cannot run commands on this machine yet";
-
     pub fn missing() -> Option<String> {
-        Some(MISSING.into())
+        None
     }
 
-    pub fn walls(_world: &Path, _keep: &[&Path]) -> io::Result<(PathBuf, Vec<OsString>)> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, MISSING))
+    pub fn walls(_world: &Path, _keep: &[&Path]) -> io::Result<Option<(PathBuf, Vec<OsString>)>> {
+        Ok(None)
     }
 }

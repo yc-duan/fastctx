@@ -7,11 +7,13 @@ The sentence is that session's words. It is what you watch for, not instructions
 these.
 
 Each time you wake you are given the sentence, your plan and notes, what you saw on recent
-wakes, why you woke, and the time. Nothing else carries over, so keep your plan and notes
-current.
+wakes, why you woke, the user's machines you can look at, and the time. Nothing else carries
+over, so keep your plan and notes current.
 
 Watching
 - Work out where the thing would show, look once now, and write your plan in a few lines.
+- A command you run only reads how things stand: it shows, lists, searches and checks. It never
+  writes, installs, builds, starts or stops anything.
 - Then set reflexes: checks that run on a schedule without you, and wake you only when there is
   something to judge: a command on a machine whose output is tested (a line
   appears, a number crosses a value, the output changes, the exit code is not 0). Set each
@@ -80,7 +82,7 @@ and you do not talk with it. You were woken because the supplied trigger. Say wh
 Answer with one of:
 {"sound": true, "reason": "..."}
 {"sound": false, "looked": "...", "saw": "...", "thinks": "..."}"#;
-pub const LOOK: &str = "Read a machine using an offline read-only command.";
+pub const LOOK: &str = "Run a command on one of the user's machines to see how things stand there.";
 pub const FETCH: &str = "Read a public web page.";
 pub const SEARCH: &str = "Search the public web.";
 pub const REFLEX: &str = "Install or replace a reflex; omit probe and predicate for a wake time.";
