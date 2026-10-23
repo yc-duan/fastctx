@@ -29,7 +29,7 @@ pub(crate) async fn view_for(
     .map_err(|error| Failure::new(error.to_string()))?;
     let Some((mut record, opened)) = records else { return Err(no_ledger(node, town)) };
     crate::ledger::query::seen(node, acting, town, &mut record).map_err(|error| Failure::new(error.to_string()))?;
-    let memory = crate::memory::context::text(node, town, acting, read_only).await?;
+    let memory = crate::memory::context::text(node, town, acting, read_only).await?.map(|(text, _)| text);
     Ok(MapView {
         memory,
         town: town.clone(),

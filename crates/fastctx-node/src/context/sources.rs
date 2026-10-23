@@ -85,6 +85,9 @@ pub(crate) async fn prepare(
 /// The project's memory index as the "map" block. The project instructions
 /// ride the "project" block, so this carries only the journals and decisions
 /// the project keeps; it is empty when memory is off or there is no project.
+/// What the conversation wrote itself is not told back to it; what another
+/// wrote is told as one fact a document, and the whole index goes with the
+/// opening, a compaction or a change of project (`world-memory.md`, 地图).
 pub(crate) async fn map(
     node: &Arc<Node>,
     id: &ResidentId,
@@ -93,19 +96,89 @@ pub(crate) async fn map(
     acting: &Acting,
 ) -> Result<(), Failure> {
     let read_only = matches!(origin, Origin::Colleague { .. });
-    let body = match town {
+    let snapshot = match town {
         Some(town) => crate::memory::context::text(node, town, acting, read_only).await?,
         None => None,
     };
-    let text = body.as_deref().unwrap_or("");
-    let change = Change { by: None, version: "", fact: &words::changed("map", words::USER), full: true };
+    let directory = node.world.conversation(id);
+    let before = map_cursor::load(&directory).map_err(|error| Failure::new(error.to_string()))?;
+    let after = map_cursor::Cursor::of(town, snapshot.as_ref().map(|(_, catalog)| catalog));
+    let me = Address { machine: node.machine(), resident: id.clone() };
+    let told = match (&before, &snapshot) {
+        (Some(before), Some((_, catalog))) if before.town == after.town => Some(map_cursor::facts(node, before, catalog, id)),
+        _ => None,
+    };
+    let fact = match &told {
+        Some(facts) if !facts.is_empty() => facts.join("
+"),
+        _ => words::changed("map", words::USER),
+    };
+    // A change with no one else's document in it is this conversation's own.
+    let own = told.as_ref().is_some_and(Vec::is_empty);
+    let change = Change { by: own.then_some(&me), version: "", fact: &fact, full: told.is_none() };
+    let text = snapshot.as_ref().map(|(text, _)| text.as_str()).unwrap_or("");
     // Opening instructions are prepared before the conversation is born.
     if node.residents.about(id).is_some() {
         super::set(node, id, "map", text, change)
     } else {
         storage::set(&node.world, id, "map", text, change)
     }
-    .map_err(|error| Failure::new(error.to_string()))
+    .map_err(|error| Failure::new(error.to_string()))?;
+    map_cursor::keep(&directory, &after).map_err(|error| Failure::new(error.to_string()))
+}
+
+/// Which version of each project document a conversation's map has shown it.
+mod map_cursor {
+    use crate::Node;
+    use fastctx_types::{ResidentId, TownName, layout::ConversationDir, memory::Catalog, project::Writer};
+    use serde::{Deserialize, Serialize};
+    use std::{collections::BTreeMap, io};
+
+    #[derive(Serialize, Deserialize)]
+    pub(super) struct Cursor {
+        pub town: Option<TownName>,
+        versions: BTreeMap<String, u32>,
+    }
+    impl Cursor {
+        pub fn of(town: Option<&TownName>, catalog: Option<&Catalog>) -> Self {
+            let versions = catalog
+                .map(|catalog| catalog.journals.iter().chain(&catalog.specs))
+                .into_iter()
+                .flatten()
+                .map(|revision| (revision.name.clone(), revision.version))
+                .collect();
+            Self { town: town.cloned(), versions }
+        }
+    }
+
+    fn path(directory: &ConversationDir) -> std::path::PathBuf {
+        directory.books().join("map-cursor.json")
+    }
+    pub fn load(directory: &ConversationDir) -> io::Result<Option<Cursor>> {
+        match std::fs::read(path(directory)) {
+            Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+    pub fn keep(directory: &ConversationDir, cursor: &Cursor) -> io::Result<()> {
+        fastctx_platform::ensure_private_dir(&directory.books())?;
+        fastctx_platform::publish(&path(directory), &serde_json::to_vec(cursor)?, fastctx_platform::Permissions::Private)
+    }
+    /// One fact for each document someone other than `id` wrote since `before`.
+    pub fn facts(node: &Node, before: &Cursor, after: &Catalog, id: &ResidentId) -> Vec<String> {
+        after
+            .journals
+            .iter()
+            .chain(&after.specs)
+            .filter(|revision| before.versions.get(&revision.name) != Some(&revision.version))
+            .filter(|revision| {
+                !matches!(&revision.author.stamp.by, Writer::Resident { address }
+                    if address.resident == *id && node.is_me(&address.machine))
+            })
+            .map(fastctx_hands::memory::changed)
+            .collect()
+    }
 }
 
 pub(super) fn observed(node: &Node, id: &ResidentId, receipt: &Receipt) -> io::Result<()> {
