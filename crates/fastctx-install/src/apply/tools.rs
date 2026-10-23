@@ -36,7 +36,7 @@ pub(super) fn codex(places: &Places) -> ToolCheck {
     let scope = match &cwd {
         Ok(cwd) => {
             format!(
-                "effective Codex features from {}, in {}; without explicit --profile or session/CLI overrides",
+                "effective Codex features from {}, in {}; native plan flag in user config; plan overrides and explicit --profile or session/CLI overrides are not checked",
                 places.codex_home.display(),
                 cwd.display()
             )
@@ -83,6 +83,12 @@ fn codex_in(home: &Path, cwd: &Path) -> Result<(), String> {
 }
 
 fn features(launch: &fastctx_hosts::codex::launch::Launch, home: &Path, cwd: &Path) -> Result<(), String> {
+    let configuration = Snapshot::read(home.join("config.toml")).map_err(|error| error.to_string())?;
+    if !crate::codex::tools::plan_configured(configuration.bytes().unwrap_or_default())
+        .map_err(|error| error.to_string())?
+    {
+        return Err("tools.update_plan.enabled is not false in the user configuration".into());
+    }
     let mut environment: Vec<_> =
         std::env::vars_os().filter(|(name, _)| !name.eq_ignore_ascii_case("CODEX_HOME")).collect();
     environment.push(("CODEX_HOME".into(), home.as_os_str().to_owned()));
@@ -123,7 +129,7 @@ pub(super) fn claude(places: &Places) -> ToolCheck {
         if crate::claude::tools::configured(file.bytes())? {
             Ok(())
         } else {
-            Err("permissions.deny does not contain all of Bash, Grep and Glob".into())
+            Err(format!("permissions.deny does not contain all of {}", crate::claude::tools::DENIED.join(", ")))
         }
     });
     ToolCheck {

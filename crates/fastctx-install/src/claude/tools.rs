@@ -7,13 +7,14 @@ use serde::{Deserialize, Serialize};
 use super::jsonc::{Document, Insertion};
 use crate::{File, Notice};
 
-pub const DENIED: [&str; 3] = ["Bash", "Grep", "Glob"];
+pub const DENIED: [&str; 9] =
+    ["Bash", "Grep", "Glob", "TodoWrite", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "ProposeGoal"];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Receipt {
     path: String,
-    rules: [Option<Added>; 3],
+    rules: Vec<Option<Added>>,
     permissions: Option<Insertion>,
     deny: Option<Insertion>,
     document: Option<DocumentInsertion>,
@@ -66,18 +67,20 @@ pub fn apply(file: File<'_>, previous: Option<&Receipt>, take_back: bool) -> Res
     let mut bytes = file.bytes.unwrap_or_default().to_vec();
     let mut receipt = previous.cloned().unwrap_or_else(|| Receipt {
         path: file.path.into(),
-        rules: [None, None, None],
+        rules: Vec::new(),
         permissions: None,
         deny: None,
         document: None,
     });
+    let known = previous.map_or(0, |receipt| receipt.rules.len());
+    receipt.rules.resize(DENIED.len(), None);
     let mut notices = Vec::new();
     if previous.is_some() {
         let document = Document::parse(&bytes)?;
         let array = match deny(&document) {
             Ok(array) => array,
             Err(error) => {
-                receipt.rules = [None, None, None];
+                receipt.rules.fill(None);
                 receipt.permissions = None;
                 receipt.deny = None;
                 receipt.document = None;
@@ -88,7 +91,7 @@ pub fn apply(file: File<'_>, previous: Option<&Receipt>, take_back: bool) -> Res
                 });
             }
         };
-        for (index, rule) in DENIED.iter().enumerate() {
+        for (index, rule) in DENIED.iter().take(known).enumerate() {
             let matches = matching(array, rule);
             let intact = match &receipt.rules[index] {
                 Some(added) => {
@@ -103,7 +106,7 @@ pub fn apply(file: File<'_>, previous: Option<&Receipt>, take_back: bool) -> Res
                 }
             }
         }
-        if !take_back {
+        if !take_back && (known >= DENIED.len() || file.bytes.is_none()) {
             return Ok(Applied { bytes: file.bytes.map(<[u8]>::to_vec), receipt, notices });
         }
     }
@@ -126,6 +129,9 @@ pub fn apply(file: File<'_>, previous: Option<&Receipt>, take_back: bool) -> Res
         receipt.deny = Some(inserted);
     }
     for (index, rule) in DENIED.iter().enumerate() {
+        if index < known && !take_back {
+            continue;
+        }
         let document = Document::parse(&bytes)?;
         let array = deny(&document)?.expect("deny created");
         if !matching(Some(array), rule).is_empty() {

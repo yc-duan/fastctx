@@ -18,7 +18,7 @@ fn plan() -> ClaudePlan {
 fn claude_2_1_287_public_lists() {
     let plan = plan();
     let plugins = json!([{
-        "id": "fastctx-world@fastctx", "version": "1.0.0", "scope": "user", "enabled": true,
+        "id": "fastctx-world@fastctx", "version": plan.plugin_version, "scope": "user", "enabled": true,
         "installPath": plan.marketplace.parent().unwrap().join("unrelated-cache-path"),
         "installedAt": "2026-10-03T00:00:00.000Z", "lastUpdated": "2026-10-03T00:00:00.000Z",
         "projectEnabled": false, "mcpServers": {}, "hasUserConfig": false

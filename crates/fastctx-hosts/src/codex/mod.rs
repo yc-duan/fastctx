@@ -1781,7 +1781,9 @@ pub fn world_tools(binary: &Path, env: &[(String, String)], tools: &[&str], budg
             "omit_app_server_notification_media": false,
             "shell_tool": false,
             "view_image": false,
+            "goals": false,
         },
+        "tools": { "update_plan": { "enabled": false } },
         "tool_output_token_limit": limit,
         "mcp_servers": { SERVER_NAME: {
             "command": binary,

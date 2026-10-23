@@ -15,11 +15,7 @@
       "args": "[<key>=<value>]",
       "route": "config"
     },
-    "goal": {
-      "arguments": "required",
-      "args": "<condition> | clear",
-      "route": "native"
-    },
+
     "autocompact": {
       "arguments": "required",
       "args": "auto | <100k–1M tokens>",
