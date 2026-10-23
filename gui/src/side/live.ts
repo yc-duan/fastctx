@@ -13,37 +13,81 @@ import type { PlanWords } from "../plan/words";
 import { unwatch, type WorldNow } from "../world/bridge";
 import { planRead, planWrite, watchPlan, type PlanPage } from "../world/plan";
 import { goalRead, goalShown, goalUpdate, watchGoal, type GoalChange, type GoalView } from "../world/goal";
+import { collaborationTree, type Branch, type NativeAgent, type Tree } from "../world/collab-tree";
 import type { Address } from "../world/wire";
-import type { ResidentNow } from "../world/world";
+import type { GoalStatus } from "./types";
 import { goalSamples, teamSample } from "./samples";
 import type { SideSeams } from "./seams";
-import type { CollabNode, GoalShown } from "./types";
+import type { CollabNode, GoalShown, NodeState } from "./types";
 import type { SideWords } from "./words";
 
-/** The colleagues a conversation asked, as the World lists them now. */
-export function colleaguesOf(world: WorldNow | null, address: Address, now: number): CollabNode[] {
-  return residentsOf(world)
-    .filter((r) => r.about.origin.kind === "colleague" && r.about.origin.asked_by.resident === address.resident && r.about.origin.asked_by.machine === address.machine)
-    .map((r) => colleagueOf(r, now));
+/** The conversation's collaboration tree, as the World reports it: the
+ *  colleagues it asked, each with its goal and the agents it sent, and the
+ *  conversation's own agents on the root beside them. */
+function treeNodes(tree: Tree, store: Store, address: Address, now: number): CollabNode[] {
+  const agentOf = (resident: string, fallback: "claude" | "codex"): "claude" | "codex" => {
+    const found = residentsOf(store.world.peek()).find((r) => r.about.id === resident);
+    return found ? (/codex/i.test(found.about.host.agent) ? "codex" : "claude") : fallback;
+  };
+  const root = agentOf(address.resident, "claude");
+  return [
+    ...tree.colleagues.map((branch) => branchNode(branch, agentOf(branch.address.resident, "codex"), store, now)),
+    ...tree.conversation.agents.map((agent) => agentNode(agent, root, now)),
+  ];
 }
 
-function colleagueOf(r: ResidentNow, now: number): CollabNode {
-  const origin = r.about.origin.kind === "colleague" ? r.about.origin : null;
-  const busy = r.now?.activity === "busy";
-  const born = Date.parse(r.about.born_at);
+function branchNode(branch: Branch, agent: "claude" | "codex", store: Store, now: number): CollabNode {
+  const found = residentsOf(store.world.peek()).find((r) => r.about.id === branch.address.resident);
+  const busy = branch.now?.activity === "busy";
+  const born = branch.born_at ? Date.parse(branch.born_at) : NaN;
+  const since = branch.now?.since ? Date.parse(branch.now.since) : born;
   return {
-    id: r.about.id,
+    id: branch.address.resident,
     kind: "colleague",
-    agent: /codex/i.test(r.about.host.agent) ? "codex" : "claude",
-    name: r.about.model ? modelName(r.about.model) : r.about.host.agent,
-    task: origin?.label ?? r.now?.title ?? "",
-    state: r.now?.trouble ? "failed" : busy ? "working" : "done",
-    goal: null,
-    took: Number.isFinite(born) ? Math.max(0, (busy ? now : Date.parse(r.now?.since ?? r.about.born_at)) - born) : 0,
+    agent,
+    name: found?.about.model ? modelName(found.about.model) : (branch.label ?? agent),
+    task: branch.label ?? branch.now?.title ?? "",
+    state: branch.now?.trouble ? "failed" : busy ? "working" : "done",
+    goal: treeGoal(branch.goal),
+    took: Number.isFinite(born) ? Math.max(0, (busy ? now : Number.isFinite(since) ? since : now) - born) : 0,
     steps: null,
-    machine: r.about.machine,
-    children: [],
+    machine: branch.address.machine,
+    children: branch.agents.map((child) => agentNode(child, agent, now)),
   };
+}
+
+function agentNode(agent: NativeAgent, parent: "claude" | "codex", now: number): CollabNode {
+  const model = agent.model ?? "";
+  const kind: "claude" | "codex" = /codex|gpt/i.test(model) ? "codex" : /claude/i.test(model) ? "claude" : parent;
+  const started = agent.started_at ? Date.parse(agent.started_at) : NaN;
+  return {
+    id: agent.id,
+    kind: "subagent",
+    agent: kind,
+    name: agent.name ?? agent.id,
+    task: agent.task ?? "",
+    state: agentState(agent),
+    goal: null,
+    took: agent.duration_ms ?? (Number.isFinite(started) ? Math.max(0, now - started) : 0),
+    steps: null,
+    children: agent.children.map((child) => agentNode(child, kind, now)),
+  };
+}
+
+/** A native agent's state, `unknown` when only a historical start is known. */
+function agentState(agent: NativeAgent): NodeState {
+  if (agent.state == null) return agent.ended_at ? "done" : "unknown";
+  const state = agent.state.toLowerCase();
+  if (/busy|run|active|work/.test(state)) return "working";
+  if (/fail|error/.test(state)) return "failed";
+  if (/stop|cancel/.test(state)) return "stopped";
+  if (/done|complete|idle|rest|end/.test(state) || agent.ended_at) return "done";
+  return "unknown";
+}
+
+/** A colleague's goal state, or none where it could not be read (Rust Result). */
+function treeGoal(goal: Branch["goal"]): GoalStatus | null {
+  return "Ok" in goal && goal.Ok ? goal.Ok.state : null;
 }
 
 /** How a conversation or a job a plan names stands now. */
@@ -165,7 +209,36 @@ export function liveSide(options: LiveSide): SideSeams {
       resume: () => changeGoal(owner, () => ({ change: "resume" })),
       clear: () => changeGoal(owner, () => ({ change: "clear" })),
     },
-    colleagues: (show) => effect(() => show(colleaguesOf(options.store.world.get(), options.address, Date.now()))),
+    colleagues: (show) => {
+      let alive = true;
+      let inflight = false;
+      let again = false;
+      const refresh = () => {
+        if (inflight) {
+          again = true;
+          return;
+        }
+        inflight = true;
+        again = false;
+        collaborationTree(owner, options.address.machine)
+          .then((tree) => {
+            if (alive) show(treeNodes(tree, options.store, options.address, Date.now()));
+          })
+          .catch((error) => console.error("the collaboration tree could not be read", error))
+          .finally(() => {
+            inflight = false;
+            if (alive && again) refresh();
+          });
+      };
+      const stop = effect(() => {
+        options.store.world.get();
+        refresh();
+      });
+      return () => {
+        alive = false;
+        stop();
+      };
+    },
     colleague: (node) => options.open({ resident: node.id, machine: node.machine ?? options.address.machine }),
   };
 }
