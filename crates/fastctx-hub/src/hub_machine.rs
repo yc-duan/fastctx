@@ -34,9 +34,11 @@ pub(crate) fn settle(hub: &Hub) -> Result<(), String> {
     store.book.directory.settle_acting();
     let actor = Actor { account: None, authenticated: true, member: None, peer: None };
     let result = (|| {
-        for share in shares {
+        for (index, share) in shares.into_iter().enumerate() {
             let action = Action::Share { machine: machine.clone(), to: share.account, shared: false };
-            crate::machine_log::effects(&mut store, &before.directory, &actor, &action)?;
+            if index == 0 {
+                crate::machine_log::effects(&mut store, &before.directory, &actor, &action)?;
+            }
             let accounts = store.book.directory.accounts.clone();
             store.book.machine_log.push(&before.directory, &accounts, actor.clone(), action, Outcome::Done)
                 .map_err(|error| error.to_string())?;

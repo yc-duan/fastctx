@@ -1004,8 +1004,8 @@ fn remove_member(
 }
 
 /// Checks `account` may have `member` uninstall Fastctx as it is taken off
-/// (`world-network.md`, 移出网络与卸载): its own machine, or a managed
-/// machine of its own or, for the super administrator, any; never one an
+/// (`world-network.md`, 移出网络与卸载): a held machine, or a managed
+/// machine the super administrator may manage; never one an
 /// application carries Fastctx on, managed or not, which whoever sits at it
 /// uninstalls once it is off, nor the machine that runs this hub.
 fn may_uninstall(

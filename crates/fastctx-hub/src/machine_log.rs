@@ -479,12 +479,15 @@ pub(crate) fn keep(
     action: Action,
     outcome: Outcome,
 ) -> Result<(), String> {
-    store
-        .book
-        .machine_log
-        .push(directory, &store.book.directory.accounts, actor, action, outcome)
-        .and_then(|()| store.save_book())
-        .map_err(|error| format!("the hub could not keep the machine log: {error}"))
+    // An unrelated login can still remove just its login from a device. That
+    // does not remove the machine and must not tell its holders that it did.
+    let login_only = matches!(&action, Action::Remove { name, .. } if store.book.directory.member(name).is_some());
+    store.book.machine_log.push(directory, &store.book.directory.accounts, actor, action, outcome)
+        .map_err(|error| format!("the hub could not keep the machine log: {error}"))?;
+    if login_only && let Some(kept) = store.book.machine_log.records.last_mut() {
+        kept.notified.clear();
+    }
+    store.save_book().map_err(|error| format!("the hub could not keep the machine log: {error}"))
 }
 
 pub(crate) fn effects(store: &mut Store, before: &Directory, actor: &Actor, action: &Action) -> Result<(), String> {
