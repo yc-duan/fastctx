@@ -289,7 +289,10 @@ async fn hand_over_locked(
         .and_then(|()| crate::assists::may_turn(node, to, about))
         .and_then(|()| crate::town::access::current(node, to))
     {
-        if matches!(pending.delivery.notice,Notice::Sentinel {..}) { again_later(node,to,about,directory,pending); }
+        // What a closed conversation is woken for is tried again later.
+        if pending.delivery.notice.wakes_closed() {
+            again_later(node, to, about, directory, pending);
+        }
         return Ok(Landed::Waiting { why: Some(error.message), answered: answered(node, to, about) });
     }
     crate::goals::colleagues::incoming(node, to, about, &pending).await?;
@@ -298,26 +301,27 @@ async fn hand_over_locked(
         return landed;
     }
     let mut why = None;
-    let requested = matches!(pending.delivery.notice, Notice::Sentinel { .. });
+    let sentinel = matches!(pending.delivery.notice, Notice::Sentinel { .. });
+    let requested = pending.delivery.notice.wakes_closed();
     if about.host.agent.as_str() == "codex"
         && (about.world_managed() || pending.delivery.notice.wakes_closed())
         && let Some(thread) = &about.session
     {
         if !about.world_started && !crate::codex::native::requested(node, about)? {
             return Ok(Landed::Waiting {
-                why: Some("the native host still runs; this observation waits at its next World tool boundary".into()),
+                why: Some("the native host still runs; this message waits at its next World tool boundary".into()),
                 answered: false,
             });
         }
         match into_thread(node, to, thread, directory, pending.clone()).await {
             Ok(landed) => {
-                if requested {
+                if sentinel {
                     crate::sentinels::report(node, &format!("delivery {to}"), None);
                 }
                 return Ok(landed);
             }
             Err(failure) => {
-                if requested {
+                if sentinel {
                     crate::sentinels::report(node, &format!("delivery {to}"), Some(failure.message.clone()));
                 } else {
                     node.log.line(format_args!("words could not go to {to} now, and wait: {failure}"));
