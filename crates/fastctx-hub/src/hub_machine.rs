@@ -10,8 +10,8 @@ use fastctx_types::{
 pub(crate) fn current(hub: &Hub, store: &Store) -> Option<MachineName> {
     let directory = &store.book.directory;
     // A completed move supersedes reports kept from the old hub host.
-    if let Some(incoming) = store.moves.last() {
-        return directory.member(&incoming.to).map(|member| member.name.clone());
+    if let Some(member) = store.moves.last().and_then(|incoming| directory.member(&incoming.to)) {
+        return Some(member.name.clone());
     }
     directory
         .machines()
