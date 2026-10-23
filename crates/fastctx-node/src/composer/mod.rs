@@ -1,6 +1,8 @@
 //! The only writer and release coordinator of each conversation's composer.
 
 mod commands;
+mod idle;
+pub(crate) use idle::input_busy;
 mod receipts;
 mod state;
 mod storage;
@@ -8,11 +10,11 @@ mod submissions;
 pub(crate) mod uploads;
 mod watching;
 
+pub use commands::{forget_command, next_command, place_command};
 use fastctx_types::access::Written;
 pub use storage::recover;
 use storage::{event, load, publish};
 pub use submissions::resume;
-pub use commands::{forget_command, next_command, place_command};
 pub use submissions::{awaits_turn, bound, turn_ended, uncertain};
 use submissions::{dispatch, schedule};
 pub use watching::{Lease, snapshot, watch};

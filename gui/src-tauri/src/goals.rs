@@ -35,7 +35,7 @@ pub async fn goal_read(
         .map_err(|error| error.to_string())?;
     match updated {
         Updated::Goal { view } => Ok(*view),
-        Updated::Conflict { .. } => Err(fastctx_types::goals::words::INVALID_READ.into()),
+        Updated::Conflict { .. } | Updated::History { .. } => Err(fastctx_types::goals::words::INVALID_READ.into()),
     }
 }
 
@@ -140,5 +140,24 @@ async fn follow(
                 }
             }
         }
+    }
+}
+
+#[fastctx_gui_command::command]
+pub async fn goal_history(
+    shell: tauri::State<'_, Shell>,
+    resident_id: String,
+    machine_name: Option<String>,
+    account: Option<HubAccount>,
+    page: Option<String>,
+) -> Result<Option<Box<fastctx_types::goals::HistoryPage>>, String> {
+    match shell
+        .world()
+        .goal(resident(resident_id)?, machine(machine_name)?, account, Request::History { page })
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        Updated::History { page } => Ok(page),
+        _ => Err(fastctx_types::goals::words::INVALID_READ.into()),
     }
 }

@@ -80,6 +80,7 @@ __FASTCTX_OBSERVATIONS__
 __FASTCTX_USAGE__
 __FASTCTX_FAILURES__
 __FASTCTX_TURN_FAILURES__
+__FASTCTX_GOAL__
 
 // /clear may replace even the same session ID. Keep the old object alive for
 // its timers, queued writes and late turn/tool results; never reset it in place.
@@ -183,7 +184,12 @@ function event($, context, kind, fields) {
   const { id: name, at } = reserved(context)
   const pending = [...context.unwritten.keys()].map((name) => name + '.json')
   const body = JSON.stringify({ kind, at, ...fields, pending })
-  context.unwritten.set(name, { body })
+  const goalStop = kind === 'turn_complete' && fields.aborted === true && context.goal?.active === true
+  if (goalStop) {
+    context.goalStopping = true
+    context.goalStopReport = name + '.json'
+  }
+  context.unwritten.set(name, { body, goalStop })
   const written = context.writing.then(() => writePending($, context, name))
   // A failed report fails its caller; it never counts as an acknowledgment.
   context.writing = written.catch(() => {
@@ -200,6 +206,7 @@ async function writePending($, context, name) {
   // same millisecond (or a clock rollback) cannot reuse fragment timestamps.
   if (report.sequence !== undefined) await $.fs.write(context.dir + '/applied/' + report.sequence + '.sequence', '')
   const path = context.dir + '/events/' + name
+  if (report.goalStop) await $.fs.write(context.dir + '/goal-stop.json', JSON.stringify({ report: name + '.json' }))
   await writeReport($, path, report.body)
   await $.fs.write(path + '.done', '')
   context.unwritten.delete(name)
@@ -311,6 +318,7 @@ async function submit($, context, deliveries, prompt) {
   if (context.closed || context.submitting.length > 0 || context.accepted.length > 0) return false
   context.submitting.push(...deliveries)
   try {
+    if (!(await goalPermitsAll($, context, deliveries))) return false
     if ((await $.session.id()) !== context.sessionId) return false
     for (const delivery of deliveries) {
       await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ at: stamp(), turn: context.turn, state: 'submitting' }))
@@ -319,6 +327,10 @@ async function submit($, context, deliveries, prompt) {
     // starts it: this plugin's own prompt reaches none of its own hooks.
     await accountAgentsBeforeSubmit($, context)
     await alongBefore($, context)
+    if (!(await goalPermitsAll($, context, deliveries))) {
+      for (const delivery of deliveries) await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ state: 'refused' }))
+      return false
+    }
     // Its row and turn can come before the call answers.
     context.accepted.push(deliveries)
     let refusal = null
@@ -360,12 +372,14 @@ async function submitted($, context, deliveries, acceptedTurn) {
 // held again, before anything held since.
 async function flush($, context, how) {
   if (context.closed || context.busy || waiting(context)) return
+  await readGoal($, context)
+  if (context.closed || context.busy || waiting(context)) return
   // What rides with the next turn starts none: it waits for one.
-  const at = context.held.findIndex((delivery) => delivery.along === undefined)
+  const at = context.held.findIndex((delivery) => delivery.along === undefined && goalPermits(context, delivery))
   if (at < 0) return
   const deliveries = context.held.splice(at, 1)
   if (deliveries[0].as_user !== true) {
-    while (at < context.held.length && context.held[at].as_user !== true && context.held[at].along === undefined) deliveries.push(...context.held.splice(at, 1))
+    while (at < context.held.length && context.held[at].as_user !== true && context.held[at].along === undefined && goalPermits(context, context.held[at])) deliveries.push(...context.held.splice(at, 1))
   }
   const prompt = deliveries[0].as_user === true
     ? { text: deliveries[0].text, asUser: true }
@@ -390,7 +404,7 @@ const STOPPED = 'The user stopped your previous turn on purpose. A tool call it 
 // stopped the last turn, and what is held to go along. Taken as it is read;
 // `keep` puts back what did not go in.
 function alongNext(context) {
-  const along = context.held.filter((delivery) => delivery.along !== undefined)
+  const along = context.held.filter((delivery) => delivery.along !== undefined && goalPermits(context, delivery))
   for (const delivery of along) context.held.splice(context.held.indexOf(delivery), 1)
   const stopped = context.toldStopped
   context.toldStopped = false
@@ -406,6 +420,7 @@ function alongNext(context) {
 // before a prompt this plugin submits; the turn that prompt starts takes it
 // (`startTurn`), and the model reads both in the one request.
 async function alongBefore($, context) {
+  await readGoal($, context)
   const { along, texts, keep } = alongNext(context)
   if (texts.length === 0) return
   let appended
@@ -428,6 +443,7 @@ async function alongBefore($, context) {
 async function alongPrompt($, context, e, next) {
   if (e.turnId !== undefined || e.command !== undefined || context.closed) return next(e)
   await refreshAccountAgents($, context)
+  await readGoal($, context)
   const { along, texts, keep } = alongNext(context)
   if (texts.length === 0) return next(e)
   let result
@@ -565,6 +581,7 @@ async function staleTurn($, context, turn) {
 
 async function looked($, context) {
   await settle($, context)
+  await readGoal($, context)
   // What has a receipt was handed over already, perhaps before this mod
   // loaded again. Without knowing which, anything handed over could repeat.
   const receipts = await listing($, context, 'receipts')
@@ -629,7 +646,7 @@ async function looked($, context) {
     if (older.length > 0) await replaced($, context, older)
     // What rides with the next turn starts none: it waits for one, or goes
     // into the one running at its next tool boundary.
-    if (context.busy || waiting(context) || delivery.along !== undefined) {
+    if (context.busy || waiting(context) || delivery.along !== undefined || !goalPermits(context, delivery)) {
       context.held.push(delivery)
       context.handled.add(name)
       continue
@@ -827,6 +844,7 @@ async function completeTurn($, context, e, next) {
     await observeAgents($, context)
     return next(e)
   }
+  await readGoal($, context)
   await context.shown.end(reports($, context), e.turnId)
   // The session's figures as the turn ends reach the node ahead of the end
   // itself, so its ledger and the account's windows stand as the turn left
@@ -861,11 +879,12 @@ async function boundary($, context, e, next) {
   const result = await next(e)
   if (context.closed || (await $.session.id()) !== context.sessionId) return result
   if (await stopping($, context)) return result
+  await readGoal($, context)
   const acceptedTurn = context.turn
   if (!context.busy || acceptedTurn === null) return result
   // Whatever waits goes in beside this result: the World's telling, and
   // the user's words sent while the turn runs (`world-colleagues.md`).
-  const deliveries = [...context.held]
+  const deliveries = context.held.filter((delivery) => goalPermits(context, delivery))
   if (deliveries.length === 0) return result
   const selected = new Set(deliveries)
   for (let i = context.held.length - 1; i >= 0; i--) if (selected.has(context.held[i])) context.held.splice(i, 1)
@@ -876,6 +895,11 @@ async function boundary($, context, e, next) {
     // deliveries; only an uncertain host append must not be replayed.
     context.held.unshift(...deliveries)
     throw error
+  }
+  if (!(await goalPermitsAll($, context, deliveries)) || !context.busy || context.turn !== acceptedTurn) {
+    for (const delivery of deliveries) await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ state: 'refused' }))
+    context.held.unshift(...deliveries)
+    return result
   }
   try {
     context.appending = true

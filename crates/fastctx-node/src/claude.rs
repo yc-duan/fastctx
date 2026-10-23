@@ -26,6 +26,7 @@ mod fork_history;
 mod fork_ready;
 mod fork_source;
 pub(crate) mod garbage;
+pub(crate) mod goal_compaction;
 pub(crate) mod history;
 mod image_records;
 mod resume;
@@ -294,6 +295,8 @@ fn policy(node: &Node, resident: &ResidentId, directory: &Path) -> std::io::Resu
             }
         }
     }
+    crate::goals::holding::registered(node, resident, directory)
+        .map_err(|error| std::io::Error::other(error.message))?;
     let value = serde_json::json!({"instance": registration.instance, "model": options.model,
         "effort": options.reasoning_effort, "last_uuid": last_uuid, "context_uuids":context_uuids, "context_tail":context_tail});
     let bytes = serde_json::to_vec(&value).map_err(std::io::Error::other)?;
@@ -757,6 +760,7 @@ async fn uncertain_inputs(
             &mut handover,
             fastctx_types::session::TurnHow::Interrupted,
             why,
+            ids.is_none().then(|| serde_json::json!({"world":"host_exited"})),
         )
         .await?;
     }
@@ -888,7 +892,9 @@ pub fn stop(node: &Node, resident: &ResidentId, turn: &str) -> Result<bool, Fail
     let session: String = node.claude.state.lock().expect("never poisoned").paired.get(resident).ok_or_else(|| {
         Failure::new(format!("{resident}'s session has not been heard from the World's plugin, which is what stops it"))
     })?;
-    if node.residents.now(resident).and_then(|now| now.turn).as_deref() != Some(turn) { return Ok(false); }
+    if node.residents.now(resident).and_then(|now| now.turn).as_deref() != Some(turn) {
+        return Ok(false);
+    }
     let directory = exchange::sessions(node.world.path()).join(&session);
     exchange::stop(&directory, turn).map_err(|error| Failure::new(format!("asking its plugin to stop: {error}")))?;
     Ok(true)
@@ -1193,6 +1199,7 @@ async fn failed_wake(
             &mut handover,
             fastctx_types::session::TurnHow::Interrupted,
             why.clone(),
+            Some(serde_json::json!({"world":"host_exited"})),
         )
         .await
         .map_err(|error| Failure::new(format!("settling interrupted Claude startup: {error}")))?;

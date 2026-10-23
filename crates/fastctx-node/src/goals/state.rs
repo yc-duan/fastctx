@@ -37,6 +37,8 @@ pub(crate) fn open(
         claim: None,
         retired: None,
         decisions: Vec::new(),
+        history: None,
+        runtime: fastctx_types::goals::runtime::Runtime { activated_at: Some(change.at), ..Default::default() },
         operation: change.operation.to_string(),
     };
     remember(&mut goal, change, "opened", String::new());
@@ -51,22 +53,33 @@ pub(crate) fn user(goal: &mut Goal, requested: UserChange, change: Change<'_>) -
         UserChange::Open { objective } => {
             nonempty(&objective, words::BLANK_GOAL)?;
             goal.objective = objective;
-            activate(goal);
+            activate(goal, change.at);
             remember(goal, change, "opened", String::new());
         }
         UserChange::Edit { objective } => {
             nonempty(&objective, words::BLANK_GOAL)?;
             goal.objective = objective;
+            if goal.runtime.pending.as_ref().is_some_and(|pending| {
+                matches!(
+                    pending.task,
+                    fastctx_types::goals::runtime::Task::Idle { .. }
+                        | fastctx_types::goals::runtime::Task::Review { .. }
+                        | fastctx_types::goals::runtime::Task::Tell { advice: true, .. }
+                )
+            }) {
+                goal.runtime.pending = None;
+            }
             remember(goal, change, "edited", String::new());
         }
         UserChange::Resume => {
-            activate(goal);
+            activate(goal, change.at);
             remember(goal, change, "resumed", String::new());
         }
         UserChange::Pause => {
             goal.status = Status::Paused;
             goal.stop = Some(Stop { kind: StopKind::User, reason: words::USER_PAUSED.into(), resume_at: None });
             goal.claim = None;
+            goal.runtime.pending = None;
             remember(goal, change, "paused", words::USER_PAUSED.into());
         }
         UserChange::Clear => return Err(Failure::new("Clear deletes the account record.")),
@@ -90,15 +103,20 @@ pub(crate) fn mark(goal: &mut Goal, mark: Mark, change: Change<'_>) -> Result<()
         Mark::Pause => (Status::Paused, None, "pause_claimed", words::AGENT_PAUSED.into()),
     };
     goal.status = status;
+    goal.runtime.pending = None;
     goal.statement = statement;
     goal.stop =
         (status != Status::Complete).then(|| Stop { kind: StopKind::Claimed, reason: reason.clone(), resume_at: None });
     goal.claim = (status != Status::Complete).then(|| Claim { status, turn: change.turn.clone(), at: change.at });
+    if goal.claim.is_some() {
+        goal.runtime.settled_turn = None;
+    }
     remember(goal, change, kind, reason);
     Ok(())
 }
 
-fn activate(goal: &mut Goal) {
+fn activate(goal: &mut Goal, at: Timestamp) {
+    goal.runtime = fastctx_types::goals::runtime::Runtime { activated_at: Some(at), ..Default::default() };
     goal.retired = None;
     goal.status = Status::Active;
     goal.stop = None;

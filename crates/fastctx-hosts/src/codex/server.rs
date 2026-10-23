@@ -76,6 +76,7 @@ fn deadline(method: &str) -> std::time::Duration {
         "thread/read",
         "thread/list",
         "thread/items/list",
+        "thread/turns/list",
         "account/read",
         "account/rateLimits/read",
         "account/usage/read",

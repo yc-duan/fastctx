@@ -25,7 +25,7 @@ impl UsedUp {
             Self::Unavailable => Timestamp::MAX,
         }
     }
-    pub(super) fn expires(&self) -> Option<Timestamp> {
+    pub(crate) fn expires(&self) -> Option<Timestamp> {
         (self.until() != Timestamp::MAX).then(|| self.until())
     }
     pub(super) fn fable(&self) -> bool {

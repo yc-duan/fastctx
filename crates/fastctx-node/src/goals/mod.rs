@@ -1,12 +1,16 @@
 //! Durable goals: account authority, local effects, and lifecycle reconciliation.
 
+mod archive;
 pub(crate) mod calls;
 pub(crate) mod context;
+pub(crate) mod engine;
+pub(crate) mod holding;
 mod intents;
 pub(crate) mod lifecycle;
 pub(crate) mod operations;
 pub(crate) mod records;
 mod recovery;
+pub(crate) mod reviewer;
 mod scope;
 mod state;
 pub(crate) mod watch;
@@ -25,7 +29,9 @@ pub(crate) struct Services {
     pub records: Arc<dyn records::Records>,
     pub context: Arc<dyn context::Context>,
     pub views: Mutex<BTreeMap<ResidentId, View>>,
-    pub changed: tokio::sync::Notify,
+    pub changed: tokio::sync::watch::Sender<u64>,
+    pub engine: engine::Running,
+    pub reviewer: Arc<dyn reviewer::Reviewer>,
     recovering: Mutex<HashSet<Address>>,
     lifecycle: Mutex<HashSet<ResidentId>>,
     watching: Mutex<HashSet<HubAccount>>,
@@ -37,7 +43,9 @@ impl Default for Services {
             records: Arc::new(records::Unconnected),
             context: Arc::new(context::Unconnected),
             views: Default::default(),
-            changed: Default::default(),
+            changed: tokio::sync::watch::channel(0).0,
+            engine: Default::default(),
+            reviewer: Arc::new(reviewer::Unconnected),
             recovering: Default::default(),
             lifecycle: Default::default(),
             watching: Default::default(),
@@ -63,6 +71,7 @@ pub(crate) fn start(node: &Arc<Node>) {
     recovery::start(node);
     watching::start(node);
     lifecycle::start(node);
+    engine::start(node);
 }
 
 /// Account-record content is sent only to a viewer of that account, even for a multi-account conversation.

@@ -8,19 +8,41 @@ use std::sync::Arc;
 use std::time::Instant;
 
 pub(crate) async fn between_turns(node: &Arc<Node>, resident: &ResidentId) -> Compacted {
-    let result = run(node, resident).await;
+    let result = run(node, resident, None).await;
     result.unwrap_or_else(|error| Compacted::Failed { reason: error.message })
 }
 
-async fn run(node: &Arc<Node>, resident: &ResidentId) -> Result<Compacted, fastctx_types::ipc::Failure> {
+pub(crate) async fn recorded(node: &Arc<Node>, resident: &ResidentId, key: &str) -> Compacted {
+    run(node, resident, Some(key)).await.unwrap_or_else(|error| Compacted::Failed { reason: error.message })
+}
+
+async fn run(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    key: Option<&str>,
+) -> Result<Compacted, fastctx_types::ipc::Failure> {
     let gate = crate::control_queue::gate(node, resident);
     let action = gate.lock().await;
     node.residents.active(resident)?;
+    let (about, _) =
+        node.residents.about(resident).ok_or_else(|| fastctx_types::ipc::Failure::new("unknown conversation"))?;
+    if about.host.agent.as_str() == "claude"
+        && let Some(key) = key
+    {
+        return match crate::claude::goal_compaction::run(node, resident, key, action).await? {
+            Controlled::Done { .. } => Ok(Compacted::Done),
+            Controlled::Refused { said, .. } => Ok(Compacted::Refused { reason: said }),
+            result => Ok(Compacted::Failed { reason: format!("compaction did not establish completion: {result:?}") }),
+        };
+    }
+    if let Some(key) = key
+        && !crate::goals::engine::requests(node, resident, key)
+    {
+        return Ok(Compacted::Refused { reason: "The goal no longer requests this compaction.".into() });
+    }
     if crate::control_queue::busy(node, resident)? {
         return Ok(Compacted::Refused { reason: "a turn is still running".into() });
     }
-    let (about, _) =
-        node.residents.about(resident).ok_or_else(|| fastctx_types::ipc::Failure::new("unknown conversation"))?;
     let before = node.residents.last_compaction(resident);
     let mut changes = node.residents.changes();
     let result = if about.host.agent.as_str() == "claude" {

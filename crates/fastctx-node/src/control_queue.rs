@@ -57,8 +57,10 @@ fn event(node: &Node, id: &ResidentId, row: &PendingControl) -> Result<(), Failu
 /// ends (`world-gui.md`, 对话): all a user does to it, but answering it,
 /// reading what it offers and withdrawing one that waits.
 pub(crate) fn told(control: &Control) -> bool {
-    !matches!(control, Control::Answer { .. } | Control::CancelControl { .. } | Control::Agents | Control::AgentMessages { .. })
-        && !matches!(control, Control::Command { name, args, path: None } if name == "model" && args.trim().is_empty())
+    !matches!(
+        control,
+        Control::Answer { .. } | Control::CancelControl { .. } | Control::Agents | Control::AgentMessages { .. }
+    ) && !matches!(control, Control::Command { name, args, path: None } if name == "model" && args.trim().is_empty())
 }
 
 /// A control done now, told in its conversation as begun.
@@ -137,9 +139,10 @@ fn after_compaction(node: Arc<Node>, id: ResidentId, mut row: PendingControl) {
                     row.result = Some(Box::new(Controlled::Done { said: None }));
                 } else {
                     row.state = ControlState::Failed;
-                    row.error = Some(now.trouble.map(|trouble| trouble.text).unwrap_or_else(|| {
-                        "the compaction's turn ended without compacting the conversation".into()
-                    }));
+                    row.error =
+                        Some(now.trouble.map(|trouble| trouble.text).unwrap_or_else(|| {
+                            "the compaction's turn ended without compacting the conversation".into()
+                        }));
                 }
                 break;
             }

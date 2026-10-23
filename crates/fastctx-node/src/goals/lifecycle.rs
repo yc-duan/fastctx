@@ -19,6 +19,7 @@ use std::time::Duration;
 pub(crate) enum HoldKind {
     Archived,
     Assistance,
+    UserStop,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -36,7 +37,7 @@ impl Hold {
         fastctx_types::goals::Pending {
             action: match self.kind {
                 HoldKind::Archived => fastctx_types::goals::PendingAction::End,
-                HoldKind::Assistance => fastctx_types::goals::PendingAction::Pause,
+                HoldKind::Assistance | HoldKind::UserStop => fastctx_types::goals::PendingAction::Pause,
             },
             reason: self.reason.clone(),
             at: self.at,
@@ -48,11 +49,18 @@ impl Hold {
         goal.id != self.goal
             || goal.operation == self.operation
             || goal.status == Status::Complete
+            || goal.retired.is_some()
+            || (matches!(self.kind, HoldKind::UserStop)
+                && goal.status == Status::Paused
+                && goal.runtime.clears_stop.as_ref() == Some(&self.operation))
             || (view.version > self.base
                 && goal.decisions.last().is_some_and(|decision| {
                     decision.operation == goal.operation
                         && matches!(decision.by, Author::User { .. })
                         && matches!(decision.kind.as_str(), "opened" | "resumed" | "paused")
+                        && (!matches!(self.kind, HoldKind::UserStop)
+                            || decision.kind == "paused"
+                            || goal.runtime.clears_stop.as_ref() == Some(&self.operation))
                 }))
     }
 }
@@ -104,6 +112,7 @@ pub(crate) fn start(node: &Arc<Node>) {
     tokio::spawn(async move {
         let mut residents = node.residents.changes();
         let mut views = node.views.subscribe();
+        let mut goals = node.goals.changed.subscribe();
         let mut every = tokio::time::interval(Duration::from_secs(30));
         loop {
             let candidates: Vec<_> = node
@@ -130,7 +139,7 @@ pub(crate) fn start(node: &Arc<Node>) {
             tokio::select! {
                 result = residents.changed() => { if result.is_err() { return; } },
                 result = views.changed() => { if result.is_err() { return; } },
-                () = node.goals.changed.notified() => {},
+                result = goals.changed() => { if result.is_err() { return; } },
                 _ = every.tick() => {},
             }
         }
@@ -156,9 +165,13 @@ async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     } else {
         view
     };
-    if held.as_ref().is_some_and(|held| held.superseded(&view)) {
-        clear_hold(node, id).map_err(failure)?;
-        held = None;
+    {
+        let _transaction = crate::resident_storage::lock();
+        held = hold(node, id).map_err(failure)?;
+        if held.as_ref().is_some_and(|held| held.superseded(&view)) {
+            clear_hold(node, id).map_err(failure)?;
+            held = None;
+        }
     }
     let Some(mut goal) = view.goal.clone() else { return Ok(()) };
     if goal.retired.is_some() {
@@ -169,6 +182,7 @@ async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
             match held.kind {
                 HoldKind::Archived => "archived",
                 HoldKind::Assistance => "assistance_ended",
+                HoldKind::UserStop => "user_stopped",
             },
             held.reason.clone(),
         )
@@ -204,12 +218,28 @@ async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     let operation = format!("lifecycle:{}:{}:{kind}", goal.id, view.version.unwrap_or(0));
     let at = held.as_ref().map_or_else(Timestamp::now, |held| held.at);
     let base = held.as_ref().map_or(view.version, |held| held.base);
-    let hold_kind = if kind == "archived" { HoldKind::Archived } else { HoldKind::Assistance };
+    let hold_kind = match kind {
+        "archived" => HoldKind::Archived,
+        "user_stopped" => HoldKind::UserStop,
+        _ => HoldKind::Assistance,
+    };
+    let hold_operation = held
+        .as_ref()
+        .filter(|held| matches!(held.kind, HoldKind::UserStop))
+        .map_or_else(|| operation.clone(), |held| held.operation.clone());
+    if kind == "user_stopped" {
+        goal.runtime.clears_stop = Some(hold_operation.clone());
+    }
+    goal.runtime.pending = None;
     if kind == "archived" {
         goal.retired = Some(Retired { at, why: Retirement::Archived });
     } else {
         goal.status = Status::Paused;
-        goal.stop = Some(Stop { kind: StopKind::Assistance, reason: reason.clone(), resume_at: None });
+        goal.stop = Some(Stop {
+            kind: if kind == "user_stopped" { StopKind::User } else { StopKind::Assistance },
+            reason: reason.clone(),
+            resume_at: None,
+        });
         goal.claim = None;
     }
     state::remember(
@@ -231,12 +261,26 @@ async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     };
     intents::keep(&directory, &intent).map_err(failure)?;
     fastctx_platform::ensure_private_dir(&directory.books()).map_err(failure)?;
-    fastctx_platform::publish(
-        &hold_path(node, id),
-        &serde_json::to_vec(&Hold { goal: goal.id, operation, reason, base, at, kind: hold_kind }).map_err(failure)?,
-        fastctx_platform::Permissions::Private,
-    )
-    .map_err(failure)?;
+    {
+        let _transaction = crate::resident_storage::lock();
+        let current_hold = hold(node, id).map_err(failure)?;
+        if current_hold.as_ref().map(|hold| &hold.operation) == held.as_ref().map(|hold| &hold.operation) {
+            fastctx_platform::publish(
+                &hold_path(node, id),
+                &serde_json::to_vec(&Hold {
+                    goal: goal.id,
+                    operation: hold_operation,
+                    reason,
+                    base,
+                    at,
+                    kind: hold_kind,
+                })
+                .map_err(failure)?,
+                fastctx_platform::Permissions::Private,
+            )
+            .map_err(failure)?;
+        }
+    }
     super::recovery::schedule(node, intent.resident.clone());
     operations::apply(node, id, &view).await?;
     let mut intent = intent;
@@ -249,6 +293,7 @@ pub(crate) async fn delete(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fail
     let resident = Address { machine: node.machine(), resident: id.clone() };
     let current = operations::read(node, &resident, &account).await?;
     if current.goal.is_none() && current.version.is_some() {
+        super::archive::for_resident(node, &account, id).await?;
         operations::publish(node, id, &current);
         node.goals.views.lock().expect("goal views").remove(id);
         return Ok(());

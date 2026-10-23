@@ -15,6 +15,10 @@ pub struct TurnFacts {
     pub world_started_at: Option<jiff::Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub world_last_activity_at: Option<jiff::Timestamp>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub world_progress: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub world_compacted: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -70,7 +74,9 @@ pub enum TurnTokens {
 
 impl TurnFacts {
     pub fn is_empty(&self) -> bool {
-        self.world_started_at.is_none()
+        !self.world_progress
+            && !self.world_compacted
+            && self.world_started_at.is_none()
             && self.world_last_activity_at.is_none()
             && self.models.is_empty()
             && self.efforts.is_empty()

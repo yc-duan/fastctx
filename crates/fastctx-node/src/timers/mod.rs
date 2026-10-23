@@ -30,8 +30,13 @@ pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Fai
         return Ok(Reply::Timers { timers: store.list(owner.as_ref()) });
     }
     let resident = match &call {
+        TimerCall::Set { action: Action::Goal { .. }, .. } => {
+            return Err(Failure::refused("goal timers are managed by the goal runtime"));
+        }
         TimerCall::Set { owner, action: Action::Tell { resident, .. }, .. } => {
-            if owner.conversation() != Some(resident) {
+            if !matches!(owner, fastctx_types::timers::Owner::Conversation { .. })
+                || owner.conversation() != Some(resident)
+            {
                 return Err(Failure::new("a conversation timer must tell its own conversation"));
             }
             resident.clone()
@@ -39,6 +44,7 @@ pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Fai
         TimerCall::Cancel { id } => match store.get(id) {
             Some(timer) => match timer.action {
                 Action::Tell { resident, .. } => resident,
+                Action::Goal { .. } => return Err(Failure::refused("goal timers are managed by the goal runtime")),
             },
             None => return Ok(Reply::Done),
         },
@@ -131,6 +137,7 @@ pub(crate) fn start(node: &Arc<Node>) {
 
 async fn execute(node: &Arc<Node>, store: &Store, timer: &Timer) -> Result<(), String> {
     match &timer.action {
+        Action::Goal { .. } => crate::goals::engine::fire(node, store, timer).await.map_err(|error| error.message),
         Action::Tell { resident, .. } => {
             let gate = crate::control_queue::gate(node, resident);
             let _action = gate.lock().await;
@@ -146,7 +153,7 @@ async fn execute(node: &Arc<Node>, store: &Store, timer: &Timer) -> Result<(), S
             crate::control_queue::drain(node, resident).await.map_err(|error| error.message)?;
             let management = node.residents.management(resident).map_err(|error| error.message)?;
             let _reading = management.read().await;
-            let Action::Tell { text, .. } = &timer.action;
+            let Action::Tell { text, .. } = &timer.action else { unreachable!() };
             let delivery = Delivery {
                 id: timer.delivery.clone(),
                 at: timer.fired_at.expect("begin records the firing"),

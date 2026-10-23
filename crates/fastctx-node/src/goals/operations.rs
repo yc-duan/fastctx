@@ -2,7 +2,7 @@
 
 use super::{
     intents::{self, Intent, Phase},
-    records::{Exchanged, Record},
+    records::Exchanged,
     state, words,
 };
 use crate::Node;
@@ -16,18 +16,24 @@ use std::time::Duration;
 
 pub(crate) const KIND: &str = "goal";
 
-pub(crate) async fn read(node: &Node, resident: &Address, account: &HubAccount) -> Result<View, Failure> {
-    let record = bounded(node.goals.records.read(account, KIND, resident.resident.as_str())).await?;
-    view(node, resident, account, record)
+pub(crate) async fn read(node: &Arc<Node>, resident: &Address, account: &HubAccount) -> Result<View, Failure> {
+    loaded(node, resident, account).await.map(|(view, _)| view)
 }
 
-fn view(node: &Node, resident: &Address, account: &HubAccount, record: Option<Record>) -> Result<View, Failure> {
+async fn loaded(
+    node: &Arc<Node>,
+    resident: &Address,
+    account: &HubAccount,
+) -> Result<(View, super::archive::Storage), Failure> {
+    let record = bounded(node.goals.records.read(account, KIND, resident.resident.as_str())).await?;
     let version = record.as_ref().map(|record| record.version);
-    let goal: Option<Goal> = record
-        .and_then(|record| record.body)
-        .map(serde_json::from_value)
-        .transpose()
-        .map_err(|error| Failure::new(format!("reading the goal record: {error}")))?;
+    let (goal, storage): (Option<Goal>, _) = match record.and_then(|record| record.body) {
+        Some(body) => {
+            let (body, storage) = super::archive::decode(node, account, body).await?;
+            (Some(serde_json::from_value(body).map_err(failure)?), storage)
+        }
+        None => (None, Default::default()),
+    };
     if let Some(goal) = &goal {
         if goal.account != *account {
             return Err(Failure::new(words::ACCOUNT_CHANGED));
@@ -41,7 +47,7 @@ fn view(node: &Node, resident: &Address, account: &HubAccount, record: Option<Re
         let hold = super::lifecycle::hold(node, &resident.resident).map_err(failure)?;
         view.pending = super::lifecycle::pending(node, &resident.resident, &view, hold.as_ref());
     }
-    Ok(view)
+    Ok((view, storage))
 }
 
 pub(crate) async fn call(
@@ -55,12 +61,29 @@ pub(crate) async fn call(
     if matches!(request, Request::Read) {
         return read(node, &resident, &account).await.map(|view| Updated::Goal { view: Box::new(view) });
     }
+    if let Request::History { page } = &request {
+        let view = read(node, &resident, &account).await?;
+        let history = match view.goal {
+            Some(goal) => super::archive::history(node, &goal, page.as_deref()).await?,
+            None if page.is_none() => None,
+            None => return Err(Failure::new("the goal whose history was requested no longer exists")),
+        };
+        return Ok(Updated::History { page: history.map(Box::new) });
+    }
     let gate = crate::control_queue::gate(node, &resident.resident);
     let _action = gate.lock().await;
     let place = if node.is_me(&resident.machine) { resident.resident.to_string() } else { resident.key() };
     let _place = node.places.using(&place).await;
     if node.is_me(&resident.machine) {
         node.residents.active(&resident.resident)?;
+        if matches!(&request, Request::Change { change: UserChange::Open { .. } | UserChange::Resume, .. })
+            && node
+                .residents
+                .about(&resident.resident)
+                .is_some_and(|(about, _)| about.host.agent.as_str() == "codex" && !about.world_started)
+        {
+            return Err(Failure::refused(words::NATIVE_CODEX));
+        }
     }
     let directory = node.world.owner(&node.names(), &resident);
     if super::scope::pinned_at(&directory)?.is_some_and(|pinned| pinned != account) {
@@ -68,7 +91,7 @@ pub(crate) async fn call(
     }
     let operation = match &request {
         Request::Change { operation, .. } | Request::Mark { operation, .. } => operation,
-        Request::Read => unreachable!(),
+        Request::Read | Request::History { .. } => unreachable!(),
     };
     if operation.is_empty() {
         return Err(Failure::not_run(fastctx_types::goals::words::NO_OPERATION));
@@ -124,7 +147,16 @@ pub(crate) async fn call(
             }
             state::mark(proposed.as_mut().ok_or_else(|| Failure::not_run(words::NO_GOAL))?, mark.clone(), change)?;
         }
-        Request::Read => unreachable!(),
+        Request::Read | Request::History { .. } => unreachable!(),
+    }
+    if node.is_me(&resident.machine)
+        && matches!(&request, Request::Change { change: UserChange::Open { .. } | UserChange::Resume, .. })
+        && let Some(goal) = proposed.as_mut()
+    {
+        goal.runtime.clears_stop = super::lifecycle::hold(node, &resident.resident)
+            .map_err(failure)?
+            .filter(|held| matches!(held.kind, super::lifecycle::HoldKind::UserStop))
+            .map(|held| held.operation);
     }
     super::scope::keep_at(&directory, &account).map_err(failure)?;
     let mut intent = Intent {
@@ -151,25 +183,39 @@ pub(crate) async fn finish(node: &Arc<Node>, intent: &mut Intent) -> Result<Upda
     if !intent.phase.pending() {
         return read(node, &intent.resident, &intent.account).await.map(|view| Updated::Goal { view: Box::new(view) });
     }
-    let mut current = read(node, &intent.resident, &intent.account).await?;
+    let (mut current, storage) = loaded(node, &intent.resident, &intent.account).await?;
     if matches!(intent.phase, Phase::Prepared) {
-        let recorded = current.goal.as_ref().is_some_and(|goal| {
+        let recorded = if let Some(goal) = &current.goal {
             goal.operation == intent.operation
                 || goal.decisions.iter().any(|decision| decision.operation == intent.operation)
-        });
+                || (current.version != intent.expected
+                    && super::archive::contains(node, goal, &intent.operation).await?)
+        } else {
+            false
+        };
         let cleared = intent.proposed.is_none()
             && current.goal.is_none()
             && current.version == intent.expected.unwrap_or(0).checked_add(1);
         if recorded || cleared {
-            intent.phase = Phase::Accepted { version: current.version.expect("a recognized mutation has a version") };
+            let version =
+                intent.expected.unwrap_or(0).checked_add(1).ok_or_else(|| Failure::new("goal revision overflow"))?;
+            intent.phase = Phase::Accepted { version };
             intents::keep(&directory, intent).map_err(failure)?;
         } else if current.version != intent.expected {
+            super::archive::close(node, &intent.account, &intent.resident.resident, &intent.operation).await?;
+            super::archive::for_resident(node, &intent.account, &intent.resident.resident).await?;
             intent.phase = Phase::Conflict { current: current.version };
             intent.proposed = None;
             intents::keep(&directory, intent).map_err(failure)?;
             return Ok(Updated::Conflict { current: current.version });
         } else {
-            let body = intent.proposed.as_ref().map(serde_json::to_value).transpose().map_err(failure)?;
+            let body = match &intent.proposed {
+                Some(goal) => Some(
+                    super::archive::encode(node, &intent.account, goal, &intent.operation, intent.expected, storage)
+                        .await?,
+                ),
+                None => None,
+            };
             match bounded(node.goals.records.exchange(
                 &intent.account,
                 KIND,
@@ -185,6 +231,8 @@ pub(crate) async fn finish(node: &Arc<Node>, intent: &mut Intent) -> Result<Upda
                     current = read(node, &intent.resident, &intent.account).await?;
                 }
                 Exchanged::Conflict { current } => {
+                    super::archive::close(node, &intent.account, &intent.resident.resident, &intent.operation).await?;
+                    super::archive::for_resident(node, &intent.account, &intent.resident.resident).await?;
                     intent.phase = Phase::Conflict { current };
                     intent.proposed = None;
                     intents::keep(&directory, intent).map_err(failure)?;
@@ -196,6 +244,10 @@ pub(crate) async fn finish(node: &Arc<Node>, intent: &mut Intent) -> Result<Upda
     let Phase::Accepted { version } = intent.phase else { unreachable!() };
     if current.version.is_none_or(|current| current < version) {
         return Err(Failure::new(fastctx_types::goals::words::LOST_REVISION));
+    }
+    super::archive::close(node, &intent.account, &intent.resident.resident, &intent.operation).await?;
+    if intent.proposed.is_none() && current.goal.is_none() {
+        super::archive::for_resident(node, &intent.account, &intent.resident.resident).await?;
     }
     if node.is_me(&intent.resident.machine) && !node.residents.is_deleting(&intent.resident.resident) {
         apply(node, &intent.resident.resident, &current).await?;
@@ -211,21 +263,41 @@ pub(crate) async fn finish(node: &Arc<Node>, intent: &mut Intent) -> Result<Upda
 }
 
 pub(crate) async fn apply(node: &Arc<Node>, resident: &ResidentId, view: &View) -> Result<(), Failure> {
-    let held = super::lifecycle::hold(node, resident).map_err(failure)?;
-    let holds = held.as_ref().is_some_and(|held| !held.superseded(view));
-    let text = if holds || node.residents.removed(resident).is_some() {
-        String::new()
-    } else {
-        view.goal.as_ref().map(words::context).unwrap_or_default()
-    };
-    if held.is_some() && !holds {
-        super::lifecycle::clear_hold(node, resident).map_err(failure)?;
+    let mut installed = None;
+    loop {
+        let (text, accepted) = {
+            let _transaction = crate::resident_storage::lock();
+            let held = super::lifecycle::hold(node, resident).map_err(failure)?;
+            let holds = held.as_ref().is_some_and(|held| !held.superseded(view));
+            let text = if holds || node.residents.removed(resident).is_some() {
+                String::new()
+            } else {
+                view.goal.as_ref().map(words::context).unwrap_or_default()
+            };
+            if held.is_some() && !holds {
+                super::lifecycle::clear_hold(node, resident).map_err(failure)?;
+            }
+            let mut view = view.clone();
+            view.pending = super::lifecycle::pending(node, resident, &view, held.as_ref());
+            if installed.as_ref() == Some(&text) {
+                super::holding::publish(node, resident, &view)?;
+                publish(node, resident, &view);
+                (text, Some(view))
+            } else {
+                if view.pending.is_some()
+                    || view.goal.as_ref().is_some_and(|goal| goal.status == fastctx_types::goals::Status::Paused)
+                {
+                    super::holding::publish(node, resident, &view)?;
+                }
+                (text, None)
+            }
+        };
+        if let Some(accepted) = accepted {
+            return super::engine::timing(node, resident, &accepted);
+        }
+        bounded(node.goals.context.set(resident, "goal", &text)).await?;
+        installed = Some(text);
     }
-    bounded(node.goals.context.set(resident, "goal", &text)).await?;
-    let mut view = view.clone();
-    view.pending = super::lifecycle::pending(node, resident, &view, held.as_ref());
-    publish(node, resident, &view);
-    Ok(())
 }
 
 pub(crate) fn publish(node: &Node, resident: &ResidentId, view: &View) {
@@ -242,7 +314,8 @@ pub(crate) fn publish(node: &Node, resident: &ResidentId, view: &View) {
             },
         },
     );
-    node.goals.changed.notify_one();
+    super::engine::observe_view(node, resident, view);
+    node.goals.changed.send_modify(|revision| *revision = revision.wrapping_add(1));
 }
 
 pub(crate) async fn bounded<T>(future: super::records::Reply<'_, T>) -> Result<T, Failure> {

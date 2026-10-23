@@ -26,6 +26,7 @@ impl Owner {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Action {
     Tell { resident: ResidentId, text: String },
+    Goal { resident: ResidentId, goal: String, work: NoticeId },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

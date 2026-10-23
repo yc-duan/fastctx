@@ -4,7 +4,7 @@ mod log;
 mod storage;
 mod updates;
 pub(crate) use storage::{
-    begin as begin_for, evidence, evidence_all, failed as failed_for, job_updates, legacy_reply, receive, record_failure, stamp,
+    begin as begin_for, evidence, evidence_all, failed as failed_for, job_updates, legacy_reply, observations, receive, record_failure, stamp,
 };
 pub(crate) use updates::job as update_job;
 

@@ -51,16 +51,16 @@ pub(crate) fn source(node: &Node, resident: &ResidentId, turn: &str) -> io::Resu
     }
 }
 
-pub(crate) fn classify(end: &TurnEnd, requested: Option<StopSource>) -> StopReason {
+pub(crate) fn classify(end: &TurnEnd, requested: Option<StopSource>, agent: &str) -> StopReason {
     let category = end
         .error
         .as_ref()
         .and_then(|error| {
             error
-                .get("codexErrorInfo")
+                .get("world")
+                .or_else(|| error.get("codexErrorInfo"))
                 .or_else(|| error.pointer("/data/codexErrorInfo"))
                 .or_else(|| error.get("category"))
-                .or_else(|| error.get("world"))
         })
         .cloned();
     let name = category.as_ref().and_then(|value| {
@@ -71,14 +71,16 @@ pub(crate) fn classify(end: &TurnEnd, requested: Option<StopSource>) -> StopReas
     let kind = match requested {
         Some(StopSource::User) => StopKind::UserStopped,
         Some(StopSource::Allowance) => StopKind::UsageLimited,
-        Some(StopSource::Stalled | StopSource::Lifecycle) => StopKind::OtherError,
+        Some(StopSource::Lifecycle) => StopKind::OtherError,
         None => match name {
+            Some("host_exited") => StopKind::HostExited,
+            Some("node_restarted") => StopKind::NodeRestarted,
+            _ if end.how == TurnHow::Interrupted => StopKind::UserStopped,
+            Some("invalid_request") if agent == "claude" => StopKind::ContextWindowExceeded,
             Some("contextWindowExceeded" | "prompt_too_long" | "model_context_window_exceeded") => {
                 StopKind::ContextWindowExceeded
             }
             Some("usageLimitExceeded" | "rate_limit") => StopKind::UsageLimited,
-            Some("host_exited") => StopKind::HostExited,
-            Some("node_restarted") => StopKind::NodeRestarted,
             _ if end.how == TurnHow::Completed => StopKind::Completed,
             _ => StopKind::OtherError,
         },

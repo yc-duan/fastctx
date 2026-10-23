@@ -19,15 +19,22 @@ pub(crate) fn render(evidence: &TurnEvidence, actions_path: &str) -> String {
     for call in &evidence.calls {
         let _ = writeln!(
             text,
-            "{} run {} -> {:?}; full command {}; output {}",
+            "{} run {} -> {:?}; job {}; call record {}; output {}",
             call.facts.machine,
             line(&call.script),
             call.facts.state,
+            call.facts.job.as_ref().map(|job| job.as_str()).unwrap_or("not reported"),
             call.source,
-            call.facts.output.as_ref().map(|output| output.path.as_str()).unwrap_or("unavailable")
+            call.facts.output.as_ref().map(|output| output.path.as_str()).unwrap_or("see call record")
         );
     }
-    for update in evidence.job_updates.iter().filter(|update| !update.primary) {
+    for update in evidence.job_updates.iter().filter(|update| {
+        !update.primary
+            || !evidence
+                .calls
+                .iter()
+                .any(|call| call.facts.machine == update.machine && call.facts.job.as_ref() == Some(&update.job))
+    }) {
         let _ = writeln!(
             text,
             "{} job {} {} -> {:?}; full record {}; output {}",

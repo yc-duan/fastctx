@@ -34,7 +34,6 @@ pub struct StopReason {
 pub enum StopSource {
     User,
     Allowance,
-    Stalled,
     Lifecycle,
 }
 
@@ -78,6 +77,9 @@ pub struct WaitHandle {
     pub liveness: Liveness,
     /// A durable World obligation will deliver a result, even if its executor is offline now.
     pub will_wake: bool,
+    /// The stable notice that proves this wait returned, when the producer can name it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion: Option<crate::NoticeId>,
     pub summary: String,
     pub output: Option<WaitOutput>,
     pub output_growth: Option<u64>,
@@ -97,6 +99,10 @@ pub struct TurnEvidence {
     pub turn: Option<String>,
     pub started_at: Option<Timestamp>,
     pub ended_at: Option<Timestamp>,
+    /// When the World first durably accepted the terminal, on its own clock.
+    /// Host timestamps may have lower precision or arrive after recovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_recorded_at: Option<Timestamp>,
     pub last_activity_at: Option<Timestamp>,
     pub end: Option<TurnEnd>,
     pub stop: Option<StopReason>,

@@ -322,6 +322,15 @@ async fn finish_at(
             || (turn.is_empty() && now.turn.is_none() && now.activity == fastctx_types::residents::Activity::Busy)
     });
     let settles_queue = current || crate::composer::awaits_turn(node, id, turn).await.map_err(std::io::Error::other)?;
+    if end.how == TurnHow::Interrupted
+        && settles_queue
+        && crate::delivery::terminal(&directory, turn)?.is_none()
+        && crate::turn_evidence::source(node, id, turn)?.is_none()
+        && crate::turn_evidence::classify(&end, None, about.host.agent.as_str()).kind
+            == fastctx_types::turn_evidence::StopKind::UserStopped
+    {
+        crate::goals::holding::stop(node, id, Some(turn.to_string())).map_err(std::io::Error::other)?;
+    }
     let (finished, first) = crate::delivery::finish_at(&directory, turn, end, &readers, ended_at, settles_queue)?;
     if first {
         crate::usage::turn_ended(node, id, &about, &finished.end, ended_at.unwrap_or_else(Timestamp::now));
@@ -571,7 +580,7 @@ pub async fn unsettled(
 ) {
     let result = async {
         let mut handover = crate::delivery::begin(directory, vec![pending])?;
-        unresolved(node, id, directory, &mut handover, how, why).await
+        unresolved(node, id, directory, &mut handover, how, why, None).await
     }
     .await;
     if let Err(error) = result {
@@ -588,6 +597,7 @@ pub async fn unresolved(
     handover: &mut crate::delivery::Handover,
     how: TurnHow,
     why: String,
+    error: Option<serde_json::Value>,
 ) -> std::io::Result<()> {
     let accepted: std::collections::HashSet<_> = crate::delivery::handovers(directory)?
         .into_iter()
@@ -597,7 +607,7 @@ pub async fn unresolved(
     if handover.inputs.iter().all(|input| accepted.contains(&input.delivery.id)) {
         return Ok(());
     }
-    let end = TurnEnd { facts: None, error: None, how, reason: Some(why), duration_ms: None, last_message: None };
+    let end = TurnEnd { facts: None, error, how, reason: Some(why), duration_ms: None, last_message: None };
     crate::delivery::unresolved(directory, handover, end)?;
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
     let readers: std::collections::BTreeSet<Address> = handover

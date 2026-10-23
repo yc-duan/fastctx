@@ -23,9 +23,17 @@ use crate::{AgentName, ResidentId, TownName};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum RemoteCall {
-    Goal { resident: ResidentId, request: crate::goals::Request },
-    ConversationDebt { resident: ResidentId, requester: crate::Address },
-    WaitingJobs { owner: crate::Address },
+    Goal {
+        resident: ResidentId,
+        request: crate::goals::Request,
+    },
+    ConversationDebt {
+        resident: ResidentId,
+        requester: crate::Address,
+    },
+    WaitingJobs {
+        owner: crate::Address,
+    },
     /// A running job returns its resident's project selection to its home.
     /// This call is relayed and authorized by a hub supporting project entry.
     EnterProject {
@@ -501,7 +509,9 @@ impl RemoteCall {
     /// check it.
     pub fn purpose(&self) -> Purpose {
         match self {
-            RemoteCall::Goal { request: crate::goals::Request::Read, .. } => Purpose::Look,
+            RemoteCall::Goal {
+                request: crate::goals::Request::Read | crate::goals::Request::History { .. }, ..
+            } => Purpose::Look,
             RemoteCall::Goal { .. } => Purpose::Agents,
             Self::EnterProject { .. } => Purpose::Echo,
             RemoteCall::PageAction { action: crate::pages::PageInvocation::Say { .. }, .. } => Purpose::Words,
@@ -587,9 +597,15 @@ impl RemoteCall {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum RemoteReply {
-    Goal { updated: Box<crate::goals::Updated> },
-    ConversationDebt { debt: crate::turn_evidence::ConversationDebt },
-    WaitingJobs { jobs: Vec<crate::turn_evidence::WaitHandle> },
+    Goal {
+        updated: Box<crate::goals::Updated>,
+    },
+    ConversationDebt {
+        debt: crate::turn_evidence::ConversationDebt,
+    },
+    WaitingJobs {
+        jobs: Vec<crate::turn_evidence::WaitHandle>,
+    },
     Entered {
         town: TownName,
         map: Box<crate::project::MapView>,
