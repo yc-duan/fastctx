@@ -106,6 +106,11 @@ pub fn recorded_colleague(error: impl std::fmt::Display) -> String {
     format!("invalid recorded colleague: {error}")
 }
 
+/// A machine of an earlier release would start a colleague without a goal.
+pub fn colleague_host_old(machine: impl std::fmt::Display) -> String {
+    format!("update {machine} to ask a colleague there")
+}
+
 pub fn goal_failed(id: &crate::ResidentId, failure: impl std::fmt::Display) -> String {
     format!("colleague {id} was created, but its goal could not be opened: {failure}")
 }

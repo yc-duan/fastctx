@@ -58,18 +58,26 @@ async fn consume(node: &Arc<Node>, account: &HubAccount) -> Result<(), Failure> 
     let mut changes = operations::bounded(node.goals.records.watch(account, operations::KIND)).await?;
     let rows = operations::bounded(node.goals.records.list(account, operations::KIND)).await?;
     for row in rows {
-        refresh(node, account, row).await?;
+        refresh_one(node, account, row).await;
     }
     let pinned: Vec<_> = node.residents.everyone().map(|record| record.about.id).collect();
     for resident in pinned {
         if scope::pinned(node, &resident)?.as_ref() == Some(account) {
-            refresh(node, account, Changed { key: resident.to_string(), version: 0 }).await?;
+            refresh_one(node, account, Changed { key: resident.to_string(), version: 0 }).await;
         }
     }
     loop {
         for row in changes.next().await? {
-            refresh(node, account, row).await?;
+            refresh_one(node, account, row).await;
         }
+    }
+}
+
+/// One conversation's trouble stays its own: the account's other goals go on.
+async fn refresh_one(node: &Arc<Node>, account: &HubAccount, row: Changed) {
+    let key = row.key.clone();
+    if let Err(failure) = refresh(node, account, row).await {
+        node.log.line(format_args!("goal of {key}: {}", failure.message));
     }
 }
 

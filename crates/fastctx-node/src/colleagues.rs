@@ -137,6 +137,14 @@ async fn ask_for_account(
         return Ok(Address { machine: here, resident: id });
     }
     let lives_on = node.written(link, &machine);
+    // Before beta.11 a machine answers Ask with a colleague of one turn and no goal.
+    match link.call(&lives_on.name, account, Purpose::Look, RemoteCall::Facts).await {
+        Ok(Ok(RemoteReply::Facts(facts))) if facts.goal_runtime => {}
+        Ok(Ok(_)) => return Err(Failure::not_run(fastctx_types::collab_prompt::colleague_host_old(&lives_on))),
+        Ok(Err(failure)) => return Err(Failure { message: format!("on {lives_on}: {}", failure.message), ..failure }),
+        // Not reached: the ask below says how, offline included.
+        Err(_) => {}
+    }
     let call = RemoteCall::Ask {
         asker: request.about.id.clone(),
         requester_turn: request.turn,

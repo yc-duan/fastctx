@@ -62,6 +62,9 @@ pub fn retire(node: &Node) -> io::Result<()> {
 /// do not have yet, a job of its that runs here or whose end it is still
 /// owed, or a job it left running on another machine.
 fn owes(node: &Node, owner: &Address, directory: &ConversationDir) -> io::Result<bool> {
+    if crate::goals::lifecycle::unfinished(directory)? {
+        return Ok(true);
+    }
     for queue in ["job-deliveries", "on-deliveries", "on-stops"] {
         if crate::retention::entries(&directory.book(queue))?
             .iter()

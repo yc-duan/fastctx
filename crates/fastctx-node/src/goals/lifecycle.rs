@@ -80,6 +80,12 @@ pub(crate) fn pending(
     None
 }
 
+/// Whether this conversation's goal still has a step to finish here: an
+/// operation not yet applied, or a hold not yet settled.
+pub(crate) fn unfinished(directory: &fastctx_types::layout::ConversationDir) -> std::io::Result<bool> {
+    Ok(directory.books().join("goal-hold.json").try_exists()? || !super::intents::pending(directory)?.is_empty())
+}
+
 fn hold_path(node: &Node, id: &ResidentId) -> std::path::PathBuf {
     node.world.conversation(id).books().join("goal-hold.json")
 }
