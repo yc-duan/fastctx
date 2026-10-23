@@ -14,6 +14,7 @@ mod heredoc;
 pub mod last;
 pub mod launch;
 mod linear;
+pub mod look;
 #[cfg(target_os = "macos")]
 mod login_shell;
 mod output;
