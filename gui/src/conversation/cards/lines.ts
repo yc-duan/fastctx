@@ -8,6 +8,8 @@ import "./lines.css";
 import { escape } from "../prose";
 import { glyph, type GlyphName } from "../glyphs";
 import { cargoSubject, shortCommand, testSubject } from "../deeds/rows";
+import { troubled } from "../deeds/fan";
+import { scriptSaid } from "../deeds/script";
 import { cardsIn, type Bunch } from "./bunch";
 import type { Card } from "./cards";
 import type { Words } from "../../words";
@@ -22,6 +24,9 @@ interface Said {
   outcome: string;
   /** Where it happened, as markup. */
   where: string;
+  /** Markup before what it was done to: the hook of a command fed by the
+   *  row above. */
+  lead?: string;
 }
 
 export interface LineLook {
@@ -40,7 +45,7 @@ export function lineHtml(part: Card | Bunch, look: LineLook): string {
   const tense = failed ? "failed" : running ? "running" : "done";
   const meta = `<span class="row-meta">${said.stats}${said.outcome}${said.where}<span class="row-chevron">${glyph("chevron", 16)}</span></span>`;
   const key = escape(part.key);
-  return `<div class="row row-tool row-${tense}${part.kind === "bunch" ? " row-bunch" : ""}${look.enter}" data-row="${key}"><span class="rail">${mark}</span><button class="row-line" type="button" data-open="${key}" aria-expanded="${look.open}"><span class="row-action">${escape(said.verb)}</span><span class="row-rest"><span class="row-object">${escape(said.object)}</span>${meta}</span></button><div class="fold-box"${look.open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div></div>`;
+  return `<div class="row row-tool row-${tense}${part.kind === "bunch" ? " row-bunch" : ""}${look.enter}" data-row="${key}"><span class="rail">${mark}</span><button class="row-line" type="button" data-open="${key}" aria-expanded="${look.open}"><span class="row-action">${escape(said.verb)}</span><span class="row-rest"><span class="row-object">${said.lead ?? ""}${escape(said.object)}</span>${meta}</span></button><div class="fold-box"${look.open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div></div>`;
 }
 
 /** A row's words, as finding reads them. */
@@ -81,8 +86,19 @@ function cardSaid(card: Card, words: Words): Said {
       const branches = [...new Set(card.deed.refs.map((ref) => ref.to))].join(words.listSeparator);
       return plainSaid("push", verbs.push, branches || card.deed.remote || "", { outcome: card.failed ? outcome(deeds.rejected) : "" });
     }
-    case "command":
-      return plainSaid("command", verbs.run, shortCommand(card.command));
+    case "command": {
+      // How a command sent elsewhere ended is its row's only when it was
+      // stopped or did not run through; its exit code is in its card.
+      const end = card.on?.end;
+      const ended = end?.kind === "stopped" ? `<span class="row-outcome">${escape(deeds.ended(end))}</span>` : end?.kind === "lost" || end?.kind === "not_run" ? outcome(deeds.ended(end)) : "";
+      const lead = card.on?.piped ? `<span class="row-fed" title="${escape(deeds.fed)}">${glyph("fed", 12)}</span>` : "";
+      return plainSaid("command", verbs.run, shortCommand(card.command), { outcome: ended, lead });
+    }
+    case "fan": {
+      const bad = card.deed.steps.filter((step) => troubled(step.end)).length;
+      const many = `<span class="row-machine">${glyph("group", 12)}${escape(deeds.machines(card.deed.steps.length))}</span>`;
+      return plainSaid("command", verbs.run, shortCommand(card.deed.command), { outcome: bad ? outcome(deeds.troubled(bad)) : "", where: many });
+    }
     case "copy": {
       const from = [...new Set(card.from.map((one) => one.machine ?? ""))].filter(Boolean);
       const names = card.from.map((one) => leaf(one.path));
@@ -92,9 +108,9 @@ function cardSaid(card: Card, words: Words): Said {
     }
     case "job":
       // What the job was running, where this conversation started it.
-      return plainSaid("terminal", deeds.world.wait, card.of ? shortCommand(card.of) : card.deed.job, { outcome: card.deed.failed ? outcome(deeds.ended(card.deed.how)) : "" });
+      return plainSaid("terminal", deeds.world.wait, card.of ? shortCommand(scriptSaid(card.of, card.deed.machine) ?? card.of) : card.deed.job, { outcome: card.deed.failed ? outcome(deeds.ended(card.deed.end)) : "" });
     case "stop":
-      return plainSaid("stop", deeds.world.stop, card.deed.job, { outcome: card.deed.stopped ? "" : outcome(deeds.ended(card.deed.how)) });
+      return plainSaid("stop", deeds.world.stop, card.of ? shortCommand(card.of) : card.deed.what, { outcome: card.deed.stopped ? "" : outcome(deeds.stopped(card.deed.how)) });
     case "page":
       return plainSaid("page", deeds.world.publish, card.deed.title, { outcome: `<span class="row-outcome">${escape(deeds.version(card.deed.version))}</span>` });
     case "project":

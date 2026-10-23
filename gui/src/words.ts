@@ -89,27 +89,6 @@ export interface AgentWords {
   unknownAgents(n: number): string;
 }
 
-/** The rows of what a run did through the World. */
-export interface TripWords {
-  /** One command sent to `n` machines. */
-  machines(n: number): string;
-  /** How many of them did not end as they should. */
-  troubled(n: number): string;
-  command: string;
-  lastLines: string;
-  stopped: string;
-  lost(why: string): string;
-  /** A command whose machine went away under it, as its row says it. */
-  unfinished: string;
-  /** Under the pointer on the hook of a command whose input flowed
-   *  straight from the row above. */
-  fed: string;
-  from: string;
-  to: string;
-  copied(files: number, size: string): string;
-  problems: string;
-}
-
 export interface Words {
   english: boolean;
   queue: QueueWords;
@@ -217,13 +196,11 @@ export interface Words {
   unchangedLines(n: number): string;
   /** Long text opened whole, in a popup. */
   fullScreen: string;
+  /** What a run did, drawn (`conversation/deeds`). */
+  deeds: DeedWords;
   /** What a command printed and what a write changed, opened under their
    *  rows: what was left out of what the model got, the whole output on
    *  its machine beside it, and what is said when either is gone. */
-  /** What a run did through the World, row by row (`conversation/trip.ts`). */
-  trip: TripWords;
-  /** What a run did, drawn (`conversation/deeds`). */
-  deeds: DeedWords;
   output: OutputWords & {
     /** What a call was given, and what it gave back, as their boxes are named. */
     input: string;
@@ -500,20 +477,6 @@ export const zh: Words = {
   moreLines: (n) => `+ ${n.toLocaleString("zh-CN")} 行`,
   unchangedLines: (n) => `${n} 行未改动`,
   fullScreen: "查看全部",
-  trip: {
-    machines: (n) => `${n} 台`,
-    troubled: (n) => `${n} 台出错`,
-    command: "命令",
-    lastLines: "最后几行",
-    stopped: "已停止",
-    lost: (why) => `没有跑完：${why}`,
-    unfinished: "没有跑完",
-    fed: "用上一行的输出",
-    from: "从",
-    to: "到",
-    copied: (files, size) => `${files} 个文件，${size}`,
-    problems: "没复制成的",
-  },
   deeds: {
     raw: "原文",
     tests: (passed, failed, ignored) => [`${passed} 个通过`, failed ? `${failed} 个失败` : "", ignored ? `${ignored} 个跳过` : ""].filter(Boolean).join("，"),
@@ -530,24 +493,23 @@ export const zh: Words = {
       blocked: { verb: "标记", object: "目标受阻", said: "目标受阻" },
       pause: { verb: "暂停", object: "目标", said: "目标暂停了" },
     },
-    ago: (said) => {
-      const match = /^(\d+) (second|minute|hour|day)s? ago$/.exec(said.trim());
-      if (!match) return said;
-      return `${match[1]} ${{ second: "秒", minute: "分钟", hour: "小时", day: "天" }[match[2] as "second"]}前`;
+    ago: (ms) => {
+      const minutes = Math.floor(ms / 60_000);
+      if (minutes < 1) return "刚刚";
+      if (minutes < 60) return `${minutes} 分钟前`;
+      const hours = Math.floor(minutes / 60);
+      return hours < 24 ? `${hours} 小时前` : `${Math.floor(hours / 24)} 天前`;
     },
-    ended: (how) => {
-      if (how === "exit 0") return "跑完了";
-      const exit = /^exit (\d+)$/.exec(how);
-      if (exit) return `退出 ${exit[1]}`;
-      if (how === "stopped by the user") return "被你停下";
-      if (how.startsWith("stopped") || how.startsWith("already stopped")) return "已停止";
-      if (how.startsWith("interrupted")) return "中断了";
-      if (how.startsWith("had already ended")) return "早已结束";
-      return "没有跑完";
-    },
+    ended: (end) =>
+      end.kind === "exited" ? (end.code === 0 ? "跑完了" : `退出 ${end.code}`) : end.kind === "stopped" ? "已停止" : end.kind === "not_run" ? "没有跑起来" : "没有跑完",
+    stopped: (how) => ({ stopped: "已停止", already_stopped: "早已停下", had_ended: "早已结束", not_cleanly: "没能停干净", still_running: "还在跑" })[how],
+    machines: (n) => `${n} 台`,
+    troubled: (n) => `${n} 台出错`,
+    lastLines: "最后几行",
+    fed: "用上一行的输出",
     version: (n) => `第 ${n} 版`,
     page: (n) => `第 ${n} 页`,
-    copied: (files, size) => [files !== null ? `${files} 个文件` : "", size ?? ""].filter(Boolean).join(" "),
+    copied: (files, size) => `${files} 个文件　${size}`,
     same: (n) => `${n} 个已经一样`,
     notCopied: (n) => `${n} 个没复制`,
     inBackground: "在后台继续",
@@ -842,20 +804,6 @@ export const en: Words = {
   moreLines: (n) => `+ ${n.toLocaleString("en")} more line${n === 1 ? "" : "s"}`,
   unchangedLines: (n) => `${n} unchanged lines`,
   fullScreen: "View all",
-  trip: {
-    machines: (n) => `${n} machines`,
-    troubled: (n) => `${n} failed`,
-    command: "Command",
-    lastLines: "Last lines",
-    stopped: "Stopped",
-    lost: (why) => `Did not finish: ${why}`,
-    unfinished: "Did not finish",
-    fed: "Takes the output of the row above",
-    from: "From",
-    to: "To",
-    copied: (files, size) => `${files} ${files === 1 ? "file" : "files"}, ${size}`,
-    problems: "Not copied",
-  },
   deeds: {
     raw: "Raw output",
     tests: (passed, failed, ignored) => [`${passed} passed`, failed ? `${failed} failed` : "", ignored ? `${ignored} skipped` : ""].filter(Boolean).join(", "),
@@ -872,20 +820,25 @@ export const en: Words = {
       blocked: { verb: "Marked", object: "the goal blocked", said: "The goal is blocked" },
       pause: { verb: "Paused", object: "the goal", said: "The goal is paused" },
     },
-    ago: (said) => said.trim(),
-    ended: (how) => {
-      if (how === "exit 0") return "finished";
-      const exit = /^exit (\d+)$/.exec(how);
-      if (exit) return `exit ${exit[1]}`;
-      if (how === "stopped by the user") return "stopped by you";
-      if (how.startsWith("stopped") || how.startsWith("already stopped")) return "stopped";
-      if (how.startsWith("interrupted")) return "interrupted";
-      if (how.startsWith("had already ended")) return "had already ended";
-      return "didn't finish";
+    ago: (ms) => {
+      const minutes = Math.floor(ms / 60_000);
+      if (minutes < 1) return "just now";
+      if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+      const days = Math.floor(hours / 24);
+      return `${days} day${days === 1 ? "" : "s"} ago`;
     },
+    ended: (end) =>
+      end.kind === "exited" ? (end.code === 0 ? "finished" : `exit ${end.code}`) : end.kind === "stopped" ? "stopped" : end.kind === "not_run" ? "didn't start" : "didn't finish",
+    stopped: (how) => ({ stopped: "stopped", already_stopped: "already stopped", had_ended: "had already ended", not_cleanly: "not stopped cleanly", still_running: "still running" })[how],
+    machines: (n) => `${n} machine${n === 1 ? "" : "s"}`,
+    troubled: (n) => `${n} failed`,
+    lastLines: "Last lines",
+    fed: "Takes the output of the row above",
     version: (n) => `version ${n}`,
     page: (n) => `page ${n}`,
-    copied: (files, size) => [files !== null ? `${files} file${files === 1 ? "" : "s"}` : "", size ?? ""].filter(Boolean).join(", "),
+    copied: (files, size) => `${files} file${files === 1 ? "" : "s"}, ${size}`,
     same: (n) => `${n} already the same`,
     notCopied: (n) => `${n} not copied`,
     inBackground: "Goes on in the background",

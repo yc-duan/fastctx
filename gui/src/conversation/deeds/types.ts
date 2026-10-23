@@ -3,6 +3,8 @@
 // (`draw.ts`). A command not recognised is only named; what it printed is
 // in the run's own words, under them.
 
+import type { OnStep, StepEnd, StopHow } from "../../world/run-facts";
+
 export interface TestFailure {
   name: string;
   /** What the test printed as it failed, as its runner gave it. */
@@ -93,15 +95,14 @@ export interface FileDeed {
   of: number | null;
 }
 
-/** A copy between machines, as its heading said it. */
+/** A copy between machines, as the copy told it. */
 export interface CopyDeed {
   kind: "copy";
   command: string | null;
-  from: { machine: string; path: string };
+  from: { machine: string; path: string }[];
   to: { machine: string; path: string };
-  files: number | null;
-  /** How much came across, as the World wrote it ("1.2 MB"). */
-  size: string | null;
+  files: number;
+  bytes: number;
   /** Files that were there already, the same. */
   same: number;
   /** What could not be copied, each as the command said it. */
@@ -114,23 +115,43 @@ export interface JobDeed {
   command: string | null;
   job: string;
   machine: string;
-  /** How it ended, as the World wrote it ("exit 0", "stopped"). */
-  how: string;
+  end: StepEnd;
   failed: boolean;
-  /** How long ago, where that was said. */
-  ago: string;
-  log: string | null;
-  /** The last lines it wrote, where they followed. */
+  /** When it ended, and when the wait for it came back. */
+  at: string;
+  waited: string | null;
+  /** The script it ran, where the wait said. */
+  script: string | null;
+  /** The last lines it wrote. */
   tail: string[];
 }
 
+/** A job, a colleague's turn or a sentinel stopped. */
 export interface StopDeed {
   kind: "stop";
   command: string | null;
-  job: string;
-  machine: string;
-  how: string;
+  what: string;
+  machine: string | null;
+  how: StopHow;
   stopped: boolean;
+}
+
+/** One command sent to many machines, one after another: each machine's
+ *  `on`. */
+export interface FanDeed {
+  kind: "fan";
+  command: string;
+  steps: OnStep[];
+}
+
+/** What an `on` that carried a command told of it: how it ended, and
+ *  whether its input was the output of the command before it. */
+export interface OnSaid {
+  end: StepEnd | null;
+  piped: boolean;
+  tail: string | null;
+  /** It was told to have begun and not yet to have ended. */
+  going: boolean;
 }
 
 /** A page published, a version of it. */
@@ -177,6 +198,9 @@ export interface WorldDeed {
 export interface PlainDeed {
   kind: "plain";
   command: string;
+  /** Where it ran, where an `on` sent it. */
+  machine?: string | null;
+  on?: OnSaid;
 }
 
 /** Where among them the files the run wrote were written: their rows,
@@ -185,7 +209,8 @@ export interface WritesDeed {
   kind: "writes";
 }
 
-export type Deed = TestsDeed | ChecksDeed | CommitDeed | StatusDeed | LogDeed | PushDeed | SearchDeed | FileDeed | CopyDeed | JobDeed | StopDeed | PageDeed | ProjectDeed | PictureDeed | WorldDeed | PlainDeed | WritesDeed;
+/** A deed, and where the command that did it ran, where the script said. */
+export type Deed = (TestsDeed | ChecksDeed | CommitDeed | StatusDeed | LogDeed | PushDeed | SearchDeed | FileDeed | CopyDeed | JobDeed | StopDeed | PageDeed | ProjectDeed | PictureDeed | WorldDeed | FanDeed | PlainDeed | WritesDeed) & { where?: string | null };
 
 /** What a reader finds in a run's output: a deed, and the line it begins
  *  at, so the commands that printed them can be told in order. */
@@ -219,14 +244,24 @@ export interface DeedWords {
   thePlan: string;
   /** A goal settled: the verb its row says, and what its card says. */
   goal: Record<"complete" | "blocked" | "pause", { verb: string; object: string; said: string }>;
-  /** How long ago, from the World's English for it ("3 minutes ago"). */
-  ago(said: string): string;
-  /** How a job ended, from the World's word for it ("exit 1", "stopped"). */
-  ended(how: string): string;
+  /** How long before. */
+  ago(ms: number): string;
+  /** How a job ended. */
+  ended(end: StepEnd): string;
+  /** How a stop left what it stopped. */
+  stopped(how: StopHow): string;
+  /** How many machines one command went to, and how many of them it did
+   *  not end well on. */
+  machines(count: number): string;
+  troubled(count: number): string;
+  /** What a command sent elsewhere last printed. */
+  lastLines: string;
+  /** A command whose input is the output of the row above. */
+  fed: string;
   version(count: number): string;
   page(count: number): string;
-  /** What a copy brought across. */
-  copied(files: number | null, size: string | null): string;
+  /** What a copy brought across: how many files, how big. */
+  copied(files: number, size: string): string;
   same(count: number): string;
   notCopied(count: number): string;
   /** A run that went on after the call came back. */

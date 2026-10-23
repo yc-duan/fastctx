@@ -2,6 +2,7 @@
 
 use clap::{Args, Subcommand};
 use fastctx_types::goals::{AgentRequest, ColleagueControl, Mark, Updated};
+use fastctx_types::run_facts::GoalMark;
 use fastctx_types::{AccountName, Call, HubName, Reply, ResidentId};
 use std::path::PathBuf;
 
@@ -35,6 +36,13 @@ enum GoalCommand {
 }
 
 pub fn run(args: GoalArgs) -> anyhow::Result<()> {
+    // What this conversation marks of its own goal is a step of its run.
+    let marked = match &args.command {
+        Some(GoalCommand::Complete { .. }) => Some(GoalMark::Complete),
+        Some(GoalCommand::Blocked { .. }) => Some(GoalMark::Blocked),
+        Some(GoalCommand::Pause { colleague: None }) => Some(GoalMark::Pause),
+        _ => None,
+    };
     let request = match args.command {
         None => AgentRequest::Read,
         Some(GoalCommand::Pause { colleague: Some(colleague) }) => AgentRequest::ControlColleague {
@@ -60,11 +68,15 @@ pub fn run(args: GoalArgs) -> anyhow::Result<()> {
         }
     };
     let job = std::env::var("FASTCTX_JOB").ok().filter(|job| !job.is_empty()).map(|job| job.parse()).transpose()?;
+    let began = marked.and_then(|_| crate::steps::began());
     match crate::ask::call(Call::GoalCommand { hub: args.hub, account: args.account, job, request })?.0 {
         Reply::Goal { updated } => {
             println!("{}", serde_json::to_string_pretty(&updated)?);
             if matches!(*updated, Updated::Conflict { .. }) {
                 anyhow::bail!(fastctx_types::goals::words::CLI_CONFLICT);
+            }
+            if let (Some(began), Some(mark)) = (began, marked) {
+                began.tell(fastctx_types::run_facts::StepDid::Goal { mark });
             }
         }
         reply => anyhow::bail!("unexpected goal reply: {reply:?}"),

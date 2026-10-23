@@ -24,10 +24,14 @@ pub(crate) fn run(args: PlanArgs) -> anyhow::Result<()> {
         }
         None => Operation::Read,
     };
+    let began = crate::steps::began();
     let (reply, _) = crate::ask::call(Call::Plan { hub: args.hub, account: args.account, operation })?;
     match reply {
         Reply::Plan { result: Result::Page { page } } => {
             println!("{}", words::version(page.version()));
+            if writing && let Some(began) = began {
+                began.tell(fastctx_types::run_facts::StepDid::Plan { version: page.version().unwrap_or(0) });
+            }
             if !writing && let Some(body) = page.body {
                 print!("\n{}", body.markdown);
             }

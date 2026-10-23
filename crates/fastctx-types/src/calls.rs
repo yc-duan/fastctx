@@ -350,6 +350,19 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         login: Option<crate::collab::Caller>,
     },
+    /// Tells what one of the World's own commands did, from inside the job
+    /// whose script gave it (`run_facts::RunStep`); the node names the job's
+    /// machine. Older nodes do not know it, and the command goes on.
+    Stepped {
+        job: crate::JobId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        town: Option<crate::TownName>,
+        id: String,
+        began: jiff::Timestamp,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ended: Option<jiff::Timestamp>,
+        did: crate::run_facts::StepDid,
+    },
     /// Records what a resident saw of files on this machine through
     /// `fastctx view`; the resident may live on another machine.
     Saw {

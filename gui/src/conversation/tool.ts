@@ -4,8 +4,7 @@
 // present, failed is its own word. Only what the tool says is shown; a
 // count that cannot be read from it is not guessed.
 
-import { tripItems } from "./trip";
-import { scriptSaid } from "./deeds/script";
+import { scriptCommands, scriptSaid } from "./deeds/script";
 import type { Change, Tool } from "../world/events";
 import type { WriteFact } from "../world/run-facts";
 import type { Act, Tally, TallyPart, Tense, Words } from "../words";
@@ -242,11 +241,15 @@ export function groupHeading(
         // file copied or looked at, and what it did on its own machine.
         const steps = tool.run?.steps ?? [];
         if (steps.length) {
-          for (const item of tripItems(tool.does.command, steps, tool.run?.writes ?? [])) {
-            if (item.kind === "own" || item.kind === "on") tally.ran += 1;
-            else if (item.kind === "fan") tally.ran += item.steps.length;
-            else if (item.kind === "copy") tally.copied += item.step.files;
-            else if (item.kind === "view") tally.read += item.step.paths.length;
+          // An `on` that only carried the World's own commands counts as
+          // what they did.
+          const carriers = new Set(steps.map((step) => step.job));
+          const own = scriptCommands(tool.does.command, tool.machine ?? null).some((command) => command.carrier === null && command.on === null && !command.world);
+          if (own) tally.ran += 1;
+          for (const step of steps) {
+            if (step.kind === "on" && !(step.sent && carriers.has(step.sent)) && !/^(?:fastctx\s+)?(?:edit|write|apply_patch)\b/.test(step.command)) tally.ran += 1;
+            else if (step.kind === "copy") tally.copied += step.files;
+            else if (step.kind === "view") tally.read += step.paths.length;
           }
           break;
         }

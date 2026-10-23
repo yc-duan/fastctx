@@ -5,6 +5,9 @@ use crate::write::ChangeKind;
 use crate::{JobId, MachineName};
 use serde::{Deserialize, Serialize};
 
+mod steps;
+pub use steps::*;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunFacts {
     /// The executor's complete job record, including the original script.
@@ -24,6 +27,9 @@ pub struct RunFacts {
     /// All exact matches in the retained capture, including the model's omitted middle.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<OutputNoteMatch>,
+    /// What it did through the World's own commands, in the order told.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<RunStep>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,4 +220,6 @@ pub struct JobFacts {
     pub sequence: u64,
     pub state: Option<RunState>,
     pub writes: Vec<WriteFact>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<RunStep>,
 }

@@ -26,7 +26,7 @@ struct Watched {
 /// Restores observation of jobs whose launching node has already exited.
 pub(crate) fn restore(node: &Arc<Node>, path: &Path, record: &JobRecord) -> std::io::Result<()> {
     if record.call_id.is_some() {
-        crate::run_facts::update_job(node, path, crate::run_facts::writes(path)?)?;
+        crate::run_facts::update_job_with(node, path, crate::run_facts::writes(path)?, crate::run_facts::steps(path)?)?;
     }
     if let Some(identity) = &record.supervisor {
         start(node, path, Some(identity.clone()));

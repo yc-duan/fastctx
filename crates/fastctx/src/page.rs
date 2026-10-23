@@ -108,10 +108,20 @@ pub fn run(command: PageCommand) -> anyhow::Result<()> {
         }
         PageCommand::List { town: given } => PageCall::List { town: town(given)? },
     };
+    let publishing = matches!(call, PageCall::Publish { .. });
+    let began = publishing.then(crate::steps::began).flatten();
     let (reply, here) = ask::call(Call::Page(call))?;
     match reply {
         Reply::Page { view } => {
             let version = &view.publication;
+            if let Some(began) = began {
+                began.tell(fastctx_types::run_facts::StepDid::Page {
+                    name: view.page.to_string(),
+                    town: view.town.clone(),
+                    title: fastctx_types::run_facts::clipped(&version.title),
+                    version: u64::from(version.version),
+                });
+            }
             if let Some(path) = output {
                 let html = view.html.as_ref().ok_or_else(|| {
                     anyhow::anyhow!("page {} version {} is withdrawn and has no HTML", view.page, version.version)

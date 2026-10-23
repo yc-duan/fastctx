@@ -972,6 +972,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             crate::write_command::write(node, peer, town, op, job).await.map(|outcome| Reply::Written { outcome })
         }
         Call::JobChanged { job, owner, town } => node.jobs.changed(node, job, owner, town).await.map(|()| Reply::Done),
+        Call::Stepped { job, town, id, began, ended, did } => {
+            let told = crate::step_command::Told { job, town, id, began, ended, did };
+            crate::step_command::stepped(node, peer, told).await.map(|()| Reply::Done)
+        }
         Call::Saw { owner, town: _, seen } => {
             let (world, here) = (node.world.clone(), node.names());
             blocking("recording what was seen", move || crate::residents::record_seen(&world, &here, &owner, &seen))

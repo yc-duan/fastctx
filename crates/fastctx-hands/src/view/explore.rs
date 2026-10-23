@@ -514,7 +514,8 @@ impl Exploring {
         if let Some(rows) = csv_rows {
             text.push_str(&format!("=== CSV ({rows} rows including the header) ===\n"));
         }
-        let mut section = Section { cost: text.len(), text, shown: true, partial: false, failed: false, whole: false };
+        let mut section =
+            Section { cost: text.len(), text, shown: true, partial: false, failed: false, whole: false, pictures: Vec::new() };
         if section.cost > budget {
             // The shared answer budget is distinct from the exploration window.
             let mut limited = options.clone();

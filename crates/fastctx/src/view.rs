@@ -88,10 +88,21 @@ pub fn run(args: ViewArgs) -> anyhow::Result<std::process::ExitCode> {
         machine: if in_run { None } else { machine(&world) },
         in_run,
     };
+    let began = crate::steps::began();
     let mut out = crate::output::out();
     let viewed = view(&paths, &options, &mut out)?;
     out.flush()?;
     drop(out);
+    if let Some(began) = began {
+        let mut pictures = viewed.pictures;
+        pictures.truncate(fastctx_types::run_facts::STEP_ENTRIES);
+        let paths = paths
+            .iter()
+            .take(fastctx_types::run_facts::STEP_ENTRIES)
+            .map(|path| fastctx_types::run_facts::clipped(&path.to_string_lossy()))
+            .collect();
+        began.tell(fastctx_types::run_facts::StepDid::View { paths, pictures });
+    }
     record(&world, viewed.seen)?;
     Ok(if viewed.failed { std::process::ExitCode::FAILURE } else { std::process::ExitCode::SUCCESS })
 }

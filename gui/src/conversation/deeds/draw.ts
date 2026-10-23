@@ -15,7 +15,9 @@ import { drops } from "./marks";
 import { carried, grid, pennant, planned, published, seal, shield, terminal, town, watching } from "../cards/drawings";
 import { escape } from "../prose";
 import type { LongText } from "../long-text";
-import type { ChecksDeed, CommitDeed, CopyDeed, Deed, DeedWords, FileDeed, JobDeed, LogDeed, PageDeed, PictureDeed, PushDeed, SearchDeed, StatusDeed, StopDeed, TestsDeed, WorldDeed, WritesDeed } from "./types";
+import type { ChecksDeed, CommitDeed, CopyDeed, Deed, DeedWords, FileDeed, JobDeed, LogDeed, PageDeed, PictureDeed, PlainDeed, PushDeed, SearchDeed, StatusDeed, StopDeed, TestsDeed, WorldDeed, WritesDeed } from "./types";
+import { bytesSaid } from "../../bytes";
+import { fanCard, sentHtml, troubled } from "./fan";
 
 export interface DeedTools {
   words: DeedWords;
@@ -77,7 +79,9 @@ export function drawDeeds(deeds: readonly Deed[], tools: DeedTools, raw: () => H
 function drawn(deed: Exclude<Deed, FileDeed | WritesDeed | PictureDeed>, words: DeedWords): HTMLElement {
   switch (deed.kind) {
     case "plain":
-      return html(`<div class="dd-plain">${glyph("command", 14)}<span>${escape(deed.command)}</span></div>`);
+      return plain(deed, words);
+    case "fan":
+      return fanCard(deed, words);
     case "tests":
       return tests(deed, words);
     case "checks":
@@ -113,34 +117,44 @@ export function goingOn(job: string, machine: string | null, words: DeedWords): 
   return scene(terminal(job, "going").svg, `<span class="dd-big">${escape(words.inBackground)}</span><span class="dd-line"><code class="dd-hash">${escape(job)}</code>${machine ? `<span>${escape(machine)}</span>` : ""}</span>`);
 }
 
+/** A command named and nothing more; one an `on` carried, with what it
+ *  last printed there and how it ended where it did not end well. */
+function plain(deed: PlainDeed, words: DeedWords): HTMLElement {
+  if (deed.on && (deed.on.tail || troubled(deed.on.end))) return html(`<div class="dd-card">${sentHtml(deed.command, deed.on.tail, deed.on.end, words)}</div>`);
+  return html(`<div class="dd-plain">${glyph("command", 14)}<span>${escape(deed.command)}</span></div>`);
+}
+
 /** A copy: the two machines, the sheet carried between them; how much came
  *  across, what was there already, and what could not be copied, each as
  *  the World said why. */
 function copy(deed: CopyDeed, words: DeedWords): HTMLElement {
+  const from = [...new Set(deed.from.map((place) => place.machine))].join(" ");
   const said = [
-    `<span class="dd-big">${escape(words.copied(deed.files, deed.size))}</span>`,
-    `<span class="dd-line"><span>${escape(deed.from.machine)}</span><span class="dd-quiet">→</span><span>${escape(deed.to.machine)}</span><span class="dd-quiet dd-path-said" title="${escape(deed.to.path)}">${escape(deed.to.path)}</span></span>`,
+    `<span class="dd-big">${escape(words.copied(deed.files, bytesSaid(deed.bytes)))}</span>`,
+    `<span class="dd-line"><span>${escape(from)}</span><span class="dd-quiet">→</span><span>${escape(deed.to.machine)}</span><span class="dd-quiet dd-path-said" title="${escape(deed.to.path)}">${escape(deed.to.path)}</span></span>`,
     deed.same ? `<span class="dd-quiet">${escape(words.same(deed.same))}</span>` : "",
     deed.notCopied.length ? `<span class="dd-wrong">${escape(words.notCopied(deed.notCopied.length))}</span>` : "",
   ].join("");
   const body = deed.notCopied.length ? `<ul class="dd-list">${deed.notCopied.map((why) => `<li class="dd-ref wrong">${drops(why, 1, "wrong")}<span class="dd-why">${escape(why)}</span></li>`).join("")}</ul>` : "";
-  return scene(carried(`${deed.from.path}${deed.to.path}`, deed.notCopied.length > 0).svg, said, body);
+  return scene(carried(`${deed.from.map((place) => place.path).join("")}${deed.to.path}`, deed.notCopied.length > 0).svg, said, body);
 }
 
 /** A job that ended: its terminal, how it ended and where, how long ago;
  *  its last lines under. */
 function job(deed: JobDeed, words: DeedWords): HTMLElement {
+  // How long before the wait came back it ended.
+  const before = deed.waited ? Date.parse(deed.waited) - Date.parse(deed.at) : NaN;
   const said = [
-    `<span class="dd-big${deed.failed ? " dd-wrong" : ""}">${escape(words.ended(deed.how))}</span>`,
-    `<span class="dd-line"><code class="dd-hash">${escape(deed.job)}</code><span>${escape(deed.machine)}</span>${deed.ago ? `<span class="dd-quiet">${escape(words.ago(deed.ago))}</span>` : ""}</span>`,
+    `<span class="dd-big${deed.failed ? " dd-wrong" : ""}">${escape(words.ended(deed.end))}</span>`,
+    `<span class="dd-line"><code class="dd-hash">${escape(deed.job)}</code><span>${escape(deed.machine)}</span>${before > 60_000 ? `<span class="dd-quiet">${escape(words.ago(before))}</span>` : ""}</span>`,
   ].join("");
   const body = deed.tail.length ? `<pre class="dd-said-text">${escape(deed.tail.join("\n"))}</pre>` : "";
-  return scene(terminal(deed.job, deed.failed ? (/stopped/.test(deed.how) ? "stopped" : "failed") : "done").svg, said, body);
+  return scene(terminal(deed.job, deed.failed ? (deed.end.kind === "stopped" ? "stopped" : "failed") : "done").svg, said, body);
 }
 
 function stopped(deed: StopDeed, words: DeedWords): HTMLElement {
-  const said = `<span class="dd-big${deed.stopped ? "" : " dd-wrong"}">${escape(words.ended(deed.how))}</span><span class="dd-line"><code class="dd-hash">${escape(deed.job)}</code><span>${escape(deed.machine)}</span></span>`;
-  return scene(terminal(deed.job, deed.stopped ? "stopped" : "failed").svg, said);
+  const said = `<span class="dd-big${deed.stopped ? "" : " dd-wrong"}">${escape(words.stopped(deed.how))}</span><span class="dd-line"><code class="dd-hash">${escape(deed.what)}</code>${deed.machine ? `<span>${escape(deed.machine)}</span>` : ""}</span>`;
+  return scene(terminal(deed.what, deed.stopped ? "stopped" : "failed").svg, said);
 }
 
 function page(deed: PageDeed, words: DeedWords): HTMLElement {

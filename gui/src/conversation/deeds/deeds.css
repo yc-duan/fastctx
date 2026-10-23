@@ -554,3 +554,33 @@ button.dd-opener-line:hover {
   font-size: var(--size-text);
   color: var(--text-2);
 }
+
+/* One command sent to many machines, opened: its grid of machines on the
+   card, the one pressed beneath it. */
+.dd-fan {
+  padding: var(--space-2);
+}
+
+.dd-fan .fan {
+  margin: 0;
+}
+
+.dd-fan .fan-tile:not(.troubled):not([aria-pressed="true"]) {
+  background: var(--surface-code-2);
+}
+
+/* A command sent elsewhere, opened: the command, its last lines, and how
+   it ended where that went wrong. */
+.dd-sent {
+  display: grid;
+  padding: var(--space-1) 0 var(--space-2);
+}
+
+.dd-sent > .dd-said-text {
+  margin-bottom: 0;
+}
+
+.dd-sent > .dd-wrong {
+  padding: var(--space-2) var(--space-3) 0;
+  font-size: var(--size-text);
+}

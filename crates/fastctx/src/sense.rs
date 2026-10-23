@@ -37,11 +37,20 @@ pub(crate) fn run(args: SenseArgs) -> anyhow::Result<()> {
         request.validate(now.as_millisecond()).map_err(anyhow::Error::msg)?;
         Request::Create { request }
     };
+    let began = (!args.help).then(crate::steps::began).flatten();
     let (reply, _) = crate::ask::call(Call::Sentinel { hub: args.hub, account: args.account, request })?;
     match reply {
         Reply::Sentinel(reply) => match *reply {
             SentinelReply::Help { text } => crate::output::print(&text)?,
-            SentinelReply::Created { sentinel } => crate::output::print(&words::created(&sentinel))?,
+            SentinelReply::Created { sentinel } => {
+                crate::output::print(&words::created(&sentinel))?;
+                if let Some(began) = began {
+                    began.tell(fastctx_types::run_facts::StepDid::Sense {
+                        sentinel: sentinel.definition.id.to_string(),
+                        condition: fastctx_types::run_facts::clipped(&sentinel.definition.condition),
+                    });
+                }
+            }
             _ => anyhow::bail!("the node did not answer sentinel registration"),
         },
         _ => anyhow::bail!("the node did not answer sentinel registration"),

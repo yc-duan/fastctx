@@ -94,6 +94,7 @@ pub fn run(command: ProjectCommand) -> anyhow::Result<()> {
     };
     let opening = matches!(call, ProjectCall::New { .. });
     let editing = matches!(call, ProjectCall::Edit { .. });
+    let began = matches!(call, ProjectCall::Enter { .. }).then(crate::steps::began).flatten();
     let (reply, here) = ask::call(Call::Project(call))?;
     let text = match reply {
         Reply::Towns { towns } => list(&here, &towns),
@@ -109,6 +110,9 @@ pub fn run(command: ProjectCommand) -> anyhow::Result<()> {
         }
         Reply::Map { map: view } => map(&view),
         Reply::Entered { town, map: view } => {
+            if let Some(began) = began {
+                began.tell(fastctx_types::run_facts::StepDid::Project { town: town.clone() });
+            }
             format!("=== you work in the project {town} from now on ===\n{}", brief(&view))
         }
         other => anyhow::bail!("the node answered something else: {other:?}"),

@@ -367,6 +367,7 @@ impl Call {
             | Self::Ask { .. }
             | Self::Message { .. }
             | Self::Saw { .. }
+            | Self::Stepped { .. }
             | Self::ClaudeConsent { .. }
             | Self::Homes { .. }
             | Self::ScanAgents { .. }

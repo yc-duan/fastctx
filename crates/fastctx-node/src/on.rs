@@ -69,6 +69,8 @@ struct ReceiptContext {
     job: Option<JobId>,
     consumed: Vec<fastctx_types::NoticeId>,
     through_exit: bool,
+    /// The step of the run that gave it, told as it goes.
+    steps: Option<crate::on_steps::Steps>,
 }
 
 pub(crate) struct OnFollowing {
@@ -125,7 +127,26 @@ impl Pieces {
         if let Ok(OnPiece::Started { job, .. }) = &piece {
             self.2.lock().expect("never poisoned").job = Some(job.clone());
         }
+        if let Some(steps) = self.steps() {
+            let mut step = steps.lock().expect("never poisoned");
+            match &piece {
+                Ok(OnPiece::Started { job, .. }) => step.started(job),
+                Err(failure) => step.failed(failure),
+                Ok(_) => {}
+            }
+        }
         self.0.send(Piece::Value(piece)).await.map_err(|_| "the on that sent it left".to_string())
+    }
+
+    fn steps(&self) -> Option<crate::on_steps::Steps> {
+        self.2.lock().expect("never poisoned").steps.clone()
+    }
+
+    /// Output on its way back, kept for the step's last lines.
+    fn kept(&self, base64: &str) {
+        if let Some(steps) = self.steps() {
+            steps.lock().expect("never poisoned").output(base64);
+        }
     }
 
     fn is_closed(&self) -> bool {
@@ -141,6 +162,11 @@ impl Pieces {
     }
 
     async fn ended(&self, end: OnEnd) -> Result<bool, String> {
+        // The step ends before the `on` that gave it is told, so the run
+        // never ends ahead of it.
+        if let Some(steps) = self.steps() {
+            steps.lock().expect("never poisoned").ended(&end);
+        }
         let (node, origin, consumed, through_exit) = {
             let context = self.2.lock().expect("never poisoned");
             (context.node.clone(), context.origin.clone(), context.consumed.clone(), context.through_exit)
@@ -219,9 +245,11 @@ pub async fn send(node: &Arc<Node>, mut origin: OnOrigin, request: OnRequest) ->
         .job
         .as_ref()
         .map(|job| node.world.job_owner(&node.names(), &origin.resident.clone().into()).job_record(job));
+    let steps = if origin.sentinel.is_none() { crate::on_steps::begin(node, parent.as_ref(), &request) } else { None };
     let context = ReceiptContext {
         scratch_hub: None,
         node: node.clone(),
+        steps,
         parent,
         acting: acting(node, &origin),
         origin: origin.clone(),
@@ -627,6 +655,7 @@ fn feed(
                                 })
                                 .await?;
                             let base64 = STANDARD.encode(&taken);
+                            pieces.kept(&base64);
                             let piece = if error { OnPiece::Err { base64 } } else { OnPiece::Out { base64 } };
                             // A cancelled feed must either leave both unchanged
                             // or retain the bytes and advance their resume offset.
@@ -1308,6 +1337,7 @@ impl Sink<'_> {
             Sink::Local(pieces) => {
                 let slot = pieces.0.reserve().await.map_err(|_| "the on that sent it left".to_string())?;
                 let base64 = STANDARD.encode(bytes);
+                pieces.kept(&base64);
                 let piece = if error { OnPiece::Err { base64 } } else { OnPiece::Out { base64 } };
                 slot.send(Piece::Value(Ok(piece)));
                 Ok(())

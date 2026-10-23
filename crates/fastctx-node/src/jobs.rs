@@ -51,12 +51,16 @@ impl Jobs {
         let record = read(&path).await.inspect_err(|_| {
             crate::inbox::retry_job(node, &path);
         })?;
-        let writes = if record.end.is_some() && !record.is_sentinel() {
-            crate::run_facts::writes(&path).map_err(|error| failure("reading write facts", error))?
+        let (writes, steps) = if record.end.is_some() && !record.is_sentinel() {
+            (
+                crate::run_facts::writes(&path).map_err(|error| failure("reading write facts", error))?,
+                crate::run_facts::steps(&path).map_err(|error| failure("reading step facts", error))?,
+            )
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
-        crate::run_facts::update_job(node, &path, writes).map_err(|error| failure("updating call facts", error))?;
+        crate::run_facts::update_job_with(node, &path, writes, steps)
+            .map_err(|error| failure("updating call facts", error))?;
         crate::inbox::tell_if_ended(node, &path, &record).await.map_err(|error| {
             crate::inbox::retry_job(node, &path);
             failure("telling the job's end", error)

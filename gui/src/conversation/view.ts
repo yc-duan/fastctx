@@ -29,8 +29,6 @@
 // quiet line on the left; what was done to a turn (copy, ask again, fork)
 // appears only once the turn is over.
 
-import { ownWork, tripItems } from "./trip";
-import { fillStep, stepKey, stepRowHtml, stepRowText, type StepItem } from "./trip-rows";
 import { diffCard, unifiedDiff, type DiffCard, type DiffKind } from "./diff-card";
 import { handOnAtEdge } from "../scroll-handoff";
 import { ActsMenu } from "../app/acts-menu";
@@ -38,7 +36,7 @@ import { onHeld } from "../app/press";
 import type { AgentActivity, Content, Health, MachineName, Notice, Speaker, Tool, TurnEnd } from "../world/events";
 import type { Attachment } from "../world/attachments";
 import type { Decoding } from "../world/remote-lines";
-import type { RunFacts, RunStep, WriteFact } from "../world/run-facts";
+import type { RunFacts, WriteFact } from "../world/run-facts";
 import type { JsonValue } from "../world/wire";
 import { folderName, type Focus } from "../world/focus";
 import { answerOf, drawAsk, readAsk, type AskWords } from "./asks";
@@ -153,8 +151,6 @@ interface Row {
 
 /** A write's row is keyed by its run's row and the write. */
 const WRITE = "~";
-/** Between a run's key and one of its steps' (`trip.ts`). */
-const STEP = "^";
 /** The most bytes of rows a change is read ahead in, not kept with the
  *  conversation: larger ones are read as they are opened. */
 const PREFETCH = 1024 * 1024;
@@ -1825,7 +1821,7 @@ export class ConversationView {
    *  in its order (`cards/`); rows for what is not drawn as cards. */
   private partsOf(run: Entry[]): (Row | Card)[] {
     const member = run[0]!;
-    if (member.kind === "tool" && !startsAgent(member.tool) && !member.tool.run?.steps?.length) {
+    if (member.kind === "tool" && !startsAgent(member.tool)) {
       const cards = cardsOf(member, (entry) => this.deedsOf(entry), (job) => this.jobCommand(job));
       if (cards.length) return cards;
     }
@@ -1897,32 +1893,9 @@ export class ConversationView {
     }
     const own: Row = { key: member.key, signature: this.memberSignature(member), html: () => this.member(member), text: () => this.findRowText(member) };
     if (member.kind !== "tool") return [own];
-    const steps = member.tool.run?.steps ?? [];
-    if (steps.length) return this.tripRows(member, steps);
     const writes = member.tool.run?.writes ?? [];
     if (!writes.length) return [own];
     return [...(onlyWrites(member.tool) ? [] : [own]), ...writes.map((write) => this.writeRowOf(member, write))];
-  }
-
-  /** A run that did things through the World, as the things it did, each
-   *  where it happened (`trip.ts`): what the script did on its own machine
-   *  first, named by the command that does work. */
-  private tripRows(member: ToolEntry, steps: readonly RunStep[]): Row[] {
-    const tool = member.tool;
-    const script = tool.does.as === "command" ? tool.does.command : "";
-    const said = ownWork(script) ?? undefined;
-    const draw = { words: this.context.words };
-    return tripItems(script, steps, tool.run?.writes ?? []).map((item): Row => {
-      if (item.kind === "own") return { key: member.key, signature: `${this.memberSignature(member)}|own`, html: () => this.member(member, said), text: () => this.findRowText(member, said) };
-      if (item.kind === "write") return this.writeRowOf(member, item.write);
-      const key = `${member.key}${STEP}${stepKey(item)}`;
-      return {
-        key,
-        signature: JSON.stringify(item),
-        html: () => stepRowHtml(key, item, { ...draw, enter: this.entering(key), open: this.openRows.has(key) }),
-        text: () => stepRowText(item, draw),
-      };
-    });
   }
 
   /** A file a run wrote, as its row. */
@@ -1938,19 +1911,6 @@ export class ConversationView {
         return [line.action, line.object, stats, write.machine !== this.context.residentMachine ? this.context.words.on(write.machine) : ""].filter(Boolean).join(" ");
       },
     };
-  }
-
-  /** What a step of a run holds, opened under its row. */
-  private fillTripStep(key: string, owner: string, part: string, content: HTMLElement): void {
-    const entry = this.conversation.get(owner);
-    if (entry?.kind !== "tool") return;
-    const tool = entry.tool;
-    const script = tool.does.as === "command" ? tool.does.command : "";
-    const item = tripItems(script, tool.run?.steps ?? [], tool.run?.writes ?? []).find(
-      (one): one is StepItem => one.kind !== "own" && one.kind !== "write" && stepKey(one) === part,
-    );
-    if (!item) return;
-    this.longs.set(key, fillStep(item, content, this.context.words, (text, label) => new LongText(text, label, this.layoutAnchor, this.longWords())));
   }
 
   /** What a run of thinking is drawn from: its parts, and the tokens told
@@ -2439,11 +2399,6 @@ export class ConversationView {
       this.fillCard(key, card, content);
       return;
     }
-    const stepAt = key.indexOf(STEP);
-    if (stepAt !== -1) {
-      this.fillTripStep(key, key.slice(0, stepAt), key.slice(stepAt + 1), content);
-      return;
-    }
     const split = key.indexOf(WRITE);
     if (split !== -1) {
       const owner = this.conversation.get(key.slice(0, split));
@@ -2507,7 +2462,9 @@ export class ConversationView {
   private commandWords(entry: ToolEntry, only: readonly number[] | null, longs: LongText[], closers: (() => void)[]): HTMLElement {
     const { tool } = entry;
     const deeds = this.deedsOf(entry);
-    const drawn = (deeds ?? []).filter((deed, index) => deed.kind !== "plain" && deed.kind !== "writes" && (!only || only.includes(index)));
+    // A command an `on` carried elsewhere is drawn as what it did there; a
+    // command only named opens on the run's own words.
+    const drawn = (deeds ?? []).filter((deed, index) => (deed.kind !== "plain" || (only !== null && !!deed.on && deed.machine != null)) && deed.kind !== "writes" && (!only || only.includes(index)));
     // A run that went on after the call came back says so above all it did.
     const job = tool.does.as === "command" && tool.does.job && (!only || drawn.length === 0) ? goingOn(tool.does.job, tool.machine, this.context.words.deeds) : null;
     if (!drawn.length) {
@@ -2535,7 +2492,8 @@ export class ConversationView {
     if (read?.stamp === entry.stamp) return read.deeds;
     const { shown, output } = toolText(entry.tool, this.context.words);
     const lines = shown ? shown.lines.map((line, index) => (shown.numbers[index] === null ? null : line)) : output ? output.split("\n") : [];
-    const deeds = entry.ended ? readRun(entry.tool.does.command, entry.tool.machine ?? this.context.residentMachine ?? null, lines) : null;
+    const steps = entry.tool.run?.steps ?? [];
+    const deeds = entry.ended || steps.length ? readRun(entry.tool.does.command, entry.tool.machine ?? this.context.residentMachine ?? null, lines, steps) : null;
     this.deedsRead.set(entry.key, { stamp: entry.stamp, deeds });
     return deeds;
   }

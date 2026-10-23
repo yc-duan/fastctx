@@ -43,6 +43,7 @@ mod server_install;
 mod service;
 #[cfg(windows)]
 mod service_local_network;
+mod steps;
 mod stop;
 mod talk;
 mod timer;

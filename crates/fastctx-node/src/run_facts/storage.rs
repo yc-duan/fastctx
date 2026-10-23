@@ -63,6 +63,7 @@ fn apply(stored: &mut StoredCall, update: &JobFacts) -> io::Result<()> {
     }
     stored.launched = true;
     merge_writes(&mut stored.facts.writes, &update.writes)?;
+    fastctx_types::run_facts::merge_steps(&mut stored.facts.steps, &update.steps);
     for visit in &update.visited {
         if !stored.facts.visited.contains(visit) {
             stored.facts.visited.push(visit.clone());
@@ -140,6 +141,7 @@ pub(crate) fn begin(node: &Node, resident: &ResidentId, id: &str, machine: Machi
                 writes: Vec::new(),
                 spans: Vec::new(),
                 notes: Vec::new(),
+                steps: Vec::new(),
             },
         },
     )
@@ -172,6 +174,9 @@ pub(super) fn keep(directory: &ConversationDir, id: &str, facts: &RunFacts, disp
             stored.facts.notes = previous.facts.notes.clone();
         }
         merge_writes(&mut stored.facts.writes, &previous.facts.writes)?;
+        // Steps told in jobs an `on` sent elsewhere reach the call only as
+        // updates.
+        fastctx_types::run_facts::merge_steps(&mut stored.facts.steps, &previous.facts.steps);
         if terminal(&previous.facts.state) && !terminal(&stored.facts.state) {
             stored.facts.state = previous.facts.state;
         }
@@ -245,6 +250,7 @@ pub(crate) fn record_failure(node: &Node, resident: &ResidentId, id: &str, error
             writes: Vec::new(),
             spans: Vec::new(),
             notes: Vec::new(),
+            steps: Vec::new(),
         },
     });
     stored.facts.state = fastctx_types::run::RunState::Failed { error: error.into() };

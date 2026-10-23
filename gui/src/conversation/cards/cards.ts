@@ -6,8 +6,9 @@
 // call, and the deeds read from it) stays with it, to be opened.
 
 import { counts } from "../diff";
-import { scriptCommands, wordsOf } from "../deeds/script";
-import type { ChecksDeed, CommitDeed, CopyDeed, Deed, FileDeed, JobDeed, LogDeed, PageDeed, PictureDeed, ProjectDeed, PushDeed, StatusDeed, StopDeed, TestsDeed, WorldDeed } from "../deeds/types";
+import { ownCommands, scriptCommands, wordsOf } from "../deeds/script";
+import type { ChecksDeed, CommitDeed, CopyDeed, Deed, FanDeed, FileDeed, JobDeed, LogDeed, OnSaid, PageDeed, PictureDeed, ProjectDeed, PushDeed, StatusDeed, StopDeed, TestsDeed, WorldDeed } from "../deeds/types";
+import { troubled } from "../deeds/fan";
 import type { Entry } from "../model";
 import { viewing } from "../tool";
 import type { ChangeHow, Tool } from "../../world/events";
@@ -49,10 +50,12 @@ export type Card =
         | { kind: "check"; deed: ChecksDeed }
         | { kind: "commit"; deed: CommitDeed; push: PushDeed | null }
         | { kind: "push"; deed: PushDeed }
-        | { kind: "command"; command: string; exit: number | null }
+        /** `on` is what the `on` that carried it told. */
+        | { kind: "command"; command: string; exit: number | null; on: OnSaid | null }
+        | { kind: "fan"; deed: FanDeed }
         | { kind: "copy"; from: Place[]; to: Place; deed: CopyDeed | null }
         | { kind: "job"; deed: JobDeed; of: string | null }
-        | { kind: "stop"; deed: StopDeed }
+        | { kind: "stop"; deed: StopDeed; of: string | null }
         | { kind: "page"; deed: PageDeed }
         | { kind: "project"; deed: ProjectDeed }
         | { kind: "picture"; deeds: PictureDeed[] }
@@ -88,9 +91,18 @@ export function cardsOf(entry: ToolEntry, deedsOf: (entry: Entry) => Deed[] | nu
   });
   const whole: Source = { entry: entry.key };
   switch (tool.does.as) {
-    case "command":
-      commandCards(entry, tool.does, cards, next, deedsOf(entry), jobOf);
+    case "command": {
+      const deeds = deedsOf(entry);
+      commandCards(entry, tool.does, cards, next, deeds, jobOf);
+      // A run still going is at the command it is on: one sent elsewhere
+      // that has not ended, or else its last.
+      if (running && deeds) {
+        const going = (card: Card) => (card.kind === "command" && !!card.on?.going) || (card.kind === "fan" && card.deed.steps.some((step) => step.ended === undefined));
+        const any = cards.some(going);
+        cards.forEach((card, index) => (card.running = any ? going(card) : index === cards.length - 1));
+      }
       break;
+    }
     case "edit":
       tool.does.changes.forEach((change, index) => {
         const counted = counts(change.diff);
@@ -128,11 +140,13 @@ function commandCards(entry: ToolEntry, does: Extract<Tool["does"], { as: "comma
       cards.push({ ...next({ entry: entry.key, write: write.id }, write.machine), key: `${entry.key}${WRITE}${write.id}`, kind: "change", path: write.path, how, added: write.added, removed: write.removed });
     }
   };
-  const command = (said: string, source: Source, last: boolean) => {
-    const failed = last && exit !== null && exit !== 0;
+  const command = (said: string, source: Source, last: boolean, machine: string | null = null, sent: OnSaid | null = null) => {
+    // A command sent elsewhere says how it ended there; the run's own last
+    // command says how the run did.
+    const failed = sent?.end ? troubled(sent.end) && sent.end.kind !== "stopped" : last && exit !== null && exit !== 0;
     // An `on` names the machine it sent its command to.
     const on = /^on\s+(?:'([^']*)'|"([^"]*)"|(\S+))\s*(.*)$/s.exec(said);
-    const where = on ? (on[1] ?? on[2] ?? on[3] ?? null) : entry.tool.machine;
+    const where = on ? (on[1] ?? on[2] ?? on[3] ?? null) : (machine ?? entry.tool.machine);
     const rest = on ? on[4]!.trim() : said;
     // The World's writes are cards of their own, as the files they wrote.
     if (WRITES.test(rest)) return writeAll();
@@ -146,7 +160,7 @@ function commandCards(entry: ToolEntry, does: Extract<Tool["does"], { as: "comma
       }
     }
     const shown = rest.replace(/<<-?\s*(['"]?)[A-Za-z_][A-Za-z0-9_]*\1/, "").trim() || said;
-    cards.push({ ...next(source, where), kind: "command", command: shown, exit: last ? exit : null, failed });
+    cards.push({ ...next(source, where), kind: "command", command: shown, exit: last ? exit : null, on: sent, failed });
   };
   if (!deeds) {
     const viewed = viewing(does.command);
@@ -154,10 +168,10 @@ function commandCards(entry: ToolEntry, does: Extract<Tool["does"], { as: "comma
       for (const path of viewed) cards.push({ ...next(whole), kind: "read", path, deed: null });
       return;
     }
-    // Each command the script gave, in order; the last says how the run
-    // ended.
-    const commands = scriptCommands(does.command, entry.tool.machine);
-    commands.forEach((one, index) => command(one.text, whole, index === commands.length - 1));
+    // Each command the script gave, in order, where it ran; the last says
+    // how the run ended.
+    const commands = ownCommands(scriptCommands(does.command, entry.tool.machine));
+    commands.forEach((one, index) => command(one.text, whole, index === commands.length - 1, one.machine));
     writeAll();
     return;
   }
@@ -174,6 +188,9 @@ function commandCards(entry: ToolEntry, does: Extract<Tool["does"], { as: "comma
     said.errors += deed.items.filter((item) => item.level === "error").length;
     built.set(tests, said);
   }
+  /** Where the command that did it ran: where an `on` sent it, or the
+   *  run's own machine. */
+  const ran = (deed: Deed) => deed.where ?? entry.tool.machine;
   deeds.forEach((deed, index) => {
     const source: Source = { entry: entry.key, deed: index };
     switch (deed.kind) {
@@ -181,30 +198,31 @@ function commandCards(entry: ToolEntry, does: Extract<Tool["does"], { as: "comma
         writeAll();
         break;
       case "file":
-        cards.push({ ...next(source, deed.machine ?? entry.tool.machine), kind: "read", path: deed.path, deed });
+        // A file whose lines the output did not show opens on the run's.
+        cards.push({ ...next(source, deed.machine ?? entry.tool.machine), kind: "read", path: deed.path, deed: deed.rows.length ? deed : null });
         break;
       case "search":
-        cards.push({ ...next(source), kind: "search", pattern: deed.pattern ?? "", hits: deed.files.reduce((sum, one) => sum + one.hits.length, 0), files: deed.files.length });
+        cards.push({ ...next(source, ran(deed)), kind: "search", pattern: deed.pattern ?? "", hits: deed.files.reduce((sum, one) => sum + one.hits.length, 0), files: deed.files.length });
         break;
       case "status":
-        cards.push({ ...next(source), kind: "tree", deed });
+        cards.push({ ...next(source, ran(deed)), kind: "tree", deed });
         break;
       case "log":
-        cards.push({ ...next(source), kind: "history", deed });
+        cards.push({ ...next(source, ran(deed)), kind: "history", deed });
         break;
       case "tests": {
         const said = built.get(deed) ?? { warnings: 0, errors: 0 };
         // The build's own lines open with the run's.
         const sources: Source[] = [...deeds.flatMap((other, at): Source[] => (other.kind === "checks" && other.command === deed.command ? [{ entry: entry.key, deed: at }] : [])), source];
-        cards.push({ ...next(source), sources, kind: "tests", deed, warnings: said.warnings, errors: said.errors, failed: deed.failed > 0 || said.errors > 0 });
+        cards.push({ ...next(source, ran(deed)), sources, kind: "tests", deed, warnings: said.warnings, errors: said.errors, failed: deed.failed > 0 || said.errors > 0 });
         break;
       }
       case "checks":
         if (deed.command !== null && testsOf.has(deed.command)) break;
-        cards.push({ ...next(source), kind: "check", deed, failed: deed.items.some((item) => item.level === "error") });
+        cards.push({ ...next(source, ran(deed)), kind: "check", deed, failed: deed.items.some((item) => item.level === "error") });
         break;
       case "commit":
-        cards.push({ ...next(source), kind: "commit", deed, push: null });
+        cards.push({ ...next(source, ran(deed)), kind: "commit", deed, push: null });
         break;
       case "push": {
         const refused = deed.refs.some((ref) => !ref.ok);
@@ -216,26 +234,29 @@ function commandCards(entry: ToolEntry, does: Extract<Tool["does"], { as: "comma
           before.failed = refused;
           break;
         }
-        cards.push({ ...next(source), kind: "push", deed, failed: refused });
+        cards.push({ ...next(source, ran(deed)), kind: "push", deed, failed: refused });
         break;
       }
       case "plain":
-        command(deed.command, source, index === lastPlain && index === deeds.length - 1);
+        command(deed.command, source, index === lastPlain && index === deeds.length - 1, deed.machine ?? deed.where ?? null, deed.on ?? null);
+        break;
+      case "fan":
+        cards.push({ ...next(source, null), kind: "fan", deed, failed: deed.steps.some((step) => troubled(step.end)) });
         break;
       case "copy":
-        cards.push({ ...next(source, null), kind: "copy", from: [deed.from], to: deed.to, deed, failed: deed.notCopied.length > 0 });
+        cards.push({ ...next(source, null), kind: "copy", from: deed.from, to: deed.to, deed, failed: deed.notCopied.length > 0 });
         break;
       case "job":
-        cards.push({ ...next(source, deed.machine), kind: "job", deed, of: jobOf(deed.job), failed: deed.failed });
+        cards.push({ ...next(source, deed.machine), kind: "job", deed, of: deed.script ?? jobOf(deed.job), failed: deed.failed });
         break;
       case "stop":
-        cards.push({ ...next(source, deed.machine), kind: "stop", deed, failed: !deed.stopped });
+        cards.push({ ...next(source, deed.machine ?? ran(deed)), kind: "stop", deed, of: jobOf(deed.what), failed: !deed.stopped });
         break;
       case "page":
         cards.push({ ...next(source, deed.machine), kind: "page", deed });
         break;
       case "project":
-        cards.push({ ...next(source), kind: "project", deed });
+        cards.push({ ...next(source, ran(deed)), kind: "project", deed });
         break;
       case "picture": {
         // The pictures one command gave are one card.
@@ -249,7 +270,7 @@ function commandCards(entry: ToolEntry, does: Extract<Tool["does"], { as: "comma
         break;
       }
       case "world":
-        cards.push({ ...next(source), kind: "world", deed, failed: deed.act === "goal-blocked" });
+        cards.push({ ...next(source, ran(deed)), kind: "world", deed, failed: deed.act === "goal-blocked" });
         break;
     }
   });

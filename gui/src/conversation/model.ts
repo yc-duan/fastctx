@@ -18,7 +18,7 @@
 import type { Health, HostAgentEnd, MachineName, Notice, SessionChange, SessionEvent, Speaker, Step, Tool, TurnEnd } from "../world/events";
 import type { Attachment, AttachmentSource } from "../world/attachments";
 import type { JsonValue } from "../world/wire";
-import type { JobFacts, RunFacts } from "../world/run-facts";
+import { mergeSteps, type JobFacts, type RunFacts } from "../world/run-facts";
 import { askKey, forPeople, type AskState } from "./ask-state";
 import { userWords } from "./told";
 import { readReply, type AsyncQuestion } from "./async-ask";
@@ -964,6 +964,7 @@ export class Fold {
     }
     for (const visit of update.visited) if (!run.visited.some(([machine, job]) => machine === visit[0] && job === visit[1])) run.visited.push(visit);
     for (const write of update.writes) if (!run.writes.some((known) => known.id === write.id)) run.writes.push(write);
+    if (update.steps?.length) run.steps = mergeSteps(run.steps ?? [], update.steps);
     entry.tool = { ...entry.tool, run };
     this.touch(entry);
   }

@@ -137,6 +137,8 @@ mod who;
 mod world;
 mod world_program;
 mod write;
+mod on_steps;
+mod step_command;
 mod write_command;
 
 use std::path::{Path, PathBuf};
