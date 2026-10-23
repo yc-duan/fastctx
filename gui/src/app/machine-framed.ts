@@ -19,12 +19,12 @@ import type { AccessWords, MachinesWords } from "./account-words";
 import type { BatchWords } from "./machine-batch-words";
 import { groupingOf } from "./machine-groups";
 import type { ReadLog } from "./machine-log";
-import { ownerLoginOf, removerLoginOf, updaterLoginOf } from "./machine-logins";
+import { holderLoginOf, removerLoginOf, updaterLoginOf } from "./machine-logins";
 import type { ManageWords } from "./machine-manage-words";
 import type { RemoveMachineSheet } from "./machine-remove";
 import { removeMachines } from "./machine-removing";
 import type { WaysSheet } from "./machine-ways";
-import { isVisitor, sameLogin, type Machine } from "./reach";
+import { isVisitor, runsHub, sameLogin, type Machine } from "./reach";
 import type { Signal } from "./signals";
 import { runningOf } from "./update-marks";
 import type { UpdateViewWords } from "./update-view-words";
@@ -242,16 +242,16 @@ export class ChosenBar {
   }
 }
 
-/** The most of `machines` one login of this device owns and may share:
- *  a visitor shares none of its machines. */
+/** The most of `machines` one login of this device holds and may share:
+ *  a visitor shares none, and no one the machine the hub runs on. */
 function sharable(machines: Machine[], world: WorldNow): { login: Login; machines: Machine[] } | null {
   let best: { login: Login; machines: Machine[] } | null = null;
   for (const machine of machines) {
-    const login = ownerLoginOf(machine, world);
+    const login = holderLoginOf(machine, world);
     if (!login || isVisitor(world, login) || (best && sameLogin(best.login, login))) continue;
     const mine = machines.filter((one) => {
-      const owner = ownerLoginOf(one, world);
-      return !!owner && sameLogin(owner, login);
+      const holder = holderLoginOf(one, world);
+      return !!holder && sameLogin(holder, login) && !runsHub(one, login, world);
     });
     if (!best || mine.length > best.machines.length) best = { login, machines: mine };
   }

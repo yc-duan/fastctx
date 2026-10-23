@@ -154,6 +154,22 @@ export function owns(machine: Machine, login: Login): boolean {
   return machine.on.some((on) => on.hub === login.hub && on.owner === login.account);
 }
 
+/** Whether `machine` is in `login`'s hands: its own, or shared whole with
+ *  its account, whose holders all manage it alike (`world-network.md`,
+ *  共享机器与智能体协助). */
+export function holds(machine: Machine, login: Login, world: WorldNow): boolean {
+  if (owns(machine, login)) return true;
+  if (!machine.on.some((on) => on.hub === login.hub)) return false;
+  const hub = world.accounts.hubs.find((one) => one.hub === login.hub);
+  return !!hub?.shares.some((share) => share.machine === machine.name && share.account === login.account);
+}
+
+/** Whether `machine` runs the network's hub `login` is on, which is shared
+ *  with no one. */
+export function runsHub(machine: Machine, login: Login, world: WorldNow): boolean {
+  return world.accounts.hubs.find((one) => one.hub === login.hub)?.hub_machine === machine.name;
+}
+
 /** Whose `machine` is on `login`'s hub; none where it is registered under
  *  nobody there. */
 export function ownerOf(machine: Machine, login: Login): AccountName | null {

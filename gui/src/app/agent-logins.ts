@@ -396,7 +396,9 @@ export class AgentLoginsPage implements Page {
     const { words } = this.options;
     const machine = this.current(world).machine;
     if (!machine) return null;
-    const mine = machine.hold === "mine";
+    // Its logins are listed and changed by those who hold it: its owner, and
+    // those it is shared with whole.
+    const mine = machine.hold === "mine" || machine.hold === "shared";
     if (this.record?.machine === machine.name) return { ...machine, mine, heard: { kind: "answered", logins: this.record } };
     if (this.problem?.machine === machine.name) {
       const said = this.problem.offline || machine.online === false ? words.offline : words.noAnswer;

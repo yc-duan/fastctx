@@ -278,6 +278,9 @@ export interface HubAccounts {
   accounts: AccountSeen[];
   members: MemberSeen[];
   shares: ShareSeen[];
+  /** The machine this hub runs on, when it is known: it is shared with no
+   *  one (`world-network.md`, 共享机器与智能体协助). */
+  hub_machine?: MachineName;
   assists: AssistSeen[];
   /** Plans the super administrator set on logins that name none. */
   plans: PlanSeen[];

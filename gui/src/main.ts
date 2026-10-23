@@ -200,7 +200,7 @@ import { markdownOf } from "./conversation/export";
 import { specimens, type Specimen } from "./specimen/sessions";
 import { answering, playLater, playTimed, streamSpecimen } from "./specimen/streams";
 import { specimenAgentRecord } from "./specimen/agents";
-import { specimenAgents, specimenAsManaged, specimenAsVisitor, specimenChange, specimenNow, specimenRenameHere } from "./specimen/world";
+import { specimenAgents, specimenAsManaged, specimenAsShared, specimenAsVisitor, specimenChange, specimenNow, specimenRenameHere } from "./specimen/world";
 import { specimenHubMove } from "./specimen/hub-move";
 import { specimenRemote } from "./specimen/remote";
 import { specimenNameProblem } from "./specimen/names";
@@ -347,6 +347,8 @@ const specimen = specimenNow(params.get("accounts") === "2");
 // `?managed`: this computer as a managed machine; `?managed=removed`, one
 // its owner took off the network.
 if (params.has("managed")) specimen.world = specimenAsManaged(specimen.world, params.get("managed") === "removed");
+// `?shared`: bo's gpu shared whole with this computer's account and ada's.
+if (params.has("shared")) specimen.world = specimenAsShared(specimen.world);
 // `?visitor`: this computer's account a visitor asked to become a member.
 if (params.has("visitor")) specimen.world = specimenAsVisitor(specimen.world);
 // `?accounts=0`: a computer in no World yet, as on its first open.

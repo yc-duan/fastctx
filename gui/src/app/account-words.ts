@@ -518,6 +518,10 @@ export interface MachinesWords {
   sharedTo: string;
   assisting: string;
   takeBack(to: string): string;
+  /** Gives back the share of another's machine this account holds. */
+  leave: string;
+  leaveTitle(machine: string): string;
+  leaveWhat(owner: string): string;
   endAssist(to: string): string;
   separator: string;
   /** A machine of another whose agents may reach this account's machines. */
@@ -785,11 +789,14 @@ export const zhMachines: MachinesWords = {
   ownedBy: (account) => `${account} 的`,
   sharedInShort: (owner) => `${owner} 共享`,
   superInShort: (owner) => `成员 ${owner} 的`,
-  sharedIn: (owner) => `${owner} 共享给你，可使用其上所有智能体；你在上面的操作 ${owner} 可见`,
+  sharedIn: (owner) => `${owner} 共享给你，你和 ${owner} 一起管它、用它上面的所有智能体；你在上面的操作 ${owner} 可见`,
   superIn: (owner) => `成员 ${owner} 的机器，你作为管理员可以使用；你的操作 ${owner} 可见`,
   sharedTo: "共享给",
   assisting: "协助",
   takeBack: (to) => `收回 ${to}`,
+  leave: "不再用这台",
+  leaveTitle: (machine) => `不再用 ${machine}？`,
+  leaveWhat: (owner) => `这台不再共享给你，要再用就请 ${owner} 共享`,
   endAssist: (to) => `结束对 ${to} 的协助`,
   separator: "、",
   reaching: "可访问你的机器",
@@ -1103,11 +1110,14 @@ export const enMachines: MachinesWords = {
   ownedBy: (account) => `${account}'s`,
   sharedInShort: (owner) => `shared by ${owner}`,
   superInShort: (owner) => `member ${owner}'s`,
-  sharedIn: (owner) => `Shared with you by ${owner}, with all its agents; ${owner} can see what you do on it`,
+  sharedIn: (owner) => `Shared with you by ${owner}: you manage it with ${owner} and use all its agents; ${owner} can see what you do on it`,
   superIn: (owner) => `Member ${owner}'s machine, available to you as administrator; ${owner} can see what you do on it`,
   sharedTo: "Shared with",
   assisting: "Assisting",
   takeBack: (to) => `Revoke ${to}`,
+  leave: "Stop using it",
+  leaveTitle: (machine) => `Stop using ${machine}?`,
+  leaveWhat: (owner) => `It is no longer shared with you; ask ${owner} to share it again`,
   endAssist: (to) => `Stop assisting ${to}`,
   separator: ", ",
   reaching: "can access your machines",

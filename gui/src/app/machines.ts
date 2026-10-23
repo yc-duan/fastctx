@@ -47,7 +47,7 @@ import { RING } from "./map-layout";
 import { mapOf, phonesOf } from "./map-of";
 import { deviceKey, type MapNode } from "./map-nodes";
 import { link, talkLink } from "./places";
-import { assistantsOf, groupsOf, isComputer, isSuper, isVisitor, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, superOf, type Assistant, type Machine } from "./reach";
+import { runsHub, holds, assistantsOf, groupsOf, isComputer, isSuper, isVisitor, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, superOf, type Assistant, type Machine } from "./reach";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import type { UpdateWords } from "./update-words";
@@ -1699,33 +1699,33 @@ export class MachinesPage implements Page {
     if (spot.kind === "assist") return [{ act: "talk", label: words.talk, icon: "plus" }, details];
     // A phone is only signed in: nothing runs on it to work with.
     if (spot.kind === "device") return [details, ...(spot.here ? [] : [{ act: "remove", label: words.removePhone, icon: "close" as const, danger: true }])];
-    const owners = this.ownersOf(spot.machine, world);
+    const holders = this.holdersOf(spot.machine, world);
     // Direct connections are the network's administrator's to allow: to a
     // computer, while it is online to be checked, and no longer at any time.
     const admin = this.adminOf(spot.machine, world);
     const member = admin ? this.memberOf(spot.machine, admin, world) : undefined;
     const direct: Act[] =
       member?.kind !== "computer" ? [] : member.direct?.length ? [{ act: "direct", label: words.stopDirect, icon: "link", on: true }] : member.reach ? [{ act: "direct", label: words.allowDirect, icon: "link", on: false }] : [];
-    // Relaying for its owner's other machines on its network is the owner's
-    // to allow, a visitor's too, on a hub that keeps relays; where it takes
-    // direct connections, they forward already.
-    const own = this.ownersOf(spot.machine, world)[0];
+    // Relaying for its owner's other machines on its network is for those
+    // who hold it to allow, a visitor too, on a hub that keeps relays; where
+    // it takes direct connections, they forward already.
+    const own = holders[0];
     const mine = own ? this.memberOf(spot.machine, own, world) : undefined;
     const relays = !!own && !!world.accounts.hubs.find((hub) => hub.hub === own.hub)?.lan_relays;
     const relay: Act[] =
       relays && mine?.kind === "computer" && !mine.direct?.length && (mine.relay?.length || mine.reach?.interfaces?.length)
         ? [{ act: "relay", label: words.relay, icon: "relay", on: !!mine.relay?.length }]
         : [];
-    // Its owner and the network's administrator rename it.
+    // Those who hold it and the network's administrator rename it.
     const rename: Act[] = renamerOf(spot.machine, world, this.options.change, this.options.renaming.here)
       ? [{ act: "rename", label: this.options.renaming.words.rename, icon: "edit" }]
       : [];
     // And they group it.
     const group: Act[] = groupingOf(spot.machine, world) ? [{ act: "group", label: words.groups.group, icon: "folder" }] : [];
     // A managed machine has no agents of anyone's on it; a visitor shares
-    // none of its machines.
+    // nothing it holds, and the machine the hub runs on is shared with no one.
     const managed = isManaged(world, spot.machine.name);
-    const shares = owners.length > 0 && !owners.some((login) => isVisitor(world, login));
+    const shares = !!this.giverOf(spot.machine, world);
     return [
       ...(managed
         ? []
@@ -1771,13 +1771,19 @@ export class MachinesPage implements Page {
     return row + (switches || removals ? `<div class="sheet-rows">${switches}${removals}</div>` : "");
   }
 
-  /** The logins whose own a machine is: this computer's account on each
-   *  hub it is registered on, or the one that registered another. */
-  private ownersOf(machine: Machine, world: WorldNow): Login[] {
+  /** The logins a machine is in the hands of: this computer's account on
+   *  each hub it is registered on; another's owner first, then those it is
+   *  shared with whole, who manage it alike. */
+  private holdersOf(machine: Machine, world: WorldNow): Login[] {
     const logins = loginsOf(world.accounts);
     if (machine.here) return logins.filter((login) => world.nodes.hubs.some((hub) => hub.hub === login.hub && hub.home === login.account));
-    const owner = logins.find((login) => owns(machine, login));
-    return owner ? [owner] : [];
+    return [...logins.filter((login) => owns(machine, login)), ...logins.filter((login) => !owns(machine, login) && holds(machine, login, world))];
+  }
+
+  /** The login that shares `machine` on: one holding it that is no visitor,
+   *  where it does not run the hub. */
+  private giverOf(machine: Machine, world: WorldNow): Login | undefined {
+    return this.holdersOf(machine, world).find((login) => !isVisitor(world, login) && !runsHub(machine, login, world));
   }
 
   /** Does an action chosen beside a spot or in its menu. */
@@ -1838,7 +1844,6 @@ export class MachinesPage implements Page {
       return;
     }
     const machine = spot.machine;
-    const login = this.ownersOf(machine, world)[0];
     switch (act) {
       case "talk":
         this.options.talk(machine.written);
@@ -1846,9 +1851,11 @@ export class MachinesPage implements Page {
       case "agents":
         location.hash = link({ kind: "agents", machine: machine.written });
         return;
-      case "share":
-        if (login) this.share(login, machine.name);
+      case "share": {
+        const giver = this.giverOf(machine, world);
+        if (giver) this.share(giver, machine.name);
         return;
+      }
       case "remove":
         this.removeNamed(machine.written);
         return;
@@ -1869,7 +1876,7 @@ export class MachinesPage implements Page {
         return;
       }
       case "relay": {
-        const own = this.ownersOf(machine, world)[0];
+        const own = this.holdersOf(machine, world)[0];
         const member = own ? this.memberOf(machine, own, world) : undefined;
         if (!own || !member) return;
         if (member.relay?.length) void this.stopRelay(own, machine, member.relay);

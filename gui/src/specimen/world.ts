@@ -497,6 +497,18 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
 /** This desktop as a managed machine of me on home (`world-network.md`,
  *  受管机器): logged in to nothing, seeing only itself; taken off the
  *  network when `removed`. */
+/** The world with bo's gpu shared whole with this computer's account too,
+ *  as `?shared`: a machine of another's it manages with its owner. */
+export function specimenAsShared(world: WorldNow): WorldNow {
+  return {
+    ...world,
+    accounts: {
+      ...world.accounts,
+      hubs: world.accounts.hubs.map((hub) => (hub.hub === HOME ? { ...hub, shares: [...hub.shares, { machine: "gpu", account: "me" }, { machine: "gpu", account: "ada" }] } : hub)),
+    },
+  };
+}
+
 export function specimenAsManaged(world: WorldNow, removed = false): WorldNow {
   const home = world.accounts.hubs.find((hub) => hub.hub === HOME);
   if (!home) return world;
