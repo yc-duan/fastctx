@@ -11,6 +11,7 @@ pub(super) const CONTEXT_AGAIN: &str = "The first turn after compaction could no
 pub(super) const IDLE: &str =
     "The turn ended with no verified work to wake it; checking ten seconds of continuous idle.";
 pub(super) const WAITING: &str = "Waiting on work that will wake this conversation.";
+pub(super) const WAITING_CHANGED: &str = "The colleague's current goal changed what this conversation is waiting for.";
 pub(super) const REVIEW_EXHAUSTED: &str = "Two consecutive sentinel suggestions were delivered; this stop is accepted.";
 pub(super) const REVIEW_FAILED: &str = "The goal's sentinel could not judge this stop after three attempts.";
 pub(super) const UNREVIEWED: &str = "No sentinel checks this goal, so the stop stands for the user to look at.";

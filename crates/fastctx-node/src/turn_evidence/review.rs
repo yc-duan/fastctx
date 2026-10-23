@@ -70,8 +70,7 @@ pub(crate) fn collect(node: &Node, resident: &ResidentId, previous: &Seen) -> io
         let mut end = finished.end;
         end.last_message = None;
         if let Some(error) = super::diagnostics::get(node, resident, &finished.turn)? {
-            end.reason = error["message"].as_str().map(str::to_owned).or(end.reason.take());
-            end.error = Some(error);
+            super::diagnostics::augment(&mut end, error);
         }
         let stop = super::classify(&end, super::source(node, resident, &finished.turn)?, about.host.agent.as_str());
         if comparing.changed("turn", &finished.turn, &(finished.at, finished.ended_at, &end, &stop))? {

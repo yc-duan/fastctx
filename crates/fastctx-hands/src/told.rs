@@ -57,7 +57,9 @@ pub fn told(notice: &Notice) -> String {
             colleague.resident, colleague.machine, health.text, colleague.resident
         ),
         Notice::Question { text, .. } => text.clone(),
-        Notice::Words { text, goal_report: Some(_), .. } => text.clone(),
+        Notice::Words { text, goal_report: Some(_), .. } | Notice::Words { text, goal_question: Some(_), .. } => {
+            text.clone()
+        }
         Notice::Words { from, text, .. } => words(from, text),
         Notice::Attached { message, text } => message.render(text),
         Notice::World { text, .. } => words(&Speaker::World, text),

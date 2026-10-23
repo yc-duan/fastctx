@@ -13,15 +13,18 @@ pub(crate) mod operations;
 pub(crate) mod questions;
 pub(crate) mod records;
 mod recovery;
+pub(crate) mod replies;
 pub(crate) mod reports;
 pub(crate) mod reviewer;
 mod wiring;
-pub(crate) use wiring::{colleagues, connected};
+pub(crate) use wiring::connected;
 mod scope;
 mod state;
+pub(crate) mod waiting;
 pub(crate) mod watch;
 mod watching;
 mod words;
+pub(crate) use words::older_goal_waits;
 
 use crate::Node;
 use fastctx_types::access::HubAccount;
@@ -87,9 +90,9 @@ pub(crate) fn visible(
     event: &fastctx_types::session::SessionEvent,
 ) -> bool {
     if let fastctx_types::session::Happened::Heard { notice: Some(notice), .. } = &event.happened
-        && let fastctx_types::residents::Notice::Words { goal_report: Some(report), .. } = notice.as_ref()
+        && let Some(account) = notice.goal_account()
     {
-        return looker.sees_account(node, &report.account);
+        return looker.sees_account(node, account);
     }
     let fastctx_types::session::Happened::Changed {
         change: fastctx_types::session::SessionChange::Goal { goal }, ..

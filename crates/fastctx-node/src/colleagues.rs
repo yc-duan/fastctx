@@ -3,11 +3,10 @@
 //!
 //! A colleague is a Codex resident the World starts, on the asker's machine
 //! or another, as a thread of that machine's app-server. The asker's words
-//! become its goal and first turn. The goal runtime delivers its report. Asking is
+//! become its goal and first turn; the goal's report returns to the asker. Asking is
 //! recorded as one of the asker's actions: where the colleague lives, and
 //! its id; speaking to it later starts from that record.
 
-pub(crate) mod goals;
 
 mod native;
 pub(crate) mod plan;
@@ -137,9 +136,10 @@ async fn ask_for_account(
         return Ok(Address { machine: here, resident: id });
     }
     let lives_on = node.written(link, &machine);
-    // Before beta.11 a machine answers Ask with a colleague of one turn and no goal.
+    // A machine before the colleague goals answers Ask with a colleague of
+    // one turn and no goal.
     match link.call(&lives_on.name, account, Purpose::Look, RemoteCall::Facts).await {
-        Ok(Ok(RemoteReply::Facts(facts))) if facts.goal_runtime => {}
+        Ok(Ok(RemoteReply::Facts(facts))) if facts.goal_colleagues => {}
         Ok(Ok(_)) => return Err(Failure::not_run(fastctx_types::collab_prompt::colleague_host_old(&lives_on))),
         Ok(Err(failure)) => return Err(Failure { message: format!("on {lives_on}: {}", failure.message), ..failure }),
         // Not reached: the ask below says how, offline included.
@@ -187,7 +187,7 @@ pub async fn ask_here(
     prompt: String,
     started: fastctx_types::collab::Started,
 ) -> Result<ResidentId, Failure> {
-    node.colleague_goals.ready()?;
+    crate::goals::colleagues::ready(node)?;
     let Requester { address: asker, turn: requester_turn } = requester;
     node.residents
         .set_departed(&node.world, &asker, false, None)
@@ -277,7 +277,7 @@ pub async fn ask_here(
         .create(&node.world, about.clone(), town.clone(), now)
         .map_err(|error| Failure::new(format!("recording the colleague: {error}")))?;
     crate::context::instructed(node, &id, &heard).map_err(|error| Failure::new(error.to_string()))?;
-    if let Err(failure) = node.colleague_goals.open(node, &id, &asker, &prompt).await {
+    if let Err(failure) = crate::goals::colleagues::open(node, &id, &asker, &prompt).await {
         node.residents
             .change_now(&node.world, &id, |now| {
                 now.activity = Activity::Idle;
@@ -300,7 +300,12 @@ pub async fn ask_here(
         delivery: Delivery {
             id: speech::new_id("words"),
             at: born_at,
-            notice: Notice::Words { from: Speaker::Resident { address: asker.clone() }, text: prompt, goal_report: None },
+            notice: Notice::Words {
+                from: Speaker::Resident { address: asker.clone() },
+                text: prompt,
+                goal_report: None,
+                goal_question: None,
+            },
         },
         readers: Vec::new(),
         state: PendingState::Waiting,
@@ -333,7 +338,7 @@ pub async fn ask_here(
             Ok(Landed::Waiting { why, .. }) => why.unwrap_or_else(|| "its session could not be reached".to_string()),
             Err(failure) => failure.message,
         };
-        // Its first turn never began: whoever asked hears so, and it is idle.
+        // Its first turn never began; the goal classifies this failure and decides what follows.
         crate::turns::unsettled(&node, &colleague, &directory, first, TurnHow::Failed, why.clone()).await;
         crate::turns::ended(
             &node,
@@ -549,7 +554,12 @@ pub async fn message(
             ));
         }
     }
-    let notice = Notice::Words { from: Speaker::Resident { address: sender.clone() }, text, goal_report: None };
+    let notice = Notice::Words {
+        from: Speaker::Resident { address: sender.clone() },
+        text,
+        goal_report: None,
+        goal_question: None,
+    };
     let landed =
         speech::tell_at(node, &acting, &to, &machine, speech::new_id("words"), notice, Owed::Speaker(sender)).await?;
     let result = match &landed {

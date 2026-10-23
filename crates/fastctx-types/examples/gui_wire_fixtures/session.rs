@@ -369,13 +369,21 @@ pub fn fixtures() -> Fixtures {
     events.push(event(Happened::Heard {
         delivery: Some("goal-question-1".parse().unwrap()),
         turn: Some(turn.clone()),
-        from: Some(Speaker::World),
+        from: Some(Speaker::Resident { address: address() }),
         text: "Question from a colleague: which output format?".into(),
         message: None,
-        notice: Some(Box::new(fastctx_types::residents::Notice::Question {
-            colleague: address(),
-            id: "goal-question-1".into(),
+        notice: Some(Box::new(fastctx_types::residents::Notice::Words {
+            from: Speaker::Resident { address: address() },
             text: "Question from a colleague: which output format?".into(),
+            goal_report: None,
+            goal_question: Some(Box::new(fastctx_types::goals::QuestionDelivery {
+                id: "goal-question-1".into(),
+                colleague: address(),
+                account: Some(fastctx_types::access::HubAccount {
+                    hub: "w-0123456789abcdef".parse().unwrap(),
+                    account: "ada".parse().unwrap(),
+                }),
+            })),
         })),
     }));
     events.push(event(Happened::Heard {
@@ -387,8 +395,9 @@ pub fn fixtures() -> Fixtures {
         notice: Some(Box::new(fastctx_types::residents::Notice::Words {
             from: Speaker::Resident { address: address() },
             text: "=== colleague codex-ab12 on desktop (goal complete, 2h14m) ===\nOriginal report.\n=== what it did: fastctx w codex-ab12 ===".into(),
+            goal_question: None,
             goal_report: Some(Box::new(fastctx_types::goals::ReportDelivery {
-                id: "goal-result-1".parse().unwrap(), colleague: address(),
+                id: "goal-result-1".parse().unwrap(), completion: Some("goal-completion-1".parse().unwrap()), colleague: address(),
                 account: fastctx_types::access::HubAccount { hub: "w-0123456789abcdef".parse().unwrap(), account: "ada".parse().unwrap() },
             })),
         })),

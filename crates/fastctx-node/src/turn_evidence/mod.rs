@@ -84,8 +84,7 @@ pub(crate) async fn snapshot_locked(
         if let (Some(turn), Some(end)) = (turn.as_deref(), end.as_mut())
             && let Some(error) = diagnostics::get(node, resident, turn)?
         {
-            end.reason = error["message"].as_str().map(str::to_owned).or(end.reason.take());
-            end.error = Some(error);
+            diagnostics::augment(end, error);
         }
         let requested = turn.as_deref().map(|turn| source(node, resident, turn)).transpose()?.flatten();
         let stop = end.as_ref().map(|end| classify(end, requested, about.host.agent.as_str()));

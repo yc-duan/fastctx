@@ -77,7 +77,7 @@ pub struct WaitHandle {
     pub liveness: Liveness,
     /// A durable World obligation will deliver a result, even if its executor is offline now.
     pub will_wake: bool,
-    /// The stable notice that proves this wait returned, when the producer can name it.
+    /// A stable identity carried by the completion notification, when the producer can name it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completion: Option<crate::NoticeId>,
     pub summary: String,
@@ -127,10 +127,25 @@ pub enum Compacted {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConversationDebt {
     pub observed_at: Timestamp,
+    /// The selected requester's autonomous goal, separate from ordinary turn replies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<Box<GoalDebt>>,
     pub pending: Vec<(String, Timestamp)>,
     pub running: Vec<(String, Timestamp)>,
     pub answers: Vec<(String, Timestamp)>,
     pub uncertain: Vec<(String, Timestamp)>,
+}
+
+/// A goal's promise to its requester, retained until its final report reaches that requester.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoalDebt {
+    pub account: crate::access::HubAccount,
+    pub completion: crate::NoticeId,
+    pub since: Timestamp,
+    pub continuing: bool,
+    /// The exact accepted final report, even after its source outbox has handed it to the network.
+    pub report: Option<crate::NoticeId>,
+    pub summary: String,
 }
 
 impl ConversationDebt {

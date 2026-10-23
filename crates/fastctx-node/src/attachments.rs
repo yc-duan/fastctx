@@ -42,7 +42,7 @@ pub fn delivery(
         None => crate::speech::new_id("talk"),
     };
     let notice = if attachments.is_empty() {
-        Notice::Words { from: Speaker::User { machine: from.clone() }, text, goal_report: None }
+        Notice::Words { from: Speaker::User { machine: from.clone() }, text, goal_report: None, goal_question: None }
     } else {
         Notice::Attached { message: AttachedMessage { delivery: id.clone(), from: from.clone(), attachments }, text }
     };

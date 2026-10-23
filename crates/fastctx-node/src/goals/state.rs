@@ -38,7 +38,11 @@ pub(crate) fn open(
         retired: None,
         decisions: Vec::new(),
         history: None,
-        runtime: fastctx_types::goals::runtime::Runtime { activated_at: Some(change.at), ..Default::default() },
+        runtime: fastctx_types::goals::runtime::Runtime {
+            activated_at: Some(change.at),
+            activation: Some(change.operation.into()),
+            ..Default::default()
+        },
         operation: change.operation.to_string(),
     };
     remember(&mut goal, change, "opened", String::new());
@@ -53,7 +57,7 @@ pub(crate) fn user(goal: &mut Goal, requested: UserChange, change: Change<'_>) -
         UserChange::Open { objective } => {
             nonempty(&objective, words::BLANK_GOAL)?;
             goal.objective = objective;
-            activate(goal, change.at);
+            activate(goal, change.at, change.operation);
             remember(goal, change, "opened", String::new());
         }
         UserChange::Edit { objective } => {
@@ -72,7 +76,7 @@ pub(crate) fn user(goal: &mut Goal, requested: UserChange, change: Change<'_>) -
             remember(goal, change, "edited", String::new());
         }
         UserChange::Resume => {
-            activate(goal, change.at);
+            activate(goal, change.at, change.operation);
             remember(goal, change, "resumed", String::new());
         }
         UserChange::Pause => {
@@ -121,8 +125,12 @@ pub(crate) fn mark(goal: &mut Goal, mark: Mark, change: Change<'_>) -> Result<()
     Ok(())
 }
 
-fn activate(goal: &mut Goal, at: Timestamp) {
-    goal.runtime = fastctx_types::goals::runtime::Runtime { activated_at: Some(at), ..Default::default() };
+fn activate(goal: &mut Goal, at: Timestamp, operation: &str) {
+    goal.runtime = fastctx_types::goals::runtime::Runtime {
+        activated_at: Some(at),
+        activation: Some(operation.into()),
+        ..Default::default()
+    };
     goal.retired = None;
     goal.status = Status::Active;
     goal.stop = None;

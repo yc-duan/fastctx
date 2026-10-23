@@ -162,7 +162,7 @@ async fn branch(node: &Arc<Node>, id: &ResidentId, acting: &Acting, deadline: In
         if label.is_none() {
             return Ok(None);
         }
-        match tokio::time::timeout_at(deadline, node.colleague_goals.state(node, id)).await {
+        match tokio::time::timeout_at(deadline, crate::goals::colleagues::summary(node, id)).await {
             Ok(result) => result.map_err(|error| error.message),
             Err(_) => Err(fastctx_types::collab_prompt::GOAL_DEADLINE.into()),
         }

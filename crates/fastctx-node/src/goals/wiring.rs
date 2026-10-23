@@ -8,18 +8,13 @@ use fastctx_net::link::Link;
 use fastctx_net::link::account_records::RecordWatch;
 use fastctx_types::account_records::{Request, Response, Watched};
 use fastctx_types::access::HubAccount;
-use fastctx_types::collab::{GoalState, GoalSummary};
-use fastctx_types::goals::{Author, Request as GoalRequest, Status, UserChange};
 use fastctx_types::ipc::Failure;
-use fastctx_types::{Address, NoticeId, ResidentId};
+use fastctx_types::ResidentId;
 use serde_json::Value;
 
 use super::context::Context;
 use super::records::{Changed, Changes, Exchanged, Record, Records, Reply};
 use crate::Node;
-use crate::colleagues::goals::ColleagueGoals;
-
-type Fut<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 
 const GOAL_CONTEXT_CHANGED: &str = "The goal changed; this replaces the previous goal in your context.";
 
@@ -159,100 +154,3 @@ pub(crate) fn connected(node: Weak<Node>) -> super::Services {
     }
 }
 
-/// The colleague-facing side of the goal runtime: a colleague's task is a goal
-/// the World opens for it, owned by the conversation that asked it.
-pub(crate) fn colleagues(node: Weak<Node>) -> Arc<dyn ColleagueGoals> {
-    Arc::new(ColleagueRuntime { node })
-}
-
-struct ColleagueRuntime {
-    node: Weak<Node>,
-}
-
-impl ColleagueRuntime {
-    fn here(&self) -> Result<Arc<Node>, Failure> {
-        self.node.upgrade().ok_or_else(|| Failure::new("the node has gone"))
-    }
-}
-
-impl ColleagueGoals for ColleagueRuntime {
-    fn ready(&self) -> Result<(), Failure> {
-        if self.here()?.goals.available() {
-            Ok(())
-        } else {
-            Err(Failure::not_run(fastctx_types::collab_prompt::GOAL_RUNTIME_REQUIRED))
-        }
-    }
-
-    fn open<'a>(
-        &'a self,
-        node: &'a Arc<Node>,
-        resident: &'a ResidentId,
-        _owner: &'a Address,
-        objective: &'a str,
-    ) -> Fut<'a, Result<(), Failure>> {
-        Box::pin(async move {
-            let account = super::scope::resolve(node, resident, None)?;
-            let address = Address { machine: node.machine(), resident: resident.clone() };
-            // The owner (the asking conversation) is derived from the colleague's
-            // own origin inside the operation, so a second open is a no-op.
-            let current = super::operations::read(node, &address, &account).await?;
-            if current.goal.is_some() {
-                return Ok(());
-            }
-            let request = GoalRequest::Change {
-                operation: format!("colleague-open:{resident}"),
-                expected: current.version,
-                change: UserChange::Open { objective: objective.to_string() },
-            };
-            super::operations::call(node, address, account, Author::User { machine: node.machine() }, None, request)
-                .await
-                .map(drop)
-        })
-    }
-
-    fn reopen_blocked<'a>(
-        &'a self,
-        node: &'a Arc<Node>,
-        resident: &'a ResidentId,
-        delivery: &'a NoticeId,
-    ) -> Fut<'a, Result<(), Failure>> {
-        Box::pin(async move {
-            let account = super::scope::resolve(node, resident, None)?;
-            let address = Address { machine: node.machine(), resident: resident.clone() };
-            let current = super::operations::read(node, &address, &account).await?;
-            if !current.goal.as_ref().is_some_and(|goal| goal.status == Status::Blocked) {
-                return Ok(());
-            }
-            // The delivery that unblocked it keys the operation, so the same
-            // message cannot reopen the goal twice.
-            let request = GoalRequest::Change {
-                operation: format!("colleague-reopen:{delivery}"),
-                expected: current.version,
-                change: UserChange::Resume,
-            };
-            // The handover delivering that message holds the colleague's action and management gates.
-            let author = Author::User { machine: node.machine() };
-            super::operations::call_held(node, address, account, author, None, request).await.map(drop)
-        })
-    }
-
-    fn state<'a>(&'a self, node: &'a Arc<Node>, resident: &'a ResidentId) -> Fut<'a, Result<Option<GoalSummary>, Failure>> {
-        Box::pin(async move {
-            let account = super::scope::resolve(node, resident, None)?;
-            let address = Address { machine: node.machine(), resident: resident.clone() };
-            let view = super::operations::read(node, &address, &account).await?;
-            Ok(view.goal.map(|goal| {
-                let state = match goal.status {
-                    Status::Active => GoalState::Active,
-                    Status::Complete => GoalState::Complete,
-                    Status::Blocked => GoalState::Blocked,
-                    Status::Paused => GoalState::Paused,
-                };
-                let elapsed =
-                    (jiff::Timestamp::now().as_millisecond() - goal.created_at.as_millisecond()).max(0) as u64;
-                GoalSummary { state, started_at: goal.created_at, elapsed_ms: elapsed }
-            }))
-        })
-    }
-}

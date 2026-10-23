@@ -37,8 +37,8 @@ type Went = (Written, Option<TownName>);
 #[derive(Default)]
 pub struct Births(Mutex<HashMap<ResidentId, Acting>>);
 
-/// A resident being born, until its record is written: dropping it ends
-/// the birth, written or not.
+/// A resident whose initial setup is in progress; dropping it ends the birth,
+/// whether setup succeeded or failed.
 pub(crate) struct Birth {
     node: Arc<Node>,
     id: ResidentId,
@@ -47,6 +47,7 @@ pub(crate) struct Birth {
 impl Drop for Birth {
     fn drop(&mut self) {
         self.node.births.0.lock().expect("never poisoned").remove(&self.id);
+        crate::goals::engine::input_changed(&self.node, &self.id);
     }
 }
 
@@ -54,6 +55,11 @@ impl Drop for Birth {
 pub(crate) fn born(node: &Arc<Node>, id: &ResidentId, acting: Acting) -> Birth {
     node.births.0.lock().expect("never poisoned").insert(id.clone(), acting);
     Birth { node: node.clone(), id: id.clone() }
+}
+
+/// Initial setup may still be publishing the first input after the resident record exists.
+pub(crate) fn being_born(node: &Node, id: &ResidentId) -> bool {
+    node.births.0.lock().expect("never poisoned").contains_key(id)
 }
 
 /// Whom `id` works for, as its record says, or as its birth does until the

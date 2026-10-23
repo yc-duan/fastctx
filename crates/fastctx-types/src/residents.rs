@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 mod about;
+mod question;
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -162,8 +163,9 @@ pub enum Notice {
     /// A colleague's host reported something in a turn owed to the resident
     /// that it must hear at once.
     Health { colleague: Address, label: String, health: Health },
-    /// A colleague's question rides with ongoing or later work without starting a turn.
-    /// Its delivery identity keeps different questions from replacing one another.
+    /// A stored question from before questions used ordinary resident messages.
+    /// Reading preserves its identity; writing emits the compatible Words shape.
+    #[serde(rename(serialize = "words", deserialize = "question"), serialize_with = "question::serialize")]
     Question { colleague: Address, id: String, text: String },
     /// Words someone said to the resident.
     Words {
@@ -172,6 +174,9 @@ pub enum Notice {
         /// A goal conclusion keeps its sender and full text for older readers.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         goal_report: Option<Box<crate::goals::ReportDelivery>>,
+        /// A nonblocking question retains its sender and full text for older readers.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        goal_question: Option<Box<crate::goals::QuestionDelivery>>,
     },
     /// The user's words and files; the accompanying facts are the World's.
     Attached { message: crate::session::attachments::AttachedMessage, text: String },
@@ -180,15 +185,30 @@ pub enum Notice {
 }
 
 impl Notice {
+    /// Whether this notice carries a colleague's nonblocking question.
+    pub fn is_question(&self) -> bool {
+        matches!(self, Self::Question { .. } | Self::Words { goal_question: Some(_), .. })
+    }
+
+    /// The account frozen with goal-derived content, when its record retained one.
+    pub fn goal_account(&self) -> Option<&crate::access::HubAccount> {
+        match self {
+            Self::Words { goal_report: Some(report), .. } => Some(&report.account),
+            Self::Words { goal_question: Some(question), .. } => question.account.as_ref(),
+            _ => None,
+        }
+    }
+
     /// Scheduled work and requested answers resume even a closed foreground conversation.
     pub fn wakes_closed(&self) -> bool {
-        matches!(
-            self,
-            Self::Words { from: Speaker::World, .. }
-                | Self::Words { goal_report: Some(_), .. }
-                | Self::Answer { .. }
-                | Self::Sentinel { .. }
-        )
+        !self.is_question()
+            && matches!(
+                self,
+                Self::Words { from: Speaker::World, .. }
+                    | Self::Words { goal_report: Some(_), .. }
+                    | Self::Answer { .. }
+                    | Self::Sentinel { .. }
+            )
     }
 
     /// What the World tells when the user changes a conversation's machines
@@ -201,6 +221,7 @@ impl Notice {
             Notice::World { fact: WorldFact::Focus { .. }, .. } => Some("focus"),
             Notice::World { fact: WorldFact::Moved { .. }, .. } => Some("project"),
             Notice::Question { id, .. } => Some(id),
+            Notice::Words { goal_question: Some(question), .. } => Some(&question.id),
             _ => None,
         }
     }

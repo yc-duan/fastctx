@@ -2,7 +2,7 @@
 
 use crate::Node;
 use fastctx_types::ResidentId;
-use fastctx_types::session::{Happened, SessionChange, SessionEvent};
+use fastctx_types::session::{Happened, SessionChange, SessionEvent, TurnEnd};
 use serde_json::Value;
 use std::io;
 
@@ -25,6 +25,18 @@ pub(super) fn observe(node: &Node, resident: &ResidentId, event: &SessionEvent) 
     let path = path(node, resident, turn);
     fastctx_platform::ensure_private_dir(path.parent().expect("failure records have a directory"))?;
     fastctx_platform::publish(&path, &serde_json::to_vec(failure)?, fastctx_platform::Permissions::Private)
+}
+
+/// Host diagnostics supplement a World-observed exit; they cannot replace its stop provenance.
+pub(super) fn augment(end: &mut TurnEnd, error: Value) {
+    if let Some(recorded) = end.error.as_mut().and_then(Value::as_object_mut)
+        && recorded.contains_key("world")
+    {
+        recorded.insert("host_diagnostic".into(), error);
+        return;
+    }
+    end.reason = error["message"].as_str().map(str::to_owned).or(end.reason.take());
+    end.error = Some(error);
 }
 
 pub(super) fn get(node: &Node, resident: &ResidentId, turn: &str) -> io::Result<Option<Value>> {

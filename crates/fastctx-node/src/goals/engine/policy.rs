@@ -63,6 +63,7 @@ pub(super) fn waiting(handles: &[WaitHandle]) -> Vec<WaitKey> {
         .map(|handle| WaitKey {
             machine: handle.machine.clone(),
             id: handle.id.clone(),
+            kind: Some(handle.kind),
             completion: handle.completion.clone(),
         })
         .collect()
@@ -424,6 +425,9 @@ pub(super) fn wait_returned(current: &Goal, handle: &WaitKey) -> Option<Decision
     let mut goal = current.clone();
     goal.runtime.waiting.retain(|waiting| waiting != handle);
     goal.runtime.advice_sent = 0;
+    if goal.runtime.pending.as_ref().is_some_and(|work| matches!(work.task, Task::Remind { .. } | Task::Idle { .. })) {
+        goal.runtime.pending = None;
+    }
     Some(decision(goal, "wait_returned", format!("{} on {} returned.", handle.id, handle.machine)))
 }
 

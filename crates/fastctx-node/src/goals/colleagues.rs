@@ -20,8 +20,29 @@ pub(crate) fn ready(node: &Node) -> Result<(), Failure> {
     Ok(())
 }
 
+/// Older nodes can accept Ask yet create a colleague without an autonomous goal.
+/// A colleague's goal as the collaboration tree draws it.
+pub(crate) async fn summary(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+) -> Result<Option<fastctx_types::collab::GoalSummary>, Failure> {
+    use fastctx_types::collab::{GoalState, GoalSummary};
+    let account = scope::resolve(node, resident, None)?;
+    let address = Address { machine: node.machine(), resident: resident.clone() };
+    let view = operations::read(node, &address, &account).await?;
+    Ok(view.goal.map(|goal| {
+        let state = match goal.status {
+            Status::Active => GoalState::Active,
+            Status::Complete => GoalState::Complete,
+            Status::Blocked => GoalState::Blocked,
+            Status::Paused => GoalState::Paused,
+        };
+        let elapsed = (jiff::Timestamp::now().as_millisecond() - goal.created_at.as_millisecond()).max(0) as u64;
+        GoalSummary { state, started_at: goal.created_at, elapsed_ms: elapsed }
+    }))
+}
+
 /// Open the birth goal once. Retrying creation never replaces or resumes an existing goal.
-#[allow(dead_code, reason = "The collaboration provider calls this seam when its implementation is integrated.")]
 pub(crate) async fn open(
     node: &Arc<Node>,
     resident: &ResidentId,

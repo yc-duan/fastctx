@@ -365,7 +365,14 @@ fn agents(now: Timestamp) -> fastctx_types::agents::AgentsReply {
 
 fn nodes(now: Timestamp) -> NodesReply {
     let facts = |name: &str, os: &str, home: &str| MachineFacts {
-        turn_debts: false, goal_runtime: false, goal_questions: false, goal_commands: false, goal_reports: false,
+        turn_debts: false,
+        goal_runtime: false,
+        goal_colleagues: false,
+        goal_waits: false,
+        goal_questions: false,
+        goal_question_words: false,
+        goal_commands: false,
+        goal_reports: false,
         sentinels: false,
         sentinel_look: false,
         name: machine(name),

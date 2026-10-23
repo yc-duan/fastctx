@@ -697,12 +697,16 @@ async fn taken(
     if kept.is_empty() {
         return Ok(());
     }
-    let mut audience = node.residents.readers(resident, turn);
-    if audience.is_empty() {
-        if let Some(finished) = crate::delivery::terminal(&directory, turn)? {
-            audience = finished.readers;
-        } else if node.residents.about(resident).is_some_and(|(about, _)| about.session.as_deref() == Some(session)) {
-            audience = node.residents.working_for(resident);
+    let mut audience = Vec::new();
+    if kept.iter().any(|pending| pending.working) && crate::goals::replies::inherits(node, resident)? {
+        audience = node.residents.readers(resident, turn);
+        if audience.is_empty() {
+            if let Some(finished) = crate::delivery::terminal(&directory, turn)? {
+                audience = finished.readers;
+            } else if node.residents.about(resident).is_some_and(|(about, _)| about.session.as_deref() == Some(session))
+            {
+                audience = node.residents.working_for(resident);
+            }
         }
     }
     for pending in &mut kept {

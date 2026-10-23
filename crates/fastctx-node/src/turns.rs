@@ -521,11 +521,18 @@ pub fn pay<'a>(
                 _ => None,
             };
             // Telling can lead back here, as a reader's turn ends at once.
-            let owed = if matches!(&answer.delivery.notice, Notice::Question { .. } | Notice::Words { goal_report: Some(_), .. }) { Owed::Nobody } else { Owed::Working };
-            let account = match &answer.delivery.notice {
-                Notice::Words { goal_report: Some(report), .. } => Some(fastctx_types::access::Acting::one(report.account.hub.clone(), report.account.account.clone())),
-                _ => None,
+            let owed = if answer.delivery.notice.is_question()
+                || matches!(&answer.delivery.notice, Notice::Words { goal_report: Some(_), .. })
+            {
+                Owed::Nobody
+            } else {
+                Owed::Working
             };
+            let account = answer
+                .delivery
+                .notice
+                .goal_account()
+                .map(|account| fastctx_types::access::Acting::one(account.hub.clone(), account.account.clone()));
             let landed = Box::pin(speech::tell(
                 node,
                 account.as_ref().unwrap_or(&acting),

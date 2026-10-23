@@ -6,11 +6,14 @@ use fastctx_types::ResidentId;
 use fastctx_types::goals::runtime::{QuotaSource, Task};
 use fastctx_types::goals::{Goal, Status, View};
 use fastctx_types::ipc::Failure;
-use fastctx_types::layout::Here;
+
 use std::sync::Arc;
 
 pub(super) async fn quiet(node: &Arc<Node>, id: &ResidentId) -> Result<bool, Failure> {
-    if crate::control_queue::busy(node, id)? || crate::composer::input_busy(node, id).await? {
+    if crate::here::being_born(node, id)
+        || crate::control_queue::busy(node, id)?
+        || crate::composer::input_busy(node, id).await?
+    {
         return Ok(false);
     }
     let (pending, uncertain) = crate::inbox::input_states(&node.world.conversation(id)).map_err(failure)?;
@@ -77,8 +80,24 @@ pub(super) async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), F
         return Ok(());
     }
     let latest = node.residents.now(id).and_then(|now| now.last_turn);
-    if latest.is_some() && latest != goal.runtime.settled_turn {
-        let mut facts = crate::turn_evidence::snapshot_locked(node, id, latest, false).await?;
+    let new_turn = latest.is_some() && latest != goal.runtime.settled_turn;
+    let mut observed = if new_turn || !goal.runtime.waiting.is_empty() {
+        Some(crate::turn_evidence::snapshot_locked(node, id, latest, false).await?)
+    } else {
+        None
+    };
+    if let Some(facts) = &observed
+        && let Some(decision) = super::returned::decision(node, &goal, facts, new_turn)?
+    {
+        return commit(node, &view, decision).await;
+    }
+    if let Some(facts) = &observed
+        && let Some(decision) = super::waiting::refresh(&goal, &facts.waiting)
+    {
+        return commit(node, &view, decision).await;
+    }
+    if new_turn {
+        let mut facts = observed.take().expect("observed new turn");
         if goal.runtime.compacted_after.is_some()
             && facts
                 .end
@@ -103,37 +122,7 @@ pub(super) async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), F
         {
             return commit(node, &view, decision).await;
         }
-        let events = crate::delivery::history(&node.world.conversation(id)).map_err(failure)?;
-        for event in &events {
-            let fastctx_types::session::Happened::Heard { delivery, turn, notice, .. } = &event.happened else {
-                continue;
-            };
-            if turn != &facts.turn {
-                continue;
-            }
-            for waiting in &goal.runtime.waiting {
-                let returned = match (&waiting.completion, delivery) {
-                    (Some(expected), Some(observed)) => expected == observed,
-                    _ => {
-                        let colleague = match notice.as_deref() {
-                            Some(fastctx_types::residents::Notice::Answer { colleague, .. }) => Some(colleague),
-                            Some(fastctx_types::residents::Notice::Words { goal_report: Some(report), .. }) => {
-                                Some(&report.colleague)
-                            }
-                            _ => None,
-                        };
-                        colleague.is_some_and(|colleague| {
-                            colleague.resident.as_str() == waiting.id
-                                && (colleague.machine == waiting.machine
-                                    || node.names().names_of(&colleague.machine).contains(&waiting.machine))
-                        })
-                    }
-                };
-                if returned && let Some(decision) = policy::wait_returned(&goal, waiting) {
-                    return commit(node, &view, decision).await;
-                }
-            }
-        }
+
         let normal =
             facts.stop.as_ref().is_some_and(|stop| stop.kind == fastctx_types::turn_evidence::StopKind::Completed);
         if !normal || quiet(node, id).await? {
@@ -165,8 +154,12 @@ pub(super) async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), F
         }
         // A cancelled window may become idle again without another turn ending.
         if goal.active() && goal.runtime.settled_turn.is_some() {
-            let facts =
-                crate::turn_evidence::snapshot_locked(node, id, goal.runtime.settled_turn.clone(), false).await?;
+            let facts = match observed.take() {
+                Some(facts) => facts,
+                None => {
+                    crate::turn_evidence::snapshot_locked(node, id, goal.runtime.settled_turn.clone(), false).await?
+                }
+            };
             waiting_known(&facts.waiting)?;
             let handles = policy::waiting(&facts.waiting);
             goal.runtime.waiting = handles;

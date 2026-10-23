@@ -796,7 +796,13 @@ async fn taken(
             crate::inbox::read(&directory, id).map_err(|error| Failure::new(error.to_string()))?
         {
             if pending.working {
-                pending.readers = node.residents.working_for(&resident);
+                pending.readers = if crate::goals::replies::inherits(node, &resident)
+                    .map_err(|error| Failure::new(error.to_string()))?
+                {
+                    node.residents.working_for(&resident)
+                } else {
+                    Vec::new()
+                };
                 pending.working = false;
             }
             by_turn.entry(reserved.2.clone()).or_default().push(pending);
