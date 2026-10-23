@@ -22,7 +22,7 @@ export const samples: Record<string, PlanSample> = {
     facts: {
       "s-pr1ce7": sense("两台里有一台降到 7,000 以下", "盯着"),
     },
-    source: `# 换一台笔记本
+    source: `# 买一台新电脑
 
 > 预算八千以内，主要写代码，要轻
 

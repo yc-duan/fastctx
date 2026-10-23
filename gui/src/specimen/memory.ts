@@ -29,7 +29,7 @@ const format = [
 const journals = [
   revision("journal", "q16-溢出排查", "step_response 卡在 0.9612 的来龙去脉：积分先舍入是罪魁", 1, 2 * day, claude, "laptop", "claude-opus-4-1"),
   revision("journal", "关节模型训练", "400 轮训练在 lab 上的设置、损失曲线和停下来的原因", 1, 5 * day, codex, "lab", "gpt-6.1-sol"),
-  revision("journal", "弱网下的-webrtc", "笔记本走 4G 时控制延迟的实测", 1, 12 * day, { kind: "user" }, "desktop", null),
+  revision("journal", "弱网下的-webrtc", "电脑走 4G 时控制延迟的实测", 1, 12 * day, { kind: "user" }, "desktop", null),
 ];
 
 const bus = revision("spec", "can-帧时间戳", "时间戳以收到帧的那一刻为准，驱动层打，应用层不再改", 1, 6 * day, claude, "laptop", "claude-opus-4-1");
