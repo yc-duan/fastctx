@@ -189,6 +189,8 @@ import { MemoryPage } from "./project/memory-page";
 import { enMemory, zhMemory } from "./project/memory-words";
 import { memory as memorySeam, type MemoryAuthor } from "./world/memory";
 import { specimenCatalog, specimenDocument } from "./specimen/memory";
+import { sentinels as liveSentinels } from "./world/sentinels";
+import { specimenSentinels } from "./specimen/sentinels";
 import { JournalForm } from "./project/journal-form";
 import { ProjectPage } from "./project/page";
 import { enProject, zhProject } from "./project/words";
@@ -778,6 +780,16 @@ const journalForm = new JournalForm({
  *  specimen's with `?memory`. */
 let memoryOn = !live && params.has("memory");
 if (live) void memorySeam.enabled().then((on) => (memoryOn = on), () => (memoryOn = false));
+const sentinelSeam = live ? liveSentinels : specimenSentinels(params.has("sentinels"));
+/** The machines the sentinels may live on, the ones online first; a
+ *  phone is a device, not one of them. */
+function sentinelHomes(): { name: string; form: "desktop" | "laptop" | "server" }[] {
+  const world = live ? store.world.peek() : specimen.world;
+  if (!world) return [];
+  return machinesOf(world)
+    .sort((a, b) => Number(b.online) - Number(a.online))
+    .map((machine) => ({ name: machine.written, form: machine.facts.Ok?.form ?? "desktop" }));
+}
 const memorySwitch = {
   enabled: async () => (live ? (memoryOn = await memorySeam.enabled()) : memoryOn),
   set: async (on: boolean) => {
@@ -2499,7 +2511,7 @@ function show(next: Place): void {
       break;
     case "features":
     case "feature":
-      page = new FeaturesPage({ store, words: english ? enFeatures : zhFeatures, homeWords: agentHomeWords, english, head, feature: next.kind === "feature" ? next.feature : null, agents: () => agentsOn(null), confirm: accountConfirm, memory: memorySwitch });
+      page = new FeaturesPage({ store, words: english ? enFeatures : zhFeatures, homeWords: agentHomeWords, english, head, feature: next.kind === "feature" ? next.feature : null, agents: () => agentsOn(null), confirm: accountConfirm, memory: memorySwitch, sentinels: { seam: sentinelSeam, machines: sentinelHomes } });
       break;
     case "login": {
       // The World's drawing, for the moment this computer is in it.

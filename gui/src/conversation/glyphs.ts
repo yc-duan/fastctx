@@ -14,14 +14,14 @@ type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "sto
  *  provider's cache and how long it stays; saving a copy, and a file's
  *  path; the machines as a drawing and as a list; a new version; a
  *  conversation's goal, pausing and resuming it, and the panel beside it;
- *  a repair; a project's journal and decision. */
+ *  a repair; a project's journal and decision; a sentinel. */
 type Frame =
   | "menu" | "plus" | "minus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back" | "sleep" | "wake" | "move"
   | "archive" | "unarchive" | "trash" | "reread" | "scan" | "grip" | "page" | "versions" | "history" | "person" | "key" | "phone"
   | "logout" | "shield" | "lock" | "unlock" | "signup" | "relay" | "save" | "link"
   | "context" | "cache" | "clock" | "tree" | "rows" | "update"
   | "note" | "plug" | "tune"
-  | "goal" | "pause" | "resume" | "panel" | "repair" | "journal" | "spec"
+  | "goal" | "pause" | "resume" | "panel" | "repair" | "journal" | "spec" | "sentinel"
   | Marks;
 
 /** Which agent and which kind of device, drawn small beside a conversation's
@@ -118,6 +118,8 @@ const paths: Record<Named, string> = {
   goal: '<path d="M6 16.25V3.75"/><path d="M6 4.5h8.5l-2 3.25 2 3.25H6"/>',
   pause: '<path d="M7.5 5.5v9M12.5 5.5v9"/>',
   resume: '<path d="M7 5.1v9.8l7.6-4.9z"/>',
+  /* An eye kept open: a sentinel watching for something. */
+  sentinel: '<path d="M2.9 10c1.7-3 4.1-4.75 7.1-4.75s5.4 1.75 7.1 4.75c-1.7 3-4.1 4.75-7.1 4.75S4.6 13 2.9 10z"/><circle cx="10" cy="10" r="2.1"/>',
   /* A notebook laid open: a journal of a project, written once. */
   journal: '<path d="M10 5.4C8.5 4.4 6.5 4 4 4.25v10.5c2.5-.25 4.5.15 6 1.15 1.5-1 3.5-1.4 6-1.15V4.25c-2.5-.25-4.5.15-6 1.15z"/><path d="M10 5.4v10.5"/>',
   /* A sheet with a seal at its foot: a decision, kept in its versions. */

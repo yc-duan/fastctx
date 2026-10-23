@@ -5,8 +5,8 @@ import type { Address } from "../world/events";
 import type { AgentSection, AgentTab } from "./profile-words";
 
 /** The features a World can turn on (`world-gui.md`, 功能). */
-export type Feature = "conversations" | "collaboration" | "memory";
-const features: Feature[] = ["conversations", "collaboration", "memory"];
+export type Feature = "conversations" | "collaboration" | "memory" | "sentinels";
+const features: Feature[] = ["conversations", "collaboration", "memory", "sentinels"];
 const sections: AgentSection[] = ["claude", "codex", "prompt", "mcp"];
 
 export type Place =

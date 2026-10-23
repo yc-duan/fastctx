@@ -40,6 +40,9 @@ import { residentsOf, type Store } from "./store";
 import { deviceFeatures } from "./device-features";
 import { collaboration } from "../film/collaboration";
 import { memoryFilm } from "../film/memory";
+import { sentinelFilm } from "../film/sentinel";
+import { SentinelForm } from "./sentinel-form";
+import type { SentinelSeam, SentinelSettingsView } from "../world/sentinels";
 import { Film } from "../film/film";
 import type { Built, Shape } from "../film/reel";
 
@@ -61,6 +64,8 @@ export interface FeaturesOptions {
   confirm: Confirm;
   /** Project memory's switch, for the account. */
   memory: { enabled(): Promise<boolean>; set(on: boolean): Promise<void> };
+  /** The sentinels' settings, and the machines they may live on. */
+  sentinels: { seam: SentinelSeam; machines(): { name: string; form: "desktop" | "laptop" | "server" }[] };
 }
 
 /** A login an agent can work in, as the settings name it, with what the
@@ -92,7 +97,16 @@ export class FeaturesPage implements Page {
 
   constructor(private readonly options: FeaturesOptions) {
     const { words, feature } = options;
-    this.title = feature === "collaboration" ? words.collaboration.name : feature === "memory" ? words.memory.name : feature === "conversations" ? words.conversations.name : words.title;
+    this.title =
+      feature === "collaboration"
+        ? words.collaboration.name
+        : feature === "memory"
+          ? words.memory.name
+          : feature === "sentinels"
+            ? words.sentinels.name
+            : feature === "conversations"
+              ? words.conversations.name
+              : words.title;
     this.element = document.createElement("div");
     this.element.className = "features-page";
     this.element.innerHTML = `${options.head(`<h1 class="page-title">${escape(this.title)}</h1>`)}<div class="features-body scroller"></div>`;
@@ -103,6 +117,7 @@ export class FeaturesPage implements Page {
     if (feature === null) this.cards();
     else if (feature === "conversations") this.conversations();
     else if (feature === "memory") this.memory();
+    else if (feature === "sentinels") this.sentinels();
     else this.collaboration();
   }
 
@@ -233,10 +248,24 @@ export class FeaturesPage implements Page {
           <span class="feature-card-art">${glyph("journal", 22)}${glyph("spec", 22)}</span>
           <span class="feature-card-name">${escape(words.memory.name)}</span>
           <span class="feature-card-line">${escape(words.memory.line)}</span>${tag(memoryOn)}</a></li>
+        <li><a class="feature-card" href="${link({ kind: "feature", feature: "sentinels" })}">
+          <span class="feature-card-art">${glyph("sentinel", 22)}${glyph("server", 22)}</span>
+          <span class="feature-card-name">${escape(words.sentinels.name)}</span>
+          <span class="feature-card-line">${escape(words.sentinels.line)}</span>${tag(sentinelsOn)}</a></li>
       </ul>`;
     };
     let memoryOn: boolean | null = null;
+    let sentinelsOn: boolean | null = null;
     draw(null);
+    const login = this.login();
+    if (login)
+      this.options.sentinels.seam.read(login.hub, login.account).then(
+        (view) => {
+          sentinelsOn = view.settings.home !== null;
+          draw(collabOn);
+        },
+        () => {},
+      );
     this.options.memory.enabled().then(
       (on) => {
         memoryOn = on;
@@ -330,6 +359,82 @@ export class FeaturesPage implements Page {
           turn.title = detailOf(error);
         },
       );
+    });
+  }
+
+  /** The login the account's settings are read and kept for. */
+  private login(): { hub: string; account: string } | null {
+    const [first] = loginsOf(this.options.store.world.peek()?.accounts);
+    return first ? { hub: first.hubName, account: first.account } : null;
+  }
+
+  /** Sentinels: their film and, on, their settings; on is a machine for
+   *  them to live on, chosen and saved. */
+  private sentinels(): void {
+    const { words } = this.options;
+    const label = words.sentinels.name;
+    const make = (shape: Shape) => sentinelFilm(words.sentinels.film, shape);
+    this.replayFilm = () => this.watch(make, label);
+    const login = this.login();
+    const seam = this.options.sentinels.seam;
+    let view: SentinelSettingsView | null = null;
+    const form = login
+      ? new SentinelForm({
+          words: words.sentinels,
+          seam,
+          login,
+          machines: () => this.options.sentinels.machines(),
+          saved: (saved) => {
+            const was = view?.settings.home ?? null;
+            view = saved;
+            if (was === null && saved.settings.home !== null) {
+              draw(true);
+              this.celebrate(label, words.sentinels.after, make);
+            }
+          },
+        })
+      : null;
+    const draw = (on: boolean, starting = false) => {
+      this.dropFilms();
+      this.body.classList.toggle("features-film", !on && !starting);
+      this.body.classList.toggle("features-on", on || starting);
+      this.body.innerHTML =
+        on || starting
+          ? `${on ? this.onTop(words.sentinels.after) : ""}<div class="sf-holder"></div>${on ? this.offWay(label) : ""}`
+          : `<div class="feature-intro"><div class="feature-film"></div><button class="sheet-go feature-turn" type="button" data-turn="1"${form ? "" : " disabled"}>${escape(words.turnOn)}</button></div>`;
+      if (form && (on || starting)) {
+        this.body.querySelector(".sf-holder")!.append(form.element);
+        if (starting && !view?.settings.home) form.start();
+        else if (view) form.show(view);
+      }
+      if (on) this.film(this.body.querySelector(".feature-still"), make, label, true);
+      else if (!starting) this.film(this.body.querySelector(".feature-film"), make, label);
+    };
+    draw(false);
+    if (login)
+      seam.read(login.hub, login.account).then(
+        (read) => {
+          view = read;
+          draw(read.settings.home !== null);
+        },
+        () => {},
+      );
+    this.body.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement;
+      if (target.closest("[data-turn]")) return draw(false, true);
+      if (target.closest("[data-act='turn-off']") && login && view) {
+        const current = view;
+        this.askOff(
+          label,
+          words.sentinels.offWhat,
+          async () => {
+            const reply = await seam.write(login.hub, login.account, current.version, { ...current.settings, home: null });
+            if (reply.kind === "conflict") throw new Error(words.sentinels.changedElsewhere);
+            view = reply.view;
+          },
+          () => draw(false),
+        );
+      }
     });
   }
 
