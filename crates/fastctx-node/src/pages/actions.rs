@@ -173,8 +173,14 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
             let town = Some(source.town.clone());
             let account = source.identity.as_ref().and_then(super::identity::account);
             let owner = fastctx_types::run::JobOwner::Page { page: source };
-            let request =
-                fastctx_types::run::RunRequest { turn: None, call_id: None, script, cwd: None, writes_off: false, wait: None };
+            let request = fastctx_types::run::RunRequest {
+                turn: None,
+                call_id: None,
+                script,
+                cwd: None,
+                writes_off: false,
+                wait: None,
+            };
             let (reply, _) = node.jobs.run(node, owner, town, request, account).await?;
             Ok(PageResult::Run(Box::new(reply)))
         }
@@ -198,7 +204,12 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
             let delivery = Delivery {
                 id: NoticeId::try_from(format!("page-{suffix}")).expect("hex notice id"),
                 at: jiff::Timestamp::now(),
-                notice: Notice::Words { from: Speaker::Page { page: Box::new(source) }, text, goal_report: None },
+                notice: Notice::Words {
+                    from: Speaker::Page { page: Box::new(source) },
+                    text,
+                    goal_report: None,
+                    goal_question: None,
+                },
             };
             let landed = crate::speech::tell_here(node, &to.resident, delivery, Owed::Nobody).await?;
             Ok(PageResult::Said { to, landed })

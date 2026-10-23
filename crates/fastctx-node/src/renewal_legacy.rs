@@ -115,7 +115,12 @@ pub(crate) fn reply(protocol: u32, reply: &mut Reply) {
     {
         for delivery in notices {
             if let Notice::World { text, .. } = &delivery.notice {
-                delivery.notice = Notice::Words { from: fastctx_types::session::Speaker::World, text: text.clone(), goal_report: None };
+                delivery.notice = Notice::Words {
+                    from: fastctx_types::session::Speaker::World,
+                    text: text.clone(),
+                    goal_report: None,
+                    goal_question: None,
+                };
             }
         }
     }
@@ -137,7 +142,12 @@ pub(crate) fn reply(protocol: u32, reply: &mut Reply) {
                 _ => None,
             };
             if let Some(text) = text {
-                delivery.notice = Notice::Words { from: fastctx_types::session::Speaker::World, text, goal_report: None };
+                delivery.notice = Notice::Words {
+                    from: fastctx_types::session::Speaker::World,
+                    text,
+                    goal_report: None,
+                    goal_question: None,
+                };
             }
         }
     }

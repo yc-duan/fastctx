@@ -28,7 +28,7 @@ pub(crate) async fn require_remote(
         .call(acting, machine, Purpose::Look, RemoteCall::Facts)
         .await
         .map_err(|error| Failure::new(error.to_string()))??;
-    if matches!(answer, RemoteReply::Facts(facts) if facts.goal_questions) {
+    if matches!(answer, RemoteReply::Facts(facts) if facts.goal_question_words) {
         Ok(())
     } else {
         Err(Failure::not_run(super::words::QUESTION_OLDER_NODE))
@@ -46,16 +46,16 @@ pub(crate) fn route(node: &Arc<Node>, id: &ResidentId, item: &Item, at: Timestam
         .get(id)
         .and_then(|view| view.goal.as_ref())
         .filter(|goal| goal.retired.is_none())
-        .map(|goal| goal.owner.clone());
-    let requester = match owner {
-        Some(Owner::Conversation { address }) => Some(address),
-        Some(Owner::User) => None,
+        .map(|goal| (goal.owner.clone(), goal.account.clone()));
+    let destination = match owner {
+        Some((Owner::Conversation { address }, account)) => Some((address, Some(account))),
+        Some((Owner::User, _)) => None,
         None => node.residents.about(id).and_then(|(about, _)| match about.origin {
-            Origin::Colleague { asked_by, .. } => Some(asked_by),
+            Origin::Colleague { asked_by, .. } => Some((asked_by, None)),
             Origin::User => None,
         }),
     };
-    let Some(requester) = requester else { return Ok(false) };
+    let Some((requester, account)) = destination else { return Ok(false) };
     let colleague = Address { machine: node.machine(), resident: id.clone() };
     let delivery = crate::speech::fixed_id("goal-question", &[&colleague.key(), &item.id, &requester.key()]);
     let text = super::words::question(&colleague, item);
@@ -64,7 +64,16 @@ pub(crate) fn route(node: &Arc<Node>, id: &ResidentId, item: &Item, at: Timestam
         delivery: Delivery {
             id: delivery.clone(),
             at,
-            notice: Notice::Question { colleague, id: delivery.to_string(), text },
+            notice: Notice::Words {
+                from: fastctx_types::session::Speaker::Resident { address: colleague.clone() },
+                text,
+                goal_report: None,
+                goal_question: Some(Box::new(fastctx_types::goals::QuestionDelivery {
+                    colleague,
+                    id: delivery.to_string(),
+                    account,
+                })),
+            },
         },
     };
     let directory = node.world.conversation(id);

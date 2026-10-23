@@ -157,7 +157,12 @@ async fn execute(node: &Arc<Node>, store: &Store, timer: &Timer) -> Result<(), S
             let delivery = Delivery {
                 id: timer.delivery.clone(),
                 at: timer.fired_at.expect("begin records the firing"),
-                notice: Notice::Words { from: Speaker::World, text: words::firing(&timer, text), goal_report: None },
+                notice: Notice::Words {
+                    from: Speaker::World,
+                    text: words::firing(&timer, text),
+                    goal_report: None,
+                    goal_question: None,
+                },
             };
             crate::speech::tell_here_locked(node, resident, delivery, crate::speech::Owed::Nobody)
                 .await

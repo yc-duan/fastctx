@@ -75,7 +75,7 @@ pub(crate) async fn tell_at(
         }
         return tell_here(node, &to.resident, delivery, owed).await;
     }
-    if matches!(&notice, Notice::Question { .. }) {
+    if notice.is_question() {
         crate::goals::questions::require_remote(node, acting, machine).await?;
     }
     if matches!(&notice, Notice::Words { goal_report: Some(_), .. }) {
@@ -84,7 +84,7 @@ pub(crate) async fn tell_at(
     let letter = match notice {
         // Words a resident said make it owed the turn they go into, which
         // the receiving machine knows from who sent them.
-        Notice::Words { from: Speaker::Resident { address }, text, goal_report: None }
+        Notice::Words { from: Speaker::Resident { address }, text, goal_report: None, goal_question: None }
             if node.is_me(&address.machine) && matches!(owed, Owed::Speaker(_)) =>
         {
             Letter::Speak { to: to.resident.clone(), from: address.resident, text, accounts: Vec::new() }
@@ -108,7 +108,10 @@ pub async fn tell_here(node: &Arc<Node>, to: &ResidentId, delivery: Delivery, ow
     // Someone's words are asked from outside: one being deleted refuses
     // them at once, and they wait for what changes its life no longer than
     // anything else asked. What comes of work waits as long as it takes.
-    let _reading = if matches!(delivery.notice, Notice::Words { goal_report: None, .. } | Notice::Attached { .. }) {
+    let _reading = if matches!(
+        delivery.notice,
+        Notice::Words { goal_report: None, goal_question: None, .. } | Notice::Attached { .. }
+    ) {
         if node.residents.is_deleting(to) {
             return Err(Failure::new(format!("{to} is being deleted")));
         }
@@ -135,7 +138,12 @@ pub(crate) async fn tell_here_locked(
     // no more; words for it are refused.
     let deleting = node.residents.is_deleting(to);
     let removed = deleting || node.residents.removed(to).is_some();
-    if !removed || matches!(delivery.notice, Notice::Words { goal_report: None, .. } | Notice::Attached { .. }) {
+    if !removed
+        || matches!(
+            delivery.notice,
+            Notice::Words { goal_report: None, goal_question: None, .. } | Notice::Attached { .. }
+        )
+    {
         node.residents.active(to)?;
     }
     let (about, _) = node
@@ -710,7 +718,9 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
     // What an interface shows of the World's telling and a colleague's
     // answer is the notice itself, not the words written for the model.
     let notice = match &delivery.notice {
-        Notice::Words { goal_report: Some(_), .. } => Some(Box::new(delivery.notice.clone())),
+        Notice::Words { goal_report: Some(_), .. } | Notice::Words { goal_question: Some(_), .. } => {
+            Some(Box::new(delivery.notice.clone()))
+        }
         Notice::Words { .. } | Notice::Attached { .. } => None,
         Notice::JobEnded { .. }
         | Notice::Answer { .. }
@@ -761,6 +771,7 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
     if let Some((about, _)) = node.residents.about(id)
         && matches!(about.origin, Origin::Colleague { .. })
         && matches!(delivery.notice, Notice::Words { .. })
+        && !delivery.notice.is_question()
     {
         let line = MessageLine {
             at: delivery.at,

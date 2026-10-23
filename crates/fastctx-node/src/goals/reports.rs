@@ -119,6 +119,7 @@ pub(crate) fn keep(node: &Arc<Node>, goal: &Goal) -> Result<(), Failure> {
                 notice: Notice::Words {
                     from: fastctx_types::session::Speaker::Resident { address: frozen.report.colleague.clone() },
                     text: fastctx_hands::told::goal_report(&frozen.report),
+                    goal_question: None,
                     goal_report: Some(Box::new(fastctx_types::goals::ReportDelivery {
                         id: frozen.report.id,
                         colleague: frozen.report.colleague,

@@ -40,16 +40,33 @@ pub fn admit(node: &Node, hub: &HubId, caller: &Caller, purpose: Purpose, letter
             (to, Purpose::Words)
         }
         Letter::Notice { to, notice } => match notice.as_ref() {
-            Notice::Words { from: Speaker::Resident { address }, goal_report: Some(report), .. }
-                if *address == report.colleague
-                    && sender(&address.machine)
-                    && report.account.hub == *hub
-                    && report.account.account == caller.account =>
+            Notice::Words {
+                from: Speaker::Resident { address },
+                goal_report: Some(report),
+                goal_question: None,
+                ..
+            } if *address == report.colleague
+                && sender(&address.machine)
+                && report.account.hub == *hub
+                && report.account.account == caller.account =>
             {
                 (to, Purpose::Echo)
             }
             Notice::Words { goal_report: Some(_), .. } => {
                 return Err(format!("{from} sent a goal report of another machine or account"));
+            }
+            Notice::Words { from: Speaker::Resident { address }, goal_question: Some(question), .. }
+                if *address == question.colleague
+                    && sender(&address.machine)
+                    && question
+                        .account
+                        .as_ref()
+                        .is_none_or(|account| account.hub == *hub && account.account == caller.account) =>
+            {
+                (to, Purpose::Echo)
+            }
+            Notice::Words { goal_question: Some(_), .. } => {
+                return Err(format!("{from} sent a question of another machine or account"));
             }
             Notice::Words { from: Speaker::Resident { address }, .. } if sender(&address.machine) => {
                 (to, Purpose::Words)

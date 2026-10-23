@@ -240,6 +240,16 @@ pub struct ReportDelivery {
     pub account: HubAccount,
 }
 
+/// A nonblocking question attached to ordinary resident words.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuestionDelivery {
+    pub id: String,
+    pub colleague: crate::Address,
+    /// Older questions and colleagues without a goal did not retain a goal account.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<HubAccount>,
+}
+
 /// A short entry for `w`; the report file retains the complete immutable text.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReportSummary {

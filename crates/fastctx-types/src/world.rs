@@ -29,6 +29,9 @@ pub struct MachineFacts {
     /// Receives colleague questions without waking an idle conversation.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub goal_questions: bool,
+    /// Recognizes nonblocking question metadata on ordinary resident words.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub goal_question_words: bool,
     /// Routes resident goal commands to their home and supports requester controls.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub goal_commands: bool,

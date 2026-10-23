@@ -28,7 +28,11 @@ static SENDING: Mutex<()> = Mutex::new(());
 fn purpose(letter: &Letter) -> Purpose {
     match letter {
         Letter::Speak { .. } => Purpose::Words,
-        Letter::Notice { notice, .. } if matches!(**notice, Notice::Words { goal_report: Some(_), .. }) => Purpose::Echo,
+        Letter::Notice { notice, .. }
+            if notice.is_question() || matches!(**notice, Notice::Words { goal_report: Some(_), .. }) =>
+        {
+            Purpose::Echo
+        }
         Letter::Notice { notice, .. } if matches!(**notice, Notice::Words { .. } | Notice::Attached { .. }) => {
             Purpose::Words
         }

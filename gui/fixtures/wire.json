@@ -4510,17 +4510,34 @@
         "delivery": "goal-question-1",
         "turn": "turn-1",
         "from": {
-          "kind": "world"
+          "kind": "resident",
+          "address": {
+            "machine": "desktop",
+            "resident": "codex-ab12"
+          }
         },
         "text": "Question from a colleague: which output format?",
         "notice": {
-          "kind": "question",
-          "colleague": {
-            "machine": "desktop",
-            "resident": "codex-ab12"
+          "kind": "words",
+          "from": {
+            "kind": "resident",
+            "address": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            }
           },
-          "id": "goal-question-1",
-          "text": "Question from a colleague: which output format?"
+          "text": "Question from a colleague: which output format?",
+          "goal_question": {
+            "id": "goal-question-1",
+            "colleague": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "account": {
+              "hub": "w-0123456789abcdef",
+              "account": "ada"
+            }
+          }
         }
       },
       {
@@ -13105,6 +13122,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_question_words": true,
           "goal_commands": true,
           "goal_reports": true,
           "name": "desktop",
@@ -13269,6 +13287,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_question_words": true,
           "goal_commands": true,
           "goal_reports": true,
           "name": "desktop",
@@ -13435,6 +13454,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_question_words": true,
           "goal_commands": true,
           "goal_reports": true,
           "name": "desktop",
@@ -13601,6 +13621,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_question_words": true,
           "goal_commands": true,
           "goal_reports": true,
           "name": "desktop",
@@ -13766,6 +13787,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_question_words": true,
           "goal_commands": true,
           "goal_reports": true,
           "name": "desktop",
@@ -13932,6 +13954,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_question_words": true,
           "goal_commands": true,
           "goal_reports": true,
           "name": "desktop",
@@ -14101,6 +14124,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_question_words": true,
           "goal_commands": true,
           "goal_reports": true,
           "name": "desktop",
@@ -14271,6 +14295,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_question_words": true,
           "goal_commands": true,
           "goal_reports": true,
           "name": "desktop",
@@ -14441,6 +14466,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_question_words": true,
           "goal_commands": true,
           "goal_reports": true,
           "name": "desktop",
@@ -14610,6 +14636,7 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_question_words": true,
           "goal_commands": true,
           "goal_reports": true,
           "name": "desktop",
