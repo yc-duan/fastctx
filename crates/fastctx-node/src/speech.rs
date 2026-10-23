@@ -277,7 +277,7 @@ async fn hand_over_locked(
         return landed;
     }
     let mut why = None;
-    if about.world_started
+    if (about.world_started || pending.delivery.notice.wakes_closed())
         && about.host.agent.as_str() == "codex"
         && let Some(thread) = &about.session
     {

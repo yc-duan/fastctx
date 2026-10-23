@@ -155,6 +155,7 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
         None
     };
     let Some(resident) = node.residents.on_record(id) else {
+        crate::timers::delete_conversation(node, id).map_err(|error| Stop::Failed(error.to_string()))?;
         let directory = node.world.conversation(id);
         if directory.about().try_exists().map_err(|error| Stop::Failed(error.to_string()))?
             && !directory.path().join("host-deleted").try_exists().map_err(|error| Stop::Failed(error.to_string()))?
@@ -222,6 +223,7 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
         fastctx_platform::Permissions::Private,
     )
     .map_err(|error| Stop::Failed(format!("recording that it is being deleted: {error}")))?;
+    crate::timers::delete_conversation(node, id).map_err(|error| Stop::Failed(error.to_string()))?;
     let completed = node.world.conversation(id).path().join("host-deleted");
     let mut host_kept = 0;
     if !completed.try_exists().map_err(|error| Stop::Failed(error.to_string()))? {

@@ -297,6 +297,7 @@ impl Call {
                     FileSearchRequest::Start { .. } | FileSearchRequest::Query { .. } | FileSearchRequest::Close { .. },
                 ..
             }
+            | Self::Timer { .. }
             | Self::CollabWrite { .. }
             | Self::ProfileWrite { .. }
             | Self::ProfileSubagents { .. }

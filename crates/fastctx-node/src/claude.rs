@@ -1113,8 +1113,8 @@ pub async fn deliver(
     }
     let user_action =
         matches!(pending.delivery.notice, Notice::Words { from: Speaker::User { .. }, .. } | Notice::Attached { .. });
-    if !about.world_started && !stopped_background && !user_action {
-        // Facts wait for a closed foreground session; only the user resumes it.
+    if !about.world_started && !stopped_background && !user_action && !pending.delivery.notice.wakes_closed() {
+        // Unscheduled facts wait for a closed foreground session.
         return Some(into_inbox(node, to, &session, directory, pending));
     }
     Some(match alive {

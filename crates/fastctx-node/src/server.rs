@@ -790,6 +790,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
     }
     active_caller(node, peer)?;
     match call {
+        Call::Timer { timer } => {
+            users_voice(node, peer)?;
+            crate::timers::call(node, timer).await
+        }
         Call::ClaudeSessionDirectory { session, previous, cwd, process, conversation } => {
             if !matches!(peer, Peer::Session { host } if host.agent.as_str() == "claude") {
                 users_voice(node, peer)?;

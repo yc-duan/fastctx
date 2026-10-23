@@ -156,6 +156,11 @@ pub enum Notice {
 }
 
 impl Notice {
+    /// Explicitly scheduled work resumes even a closed foreground conversation.
+    pub fn wakes_closed(&self) -> bool {
+        matches!(self, Self::Words { from: Speaker::World, .. })
+    }
+
     /// What the World tells when the user changes a conversation's machines
     /// and folders, or its project: it starts no turn, but goes in with the
     /// next one, or into the one running where it next can; told again
