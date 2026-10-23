@@ -3043,6 +3043,20 @@
               "ms": 38
             },
             "me": "desktop",
+            "hub_machine": "server",
+            "machine_notices": [
+              {
+                "id": 42,
+                "at": "2026-10-09T08:30:00Z",
+                "account": "ada",
+                "machine": "laptop",
+                "by": "bo",
+                "action": {
+                  "kind": "rename",
+                  "to": "workstation"
+                }
+              }
+            ],
             "renames": true,
             "managed": true,
             "roles": true,

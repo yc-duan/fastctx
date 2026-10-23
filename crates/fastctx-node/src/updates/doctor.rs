@@ -83,10 +83,12 @@ pub(super) fn heard(node: &Arc<Node>) {
             continue;
         }
         for member in &view.directory.members {
-            let Some(owner) = &member.home else { continue };
-            if member.key == me.key || !view.directory.logged_in(&me.name, owner) {
+            if member.key == me.key || !member.is_machine() {
                 continue;
             }
+            let Some(owner) = me.logins.iter().find(|account| view.may_update(account, &member.name)) else {
+                continue;
+            };
             let Some(running) = network.machines.get(&member.name) else { continue };
             let key = (link.hub().clone(), member.key);
             if running.repair_supported {

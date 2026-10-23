@@ -355,10 +355,15 @@ impl Directory {
         self.account(account).is_some_and(Account::is_super)
     }
 
-    /// Whether an account may manage a machine's updates: its owner or the
-    /// super administrator, except for another account's visitor machines.
+    /// Managing a machine has the same authority as working on it
+    /// (`world-network.md`, 共享机器与智能体协助).
     pub fn may_update(&self, account: &AccountName, machine: &MachineName) -> bool {
         self.authorize(account, crate::authorization::Action::Manage(machine)).is_ok()
+    }
+
+    /// Whether this account holds a machine, rather than merely administering it.
+    pub fn holds(&self, account: &AccountName, machine: &MachineName) -> bool {
+        self.authorize(account, crate::authorization::Action::Hold(machine)).is_ok()
     }
 
     /// Whether `account` is a visitor: its machines are its alone, and it
@@ -577,6 +582,12 @@ pub struct View {
     pub machine_log: bool,
     pub hub: HubId,
     pub hub_name: HubName,
+    /// Current hub host, only when visible to this member.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub_machine: Option<MachineName>,
+    /// Committed changes delivered to accounts logged in on this device.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub machine_notices: Vec<fastctx_types::sharing::Notice>,
     /// The member this view is for.
     pub me: MachineName,
     /// Whether accounts may be opened by anyone who reaches the hub.
@@ -739,6 +750,8 @@ impl View {
             machine_log: false,
             hub,
             hub_name,
+            hub_machine: None,
+            machine_notices: Vec::new(),
             me,
             self_registration: false,
             direct_links: false,

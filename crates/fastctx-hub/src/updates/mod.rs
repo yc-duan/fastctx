@@ -310,7 +310,11 @@ pub(crate) fn heard(hub: &Arc<Hub>, name: &MachineName, generation: u64, mut rep
         updates.reports.insert(name.clone(), (generation, report));
         changed
     };
+    if let Err(error) = crate::hub_machine::settle(hub) {
+        hub.log.line(format_args!("revoking shares of the hub machine: {error}"));
+    }
     if planning_changed {
+        hub.directory_changed.notify_one();
         settle(hub, name, &kernel, app.as_deref(), asked);
     }
     let mut due_changed = false;
@@ -372,7 +376,10 @@ fn settle(hub: &Hub, name: &MachineName, kernel: &str, app: Option<&str>, asked:
     let actor = Actor { account: None, authenticated: true, member: Some(name.clone()), peer: None };
     let action = Action::Updated { machine: name.clone(), from: asked.from, to: kernel.to_string(), by: asked.by };
     match crate::machine_log::keep(&mut store, &directory, actor, action, Outcome::Done) {
-        Ok(()) => hub.machine_log_changed.notify_one(),
+        Ok(()) => {
+            hub.machine_log_changed.notify_one();
+            hub.directory_changed.notify_one();
+        }
         Err(error) => hub.log.line(format_args!("{error}")),
     }
 }

@@ -32,6 +32,7 @@ mod direct;
 pub mod dissolve;
 mod forget;
 mod health;
+mod hub_machine;
 mod ledger;
 mod log;
 mod login;
@@ -599,6 +600,9 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         health: health::Health::default(),
         account_records,
     });
+    if let Err(error) = hub_machine::settle(&hub) {
+        hub.log.line(format_args!("revoking shares of the hub machine: {error}"));
+    }
     tokio::spawn(health::keep(Arc::downgrade(&hub)));
     tokio::spawn(data::expire(Arc::downgrade(&hub)));
     tokio::spawn(updates::look_every(Arc::downgrade(&hub)));

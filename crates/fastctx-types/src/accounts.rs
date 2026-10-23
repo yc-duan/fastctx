@@ -359,6 +359,12 @@ pub struct HubAccounts {
     /// followed a rename yet. None from an older node.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub me: Option<MachineName>,
+    /// The current hub host, absent when unknown or outside this device's view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub_machine: Option<MachineName>,
+    /// Changes to held machines by other accounts, keyed by hub/account/id.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub machine_notices: Vec<crate::sharing::Notice>,
     /// Whether the hub renames machines.
     #[serde(default)]
     pub renames: bool,

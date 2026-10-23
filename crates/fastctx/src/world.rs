@@ -1062,8 +1062,38 @@ fn account_or_owner(
                 member.home.clone().or_else(|| member.logins.iter().find(|login| seen.logins.contains(login)).cloned())
             })
         && seen.logins.contains(&owner)
+        && seen.accounts.iter().any(|account| account.name == owner && !account.locked)
     {
         return Ok(owner);
+    }
+    if seen.logins.len() > 1
+        && let Some(machine) = machine
+    {
+        // Use the node's account-policy result, just as the machine page does.
+        // Resolve former names through Accounts before selecting the rights row.
+        let name = seen
+            .members
+            .iter()
+            .find(|member| member.name == *machine || member.was.contains(machine))
+            .map_or(machine, |member| &member.name);
+        if let Reply::Nodes(nodes) = call(Call::Nodes)?
+            && let Some(hub) = nodes.hubs.iter().find(|hub| hub.hub == seen.hub)
+        {
+            let rights = if seen.me.as_ref() == Some(name) {
+                Some(&hub.here)
+            } else {
+                hub.machines.iter().find(|member| member.name == *name).map(|member| &member.rights)
+            };
+            let managers: Vec<_> = rights
+                .into_iter()
+                .flatten()
+                .filter(|(account, rights)| rights.hands && seen.logins.contains(account))
+                .map(|(account, _)| account)
+                .collect();
+            if let [only] = managers.as_slice() {
+                return Ok((*only).clone());
+            }
+        }
     }
     match seen.logins.as_slice() {
         [only] => Ok(only.clone()),
