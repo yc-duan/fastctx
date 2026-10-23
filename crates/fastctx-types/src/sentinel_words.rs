@@ -84,7 +84,8 @@ pub fn notification(observation: &crate::sentinel_notice::SentinelNotice, now: j
     if !observation.tell.is_empty() {text.push_str(&format!("Your note: {}\n",observation.tell));}
     if !reason.is_empty() {text.push_str(reason);text.push('\n');}
     for seen in evidence {
-        text.push_str(&format!("{} at {}: {}\n",seen.source,seen.at,seen.text.chars().take(2048).collect::<String>()));
+        let at = jiff::Timestamp::from_millisecond(seen.at).map_or_else(|_| seen.at.to_string(), |at| at.to_string());
+        text.push_str(&format!("{} at {at}: {}\n",seen.source,seen.text.chars().take(2048).collect::<String>()));
         if let Some(path)=&seen.full_path {text.push_str(&format!("Full observation on {}: {path}\n",observation.machine));}
     }
     text
