@@ -18,7 +18,7 @@ pub(super) fn serialize<S: Serializer>(
     Words {
         from: Speaker::Resident { address: colleague.clone() },
         text,
-        goal_question: QuestionDelivery { id: id.into(), colleague: colleague.clone(), account: None },
+        goal_question: QuestionDelivery { id: id.into(), colleague: colleague.clone(), account: None, questions: None },
     }
     .serialize(serializer)
 }

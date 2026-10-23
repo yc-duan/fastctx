@@ -201,6 +201,17 @@ export interface MachineFacts {
   attachment_places?: boolean;
   /** It takes a colleague's question without being woken by it. */
   goal_questions?: boolean;
+  /** It reads such a question carried on a colleague's words. */
+  goal_question_words?: boolean;
+  /** It opens a colleague's goal before its first input. */
+  goal_colleagues?: boolean;
+  /** It says which colleague goals a conversation still waits on. */
+  goal_waits?: boolean;
+  /** It takes goal commands from runs elsewhere, and a requester's pause
+   *  and resume of its colleague. */
+  goal_commands?: boolean;
+  /** It takes a colleague's goal report and wakes a closed requester. */
+  goal_reports?: boolean;
   name: MachineName;
   os: string;
   arch: string;

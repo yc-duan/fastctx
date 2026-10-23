@@ -123,6 +123,14 @@ pub(crate) fn keep(node: &Arc<Node>, goal: &Goal) -> Result<(), Failure> {
                     goal_report: Some(Box::new(fastctx_types::goals::ReportDelivery {
                         id: frozen.report.id,
                         completion: (!super::waiting::continues(goal)).then(|| super::waiting::completion(goal)),
+                        shown: Some(fastctx_types::goals::ReportShown {
+                            label: frozen.report.label,
+                            status: frozen.report.status,
+                            started_at: frozen.report.started_at,
+                            ended_at: frozen.report.ended_at,
+                            resume_at: frozen.report.resume_at,
+                            text: frozen.report.text,
+                        }),
                         colleague: frozen.report.colleague,
                         account: frozen.report.account,
                     })),

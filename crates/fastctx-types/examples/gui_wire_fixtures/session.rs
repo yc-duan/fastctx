@@ -383,6 +383,8 @@ pub fn fixtures() -> Fixtures {
                     hub: "w-0123456789abcdef".parse().unwrap(),
                     account: "ada".parse().unwrap(),
                 }),
+                questions: Some(json!([{"question":"Which output format?","header":"Format","multiSelect":false,
+                    "options":[{"label":"Text","description":"Plain lines"},{"label":"Table"}]}])),
             })),
         })),
     }));
@@ -399,6 +401,14 @@ pub fn fixtures() -> Fixtures {
             goal_report: Some(Box::new(fastctx_types::goals::ReportDelivery {
                 id: "goal-result-1".parse().unwrap(), completion: Some("goal-completion-1".parse().unwrap()), colleague: address(),
                 account: fastctx_types::access::HubAccount { hub: "w-0123456789abcdef".parse().unwrap(), account: "ada".parse().unwrap() },
+                shown: Some(fastctx_types::goals::ReportShown {
+                    label: "fit the model".into(),
+                    status: fastctx_types::goals::Status::Complete,
+                    started_at: "2026-10-23T08:00:00Z".parse().unwrap(),
+                    ended_at: "2026-10-23T10:14:00Z".parse().unwrap(),
+                    resume_at: None,
+                    text: "Original report.".into(),
+                }),
             })),
         })),
     }));

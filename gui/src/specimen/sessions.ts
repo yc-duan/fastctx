@@ -675,9 +675,41 @@ function asking(): Specimen {
           ],
         },
       ];
-      // A colleague working toward its own goal asked this conversation too.
-      const question = "迁移脚本里旧的 ingest_files 要不要顺手删掉？\n删掉的话回滚要重新导入。";
-      s.heard("t2", { kind: "world" }, question, 2, { kind: "question", colleague: { machine: "lab", resident: "codex-77a1" }, id: "q-1", text: question });
+      // A colleague working toward its own goal asked this conversation too,
+      // and another handed back what its goal came to.
+      const colleague = { machine: "lab", resident: "codex-77a1" };
+      const account = { hub: "w-0123456789abcdef", account: "ada" };
+      const sidelong = [
+        {
+          question: "迁移脚本里旧的 ingest_files 要不要顺手删掉？",
+          header: "旧表",
+          multiSelect: false,
+          options: [
+            { label: "删掉", description: "回滚要重新导入" },
+            { label: "留着", description: "下个版本再删" },
+          ],
+        },
+      ];
+      s.heard("t2", { kind: "resident", address: colleague }, "Question from codex-77a1 on lab", 2, {
+        kind: "words",
+        from: { kind: "resident", address: colleague },
+        text: "Question from codex-77a1 on lab",
+        goal_question: { id: "q-1", colleague, account, questions: sidelong },
+      });
+      const done = { machine: "gpu", resident: "codex-3f20" };
+      const report = "离线缓存的查询改好了：\n\n- 批次表加了 `replayed_at`，崩溃后从那里接着回放\n- 5000 一批，lab 上整套集成测试过了\n\n没动线上的副本。";
+      s.heard("t2", { kind: "resident", address: done }, report, 2, {
+        kind: "words",
+        from: { kind: "resident", address: done },
+        text: report,
+        goal_report: {
+          id: "r-1",
+          completion: "c-1",
+          colleague: done,
+          account,
+          shown: { label: "离线缓存", status: "complete", started_at: "2026-10-23T08:00:00Z", ended_at: "2026-10-23T09:42:00Z", text: report },
+        },
+      });
       s.say("t2", "message", "我先按 5000 接着做，下面两件你有空再定。", 2);
       s.push({
         event: "finished",

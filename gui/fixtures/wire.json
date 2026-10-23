@@ -4585,7 +4585,23 @@
             "account": {
               "hub": "w-0123456789abcdef",
               "account": "ada"
-            }
+            },
+            "questions": [
+              {
+                "header": "Format",
+                "multiSelect": false,
+                "options": [
+                  {
+                    "description": "Plain lines",
+                    "label": "Text"
+                  },
+                  {
+                    "label": "Table"
+                  }
+                ],
+                "question": "Which output format?"
+              }
+            ]
           }
         }
       },
@@ -4622,6 +4638,13 @@
             "account": {
               "hub": "w-0123456789abcdef",
               "account": "ada"
+            },
+            "shown": {
+              "label": "fit the model",
+              "status": "complete",
+              "started_at": "2026-10-23T08:00:00Z",
+              "ended_at": "2026-10-23T10:14:00Z",
+              "text": "Original report."
             }
           }
         }

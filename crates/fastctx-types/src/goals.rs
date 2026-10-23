@@ -241,6 +241,23 @@ pub struct ReportDelivery {
     pub completion: Option<crate::NoticeId>,
     pub colleague: crate::Address,
     pub account: HubAccount,
+    /// The report as an interface draws it; older senders leave it out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shown: Option<ReportShown>,
+}
+
+/// A colleague's report as an interface draws it, beside the words the
+/// requester's model reads.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReportShown {
+    pub label: String,
+    pub status: Status,
+    pub started_at: Timestamp,
+    pub ended_at: Timestamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_at: Option<Timestamp>,
+    /// The colleague's conclusion, as it wrote it.
+    pub text: String,
 }
 
 /// A nonblocking question attached to ordinary resident words.
@@ -251,6 +268,10 @@ pub struct QuestionDelivery {
     /// Older questions and colleagues without a goal did not retain a goal account.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<HubAccount>,
+    /// The questions as the colleague's host asked them, for an interface
+    /// to draw; older senders leave them out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub questions: Option<serde_json::Value>,
 }
 
 /// A short entry for `w`; the report file retains the complete immutable text.

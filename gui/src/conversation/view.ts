@@ -52,6 +52,7 @@ import { AgentBox } from "./agent-box";
 import { toldSaid, type AgentRun } from "./agents";
 import type { Conversation } from "./conversation";
 import { escape, plain, render } from "./prose";
+import { askedHtml, askedOf } from "./goal-notice";
 import { numbered, parse } from "./diff";
 import { DiffLines, RemoteDiff, diffPaint, encodeRow, keptDiff, memoryDiff } from "./diff-lines";
 import { readRun } from "./deeds/read";
@@ -1402,6 +1403,7 @@ export class ConversationView {
   private noticeOf(entry: HeardEntry): Notice | null {
     const notice = entry.notice;
     if (!notice || entry.from?.kind === "user") return null;
+    if (notice.kind === "words") return notice.goal_report?.shown || notice.goal_question ? notice : null;
     return notice.kind === "answer" || notice.kind === "health" || notice.kind === "question" || notice.kind === "world" ? notice : null;
   }
 
@@ -1456,6 +1458,20 @@ export class ConversationView {
         said = words.colleagueAsks(notice.text.trim().split("\n")[0] ?? "");
         more = "text";
         break;
+      case "words": {
+        // A colleague's goal settled, or it asks on the side.
+        const report = notice.goal_report?.shown;
+        if (report) {
+          ok = report.status !== "blocked";
+          said = words.goalReported(report.label, report.status, words.took(Date.parse(report.ended_at) - Date.parse(report.started_at)));
+          more = report.text.trim() ? "text" : "";
+          break;
+        }
+        const asked = askedOf(notice.goal_question?.questions);
+        said = asked.length ? words.colleagueAsks(asked[0]!.ask) : words.colleagueAsked;
+        more = asked.length ? "text" : "";
+        break;
+      }
       case "world": {
         const fact = notice.fact;
         said =
@@ -1476,7 +1492,9 @@ export class ConversationView {
       default:
         said = "";
     }
-    const mark = notice.kind === "question" ? glyph("ask", 14) : ok ? glyph("check", 14) : glyph("cross", 14);
+    const asks = notice.kind === "question" || (notice.kind === "words" && !notice.goal_report);
+    const paused = notice.kind === "words" && notice.goal_report?.shown?.status === "paused";
+    const mark = asks ? glyph("ask", 14) : paused ? glyph("pause", 14) : ok ? glyph("check", 14) : glyph("cross", 14);
     const line = `<span class="notice-mark${ok ? "" : " wrong"}">${mark}</span><span class="notice-said">${escape(said)}</span>`;
     if (!more) return `<div class="notice-line${ok ? "" : " failed"}">${line}</div>`;
     const open = this.openRows.has(entry.key);
@@ -1494,6 +1512,10 @@ export class ConversationView {
       into.innerHTML = `<div class="told-plain">${plain(entry.text)}</div>`;
     } else if (notice.kind === "question") {
       into.innerHTML = `<div class="told-plain">${plain(notice.text)}</div>`;
+    } else if (notice.kind === "words" && notice.goal_report?.shown) {
+      into.innerHTML = `<div class="prose notice-answer">${render(notice.goal_report.shown.text)}</div>`;
+    } else if (notice.kind === "words" && notice.goal_question) {
+      into.innerHTML = askedHtml(askedOf(notice.goal_question.questions));
     }
   }
 

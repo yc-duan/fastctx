@@ -264,6 +264,10 @@ export interface Words {
   answerFailed(label: string): string;
   /** A colleague asked the conversation that asked it something. */
   colleagueAsks(question: string): string;
+  /** A colleague asked, in a shape older nodes do not tell. */
+  colleagueAsked: string;
+  /** A colleague's goal settled: done after how long, blocked, or paused. */
+  goalReported(label: string, status: "active" | "complete" | "blocked" | "paused", took: string): string;
   /** The watch on the session ended: the node ended it, or the connection
    *  to it broke. */
   watchEnded(why: string | null): string;
@@ -609,6 +613,9 @@ export const zh: Words = {
   answered: (label, took) => (took ? `${label} 交回　${took}` : `${label} 交回`),
   answerFailed: (label) => `${label} 本轮失败`,
   colleagueAsks: (question) => `同事问：${question}`,
+  colleagueAsked: "同事有一个问题",
+  goalReported: (label, status, took) =>
+    status === "blocked" ? `${label} 受阻` : status === "paused" ? `${label} 暂停了` : `${label} 完成　${took}`,
   watchEnded: () => "已停止同步",
   watchRefused: "你的账号看不了这段对话",
   watchInterrupted: () => "连接中断，正在重连…",
@@ -944,6 +951,9 @@ export const en: Words = {
   answered: (label, took) => (took ? `${label} handed back after ${took}` : `${label} handed back`),
   answerFailed: (label) => `${label}: turn failed`,
   colleagueAsks: (question) => `A colleague asks: ${question}`,
+  colleagueAsked: "A colleague asks a question",
+  goalReported: (label, status, took) =>
+    status === "blocked" ? `${label} is blocked` : status === "paused" ? `${label} paused` : `${label} done after ${took}`,
   watchEnded: () => "Sync stopped",
   watchRefused: "Your account can't see this conversation",
   watchInterrupted: () => "Disconnected, reconnecting…",

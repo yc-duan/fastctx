@@ -59,6 +59,11 @@ pub(crate) fn route(node: &Arc<Node>, id: &ResidentId, item: &Item, at: Timestam
     let colleague = Address { machine: node.machine(), resident: id.clone() };
     let delivery = crate::speech::fixed_id("goal-question", &[&colleague.key(), &item.id, &requester.key()]);
     let text = super::words::question(&colleague, item);
+    let questions = item
+        .detail
+        .as_ref()
+        .and_then(|detail| detail.pointer("/fastctx_goal_question/questions").or_else(|| detail.get("questions")))
+        .cloned();
     let owing = Owing {
         to: requester,
         delivery: Delivery {
@@ -72,6 +77,7 @@ pub(crate) fn route(node: &Arc<Node>, id: &ResidentId, item: &Item, at: Timestam
                     colleague,
                     id: delivery.to_string(),
                     account,
+                    questions,
                 })),
             },
         },
