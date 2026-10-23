@@ -33,7 +33,7 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
     let device = view.member(from).is_some_and(|member| !member.is_machine());
     let users_own = matches!(
         call,
-        RemoteCall::SentinelSettings { .. } | RemoteCall::Mcp { .. } | RemoteCall::Talk { .. }
+        RemoteCall::SentinelSettings { .. } | RemoteCall::SentinelControl { .. } | RemoteCall::Mcp { .. } | RemoteCall::Talk { .. }
             | RemoteCall::Composer { .. }
             | RemoteCall::Open { .. }
             | RemoteCall::Stop { .. }

@@ -32,3 +32,56 @@ pub trait Credentials: Send + Sync {
     fn model_key<'a>(&'a self, definition: &'a Definition) -> FutureResult<'a, String>;
     fn search_key<'a>(&'a self, definition: &'a Definition) -> FutureResult<'a, String>;
 }
+
+/// A node's resident worker. It verifies the authoritative account record and
+/// assignment before beginning, and verifies scope against local state on reads.
+pub trait ResidentHost: Send + Sync {
+    fn call<'a>(
+        &'a self,
+        scope: &'a fastctx_types::access::HubAccount,
+        request: &'a fastctx_types::sentinel_control::HomeRequest,
+    ) -> FutureResult<'a, fastctx_types::sentinel_control::HomeReply>;
+}
+
+/// Durable timer adapter supplied by the node's scheduler. Reusing an ID replaces
+/// its time/action. A firing is delivered at least once with its original due time.
+pub trait Timers: Send + Sync {
+    fn set<'a>(&'a self, timer: &'a Timer) -> FutureResult<'a, ()>;
+    fn cancel<'a>(&'a self, id: &'a str) -> FutureResult<'a, ()>;
+    fn list<'a>(&'a self, owner: &'a str) -> FutureResult<'a, Vec<Timer>>;
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Timer {
+    pub id: String,
+    pub owner: String,
+    pub at: i64,
+    pub action: TimerAction,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TimerAction {
+    WakeSentinel {
+        scope: fastctx_types::access::HubAccount,
+        id: fastctx_types::SentinelId,
+        generation: u64,
+        wake: ScheduledWake,
+    },
+    RunReflex {
+        scope: fastctx_types::access::HubAccount,
+        id: fastctx_types::SentinelId,
+        generation: u64,
+        reflex: String,
+    },
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ScheduledWake {
+    OwnerAlarm { index: usize },
+    SentinelTime { reflex: String },
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Fired {
+    pub timer: Timer,
+    pub scheduled_at: i64,
+    pub late_ms: u64,
+}

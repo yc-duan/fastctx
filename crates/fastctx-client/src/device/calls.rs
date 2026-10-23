@@ -112,6 +112,28 @@ impl Device {
                 let view = session.link.profile_subagents(&account, operation).await.map_err(failed)?;
                 return Ok((Reply::ProfileSubagents(Box::new(view)), here()));
             }
+            Call::Sentinel { hub, account, request } => {
+                if matches!(request, fastctx_types::sentinel_control::Request::Create { .. }) {return Err(failed("a device cannot create a conversation's sentinel"));}
+                let session = self.on_hub(hub.as_ref())?;
+                let account = profile_account(&session, account)?;
+                let view = session.link.view();
+                let candidates: Vec<_> = view.machines().filter(|m| m.online && view.may_act_for(&account, &m.name) && view.rights(&account, &m.name).any()).map(|m|m.name.clone()).collect();
+                let mut unavailable = Vec::new();
+                for machine in candidates {
+                    match session.link.call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts).await {
+                        Ok(Ok(RemoteReply::Facts(facts))) if facts.sentinels => {},
+                        Ok(Ok(_)) => { unavailable.push(format!("upgrade {machine} to use sentinels")); continue; },
+                        Ok(Err(error)) => { unavailable.push(error.to_string()); continue; },
+                        Err(error) => { unavailable.push(error.to_string()); continue; },
+                    }
+                    let call = RemoteCall::SentinelControl { request };
+                    return match session.link.call(&machine, &account, call.purpose(), call).await.map_err(failed)?.map_err(failed)? {
+                        RemoteReply::SentinelControl(reply) => Ok((Reply::Sentinel(reply), machine)),
+                        _ => Err(failed("the machine did not answer sentinel control")),
+                    };
+                }
+                return Err(failed(format!("no online sentinel-capable machine answered: {}", unavailable.join("; "))));
+            }
             Call::SentinelSettings { hub, account, change } => {
                 let session = self.on_hub(hub.as_ref())?;
                 let account = profile_account(&session, account)?;

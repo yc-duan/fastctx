@@ -61,11 +61,7 @@ pub(crate) async fn settings(
     Ok(SettingsReply::View { view: SettingsView { version, settings, home_status: status, keys, key_error } })
 }
 
-pub(crate) async fn home_status(
-    link: &Arc<Link>,
-    account: &AccountName,
-    home: Option<&MachineName>,
-) -> HomeStatus {
+pub(crate) async fn home_status(link: &Arc<Link>, account: &AccountName, home: Option<&MachineName>) -> HomeStatus {
     let Some(home) = home else { return HomeStatus::Unset };
     let view = match crate::authorization::current_view(link) {
         Ok(view) => view,

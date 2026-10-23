@@ -23,6 +23,8 @@ use crate::{AgentName, ResidentId, TownName};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum RemoteCall {
+    SentinelControl { request: crate::sentinel_control::Request },
+    SentinelHome { request: crate::sentinel_control::HomeRequest },
     SentinelSettings { change: Option<crate::sentinel_settings::WriteSettings> },
     /// A running job returns its resident's project selection to its home.
     /// This call is relayed and authorized by a hub supporting project entry.
@@ -496,7 +498,9 @@ impl RemoteCall {
     pub fn purpose(&self) -> Purpose {
         match self {
             Self::EnterProject { .. } => Purpose::Echo,
-            Self::SentinelSettings { .. } => Purpose::Look,
+            Self::SentinelSettings { .. } | Self::SentinelControl { .. } => Purpose::Look,
+            Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Inspect { .. } } => Purpose::Look,
+            Self::SentinelHome { .. } => Purpose::Hands,
             RemoteCall::PageAction { action: crate::pages::PageInvocation::Say { .. }, .. } => Purpose::Words,
             RemoteCall::ReadAttachment { attachment: crate::attachments::AttachmentSource::Upload(file), .. }
                 if file.owner != *file.conversation() =>
@@ -578,6 +582,8 @@ impl RemoteCall {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum RemoteReply {
+    SentinelControl(Box<crate::sentinel_control::Reply>),
+    SentinelHome(Box<crate::sentinel_control::HomeReply>),
     SentinelSettings(Box<crate::sentinel_settings::SettingsReply>),
     Entered {
         town: TownName,

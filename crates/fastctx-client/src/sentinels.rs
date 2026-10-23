@@ -17,3 +17,11 @@ impl World {
         }
     }
 }
+
+impl World {
+    pub async fn sentinel(&self,hub:Option<HubName>,account:Option<AccountName>,request:fastctx_types::sentinel_control::Request)->Result<fastctx_types::sentinel_control::Reply,Error> {
+        match self.ask(Call::Sentinel{hub,account,request}).await? {
+            Reply::Sentinel(reply)=>Ok(*reply),_=>Err(Error::Unexpected("sentinel reply".into())),
+        }
+    }
+}

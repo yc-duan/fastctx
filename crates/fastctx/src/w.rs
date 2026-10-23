@@ -3,6 +3,7 @@
 mod detail;
 mod history;
 mod render;
+mod sentinels;
 
 use clap::Args;
 use fastctx_client::town::{MachineState, Scope, address, busy};
@@ -30,7 +31,7 @@ pub struct WArgs {
     names: Vec<String>,
 }
 
-pub fn run(args: WArgs) -> anyhow::Result<()> {
+pub fn run(mut args: WArgs) -> anyhow::Result<()> {
     let now = Timestamp::now();
     let since = args.since.as_deref().map(|text| history::parse(text, now)).transpose()?;
     let world = World::here()?;
@@ -40,11 +41,26 @@ pub fn run(args: WArgs) -> anyhow::Result<()> {
         Err(ConnectError::NoNode { .. }) => None,
         Err(error) => return Err(error.into()),
     };
-    let you = std::env::var("FASTCTX_RESIDENT").ok().map(|value| value.parse::<Address>()).transpose()?;
     let is_id = |name: &str| {
         let id = name.split_once('@').map_or(name, |(id, _)| id);
         ResidentId::try_from(id).is_ok() || JobId::try_from(id).is_ok()
     };
+    let sentinel_names: Vec<_> = args.names.iter().filter(|name| sentinels::named(name)).cloned().collect();
+    let overview = args.names.is_empty() || (args.names.len() == 1 && !is_id(&args.names[0]));
+    if !sentinel_names.is_empty() && let Some(client) = &client {
+        anyhow::ensure!(client.sentinels, "upgrade {} to inspect sentinels", client.machine);
+    }
+    let (sentinel_rows, sentinel_errors) = if (overview || !sentinel_names.is_empty()) && let Some(client) = &mut client {
+        sentinels::list(&runtime, client)?
+    } else { (Vec::new(), Vec::new()) };
+    if !sentinel_names.is_empty() {
+        anyhow::ensure!(client.is_some(), "the node is not running; sentinel activity cannot be verified");
+        anyhow::ensure!(args.since.is_none() && !args.full, "--since and --full do not apply to sentinel ids");
+        crate::output::print(&sentinels::detail(&sentinel_names, &sentinel_rows, &sentinel_errors)?)?;
+        args.names.retain(|name| !sentinels::named(name));
+        if args.names.is_empty() { return Ok(()); }
+    }
+    let you = std::env::var("FASTCTX_RESIDENT").ok().map(|value| value.parse::<Address>()).transpose()?;
     let text = if args.names.is_empty() || (args.names.len() == 1 && !is_id(&args.names[0])) {
         let town = args
             .names
@@ -65,7 +81,8 @@ pub fn run(args: WArgs) -> anyhow::Result<()> {
         anyhow::ensure!(since.is_none() || who.history.is_some(), "the node did not return the requested history");
         let you = who.you.as_ref().or(you.as_ref());
         let view = TownView::new(who.clone(), you);
-        let mut text = render::overview(&view, you, args.all, now, client.is_none());
+        let mut text = render::overview(&view, you, args.all, now, client.is_none(), &sentinel_rows);
+        text.push_str(&sentinels::unavailable(&sentinel_errors));
         if let Some(history) = &who.history {
             text.push_str(&history::render(history, args.since.is_none(), args.full, now, &view));
         }

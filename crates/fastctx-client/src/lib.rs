@@ -262,7 +262,7 @@ impl Client {
 
     /// Sends `call` and waits for its answer.
     pub async fn call(&mut self, call: Call) -> Result<Reply, CallError> {
-        if !self.sentinels && matches!(call, Call::SentinelSettings { .. }) {
+        if !self.sentinels && matches!(call, Call::SentinelSettings { .. } | Call::Sentinel { .. }) {
             return Err(CallError::Failed(Failure::not_run(format!("upgrade {} to use sentinels", self.machine))));
         }
         if !self.profiles

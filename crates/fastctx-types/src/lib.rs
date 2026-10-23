@@ -52,6 +52,8 @@ pub mod run;
 pub mod run_facts;
 pub mod sentinel;
 pub mod sentinel_settings;
+pub mod sentinel_control;
+pub mod sentinel_words;
 pub mod session;
 pub mod since;
 pub mod stats;

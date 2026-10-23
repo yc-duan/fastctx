@@ -27,7 +27,8 @@ impl Model for OpenAi {
                 }
             }
             let tools: Vec<_> = request.tools.iter().map(|t| json!({"type":"function","function":{"name":t.name,"description":t.description,"parameters":t.parameters}})).collect();
-            let body = json!({"model":self.settings.model,"messages":messages,"tools":tools,"stream":false,"max_completion_tokens":request.max_output});
+            let mut body = json!({"model":self.settings.model,"messages":messages,"tools":tools,"stream":false});
+            body[self.settings.output_limit.parameter()] = json!(request.max_output);
             let auth = format!("Bearer {}", self.key);
             let value = http::post(&self.settings.endpoint, &[("authorization", &auth)], body).await?;
             let usage_value = &value["usage"];

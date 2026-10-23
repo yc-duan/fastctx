@@ -46,9 +46,9 @@ pub async fn wake(
         store.commit(&state)?;
         return Ok(state);
     }
-    let recent: Vec<_> = state.recent.iter().map(|o| json!({"id":o.id,"at":o.at,"source":bounded(&o.source,256),"text":bounded(&o.text,1024),"full_path":o.full_path})).collect();
+    let recent: Vec<_> = state.recent.iter().map(|o| json!({"id":o.id,"at":o.at,"source":bounded(&o.source,256),"text":bounded(&o.text,1024),"full_path":if state.definition.kind==Kind::Web { None } else { o.full_path.as_ref() }})).collect();
     let reflexes: Vec<_> = state.reflexes.iter().map(|r| json!({"id":r.id,"at":r.at,"every_ms":r.every_ms})).collect();
-    let input = json!({"condition":state.definition.condition,"plan_claim":state.plan,"notes_claim":state.notes,"recent":recent,
+    let input = json!({"condition":state.definition.condition,"kind":state.definition.kind,"at":state.definition.at,"plan_claim":state.plan,"notes_claim":state.notes,"recent":recent,
         "reflexes":reflexes,"wake":reason,"now":now}).to_string();
     let goal = state.definition.kind == Kind::Goal;
     if goal != matches!(reason, WakeReason::Goal { .. }) {
@@ -142,9 +142,14 @@ impl Application for Sentinel<'_> {
             ],
         };
         if self.state.definition.kind != Kind::Goal {
+            let probe = if self.state.definition.kind == Kind::Web {
+                json!({"type":"object","properties":{"kind":{"const":"web"},"url":string()},"required":["kind","url"],"additionalProperties":false})
+            } else {
+                json!({"type":"object","properties":{"kind":{"const":"look"},"machine":string(),"command":string()},"required":["kind","machine","command"],"additionalProperties":false})
+            };
             tools.push(tool("install_reflex",words::REFLEX, json!({
                 "id":string(),"at":{"type":"integer"},"every_ms":{"type":["integer","null"]},
-                "probe":{"oneOf":[{"type":"null"},{"type":"object","properties":{"kind":{"enum":["look","web"]},"machine":string(),"command":string(),"url":string()},"required":["kind"]}]},
+                "probe":{"oneOf":[{"type":"null"},probe]},
                 "predicate":{"oneOf":[{"type":"null"},{"type":"object","properties":{"kind":{"enum":["contains","number","changed","exit_nonzero"]},"text":string(),"prefix":string(),"comparison":{"enum":["less","less_equal","greater","greater_equal","equal"]},"value":{"type":"number"}},"required":["kind"]}]}
             }), &["id","at"]));
             tools.push(tool("report",words::REPORT,json!({"status":{"enum":["watching","satisfied","unable"]},"reason":string(),"obstacle":string(),"evidence":{"type":"array","items":string()},"plan":string(),"notes":string()}), &["status"]));
@@ -232,7 +237,10 @@ impl Sentinel<'_> {
             exit_code: result.exit_code,
             full_path: Some(full_path),
         };
-        let output = serde_json::to_value(&observation).map_err(|e| e.to_string())?;
+        let mut output = serde_json::to_value(&observation).map_err(|e| e.to_string())?;
+        if self.state.definition.kind == Kind::Web {
+            output.as_object_mut().expect("observation object").remove("full_path");
+        }
         self.observations.push(observation);
         Ok(ToolOutput::value(output))
     }

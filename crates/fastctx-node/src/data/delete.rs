@@ -283,6 +283,7 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
             }
         }
     }
+    crate::sentinels::deletion::note_deleted(node, id).map_err(Stop::Failed)?;
     node.residents
         .forget(&node.world, id, measured.sessions.clone())
         .map_err(|error| Stop::Failed(format!("recording its deletion: {error}")))?;

@@ -35,6 +35,7 @@ mod proxy;
 mod renew;
 mod secret;
 mod self_update;
+mod sense;
 mod server_install;
 mod service;
 #[cfg(windows)]
@@ -74,6 +75,8 @@ enum Command {
     Mcp(mcp::McpArgs),
     /// Read or change the account's instructions and host settings.
     Profile(profile::ProfileArgs),
+    /// Leave a sentinel to wait for something.
+    Sense(sense::SenseArgs),
     #[command(hide = true)]
     McpRelay { name: String },
     #[command(hide = true)]
@@ -486,6 +489,7 @@ fn main() -> ExitCode {
         Command::ServiceCheck { name } => fastctx_install::service::check_guardian(&name),
         Command::Mcp(args) => mcp::run(args),
         Command::Profile(args) => profile::run(args),
+        Command::Sense(args) => sense::run(args),
         Command::McpRelay { name } => mcp_relay::run(name),
         Command::McpChild { args } => mcp_child::run(args),
         Command::Serve { writer: _, writes } => serve(writes == "off"),

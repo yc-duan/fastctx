@@ -1,5 +1,6 @@
 //! Sentinels use the internal agent runtime without depending on a node.
 pub mod ports;
+pub mod lifecycle;
 pub mod reflex;
 pub mod records;
 pub mod settings;

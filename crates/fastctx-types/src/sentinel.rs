@@ -55,7 +55,7 @@ pub struct Reflex {
     pub predicate: Option<Predicate>,
     pub last_fingerprint: Option<String>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Observation {
     pub id: String,
     pub at: i64,

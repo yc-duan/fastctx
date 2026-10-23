@@ -1010,6 +1010,16 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(|map| RemoteReply::Entered { town, map: Box::new(map) })
                 }
+                RemoteCall::SentinelControl { request } => {
+                    if matches!(request, fastctx_types::sentinel_control::Request::Create { .. }) {
+                        return Err(Failure::refused("a conversation registers a sentinel through its own command"));
+                    }
+                    crate::sentinels::control(&node, &crate::town::caller::Caller::User, &link, &caller.account, request).await.map(|reply| RemoteReply::SentinelControl(Box::new(reply)))
+                }
+                RemoteCall::SentinelHome { request } => {
+                    let scope = fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
+                    crate::sentinels::home_call(&node, &scope, &request).await.map(|reply| RemoteReply::SentinelHome(Box::new(reply))).map_err(Failure::new)
+                }
                 RemoteCall::SentinelSettings { change } => crate::sentinels::settings(&node, &link, &caller.account, change).await.map(|reply| RemoteReply::SentinelSettings(Box::new(reply))),
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&node))),
                 RemoteCall::AttachmentReferences { conversation, attachments } => {

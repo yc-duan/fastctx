@@ -102,6 +102,10 @@ impl RemoteCall {
     /// What this call is (`Contract`).
     pub fn contract(&self) -> Contract {
         match self {
+            Self::SentinelControl { request: crate::sentinel_control::Request::List { .. } | crate::sentinel_control::Request::Help }
+            | Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Inspect { .. } } => Contract { within: Some(Duration::from_secs(90)), ..Contract::QUERY },
+            Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Withdraw { .. } } => Contract::CONTROL,
+            Self::SentinelControl { .. } | Self::SentinelHome { .. } => Contract::START,
             Self::SentinelSettings { change: None } => Contract { within: Some(Duration::from_secs(180)), ..Contract::QUERY },
             Self::SentinelSettings { change: Some(_) } => Contract::CHANGE,
             Self::Mcp {
@@ -253,6 +257,8 @@ impl Call {
     /// (`Leaving`).
     pub fn on_leaving(&self) -> Leaving {
         match self {
+            Self::Sentinel { request: crate::sentinel_control::Request::List { .. } | crate::sentinel_control::Request::Help, .. } => Leaving::Stop,
+            Self::Sentinel { .. } => Leaving::Finish,
             Self::SentinelSettings { change: None, .. } => Leaving::Stop,
             Self::SentinelSettings { change: Some(_), .. } => Leaving::Finish,
             Self::AttachmentPlaces { .. }

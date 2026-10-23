@@ -1253,6 +1253,14 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
             crate::copy::copy(node, &acting, from, to).await.map(Reply::Copied)
         }
+        Call::Sentinel { hub, account, request } => {
+            let caller = caller::of(node, peer)?;
+            if hub.is_none() && account.is_none() && let fastctx_types::sentinel_control::Request::List { owner } = request {
+                return crate::sentinels::list_all(node, &caller, owner).await.map(|reply| Reply::Sentinel(Box::new(reply)));
+            }
+            let (link, account) = crate::sentinels::scope(node, &caller, hub.as_ref(), account.as_ref())?;
+            crate::sentinels::control(node, &caller, &link, &account, request).await.map(|reply| Reply::Sentinel(Box::new(reply)))
+        }
         Call::SentinelSettings { hub, account, change } => {
             if change.is_some() { users_voice(node, peer)?; }
             let (link, account) = crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;

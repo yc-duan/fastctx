@@ -38,6 +38,18 @@ pub(crate) fn prepare(world: &WorldDir, log: &Log) {
 /// Each worker finishes a pass before waiting. A successful deletion scan
 /// does not retire its worker: a later request can leave a new intent.
 pub(crate) fn start(node: &Arc<Node>, jobs_reconciled: bool) {
+    let sentinels = node.clone();
+    tokio::spawn(async move {
+        let mut previous = Vec::new();
+        loop {
+            let errors = crate::sentinels::deletion::recover(&sentinels).await;
+            for error in &errors {
+                if !previous.contains(error) { sentinels.log.line(error); }
+            }
+            previous = errors;
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
+    });
     let deleting = node.clone();
     tokio::spawn(async move {
         loop {

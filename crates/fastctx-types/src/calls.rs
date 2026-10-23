@@ -20,6 +20,11 @@ use crate::{Address, AgentName, EntryId, JobId, JournalName, MachineName, Notice
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum Call {
+    Sentinel {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        request: crate::sentinel_control::Request,
+    },
     SentinelSettings {
         hub: Option<crate::HubName>,
         account: Option<crate::AccountName>,
@@ -721,6 +726,7 @@ pub enum Call {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum Reply {
+    Sentinel(Box<crate::sentinel_control::Reply>),
     SentinelSettings(Box<crate::sentinel_settings::SettingsReply>),
     /// The HTTP proxy chosen in Fastctx, if one is (`Call::HubProxy`).
     HubProxy {

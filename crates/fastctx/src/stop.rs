@@ -18,6 +18,12 @@ pub struct StopArgs {
     /// names the machine it runs on, when jobs on several have this id.
     #[arg(value_name = "JOB", required = true)]
     jobs: Vec<String>,
+    /// The account whose sentinels are being withdrawn.
+    #[arg(long = "as")]
+    account: Option<fastctx_types::AccountName>,
+    /// The network containing those sentinels.
+    #[arg(long)]
+    hub: Option<fastctx_types::HubName>,
     /// The machine, written the older way.
     #[arg(long, hide = true)]
     machine: Option<String>,
@@ -32,6 +38,24 @@ pub fn run(args: StopArgs) -> anyhow::Result<ExitCode> {
         runtime.block_on(Client::connect(&world, command_peer()?)).context("reaching this machine's node")?;
     let mut failed = false;
     for named in &args.jobs {
+        if named.starts_with("s-") {
+            let stopped = match crate::sense::stop(
+                &runtime,
+                &mut client,
+                named,
+                args.machine.as_deref(),
+                args.hub.as_ref(),
+                args.account.as_ref(),
+            ) {
+                Ok(stopped) => stopped,
+                Err(error) => {
+                    eprintln!("fastctx stop: {named}: {error:#}");
+                    false
+                }
+            };
+            failed |= !stopped;
+            continue;
+        }
         let stopped = match target(named, args.machine.as_deref()) {
             Ok((job, machine)) => stop(&runtime, &mut client, job, machine)?,
             Err(error) => {
