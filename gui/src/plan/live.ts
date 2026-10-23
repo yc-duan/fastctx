@@ -1,12 +1,12 @@
-// The world's own ids in a plan come alive: a colleague, a sentinel, a job
-// or a journal entry the agent wrote by name is drawn as a small chip that
+// The world's own ids in a plan come alive: a colleague or conversation, a
+// sentinel or a job the agent wrote by name is drawn as a small chip that
 // says how it stands now, read from the world rather than from the agent's
-// words, which would go stale.
+// words, which would go stale; pressed, it opens what it names.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 
-export type LiveKind = "resident" | "sense" | "job" | "entry";
+export type LiveKind = "resident" | "sense" | "job";
 
 /** How a thing in the world stands now, in the interface's words. */
 export interface LiveFact {
@@ -23,7 +23,7 @@ export interface LiveFact {
 
 export type LiveFacts = (id: string) => LiveFact | null;
 
-const pattern = /\b(?:(?:codex|claude)-[0-9a-z]{4}|[js]-[0-9a-z]{6}|\d{8}T\d{6}Z-[A-Za-z0-9][\w.-]*)\b/g;
+const pattern = /\b(?:(?:codex|claude)-[0-9a-z]{4}|[js]-[0-9a-z]{6})\b/g;
 
 /** Replaces each id in the text under `root` with its chip. Code keeps its
  *  ids as written. */

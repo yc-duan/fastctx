@@ -50,6 +50,8 @@ export interface PlanSeams {
   words: BlockWords;
   /** The user picked an option of a decision on the plan. */
   answer: (question: string, option: string) => void;
+  /** Opens what one of the world's ids names. */
+  open?: ((id: string) => void) | undefined;
 }
 
 /** The plan's page, not yet laid out: call `drawPlan` once it is placed,
@@ -76,6 +78,15 @@ export function planElement(source: string, seams: PlanSeams): HTMLElement {
     slot.replaceWith(picture);
   }
   liven(root, seams.facts);
+  // A chip opens what it names, by the pointer or by Enter.
+  const open = (event: Event) => {
+    const id = (event.target as HTMLElement).closest<HTMLElement>(".pb-chip[data-id]")?.dataset.id;
+    if (id && seams.open) seams.open(id);
+  };
+  root.addEventListener("click", open);
+  root.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") open(event);
+  });
   return root;
 }
 

@@ -112,7 +112,7 @@ import "./app/folder-picker.css";
 import "./app/fingers.css";
 import { Palette, type PaletteItem } from "./app/palette";
 import { ProjectForm } from "./app/project-form";
-import { link, placeOf, talkLink, type Place } from "./app/places";
+import { fileLink, link, placeOf, talkLink, type Place } from "./app/places";
 import { MachinePage } from "./app/machine-page";
 import { enMachinePage, zhMachinePage } from "./app/machine-page-words";
 import { enManage, zhManage } from "./app/machine-manage-words";
@@ -1758,6 +1758,8 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
       store,
       address,
       bare: inPanel,
+      took: (ms) => words.took(ms),
+      openId: (id) => openWorldId(id),
       open: (colleague) => {
         const page = liveTalk(colleague, true);
         page.resume();
@@ -2003,6 +2005,19 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
       reading.close();
     },
   };
+}
+
+/** Opens what one of the world's ids names: a conversation, or a job's
+ *  output on its machine. */
+function openWorldId(id: string): void {
+  const world = store.world.peek();
+  const resident = residentsOf(world).find((r) => r.about.id === id);
+  if (resident) {
+    location.hash = talkLink(addressOf(resident));
+    return;
+  }
+  const job = jobsOf(world).find((one) => one.job === id);
+  if (job) location.hash = fileLink(job.machine, job.output, true);
 }
 
 /** The head of a colleague's page opened in the panel: the panel's own

@@ -3,7 +3,9 @@
 // it; its plan and goal come from the conversation's own records.
 
 import { effect } from "../app/signals";
-import { residentsOf } from "../app/store";
+import { jobsOf, residentsOf } from "../app/store";
+import { titleOf } from "../world/names";
+import type { LiveFact } from "../plan/live";
 import type { Store } from "../app/store";
 import { modelName } from "../conversation/view";
 import type { PlanShown, PageSeams } from "../plan/panel";
@@ -42,6 +44,26 @@ function colleagueOf(r: ResidentNow, now: number): CollabNode {
   };
 }
 
+/** How a conversation or a job a plan names stands now. */
+export function planFact(world: WorldNow | null, id: string, words: PlanWords, took: (ms: number) => string, now: number): LiveFact | null {
+  const resident = residentsOf(world).find((r) => r.about.id === id);
+  if (resident) {
+    const origin = resident.about.origin.kind === "colleague" ? resident.about.origin.label : null;
+    const busy = resident.now?.activity === "busy";
+    const since = Date.parse(resident.now?.since ?? resident.about.born_at);
+    return {
+      kind: "resident",
+      agent: /codex/i.test(resident.about.host.agent) ? "codex" : "claude",
+      label: origin ?? titleOf(resident) ?? id,
+      state: resident.now?.trouble ? words.live.failed : busy ? words.live.working(took(now - since)) : words.live.resting,
+      lit: busy,
+    };
+  }
+  const job = jobsOf(world).find((one) => one.job === id);
+  if (job) return { kind: "job", label: job.command, state: words.live.running(took(now - Date.parse(job.started_at))), lit: true };
+  return null;
+}
+
 export interface LiveSide {
   words: SideWords;
   planWords: PlanWords;
@@ -51,6 +73,10 @@ export interface LiveSide {
   bare?: boolean;
   /** A colleague's conversation, to talk with it in the panel. */
   open(address: Address): { element: HTMLElement; leave(): void };
+  /** A span of time, short. */
+  took(ms: number): string;
+  /** Opens what one of the world's ids names, from the plan. */
+  openId(id: string): void;
 }
 
 /** What the World does not tell yet: the plan and the goal arrive with the
@@ -58,7 +84,12 @@ export interface LiveSide {
 const notYet = () => Promise.reject(new Error("this version of the World keeps no goal"));
 
 export function liveSide(options: LiveSide): SideSeams {
-  const plan: PageSeams = { facts: () => null, save: () => {}, answer: () => {} };
+  const plan: PageSeams = {
+    facts: (id) => planFact(options.store.world.peek(), id, options.planWords, options.took, Date.now()),
+    open: (id) => options.openId(id),
+    save: () => {},
+    answer: () => {},
+  };
   return {
     words: options.words,
     ...(options.bare ? { bare: true } : {}),
