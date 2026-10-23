@@ -1628,7 +1628,8 @@ pub(crate) fn settings_json(id: &ResidentId) -> String {
             "FASTCTX_CONVERSATION": id.as_str(),
         },
         "permissions": {
-            "deny": ["Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob"],
+            "deny": ["Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob",
+                "TodoWrite", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "ProposeGoal"],
         },
         "worktree": { "bgIsolation": "none" },
     });

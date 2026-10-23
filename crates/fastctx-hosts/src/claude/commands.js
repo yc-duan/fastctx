@@ -20,6 +20,7 @@ async function controlCatalog($, state) {
   for (const command of commands) counts.set(command.name, (counts.get(command.name) ?? 0) + 1)
   const offered = []
   for (const command of commands) {
+    if (command.name === 'goal') continue
     if (assisting && (command.source !== 'builtin' || !assistedCommands.has(command.name))) continue
     // No public path executor exists. Ambiguous names cannot be advertised
     // with a fabricated identity that $.command.run cannot honor.
