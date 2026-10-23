@@ -121,6 +121,7 @@ fn reached<'a>(node: &Node, call: &'a Call) -> Option<&'a ResidentId> {
         Call::Talk { to: resident, machine, .. }
         | Call::Message { to: resident, machine, .. }
         | Call::Watch { resident, machine, .. }
+        | Call::Goal { resident, machine, .. }
         | Call::Composer { resident, machine, .. }
         | Call::Stop { resident, machine }
         | Call::Control { resident, machine, .. }

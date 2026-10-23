@@ -30,6 +30,7 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
         connection
             .send(
                 &serde_json::to_vec(&Welcome::Accepted {
+                    goal_runtime: false,
                     profiles: false,
                     machine: "fixture".parse().unwrap(),
                     version: env!("CARGO_PKG_VERSION").into(),

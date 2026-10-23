@@ -100,6 +100,7 @@ mod resident_storage;
 mod residents;
 mod retention;
 mod run_facts;
+mod goals;
 mod server;
 mod server_invitation;
 mod session_live;
@@ -160,6 +161,7 @@ pub(crate) struct Node {
     jobs: jobs::Jobs,
     timers: std::sync::OnceLock<Arc<timers::store::Store>>,
     turn_activity: turn_evidence::Activities,
+    goals: goals::Services,
     sentinel_waits: Arc<dyn turn_evidence::waiting::SentinelWaits>,
     mcp_keeping: std::sync::Mutex<()>,
     job_watches: job_watch::Watches,
@@ -550,6 +552,7 @@ pub async fn run_prepared(
         jobs: jobs::Jobs::new(),
         timers: Default::default(),
         turn_activity: Default::default(),
+        goals: Default::default(),
         sentinel_waits: Arc::new(turn_evidence::waiting::NoSentinels),
         mcp_keeping: std::sync::Mutex::new(()),
         job_watches: Default::default(),
@@ -655,6 +658,7 @@ pub async fn run_prepared(
     composer::resume(&node);
     recovery::start(&node, jobs_reconciled);
     timers::start(&node);
+    goals::start(&node);
     on_delivery::resume(&node);
     retention::start(&node).context("starting command artifact retention")?;
     profile::session::start(&node);

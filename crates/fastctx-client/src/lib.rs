@@ -19,6 +19,7 @@ pub mod attachments;
 pub mod cache;
 mod collab;
 pub mod composer;
+pub mod goals;
 pub mod conversation;
 mod data;
 pub mod device;
@@ -114,6 +115,7 @@ pub struct Client {
     /// The node binary's version.
     pub node_version: String,
     pub profiles: bool,
+    pub goal_runtime: bool,
     /// The connected node's facts, including when another starter won.
     pub node_lifetime: Option<Box<fastctx_types::node_lifetime::NodeLifetime>>,
 }
@@ -148,8 +150,8 @@ impl Client {
             .map_err(io_error)?
             .ok_or_else(|| io_error(std::io::ErrorKind::UnexpectedEof.into()))?;
         match serde_json::from_slice::<Welcome>(&welcome).map_err(|error| io_error(std::io::Error::other(error)))? {
-            Welcome::Accepted { machine, version, node_lifetime, profiles } => {
-                Ok(Self { connection, next: 0, machine, node_version: version, node_lifetime, profiles })
+            Welcome::Accepted { machine, version, node_lifetime, profiles, goal_runtime } => {
+                Ok(Self { connection, next: 0, machine, node_version: version, node_lifetime, profiles, goal_runtime })
             }
             Welcome::Refused { reason, mismatch } => {
                 let mismatch = mismatch.or_else(|| renewal::legacy_mismatch(&reason));
@@ -260,6 +262,9 @@ impl Client {
 
     /// Sends `call` and waits for its answer.
     pub async fn call(&mut self, call: Call) -> Result<Reply, CallError> {
+        if !self.goal_runtime && matches!(call, Call::Goal { .. } | Call::GoalCommand { .. }) {
+            return Err(CallError::Failed(Failure::not_run(fastctx_types::goals::words::OLDER_NODE)));
+        }
         if !self.profiles
             && matches!(
                 call,
@@ -331,6 +336,9 @@ impl Client {
 
     /// Sends a `Watch` call; the connection carries the watch from then on.
     pub async fn watch(mut self, call: Call) -> Result<Watching, CallError> {
+        if !self.goal_runtime && matches!(call, Call::Watch { goal: Some(_), .. }) {
+            return Err(CallError::Failed(Failure::not_run(fastctx_types::goals::words::OLDER_NODE)));
+        }
         self.next += 1;
         let id = self.next;
         self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;

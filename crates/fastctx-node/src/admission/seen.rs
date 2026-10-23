@@ -36,7 +36,7 @@ pub enum Looker<'a> {
 
 impl Looker<'_> {
     /// Whether what works for `account` is the looker's to see.
-    fn sees_account(self, node: &Node, account: &HubAccount) -> bool {
+    pub(crate) fn sees_account(self, node: &Node, account: &HubAccount) -> bool {
         match self {
             Looker::Asker(asker) => account.hub == asker.hub && account.account == asker.account,
             Looker::Here(acting) => node.serves(acting, &account.hub, &account.account),

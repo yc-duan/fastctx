@@ -55,6 +55,7 @@ pub mod stats;
 pub mod thumbnail;
 pub mod timers;
 pub mod turn_evidence;
+pub mod goals;
 pub mod tolerant;
 pub mod town;
 pub mod uninstall;

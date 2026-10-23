@@ -364,7 +364,7 @@ fn agents(now: Timestamp) -> fastctx_types::agents::AgentsReply {
 
 fn nodes(now: Timestamp) -> NodesReply {
     let facts = |name: &str, os: &str, home: &str| MachineFacts {
-        turn_debts: false,
+        turn_debts: false, goal_runtime: false,
         name: machine(name),
         os: os.into(),
         arch: "x86_64".into(),

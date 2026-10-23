@@ -102,6 +102,8 @@ impl RemoteCall {
     /// What this call is (`Contract`).
     pub fn contract(&self) -> Contract {
         match self {
+            Self::Goal { request: crate::goals::Request::Read, .. } => Contract::QUERY,
+            Self::Goal { .. } => Contract::CHANGE,
             Self::Mcp {
                 mcp:
                     crate::mcp::MachineCall::Status { .. }
@@ -299,6 +301,8 @@ impl Call {
                     FileSearchRequest::Start { .. } | FileSearchRequest::Query { .. } | FileSearchRequest::Close { .. },
                 ..
             }
+            | Self::Goal { .. }
+            | Self::GoalCommand { .. }
             | Self::Timer { .. }
             | Self::TurnEvidence { .. }
             | Self::CompactBetweenTurns { .. }

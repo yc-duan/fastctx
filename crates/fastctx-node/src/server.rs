@@ -52,6 +52,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         return Ok(());
     }
     let welcome = Welcome::Accepted {
+        goal_runtime: node.goals.available(),
         profiles: true,
         machine: node.machine(),
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -100,7 +101,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         if let Call::McpRelay { name } = call {
             return crate::mcp::local::serve(node, &hello.peer, name, id, reader, writer).await;
         }
-        if let Call::Watch { resident, machine, composer, held, now } = call {
+        if let Call::Watch { resident, machine, composer, held, now, goal } = call {
             // Watching a conversation anywhere is the user's, with this
             // computer's logins.
             if let Err(failure) = users_voice(node, &hello.peer) {
@@ -109,7 +110,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             }
             // A watch keeps the connection until one end leaves.
             let opening = tokio::select! {
-                result = crate::talk::watch(node, resident, machine, composer, held, now) => result,
+                result = crate::talk::watch(node, resident, machine, composer, held, now, goal) => result,
                 _ = reader.recv() => return Ok(()),
             };
             let ended = match opening {
@@ -790,6 +791,15 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
     }
     active_caller(node, peer)?;
     match call {
+        Call::Goal { resident, machine, account, request } => {
+            users_voice(node, peer)?;
+            crate::goals::calls::user(node, resident, machine, account, request).await
+                .map(|updated| Reply::Goal { updated: Box::new(updated) })
+        }
+        Call::GoalCommand { hub, account, job, request } => {
+            crate::goals::calls::command(node, peer, hub, account, job, request).await
+                .map(|updated| Reply::Goal { updated: Box::new(updated) })
+        }
         Call::TurnEvidence { resident, turn, refresh_limits } => {
             users_voice(node, peer)?;
             let evidence = crate::turn_evidence::snapshot(node, &resident, turn, refresh_limits).await?;

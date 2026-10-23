@@ -290,7 +290,7 @@ fn nodes() -> Vec<NodesReply> {
         ms: Some(41),
     });
     let facts = |name: &str, os: &str, lifetime: bool| MachineFacts {
-        turn_debts: false,
+        turn_debts: false, goal_runtime: false,
         name: name.parse().unwrap(),
         os: os.into(),
         arch: if os == "windows" { "x86_64".into() } else { "aarch64".into() },

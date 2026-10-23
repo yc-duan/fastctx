@@ -20,6 +20,8 @@ use crate::{Address, AgentName, EntryId, JobId, JournalName, MachineName, Notice
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum Call {
+    Goal { resident: ResidentId, machine: Option<crate::access::Written>, account: Option<crate::access::HubAccount>, request: crate::goals::Request },
+    GoalCommand { hub: Option<crate::HubName>, account: Option<crate::AccountName>, job: Option<crate::JobId>, request: crate::goals::AgentRequest },
     Timer { timer: crate::timers::TimerCall },
     TurnEvidence { resident: ResidentId, turn: Option<String>, refresh_limits: bool },
     CompactBetweenTurns { resident: ResidentId },
@@ -459,6 +461,8 @@ pub enum Call {
     /// and then each event as it happens, for as long as the connection
     /// stays open.
     Watch {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        goal: Option<crate::access::HubAccount>,
         resident: ResidentId,
         machine: Option<Written>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -719,6 +723,7 @@ pub enum Call {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum Reply {
+    Goal { updated: Box<crate::goals::Updated> },
     Timers { timers: Vec<crate::timers::Timer> },
     TurnEvidence { evidence: Box<crate::turn_evidence::TurnEvidence>, text: String },
     Compacted { result: crate::turn_evidence::Compacted },

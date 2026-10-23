@@ -96,6 +96,7 @@ pub async fn watch(
     composer: Option<String>,
     held: Option<Held>,
     now: bool,
+    goal: Option<fastctx_types::access::HubAccount>,
 ) -> Result<mpsc::UnboundedReceiver<Result<Watched, Failure>>, Failure> {
     let local = machine.is_none() && node.residents.about(&resident).is_some();
     let machine = match machine {
@@ -105,7 +106,10 @@ pub async fn watch(
     let (sender, receiver) = mpsc::unbounded_channel();
     if local || node.is_here(&machine) {
         let mut told = Told::new(node, &resident, now && composer.is_none());
-        let (lease, opened) = opening(node, &resident, composer, held.as_ref()).await?;
+        let (lease, opened) = if let Some(account) = &goal {
+            if !node.serves(&Acting::Here, &account.hub, &account.account) { return Err(Failure::refused(fastctx_types::goals::words::WATCH_ACCOUNT)); }
+            (None, crate::goals::watch::opening(node, &resident, account).await?)
+        } else { opening(node, &resident, composer, held.as_ref()).await? };
         let Opening { pieces, mut events, slim } = opened;
         for piece in pieces.into_iter().chain(told.first()) {
             let _ = sender.send(Ok(piece));
@@ -117,6 +121,8 @@ pub async fn watch(
                 tokio::select! {
                     event = events.recv() => match event {
                         Some(event) => {
+                            if goal.is_some() && !crate::goals::watch::is_goal(&event) { continue; }
+                            if !crate::goals::visible(&node, crate::admission::seen::Looker::Here(&Acting::Here), &event) { continue; }
                             let Some(event) = live(event, slim.as_ref()) else { continue };
                             if sender.send(Ok(Watched::Live { event })).is_err() { return }
                         }
@@ -171,12 +177,16 @@ pub async fn watch(
         Some(_) => format!("the watch of {resident}'s shared input on {machine}"),
         None => format!("the watch of {resident} on {machine}"),
     };
-    let call = RemoteCall::Watch { resident, watch, composer, held, now };
+    let acting = goal.as_ref().map(|account| Acting::one(account.hub.clone(), account.account.clone())).unwrap_or(Acting::Here);
+    if let Some(account) = &goal && !node.serves(&Acting::Here, &account.hub, &account.account) {
+        return Err(Failure::refused(fastctx_types::goals::words::WATCH_ACCOUNT));
+    }
+    let call = RemoteCall::Watch { resident, watch, composer, held, now, goal: goal.is_some() };
     let node = node.clone();
     tokio::spawn(async move {
         let started = std::time::Instant::now();
         let result = tokio::select! {
-            result = node.call_with_stream(&Acting::Here, &written, Purpose::Agents, call, feed) => result,
+            result = node.call_with_stream(&acting, &written, Purpose::Agents, call, feed) => result,
             () = sender.closed() => return,
         };
         let ended = match result {
@@ -558,6 +568,7 @@ async fn unseal(links: &[Arc<Link>], from: &MachineName, signed: &fastctx_net::s
 #[allow(clippy::too_many_arguments)]
 pub async fn serve_watch(
     node: &Arc<Node>,
+    asker: &crate::admission::Asker,
     link: &Arc<Link>,
     from: &MachineName,
     resident: ResidentId,
@@ -565,6 +576,7 @@ pub async fn serve_watch(
     composer: Option<String>,
     held: Option<Held>,
     now: bool,
+    goal: bool,
     mut stream: Stream,
 ) -> Result<RemoteReply, Failure> {
     let what = match &composer {
@@ -578,8 +590,14 @@ pub async fn serve_watch(
     };
     let packed = held.is_some();
     let mut told = Told::new(node, &resident, now && composer.is_none());
+    let open = async {
+        if goal {
+            let account = fastctx_types::access::HubAccount { hub: asker.hub.clone(), account: asker.account.clone() };
+            Ok((None, crate::goals::watch::opening(node, &resident, &account).await?))
+        } else { opening(node, &resident, composer, held.as_ref()).await }
+    };
     let (_lease, opened) = tokio::select! {
-        result = opening(node, &resident, composer, held.as_ref()) => match result {
+        result = open => match result {
             Ok(opened) => opened,
             Err(failure) => {
                 node.log.line(format_args!("{what} could not open: {}", failure.message));
@@ -621,7 +639,11 @@ pub async fn serve_watch(
         }
         tokio::select! {
             event = events.recv() => match event {
-                Some(event) => next.extend(live(event, slim.as_ref()).map(|event| Watched::Live { event })),
+                Some(event) => {
+                    if (!goal || crate::goals::watch::is_goal(&event)) && crate::goals::visible(node, crate::admission::seen::Looker::Asker(asker), &event) {
+                        next.extend(live(event, slim.as_ref()).map(|event| Watched::Live { event }));
+                    }
+                },
                 None => return ended("this machine stopped telling its events"),
             },
             now = told.changed(node) => next.extend(now),

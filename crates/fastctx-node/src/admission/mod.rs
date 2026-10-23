@@ -41,7 +41,8 @@ pub struct Asker {
 /// The resident of this machine `call` is about, if it is about one.
 fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
     match call {
-        RemoteCall::ConversationDebt { resident: who, .. }
+        RemoteCall::Goal { resident: who, .. }
+        | RemoteCall::ConversationDebt { resident: who, .. }
         | RemoteCall::EnterProject { resident: who, .. }
         | RemoteCall::Talk { to: who, .. }
         | RemoteCall::Composer { resident: who, .. }

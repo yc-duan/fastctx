@@ -9,6 +9,7 @@ mod accounts;
 mod android;
 mod collab;
 mod composer;
+mod goals;
 mod connection;
 #[cfg(desktop)]
 mod data;
@@ -1242,6 +1243,9 @@ pub fn run() {
             kept::kept_forget,
             item_details::item_detail,
             item_details::agent_activity,
+            goals::goal_read,
+            goals::goal_update,
+            goals::goal_watch,
             composer::composer_read,
             composer::composer_watch,
             composer::composer_update,

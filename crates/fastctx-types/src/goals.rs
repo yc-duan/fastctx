@@ -1,0 +1,181 @@
+//! An account's goal for one conversation and the authority behind its changes.
+
+use crate::access::HubAccount;
+use crate::{Address, MachineName};
+use jiff::Timestamp;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    Active,
+    Complete,
+    Blocked,
+    Paused,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Owner {
+    User,
+    Conversation { address: Address },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Author {
+    User { machine: MachineName },
+    Resident { address: Address },
+    World,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopKind {
+    User,
+    Claimed,
+    Quota,
+    Assistance,
+    Review,
+    RetryExhausted,
+    Context,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stop {
+    pub kind: StopKind,
+    pub reason: String,
+    pub resume_at: Option<Timestamp>,
+}
+
+/// A main agent's blocked or paused claim still awaits its stopped-turn review.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Claim {
+    pub status: Status,
+    pub turn: Option<String>,
+    pub at: Timestamp,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Decision {
+    pub operation: String,
+    pub at: Timestamp,
+    pub by: Author,
+    pub kind: String,
+    pub turn: Option<String>,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Retirement {
+    Archived,
+    Removed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Retired {
+    pub at: Timestamp,
+    pub why: Retirement,
+}
+
+/// The body of the `goal` account record, keyed by the conversation's resident ID.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Goal {
+    /// A new goal after clearing has a new identity; old timers cannot affect it.
+    pub id: String,
+    pub resident: Address,
+    pub account: HubAccount,
+    pub objective: String,
+    pub owner: Owner,
+    pub status: Status,
+    pub created_at: Timestamp,
+    pub created_by: Author,
+    pub changed_at: Timestamp,
+    pub stop: Option<Stop>,
+    pub statement: Option<String>,
+    pub claim: Option<Claim>,
+    pub retired: Option<Retired>,
+    pub decisions: Vec<Decision>,
+    /// Identifies the last durable mutation across a lost CAS response.
+    pub operation: String,
+}
+
+impl Goal {
+    pub fn active(&self) -> bool {
+        self.status == Status::Active && self.retired.is_none()
+    }
+}
+
+/// A deleted record retains its version, so a stale first write cannot resurrect it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct View {
+    pub account: HubAccount,
+    pub version: Option<u64>,
+    pub goal: Option<Goal>,
+    /// A locally observed stop awaiting its account record, never presented as an accepted revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<Pending>,
+}
+
+impl View {
+    pub fn active(&self) -> bool {
+        self.pending.is_none() && self.goal.as_ref().is_some_and(Goal::active)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingAction {
+    Pause,
+    End,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Pending {
+    pub action: PendingAction,
+    pub reason: String,
+    pub at: Timestamp,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "change", rename_all = "snake_case")]
+pub enum UserChange {
+    Open { objective: String },
+    Edit { objective: String },
+    Pause,
+    Resume,
+    Clear,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mark", rename_all = "snake_case")]
+pub enum Mark {
+    Complete { statement: String },
+    Blocked { statement: String },
+    Pause,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "request", rename_all = "snake_case")]
+pub enum Request {
+    Read,
+    Change { operation: String, expected: Option<u64>, change: UserChange },
+    Mark { operation: String, mark: Mark },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "result", rename_all = "snake_case")]
+pub enum Updated {
+    Goal { view: Box<View> },
+    Conflict { current: Option<u64> },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "request", rename_all = "snake_case")]
+pub enum AgentRequest {
+    Read,
+    Mark { operation: String, mark: Mark },
+}
+
+pub mod words;

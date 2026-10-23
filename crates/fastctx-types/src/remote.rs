@@ -23,6 +23,7 @@ use crate::{AgentName, ResidentId, TownName};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum RemoteCall {
+    Goal { resident: ResidentId, request: crate::goals::Request },
     ConversationDebt { resident: ResidentId, requester: crate::Address },
     WaitingJobs { owner: crate::Address },
     /// A running job returns its resident's project selection to its home.
@@ -362,6 +363,8 @@ pub enum RemoteCall {
     /// connection until the caller closes it, each piece signed by the
     /// machine that holds the session, naming `watch` and numbered from 0.
     Watch {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        goal: bool,
         resident: ResidentId,
         watch: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -498,6 +501,8 @@ impl RemoteCall {
     /// check it.
     pub fn purpose(&self) -> Purpose {
         match self {
+            RemoteCall::Goal { request: crate::goals::Request::Read, .. } => Purpose::Look,
+            RemoteCall::Goal { .. } => Purpose::Agents,
             Self::EnterProject { .. } => Purpose::Echo,
             RemoteCall::PageAction { action: crate::pages::PageInvocation::Say { .. }, .. } => Purpose::Words,
             RemoteCall::ReadAttachment { attachment: crate::attachments::AttachmentSource::Upload(file), .. }
@@ -582,6 +587,7 @@ impl RemoteCall {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum RemoteReply {
+    Goal { updated: Box<crate::goals::Updated> },
     ConversationDebt { debt: crate::turn_evidence::ConversationDebt },
     WaitingJobs { jobs: Vec<crate::turn_evidence::WaitHandle> },
     Entered {

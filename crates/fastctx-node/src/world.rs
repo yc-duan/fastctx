@@ -571,6 +571,7 @@ pub fn facts(node: &Node) -> MachineFacts {
     };
     MachineFacts {
         turn_debts: true,
+        goal_runtime: node.goals.available(),
         name: node.machine(),
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
@@ -853,10 +854,10 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(|landed| RemoteReply::Said { landed })
                 }
-                RemoteCall::Watch { resident, watch, composer, held, now } => {
+                RemoteCall::Watch { resident, watch, composer, held, now, goal } => {
                     let stream = stream
                         .ok_or_else(|| Failure::new("a watch comes with a data connection, and this one had none"))?;
-                    crate::talk::serve_watch(&node, &link, &from, resident, watch, composer, held, now, stream).await
+                    crate::talk::serve_watch(&node, &asker, &link, &from, resident, watch, composer, held, now, goal, stream).await
                 }
                 RemoteCall::Agents => crate::agents::here(&node)
                     .await
@@ -1019,6 +1020,11 @@ impl fastctx_net::link::Node for Handler {
                     crate::town::enter::here(&node, &resident, &town, Some(&account))
                         .await
                         .map(|map| RemoteReply::Entered { town, map: Box::new(map) })
+                }
+                RemoteCall::Goal { resident, request } => {
+                    let account = fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
+                    crate::goals::calls::user_here(&node, resident, account, from, request).await
+                        .map(|updated| RemoteReply::Goal { updated: Box::new(updated) })
                 }
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&node))),
                 RemoteCall::AttachmentReferences { conversation, attachments } => {
