@@ -157,13 +157,13 @@ export function thoughtTook(run: readonly ProseEntry[]): number | null {
   return took;
 }
 
-/** The titles a summary of thinking puts its sections under, in bold on a
- *  line of their own. */
 /** The titles a run of thinking said it was in, its words shown or not. */
 export function thoughtHeads(run: readonly ProseEntry[]): string[] {
   return sections(run.map((entry) => entry.text || entry.heads || "").join("\n"));
 }
 
+/** The titles a summary of thinking puts its sections under, in bold on a
+ *  line of their own. */
 export function sections(text: string): string[] {
   return [...text.matchAll(/^\*\*(.+?)\*\*\s*$/gm)].map((match) => match[1]!);
 }

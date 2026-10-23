@@ -240,6 +240,9 @@ export class Fold {
   /** How many of the user's heard words each turn holds, for their keys. */
   private heardIn = new Map<string, number>();
   private endedTurns = new Set<string>();
+  /** Items their host has told whole as they ended: a snapshot of one told
+   *  after that, as it began or ran, is behind it and changes nothing. */
+  private over = new Set<string>();
   /** Turns begun and not yet ended, as the World tells them, with when
    * each began. */
   private running = new Set<string>();
@@ -319,6 +322,7 @@ export class Fold {
     this.byTurn.clear();
     this.heardIn.clear();
     this.endedTurns.clear();
+    this.over.clear();
     this.stretches.clear();
     this.sequences.clear();
     this.stale = false;
@@ -527,6 +531,7 @@ export class Fold {
           this.touch(shown);
         } else if (!shown && event.part === "text") {
           // A message's first words can come before any word of it.
+          this.overtaken(event.turn);
           this.add({
             kind: "prose",
             key: itemEntryKey(event.turn, event.item),
@@ -746,6 +751,10 @@ export class Fold {
     const id = native.id;
     if (id && native.draft) this.renamed(turn, native.draft, id);
     const key = id ? itemEntryKey(turn, id) : `n:${this.scope}@${this.current}`;
+    if (id && !finished && this.over.has(key)) return;
+    if (id && finished) this.over.add(key);
+    const said = native.kind === "message" || native.kind === "thinking" || native.kind === "plan" || native.kind === "tool" || native.kind === "compaction";
+    if (said && !(id && this.find(turn, id))) this.overtaken(turn);
     let fresh: Entry;
     const questions = native.kind === "message" ? questionsOf(native.detail) : null;
     if (questions) {
@@ -826,12 +835,23 @@ export class Fold {
       return;
     }
     if (shown.kind === "prose" && fresh.kind === "prose") {
+      // Thinking whose words are not shown still says the section it is in.
+      const heads = fresh.heads;
+      const headed = heads !== undefined && heads !== shown.heads;
+      if (headed) {
+        shown.heads = heads;
+        shown.version += 1;
+      }
       // A message still being written keeps what it has until its whole
       // text comes.
-      if (shown.writing && !finished && fresh.text === "") return;
+      if (shown.writing && !finished && fresh.text === "") {
+        if (headed) this.touch(shown);
+        return;
+      }
       if (shown.text !== fresh.text) shown.version += 1;
       shown.text = fresh.text;
-      shown.writing = fresh.writing;
+      // What has stopped being written does not start again.
+      shown.writing = shown.writing && fresh.writing;
       if (fresh.took !== undefined) shown.took = fresh.took;
       if (shown.began === undefined && fresh.began !== undefined) shown.began = fresh.began;
       this.touch(shown);
@@ -840,11 +860,23 @@ export class Fold {
     if (shown.kind === "tool" && fresh.kind === "tool") {
       // Facts gathered while it ran stand until the item brings its own.
       shown.tool = fresh.tool.run || !shown.tool.run ? fresh.tool : { ...fresh.tool, run: shown.tool.run };
-      shown.ended = fresh.ended;
+      shown.ended = fresh.ended ?? shown.ended;
       this.touch(shown);
       return;
     }
     this.replace(shown, { ...fresh, key: shown.key } as Entry);
+  }
+
+  /** The model says one thing at a time: thinking still shown under way
+   *  when the next thing it says begins is over, whatever word of its end
+   *  is still to come. Agents' comings and goings are told beside the
+   *  model's words and end nothing of them. */
+  private overtaken(turn: string): void {
+    for (const entry of this.byTurn.get(turn) ?? []) {
+      if (entry.kind !== "prose" || entry.prose !== "thinking" || !entry.writing) continue;
+      entry.writing = false;
+      this.touch(entry);
+    }
   }
 
   /** Thinking tokens by model response, as the hosts told them. */
