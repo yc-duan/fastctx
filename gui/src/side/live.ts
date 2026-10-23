@@ -12,6 +12,7 @@ import type { PlanShown, PageSeams } from "../plan/panel";
 import type { PlanWords } from "../plan/words";
 import { unwatch, type WorldNow } from "../world/bridge";
 import { planRead, planWrite, watchPlan, type PlanPage } from "../world/plan";
+import { goalRead, goalShown, goalUpdate, watchGoal, type GoalChange, type GoalView } from "../world/goal";
 import type { Address } from "../world/wire";
 import type { ResidentNow } from "../world/world";
 import { goalSamples, teamSample } from "./samples";
@@ -82,7 +83,12 @@ export interface LiveSide {
 
 /** What the World does not tell yet: the plan and the goal arrive with the
  *  nodes that keep them. */
-const notYet = () => Promise.reject(new Error("this version of the World keeps no goal"));
+/** Applies a change to a goal: reads the current version for the comparison,
+ *  then writes it with a fresh operation id. The watch brings the result. */
+async function changeGoal(owner: string, of: (view: GoalView) => GoalChange): Promise<void> {
+  const view = await goalRead(owner);
+  await goalUpdate(owner, crypto.randomUUID(), view.version, of(view));
+}
 
 /** The plan page's shape, read from the World's stored plan. */
 function planShownOf(page: PlanPage, words: SideWords, now: number): PlanShown | null {
@@ -135,13 +141,29 @@ export function liveSide(options: LiveSide): SideSeams {
     },
     goal: {
       watch: (show: (goal: GoalShown | null) => void) => {
-        show(null);
-        return () => {};
+        let alive = true;
+        let watching: number | null = null;
+        watchGoal(owner, (piece) => {
+          if (piece.kind === "snapshot" && alive) show(goalShown(piece.view, Date.now()));
+        })
+          .then(({ id, view }) => {
+            if (!alive) {
+              void unwatch(id);
+              return;
+            }
+            watching = id;
+            show(goalShown(view, Date.now()));
+          })
+          .catch((error) => console.error("the goal could not be watched", error));
+        return () => {
+          alive = false;
+          if (watching != null) void unwatch(watching);
+        };
       },
-      set: notYet,
-      pause: notYet,
-      resume: notYet,
-      clear: notYet,
+      set: (objective) => changeGoal(owner, (view) => ({ change: view.goal ? "edit" : "open", objective })),
+      pause: () => changeGoal(owner, () => ({ change: "pause" })),
+      resume: () => changeGoal(owner, () => ({ change: "resume" })),
+      clear: () => changeGoal(owner, () => ({ change: "clear" })),
     },
     colleagues: (show) => effect(() => show(colleaguesOf(options.store.world.get(), options.address, Date.now()))),
     colleague: (node) => options.open({ resident: node.id, machine: node.machine ?? options.address.machine }),
