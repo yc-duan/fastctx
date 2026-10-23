@@ -387,6 +387,11 @@
   color: var(--text-2);
 }
 
+.callee-switch input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 .callee-add {
   display: flex;
   flex-direction: column;

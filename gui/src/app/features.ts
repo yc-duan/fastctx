@@ -14,9 +14,7 @@
 // GPT (callers), which GPTs they may hand it to (callees: a Codex login
 // each, its model and effort, the name and the line the calling model
 // chooses by, whether it may use the screen), the text the callers are given
-// and the rules every callee is given. It is in development: its card says
-// so, and its page is its film and what it gives, with nothing to turn on,
-// until `COLLABORATION_READY`. Project memory: for the whole account, a
+// and the rules every callee is given. Project memory: for the whole account, a
 // project's journal and decisions shown with it and given to its
 // conversations; it has no settings.
 
@@ -46,9 +44,9 @@ import type { SentinelSeam, SentinelSettingsView } from "../world/sentinels";
 import { Film } from "../film/film";
 import type { Built, Shape } from "../film/reel";
 
-/** Whether model collaboration can be turned on; while it is in
- *  development, no session is offered a colleague either (`collab.rs`). */
-const COLLABORATION_READY = false;
+/** Whether model collaboration can be turned on; a node offers a colleague
+ *  only as `collab.rs` lets it. */
+const COLLABORATION_READY = true;
 import { watchFilm } from "../film/theater";
 import { workbench } from "../film/workbench";
 
