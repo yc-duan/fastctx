@@ -23,6 +23,8 @@ export interface MountContext {
   seams: SideSeams;
   /** Says a line beside the input, as the page does. */
   say(text: string, detail?: string): void;
+  /** Sends the user's words into the conversation at once, as an answer. */
+  answer(text: string): Promise<void>;
   /** What one of the host's agents did, as a box the panel can show. */
   agentBox(run: AgentRun): { element: HTMLElement; update(run: AgentRun): void; destroy(): void };
   /** Brings the row of the call that sent one of the host's agents into view. */
@@ -67,6 +69,8 @@ export class SideMount {
   private drawnTeam = "";
   private planSeen: string | null = null;
   private goalSeen: string | null = null;
+  /** The goal as last shown, whose version a change is made against. */
+  private shownGoal: GoalShown | null = null;
   /** The box of one of the host's agents open in the panel. */
   private box: { id: string; update(run: AgentRun): void } | null = null;
 
@@ -76,19 +80,25 @@ export class SideMount {
   ) {
     const { seams } = context;
     const words = seams.words;
-    this.planPage = new PlanPage(seams.plan.words, seams.plan.seams);
+    const planWords = seams.plan.words;
+    this.planPage = new PlanPage(planWords, {
+      ...seams.plan.seams,
+      // A decision on the plan is the user's words to the conversation.
+      answer: (question, option) => context.answer(planWords.reply(question, option)),
+    });
+    const version = () => this.shownGoal?.version;
     this.goalPage = new GoalPage(words.goal, {
-      save: (text) => this.act(seams.goal.set(text)),
-      pause: () => this.act(seams.goal.pause()),
-      resume: () => this.act(seams.goal.resume()),
-      clear: () => this.act(seams.goal.clear()),
+      save: (text, seen) => this.act(seams.goal.set(text, seen)),
+      pause: () => void this.act(seams.goal.pause(version())),
+      resume: () => void this.act(seams.goal.resume(version())),
+      clear: () => void this.act(seams.goal.clear(version())),
     });
     this.collab = new CollabPage(words.collab, words.goal, (node) => this.openNode(node));
     this.panel = new SidePanel(words, { plan: this.planPage, goal: this.goalPage, collab: this.collab }, { changed: () => this.drawToggle() });
     this.bar = new GoalBar(words.goal, {
-      pause: () => this.act(seams.goal.pause()),
-      resume: () => this.act(seams.goal.resume()),
-      clear: () => this.act(seams.goal.clear()),
+      pause: () => void this.act(seams.goal.pause(version())),
+      resume: () => void this.act(seams.goal.resume(version())),
+      clear: () => void this.act(seams.goal.clear(version())),
       expand: seams.bare ? undefined : () => this.panel.show("goal"),
     });
     this.toggle = document.createElement("button");
@@ -150,7 +160,7 @@ export class SideMount {
 
   /** The goal set from the input (`/goal`): it opens at once. */
   setGoal(objective: string): void {
-    this.act(this.context.seams.goal.set(objective));
+    void this.act(this.context.seams.goal.set(objective, this.shownGoal?.version));
   }
 
   leave(): void {
@@ -169,6 +179,7 @@ export class SideMount {
   }
 
   private goal(goal: GoalShown | null): void {
+    this.shownGoal = goal;
     const seen = goal ? `${goal.version}|${goal.status}|${goal.sentinel?.at ?? ""}` : "";
     if (this.goalSeen !== null && seen !== this.goalSeen && seen !== "") this.panel.news("goal");
     this.goalSeen = seen;
@@ -224,9 +235,20 @@ export class SideMount {
   }
 
   /** What the user did to the goal: said beside the input when it did not
-   *  go through, the World's own words when pointed at. */
-  private act(done: Promise<void>): void {
-    done.catch((error: unknown) => this.context.say(this.context.seams.words.goal.failed, error instanceof Error ? error.message : String(error)));
+   *  go through, the World's own words when pointed at, or when the goal
+   *  changed elsewhere first. Resolves whether it went through. */
+  private act(done: Promise<boolean>): Promise<boolean> {
+    const words = this.context.seams.words.goal;
+    return done.then(
+      (went) => {
+        if (!went) this.context.say(words.changed);
+        return went;
+      },
+      (error: unknown) => {
+        this.context.say(words.failed, error instanceof Error ? error.message : String(error));
+        return false;
+      },
+    );
   }
 }
 

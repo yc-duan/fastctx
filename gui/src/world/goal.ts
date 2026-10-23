@@ -21,6 +21,8 @@ interface GoalRecord {
   created_at: Timestamp;
   changed_at: Timestamp;
   stop?: GoalStop | null;
+  /** The agent's account of it done or blocked. */
+  statement?: string | null;
 }
 
 interface GoalPending {
@@ -79,20 +81,24 @@ function pausedBy(kind: StopKind | undefined): PausedBy {
 
 /** The goal as the panel shows it, from the World's view. A locally observed
  *  stop awaiting its record is shown as paused, not as the old running state. */
-export function goalShown(view: GoalView, now: number): GoalShown | null {
+export function goalShown(view: GoalView): GoalShown | null {
   const goal = view.goal;
   if (!goal) return null;
   const pendingPause = view.pending?.action === "pause";
   const status: GoalStatus = pendingPause ? "paused" : goal.status;
   const created = Date.parse(goal.created_at);
   const changed = Date.parse(goal.changed_at);
+  const since = Number.isFinite(changed) ? changed : created;
+  // The World keeps no running total: worked is the time from setting it to
+  // its present state, and an active one adds the stretch under way.
   const shown: GoalShown = {
     objective: goal.objective,
     version: view.version ?? 0,
     status,
-    worked: Number.isFinite(created) ? Math.max(0, now - created) : 0,
-    since: Number.isFinite(changed) ? changed : created,
+    worked: Number.isFinite(created) && Number.isFinite(since) ? Math.max(0, since - created) : 0,
+    since,
     paused: null,
+    statement: goal.statement ?? null,
     sentinel: null,
   };
   if (status === "paused") {
@@ -100,6 +106,7 @@ export function goalShown(view: GoalView, now: number): GoalShown | null {
     shown.paused = {
       by: pendingPause ? "agent" : pausedBy(goal.stop?.kind),
       until: Number.isFinite(until) ? until : null,
+      reason: view.pending?.reason ?? goal.stop?.reason ?? null,
     };
   }
   return shown;

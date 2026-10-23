@@ -63,9 +63,10 @@ export interface FeaturesOptions {
   /** Asks before a feature is turned off. */
   confirm: Confirm;
   /** Project memory's switch, for the account. */
-  memory: { enabled(): Promise<boolean>; set(on: boolean): Promise<void> };
+  /** Project memory, on or off for a login's account; null lets the World pick. */
+  memory: { enabled(hub: string | null, account: string | null): Promise<boolean>; set(on: boolean, hub: string | null, account: string | null): Promise<void> };
   /** The sentinels' settings, and the machines they may live on. */
-  sentinels: { seam: SentinelSeam; machines(): { name: string; form: "desktop" | "laptop" | "server" }[] };
+  sentinels: { seam: SentinelSeam; machines(hub: string, account: string): { name: string; form: "desktop" | "laptop" | "server" }[] };
 }
 
 /** A login an agent can work in, as the settings name it, with what the
@@ -266,7 +267,7 @@ export class FeaturesPage implements Page {
         },
         () => {},
       );
-    this.options.memory.enabled().then(
+    this.options.memory.enabled(login?.hub ?? null, login?.account ?? null).then(
       (on) => {
         memoryOn = on;
         draw(collabOn);
@@ -326,7 +327,12 @@ export class FeaturesPage implements Page {
    *  of the film waits at the top. */
   private memory(): void {
     const { words } = this.options;
-    const seam = this.options.memory;
+    const login = this.login();
+    const memory = this.options.memory;
+    const seam = {
+      enabled: () => memory.enabled(login?.hub ?? null, login?.account ?? null),
+      set: (on: boolean) => memory.set(on, login?.hub ?? null, login?.account ?? null),
+    };
     const make = (shape: Shape) => memoryFilm(words.memory.film, shape);
     const label = words.memory.name;
     this.replayFilm = () => this.watch(make, label);
@@ -383,7 +389,7 @@ export class FeaturesPage implements Page {
           words: words.sentinels,
           seam,
           login,
-          machines: () => this.options.sentinels.machines(),
+          machines: () => (login ? this.options.sentinels.machines(login.hub, login.account) : []),
           saved: (saved) => {
             const was = view?.settings.home ?? null;
             view = saved;

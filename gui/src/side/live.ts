@@ -11,8 +11,8 @@ import { modelName } from "../conversation/view";
 import type { PlanShown, PageSeams } from "../plan/panel";
 import type { PlanWords } from "../plan/words";
 import { unwatch, type WorldNow } from "../world/bridge";
-import { planRead, planWrite, watchPlan, type PlanPage } from "../world/plan";
-import { goalRead, goalShown, goalUpdate, watchGoal, type GoalChange, type GoalView } from "../world/goal";
+import { planRead, planWrite, watchPlan, type PlanAccount, type PlanPage } from "../world/plan";
+import { goalShown, goalUpdate, watchGoal, type GoalChange, type GoalView } from "../world/goal";
 import { collaborationTree, type Branch, type NativeAgent, type Tree } from "../world/collab-tree";
 import type { Address } from "../world/wire";
 import type { GoalStatus } from "./types";
@@ -21,19 +21,15 @@ import type { SideSeams } from "./seams";
 import type { CollabNode, GoalShown, NodeState } from "./types";
 import type { SideWords } from "./words";
 
-/** The conversation's collaboration tree, as the World reports it: the
- *  colleagues it asked, each with its goal and the agents it sent, and the
- *  conversation's own agents on the root beside them. */
-function treeNodes(tree: Tree, store: Store, address: Address, now: number): CollabNode[] {
+/** The colleagues the conversation asked, as the World reports them, each
+ *  with its goal and the agents it sent. The conversation's own agents come
+ *  from its own events, which the panel already follows. */
+function treeNodes(tree: Tree, store: Store, now: number): CollabNode[] {
   const agentOf = (resident: string, fallback: "claude" | "codex"): "claude" | "codex" => {
     const found = residentsOf(store.world.peek()).find((r) => r.about.id === resident);
     return found ? (/codex/i.test(found.about.host.agent) ? "codex" : "claude") : fallback;
   };
-  const root = agentOf(address.resident, "claude");
-  return [
-    ...tree.colleagues.map((branch) => branchNode(branch, agentOf(branch.address.resident, "codex"), store, now)),
-    ...tree.conversation.agents.map((agent) => agentNode(agent, root, now)),
-  ];
+  return tree.colleagues.map((branch) => branchNode(branch, agentOf(branch.address.resident, "codex"), store, now));
 }
 
 function branchNode(branch: Branch, agent: "claude" | "codex", store: Store, now: number): CollabNode {
@@ -41,13 +37,17 @@ function branchNode(branch: Branch, agent: "claude" | "codex", store: Store, now
   const busy = branch.now?.activity === "busy";
   const born = branch.born_at ? Date.parse(branch.born_at) : NaN;
   const since = branch.now?.since ? Date.parse(branch.now.since) : born;
+  // A branch its machine could not tell about is not known to be done.
+  const why = [...branch.unavailable, ...("Err" in branch.goal ? [branch.goal.Err] : [])].join("; ");
+  const state: NodeState = branch.now?.trouble ? "failed" : !branch.now ? "unknown" : busy ? "working" : "done";
   return {
     id: branch.address.resident,
     kind: "colleague",
     agent,
     name: found?.about.model ? modelName(found.about.model) : (branch.label ?? agent),
     task: branch.label ?? branch.now?.title ?? "",
-    state: branch.now?.trouble ? "failed" : busy ? "working" : "done",
+    state,
+    why: why || null,
     goal: treeGoal(branch.goal),
     took: Number.isFinite(born) ? Math.max(0, (busy ? now : Number.isFinite(since) ? since : now) - born) : 0,
     steps: null,
@@ -125,13 +125,22 @@ export interface LiveSide {
   openId(id: string): void;
 }
 
-/** What the World does not tell yet: the plan and the goal arrive with the
- *  nodes that keep them. */
-/** Applies a change to a goal: reads the current version for the comparison,
- *  then writes it with a fresh operation id. The watch brings the result. */
-async function changeGoal(owner: string, of: (view: GoalView) => GoalChange): Promise<void> {
-  const view = await goalRead(owner);
-  await goalUpdate(owner, crypto.randomUUID(), view.version, of(view));
+/** Applies a change to a goal against the version the user saw, with a
+ *  fresh operation id; false when it changed elsewhere first. The watch
+ *  brings the result. */
+async function changeGoal(owner: string, seen: number | null, change: GoalChange): Promise<boolean> {
+  const updated = await goalUpdate(owner, crypto.randomUUID(), seen, change);
+  return updated.result === "goal";
+}
+
+/** The account a conversation works for, where it is one, by its hub's name. */
+function accountOf(store: Store, address: Address): PlanAccount | null {
+  const world = store.world.peek();
+  const acting = residentsOf(world).find((r) => r.about.id === address.resident)?.about.acting;
+  if (acting?.kind !== "accounts" || acting.accounts.length !== 1) return null;
+  const [one] = acting.accounts;
+  const hub = world?.accounts?.hubs.find((seen) => seen.hub === one!.hub)?.name;
+  return hub ? { hub, account: one!.account } : null;
 }
 
 /** The plan page's shape, read from the World's stored plan. */
@@ -143,15 +152,19 @@ function planShownOf(page: PlanPage, words: SideWords, now: number): PlanShown |
 
 export function liveSide(options: LiveSide): SideSeams {
   const owner = options.address.resident;
-  const plan: PageSeams = {
+  const at = () => accountOf(options.store, options.address);
+  const plan: Omit<PageSeams, "answer"> = {
     facts: (id) => planFact(options.store.world.peek(), id, options.planWords, options.took, Date.now()),
     open: (id) => options.openId(id),
     save: async (source, expected) => {
-      const result = await planWrite(owner, expected, source);
+      const result = await planWrite(owner, expected, source, at());
       return result.result === "page" ? { ok: true } : { ok: false, current: result.current?.version ?? null };
     },
-    answer: () => {},
   };
+  // The goal as last seen, for what a change is to: its version even when
+  // there is no goal, since a cleared one keeps it.
+  let current: GoalView | null = null;
+  const seen = (version: number | undefined) => version ?? current?.version ?? null;
   return {
     words: options.words,
     ...(options.bare ? { bare: true } : {}),
@@ -162,16 +175,20 @@ export function liveSide(options: LiveSide): SideSeams {
         let alive = true;
         let watching: number | null = null;
         const refresh = () => {
-          planRead(owner)
+          planRead(owner, at())
             .then((page) => {
               if (alive) show(planShownOf(page, options.words, Date.now()));
             })
             .catch((error) => console.error("the plan could not be read", error));
         };
         refresh();
-        watchPlan(owner, (piece) => {
-          if (piece.kind === "changed") refresh();
-        })
+        watchPlan(
+          owner,
+          (piece) => {
+            if (piece.kind === "changed") refresh();
+          },
+          at(),
+        )
           .then((id) => {
             if (alive) watching = id;
             else void unwatch(id);
@@ -188,7 +205,9 @@ export function liveSide(options: LiveSide): SideSeams {
         let alive = true;
         let watching: number | null = null;
         watchGoal(owner, (piece) => {
-          if (piece.kind === "snapshot" && alive) show(goalShown(piece.view, Date.now()));
+          if (piece.kind !== "snapshot" || !alive) return;
+          current = piece.view;
+          show(goalShown(piece.view));
         })
           .then(({ id, view }) => {
             if (!alive) {
@@ -196,7 +215,8 @@ export function liveSide(options: LiveSide): SideSeams {
               return;
             }
             watching = id;
-            show(goalShown(view, Date.now()));
+            current = view;
+            show(goalShown(view));
           })
           .catch((error) => console.error("the goal could not be watched", error));
         return () => {
@@ -204,15 +224,21 @@ export function liveSide(options: LiveSide): SideSeams {
           if (watching != null) void unwatch(watching);
         };
       },
-      set: (objective) => changeGoal(owner, (view) => ({ change: view.goal ? "edit" : "open", objective })),
-      pause: () => changeGoal(owner, () => ({ change: "pause" })),
-      resume: () => changeGoal(owner, () => ({ change: "resume" })),
-      clear: () => changeGoal(owner, () => ({ change: "clear" })),
+      // New words for a goal done open it again; for any other, they replace its words.
+      set: (objective, version) => {
+        const goal = current?.goal;
+        const change: GoalChange = goal && goal.status !== "complete" ? { change: "edit", objective } : { change: "open", objective };
+        return changeGoal(owner, seen(version), change);
+      },
+      pause: (version) => changeGoal(owner, seen(version), { change: "pause" }),
+      resume: (version) => changeGoal(owner, seen(version), { change: "resume" }),
+      clear: (version) => changeGoal(owner, seen(version), { change: "clear" }),
     },
     colleagues: (show) => {
       let alive = true;
       let inflight = false;
       let again = false;
+      let last: CollabNode[] = [];
       const refresh = () => {
         if (inflight) {
           again = true;
@@ -222,9 +248,13 @@ export function liveSide(options: LiveSide): SideSeams {
         again = false;
         collaborationTree(owner, options.address.machine)
           .then((tree) => {
-            if (alive) show(treeNodes(tree, options.store, options.address, Date.now()));
+            if (alive) show((last = treeNodes(tree, options.store, Date.now())));
           })
-          .catch((error) => console.error("the collaboration tree could not be read", error))
+          .catch((error: unknown) => {
+            // What was known stays, no longer said to stand as it did.
+            const why = error instanceof Error ? error.message : String(error);
+            if (alive) show(last.map((node) => ({ ...node, state: "unknown", why })));
+          })
           .finally(() => {
             inflight = false;
             if (alive && again) refresh();
@@ -256,7 +286,7 @@ export function specimenSide(words: SideWords, planWords: PlanWords, plan: PlanS
     words,
     plan: {
       words: planWords,
-      seams: { facts: plan.facts, save: async () => ({ ok: true }), answer: () => {} },
+      seams: { facts: plan.facts, save: async () => ({ ok: true }) },
       watch: (show) => {
         show(plan);
         return () => {};
@@ -270,19 +300,24 @@ export function specimenSide(words: SideWords, planWords: PlanWords, plan: PlanS
       },
       set: async (objective) => {
         await wait();
-        tell(goal ? { ...goal, objective, version: goal.version + 1 } : { objective, version: 1, status: "active", worked: 0, since: Date.now() });
+        const reopened = goal?.status === "complete" ? { status: "active" as const, since: Date.now() } : {};
+        tell(goal ? { ...goal, objective, version: goal.version + 1, ...reopened } : { objective, version: 1, status: "active", worked: 0, since: Date.now() });
+        return true;
       },
       pause: async () => {
         await wait();
         if (goal) tell({ ...goal, status: "paused", worked: goal.worked + Date.now() - goal.since, since: Date.now(), paused: { by: "user", until: null } });
+        return true;
       },
       resume: async () => {
         await wait();
         if (goal) tell({ ...goal, status: "active", since: Date.now(), paused: null });
+        return true;
       },
       clear: async () => {
         await wait();
         tell(null);
+        return true;
       },
     },
     colleagues: (show) => {

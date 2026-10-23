@@ -127,7 +127,7 @@ export class CollabPage implements SidePage {
     const meta = node.goal
       ? `${glyph("goal", 14)}<span>${escape(words.goal[node.goal])}</span>`
       : `<span>${escape(this.goals.worked(node.took))}</span>${node.steps !== null ? `<span>${escape(words.steps(node.steps))}</span>` : ""}`;
-    const facts = [words.states[node.state], this.goals.worked(node.took), node.steps !== null ? words.steps(node.steps) : ""];
+    const facts = [words.states[node.state], this.goals.worked(node.took), node.steps !== null ? words.steps(node.steps) : "", node.why ?? ""];
     const said = [node.name, facts.filter(Boolean).join(words.separator), node.machine ?? "", node.task].filter(Boolean).join("\n");
     const end =
       node.state === "working"

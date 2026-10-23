@@ -48,8 +48,9 @@ markdown.renderer.rules.link_open = (tokens, index, options, env, self) => {
 export interface PlanSeams {
   facts: LiveFacts;
   words: BlockWords;
-  /** The user picked an option of a decision on the plan. */
-  answer: (question: string, option: string) => void;
+  /** The user picked an option of a decision on the plan; a rejection
+   *  leaves it to be picked again. */
+  answer: (question: string, option: string) => Promise<void> | void;
   /** Opens what one of the world's ids names. */
   open?: ((id: string) => void) | undefined;
 }

@@ -59,9 +59,10 @@ const planPage = new PlanPage(planWords, {
 planPage.show({ source: sample.source, version: sample.version, when: sample.when });
 
 const goalPage = new GoalPage(words.goal, {
-  save: (text) => {
+  save: async (text) => {
     goal = goal ? { ...goal, objective: text, version: goal.version + 1 } : { objective: text, version: 1, status: "active", worked: 0, since: Date.now() };
     drawGoal();
+    return true;
   },
   pause: () => setStatus("paused"),
   resume: () => setStatus("active"),

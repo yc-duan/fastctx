@@ -122,7 +122,7 @@ import { specimenStats } from "./specimen/stats";
 import { SettingsPage } from "./app/settings";
 import { DataPage, enData, totalOf, zhData } from "./app/data-page";
 import { data } from "./world/data";
-import { keptUsage, keptClear, seenDissolved } from "./world/bridge";
+import { keptUsage, keptClear, seenDissolved, unwatch } from "./world/bridge";
 import { specimenCache, specimenData } from "./specimen/data";
 import { ReaderPage } from "./app/reader";
 import { Shell, pageHead, type Page } from "./app/shell";
@@ -779,21 +779,34 @@ const journalForm = new JournalForm({
 /** Whether project memory is on for the account, as last read: the
  *  specimen's with `?memory`. */
 let memoryOn = !live && params.has("memory");
-if (live) void memorySeam.enabled().then((on) => (memoryOn = on), () => (memoryOn = false));
+if (live) void memorySeam.enabled(null, null).then((on) => (memoryOn = on), () => (memoryOn = false));
 const sentinelSeam = live ? liveSentinels : specimenSentinels(params.has("sentinels"));
 /** The machines the sentinels may live on, the ones online first; a
  *  phone is a device, not one of them. */
-function sentinelHomes(): { name: string; form: "desktop" | "laptop" | "server" }[] {
+/** The machines a login's sentinels may live on: its own and those shared
+ *  with it whole, never a managed one, which acts for no one (`world-senses.md`,
+ *  哨兵住在哪). */
+function sentinelHomes(hub: string, account: string): { name: string; form: "desktop" | "laptop" | "server" }[] {
   const world = live ? store.world.peek() : specimen.world;
   if (!world) return [];
+  const seen = world.accounts?.hubs.find((one) => one.name === hub);
+  const homes = seen
+    ? new Set(
+        seen.members
+          .filter((member) => member.kind === "computer" && !member.managed)
+          .filter((member) => member.logins.includes(account) || member.home === account || seen.shares.some((share) => share.machine === member.name && share.account === account))
+          .map((member) => member.name),
+      )
+    : null;
   return machinesOf(world)
+    .filter((machine) => !homes || homes.has(machine.name))
     .sort((a, b) => Number(b.online) - Number(a.online))
     .map((machine) => ({ name: machine.written, form: machine.facts.Ok?.form ?? "desktop" }));
 }
 const memorySwitch = {
-  enabled: async () => (live ? (memoryOn = await memorySeam.enabled()) : memoryOn),
-  set: async (on: boolean) => {
-    if (live) await memorySeam.setEnabled(on);
+  enabled: async (hub: string | null, account: string | null) => (live ? (memoryOn = await memorySeam.enabled(hub, account)) : memoryOn),
+  set: async (on: boolean, hub: string | null, account: string | null) => {
+    if (live) await memorySeam.setEnabled(on, hub, account);
     memoryOn = on;
   },
 };
@@ -2094,17 +2107,30 @@ function projectPage(town: string): Page {
       },
     },
   });
-  // Its memory, where the feature is on, read as the page opens and as
-  // the page is asked again.
-  const readMemory = () => {
-    if (!memoryOn) return page.showMemory(null);
-    if (!live) return page.showMemory(specimenCatalog(specimen.now));
-    memorySeam.catalog(town).then(
-      (catalog) => page.showMemory(catalog),
-      () => page.showMemory(null),
-    );
+  // Its memory, where the feature is on: the catalog as it stands, then as
+  // anyone writes to it. The switch is asked as the page opens, not taken
+  // from a read that may not have come back yet.
+  let memoryLeft = false;
+  let memoryWatch: number | null = null;
+  const followMemory = async () => {
+    if (!live) return page.showMemory(memoryOn ? specimenCatalog(specimen.now) : null);
+    memoryOn = await memorySeam.enabled(null, null).catch(() => memoryOn);
+    if (memoryLeft || !memoryOn) return page.showMemory(null);
+    try {
+      const id = await memorySeam.watch(town, (catalog) => {
+        if (!memoryLeft) page.showMemory(catalog);
+      });
+      if (memoryLeft) void unwatch(id);
+      else memoryWatch = id;
+    } catch {
+      // A World without the watch still answers a single read.
+      await memorySeam.catalog(town).then(
+        (catalog) => !memoryLeft && page.showMemory(catalog),
+        () => !memoryLeft && page.showMemory(null),
+      );
+    }
   };
-  readMemory();
+  void followMemory();
   if (!live) {
     const map = specimenMap();
     page.update(map, { machine: specimen.world.here, scope: { kind: "town", town, record: null }, machines: specimen.world.who.machines.map((machine) => machine.kind === "answered" ? { ...machine, reply: { ...machine.reply, residents: machine.reply.residents.filter((r) => r.town === town) } } : machine) }, specimen.now);
@@ -2134,6 +2160,8 @@ function projectPage(town: string): Page {
     title: store.world.peek()?.towns.find((t) => t.town === town)?.record.name ?? town,
     leave() {
       left = true;
+      memoryLeft = true;
+      if (memoryWatch !== null) void unwatch(memoryWatch);
       clearTimeout(timer);
     },
   };

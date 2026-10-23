@@ -29,7 +29,8 @@ export interface GoalShown {
   worked: number;
   /** Since when it is in this state, in milliseconds since the epoch. */
   since: number;
-  paused?: { by: PausedBy; until: number | null } | null;
+  /** `reason` is the World's own words for the stop, shown when pointed at. */
+  paused?: { by: PausedBy; until: number | null; reason?: string | null } | null;
   /** The agent's account of it done or blocked, as Markdown. */
   statement?: string | null;
   sentinel?: SentinelLook | null;
@@ -54,5 +55,7 @@ export interface CollabNode {
   took: number;
   steps: number | null;
   machine?: string;
+  /** Why how it stands is not known, as the World said it. */
+  why?: string | null;
   children: CollabNode[];
 }

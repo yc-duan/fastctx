@@ -14,16 +14,19 @@ export interface SideSeams {
   bare?: boolean;
   plan: {
     words: PlanWords;
-    seams: PageSeams;
+    /** The plan's seams but its answers, which go in as the user's words. */
+    seams: Omit<PageSeams, "answer">;
     watch(show: (plan: PlanShown | null) => void): () => void;
   };
   goal: {
     watch(show: (goal: GoalShown | null) => void): () => void;
-    /** Sets the goal, or its words anew. */
-    set(objective: string): Promise<void>;
-    pause(): Promise<void>;
-    resume(): Promise<void>;
-    clear(): Promise<void>;
+    /** Sets the goal or its words anew, opening one done again. `seen` is
+     *  the version the user began from; each resolves false when the goal
+     *  changed elsewhere first. */
+    set(objective: string, seen?: number): Promise<boolean>;
+    pause(seen?: number): Promise<boolean>;
+    resume(seen?: number): Promise<boolean>;
+    clear(seen?: number): Promise<boolean>;
   };
   /** The colleagues the conversation asked, each with the host's agents
    *  it sent, as far as they are known. */

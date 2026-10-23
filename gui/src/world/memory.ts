@@ -4,7 +4,7 @@
 // a version, when and where, is the World's stamp beside it, never the
 // text's own word.
 
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import type { Writer } from "./world";
 
 export type MemoryKind = "journal" | "spec";
@@ -66,9 +66,13 @@ export interface MemorySeam {
   /** Writes a new journal, or the next version of a decision after
    *  `expected`; fails where another version came first. */
   save(town: string, kind: MemoryKind, name: string, text: string, expected: number | null): Promise<MemoryRevision>;
-  /** Whether project memory is on for the account. */
-  enabled(): Promise<boolean>;
-  setEnabled(on: boolean): Promise<void>;
+  /** Follows a project's catalog: as it stands, then after each change; the
+   *  id resolves for `unwatch`. */
+  watch(town: string, onCatalog: (catalog: MemoryCatalog) => void): Promise<number>;
+  /** Memory is on or off for a whole account; null lets the World pick
+   *  this computer's only one. */
+  enabled(hub: string | null, account: string | null): Promise<boolean>;
+  setEnabled(on: boolean, hub: string | null, account: string | null): Promise<void>;
 }
 
 export const memory: MemorySeam = {
@@ -79,6 +83,19 @@ export const memory: MemorySeam = {
     kind === "spec"
       ? invoke<MemoryRevision>("memory_save_spec", { project, name, text, expected })
       : invoke<MemoryRevision>("memory_add_journal", { project, name, text }),
-  enabled: () => invoke<{ enabled: boolean }>("memory_settings_read", {}).then((settings) => settings.enabled),
-  setEnabled: (on) => invoke<{ enabled: boolean }>("memory_settings_set", { enabled: on }).then(() => undefined),
+  watch: (project, onCatalog) => {
+    const pieces = new Channel<{ kind: "catalog"; catalog: MemoryCatalog } | { kind: "interrupted"; error: string; since: number }>();
+    pieces.onmessage = (piece) => {
+      // A broken watch keeps the catalog last seen until it comes back.
+      if (piece.kind !== "catalog") return;
+      try {
+        onCatalog(piece.catalog);
+      } catch (error) {
+        console.error("a memory catalog could not be shown", error);
+      }
+    };
+    return invoke<number>("memory_watch", { project, pieces });
+  },
+  enabled: (hub, account) => invoke<{ enabled: boolean }>("memory_settings_read", { hub, account }).then((settings) => settings.enabled),
+  setEnabled: (on, hub, account) => invoke<{ enabled: boolean }>("memory_settings_set", { hub, account, enabled: on }).then(() => undefined),
 };

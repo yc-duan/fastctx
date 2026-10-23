@@ -91,7 +91,7 @@ export function drawTree(root: HTMLElement): void {
  *  a marker's light sweep beneath it, each option with a ring drawn before
  *  it, the suggested one noted in the accent. Pressing one drops ink into
  *  its ring and tells the conversation, as the user's own words. */
-export function askElement(ask: Ask, words: BlockWords, seed: string, answer: (question: string, option: string) => void): HTMLElement {
+export function askElement(ask: Ask, words: BlockWords, seed: string, answer: (question: string, option: string) => Promise<void> | void): HTMLElement {
   const root = document.createElement("div");
   root.className = "pb-ask";
   root.dataset.seed = seed;
@@ -113,7 +113,13 @@ export function askElement(ask: Ask, words: BlockWords, seed: string, answer: (q
     button.classList.add("chosen");
     root.setAttribute("aria-label", words.answered(option.text));
     drawAsk(root);
-    answer(ask.question, option.text);
+    // Chosen once it went in; otherwise it can be picked again.
+    void Promise.resolve(answer(ask.question, option.text)).catch(() => {
+      root.classList.remove("answered");
+      button.classList.remove("chosen");
+      root.setAttribute("aria-label", words.decide);
+      drawAsk(root);
+    });
   });
   return root;
 }

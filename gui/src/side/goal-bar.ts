@@ -70,14 +70,10 @@ export class GoalBar {
       goal.status === "paused" && goal.paused
         ? words.paused(goal.paused.by, goal.paused.until === null ? null : words.at(goal.paused.until, now))
         : words.worked(workedNow(goal, now));
-    const turn =
-      goal.status === "active"
-        ? this.button("pause", "pause", words.pause)
-        : goal.status === "complete"
-          ? ""
-          : this.button("resume", "resume", words.resume);
+    const turn = goal.status === "active" ? this.button("pause", "pause", words.pause) : this.button("resume", "resume", words.resume);
+    const why = goal.status === "paused" && goal.paused?.reason ? ` title="${escape(goal.paused.reason)}"` : "";
     const acts = [this.button("clear", "close", words.clear), turn, this.acts.expand ? this.button("expand", "expand", words.expand) : ""].join("");
-    this.element.innerHTML = `<span class="gb-mark" aria-hidden="true">${glyph("goal", 16)}</span><span class="gb-state">${escape(words.bar[goal.status])}</span><span class="gb-text" title="${escape(goal.objective)}">${escape(goal.objective)}</span><span class="gb-when">${escape(when)}</span><span class="gb-acts">${acts}</span>`;
+    this.element.innerHTML = `<span class="gb-mark" aria-hidden="true">${glyph("goal", 16)}</span><span class="gb-state">${escape(words.bar[goal.status])}</span><span class="gb-text" title="${escape(goal.objective)}">${escape(goal.objective)}</span><span class="gb-when"${why}>${escape(when)}</span><span class="gb-acts">${acts}</span>`;
     if (goal.status === "active") this.tick = window.setTimeout(() => this.draw(), TICK_MS);
   }
 

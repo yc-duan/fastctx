@@ -483,6 +483,11 @@ export class ConversationPage {
         host: markOf(someone.agent) === "codex" ? "codex" : "claude",
         seams: options.side,
         say: (text, detail) => this.say(text, detail ?? ""),
+        // Answers go in at once, into the turn if one runs.
+        answer: async (text) => {
+          const came = await this.options.send(text, { refs: [], shown: [] });
+          if (came === "failed") throw new Error(words.notSent(""));
+        },
         agentBox: (run) =>
           new AgentBox(run, {
             words,

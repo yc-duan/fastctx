@@ -27,6 +27,8 @@ export interface GoalWords {
   undo: string;
   /** What the user did to the goal did not go through. */
   failed: string;
+  /** The goal changed elsewhere before what the user did reached it. */
+  changed: string;
   /** The empty field's placeholder, and its act. */
   ask: string;
   start: string;
@@ -87,6 +89,7 @@ export const zhSide: SideWords = {
     cleared: "目标已清掉",
     undo: "撤回",
     failed: "目标没改成",
+    changed: "目标在别处刚改过，看过再改",
     ask: "要它做成什么",
     start: "设为目标",
     save: "保存",
@@ -145,6 +148,7 @@ export const enSide: SideWords = {
     cleared: "Goal cleared",
     undo: "Undo",
     failed: "Couldn't change the goal",
+    changed: "The goal was just changed elsewhere; look before you change it",
     ask: "What should it get done",
     start: "Set as goal",
     save: "Save",

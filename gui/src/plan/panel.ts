@@ -124,15 +124,26 @@ export class PlanPage implements SidePage {
       this.drawn();
       return;
     }
-    // Drawn as saved at once; the version the World keeps comes after.
-    this.shownPlan = { ...this.shownPlan, source };
-    this.drawn();
-    void this.seams
-      .save(source, expected)
-      .then((saved) => {
-        if (!saved.ok) this.conflicted(source, saved.current);
-      })
-      .catch((error) => console.error("the plan could not be saved", error));
+    // The edit stays until the World keeps it; a save that did not go
+    // through keeps it to save again.
+    text.readOnly = true;
+    void this.seams.save(source, expected).then(
+      (saved) => {
+        if (this.editing !== text) return;
+        if (!saved.ok) return this.conflicted(source, saved.current);
+        if (this.shownPlan) this.shownPlan = { ...this.shownPlan, source };
+        this.drawn();
+      },
+      (error: unknown) => {
+        if (this.editing !== text) return;
+        text.readOnly = false;
+        this.sheet.querySelector(".plan-unsaved")?.remove();
+        const note = noteElement("warn", `<p>${escape(this.words.unsaved)}</p>`, "plan-unsaved");
+        note.classList.add("plan-unsaved");
+        note.title = error instanceof Error ? error.message : String(error);
+        this.sheet.prepend(note);
+      },
+    );
   }
 
   /** A save met a newer version. The draft is kept and laid out to edit

@@ -14,8 +14,9 @@ import type { GoalShown } from "./types";
 import type { GoalWords } from "./words";
 
 export interface GoalPageActs {
-  /** A goal set, or its words changed. */
-  save(objective: string): void;
+  /** A goal set, or its words changed, from the version the edit began at;
+   *  resolves whether it went through. */
+  save(objective: string, seen: number | undefined): Promise<boolean>;
   pause(): void;
   resume(): void;
   clear(): void;
@@ -26,6 +27,8 @@ export class GoalPage implements SidePage {
   private goal: GoalShown | null = null;
   /** The words as last saved or shown, to tell an edit from them. */
   private kept = "";
+  /** The version an edit under way began at. */
+  private editFrom: number | undefined;
 
   constructor(
     private readonly words: GoalWords,
@@ -43,6 +46,7 @@ export class GoalPage implements SidePage {
     this.element.addEventListener("input", (event) => {
       const field = event.target as HTMLTextAreaElement;
       if (!field.classList.contains("gp-field")) return;
+      this.editFrom ??= this.goal?.version;
       this.fit(field);
       const save = this.element.querySelector<HTMLElement>(".gp-save");
       if (save) save.hidden = field.value.trim() === "" || field.value.trim() === this.kept.trim();
@@ -75,6 +79,7 @@ export class GoalPage implements SidePage {
     const goal = this.goal;
     const words = this.words;
     this.kept = goal?.objective ?? "";
+    this.editFrom = undefined;
     const statement =
       goal?.statement && (goal.status === "complete" || goal.status === "blocked")
         ? `<section class="gp-part"><h2 class="gp-label">${escape(goal.status === "complete" ? words.done : words.blocked)}</h2><div class="prose gp-statement">${render(goal.statement)}</div></section>`
@@ -97,10 +102,11 @@ export class GoalPage implements SidePage {
       goal.status === "paused" && goal.paused
         ? words.paused(goal.paused.by, goal.paused.until === null ? null : words.at(goal.paused.until, now))
         : words.worked(workedNow(goal, now));
-    const turn =
-      goal.status === "active" ? this.act("pause", words.pause) : goal.status === "complete" ? "" : this.act("resume", words.resume);
+    // A goal done goes on where the user finds it not done.
+    const turn = goal.status === "active" ? this.act("pause", words.pause) : this.act("resume", words.resume);
+    const why = goal.status === "paused" && goal.paused?.reason ? ` title="${escape(goal.paused.reason)}"` : "";
     line.dataset.status = goal.status;
-    line.innerHTML = `<span class="gp-mark" aria-hidden="true"></span><span class="gp-word">${escape(words.states[goal.status])}</span><span class="gp-when">${escape(when)}</span><span class="gp-acts">${turn}${this.act("clear", words.clear)}</span>`;
+    line.innerHTML = `<span class="gp-mark" aria-hidden="true"></span><span class="gp-word">${escape(words.states[goal.status])}</span><span class="gp-when"${why}>${escape(when)}</span><span class="gp-acts">${turn}${this.act("clear", words.clear)}</span>`;
     this.drawMark();
   }
 
@@ -141,10 +147,21 @@ export class GoalPage implements SidePage {
     const field = this.element.querySelector<HTMLTextAreaElement>(".gp-field");
     const text = field?.value.trim() ?? "";
     if (!text || text === this.kept.trim()) return;
+    const seen = this.editFrom ?? this.goal?.version;
     this.kept = text;
     this.element.querySelector<HTMLElement>(".gp-save")!.hidden = true;
     field?.blur();
-    this.acts.save(text);
+    void this.acts.save(text, seen).then((went) => {
+      if (went) return;
+      // Not taken: the user's words stay, to save again over what is there now.
+      const now = this.element.querySelector<HTMLTextAreaElement>(".gp-field");
+      if (!now) return;
+      this.kept = this.goal?.objective ?? "";
+      now.value = text;
+      this.fit(now);
+      this.editFrom = this.goal?.version;
+      this.element.querySelector<HTMLElement>(".gp-save")!.hidden = false;
+    });
   }
 
   /** The field as tall as its words, so the page, not it, scrolls. */
