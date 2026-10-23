@@ -185,8 +185,8 @@ fn tell(
 /// spawned. The app-server that spawned it answers; the others do not know
 /// it.
 async fn whose(node: &Arc<Node>, thread: &str) -> Option<(String, Option<String>, Spawned)> {
-    for host in node.codex.all() {
-        let Ok(Some(spawned)) = host.spawned_by(thread).await else { continue };
+    if let Some(host) = node.codex.source(thread) {
+        let Ok(Some(spawned)) = host.spawned_by(thread).await else { return None };
         let mut above = spawned.parent.clone();
         for _ in 0..DEEPEST {
             if node.residents.resident_of_thread(&above).is_some() {

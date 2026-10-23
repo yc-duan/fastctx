@@ -876,7 +876,7 @@ pub async fn open_here(
     let _starting = crate::codex::starting(node);
     let (thread, model) = node
         .codex
-        .session(opened.home.as_deref(), crate::assists::host::kept(node, &id)?.unwrap_or(false))?
+        .conversation(&id, opened.home.as_deref(), crate::assists::host::kept(node, &id)?.unwrap_or(false))?
         .start_thread(spec)
         .await
         .map_err(Failure::new)?;

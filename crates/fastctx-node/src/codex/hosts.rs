@@ -1,20 +1,17 @@
-//! The node's Codex app-servers, one for each Codex login and a separate
-//! instruction and extension home for its assisted conversations. An
-//! app-server serves one login, so each account
-//! runs its own (`AgentHome`). The default home's starts as before; each
-//! other one at its first use, with `CODEX_HOME` naming it and the desktop
-//! app's program when its home records none. Whatever any of them reports
-//! reaches the node's one listener: threads are told apart by their ids;
-//! what they read of their logins' limits, and what each app-server says of
-//! its login on starting, reach the logins' record (`crate::logins`).
+//! Login hosts and independent processes for World-owned conversations.
+//! Assisted conversations retain their separate instruction and session home.
+//! Reports remember their source, so looking up a subagent never starts an
+//! unrelated conversation's process.
 
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use fastctx_hosts::codex::identify::SaidReport;
 use fastctx_hosts::codex::launch::{self, Launch};
 use fastctx_hosts::codex::{CodexHost, HostEvent, LimitsReport, Log};
+use fastctx_types::ResidentId;
 use fastctx_types::ipc::Failure;
 use fastctx_types::residents::About;
 use tokio::sync::mpsc;
@@ -23,8 +20,10 @@ pub(crate) struct CodexHosts {
     default: Arc<CodexHost>,
     others: Mutex<Vec<Arc<CodexHost>>>,
     assisted: Mutex<Vec<Arc<CodexHost>>>,
-    /// `<world>/codex`, where the default home's app-server runs; each
-    /// other one runs in `homes/<key>` under it.
+    conversations: Mutex<HashMap<ResidentId, Arc<CodexHost>>>,
+    sources: Sources,
+    /// `<world>/codex`: login hosts run in `homes/<key>`, conversation
+    /// processes in `c/<resident>`. Short names leave room for Unix sockets.
     workdir: PathBuf,
     environment: Vec<(OsString, OsString)>,
     log: Log,
@@ -59,11 +58,14 @@ impl CodexHosts {
         let (default, reports) = CodexHost::new(default_home, None, workdir.clone(), environment.clone(), log.clone());
         default.report_limits_to(limits.clone());
         default.report_said_to(said.clone());
-        forward(reports, events.clone());
+        let sources = Sources::default();
+        forward(reports, events.clone(), Arc::downgrade(&default), sources.clone());
         let hosts = Self {
             default,
             others: Mutex::new(Vec::new()),
             assisted: Mutex::new(Vec::new()),
+            conversations: Mutex::new(HashMap::new()),
+            sources,
             workdir,
             environment,
             log,
@@ -99,7 +101,7 @@ impl CodexHosts {
         let (host, reports) = CodexHost::new(dir.to_path_buf(), program_home, workdir, environment, self.log.clone());
         host.report_limits_to(self.limits.clone());
         host.report_said_to(self.said.clone());
-        forward(reports, self.events.clone());
+        forward(reports, self.events.clone(), Arc::downgrade(&host), self.sources.clone());
         others.push(host.clone());
         Ok(host)
     }
@@ -149,9 +151,41 @@ impl CodexHosts {
         })
     }
 
-    /// The original or isolated host recorded when the conversation was born.
+    /// World-owned conversations never share an app-server process. Native
+    /// sessions retain the login host; the node does not own their process.
     pub(crate) fn of(&self, node: &crate::Node, about: &About) -> Result<Arc<CodexHost>, Failure> {
-        self.session(about.home.as_deref(), crate::assists::host::kept(node, &about.id)?.unwrap_or(false))
+        let assisting = crate::assists::host::kept(node, &about.id)?.unwrap_or(false);
+        if about.world_started {
+            self.conversation(&about.id, about.home.as_deref(), assisting)
+        } else {
+            self.session(about.home.as_deref(), assisting)
+        }
+    }
+
+    pub(crate) fn conversation(
+        &self,
+        id: &ResidentId,
+        dir: Option<&Path>,
+        assisting: bool,
+    ) -> Result<Arc<CodexHost>, Failure> {
+        let template = self.session(dir, assisting)?;
+        let mut conversations = self.conversations.lock().expect("never poisoned");
+        if let Some(host) = conversations.get(id) {
+            return Ok(host.clone());
+        }
+        let workdir = self.workdir.join("c").join(id.as_str());
+        let (host, reports) = template.for_conversation(id.clone(), workdir);
+        host.report_limits_to(self.limits.clone());
+        if !assisting {
+            host.report_said_to(self.said.clone());
+        }
+        forward(reports, self.events.clone(), Arc::downgrade(&host), self.sources.clone());
+        conversations.insert(id.clone(), host.clone());
+        Ok(host)
+    }
+
+    pub(crate) fn source(&self, thread: &str) -> Option<Arc<CodexHost>> {
+        self.sources.lock().expect("never poisoned").get(thread).and_then(Weak::upgrade)
     }
 
     pub(crate) fn session(&self, dir: Option<&Path>, assisting: bool) -> Result<Arc<CodexHost>, Failure> {
@@ -168,7 +202,7 @@ impl CodexHosts {
             .map_err(|error| Failure::new(format!("keeping the assisted Codex home: {error}")))?;
         let (host, reports) = CodexHost::new_assisted(owner, workdir).map_err(Failure::new)?;
         host.report_limits_to(self.limits.clone());
-        forward(reports, self.events.clone());
+        forward(reports, self.events.clone(), Arc::downgrade(&host), self.sources.clone());
         assisted.push(host.clone());
         Ok(host)
     }
@@ -177,6 +211,7 @@ impl CodexHosts {
         let mut all = vec![self.default.clone()];
         all.extend(self.others.lock().expect("never poisoned").iter().cloned());
         all.extend(self.assisted.lock().expect("never poisoned").iter().cloned());
+        all.extend(self.conversations.lock().expect("never poisoned").values().cloned());
         all
     }
 
@@ -188,15 +223,42 @@ impl CodexHosts {
     /// A report's effects are durable: the host it came from lets its turn
     /// go (the others hold none of its threads).
     pub(crate) fn acknowledge(&self, event: &HostEvent) {
-        for host in self.all() {
-            host.acknowledge(event);
+        for thread in threads(event) {
+            if let Some(host) = self.source(thread) {
+                host.acknowledge(event);
+            }
         }
     }
 }
 
-fn forward(mut reports: mpsc::UnboundedReceiver<HostEvent>, events: mpsc::UnboundedSender<HostEvent>) {
+type Sources = Arc<Mutex<HashMap<String, Weak<CodexHost>>>>;
+
+fn threads(event: &HostEvent) -> Vec<&str> {
+    match event {
+        HostEvent::Happened { thread, .. }
+        | HostEvent::Desk { thread, .. }
+        | HostEvent::Unloaded { thread }
+        | HostEvent::Synchronized { thread, .. } => vec![thread],
+        HostEvent::Gone { turns, .. } => turns.iter().map(|(thread, _)| thread.as_str()).collect(),
+    }
+}
+
+fn forward(
+    mut reports: mpsc::UnboundedReceiver<HostEvent>,
+    events: mpsc::UnboundedSender<HostEvent>,
+    host: Weak<CodexHost>,
+    sources: Sources,
+) {
     tokio::spawn(async move {
         while let Some(event) = reports.recv().await {
+            {
+                let mut sources = sources.lock().expect("never poisoned");
+                for thread in threads(&event) {
+                    if sources.get(thread).is_none_or(|previous| !Weak::ptr_eq(previous, &host)) {
+                        sources.insert(thread.to_string(), host.clone());
+                    }
+                }
+            }
             if events.send(event).is_err() {
                 return;
             }
