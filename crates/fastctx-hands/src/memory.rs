@@ -2,7 +2,7 @@
 
 use fastctx_types::memory::{Catalog, Folders, Revision};
 
-mod words;
+use fastctx_types::memory::words;
 
 /// Journal rows, including the omission notice, take at most 2,048 output units.
 /// Project attributes and the complete spec index have independent, user-owned sizes.
@@ -19,7 +19,7 @@ pub fn map(catalog: &Catalog, folders: Result<&Folders, &str>, read_only: bool) 
         Err(why) => {
             text.push_str(&format!("{} {why}\nSpecs:\n", words::UNAVAILABLE));
             specs(&mut text, catalog);
-            text.push_str("Journals, newest first:\n");
+            text.push_str(fastctx_types::memory::words::JOURNAL_HEADING);
         }
     }
     text.push_str(&journals(catalog));

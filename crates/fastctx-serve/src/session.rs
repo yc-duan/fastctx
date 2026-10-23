@@ -389,9 +389,9 @@ impl Session {
         let mut answer = match reply {
             Ok(Reply::Asked { colleague }) => Answer {
                 facts: None,
-                content: vec![Content::Text(format!(
-                    "=== colleague {} on {} (started) ===\nIts last message of each turn will be delivered to you. See what it is doing: fastctx w {}",
-                    colleague.resident, colleague.machine, colleague.resident
+                content: vec![Content::Text(fastctx_types::collab_prompt::started(
+                    &colleague.resident,
+                    &colleague.machine,
                 ))],
                 is_error: false,
                 receipt: None,

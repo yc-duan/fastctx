@@ -8,6 +8,7 @@ mod accounts;
 #[cfg(target_os = "android")]
 mod android;
 mod collab;
+mod collaboration;
 mod composer;
 mod goals;
 mod connection;
@@ -1237,6 +1238,7 @@ pub fn run() {
             profile::mcp,
             collab::collab_read,
             collab::collab_write,
+            collaboration::collaboration_tree,
             memory::memory_list,
             memory::memory_read,
             memory::memory_save_spec,

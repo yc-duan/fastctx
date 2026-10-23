@@ -26,7 +26,7 @@ impl Content {
             Self::Bytes(bytes) => staged.write_all(bytes)?,
             Self::File { source, size, hash } => {
                 if !std::fs::symlink_metadata(source)?.file_type().is_file() {
-                    return Err(io::Error::other("the retained evidence is not a regular file"));
+                    return Err(io::Error::other(fastctx_types::memory::words::EVIDENCE_NOT_FILE));
                 }
                 let mut source = std::fs::File::open(source)?;
                 let mut digest = Sha256::new();
@@ -42,7 +42,7 @@ impl Content {
                     staged.write_all(&buffer[..read])?;
                 }
                 if count != *size || format!("{:x}", digest.finalize()) != *hash {
-                    return Err(io::Error::other("the retained evidence differs from its ledger digest"));
+                    return Err(io::Error::other(fastctx_types::memory::words::EVIDENCE_CHANGED));
                 }
             }
         }

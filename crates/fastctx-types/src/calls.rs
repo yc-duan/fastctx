@@ -47,6 +47,10 @@ pub enum Call {
         account: Option<crate::AccountName>,
         kind: String,
     },
+    Collaboration {
+        resident: ResidentId,
+        machine: Option<crate::access::Written>,
+    },
     Memory(crate::memory::MemoryCall),
     WatchMemory {
         town: TownName,
@@ -765,6 +769,7 @@ pub enum Reply {
     AccountRecords {
         response: crate::account_records::Response,
     },
+    Collaboration(Box<crate::collaboration::Tree>),
     Memory(crate::memory::MemoryReply),
     MemorySettings(crate::memory::Settings),
     Goal { updated: Box<crate::goals::Updated> },

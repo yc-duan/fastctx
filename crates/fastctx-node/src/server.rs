@@ -1108,7 +1108,16 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|(resident, landed)| Reply::Opened { resident, landed })
         }
+        Call::Collaboration { resident, machine } => {
+            users_voice(node, peer)?;
+            crate::colleagues::tree::query(node, resident, machine)
+                .await
+                .map(|tree| Reply::Collaboration(Box::new(tree)))
+        }
         Call::Stop { resident, machine } => {
+            if let Caller::Resident(parent) = caller::of(node, peer)? {
+                return crate::colleagues::stopping::stop(node, parent, resident, machine).await;
+            }
             users_voice(node, peer)?;
             crate::talk::stop(node, resident, machine)
                 .await

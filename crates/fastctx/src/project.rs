@@ -14,7 +14,7 @@ use crate::ask;
 pub enum ProjectCommand {
     /// The projects this machine is part of.
     List,
-    /// A project's attributes and enabled memory index.
+    #[command(about = fastctx_types::memory::words::SHOW_HELP)]
     Show {
         /// The project; without it, the one you work in.
         #[arg(value_name = "NAME")]

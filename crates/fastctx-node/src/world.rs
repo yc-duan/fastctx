@@ -589,6 +589,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         page_accounts: true,
         attachment_places: true,
         memory_folders: true,
+        collaboration_tree: true,
         shell: shell(),
         form: Some(form()),
         node_lifetime: Some(Box::new(node.lifetime.clone())),
@@ -1032,6 +1033,12 @@ impl fastctx_net::link::Node for Handler {
                         .map(|updated| RemoteReply::Goal { updated: Box::new(updated) })
                 }
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&node))),
+                RemoteCall::Collaboration { resident, colleagues } => {
+                    let acting = Acting::one(asker.hub.clone(), asker.account.clone());
+                    crate::colleagues::tree::here(&node, &resident, &acting, colleagues)
+                        .await
+                        .map(|tree| RemoteReply::Collaboration(Box::new(tree)))
+                }
                 RemoteCall::AttachmentReferences { conversation, attachments } => {
                     if !node.is_me(&conversation.machine)
                         || attachments.iter().any(|file| file.conversation().resident != conversation.resident)

@@ -272,6 +272,7 @@ async fn hand_over_locked(
     {
         return Ok(Landed::Waiting { why: Some(error.message), answered: answered(node, to, about) });
     }
+    crate::colleagues::goals::incoming(node, to, about, &pending).await?;
     crate::focus::refresh(node, to).await?;
     if let Some(landed) = crate::claude::deliver(node, to, about, directory, &pending).await {
         return landed;

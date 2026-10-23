@@ -14,10 +14,8 @@ use fastctx_types::{AccountName, AgentName, ResidentId};
 
 use crate::Node;
 
-/// Whether model collaboration is offered: while it is in development, no
-/// session is given a colleague, whatever an account or this computer has
-/// set, and the interface has nothing to turn it on (`world-gui.md`, 功能).
-const OFFERED: bool = false;
+/// Accounts still opt in and select each calling login.
+const OFFERED: bool = true;
 
 pub(crate) struct Candidate {
     pub shown: String,
@@ -219,11 +217,9 @@ fn own(node: &Node, login: &Caller) -> Result<Option<Choices>, Failure> {
 
 pub(crate) fn require(node: &Arc<Node>, resident: &ResidentId, login: Option<&Caller>) -> Result<Choices, Failure> {
     if let Some((about, _)) = node.residents.about(resident)
-        && let Origin::Colleague { asked_by, .. } = &about.origin
+        && matches!(about.origin, Origin::Colleague { .. })
     {
-        return Err(Failure::not_run(format!(
-            "you are a colleague {asked_by} asked for, and a colleague does not ask for colleagues; say what you need in your last message"
-        )));
+        return Err(Failure::not_run(fastctx_types::collab_prompt::NO_NESTING));
     }
     choices(node, Some(resident), login)?.ok_or_else(|| {
         Failure::not_run(if OFFERED {

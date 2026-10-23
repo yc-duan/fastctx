@@ -28,9 +28,7 @@ pub(super) fn authorize(
     directory.authorize(account, Action::ActFor(from)).map_err(|denial| denial.message)?;
     directory.authorize(account, Action::Project(town)).map_err(|denial| denial.message)?;
     if body && !directory.logged_in(from, account) {
-        return Err(
-            "project bodies are read on the account's own devices; an assisting host receives only the index".into()
-        );
+        return Err(fastctx_types::memory::words::BODY_DEVICE_REQUIRED.into());
     }
     Ok(())
 }
@@ -61,7 +59,7 @@ pub(crate) fn ask(hub: &Arc<Hub>, from: &MachineName, out: &Outq, id: u64, quest
         let store = hub.store();
         authorize(&store.book.directory, from, &account, &town, body)?;
         let ledgers = hub.ledgers.lock().expect("never poisoned");
-        let ledger = ledgers.towns.get(&town).ok_or("the project has no ledger yet")?;
+        let ledger = ledgers.towns.get(&town).ok_or(fastctx_types::memory::words::NO_LEDGER)?;
         let path = |seq: u64| ledgers.dir.join(town.as_str()).join(format!("{seq:020}.json"));
         let plan = if let Some((name, version)) = &wanted {
             let versions = ledger.memory.versions(name);
@@ -69,8 +67,11 @@ pub(crate) fn ask(hub: &Arc<Hub>, from: &MachineName, out: &Outq, id: u64, quest
                 Some(version) => versions.iter().find(|revision| revision.version == *version),
                 None => versions.last(),
             }
-            .ok_or("no such memory document or revision")?;
-            let seq = *ledger.sequences.get(&revision.path("md")).ok_or("the memory revision has no ledger entry")?;
+            .ok_or(fastctx_types::memory::words::NO_DOCUMENT)?;
+            let seq = *ledger
+                .sequences
+                .get(&revision.path("md"))
+                .ok_or(fastctx_types::memory::words::MISSING_REVISION_ENTRY)?;
             Plan::Document { path: path(seq), evidence: ledger.memory.evidence(&revision.name), versions }
         } else {
             let mut records: Vec<_> = ledger
@@ -82,7 +83,7 @@ pub(crate) fn ask(hub: &Arc<Hub>, from: &MachineName, out: &Outq, id: u64, quest
                 })
                 .collect();
             records.sort_by_key(|(version, _, _)| *version);
-            let (_, first, first_path) = records.first().ok_or("the project's opening record is missing")?;
+            let (_, first, first_path) = records.first().ok_or(fastctx_types::memory::words::MISSING_OPENING)?;
             let (_, last, last_path) = records.last().expect("has a first record");
             Plan::Index {
                 seq: ledger.next - 1,
@@ -101,7 +102,7 @@ pub(crate) fn ask(hub: &Arc<Hub>, from: &MachineName, out: &Outq, id: u64, quest
     };
     let prepared = prepare().and_then(|(plan, hub_id)| {
         let permit =
-            READERS.clone().try_acquire_owned().map_err(|_| "the hub is busy reading project memory".to_string())?;
+            READERS.clone().try_acquire_owned().map_err(|_| fastctx_types::memory::words::BUSY_READING.to_string())?;
         Ok((plan, hub_id, permit))
     });
     let (plan, hub_id, permit) = match prepared {
@@ -121,7 +122,7 @@ pub(crate) fn ask(hub: &Arc<Hub>, from: &MachineName, out: &Outq, id: u64, quest
         let answer = match tokio::time::timeout(Duration::from_secs(55), reading).await {
             Ok(Ok(answer)) => answer,
             Ok(Err(error)) => Err(format!("reading project memory: {error}")),
-            Err(_) => Err("reading project memory exceeded 55 seconds".into()),
+            Err(_) => Err(fastctx_types::memory::words::READ_DEADLINE.into()),
         };
         let answer = authorize(&hub.store().book.directory, &from, &account, &town, body).and(answer);
         let _ = out.send(Out::Frame(Down::Told { id, answer }));
@@ -143,7 +144,7 @@ impl Plan {
                         .files
                         .iter()
                         .find(|item| item.path == *file)
-                        .ok_or("the project record is missing")?
+                        .ok_or(fastctx_types::memory::words::MISSING_RECORD)?
                         .bytes
                         .0;
                     serde_json::from_slice::<Record>(bytes).map_err(|error| error.to_string())

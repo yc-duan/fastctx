@@ -19,6 +19,7 @@ mod artifact_sink;
 pub mod attachments;
 pub mod cache;
 mod collab;
+mod collaboration;
 pub mod composer;
 pub mod goals;
 pub mod conversation;

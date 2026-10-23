@@ -44,6 +44,7 @@ fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
         RemoteCall::Plan { resident: who, .. }
         | RemoteCall::Goal { resident: who, .. }
         | RemoteCall::ConversationDebt { resident: who, .. }
+        | RemoteCall::Collaboration { resident: who, .. }
         | RemoteCall::EnterProject { resident: who, .. }
         | RemoteCall::Talk { to: who, .. }
         | RemoteCall::Composer { resident: who, .. }

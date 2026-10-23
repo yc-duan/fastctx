@@ -62,14 +62,14 @@ impl Index {
             Mutation::Revision(revision) => {
                 let current = self.latest(&revision.name);
                 if current.is_some_and(|old| old.name != revision.name || old.kind != revision.kind) {
-                    return Err("a memory name already belongs to a different document".into());
+                    return Err(fastctx_types::memory::words::NAME_TAKEN.into());
                 }
                 if revision.kind == Kind::Journal && current.is_some() {
-                    return Err("journals cannot be changed; write another journal that names the correction".into());
+                    return Err(fastctx_types::memory::words::IMMUTABLE_JOURNAL.into());
                 }
                 let expected = current.map_or(0, |old| old.version);
                 if expected.checked_add(1) != Some(revision.version) {
-                    return Err(format!("memory revision conflict: current version is {expected}"));
+                    return Err(fastctx_types::memory::words::conflict(expected));
                 }
             }
             Mutation::Evidence(evidence) => {
@@ -77,12 +77,12 @@ impl Index {
                     .latest(&evidence.journal)
                     .is_some_and(|head| head.kind == Kind::Journal && head.name == evidence.journal)
                 {
-                    return Err("evidence must belong to an existing journal".into());
+                    return Err(fastctx_types::memory::words::EVIDENCE_JOURNAL.into());
                 }
                 if self.evidence.keys().any(|(journal, name)| {
                     journal == &evidence.journal.to_lowercase() && crate::ledger::conflicts(name, &evidence.name)
                 }) {
-                    return Err("journal evidence already exists and cannot be changed".into());
+                    return Err(fastctx_types::memory::words::IMMUTABLE_EVIDENCE.into());
                 }
             }
         }
@@ -113,12 +113,12 @@ impl Index {
             Some(version) => versions.iter().find(|revision| revision.version == version),
             None => versions.last(),
         }
-        .ok_or_else(|| format!("no such memory document or revision: {name}"))?
+        .ok_or_else(|| fastctx_types::memory::words::missing(name))?
         .clone();
         let file = files
             .iter()
             .find(|file| file.path == revision.path("md"))
-            .ok_or("the document's Markdown is missing from its ledger")?;
+            .ok_or(fastctx_types::memory::words::MISSING_DOCUMENT_TEXT)?;
         let text = String::from_utf8(file.bytes.0.clone()).map_err(|error| error.to_string())?;
         Ok(Document { revision, text, versions, evidence: self.evidence(name) })
     }
@@ -134,7 +134,7 @@ pub fn decode(files: &[File]) -> Result<Option<Mutation>, String> {
         return Ok(None);
     }
     if files.is_empty() || files.len() > 2 || files.iter().any(|file| !file.path.starts_with("memory/")) {
-        return Err("a memory append contains one document revision or evidence file".into());
+        return Err(fastctx_types::memory::words::APPEND_SHAPE.into());
     }
     for file in files {
         crate::ledger::check_path(&file.path)?;
@@ -142,7 +142,7 @@ pub fn decode(files: &[File]) -> Result<Option<Mutation>, String> {
     let metadata = files
         .iter()
         .find(|file| file.path.ends_with(".json") && !file.path.contains("/files/"))
-        .ok_or("the memory append has no metadata")?;
+        .ok_or(fastctx_types::memory::words::MISSING_METADATA)?;
     if metadata.path.contains("/evidence/") {
         let evidence: Evidence = serde_json::from_slice(&metadata.bytes.0).map_err(|error| error.to_string())?;
         markdown::check_name(&evidence.journal)?;
@@ -150,23 +150,25 @@ pub fn decode(files: &[File]) -> Result<Option<Mutation>, String> {
         if evidence.sha256.len() != 64
             || !evidence.sha256.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         {
-            return Err("evidence needs a lowercase SHA-256 digest".into());
+            return Err(fastctx_types::memory::words::EVIDENCE_DIGEST.into());
         }
         if metadata.path != evidence.path() {
-            return Err("the evidence metadata path does not match its name".into());
+            return Err(fastctx_types::memory::words::EVIDENCE_PATH.into());
         }
         if let Some(location) = &evidence.location {
             if files.len() != 1 || location.path.is_empty() {
-                return Err("external evidence needs a location and contains no inline bytes".into());
+                return Err(fastctx_types::memory::words::EXTERNAL_EVIDENCE.into());
             }
         } else {
-            let content =
-                files.iter().find(|file| file.path == evidence.content_path()).ok_or("evidence bytes are missing")?;
+            let content = files
+                .iter()
+                .find(|file| file.path == evidence.content_path())
+                .ok_or(fastctx_types::memory::words::MISSING_EVIDENCE_BYTES)?;
             if content.bytes.0.len() > INLINE_EVIDENCE_LIMIT
                 || content.bytes.0.len() as u64 != evidence.bytes
                 || digest(&content.bytes.0) != evidence.sha256
             {
-                return Err("the evidence bytes do not match their metadata".into());
+                return Err(fastctx_types::memory::words::EVIDENCE_MISMATCH.into());
             }
         }
         return Ok(Some(Mutation::Evidence(evidence)));
@@ -174,17 +176,19 @@ pub fn decode(files: &[File]) -> Result<Option<Mutation>, String> {
     let revision: Revision = serde_json::from_slice(&metadata.bytes.0).map_err(|error| error.to_string())?;
     markdown::check_name(&revision.name)?;
     if revision.version == 0 || metadata.path != revision.path("json") || files.len() != 2 {
-        return Err("the memory revision paths or version are invalid".into());
+        return Err(fastctx_types::memory::words::REVISION_PATH.into());
     }
-    let content = files.iter().find(|file| file.path == revision.path("md")).ok_or("the memory Markdown is missing")?;
+    let content = files
+        .iter()
+        .find(|file| file.path == revision.path("md"))
+        .ok_or(fastctx_types::memory::words::MISSING_MARKDOWN)?;
     if content.bytes.0.len() > CONTENT_LIMIT {
-        return Err("the memory document exceeds 8 MiB".into());
+        return Err(fastctx_types::memory::words::DOCUMENT_TOO_LARGE.into());
     }
-    let text =
-        std::str::from_utf8(&content.bytes.0).map_err(|error| format!("memory Markdown must be UTF-8: {error}"))?;
+    let text = std::str::from_utf8(&content.bytes.0).map_err(fastctx_types::memory::words::utf8)?;
     let (description, stamped) = markdown::render(&revision.name, revision.kind, text, &revision.author)?;
     if description != revision.description || stamped != text {
-        return Err("the memory header does not match its World attribution".into());
+        return Err(fastctx_types::memory::words::HEADER_ATTRIBUTION.into());
     }
     Ok(Some(Mutation::Revision(revision)))
 }
@@ -197,9 +201,9 @@ pub fn revision_files(
     author: Author,
 ) -> Result<(Revision, Vec<File>), String> {
     if kind == Kind::Journal && expected.is_some() {
-        return Err("journals cannot be changed; write another journal that names the correction".into());
+        return Err(fastctx_types::memory::words::IMMUTABLE_JOURNAL.into());
     }
-    let version = expected.unwrap_or(0).checked_add(1).ok_or("the memory version is exhausted")?;
+    let version = expected.unwrap_or(0).checked_add(1).ok_or(fastctx_types::memory::words::VERSION_EXHAUSTED)?;
     let (description, text) = markdown::render(name, kind, text, &author)?;
     let revision = Revision { kind, name: name.into(), description, version, author };
     let files = vec![

@@ -28,6 +28,10 @@ pub enum RemoteCall {
         resident: ResidentId,
         operation: crate::plan::Operation,
     },
+    Collaboration {
+        resident: ResidentId,
+        colleagues: bool,
+    },
     /// Replica paths on an account's own computer, without any document bytes.
     MemoryFolders {
         town: TownName,
@@ -558,7 +562,8 @@ impl RemoteCall {
             | RemoteCall::UpdateWorld
             | RemoteCall::Updates { .. }
             | RemoteCall::Stats { .. } => Purpose::Hands,
-            RemoteCall::AttachmentPlaces { .. }
+            RemoteCall::Collaboration { .. }
+            | RemoteCall::AttachmentPlaces { .. }
             | RemoteCall::ReserveAttachment { .. }
             | RemoteCall::CommitAttachment { .. }
             | RemoteCall::Composer { .. }
@@ -600,6 +605,7 @@ pub enum RemoteReply {
     Plan {
         result: crate::plan::Result,
     },
+    Collaboration(Box<crate::collaboration::Tree>),
     MemoryFolders(crate::memory::Folders),
     Goal { updated: Box<crate::goals::Updated> },
     ConversationDebt { debt: crate::turn_evidence::ConversationDebt },

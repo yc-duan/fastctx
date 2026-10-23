@@ -23,7 +23,7 @@ fn scope(hub: Option<String>, account: Option<String>) -> Result<(Option<HubName
 pub(crate) async fn memory_list(shell: tauri::State<'_, Shell>, project: String) -> Result<Catalog, String> {
     match shell.world().memory(MemoryCall::List { town: town(project)? }).await.map_err(|error| error.to_string())? {
         MemoryReply::Catalog { catalog } => Ok(catalog),
-        _ => Err("the World did not return a memory catalog".into()),
+        _ => Err(fastctx_types::memory::words::CATALOG_UNANSWERED.into()),
     }
 }
 
@@ -41,7 +41,7 @@ pub(crate) async fn memory_read(
         .map_err(|error| error.to_string())?
     {
         MemoryReply::Document { document } => Ok(*document),
-        _ => Err("the World did not return a memory document".into()),
+        _ => Err(fastctx_types::memory::words::WORLD_DOCUMENT_UNANSWERED.into()),
     }
 }
 
@@ -81,7 +81,7 @@ async fn save(
         .map_err(|error| error.to_string())?
     {
         MemoryReply::Saved { revision } => Ok(*revision),
-        _ => Err("the World did not confirm the memory revision".into()),
+        _ => Err(fastctx_types::memory::words::SAVE_UNCONFIRMED.into()),
     }
 }
 

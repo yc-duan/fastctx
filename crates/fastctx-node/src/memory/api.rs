@@ -13,17 +13,18 @@ use std::sync::Arc;
 pub(crate) fn account(node: &Node, acting: &Acting, town: &TownName) -> Result<Option<AccountName>, Failure> {
     let place = crate::ledger::names::place(&node.world, town)
         .map_err(|error| Failure::new(error.to_string()))?
-        .ok_or_else(|| Failure::new("the project has no ledger identity"))?;
+        .ok_or_else(|| Failure::new(fastctx_types::memory::words::MISSING_IDENTITY))?;
     let Some(link) = node.link_of(&place.hub) else { return Ok(None) };
     let view = link.view();
-    let project = view.project(&place.town).ok_or_else(|| Failure::new("the hub no longer lists the project"))?;
+    let project =
+        view.project(&place.town).ok_or_else(|| Failure::new(fastctx_types::memory::words::PROJECT_UNLISTED))?;
     let accounts: Vec<_> =
         node.accounts_on(&link, acting).into_iter().filter(|account| view.in_project(account, &place.town)).collect();
     let account = accounts
         .iter()
         .find(|account| **account == project.owner)
         .or(accounts.first())
-        .ok_or_else(|| Failure::refused("no caller account may write this project"))?;
+        .ok_or_else(|| Failure::refused(fastctx_types::memory::words::NO_PROJECT_WRITER))?;
     Ok(Some(account.clone()))
 }
 

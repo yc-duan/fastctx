@@ -2,8 +2,8 @@
 
 pub mod markdown;
 
-/// Compatibility refusal for the retired journal and external canon protocols.
-pub const LEGACY: &str = "This journal interface was retired; use project memory Markdown files.";
+pub mod words;
+pub use words::LEGACY;
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};

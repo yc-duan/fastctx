@@ -22,7 +22,7 @@ pub fn locate(world: &Path, path: &Path) -> Result<Option<Target>, String> {
     let resolved = crate::files::canonical_path(&native).map_err(|error| error.to_string())?;
     let actual = parse(&resolved, &root)?;
     if lexical.is_some() && lexical != actual {
-        return Err("a project-memory path was redirected outside its replica".into());
+        return Err(fastctx_types::memory::words::REDIRECTED_PATH.into());
     }
     Ok(actual.or(lexical))
 }
@@ -48,14 +48,14 @@ fn parse(path: &Path, world: &Path) -> Result<Option<Target>, String> {
     };
     let town = TownName::try_from(town.as_str()).map_err(|error| error.to_string())?;
     let (name, evidence) = match rest {
-        [file] => (file.strip_suffix(".md").ok_or("memory documents have the .md extension")?.to_string(), None),
+        [file] => (file.strip_suffix(".md").ok_or(fastctx_types::memory::words::MARKDOWN_EXTENSION)?.to_string(), None),
         [name, files @ ..] if kind == Kind::Journal && !files.is_empty() => (name.clone(), Some(files.join("/"))),
-        _ => return Err("write a Markdown document or a file in a journal's evidence folder".into()),
+        _ => return Err(fastctx_types::memory::words::WRITE_TARGET.into()),
     };
     fastctx_types::memory::markdown::check_name(&name)?;
     if evidence.as_ref().is_some_and(|name| name.split('/').any(|part| part.is_empty() || part == "." || part == ".."))
     {
-        return Err("evidence must stay inside its journal folder".into());
+        return Err(fastctx_types::memory::words::EVIDENCE_FOLDER.into());
     }
     Ok(Some(Target { town, kind, name, evidence }))
 }

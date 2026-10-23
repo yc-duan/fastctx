@@ -3,9 +3,16 @@
 //!
 //! A colleague is a Codex resident the World starts, on the asker's machine
 //! or another, as a thread of that machine's app-server. The asker's words
-//! become its first turn, and the asker is owed that turn's end. Asking is
+//! become its goal and first turn. The goal runtime delivers its report. Asking is
 //! recorded as one of the asker's actions: where the colleague lives, and
 //! its id; speaking to it later starts from that record.
+
+pub(crate) mod goals;
+
+mod native;
+pub(crate) mod plan;
+pub(crate) mod stopping;
+pub(crate) mod tree;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -177,6 +184,7 @@ pub async fn ask_here(
     prompt: String,
     started: fastctx_types::collab::Started,
 ) -> Result<ResidentId, Failure> {
+    node.colleague_goals.ready()?;
     let Requester { address: asker, turn: requester_turn } = requester;
     node.residents
         .set_departed(&node.world, &asker, false, None)
@@ -245,7 +253,7 @@ pub async fn ask_here(
         turn: None,
         last_turn: None,
         owed: Default::default(),
-        answering: vec![asker.clone()],
+        answering: Vec::new(),
         trouble: None,
         desk: false,
         desk_since: None,
@@ -265,6 +273,16 @@ pub async fn ask_here(
         .create(&node.world, about.clone(), town.clone(), now)
         .map_err(|error| Failure::new(format!("recording the colleague: {error}")))?;
     crate::context::instructed(node, &id, &heard).map_err(|error| Failure::new(error.to_string()))?;
+    if let Err(failure) = node.colleague_goals.open(node, &id, &asker, &prompt).await {
+        node.residents
+            .change_now(&node.world, &id, |now| {
+                now.activity = Activity::Idle;
+                now.trouble =
+                    Some(fastctx_types::residents::Trouble { at: Timestamp::now(), text: failure.message.clone() });
+            })
+            .map_err(|error| Failure::new(error.to_string()))?;
+        return Err(Failure::new(fastctx_types::collab_prompt::goal_failed(&id, failure)));
+    }
     node.residents.set_instructed(&id, heard);
     crate::codex::claim(node, &thread, &id).await;
     let directory = node.world.conversation(&id);
@@ -280,13 +298,21 @@ pub async fn ask_here(
             at: born_at,
             notice: Notice::Words { from: Speaker::Resident { address: asker.clone() }, text: prompt },
         },
-        readers: vec![asker],
+        readers: Vec::new(),
         state: PendingState::Waiting,
         working: false,
         session: None,
         since: None,
     };
-    crate::inbox::keep(&directory, &first).map_err(|error| Failure::new(format!("keeping the request: {error}")))?;
+    if let Err(error) = crate::inbox::keep(&directory, &first) {
+        node.residents
+            .change_now(&node.world, &id, |now| {
+                now.activity = Activity::Idle;
+                now.trouble = Some(fastctx_types::residents::Trouble { at: Timestamp::now(), text: error.to_string() });
+            })
+            .map_err(|error| Failure::new(error.to_string()))?;
+        return Err(Failure::new(fastctx_types::collab_prompt::first_request_failed(&id, error)));
+    }
     let (node, colleague) = (node.clone(), id.clone());
     let answering = node.handoff.call();
     tokio::spawn(async move {
@@ -454,8 +480,9 @@ fn words(id: &ResidentId, town: Option<&TownName>, origin: &Origin, record: bool
     };
     let working = match origin {
         Origin::Colleague { asked_by, .. } => format!(
-            "{} on {} started you, and you work for it. Its request comes next, under a line naming it; messages from anyone else arrive the same way. At the end of each turn, your last message goes word for word to whoever's messages went into that turn, and to no one else; nothing you write before it reaches anyone. Put what you found, or what you need to ask, in that last message.",
-            asked_by.resident, asked_by.machine
+            "{} asked you to do this work.\n\n{}",
+            asked_by.resident,
+            fastctx_types::collab_prompt::COLLEAGUE_RULES
         ),
         Origin::User => "The user started this session from fastctx and talks to you here.".to_string(),
     };

@@ -23,7 +23,7 @@ pub(crate) fn restore(world: &WorldDir, town: &TownName) -> io::Result<Vec<Strin
             .files
             .iter()
             .find(|file| file.path == revision.path("md"))
-            .ok_or_else(|| io::Error::other("a memory revision has no Markdown"))?
+            .ok_or_else(|| io::Error::other(fastctx_types::memory::words::REVISION_NO_MARKDOWN))?
             .bytes
             .0
             .clone();
@@ -42,7 +42,7 @@ pub(crate) fn restore(world: &WorldDir, town: &TownName) -> io::Result<Vec<Strin
                 }
                 let source = directory.attachments().join("memory").join(&journal.name).join(&evidence.sha256);
                 if !source.is_file() {
-                    return Err(io::Error::other(format!("retained evidence is missing: {}", source.display())));
+                    return Err(io::Error::other(fastctx_types::memory::words::missing_evidence(source.display())));
                 }
                 Content::File { source, size: evidence.bytes, hash: evidence.sha256 }
             } else {
@@ -50,7 +50,7 @@ pub(crate) fn restore(world: &WorldDir, town: &TownName) -> io::Result<Vec<Strin
                     .files
                     .iter()
                     .find(|file| file.path == evidence.content_path())
-                    .ok_or_else(|| io::Error::other("journal evidence is missing"))?
+                    .ok_or_else(|| io::Error::other(fastctx_types::memory::words::EVIDENCE_MISSING))?
                     .bytes
                     .0
                     .clone();

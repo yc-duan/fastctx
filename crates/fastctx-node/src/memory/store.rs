@@ -25,7 +25,7 @@ pub(crate) fn catalog(world: &WorldDir, town: &TownName) -> io::Result<fastctx_t
     static CATALOGS: std::sync::OnceLock<std::sync::Mutex<Cached>> = std::sync::OnceLock::new();
     let cache = CATALOGS.get_or_init(Default::default);
     let identity = crate::ledger::names::place(world, town)?
-        .ok_or_else(|| io::Error::other("the project has no ledger identity"))?;
+        .ok_or_else(|| io::Error::other(fastctx_types::memory::words::MISSING_IDENTITY))?;
     let seq = crate::ledger::replica_seq(world, town)?;
     let path = world.town(town).path().to_path_buf();
     let held = cache

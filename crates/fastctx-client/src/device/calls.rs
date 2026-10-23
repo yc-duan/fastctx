@@ -291,6 +291,10 @@ impl Device {
                 };
                 (machine, open, None)
             }
+            Call::Collaboration { resident, machine } => {
+                let machine = self.find(&resident, machine).await?;
+                (machine, RemoteCall::Collaboration { resident: resident.clone(), colleagues: true }, Some(resident))
+            }
             Call::Stop { resident, machine } => {
                 let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::Stop { resident: resident.clone() }, Some(resident))
@@ -430,6 +434,20 @@ impl Device {
                 return Err(failed(fastctx_types::goals::words::OLDER_NODE));
             }
         }
+        if matches!(remote, RemoteCall::Collaboration { .. }) {
+            if !session.link.view().collaboration_tree {
+                return Err(failed(fastctx_types::collab_prompt::TREE_HUB_OLD));
+            }
+            let facts = session
+                .link
+                .call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts)
+                .await
+                .map_err(|error| failed(error.to_string()))?
+                .map_err(failed)?;
+            if !matches!(facts, RemoteReply::Facts(facts) if facts.collaboration_tree) {
+                return Err(failed(fastctx_types::collab_prompt::TREE_MACHINE_OLD));
+            }
+        }
         let needs_profile = match &remote {
             RemoteCall::Manage { action: fastctx_types::management::Management::Mcp { .. }, .. } => true,
             RemoteCall::Open { mcp_off, .. } => {
@@ -460,6 +478,7 @@ impl Device {
         let address = resident.map(|resident| Address { machine: machine.clone(), resident });
         let reply = match (remote, answer) {
             (RemoteCall::Goal { .. }, RemoteReply::Goal { updated }) => Reply::Goal { updated },
+            (RemoteCall::Collaboration { .. }, RemoteReply::Collaboration(tree)) => Reply::Collaboration(tree),
             (RemoteCall::Composer { .. }, RemoteReply::Composer(updated)) => Reply::Composer(updated),
             (RemoteCall::FindFiles { .. }, RemoteReply::FilesFound(reply)) => Reply::FilesFound(reply),
             (RemoteCall::Folders { .. }, RemoteReply::Folders(folders)) => Reply::Folders(folders),
