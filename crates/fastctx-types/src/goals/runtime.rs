@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 pub struct Runtime {
     /// Only ends observed after this activation belong to this run of the goal.
     pub activated_at: Option<Timestamp>,
+    /// The operation that opened this run, independent of clock resolution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation: Option<String>,
     pub settled_turn: Option<String>,
     pub pending: Option<Work>,
     pub retry: Option<Retry>,
@@ -41,6 +44,8 @@ pub struct Conclusion {
 pub struct WaitKey {
     pub machine: MachineName,
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<crate::turn_evidence::WaitKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completion: Option<NoticeId>,
 }

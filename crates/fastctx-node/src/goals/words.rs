@@ -22,6 +22,44 @@ pub(crate) fn birth_input_failed(id: &fastctx_types::ResidentId, why: &str) -> S
     format!("Colleague {id} has a goal, but keeping its first request failed: {why}")
 }
 
+pub(crate) fn older_goal_waits(machine: &fastctx_types::MachineName) -> String {
+    format!("{machine} is too old to report outstanding colleague goals")
+}
+
+pub(crate) fn goal_waiting(goal: &Goal, pending: bool) -> String {
+    use fastctx_types::goals::runtime::Task;
+    if pending {
+        return "A local goal change is awaiting settlement.".into();
+    }
+    if goal.claim.is_some()
+        || goal.runtime.pending.as_ref().is_some_and(|work| matches!(work.task, Task::Review { .. }))
+    {
+        return "The colleague's goal is awaiting review.".into();
+    }
+    if let Some(stop) = &goal.stop
+        && let Some(at) = stop.resume_at
+        && matches!(goal.runtime.pending.as_ref().map(|work| &work.task), Some(Task::Quota { .. }))
+    {
+        return format!("The colleague's goal is waiting for quota; resumption is scheduled for {at}.");
+    }
+    format!(
+        "The colleague's goal is {}.",
+        match goal.status {
+            fastctx_types::goals::Status::Active => "active",
+            fastctx_types::goals::Status::Complete => "complete",
+            fastctx_types::goals::Status::Blocked => "blocked",
+            fastctx_types::goals::Status::Paused => "paused",
+        }
+    )
+}
+
+pub(crate) fn goal_report_wait(summary: &str, received: bool) -> String {
+    format!(
+        "{summary} {}",
+        if received { "Its final report has arrived." } else { "Its final report has not arrived yet." }
+    )
+}
+
 const BLOCK: &str = r#"THE GOAL
 The user set a goal for this conversation, and it is on:
 

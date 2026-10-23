@@ -18,10 +18,11 @@ pub(crate) mod reports;
 pub(crate) mod reviewer;
 mod scope;
 mod state;
+pub(crate) mod waiting;
 pub(crate) mod watch;
 mod watching;
 mod words;
-pub(crate) use words::{birth_goal_failed, birth_input_failed};
+pub(crate) use words::{birth_goal_failed, birth_input_failed, older_goal_waits};
 
 use crate::Node;
 use fastctx_types::access::HubAccount;

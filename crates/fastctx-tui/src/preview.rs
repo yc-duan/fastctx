@@ -369,6 +369,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         turn_debts: false,
         goal_runtime: false,
         goal_colleagues: false,
+        goal_waits: false,
         goal_questions: false,
         goal_question_words: false,
         goal_commands: false,

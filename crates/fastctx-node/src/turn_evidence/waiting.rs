@@ -157,34 +157,46 @@ pub(crate) async fn collect(
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(failure(error)),
     }
+    let received =
+        Arc::new(if colleagues.is_empty() { Vec::new() } else { crate::goals::waiting::received(node, resident)? });
     let mut queries = tokio::task::JoinSet::new();
     for (colleague, since) in colleagues {
-        let (node, acting, owner) = (node.clone(), about.acting.clone(), owner.clone());
+        let (node, acting, owner, received) = (node.clone(), about.acting.clone(), owner.clone(), received.clone());
         queries.spawn(async move {
             match super::debts::read(&node, &acting, &colleague, &owner).await {
-                Ok(debt) if debt.since().is_none() => Vec::new(),
-                Ok(debt) => vec![WaitHandle {
-                    id: colleague.resident.to_string(),
-                    completion: None,
-                    kind: WaitKind::Colleague,
-                    machine: colleague.machine,
-                    since: debt.since().or(Some(since)),
-                    liveness: if debt.uncertain.is_empty() {
-                        Liveness::Alive
-                    } else {
-                        Liveness::Unknown { reason: "host acceptance is uncertain".into() }
-                    },
-                    will_wake: !debt.pending.is_empty() || !debt.running.is_empty() || !debt.answers.is_empty(),
-                    summary: format!(
-                        "{} pending inputs, {} running turns, {} undelivered answers, {} uncertain inputs",
-                        debt.pending.len(),
-                        debt.running.len(),
-                        debt.answers.len(),
-                        debt.uncertain.len()
-                    ),
-                    output: None,
-                    output_growth: None,
-                }],
+                Ok(debt) => {
+                    let mut handles = Vec::new();
+                    if let Some(goal) = &debt.goal
+                        && let Some(handle) = crate::goals::waiting::handle(&node, &colleague, goal, &received)
+                    {
+                        handles.push(handle);
+                    }
+                    if debt.since().is_some() {
+                        handles.push(WaitHandle {
+                            id: colleague.resident.to_string(),
+                            completion: None,
+                            kind: WaitKind::Colleague,
+                            machine: colleague.machine,
+                            since: debt.since().or(Some(since)),
+                            liveness: if debt.uncertain.is_empty() {
+                                Liveness::Alive
+                            } else {
+                                Liveness::Unknown { reason: "host acceptance is uncertain".into() }
+                            },
+                            will_wake: !debt.pending.is_empty() || !debt.running.is_empty() || !debt.answers.is_empty(),
+                            summary: format!(
+                                "{} pending inputs, {} running turns, {} undelivered answers, {} uncertain inputs",
+                                debt.pending.len(),
+                                debt.running.len(),
+                                debt.answers.len(),
+                                debt.uncertain.len()
+                            ),
+                            output: None,
+                            output_growth: None,
+                        });
+                    }
+                    handles
+                }
                 Err(error) => vec![unknown(
                     colleague.resident.to_string(),
                     WaitKind::Colleague,

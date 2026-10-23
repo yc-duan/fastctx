@@ -236,6 +236,9 @@ pub struct Report {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReportDelivery {
     pub id: crate::NoticeId,
+    /// The goal run fulfilled by a final result; quota notices do not fulfill it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion: Option<crate::NoticeId>,
     pub colleague: crate::Address,
     pub account: HubAccount,
 }

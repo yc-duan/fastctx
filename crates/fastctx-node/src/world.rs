@@ -573,6 +573,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         turn_debts: true,
         goal_runtime: node.goals.available(),
         goal_colleagues: true,
+        goal_waits: true,
         goal_questions: true,
         goal_question_words: true,
         goal_commands: true,
@@ -992,9 +993,9 @@ impl fastctx_net::link::Node for Handler {
                         .map_err(|error| Failure::new(error.to_string()))
                 }
                 RemoteCall::ConversationDebt { resident, requester } => {
-                    crate::turn_evidence::debts::here(&node, &resident, &requester)
+                    crate::turn_evidence::debts::here(&node, &acting, &resident, &requester)
+                        .await
                         .map(|debt| RemoteReply::ConversationDebt { debt })
-                        .map_err(|error| Failure::new(error.to_string()))
                 }
                 RemoteCall::Look { id } => {
                     let (looked, mut jobs) = crate::look::look_here(&node, &id).await?;

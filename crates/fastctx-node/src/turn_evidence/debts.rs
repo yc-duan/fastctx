@@ -10,7 +10,7 @@ use jiff::Timestamp;
 use std::io;
 use std::sync::Arc;
 
-pub(crate) fn here(node: &Node, resident: &ResidentId, requester: &Address) -> io::Result<ConversationDebt> {
+fn deliveries(node: &Node, resident: &ResidentId, requester: &Address) -> io::Result<ConversationDebt> {
     let directory = node.world.conversation(resident);
     let names = node.names();
     let (pending, uncertain) = crate::inbox::input_states(&directory)?;
@@ -32,10 +32,29 @@ pub(crate) fn here(node: &Node, resident: &ResidentId, requester: &Address) -> i
         .collect();
     let answers = crate::inbox::owing(&directory)?
         .into_iter()
-        .filter(|owing| super::identity::same(&names, &owing.to, requester) && owing.delivery.notice.along().is_none())
+        .filter(|owing| {
+            super::identity::same(&names, &owing.to, requester)
+                && owing.delivery.notice.along().is_none()
+                && !matches!(
+                    owing.delivery.notice,
+                    fastctx_types::residents::Notice::Words { goal_report: Some(_), .. }
+                )
+        })
         .map(|owing| (owing.delivery.id.to_string(), owing.delivery.at))
         .collect();
-    Ok(ConversationDebt { observed_at: Timestamp::now(), pending, running, answers, uncertain })
+    Ok(ConversationDebt { observed_at: Timestamp::now(), goal: None, pending, running, answers, uncertain })
+}
+
+pub(crate) async fn here(
+    node: &Arc<Node>,
+    acting: &Acting,
+    resident: &ResidentId,
+    requester: &Address,
+) -> Result<ConversationDebt, Failure> {
+    let goal = crate::goals::waiting::debt(node, acting, resident, requester).await?;
+    let mut debt = deliveries(node, resident, requester).map_err(|error| Failure::new(error.to_string()))?;
+    debt.goal = goal.map(Box::new);
+    Ok(debt)
 }
 
 pub(crate) async fn read(
@@ -45,18 +64,15 @@ pub(crate) async fn read(
     requester: &Address,
 ) -> Result<ConversationDebt, Failure> {
     if node.is_me(&colleague.machine) {
-        return here(node, &colleague.resident, requester).map_err(|error| Failure::new(error.to_string()));
+        return here(node, acting, &colleague.resident, requester).await;
     }
     let machine = (&colleague.machine).into();
     let facts = node
         .call(acting, &machine, Purpose::Look, RemoteCall::Facts)
         .await
         .map_err(|error| Failure::new(error.to_string()))??;
-    if !matches!(facts, RemoteReply::Facts(facts) if facts.turn_debts) {
-        return Err(Failure::new(format!(
-            "{} is too old to report outstanding conversation deliveries",
-            colleague.machine
-        )));
+    if !matches!(facts, RemoteReply::Facts(facts) if facts.goal_waits) {
+        return Err(Failure::new(crate::goals::older_goal_waits(&colleague.machine)));
     }
     match node
         .call(

@@ -295,6 +295,7 @@ fn nodes() -> Vec<NodesReply> {
         turn_debts: false,
         goal_runtime: false,
         goal_colleagues: lifetime,
+        goal_waits: lifetime,
         goal_questions: lifetime,
         goal_question_words: lifetime,
         goal_commands: lifetime,
