@@ -114,8 +114,20 @@ pub(super) async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), F
             for waiting in &goal.runtime.waiting {
                 let returned = match (&waiting.completion, delivery) {
                     (Some(expected), Some(observed)) => expected == observed,
-                    _ => matches!(notice.as_deref(), Some(fastctx_types::residents::Notice::Answer { colleague, .. })
-                        if colleague.resident.as_str() == waiting.id && (colleague.machine == waiting.machine || node.names().names_of(&colleague.machine).contains(&waiting.machine))),
+                    _ => {
+                        let colleague = match notice.as_deref() {
+                            Some(fastctx_types::residents::Notice::Answer { colleague, .. }) => Some(colleague),
+                            Some(fastctx_types::residents::Notice::Words { goal_report: Some(report), .. }) => {
+                                Some(&report.colleague)
+                            }
+                            _ => None,
+                        };
+                        colleague.is_some_and(|colleague| {
+                            colleague.resident.as_str() == waiting.id
+                                && (colleague.machine == waiting.machine
+                                    || node.names().names_of(&colleague.machine).contains(&waiting.machine))
+                        })
+                    }
                 };
                 if returned && let Some(decision) = policy::wait_returned(&goal, waiting) {
                     return commit(node, &view, decision).await;

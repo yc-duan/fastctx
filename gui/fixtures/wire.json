@@ -4574,6 +4574,42 @@
       },
       {
         "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "heard",
+        "delivery": "goal-result-1",
+        "turn": "turn-1",
+        "from": {
+          "kind": "resident",
+          "address": {
+            "machine": "desktop",
+            "resident": "codex-ab12"
+          }
+        },
+        "text": "=== colleague codex-ab12 on desktop (goal complete, 2h14m) ===\nOriginal report.\n=== what it did: fastctx w codex-ab12 ===",
+        "notice": {
+          "kind": "words",
+          "from": {
+            "kind": "resident",
+            "address": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            }
+          },
+          "text": "=== colleague codex-ab12 on desktop (goal complete, 2h14m) ===\nOriginal report.\n=== what it did: fastctx w codex-ab12 ===",
+          "goal_report": {
+            "id": "goal-result-1",
+            "colleague": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "account": {
+              "hub": "w-0123456789abcdef",
+              "account": "ada"
+            }
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
         "event": "finished",
         "turn": "turn-1",
         "item": {
@@ -13109,6 +13145,8 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13271,6 +13309,8 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13435,6 +13475,8 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13599,6 +13641,8 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13762,6 +13806,8 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13926,6 +13972,8 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -14093,6 +14141,8 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -14261,6 +14311,8 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -14429,6 +14481,8 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -14596,6 +14650,8 @@
         "machine": "desktop",
         "facts": {
           "goal_questions": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",

@@ -105,7 +105,8 @@ impl RemoteCall {
             Self::Goal { request: crate::goals::Request::Read | crate::goals::Request::History { .. }, .. } => {
                 Contract::QUERY
             }
-            Self::Goal { .. } => Contract::CHANGE,
+            Self::GoalCommand { request: crate::goals::AgentRequest::Read, .. } => Contract::QUERY,
+            Self::Goal { .. } | Self::GoalCommand { .. } => Contract::CHANGE,
             Self::SentinelControl { request: crate::sentinel_control::Request::List { .. } | crate::sentinel_control::Request::Help }
             | Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Inspect { .. } } => Contract { within: Some(Duration::from_secs(90)), ..Contract::QUERY },
             Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Withdraw { .. } } => Contract::CONTROL,

@@ -54,6 +54,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
     let welcome = Welcome::Accepted {
         goal_runtime: node.goals.available(),
         sentinels: true,
+        goal_commands: true,
         profiles: true,
         account_records: true,
         conversation_plans: true,

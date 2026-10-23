@@ -1,8 +1,8 @@
 //! The main agent reads or marks its goal; the owning user opens and resumes it through the interface.
 
 use clap::{Args, Subcommand};
-use fastctx_types::goals::{AgentRequest, Mark, Updated};
-use fastctx_types::{AccountName, Call, HubName, Reply};
+use fastctx_types::goals::{AgentRequest, ColleagueControl, Mark, Updated};
+use fastctx_types::{AccountName, Call, HubName, Reply, ResidentId};
 use std::path::PathBuf;
 
 #[derive(Args)]
@@ -26,19 +26,37 @@ enum GoalCommand {
         #[arg(long, value_parser = crate::paths::parser())]
         file: PathBuf,
     },
-    Pause,
+    Pause {
+        colleague: Option<ResidentId>,
+    },
+    Resume {
+        colleague: ResidentId,
+    },
 }
 
 pub fn run(args: GoalArgs) -> anyhow::Result<()> {
     let request = match args.command {
         None => AgentRequest::Read,
-        Some(command) => {
-            let mark = match command {
-                GoalCommand::Complete { file } => Mark::Complete { statement: draft(file)? },
-                GoalCommand::Blocked { file } => Mark::Blocked { statement: draft(file)? },
-                GoalCommand::Pause => Mark::Pause,
-            };
-            AgentRequest::Mark { operation: fastctx_client::composer::watch_id()?, mark }
+        Some(GoalCommand::Pause { colleague: Some(colleague) }) => AgentRequest::ControlColleague {
+            operation: fastctx_client::composer::watch_id()?,
+            colleague,
+            control: ColleagueControl::Pause,
+        },
+        Some(GoalCommand::Resume { colleague }) => AgentRequest::ControlColleague {
+            operation: fastctx_client::composer::watch_id()?,
+            colleague,
+            control: ColleagueControl::Resume,
+        },
+        Some(GoalCommand::Complete { file }) => AgentRequest::Mark {
+            operation: fastctx_client::composer::watch_id()?,
+            mark: Mark::Complete { statement: draft(file)? },
+        },
+        Some(GoalCommand::Blocked { file }) => AgentRequest::Mark {
+            operation: fastctx_client::composer::watch_id()?,
+            mark: Mark::Blocked { statement: draft(file)? },
+        },
+        Some(GoalCommand::Pause { colleague: None }) => {
+            AgentRequest::Mark { operation: fastctx_client::composer::watch_id()?, mark: Mark::Pause }
         }
     };
     let job = std::env::var("FASTCTX_JOB").ok().filter(|job| !job.is_empty()).map(|job| job.parse()).transpose()?;

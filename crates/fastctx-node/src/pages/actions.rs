@@ -197,7 +197,7 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
             let delivery = Delivery {
                 id: NoticeId::try_from(format!("page-{suffix}")).expect("hex notice id"),
                 at: jiff::Timestamp::now(),
-                notice: Notice::Words { from: Speaker::Page { page: Box::new(source) }, text },
+                notice: Notice::Words { from: Speaker::Page { page: Box::new(source) }, text, goal_report: None },
             };
             let landed = crate::speech::tell_here(node, &to.resident, delivery, Owed::Nobody).await?;
             Ok(PageResult::Said { to, landed })

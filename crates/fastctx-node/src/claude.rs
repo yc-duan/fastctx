@@ -1263,7 +1263,7 @@ fn into_inbox(
 /// own words, which go in as the user's.
 fn words(notice: &Notice) -> (String, bool) {
     match notice {
-        Notice::Words { from: Speaker::User { .. }, text } => (text.clone(), true),
+        Notice::Words { from: Speaker::User { .. }, text, .. } => (text.clone(), true),
         Notice::Attached { message, text } => (message.render(text), true),
         notice => (told::told(notice), false),
     }

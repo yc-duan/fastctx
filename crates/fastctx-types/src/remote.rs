@@ -41,6 +41,13 @@ pub enum RemoteCall {
         town: TownName,
     },
     Goal { resident: ResidentId, request: crate::goals::Request },
+    /// A node forwards a resident command, including commands from its running jobs,
+    /// to the home that owns the goal's durable effects.
+    GoalCommand {
+        actor: crate::Address,
+        turn: Option<String>,
+        request: crate::goals::AgentRequest,
+    },
     ConversationDebt { resident: ResidentId, requester: crate::Address },
     WaitingJobs { owner: crate::Address },
     SentinelControl { request: crate::sentinel_control::Request },
@@ -526,7 +533,8 @@ impl RemoteCall {
     pub fn purpose(&self) -> Purpose {
         match self {
             Self::Goal { request: crate::goals::Request::Read | crate::goals::Request::History { .. }, .. } => Purpose::Look,
-            Self::Goal { .. } => Purpose::Agents,
+            Self::GoalCommand { request: crate::goals::AgentRequest::Read, .. } => Purpose::Look,
+            Self::Goal { .. } | Self::GoalCommand { .. } => Purpose::Agents,
             Self::EnterProject { .. } | Self::Plan { .. } => Purpose::Echo,
             Self::SentinelSettings { .. } | Self::SentinelControl { .. } | Self::SentinelKeys => Purpose::Look,
             Self::SentinelKey { .. } => Purpose::Hands,

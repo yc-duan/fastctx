@@ -166,7 +166,13 @@ pub enum Notice {
     /// Its delivery identity keeps different questions from replacing one another.
     Question { colleague: Address, id: String, text: String },
     /// Words someone said to the resident.
-    Words { from: Speaker, text: String },
+    Words {
+        from: Speaker,
+        text: String,
+        /// A goal conclusion keeps its sender and full text for older readers.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        goal_report: Option<Box<crate::goals::ReportDelivery>>,
+    },
     /// The user's words and files; the accompanying facts are the World's.
     Attached { message: crate::session::attachments::AttachedMessage, text: String },
     /// A fact of the World's own, with the words the resident reads for it.
@@ -174,9 +180,15 @@ pub enum Notice {
 }
 
 impl Notice {
-    /// Explicitly scheduled work resumes even a closed foreground conversation.
+    /// Scheduled work and requested answers resume even a closed foreground conversation.
     pub fn wakes_closed(&self) -> bool {
-        matches!(self, Self::Words { from: Speaker::World, .. } | Self::Sentinel { .. })
+        matches!(
+            self,
+            Self::Words { from: Speaker::World, .. }
+                | Self::Words { goal_report: Some(_), .. }
+                | Self::Answer { .. }
+                | Self::Sentinel { .. }
+        )
     }
 
     /// What the World tells when the user changes a conversation's machines

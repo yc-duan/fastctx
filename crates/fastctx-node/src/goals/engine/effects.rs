@@ -228,7 +228,7 @@ async fn tell(node: &Arc<Node>, view: &View, work: &Work, timer: &Timer, text: &
     let delivery = Delivery {
         id: work.id.clone(),
         at: timer.fired_at.expect("begun timer"),
-        notice: Notice::Words { from: Speaker::World, text: text.into() },
+        notice: Notice::Words { from: Speaker::World, text: text.into(), goal_report: None },
     };
     crate::speech::tell_here_locked(node, id, delivery, crate::speech::Owed::Nobody).await?;
     drop(_reading);

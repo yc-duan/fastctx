@@ -29,6 +29,12 @@ pub struct MachineFacts {
     /// Receives colleague questions without waking an idle conversation.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub goal_questions: bool,
+    /// Routes resident goal commands to their home and supports requester controls.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub goal_commands: bool,
+    /// Receives immutable colleague goal reports and wakes closed requesters.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub goal_reports: bool,
     /// Reports a requester's pending inputs, running turns and undelivered answers.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub turn_debts: bool,

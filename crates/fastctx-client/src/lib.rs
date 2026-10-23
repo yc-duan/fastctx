@@ -21,7 +21,6 @@ pub mod cache;
 mod collab;
 mod collaboration;
 pub mod composer;
-pub mod goals;
 pub mod conversation;
 mod data;
 pub mod device;
@@ -30,6 +29,7 @@ pub mod file_read;
 mod file_search;
 mod frozen_lines;
 mod frozen_output;
+pub mod goals;
 pub mod host;
 mod line_rows;
 mod lines;
@@ -125,6 +125,7 @@ pub struct Client {
     pub goal_runtime: bool,
     pub scratch_locations: bool,
     pub sentinels: bool,
+    pub goal_commands: bool,
     /// The connected node's facts, including when another starter won.
     pub node_lifetime: Option<Box<fastctx_types::node_lifetime::NodeLifetime>>,
 }
@@ -169,6 +170,7 @@ impl Client {
                 goal_runtime,
                 scratch_locations,
                 sentinels,
+                goal_commands,
             } => Ok(Self {
                 connection,
                 next: 0,
@@ -181,6 +183,7 @@ impl Client {
                 goal_runtime,
                 scratch_locations,
                 sentinels,
+                goal_commands,
             }),
             Welcome::Refused { reason, mismatch } => {
                 let mismatch = mismatch.or_else(|| renewal::legacy_mismatch(&reason));
@@ -304,6 +307,14 @@ impl Client {
         }
         if !self.sentinels && matches!(call, Call::SentinelSettings { .. } | Call::SentinelKey { .. } | Call::Sentinel { .. }) {
             return Err(CallError::Failed(Failure::not_run(format!("upgrade {} to use sentinels", self.machine))));
+        }
+        if !self.goal_commands
+            && matches!(
+                call,
+                Call::GoalCommand { request: fastctx_types::goals::AgentRequest::ControlColleague { .. }, .. }
+            )
+        {
+            return Err(CallError::Failed(Failure::not_run(fastctx_types::goals::words::OLDER_COMMAND_NODE)));
         }
         if !self.profiles
             && matches!(

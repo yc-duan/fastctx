@@ -689,6 +689,9 @@ pub struct View {
     pub goal_control: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub scratch_locations: bool,
+    /// The hub relays resident goal commands and requester controls.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub goal_commands: bool,
     /// The hub accepts account-level Claude subagent changes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub subagents: bool,
@@ -776,6 +779,7 @@ impl View {
             conversation_plans: false,
             goal_control: false,
             scratch_locations: false,
+            goal_commands: false,
             subagents: false,
             versions: false,
             package_progress: false,

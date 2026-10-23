@@ -76,11 +76,17 @@ pub(crate) fn user(goal: &mut Goal, requested: UserChange, change: Change<'_>) -
             remember(goal, change, "resumed", String::new());
         }
         UserChange::Pause => {
+            let reason = if matches!(change.author, Author::Resident { .. }) {
+                words::REQUESTER_PAUSED
+            } else {
+                words::USER_PAUSED
+            };
             goal.status = Status::Paused;
-            goal.stop = Some(Stop { kind: StopKind::User, reason: words::USER_PAUSED.into(), resume_at: None });
+            goal.stop = Some(Stop { kind: StopKind::User, reason: reason.into(), resume_at: None });
             goal.claim = None;
             goal.runtime.pending = None;
-            remember(goal, change, "paused", words::USER_PAUSED.into());
+            goal.runtime.retry = None;
+            remember(goal, change, "paused", reason.into());
         }
         UserChange::Clear => return Err(Failure::new("Clear deletes the account record.")),
     }
@@ -125,6 +131,7 @@ fn activate(goal: &mut Goal, at: Timestamp) {
 }
 
 pub(crate) fn remember(goal: &mut Goal, change: Change<'_>, kind: &str, reason: String) {
+    super::reports::remember(goal, change.operation, change.at);
     goal.operation = change.operation.to_string();
     goal.changed_at = change.at;
     goal.decisions.push(Decision {

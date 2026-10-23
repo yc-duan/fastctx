@@ -95,11 +95,7 @@ pub(crate) async fn command(
     let Caller::Resident(address) = caller::of(node, peer)? else {
         return Err(Failure::refused(words::MAIN_ONLY));
     };
-    let request = match request {
-        AgentRequest::Read => Request::Read,
-        AgentRequest::Mark { operation, mark } => Request::Mark { operation, mark },
-    };
-    require(node, &request)?;
+
     let (selected, turn) = if let Some(job) = job {
         let directory = node.world.owner(&node.names(), &address);
         let record = fastctx_hands::run::record::read(&directory.job_record(&job)).map_err(failure)?;
@@ -112,19 +108,25 @@ pub(crate) async fn command(
     } else {
         return Err(Failure::refused(fastctx_types::goals::words::REMOTE_JOB));
     };
-    let scope = if node.is_me(&address.machine) {
-        let selected = choose(node, &address, hub.as_ref(), account.as_ref(), selected.as_ref())?;
-        scope::resolve(node, &address.resident, selected.as_ref())?
+    let selected = choose(node, &address, hub.as_ref(), account.as_ref(), selected.as_ref())?;
+    if !node.is_me(&address.machine)
+        && selected
+            .as_ref()
+            .is_none_or(|selected| !crate::jobs::running_for(&node.world, &node.names(), &address).contains(selected))
+    {
+        return Err(Failure::refused(words::ACCOUNT_MISSING));
+    }
+    let (target, scope) = if let AgentRequest::ControlColleague { colleague, .. } = &request {
+        super::commands::target(node, &address, colleague, selected).await?
     } else {
-        let selected = choose(node, &address, hub.as_ref(), account.as_ref(), selected.as_ref())?
-            .ok_or_else(|| Failure::refused(words::ACCOUNT_MISSING))?;
-        if !crate::jobs::running_for(&node.world, &node.names(), &address).contains(&selected) {
-            return Err(Failure::refused(words::ACCOUNT_MISSING));
-        }
-        selected
+        let scope = if node.is_me(&address.machine) {
+            scope::resolve(node, &address.resident, selected.as_ref())?
+        } else {
+            selected.ok_or_else(|| Failure::refused(words::ACCOUNT_MISSING))?
+        };
+        (address.clone(), scope)
     };
-    let author = Author::Resident { address: address.clone() };
-    operations::call(node, address, scope, author, turn, request).await
+    super::commands::route(node, target, address, scope, turn, request).await
 }
 
 fn choose(

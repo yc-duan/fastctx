@@ -25,7 +25,24 @@ async fn loaded(
     resident: &Address,
     account: &HubAccount,
 ) -> Result<(View, super::archive::Storage), Failure> {
-    let record = bounded(node.goals.records.read(account, KIND, resident.resident.as_str())).await?;
+    let (mut view, storage) = by_id(node, &resident.resident, account).await?;
+    if view.goal.as_ref().is_some_and(|goal| !super::same(node, &goal.resident, resident)) {
+        return Err(Failure::new(words::CONVERSATION_CHANGED));
+    }
+    if node.is_me(&resident.machine) {
+        let hold = super::lifecycle::hold(node, &resident.resident).map_err(failure)?;
+        view.pending = super::lifecycle::pending(node, &resident.resident, &view, hold.as_ref());
+    }
+    Ok((view, storage))
+}
+
+/// Looks up a goal in an already authorized account, including its authoritative home.
+pub(crate) async fn by_id(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    account: &HubAccount,
+) -> Result<(View, super::archive::Storage), Failure> {
+    let record = bounded(node.goals.records.read(account, KIND, resident.as_str())).await?;
     let version = record.as_ref().map(|record| record.version);
     let (goal, storage): (Option<Goal>, _) = match record.and_then(|record| record.body) {
         Some(body) => {
@@ -38,16 +55,11 @@ async fn loaded(
         if goal.account != *account {
             return Err(Failure::new(words::ACCOUNT_CHANGED));
         }
-        if !super::same(node, &goal.resident, resident) {
+        if goal.resident.resident != *resident {
             return Err(Failure::new(words::CONVERSATION_CHANGED));
         }
     }
-    let mut view = View { account: account.clone(), version, goal, pending: None };
-    if node.is_me(&resident.machine) {
-        let hold = super::lifecycle::hold(node, &resident.resident).map_err(failure)?;
-        view.pending = super::lifecycle::pending(node, &resident.resident, &view, hold.as_ref());
-    }
-    Ok((view, storage))
+    Ok((View { account: account.clone(), version, goal, pending: None }, storage))
 }
 
 pub(crate) async fn call(
@@ -85,7 +97,7 @@ pub(crate) async fn call_held(
     node: &Arc<Node>,
     resident: Address,
     account: HubAccount,
-    author: Author,
+    mut author: Author,
     turn: Option<String>,
     request: Request,
 ) -> Result<Updated, Failure> {
@@ -124,12 +136,12 @@ pub(crate) async fn call_held(
     let current = read(node, &resident, &account).await?;
     let mut proposed = current.goal.clone();
     let at = Timestamp::now();
+    if let Request::Change { change, .. } = &request {
+        super::colleagues::authorize(node, &resident, current.goal.as_ref(), &mut author, change)?;
+    }
     let change = state::Change { operation, author: author.clone(), turn, at };
     match &request {
         Request::Change { expected, change: requested, .. } => {
-            if !matches!(author, Author::User { .. }) {
-                return Err(Failure::refused(words::OWNER_ONLY));
-            }
             if *expected != current.version {
                 return Ok(Updated::Conflict { current: current.version });
             }
@@ -263,6 +275,9 @@ pub(crate) async fn finish(node: &Arc<Node>, intent: &mut Intent) -> Result<Upda
     if current.version.is_none_or(|current| current < version) {
         return Err(Failure::new(fastctx_types::goals::words::LOST_REVISION));
     }
+    if let Some(goal) = &intent.proposed {
+        super::reports::keep(node, goal)?;
+    }
     super::archive::close(node, &intent.account, &intent.resident.resident, &intent.operation).await?;
     if intent.proposed.is_none() && current.goal.is_none() {
         super::archive::for_resident(node, &intent.account, &intent.resident.resident).await?;
@@ -288,6 +303,9 @@ pub(crate) async fn finish(node: &Arc<Node>, intent: &mut Intent) -> Result<Upda
 }
 
 pub(crate) async fn apply(node: &Arc<Node>, resident: &ResidentId, view: &View) -> Result<(), Failure> {
+    if let Some(goal) = &view.goal {
+        super::reports::keep(node, goal)?;
+    }
     let mut installed = None;
     loop {
         let (text, accepted) = {

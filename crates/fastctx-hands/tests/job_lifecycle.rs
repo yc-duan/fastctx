@@ -231,6 +231,7 @@ async fn node(mut listener: Listener, world: WorldDir, machine: MachineName, not
                 &serde_json::to_vec(&Welcome::Accepted {
                     goal_runtime: false,
                     sentinels: false,
+                    goal_commands: false,
                     profiles: false,
                     account_records: false,
                     conversation_plans: false,
