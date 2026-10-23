@@ -18,6 +18,7 @@ mod item_details;
 mod kept;
 mod profile;
 mod sentinels;
+mod sentinel_controls;
 mod transcript;
 mod updates;
 mod world_watch;
@@ -1193,6 +1194,8 @@ pub fn run() {
             accounts::accounts,
             accounts::seen_dissolved,
             accounts::machine_log,
+            sentinel_controls::sentinel_list,
+            sentinel_controls::sentinel_stop,
             sentinels::sentinel_settings_read,
             sentinels::sentinel_settings_write,
             profile::profile_read,

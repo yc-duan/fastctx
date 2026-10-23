@@ -4,7 +4,7 @@ use fastctx_types::{
     AccountName, HubName,
     sentinel_settings::{SettingsReply, SettingsView, WriteSettings},
 };
-fn names(hub: Option<String>, account: Option<String>) -> Result<(Option<HubName>, Option<AccountName>), String> {
+pub(crate) fn names(hub: Option<String>, account: Option<String>) -> Result<(Option<HubName>, Option<AccountName>), String> {
     Ok((
         hub.map(HubName::try_from).transpose().map_err(|e| e.to_string())?,
         account.map(AccountName::try_from).transpose().map_err(|e| e.to_string())?,
