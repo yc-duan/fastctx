@@ -46,6 +46,10 @@ pub enum RemoteCall {
     SentinelControl { request: crate::sentinel_control::Request },
     SentinelHome { request: crate::sentinel_control::HomeRequest },
     SentinelSettings { change: Option<crate::sentinel_settings::WriteSettings> },
+    /// Keeps or removes one of the account's sentinel keys on its home.
+    SentinelKey { key: crate::sentinel_settings::KeyName, value: Option<crate::sentinel_settings::Secret> },
+    /// Which of the account's sentinel keys its home holds.
+    SentinelKeys,
     /// A running job returns its resident's project selection to its home.
     /// This call is relayed and authorized by a hub supporting project entry.
     EnterProject {
@@ -524,7 +528,8 @@ impl RemoteCall {
             Self::Goal { request: crate::goals::Request::Read, .. } => Purpose::Look,
             Self::Goal { .. } => Purpose::Agents,
             Self::EnterProject { .. } | Self::Plan { .. } => Purpose::Echo,
-            Self::SentinelSettings { .. } | Self::SentinelControl { .. } => Purpose::Look,
+            Self::SentinelSettings { .. } | Self::SentinelControl { .. } | Self::SentinelKeys => Purpose::Look,
+            Self::SentinelKey { .. } => Purpose::Hands,
             Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Inspect { .. } } => Purpose::Look,
             Self::SentinelHome { .. } => Purpose::Hands,
             RemoteCall::PageAction { action: crate::pages::PageInvocation::Say { .. }, .. } => Purpose::Words,
@@ -627,6 +632,7 @@ pub enum RemoteReply {
     SentinelControl(Box<crate::sentinel_control::Reply>),
     SentinelHome(Box<crate::sentinel_control::HomeReply>),
     SentinelSettings(Box<crate::sentinel_settings::SettingsReply>),
+    SentinelKeys(crate::sentinel_settings::KeyStatus),
     Entered {
         town: TownName,
         map: Box<crate::project::MapView>,

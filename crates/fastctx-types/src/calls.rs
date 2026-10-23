@@ -75,6 +75,13 @@ pub enum Call {
         account: Option<crate::AccountName>,
         change: Option<crate::sentinel_settings::WriteSettings>,
     },
+    /// Hands one sentinel key to the account's sentinel home; `None` removes it.
+    SentinelKey {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        key: crate::sentinel_settings::KeyName,
+        value: Option<crate::sentinel_settings::Secret>,
+    },
     /// The selected account's machine changes, before a previous page's
     /// cursor when supplied. The hub checks visibility on every read.
     MachineLog {

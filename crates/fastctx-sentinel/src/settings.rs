@@ -4,8 +4,7 @@ use fastctx_types::{
     access::HubAccount,
     sentinel_settings::{Settings, WriteSettings},
 };
-pub const KIND: &str = "sentinel-settings";
-pub const KEY: &str = "default";
+pub use fastctx_types::sentinel_settings::{RECORD_KEY as KEY, RECORD_KIND as KIND};
 
 pub async fn read(records: &dyn Records, scope: &HubAccount) -> Result<(Option<u64>, Settings), Error> {
     match tokio::time::timeout(std::time::Duration::from_secs(60), records.get(scope, KIND, KEY))

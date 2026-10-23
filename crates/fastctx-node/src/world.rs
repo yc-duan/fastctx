@@ -1050,6 +1050,14 @@ impl fastctx_net::link::Node for Handler {
                     crate::sentinels::home_call(&node, &scope, &request).await.map(|reply| RemoteReply::SentinelHome(Box::new(reply))).map_err(Failure::new)
                 }
                 RemoteCall::SentinelSettings { change } => crate::sentinels::settings(&node, &link, &caller.account, change).await.map(|reply| RemoteReply::SentinelSettings(Box::new(reply))),
+                RemoteCall::SentinelKey { key, value } => {
+                    let scope = fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
+                    crate::sentinels::keys::keep_here(&node, &scope, key, value).await.map(RemoteReply::SentinelKeys)
+                }
+                RemoteCall::SentinelKeys => {
+                    let scope = fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
+                    crate::sentinels::keys::status_here(&node, &scope).map(RemoteReply::SentinelKeys)
+                }
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&node))),
                 RemoteCall::Collaboration { resident, colleagues } => {
                     let acting = Acting::one(asker.hub.clone(), asker.account.clone());

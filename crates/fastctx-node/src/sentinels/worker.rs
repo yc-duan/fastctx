@@ -120,6 +120,7 @@ async fn watch_scope(node: Arc<Node>, scope: HubAccount) {
                     enqueue(&node, scope.clone(), id, None).await;
                 }
                 report(&node, &key, None);
+                super::keys::forget_if_moved(&node, &scope).await;
                 tokio::select! {
                     changed=changes.recv()=>{changed.map_err(|e|e.to_string())?;},
                     changed=settings.recv()=>{changed.map_err(|e|e.to_string())?;},

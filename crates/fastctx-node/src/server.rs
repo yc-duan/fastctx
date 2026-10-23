@@ -1382,6 +1382,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let (link, account) = crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
             crate::sentinels::settings(node, &link, &account, change).await.map(|reply| Reply::SentinelSettings(Box::new(reply)))
         }
+        Call::SentinelKey { hub, account, key, value } => {
+            users_voice(node, peer)?;
+            let (link, account) = crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
+            crate::sentinels::keys::set(node, &link, &account, key, value).await.map(|_| Reply::Done)
+        }
         Call::CollabRead { hub, account } => {
             users_voice(node, peer)?;
             match account {

@@ -574,7 +574,7 @@ pub async fn run_prepared(
         turn_activity: Default::default(),
         goals: goals::connected(weak.clone()),
         sentinel_waits: Arc::new(turn_evidence::waiting::NoSentinels),
-        sentinels: Default::default(),
+        sentinels: sentinels::connected(weak.clone()),
         mcp_keeping: std::sync::Mutex::new(()),
         job_watches: Default::default(),
         contexts: Default::default(),

@@ -302,7 +302,7 @@ impl Client {
         if !self.goal_runtime && matches!(call, Call::Goal { .. } | Call::GoalCommand { .. }) {
             return Err(CallError::Failed(Failure::not_run(fastctx_types::goals::words::OLDER_NODE)));
         }
-        if !self.sentinels && matches!(call, Call::SentinelSettings { .. } | Call::Sentinel { .. }) {
+        if !self.sentinels && matches!(call, Call::SentinelSettings { .. } | Call::SentinelKey { .. } | Call::Sentinel { .. }) {
             return Err(CallError::Failed(Failure::not_run(format!("upgrade {} to use sentinels", self.machine))));
         }
         if !self.profiles

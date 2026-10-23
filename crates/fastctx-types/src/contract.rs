@@ -110,6 +110,8 @@ impl RemoteCall {
             Self::SentinelControl { .. } | Self::SentinelHome { .. } => Contract::START,
             Self::SentinelSettings { change: None } => Contract { within: Some(Duration::from_secs(180)), ..Contract::QUERY },
             Self::SentinelSettings { change: Some(_) } => Contract::CHANGE,
+            Self::SentinelKeys => Contract { within: Some(Duration::from_secs(30)), ..Contract::QUERY },
+            Self::SentinelKey { .. } => Contract::CHANGE,
             Self::Mcp {
                 mcp:
                     crate::mcp::MachineCall::Status { .. }
@@ -290,6 +292,7 @@ impl Call {
             Self::Sentinel { .. } => Leaving::Finish,
             Self::SentinelSettings { change: None, .. } => Leaving::Stop,
             Self::SentinelSettings { change: Some(_), .. } => Leaving::Finish,
+            Self::SentinelKey { .. } => Leaving::Finish,
             Self::AttachmentPlaces { .. }
             | Self::McpRelay { .. }
             | Self::MachineLog { .. }

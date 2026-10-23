@@ -1238,6 +1238,7 @@ pub fn run() {
             sentinel_controls::sentinel_stop,
             sentinels::sentinel_settings_read,
             sentinels::sentinel_settings_write,
+            sentinels::sentinel_key_set,
             profile::profile_read,
             profile::profile_subagents,
             profile::profile_write,

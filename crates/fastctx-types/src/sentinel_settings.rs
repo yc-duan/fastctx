@@ -2,6 +2,10 @@
 use crate::{MachineName, agent::ModelSettings};
 use serde::{Deserialize, Serialize};
 
+/// The account record that holds these settings.
+pub const RECORD_KIND: &str = "sentinel-settings";
+pub const RECORD_KEY: &str = "default";
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     pub home: Option<MachineName>,
@@ -28,6 +32,23 @@ pub struct WriteSettings {
 pub struct KeyStatus {
     pub model: bool,
     pub search: bool,
+}
+/// Which of the account's sentinel keys a call sets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyName {
+    Model,
+    Search,
+}
+/// A key on its way to the sentinel home. It serializes as the plain string
+/// and never appears in debug output or logs.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Secret(pub String);
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Secret(..)")
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]

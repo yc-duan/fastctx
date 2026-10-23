@@ -122,3 +122,26 @@ pub struct ActionFact {
     pub exit_code: Option<i32>,
     pub full_path: Option<String>,
 }
+/// What a sentinel's durable timer does when it fires; only the sentinel runtime acts on it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TimerAction {
+    WakeSentinel {
+        scope: crate::access::HubAccount,
+        id: SentinelId,
+        generation: u64,
+        wake: ScheduledWake,
+    },
+    RunReflex {
+        scope: crate::access::HubAccount,
+        id: SentinelId,
+        generation: u64,
+        reflex: String,
+    },
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ScheduledWake {
+    OwnerAlarm { index: usize },
+    SentinelTime { reflex: String },
+}

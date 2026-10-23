@@ -61,28 +61,7 @@ pub struct Timer {
     pub at: i64,
     pub action: TimerAction,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum TimerAction {
-    WakeSentinel {
-        scope: fastctx_types::access::HubAccount,
-        id: fastctx_types::SentinelId,
-        generation: u64,
-        wake: ScheduledWake,
-    },
-    RunReflex {
-        scope: fastctx_types::access::HubAccount,
-        id: fastctx_types::SentinelId,
-        generation: u64,
-        reflex: String,
-    },
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ScheduledWake {
-    OwnerAlarm { index: usize },
-    SentinelTime { reflex: String },
-}
+pub use fastctx_types::sentinel::{ScheduledWake, TimerAction};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Fired {
     pub timer: Timer,

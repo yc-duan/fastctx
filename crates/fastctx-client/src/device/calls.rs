@@ -185,6 +185,30 @@ impl Device {
                 }
                 return Err(failed(format!("no online sentinel-capable machine can read this account's settings: {}", unavailable.join("; "))));
             }
+            Call::SentinelKey { hub, account, key, value } => {
+                // The key goes from this device straight to the home, through the hub alone.
+                let session = self.on_hub(hub.as_ref())?;
+                let account = profile_account(&session, account)?;
+                let request = fastctx_types::account_records::Request::Read {
+                    kind: fastctx_types::sentinel_settings::RECORD_KIND.into(),
+                    key: fastctx_types::sentinel_settings::RECORD_KEY.into(),
+                };
+                let home = match session.link.account_records(&account, request).await.map_err(failed)? {
+                    fastctx_types::account_records::Response::Read { record: Some(record) } if !record.metadata.deleted => {
+                        serde_json::from_value::<fastctx_types::sentinel_settings::Settings>(record.body)
+                            .map_err(failed)?
+                            .home
+                    }
+                    fastctx_types::account_records::Response::Read { .. } => None,
+                    _ => return Err(failed("the hub answered another account-records reply")),
+                };
+                let home = home.ok_or_else(|| failed("choose the sentinel home first"))?;
+                let call = RemoteCall::SentinelKey { key, value };
+                return match session.link.call(&home, &account, call.purpose(), call).await.map_err(failed)?.map_err(failed)? {
+                    RemoteReply::SentinelKeys(_) => Ok((Reply::Done, home)),
+                    _ => Err(failed("the sentinel home did not answer the key")),
+                };
+            }
             Call::ProfileRead { hub, account } => {
                 let session = self.on_hub(hub.as_ref())?;
                 let account = profile_account(&session, account)?;

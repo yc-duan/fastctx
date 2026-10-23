@@ -27,9 +27,13 @@ pub(crate) fn table(node: &Node) -> Result<&Arc<Store>, Failure> {
 pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Failure> {
     let store = table(node)?;
     if let TimerCall::List { owner } = call {
-        return Ok(Reply::Timers { timers: store.list(owner.as_ref()) });
+        let timers = store.list(owner.as_ref()).into_iter().filter(|timer| !matches!(timer.action, Action::Sentinel { .. }));
+        return Ok(Reply::Timers { timers: timers.collect() });
     }
     let resident = match &call {
+        TimerCall::Set { action: Action::Sentinel { .. }, .. } => {
+            return Err(Failure::refused("sentinel timers are managed by their sentinel"));
+        }
         TimerCall::Set { owner, action: Action::Tell { resident, .. }, .. } => {
             if owner.conversation() != Some(resident) {
                 return Err(Failure::new("a conversation timer must tell its own conversation"));
@@ -39,6 +43,7 @@ pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Fai
         TimerCall::Cancel { id } => match store.get(id) {
             Some(timer) => match timer.action {
                 Action::Tell { resident, .. } => resident,
+                Action::Sentinel { .. } => return Err(Failure::refused("sentinel timers are managed by their sentinel")),
             },
             None => return Ok(Reply::Done),
         },
@@ -131,6 +136,7 @@ pub(crate) fn start(node: &Arc<Node>) {
 
 async fn execute(node: &Arc<Node>, store: &Store, timer: &Timer) -> Result<(), String> {
     match &timer.action {
+        Action::Sentinel { .. } => crate::sentinels::timers::fire(node, store, timer),
         Action::Tell { resident, .. } => {
             let gate = crate::control_queue::gate(node, resident);
             let _action = gate.lock().await;
@@ -146,7 +152,7 @@ async fn execute(node: &Arc<Node>, store: &Store, timer: &Timer) -> Result<(), S
             crate::control_queue::drain(node, resident).await.map_err(|error| error.message)?;
             let management = node.residents.management(resident).map_err(|error| error.message)?;
             let _reading = management.read().await;
-            let Action::Tell { text, .. } = &timer.action;
+            let Action::Tell { text, .. } = &timer.action else { unreachable!() };
             let delivery = Delivery {
                 id: timer.delivery.clone(),
                 at: timer.fired_at.expect("begin records the firing"),

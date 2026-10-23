@@ -2,7 +2,7 @@
 use crate::Shell;
 use fastctx_types::{
     AccountName, HubName,
-    sentinel_settings::{SettingsReply, SettingsView, WriteSettings},
+    sentinel_settings::{KeyName, Secret, SettingsReply, SettingsView, WriteSettings},
 };
 pub(crate) fn names(hub: Option<String>, account: Option<String>) -> Result<(Option<HubName>, Option<AccountName>), String> {
     Ok((
@@ -31,4 +31,16 @@ pub(crate) async fn sentinel_settings_write(
 ) -> Result<SettingsReply, String> {
     let (hub, account) = names(hub, account)?;
     shell.world().sentinel_settings(hub, account, Some(change)).await.map_err(|e| e.to_string())
+}
+#[fastctx_gui_command::command]
+pub(crate) async fn sentinel_key_set(
+    shell: tauri::State<'_, Shell>,
+    hub: Option<String>,
+    account: Option<String>,
+    key: KeyName,
+    value: String,
+) -> Result<(), String> {
+    let (hub, account) = names(hub, account)?;
+    let value = Some(value).filter(|value| !value.trim().is_empty()).map(Secret);
+    shell.world().sentinel_key(hub, account, key, value).await.map_err(|e| e.to_string())
 }

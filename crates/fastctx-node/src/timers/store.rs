@@ -149,6 +149,21 @@ impl Store {
         Ok(())
     }
 
+    /// Fires this delivery again at `until` unless its taker completes it first.
+    pub fn hold(&self, timer: &Timer, until: Timestamp) -> io::Result<()> {
+        let mut index = self.index.lock();
+        let Some(row) = index.rows.get(&timer.id).filter(|row| row.delivery == timer.delivery) else { return Ok(()) };
+        let mut row = row.clone();
+        row.next_attempt = until;
+        row.error = None;
+        self.save(&row)?;
+        index.due.insert((row.next_attempt, row.id.clone()));
+        index.rows.insert(row.id.clone(), row);
+        drop(index);
+        self.changed.notify_one();
+        Ok(())
+    }
+
     /// A disk failure must not strand a claimed timer in memory until the next restart.
     pub fn release(&self, timer: &Timer, now: Timestamp) {
         let mut index = self.index.lock();
