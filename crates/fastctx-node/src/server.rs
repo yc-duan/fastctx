@@ -655,9 +655,16 @@ async fn collect(
 ) -> Result<Reply, Failure> {
     let gate = node.residents.management(&resident)?;
     let _collecting = gate.write().await;
-    crate::codex::native_context::observe(node, &resident).await?;
+    // What the host did to its context, and the blocks kept for it, are read
+    // from elsewhere; when that fails, the blocks wait for a later answer, and
+    // what waits for the conversation still goes with this one.
+    if let Err(failure) = crate::codex::native_context::observe(node, &resident).await {
+        node.log.line(format_args!("{resident}: reading its host's context: {}", failure.message));
+    }
     crate::context::plugin_heard(node, &resident).map_err(|error| Failure::new(error.to_string()))?;
-    crate::context::refresh(node, &resident).await?;
+    if let Err(failure) = crate::context::refresh(node, &resident).await {
+        node.log.line(format_args!("{resident}: refreshing its context: {}", failure.message));
+    }
     if native_delivery(node, &resident) {
         return collect_notes(node, resident, answering, Vec::new(), collected_notes).await;
     }
