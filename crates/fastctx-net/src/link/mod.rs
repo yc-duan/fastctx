@@ -136,6 +136,8 @@ pub trait Node: Send + Sync + 'static {
     /// This machine's view of the directory may have changed: the link has
     /// just asked the hub.
     fn directory_changed(&self) {}
+    /// An account record changed; consumers fetch the authoritative body as needed.
+    fn account_record_changed(&self, _change: &fastctx_types::account_records::Changed) {}
     /// The hub calls this machine `to` now, no longer `from`.
     fn renamed(&self, from: &MachineName, to: &MachineName) {
         let _ = (from, to);

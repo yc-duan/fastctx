@@ -399,10 +399,7 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
             );
             if changed {
                 match crate::focus::changed(node, id, &about, &focus).await {
-                    Ok(delivery) => match speech::tell_here_locked(node, id, delivery, speech::Owed::Nobody).await {
-                        Ok(landed) => result.notification = Some(landed),
-                        Err(error) => step(&mut result, "notification", Outcome::Failed, error.message),
-                    },
+                    Ok(()) => {}
                     Err(error) => step(&mut result, "notification", Outcome::Failed, error.message),
                 }
             }

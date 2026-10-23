@@ -30,8 +30,18 @@ fn seen(node: &Node, id: &ResidentId) -> Result<Option<Seen>, Failure> {
 }
 
 fn remember(node: &Node, id: &ResidentId, account: HubAccount, page: &Page) -> Result<(), Failure> {
-    let bytes = serde_json::to_vec(&Seen { account, owner: page.owner.clone(), version: page.version() })
-        .map_err(|error| Failure::new(error.to_string()))?;
+    let observed = Seen { account, owner: page.owner.clone(), version: page.version() };
+    keep_seen(node, id, &observed)
+}
+
+fn keep_seen(node: &Node, id: &ResidentId, observed: &Seen) -> Result<(), Failure> {
+    let _transaction = crate::resident_storage::lock();
+    if seen(node, id)?.is_some_and(|before| {
+        before.account == observed.account && before.owner == observed.owner && before.version >= observed.version
+    }) {
+        return Ok(());
+    }
+    let bytes = serde_json::to_vec(observed).map_err(|error| Failure::new(error.to_string()))?;
     fastctx_platform::publish(
         &node.world.conversation(id).path().join("plan-seen.json"),
         &bytes,
@@ -96,6 +106,7 @@ pub(crate) async fn here(
     let gate = node.residents.management(id)?;
     let _one = crate::gate_waits::alone(node, id, &gate).await?;
     node.residents.active(id)?;
+    crate::context::plugin_heard(node, id).map_err(|error| Failure::new(error.to_string()))?;
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::refused(words::RESIDENT))?;
     let (owner, colleague) = match &about.origin {
         Origin::Colleague { asked_by, .. } => (asked_by.resident.clone(), true),
@@ -146,9 +157,75 @@ pub(crate) async fn here(
         }
     };
     if let plan::Result::Page { page } = &result {
+        let version =
+            serde_json::to_string(&Seen { account: scope.clone(), owner: page.owner.clone(), version: page.version() })
+                .map_err(|error| Failure::new(error.to_string()))?;
+        crate::context::plan(node, id, page, &version).map_err(|error| Failure::new(error.to_string()))?;
         remember(node, id, scope, page)?;
     }
     Ok(result)
+}
+
+/// Refreshes the plan projection without advancing the conversation's observed
+/// revision. A native conversation with several accounts selects one by reading
+/// its plan explicitly; context must not choose an account on its behalf.
+pub(crate) async fn context(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    origin: &Origin,
+    acting: &Acting,
+) -> Result<(), Failure> {
+    let previous = seen(node, id)?;
+    let selected = previous.as_ref().map(|seen| seen.account.clone()).or_else(|| {
+        let accounts = match acting {
+            Acting::Accounts { accounts } => accounts.clone(),
+            Acting::Here => node
+                .links()
+                .into_iter()
+                .flat_map(|link| {
+                    node.accounts_on(&link, acting)
+                        .into_iter()
+                        .map(move |account| HubAccount { hub: link.membership().id, account })
+                })
+                .collect(),
+        };
+        match accounts.as_slice() {
+            [account] => Some(account.clone()),
+            _ => None,
+        }
+    });
+    let unavailable = || crate::context::plan_unavailable(node, id).map_err(|error| Failure::new(error.to_string()));
+    let Some(scope) = selected else { return unavailable() };
+    if !node.serves(acting, &scope.hub, &scope.account) {
+        unavailable()?;
+        return Err(Failure::refused(words::ROUTE));
+    }
+    let Some(link) = node.link_of(&scope.hub) else {
+        unavailable()?;
+        return Err(Failure::new(words::ROUTE));
+    };
+    if !link.view().account_records {
+        return unavailable();
+    }
+    let owner = match origin {
+        Origin::User => id.clone(),
+        Origin::Colleague { asked_by, .. } => asked_by.resident.clone(),
+    };
+    let page = match link.plan_read(&scope.account, owner).await {
+        Ok(page) => page,
+        Err(error) => {
+            unavailable()?;
+            return Err(Failure::new(error));
+        }
+    };
+    let version = serde_json::to_string(&Seen { account: scope, owner: page.owner.clone(), version: page.version() })
+        .map_err(|error| Failure::new(error.to_string()))?;
+    crate::context::plan(node, id, &page, &version).map_err(|error| Failure::new(error.to_string()))
+}
+
+pub(crate) fn context_seen(node: &Node, id: &ResidentId, version: &str) -> Result<(), Failure> {
+    let observed: Seen = serde_json::from_str(version).map_err(|error| Failure::new(error.to_string()))?;
+    keep_seen(node, id, &observed)
 }
 
 /// Before the identity record goes, remove the owner's plan at every account it

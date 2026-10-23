@@ -25,6 +25,9 @@ pub struct Host {
 /// What a session knows about itself that lets the World recognise it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hints {
+    /// The native Codex login that owns the thread's persisted history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<std::path::PathBuf>,
     /// Set by the World when it started the session itself.
     pub resident: Option<ResidentId>,
     /// The thread a Codex call belongs to; one thread is one resident,

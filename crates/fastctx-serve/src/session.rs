@@ -583,7 +583,8 @@ impl Session {
             .map_err(|error| error.to_string())?
             .map(|address| address.resident)
             .or_else(|| self.conversation.clone());
-        let hints = Hints { resident, thread: thread.clone(), was, tool_use_id: None };
+        let home = self.login(&host).and_then(|login| login.home);
+        let hints = Hints { resident, thread: thread.clone(), was, tool_use_id: None, home };
         let mut client = self.client_for(host.clone()).await?;
         match client.call(Call::Arrive { host, hints }).await {
             Ok(Reply::Arrived(whereabouts)) => {

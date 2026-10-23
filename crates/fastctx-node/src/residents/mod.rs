@@ -155,6 +155,8 @@ pub struct Former {
 #[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Heard {
     #[serde(default)]
+    pub context: Option<crate::context::Receipt>,
+    #[serde(default)]
     pub user_prompt: Option<String>,
     pub town: Option<TownName>,
     pub ledger: u64,
@@ -397,17 +399,6 @@ impl Residents {
         }
     }
 
-    /// The session of `id` compacted its conversation, and knows of its town
-    /// only what its instructions tell it: what changed since is told again,
-    /// as all of it is to one whose instructions told it of another town or
-    /// of none.
-    pub fn compacted(&self, id: &ResidentId) {
-        if let Some(live) = self.lock().live.get_mut(id) {
-            let town = live.town();
-            live.heard = live.instructed.clone().filter(|heard| heard.town == town);
-        }
-    }
-
     /// Its host told of its context compacted, at `at`.
     pub fn compacted_at(&self, id: &ResidentId, at: Timestamp) {
         if let Some(live) = self.lock().live.get_mut(id) {
@@ -500,7 +491,7 @@ impl Residents {
             model: None,
             acting: fastctx_types::access::Acting::Here,
             focus: Default::default(),
-            home: None,
+            home: hints.home,
             callee: None,
         };
         let places = Places::born(None, about.born_at);
@@ -1070,12 +1061,17 @@ mod lifetime_tests {
         assert!(problems.is_empty());
         let machine = "private-node".parse().unwrap();
         let host = Host { agent: "codex".parse().unwrap(), version: "fixture".into(), client: "fixture".into() };
-        let hints =
-            |index| Hints { resident: None, thread: Some(format!("thread-{index}")), was: None, tool_use_id: None };
+        let hints = |index| Hints {
+            resident: None,
+            thread: Some(format!("thread-{index}")),
+            was: None,
+            tool_use_id: None,
+            home: None,
+        };
         for index in 0..512 {
             let arrived = residents.arrive(&world, &machine, host.clone(), hints(index)).unwrap();
             let id = &arrived.resident;
-            residents.set_heard(id, Heard { user_prompt: None, town: None, ledger: index });
+            residents.set_heard(id, Heard { context: None, user_prompt: None, town: None, ledger: index });
             residents.set_inbox(id, format!("old-{index}"));
             residents.set_inbox(id, format!("new-{index}"));
             assert!(residents.resident_of_inbox(&format!("old-{index}")).is_none());

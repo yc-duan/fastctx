@@ -287,6 +287,7 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
     node.residents
         .forget(&node.world, id, measured.sessions.clone())
         .map_err(|error| Stop::Failed(format!("recording its deletion: {error}")))?;
+    crate::codex::native_context::forget(node, id);
     crate::desk::removed(node, id);
     crate::composer::deleted(node, id);
     crate::claude::removed(node, id);

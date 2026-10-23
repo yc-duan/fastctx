@@ -594,6 +594,7 @@ async fn connected(
             }
             Down::LedgerChanged { town } => inner.node.ledger_changed(Some(town)),
             Down::AccountRecordChanged { changed } => {
+                inner.node.account_record_changed(&changed);
                 let _ = inner.record_changes.send(Some(changed));
             }
             Down::Afoot { machine, busy, change } => inner.heard_afoot(machine, busy, *change),

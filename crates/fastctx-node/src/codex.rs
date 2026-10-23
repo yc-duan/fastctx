@@ -20,6 +20,7 @@ use crate::Node;
 pub mod control;
 mod directories;
 pub mod hosts;
+pub(crate) mod native_context;
 pub mod spawned;
 pub mod watch;
 

@@ -1277,6 +1277,14 @@ impl fastctx_net::link::Node for Handler {
 
     /// Someone may have logged in to an account this computer is logged in
     /// to: its user is told who, from the views before and after.
+    fn account_record_changed(&self, change: &fastctx_types::account_records::Changed) {
+        if change.metadata.kind == fastctx_types::plan::KIND
+            && let Some(node) = self.node.upgrade()
+        {
+            crate::context::request_all(&node);
+        }
+    }
+
     fn directory_changed(&self) {
         let Some(node) = self.node.upgrade() else { return };
         if let Err(error) = crate::mcp::store::sweep(&node, &self.hub) {

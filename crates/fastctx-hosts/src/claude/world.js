@@ -938,34 +938,29 @@ async function transcript($, context, path) {
   }
 }
 
-// The machines and folders the user pointed a conversation the World opened
-// at, as the node keeps them in the session's directory: a block of the
-// context the first message carries, beside the instruction files, read
-// again whenever Claude Code reads that context again, as after compacting
-// the conversation. None where the node keeps none.
-const FOCUS_BLOCK = 'machinesAndFolders'
-
-// The record of the project the conversation works in, the user's
-// instructions for all work in it first, as the node keeps it in the
-// session's directory, up to date: read into the context the same way.
-// None where it works in no project.
-const USER_BLOCK = 'userInstructions'
-const PROJECT_BLOCK = 'projectRecord'
-// How the account wants its subagents used, as it was last read with them
-// (`refreshAccountAgents`).
+// Named context is read afresh on every prompt rebuild, including compaction.
 const SUBAGENT_BLOCK = 'subagentInstructions'
+const CONTEXT_PREFIX = 'fastctx:'
+const OLD_CONTEXT_NAMES = ['machinesAndFolders', 'userInstructions', 'projectRecord', SUBAGENT_BLOCK]
 
-async function blockText($, context, name) {
-  try {
-    const text = await $.fs.read(context.dir + '/' + name)
-    return text.trim() === '' ? null : text
-  } catch (error) {
-    return null
+async function contextBlocks($, context) {
+  const pointer = JSON.parse(await $.fs.read(context.dir + '/context.json'))
+  const state = JSON.parse(await $.fs.read(pointer.state))
+  const entries = (await $.fs.list(pointer.directory)).filter((entry) => /^[a-z0-9-]{1,32}\.json$/.test(entry.name))
+  const blocks = []
+  const receipt = { epoch: state.epoch, revisions: {}, versions: {} }
+  const order = ['user.json', 'project.json', 'focus.json', 'plan.json', 'goal.json', 'map.json']
+  const rank = (entry) => order.includes(entry.name) ? order.indexOf(entry.name) : order.length
+  entries.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
+  for (const entry of entries) {
+    const block = JSON.parse(await $.fs.read(pointer.directory + '/' + entry.name))
+    const name = entry.name.slice(0, -5)
+    receipt.revisions[name] = block.revision
+    receipt.versions[name] = block.version
+    if (block.text !== '') blocks.push({ name: CONTEXT_PREFIX + name, text: block.text })
   }
-}
-
-async function focus($, context) {
-  return blockText($, context, 'focus.md')
+  await $.fs.write(context.dir + '/context-heard.json', JSON.stringify(receipt))
+  return blocks
 }
 
 async function session($, registry, id, renew = false) {
@@ -1144,15 +1139,13 @@ export function register(on) {
     const result = await next(e)
     const context = await session($, registry, await $.session.id())
     context.heardAccountAgents = context.accountAgentRevision
-    const added = [
-      { name: FOCUS_BLOCK, text: await focus($, context) },
-      { name: USER_BLOCK, text: await blockText($, context, 'user.md') },
-      { name: SUBAGENT_BLOCK, text: context.subagentInstructions || null },
-      { name: PROJECT_BLOCK, text: await blockText($, context, 'project.md') },
-    ].filter((block) => block.text !== null)
-    if (!added.length) return result
-    const names = added.map((block) => block.name)
-    return { ...result, blocks: [...result.blocks.filter((block) => !names.includes(block.name)), ...added] }
+    const added = await contextBlocks($, context)
+    if (context.subagentInstructions) {
+      const at = added.findIndex((block) => block.name === CONTEXT_PREFIX + 'user')
+      added.splice(at < 0 ? 0 : at + 1, 0, { name: SUBAGENT_BLOCK, text: context.subagentInstructions })
+    }
+    return { ...result, blocks: [...result.blocks.filter((block) =>
+      !block.name.startsWith(CONTEXT_PREFIX) && !OLD_CONTEXT_NAMES.includes(block.name)), ...added] }
   }).catch(($, e, next) => continueWithoutWorld($, 'prompt.context', e, next))
   on('prompt.section', async ($, e, next) => {
     if (await removed($)) return next(e)

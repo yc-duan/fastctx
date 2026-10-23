@@ -1492,6 +1492,7 @@ pub async fn open_here(
     node.residents
         .create(&node.world, about, town.clone(), now)
         .map_err(|error| Failure::new(format!("recording the session: {error}")))?;
+    crate::context::instructed(node, &id, &heard).map_err(|error| Failure::new(error.to_string()))?;
     node.residents.set_instructed(&id, heard);
     crate::session_options::keep(node, &id, &options)?;
     let directory = node.world.conversation(&id);
