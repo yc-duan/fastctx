@@ -35,7 +35,6 @@ fn id(link: &Link, scope: &HubAccount, owner: &Address) -> Result<SentinelId, Fa
 }
 /// Called after the goal engine durably opens or changes a goal. Retain the
 /// returned assignment for judge/end; `reason` means it is registered but away.
-#[allow(dead_code)] // The goal engine attaches this integration point when the lines are joined.
 pub(crate) async fn open(
     node: &Arc<Node>,
     scope: &HubAccount,
@@ -83,7 +82,6 @@ pub(crate) async fn open(
 }
 /// Stable request IDs deduplicate completed judgments, including after restart.
 /// The caller must recheck its current goal/idle/wait state before using advice.
-#[allow(dead_code)] // The goal engine attaches this integration point when the lines are joined.
 pub(crate) async fn judge(
     node: &Arc<Node>,
     registration: &Registration,
@@ -120,7 +118,6 @@ pub(crate) async fn judge(
     result.unwrap_or_else(|e: Failure| Judgment::Unavailable { reason: e.message })
 }
 /// Called for a cleared/completed/removed goal. A stale assignment is refused.
-#[allow(dead_code)] // The goal engine attaches this integration point when the lines are joined.
 pub(crate) async fn end(node: &Arc<Node>, registration: &Registration) -> Result<Option<String>, Failure> {
     // Removal may already have made the resident inactive. Account authority is
     // retained by the engine; deleting its record never starts another turn.
@@ -131,9 +128,20 @@ pub(crate) async fn end(node: &Arc<Node>, registration: &Registration) -> Result
         .await
         .map_err(|e| Failure::new(e.to_string()))
 }
+/// Ends the sentinel of `owner`'s goal on `scope`, where there is one.
+pub(crate) async fn retire(node: &Arc<Node>, scope: &HubAccount, owner: &Address) -> Result<(), Failure> {
+    let link = node.link_of(&scope.hub).ok_or_else(|| Failure::not_run("the goal account's hub is not connected"))?;
+    let id = id(&link, scope, owner)?;
+    let records = node.sentinels.records()?;
+    let Some((_, registration)) =
+        fastctx_sentinel::lifecycle::get(records, scope, &id).await.map_err(|e| Failure::new(e.to_string()))?
+    else {
+        return Ok(());
+    };
+    end(node, &registration).await.map(|_| ())
+}
 /// Definitions for the existing turn-evidence SentinelWaits adapter. Errors must
 /// remain errors; an unavailable account cannot be presented as no background work.
-#[allow(dead_code)] // The turn-evidence adapter attaches this integration point when the lines are joined.
 pub(crate) async fn waiting(node: &Arc<Node>, owner: &Address) -> Result<Vec<Registration>, Failure> {
     let mut result = Vec::new();
     let scopes = control::scopes(node, &Caller::Resident(owner.clone()), None, None);

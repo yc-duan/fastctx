@@ -270,6 +270,13 @@ pub(crate) async fn finish(node: &Arc<Node>, intent: &mut Intent) -> Result<Upda
     if node.is_me(&intent.resident.machine) && !node.residents.is_deleting(&intent.resident.resident) {
         apply(node, &intent.resident.resident, &current).await?;
     }
+    // A goal cleared or completed takes its sentinel with it; ending one
+    // already gone does nothing, so a replay is harmless.
+    if node.is_me(&intent.resident.machine)
+        && current.goal.as_ref().is_none_or(|goal| goal.status == fastctx_types::goals::Status::Complete)
+    {
+        crate::sentinels::goal_seams::retire(node, intent.account.clone(), intent.resident.clone());
+    }
     intent.phase = if current.version == Some(version) {
         Phase::Applied { version }
     } else {

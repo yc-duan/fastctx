@@ -16,22 +16,12 @@ use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 
-/// The sentinel line supplies this query; an observation failure is never an empty list.
+/// The sentinels a conversation left (`sentinels::goal_seams`); an observation failure is never an empty list.
 pub(crate) trait SentinelWaits: Send + Sync {
     fn waiting<'a>(
         &'a self,
         owner: &'a ResidentId,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<Vec<WaitHandle>, Failure>> + Send + 'a>>;
-}
-
-pub(crate) struct NoSentinels;
-impl SentinelWaits for NoSentinels {
-    fn waiting<'a>(
-        &'a self,
-        _: &'a ResidentId,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<Vec<WaitHandle>, Failure>> + Send + 'a>> {
-        Box::pin(async { Ok(Vec::new()) })
-    }
 }
 
 /// Reads only this owner's completion debts, even when the owner lives elsewhere.

@@ -161,6 +161,7 @@ pub(crate) async fn fire(node: &Arc<Node>, store: &Store, timer: &Timer) -> Resu
                     Answer::Judged(verdict) => {
                         policy::reviewed(goal, &work.id, verdict, observed, quiet, &clock(node), new_work())
                     }
+                    Answer::Absent { reason } => policy::unreviewed(goal, &work.id, reason, quiet),
                     Answer::Offline { reason } if quiet => {
                         policy::review_unavailable(goal, &work.id, true, reason, &clock(node), new_work())
                     }

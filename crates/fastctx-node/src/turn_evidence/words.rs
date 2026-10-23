@@ -5,16 +5,12 @@ use std::fmt::Write;
 
 pub(crate) fn render(evidence: &TurnEvidence, actions_path: &str) -> String {
     let mut text = String::new();
-    let _ =
-        writeln!(text, "Conversation {} · turn {}", evidence.resident, evidence.turn.as_deref().unwrap_or("unknown"));
+    // How the turn ended, with the host's category and words only where it gave them.
     if let Some(stop) = &evidence.stop {
-        let _ = writeln!(
-            text,
-            "Stopped: {:?}; category {}; message {}",
-            stop.kind,
-            stop.category.as_ref().map(ToString::to_string).unwrap_or_else(|| "unknown".into()),
-            stop.message.as_deref().map(line).unwrap_or_default()
-        );
+        let kind = serde_json::to_value(stop.kind).ok().and_then(|kind| kind.as_str().map(str::to_owned)).unwrap_or_default();
+        let category = stop.category.as_ref().map(|category| format!(" ({category})")).unwrap_or_default();
+        let message = stop.message.as_deref().map(line).filter(|message| !message.is_empty());
+        let _ = writeln!(text, "A turn ended: {kind}{category}{}", message.map(|message| format!(": {message}")).unwrap_or_default());
     }
     for call in &evidence.calls {
         let _ = writeln!(

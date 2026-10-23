@@ -153,7 +153,8 @@ impl Context for NamedContext {
 pub(crate) fn connected(node: Weak<Node>) -> super::Services {
     super::Services {
         records: Arc::new(AccountRecords { node: node.clone() }),
-        context: Arc::new(NamedContext { node }),
+        context: Arc::new(NamedContext { node: node.clone() }),
+        reviewer: Arc::new(crate::sentinels::goal_seams::GoalSentinel(node)),
         ..Default::default()
     }
 }

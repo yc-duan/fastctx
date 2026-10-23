@@ -1,6 +1,7 @@
 //! Account-scoped sentinel services and their integration ports.
 mod control;
 pub(crate) mod goal;
+pub(crate) mod goal_seams;
 mod effects;
 mod delivery;
 mod worker;

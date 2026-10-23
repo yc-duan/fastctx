@@ -28,6 +28,9 @@ pub fn input(review: &GoalReview) -> Result<Value, String> {
             value["blocked_claim"] = json!(review.blocked_claim);
         }
     }
+    if let Some(full) = &review.full {
+        value["full"] = json!(full);
+    }
     if serde_json::to_vec(&value).map_err(|e| e.to_string())?.len() > 24_000 {
         return Err(
             "goal review exceeds 24000 bytes; supply a smaller account of the facts and keep full evidence paths"

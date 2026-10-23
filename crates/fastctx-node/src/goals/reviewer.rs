@@ -67,6 +67,11 @@ pub(crate) enum Answer {
     Failed {
         reason: String,
     },
+    /// The account has no sentinel to look: the stop stands as the agent
+    /// left it, and the user is told.
+    Absent {
+        reason: String,
+    },
 }
 
 impl Answer {
@@ -86,10 +91,11 @@ impl Answer {
     }
 }
 
-#[allow(dead_code, reason = "The integrated reviewer provider constructs these availability results.")]
 pub(crate) enum Readiness {
     Ready,
     Offline { reason: String },
+    /// No sentinel is set up for the account, or its home cannot be used.
+    Absent { reason: String },
 }
 
 pub(crate) trait Reviewer: Send + Sync {

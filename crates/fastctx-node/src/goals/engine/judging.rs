@@ -14,6 +14,7 @@ pub(super) async fn run(node: &Arc<Node>, goal: &Goal, work: &Work, cause: Revie
     match tokio::time::timeout(Duration::from_secs(60), node.goals.reviewer.readiness(&goal.account)).await {
         Ok(Ok(Readiness::Ready)) => {}
         Ok(Ok(Readiness::Offline { reason })) => return (None, Answer::Offline { reason }),
+        Ok(Ok(Readiness::Absent { reason })) => return (None, Answer::Absent { reason }),
         Ok(Err(error)) => return (None, Answer::Failed { reason: error.message }),
         Err(_) => {
             return (

@@ -13,6 +13,7 @@ pub(super) const IDLE: &str =
 pub(super) const WAITING: &str = "Waiting on work that will wake this conversation.";
 pub(super) const REVIEW_EXHAUSTED: &str = "Two consecutive sentinel suggestions were delivered; this stop is accepted.";
 pub(super) const REVIEW_FAILED: &str = "The goal's sentinel could not judge this stop after three attempts.";
+pub(super) const UNREVIEWED: &str = "No sentinel checks this goal, so the stop stands for the user to look at.";
 pub(super) const RETRY_LIMIT: &str = "The goal has failed for six hours while this machine was online.";
 pub(super) const QUOTA_RECOVERED: &str = "The goal's usage pause has ended.";
 pub(super) const QUOTA_UNKNOWN: &str = "The host has not confirmed that ordinary usage is allowed.";

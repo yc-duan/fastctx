@@ -99,28 +99,33 @@ pub enum GoalTrigger {
     Blocked,
     Paused,
 }
+/// The small account of a stop a goal's sentinel judges (`world-goal.md`,
+/// 目标的哨兵): the agent's words marked as claims, the World's facts as facts.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoalReview {
     pub trigger: GoalTrigger,
     pub suggestions_left: u8,
     pub goal: String,
     pub plan_claim: Option<String>,
-    pub actions: Vec<ActionFact>,
+    /// What the World saw the agent do since the sentinel last looked, one
+    /// fact per line, each naming where its full record is.
+    pub actions: Option<String>,
     pub turn_end: Option<String>,
     pub last_words_claim: Option<String>,
     pub blocked_claim: Option<String>,
     pub user_words: Vec<String>,
-    pub previous_judgments: Vec<Judgment>,
+    pub previous_judgments: Vec<String>,
     pub machines: Vec<MachineName>,
-    pub now: i64,
+    pub now: jiff::Timestamp,
+    /// Where all this review is about is kept whole, to read there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full: Option<FullMaterial>,
 }
+/// A file on one of the account's machines.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ActionFact {
-    pub at: i64,
+pub struct FullMaterial {
     pub machine: MachineName,
-    pub summary: String,
-    pub exit_code: Option<i32>,
-    pub full_path: Option<String>,
+    pub path: String,
 }
 /// What a sentinel's durable timer does when it fires; only the sentinel runtime acts on it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

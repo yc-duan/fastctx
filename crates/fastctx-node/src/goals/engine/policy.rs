@@ -277,6 +277,21 @@ pub(super) fn reviewed(
     }
 }
 
+/// No sentinel can look: the stop stands as the agent left it, a blocked
+/// one blocked, any other paused, and the user is told why.
+pub(super) fn unreviewed(current: &Goal, expected: &NoticeId, reason: String, idle: bool) -> Option<Decision> {
+    let pending = current.runtime.pending.as_ref().filter(|pending| &pending.id == expected)?;
+    let Task::Review { cause, .. } = pending.task else { return None };
+    let mut goal = current.clone();
+    goal.runtime.pending = None;
+    let reason = format!("{}\n{reason}", words::UNREVIEWED);
+    if idle {
+        let status = if cause == ReviewCause::Blocked { Status::Blocked } else { Status::Paused };
+        stop(&mut goal, status, StopKind::Review, reason.clone());
+    }
+    Some(decision(goal, if idle { "unreviewed" } else { "review_obsolete" }, reason))
+}
+
 /// Offline homes do not consume attempts. Provider failures get the initial attempt and two retries.
 pub(super) fn review_unavailable(
     current: &Goal,
