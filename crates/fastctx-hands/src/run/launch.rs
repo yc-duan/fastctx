@@ -174,7 +174,7 @@ fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Resul
         account: launch.account.cloned(),
     };
     record::write(&record_path, &record).map_err(|error| failure("could not write the job's record", &error))?;
-    if launch.on.is_some() {
+    if launch.on.is_some_and(|on|on.sentinel.is_none()) {
         // No supervisor can execute until its completion debt is durable.
         publish_new(&resident.job_owed(&job), b"", Permissions::Private)
             .map_err(|error| failure("could not keep the job's completion debt", &error))?;

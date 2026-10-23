@@ -26,6 +26,7 @@ mod profile;
 #[cfg(desktop)]
 mod repair_probe;
 mod startup;
+mod sentinels;
 mod transcript;
 mod updates;
 mod world_watch;
@@ -1232,6 +1233,8 @@ pub fn run() {
             plan::plan_read,
             plan::plan_write,
             plan::plan_watch,
+            sentinels::sentinel_settings_read,
+            sentinels::sentinel_settings_write,
             profile::profile_read,
             profile::profile_subagents,
             profile::profile_write,

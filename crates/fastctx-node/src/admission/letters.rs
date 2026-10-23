@@ -53,7 +53,8 @@ pub fn admit(node: &Node, hub: &HubId, caller: &Caller, purpose: Purpose, letter
                 (to, Purpose::Echo)
             }
             Notice::JobEnded { machine, .. } if sender(machine) => (to, Purpose::Echo),
-            Notice::Answer { .. } | Notice::Health { .. } | Notice::JobEnded { .. } => {
+            Notice::Sentinel {observation} if sender(&observation.machine) => (to, Purpose::Echo),
+            Notice::Answer { .. } | Notice::Health { .. } | Notice::JobEnded { .. } | Notice::Sentinel { .. } => {
                 return Err(format!("{from} told of something that happened on another machine"));
             }
         },

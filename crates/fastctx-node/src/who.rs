@@ -32,7 +32,7 @@ pub fn who(
         // a session the user opened elsewhere once it has done something here.
         // A first World run is already work before it has an action result.
         let participated = last_action.is_some()
-            || resident.about.world_started
+            || resident.about.world_managed()
             || matches!(resident.about.origin, fastctx_types::residents::Origin::Colleague { .. })
             || resident.now.as_ref().is_some_and(|now| now.last_tool_at.is_some() || now.desk || !now.owed.is_empty())
             || read_dir(&world.conversation(&resident.id).jobs())?
@@ -139,7 +139,7 @@ pub(crate) fn running_jobs(jobs: &Path, running: &mut Vec<RunningJob>) -> io::Re
             continue;
         }
         let job = record::read(&path)?;
-        if job.end.is_none() {
+        if job.end.is_none() && !job.is_sentinel() {
             let account = job.on.and_then(|on| on.account).or(job.account);
             running.push(RunningJob {
                 source: None,

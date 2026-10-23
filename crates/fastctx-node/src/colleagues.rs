@@ -241,6 +241,7 @@ pub async fn ask_here(
         origin,
         session: Some(thread.clone()),
         world_started: true,
+            native_resumed: false,
         model,
         acting,
         focus: Default::default(),
@@ -412,7 +413,7 @@ pub async fn thread_spec(
     developer_instructions.push_str(fastctx_install::briefing::CODEX_EXEC);
     Ok((
         ThreadSpec {
-            user_mcp,
+            native_resume: false,            user_mcp,
             owner: Address { machine: node.machine(), resident: id.clone() },
             cwd,
             developer_instructions,

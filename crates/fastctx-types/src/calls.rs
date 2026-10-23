@@ -65,6 +65,16 @@ pub enum Call {
     Timer { timer: crate::timers::TimerCall },
     TurnEvidence { resident: ResidentId, turn: Option<String>, refresh_limits: bool },
     CompactBetweenTurns { resident: ResidentId },
+    Sentinel {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        request: crate::sentinel_control::Request,
+    },
+    SentinelSettings {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        change: Option<crate::sentinel_settings::WriteSettings>,
+    },
     /// The selected account's machine changes, before a previous page's
     /// cursor when supplied. The hub checks visibility on every read.
     MachineLog {
@@ -779,6 +789,8 @@ pub enum Reply {
     Timers { timers: Vec<crate::timers::Timer> },
     TurnEvidence { evidence: Box<crate::turn_evidence::TurnEvidence>, text: String },
     Compacted { result: crate::turn_evidence::Compacted },
+    Sentinel(Box<crate::sentinel_control::Reply>),
+    SentinelSettings(Box<crate::sentinel_settings::SettingsReply>),
     /// The HTTP proxy chosen in Fastctx, if one is (`Call::HubProxy`).
     HubProxy {
         url: Option<String>,

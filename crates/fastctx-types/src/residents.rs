@@ -28,6 +28,9 @@ pub struct Hints {
     /// The native Codex login that owns the thread's persisted history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<std::path::PathBuf>,
+    /// OS lifetime of the native host that started this adapter, reported locally.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_process: Option<crate::ProcessIdentity>,
     /// Set by the World when it started the session itself.
     pub resident: Option<ResidentId>,
     /// The thread a Codex call belongs to; one thread is one resident,
@@ -64,6 +67,10 @@ pub struct About {
     /// through its calls of the World's tools.
     #[serde(default)]
     pub world_started: bool,
+    /// A native Codex thread the World resumed for a requested background event.
+    /// Birth provenance remains unchanged in world_started and origin.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub native_resumed: bool,
     /// The model, as the host told the World; `None` when it did not.
     #[serde(default)]
     pub model: Option<String>,
@@ -116,6 +123,8 @@ pub struct LastLines {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Notice {
+    /// A requested observation, allowed to resume the owner's closed session.
+    Sentinel { observation: Box<crate::sentinel_notice::SentinelNotice> },
     /// A job the resident started, which went on in the background, ended.
     JobEnded {
         /// A wait took this end; this is a receipt, never a session notification.
@@ -164,7 +173,7 @@ pub enum Notice {
 impl Notice {
     /// Explicitly scheduled work resumes even a closed foreground conversation.
     pub fn wakes_closed(&self) -> bool {
-        matches!(self, Self::Words { from: Speaker::World, .. })
+        matches!(self, Self::Words { from: Speaker::World, .. } | Self::Sentinel { .. })
     }
 
     /// What the World tells when the user changes a conversation's machines
@@ -588,4 +597,9 @@ pub struct Owing {
 pub struct Whereabouts {
     pub resident: ResidentId,
     pub town: Option<TownName>,
+}
+
+impl About {
+    /// Whether the World retains a restoration contract for this host session.
+    pub fn world_managed(&self) -> bool { self.world_started || self.native_resumed }
 }

@@ -186,12 +186,12 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
     if busy {
         return Err(Stop::Refused("it is working; stop it first".to_string()));
     }
-    if node.residents.host_open(id) && !resident.about.world_started {
+    if node.residents.host_open(id) && !resident.about.world_managed() {
         return Err(Stop::Refused(
             "it is open in its agent's window on this machine; close it there first".to_string(),
         ));
     }
-    if resident.about.host.agent.as_str() == "claude" && !resident.about.world_started {
+    if resident.about.host.agent.as_str() == "claude" && !resident.about.world_managed() {
         for exchange in super::space::entries(&node.world.conversation(id).path().join("claude"))
             .map_err(|error| Stop::Failed(error.to_string()))?
         {
@@ -288,6 +288,7 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
             }
         }
     }
+    crate::sentinels::deletion::note_deleted(node, id).map_err(Stop::Failed)?;
     node.residents
         .forget(&node.world, id, measured.sessions.clone())
         .map_err(|error| Stop::Failed(format!("recording its deletion: {error}")))?;
@@ -450,7 +451,7 @@ async fn host(node: &Arc<Node>, about: &About, measured: &Measured) -> Result<()
             }
         }
         "claude" => {
-            if about.world_started
+            if about.world_managed()
                 && let Some(session) = &about.session
             {
                 crate::claude::management::retire(node, about.home.as_deref(), &about.id, session).await.map_err(
@@ -470,7 +471,7 @@ async fn host(node: &Arc<Node>, about: &About, measured: &Measured) -> Result<()
             claude_temp(node, measured).await?;
             // Its sessions stood in its own directory before they stood in
             // their project's, and the World trusted that directory for it.
-            if about.world_started {
+            if about.world_managed() {
                 let directory = node.world.conversation(&about.id).path().to_path_buf();
                 let home = about.home.clone();
                 tokio::task::spawn_blocking(move || crate::claude::untrust(&directory, home.as_deref()))

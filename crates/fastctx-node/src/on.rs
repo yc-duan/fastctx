@@ -146,7 +146,7 @@ impl Pieces {
             (context.node.clone(), context.origin.clone(), context.consumed.clone(), context.through_exit)
         };
         let complete = !through_exit && !matches!(&end, OnEnd::Exited { remaining, .. } if *remaining > 0);
-        if node.is_me(&origin.resident.machine) && !consumed.is_empty() {
+        if origin.sentinel.is_none() && node.is_me(&origin.resident.machine) && !consumed.is_empty() {
             let directory = node.world.conversation(&origin.resident.resident);
             tokio::task::spawn_blocking(move || crate::job_receipts::apply_consumed(&directory, &consumed))
                 .await
@@ -156,7 +156,7 @@ impl Pieces {
         let (taken, receipt) = oneshot::channel();
         self.0.send(Piece::End { end, taken }).await.map_err(|_| "the on that sent it left".to_string())?;
         let received = receipt.await.is_ok();
-        if received {
+        if received && origin.sentinel.is_none() {
             let context = self.2.lock().expect("never poisoned");
             let job = context.job.as_ref().expect("started before end");
             crate::job_receipts::on_taken(
@@ -374,6 +374,12 @@ async fn there(
         let mut context = pieces.2.lock().expect("never poisoned");
         context.origin = origin.clone();
         context.scratch_hub = Some(link.membership().id);
+    }
+    if origin.sentinel.is_some() {
+        match link.call(&machine, &account, Purpose::Look, RemoteCall::Facts).await.map_err(crate::authorization::call_failure)?? {
+            RemoteReply::Facts(facts) if facts.sentinel_look => {}
+            _ => return Err(Failure::not_run("upgrade the observed machine to run sentinel observations")),
+        }
     }
     let sizes = sizes(&request.package).await.map_err(|failure| Failure::not_run(failure.message))?;
     requested(node, local_origin, request).await?;
@@ -710,7 +716,7 @@ async fn sizes(package: &OnPackage) -> Result<OnSizes, Failure> {
 /// it lives here, so the machine it went to may write back about it; and
 /// beside the job whose script it is part of, for that job's answer.
 async fn requested(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest) -> Result<(), Failure> {
-    if !node.is_me(&origin.resident.machine) {
+    if origin.sentinel.is_some() || !node.is_me(&origin.resident.machine) {
         return Ok(());
     }
     let action = Action {
@@ -744,6 +750,7 @@ async fn requested(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest) -> 
 }
 
 async fn noted(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, job: &JobId) -> Result<(), Failure> {
+    if origin.sentinel.is_some() { return Ok(()); }
     let here = node.names();
     let action = Action {
         turn: origin.turn.clone(), at: jiff::Timestamp::now(),
@@ -795,6 +802,9 @@ pub async fn serve_on(
     mut stream: Stream,
 ) -> Result<RemoteReply, Failure> {
     let starting = async {
+        if origin.sentinel.is_some() && (sizes.state != 0 || sizes.input != 0 || sizes.script > 8192 || how.piped || how.source.is_some()) {
+            return Err(Failure::not_run("invalid internal observation package"));
+        }
         let mut staged = Staged::receive(node, &origin, &sizes, &mut stream)
             .await
             .map_err(|failure| Failure::not_run(failure.message))?;
@@ -1080,6 +1090,7 @@ pub(crate) fn on_job(node: &Arc<Node>, origin: &OnOrigin, job: &JobId) -> Result
         {
             Err(Failure::new(format!("{job} belongs to a different on request")))
         }
+        Ok(record) if record.on.as_ref().is_some_and(|on| on.sentinel != origin.sentinel || (on.sentinel.is_some() && on.account != origin.account)) => Err(Failure::refused("the observation identity or account does not match")),
         Ok(record) if record.on.is_some() => Ok(path),
         Ok(_) => Err(Failure::new(format!("{job} on {} was not sent by an on", node.machine()))),
         Err(error) => {
@@ -1174,8 +1185,10 @@ async fn start(
     writes_off: bool,
     piped: bool,
 ) -> Result<(JobId, PathBuf, Follower), Failure> {
+    if origin.sentinel.is_some() { crate::sentinels::look::admit(node, origin).await?; }
     let script = staged.script;
     let on = OnJob {
+        sentinel: origin.sentinel.clone(),
         state: staged.state.to_string_lossy().into_owned(),
         request: origin.request.clone(),
         follower: origin.follower.clone(),
@@ -1199,26 +1212,37 @@ pub(crate) struct Follower {
     node: Arc<Node>,
     path: PathBuf,
     _reader: crate::job_reader::Lease,
+    internal: bool,
 }
 
 impl Follower {
-    pub(crate) fn reserved(node: &Arc<Node>, path: &Path) -> Self {
+    pub(crate) fn reserved(node: &Arc<Node>, path: &Path, internal: bool) -> Self {
         *node.following.lock().expect("never poisoned").entry(path.to_path_buf()).or_default() += 1;
-        Self { node: node.clone(), path: path.to_path_buf(), _reader: crate::job_reader::hold(node, path) }
+        Self { node: node.clone(), path: path.to_path_buf(), _reader: crate::job_reader::hold(node, path), internal }
     }
 
     async fn new(node: &Arc<Node>, path: &Path) -> Result<Self, Failure> {
         let (node, path) = (node.clone(), path.to_path_buf());
         tokio::task::spawn_blocking(move || {
             let _gate = node.disk.lock();
-            fastctx_hands::run::record::read(&path).map_err(|error| Failure::new(error.to_string()))?;
-            Ok(Self::reserved(&node, &path))
+            let record = fastctx_hands::run::record::read(&path).map_err(|error| Failure::new(error.to_string()))?;
+            Ok(Self::reserved(&node, &path, record.is_sentinel()))
         })
         .await
         .map_err(|error| Failure::new(error.to_string()))?
     }
 
     async fn finish(self, handed: Result<Handed, String>) -> Result<(), Failure> {
+        if self.internal {
+            if matches!(handed, Ok(Handed { taken: true, complete: true })) {
+                let record = fastctx_hands::run::record::read(&self.path).map_err(|e| Failure::new(e.to_string()))?;
+                let receipt = fastctx_types::run::JobDelivery {job: record.id, output: record.output, at: jiff::Timestamp::now(), shown_whole: true};
+                fastctx_agent::state::save(&self.path.with_extension("delivered"), &receipt).map_err(Failure::new)?;
+                self.node.disk_due.lock().expect("never poisoned").insert(self.path.clone());
+                self.node.disk_changed.notify_one();
+            }
+            return Ok(());
+        }
         // A shell's background children still owe their eventual end,
         // even if they finished while the shell's receipt was in flight.
         if matches!(handed, Ok(Handed { taken: true, complete: true })) {
@@ -1243,7 +1267,7 @@ impl Drop for Follower {
                 following.remove(&self.path);
             }
         }
-        crate::inbox::retry_job(&self.node, &self.path);
+        if !self.internal { crate::inbox::retry_job(&self.node, &self.path); }
     }
 }
 
@@ -1366,8 +1390,10 @@ async fn hand_over(
             sink.scratch(scratch.clone()).await?;
             known_scratch = scratch;
         }
-        sink.facts(crate::run_facts::read_since(record_path, &mut facts_cursor).map_err(|error| error.to_string())?)
-            .await?;
+        if !record.is_sentinel() {
+            sink.facts(crate::run_facts::read_since(record_path, &mut facts_cursor).map_err(|error| error.to_string())?)
+                .await?;
+        }
         let errors = record.stderr.clone();
         let boundary = record.output_drained.filter(|_| record.end.is_none() && through(&record).is_some());
         // Output that went straight on is taken from here by another
@@ -1392,6 +1418,9 @@ async fn hand_over(
             continue;
         }
         if let Some(end) = through(&record) {
+            if record.is_sentinel() {
+                return sink.ended(end, false, Vec::new(), record.end.is_none(), known_scratch).await.map(|taken| Handed {taken,complete:record.end.is_some()});
+            }
             sink.facts(crate::run_facts::writes(record_path).map_err(|error| error.to_string())?).await?;
             // A letter goes only for an end nobody followed, and takes the
             // marker that it is owed: without one, the letter went.

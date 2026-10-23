@@ -283,7 +283,7 @@ pub(crate) fn subscribe(
     match &about.session {
         Some(thread) if about.host.agent.as_str() == "codex" => {
             let codex = node.codex.of(node, &about)?;
-            let pending = if about.world_started { codex.requests(thread) } else { Vec::new() };
+            let pending = if about.world_managed() { codex.requests(thread) } else { Vec::new() };
             Ok((crate::codex::watch::requests(codex, thread.clone(), events), pending))
         }
         _ => Ok((events, Vec::new())),
@@ -372,7 +372,7 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRea
         crate::run_facts::attach(&directory, event).map_err(|error| Failure::new(error.to_string()))?;
     }
     let pending = match &about.session {
-        Some(thread) if about.world_started && about.host.agent.as_str() == "codex" => {
+        Some(thread) if about.world_managed() && about.host.agent.as_str() == "codex" => {
             node.codex.of(node, &about)?.requests(thread)
         }
         _ => Vec::new(),
@@ -891,6 +891,7 @@ pub async fn open_here(
         origin,
         session: Some(thread.clone()),
         world_started: true,
+            native_resumed: false,
         model,
         acting: opened.acting,
         focus: opened.focus,
@@ -1000,7 +1001,7 @@ pub(crate) async fn stop_here_as(node: &Arc<Node>, resident: &ResidentId, source
         crate::turn_evidence::remember(node, resident, turn, source)
             .map_err(|error| Failure::new(format!("recording why the turn is stopped: {error}")))?;
     }
-    match (about.host.agent.as_str(), about.world_started, &about.session) {
+    match (about.host.agent.as_str(), about.world_managed(), &about.session) {
         ("codex", true, Some(thread)) => match targeted {
             Some(turn) => node.codex.of(node, &about)?.interrupt_turn(thread, &turn).await.map_err(Failure::new),
             None => node.codex.of(node, &about)?.interrupt(thread).await.map_err(Failure::new),

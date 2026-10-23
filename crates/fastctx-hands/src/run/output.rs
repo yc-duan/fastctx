@@ -11,6 +11,7 @@ use fastctx_types::run::OutputLost;
 pub(super) fn copy(
     mut output: Reader,
     mut log: File,
+    limit: Option<u64>,
     drained: impl FnOnce(u64, Option<OutputLost>),
 ) -> io::Result<Option<OutputLost>> {
     let mut buffer = vec![0u8; 64 * 1024];
@@ -42,6 +43,9 @@ pub(super) fn copy(
         };
         if let Some(pending) = pending.as_mut() {
             *pending = pending.saturating_sub(read);
+        }
+        if limit.is_some_and(|limit|kept.saturating_add(read as u64)>limit) {
+            return Err(io::Error::other("sentinel observation output exceeded 65536 bytes"));
         }
         let mut bytes = &buffer[..read];
         while lost.is_none() && !bytes.is_empty() {

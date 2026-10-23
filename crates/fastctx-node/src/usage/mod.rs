@@ -189,7 +189,7 @@ fn login_of(node: &Node, id: &ResidentId, about: &About) -> Option<PathBuf> {
             if let Some(home) = &about.home {
                 return Some(home.clone());
             }
-            if about.world_started {
+            if about.world_managed() {
                 return claude_default();
             }
             if let Some(known) = node.usage.logins.lock().expect("never poisoned").get(id) {

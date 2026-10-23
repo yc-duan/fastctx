@@ -43,6 +43,9 @@ pub enum RemoteCall {
     Goal { resident: ResidentId, request: crate::goals::Request },
     ConversationDebt { resident: ResidentId, requester: crate::Address },
     WaitingJobs { owner: crate::Address },
+    SentinelControl { request: crate::sentinel_control::Request },
+    SentinelHome { request: crate::sentinel_control::HomeRequest },
+    SentinelSettings { change: Option<crate::sentinel_settings::WriteSettings> },
     /// A running job returns its resident's project selection to its home.
     /// This call is relayed and authorized by a hub supporting project entry.
     EnterProject {
@@ -521,6 +524,9 @@ impl RemoteCall {
             Self::Goal { request: crate::goals::Request::Read, .. } => Purpose::Look,
             Self::Goal { .. } => Purpose::Agents,
             Self::EnterProject { .. } | Self::Plan { .. } => Purpose::Echo,
+            Self::SentinelSettings { .. } | Self::SentinelControl { .. } => Purpose::Look,
+            Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Inspect { .. } } => Purpose::Look,
+            Self::SentinelHome { .. } => Purpose::Hands,
             RemoteCall::PageAction { action: crate::pages::PageInvocation::Say { .. }, .. } => Purpose::Words,
             RemoteCall::ReadAttachment { attachment: crate::attachments::AttachmentSource::Upload(file), .. }
                 if file.owner != *file.conversation() =>
@@ -618,6 +624,9 @@ pub enum RemoteReply {
     Goal { updated: Box<crate::goals::Updated> },
     ConversationDebt { debt: crate::turn_evidence::ConversationDebt },
     WaitingJobs { jobs: Vec<crate::turn_evidence::WaitHandle> },
+    SentinelControl(Box<crate::sentinel_control::Reply>),
+    SentinelHome(Box<crate::sentinel_control::HomeReply>),
+    SentinelSettings(Box<crate::sentinel_settings::SettingsReply>),
     Entered {
         town: TownName,
         map: Box<crate::project::MapView>,

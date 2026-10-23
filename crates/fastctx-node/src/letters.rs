@@ -31,6 +31,7 @@ fn purpose(letter: &Letter) -> Purpose {
         Letter::Notice { notice, .. } if matches!(**notice, Notice::Words { .. } | Notice::Attached { .. }) => {
             Purpose::Words
         }
+        Letter::Notice { notice, .. } if matches!(**notice, Notice::Sentinel { .. }) => Purpose::Echo,
         Letter::Left { .. } | Letter::Fragment { .. } | Letter::Notice { .. } | Letter::JobFacts { .. } => {
             Purpose::Echo
         }

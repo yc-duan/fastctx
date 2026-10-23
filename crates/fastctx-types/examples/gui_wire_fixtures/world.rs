@@ -91,6 +91,7 @@ fn residents() -> Vec<ResidentNow> {
                 },
                 session: (i != 0).then(|| "thread-1".into()),
                 world_started: i != 0,
+            native_resumed: false,
                 model: (i != 0).then(|| "model-a".into()),
                 acting: if i == 0 {
                     fastctx_types::access::Acting::Here
@@ -291,6 +292,8 @@ fn nodes() -> Vec<NodesReply> {
     });
     let facts = |name: &str, os: &str, lifetime: bool| MachineFacts {
         turn_debts: false, goal_runtime: false,
+        sentinels: false,
+        sentinel_look: false,
         name: name.parse().unwrap(),
         os: os.into(),
         arch: if os == "windows" { "x86_64".into() } else { "aarch64".into() },

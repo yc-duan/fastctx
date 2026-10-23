@@ -286,6 +286,7 @@ async fn fork(
         origin: Origin::User,
         session: Some(fork.clone()),
         world_started: true,
+            native_resumed: false,
         model,
         acting: source.acting,
         focus: source.focus,

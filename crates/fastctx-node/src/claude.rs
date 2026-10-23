@@ -1114,7 +1114,7 @@ pub async fn deliver(
     let user_action =
         matches!(pending.delivery.notice, Notice::Words { from: Speaker::User { .. }, .. } | Notice::Attached { .. });
     if !about.world_started && !stopped_background && !user_action && !pending.delivery.notice.wakes_closed() {
-        // Unscheduled facts wait for a closed foreground session.
+        // Unscheduled facts, and a sentinel's, wait for a closed foreground session.
         return Some(into_inbox(node, to, &session, directory, pending));
     }
     Some(match alive {
@@ -1462,6 +1462,7 @@ pub async fn open_here(
         origin: Origin::User,
         session: None,
         world_started: true,
+            native_resumed: false,
         model: None,
         acting: opened.acting,
         focus: opened.focus,

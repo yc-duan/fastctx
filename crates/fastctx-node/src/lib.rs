@@ -107,6 +107,7 @@ mod run_facts;
 mod goals;
 mod scratch;
 mod server;
+mod sentinels;
 mod server_invitation;
 mod session_live;
 mod session_options;
@@ -168,6 +169,7 @@ pub(crate) struct Node {
     turn_activity: turn_evidence::Activities,
     goals: goals::Services,
     sentinel_waits: Arc<dyn turn_evidence::waiting::SentinelWaits>,
+    sentinels: sentinels::Services,
     mcp_keeping: std::sync::Mutex<()>,
     job_watches: job_watch::Watches,
     disk: ranked::Disk,
@@ -572,6 +574,7 @@ pub async fn run_prepared(
         turn_activity: Default::default(),
         goals: goals::connected(weak.clone()),
         sentinel_waits: Arc::new(turn_evidence::waiting::NoSentinels),
+        sentinels: Default::default(),
         mcp_keeping: std::sync::Mutex::new(()),
         job_watches: Default::default(),
         contexts: Default::default(),
@@ -683,6 +686,7 @@ pub async fn run_prepared(
     recovery::start(&node, jobs_reconciled);
     timers::start(&node);
     goals::start(&node);
+    sentinels::start(&node);
     on_delivery::resume(&node);
     retention::start(&node).context("starting command artifact retention")?;
     profile::session::start(&node);

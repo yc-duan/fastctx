@@ -129,7 +129,7 @@ async fn stamp(node: &Arc<Node>, resident: &ResidentId) -> Result<Option<String>
         // A thread the user opened in the Codex command line runs turns the
         // World does not see, so its record can grow under a stamp that
         // would not change.
-        ("codex", Some(_)) if !about.world_started => return Ok(None),
+        ("codex", Some(_)) if !about.world_managed() => return Ok(None),
         ("codex", Some(thread)) => {
             let codex = node.codex.of(node, &about)?;
             take(codex.stamp(thread).await.map_err(Failure::new)?.as_bytes());

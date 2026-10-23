@@ -391,6 +391,15 @@ name_type!(
 );
 
 name_type!(
+    /// A sentinel registered by a conversation or a goal.
+    SentinelId,
+    "sentinel id",
+    "`s-` followed by sixteen lowercase hex digits",
+    |text| text.len() == 18 && text.starts_with("s-")
+        && text[2..].bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+);
+
+name_type!(
     /// Something a resident started running, such as `j-k3x9a2`.
     JobId,
     "job id",

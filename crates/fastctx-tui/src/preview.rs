@@ -75,6 +75,7 @@ fn resident(
             origin,
             session: None,
             world_started: true,
+            native_resumed: false,
             model: Some(model.to_string()),
             acting: Default::default(),
             focus: Default::default(),
@@ -365,6 +366,8 @@ fn agents(now: Timestamp) -> fastctx_types::agents::AgentsReply {
 fn nodes(now: Timestamp) -> NodesReply {
     let facts = |name: &str, os: &str, home: &str| MachineFacts {
         turn_debts: false, goal_runtime: false,
+        sentinels: false,
+        sentinel_look: false,
         name: machine(name),
         os: os.into(),
         arch: "x86_64".into(),

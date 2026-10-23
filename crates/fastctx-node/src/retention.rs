@@ -237,6 +237,11 @@ fn collect_records(
                     continue;
                 }
                 let job = record::read(&path)?;
+                if job.is_sentinel() && let Some(end) = &job.end
+                    && expired(now, end.at, lifetime) && !program::in_use(&job)? && unfollowed(&path) {
+                    if !forget(&path)? { pending = true; }
+                    continue;
+                }
                 let marker = path.with_extension("delivered");
                 let delivery = match fs::read(&marker) {
                     Ok(bytes) => serde_json::from_slice::<JobDelivery>(&bytes).map_err(io::Error::other)?,

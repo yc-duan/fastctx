@@ -34,6 +34,8 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
     let users_own = matches!(
         call,
         RemoteCall::Collaboration { .. }
+            | RemoteCall::SentinelSettings { .. }
+            | RemoteCall::SentinelControl { .. }
             | RemoteCall::Mcp { .. }
             | RemoteCall::Talk { .. }
             | RemoteCall::Goal { .. }

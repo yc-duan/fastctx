@@ -1,0 +1,181 @@
+//! Register, list and withdraw the calling account's sentinels.
+use super::transport::Transport;
+use crate::{Node, town::caller::Caller};
+use fastctx_net::link::Link;
+use fastctx_types::{
+    AccountName, HubName, access::HubAccount, ipc::Failure, sentinel::Definition, sentinel_control::*,
+    sentinel_settings::HomeStatus, sentinel_words as words,
+};
+use std::sync::Arc;
+
+/// Native conversations use the accounts currently logged in here, just as run
+/// does. Explicitly delegated conversations retain their recorded account scope.
+pub(crate) fn scope(
+    node: &Node,
+    caller: &Caller,
+    hub: Option<&HubName>,
+    account: Option<&AccountName>,
+) -> Result<(Arc<Link>, AccountName), Failure> {
+    if matches!(caller, Caller::Page(_) | Caller::Session(_)) {
+        return Err(Failure::refused(words::NEED_CONVERSATION));
+    }
+    let mut choices = scopes(node, caller, hub, account);
+    if choices.len() != 1 {
+        return Err(Failure::not_run(words::CHOOSE_ACCOUNT));
+    }
+    Ok(choices.pop().expect("one account"))
+}
+fn scopes(
+    node: &Node,
+    caller: &Caller,
+    hub: Option<&HubName>,
+    account: Option<&AccountName>,
+) -> Vec<(Arc<Link>, AccountName)> {
+    let acting = crate::around::acting_of(node, caller);
+    let mut choices = Vec::new();
+    for link in node.links().into_iter().filter(|link| hub.is_none_or(|name| link.hub_name() == *name)) {
+        for name in node.accounts_on(&link, &acting) {
+            if account.is_none_or(|wanted| *wanted == name) {
+                choices.push((link.clone(), name));
+            }
+        }
+    }
+    choices
+}
+
+pub(crate) async fn list_all(
+    node: &Arc<Node>,
+    caller: &Caller,
+    owner: Option<fastctx_types::Address>,
+) -> Result<Reply, Failure> {
+    if matches!(caller, Caller::Page(_) | Caller::Session(_)) {
+        return Err(Failure::refused(words::NEED_CONVERSATION));
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(75), async {
+        let mut sentinels = Vec::new();
+        let mut unavailable = Vec::new();
+        for (link, account) in scopes(node, caller, None, None) {
+            match control(node, caller, &link, &account, Request::List { owner: owner.clone() }).await {
+                Ok(Reply::Listed { sentinels: found, unavailable: errors }) => {
+                    sentinels.extend(found);
+                    unavailable.extend(errors);
+                }
+                Ok(_) => return Err(Failure::new("unexpected sentinel list reply")),
+                Err(error) => unavailable.push(format!("{} at {}: {}", account, link.hub_name(), error.message)),
+            }
+        }
+        Ok(Reply::Listed { sentinels, unavailable })
+    })
+    .await
+    .map_err(|_| Failure::new("listing sentinels across accounts timed out"))?
+}
+
+pub(crate) async fn control(
+    node: &Arc<Node>,
+    caller: &Caller,
+    link: &Arc<Link>,
+    account: &AccountName,
+    request: Request,
+) -> Result<Reply, Failure> {
+    let scope = HubAccount { hub: link.membership().id.clone(), account: account.clone() };
+    let records = node.sentinels.records()?;
+    let homes = Transport(node.clone());
+    let fail = |error: fastctx_sentinel::records::Error| Failure::new(error.to_string());
+    match request {
+        Request::Help => {
+            let (_, settings) = fastctx_sentinel::settings::read(records, &scope).await.map_err(fail)?;
+            let home = settings.home.map(|home| home.to_string()).unwrap_or_else(|| words::NO_HOME.into());
+            Ok(Reply::Help { text: words::HELP.replace("<machine>", &home) })
+        }
+        Request::Create { mut request } => {
+            let Caller::Resident(owner) = caller else {
+                return Err(Failure::refused(words::NEED_CONVERSATION));
+            };
+            if node.is_me(&owner.machine) && let Some((about,_))=node.residents.about(&owner.resident)
+                && about.host.agent.as_str()=="codex" && !about.world_started {
+                crate::codex::native_lifetime::processes(&node.world,&owner.resident).map_err(Failure::not_run)?;
+            }
+            let now = jiff::Timestamp::now().as_millisecond();
+            request.validate(now).map_err(Failure::not_run)?;
+            let (_, settings) = fastctx_sentinel::settings::read(records, &scope).await.map_err(fail)?;
+            let home = settings.home.ok_or_else(|| Failure::not_run(words::NO_HOME))?;
+            let status = super::settings::home_status(link, account, Some(&home)).await;
+            if status != HomeStatus::Ready {
+                return Err(Failure::not_run(words::home_unavailable(&status)));
+            }
+            if !request.condition.trim().is_empty() {
+                if settings.model.is_none() {
+                    return Err(Failure::not_run(words::NO_MODEL));
+                }
+                let credentials = node
+                    .sentinels
+                    .credentials
+                    .get()
+                    .ok_or_else(|| Failure::not_run("sentinel credential service is not connected"))?;
+                let keys = tokio::time::timeout(std::time::Duration::from_secs(30), credentials.status(&scope, &home))
+                    .await
+                    .map_err(|_| Failure::not_run("sentinel key status timed out"))?
+                    .map_err(Failure::not_run)?;
+                if !keys.model {
+                    return Err(Failure::not_run(words::NO_KEY));
+                }
+            }
+            request.at.sort_unstable();
+            request.at.dedup();
+            let mut bytes = [0u8; 8];
+            getrandom::fill(&mut bytes).map_err(|e| Failure::new(e.to_string()))?;
+            let id = format!("s-{}", bytes.iter().map(|b| format!("{b:02x}")).collect::<String>())
+                .parse()
+                .map_err(|e: fastctx_types::NameError| Failure::new(e.to_string()))?;
+            let kind = request.kind();
+            let definition = Definition {
+                id,
+                hub: link.hub_name(),
+                account: account.clone(),
+                owner: owner.clone(),
+                home,
+                generation: 1,
+                condition: request.condition,
+                at: request.at,
+                kind,
+                tell: request.tell,
+            };
+            let sentinel =
+                fastctx_sentinel::lifecycle::create(records, &homes, Registration { scope, definition, active: true })
+                    .await
+                    .map_err(fail)?;
+            Ok(Reply::Created { sentinel: Box::new(sentinel) })
+        }
+        Request::List { owner } => Ok(Reply::Listed {
+            sentinels: fastctx_sentinel::lifecycle::list(records, &homes, &scope, owner.as_ref())
+                .await
+                .map_err(fail)?,
+            unavailable: Vec::new(),
+        }),
+        Request::Stop { id, home } => {
+            if let Some(home) = home {
+                let Some((_, registration)) =
+                    fastctx_sentinel::lifecycle::get(records, &scope, &id).await.map_err(fail)?
+                else {
+                    return Err(Failure::not_run("sentinel not found"));
+                };
+                let view = crate::authorization::current_view(link)?;
+                if home != registration.definition.home
+                    && view
+                        .member(&home)
+                        .zip(view.member(&registration.definition.home))
+                        .is_none_or(|(a, b)| a.key != b.key)
+                {
+                    return Err(Failure::not_run("the sentinel lives on a different machine"));
+                }
+            }
+            let owner = match caller {
+                Caller::Resident(owner) => Some(owner),
+                Caller::User => None,
+                _ => return Err(Failure::refused(words::NEED_CONVERSATION)),
+            };
+            let reason = fastctx_sentinel::lifecycle::stop(records, &homes, &scope, &id, owner).await.map_err(fail)?;
+            Ok(Reply::Stopped { id, home_confirmed: reason.is_none(), reason })
+        }
+    }
+}

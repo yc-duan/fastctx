@@ -38,6 +38,7 @@ mod renew;
 mod repair;
 mod secret;
 mod self_update;
+mod sense;
 mod server_install;
 mod service;
 #[cfg(windows)]
@@ -84,6 +85,8 @@ enum Command {
     Plan(plan::PlanArgs),
     #[command(hide = true)]
     Records(records::RecordsArgs),
+    /// Leave a sentinel to wait for something.
+    Sense(sense::SenseArgs),
     #[command(hide = true)]
     McpRelay { name: String },
     #[command(hide = true)]
@@ -504,6 +507,7 @@ fn main() -> ExitCode {
         Command::Profile(args) => profile::run(args),
         Command::Plan(args) => plan::run(args),
         Command::Records(args) => records::run(args),
+        Command::Sense(args) => sense::run(args),
         Command::McpRelay { name } => mcp_relay::run(name),
         Command::McpChild { args } => mcp_child::run(args),
         Command::Serve { writer: _, writes } => serve(writes == "off"),

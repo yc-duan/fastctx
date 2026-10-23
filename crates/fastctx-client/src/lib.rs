@@ -41,6 +41,7 @@ mod originals;
 pub mod pages;
 pub mod plans;
 mod profile;
+mod sentinels;
 pub mod renewal;
 pub mod shown;
 mod thumbnail;
@@ -123,6 +124,7 @@ pub struct Client {
     pub conversation_plans: bool,
     pub goal_runtime: bool,
     pub scratch_locations: bool,
+    pub sentinels: bool,
     /// The connected node's facts, including when another starter won.
     pub node_lifetime: Option<Box<fastctx_types::node_lifetime::NodeLifetime>>,
 }
@@ -166,6 +168,7 @@ impl Client {
                 conversation_plans,
                 goal_runtime,
                 scratch_locations,
+                sentinels,
             } => Ok(Self {
                 connection,
                 next: 0,
@@ -177,6 +180,7 @@ impl Client {
                 conversation_plans,
                 goal_runtime,
                 scratch_locations,
+                sentinels,
             }),
             Welcome::Refused { reason, mismatch } => {
                 let mismatch = mismatch.or_else(|| renewal::legacy_mismatch(&reason));
@@ -297,6 +301,9 @@ impl Client {
         }
         if !self.goal_runtime && matches!(call, Call::Goal { .. } | Call::GoalCommand { .. }) {
             return Err(CallError::Failed(Failure::not_run(fastctx_types::goals::words::OLDER_NODE)));
+        }
+        if !self.sentinels && matches!(call, Call::SentinelSettings { .. } | Call::Sentinel { .. }) {
+            return Err(CallError::Failed(Failure::not_run(format!("upgrade {} to use sentinels", self.machine))));
         }
         if !self.profiles
             && matches!(

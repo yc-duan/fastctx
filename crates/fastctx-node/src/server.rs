@@ -53,6 +53,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
     }
     let welcome = Welcome::Accepted {
         goal_runtime: node.goals.available(),
+        sentinels: true,
         profiles: true,
         account_records: true,
         conversation_plans: true,
@@ -382,7 +383,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                         .then(|| crate::on::sent_for(node, request.job.as_ref()))
                         .flatten();
                     let origin = fastctx_types::on::OnOrigin {
-                        turn: None, call_id: None,
+                        turn: None, sentinel: None, call_id: None,
                         resident,
                         town,
                         request: None,
@@ -639,6 +640,7 @@ impl Drop for Arrived<'_> {
             crate::codex::native_context::forget(self.node, &resident);
             crate::colleagues::left(self.node, resident);
         }
+        for resident in &self.residents { crate::codex::native::left(self.node,resident); }
     }
 }
 
@@ -688,7 +690,7 @@ async fn collect(
                     .and_then(|now| now.turn)
                     .or_else(|| {
                         node.residents.about(&resident).and_then(|(about, _)| {
-                            if about.world_started && about.host.agent.as_str() == "codex" {
+                            if about.world_managed() && about.host.agent.as_str() == "codex" {
                                 let codex = node.codex.of(node, &about).ok()?;
                                 about.session.and_then(|thread| codex.running_turn(&thread))
                             } else {
@@ -709,7 +711,9 @@ fn native_delivery(node: &Node, resident: &ResidentId) -> bool {
     // response cannot deliver the parent's words to the intended thread;
     // sessions with a native channel exclusively use that channel.
     node.residents.about(resident).is_some_and(|(about, _)| {
-        (about.world_started && about.host.agent.as_str() == "codex") || crate::claude::paired(node, resident)
+        (about.host.agent.as_str() == "codex" && (about.world_started || about.session.as_ref().is_some_and(|thread| {
+            node.codex.of(node,&about).is_ok_and(|host|host.loaded(thread))
+        }))) || crate::claude::paired(node, resident)
     })
 }
 
@@ -906,9 +910,17 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 }
                 return Ok(Reply::Arrived(whereabouts));
             }
+            let codex = host.agent.as_str() == "codex";
+            let process = hints.host_process.clone();
             let whereabouts = node.residents.arrive(&node.world, &node.machine(), host, hints)?;
             if let Err(error) = crate::codex::native_context::observe(node, &whereabouts.resident).await {
                 node.log.line(format_args!("initializing {}'s context observation: {error}", whereabouts.resident));
+            }
+            if codex
+                && node.residents.about(&whereabouts.resident).is_some_and(|(about, _)| !about.world_started)
+                && let Err(error) = crate::codex::native_lifetime::record(&node.world, &whereabouts.resident, process)
+            {
+                node.log.line(format_args!("recording the native host of {}: {error}", whereabouts.resident));
             }
             Ok(Reply::Arrived(whereabouts))
         }
@@ -1356,6 +1368,19 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::Copy { from, to } => {
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
             crate::copy::copy(node, &acting, from, to).await.map(Reply::Copied)
+        }
+        Call::Sentinel { hub, account, request } => {
+            let caller = caller::of(node, peer)?;
+            if hub.is_none() && account.is_none() && let fastctx_types::sentinel_control::Request::List { owner } = request {
+                return crate::sentinels::list_all(node, &caller, owner).await.map(|reply| Reply::Sentinel(Box::new(reply)));
+            }
+            let (link, account) = crate::sentinels::scope(node, &caller, hub.as_ref(), account.as_ref())?;
+            crate::sentinels::control(node, &caller, &link, &account, request).await.map(|reply| Reply::Sentinel(Box::new(reply)))
+        }
+        Call::SentinelSettings { hub, account, change } => {
+            if change.is_some() { users_voice(node, peer)?; }
+            let (link, account) = crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
+            crate::sentinels::settings(node, &link, &account, change).await.map(|reply| Reply::SentinelSettings(Box::new(reply)))
         }
         Call::CollabRead { hub, account } => {
             users_voice(node, peer)?;

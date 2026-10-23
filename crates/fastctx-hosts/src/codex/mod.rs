@@ -139,6 +139,9 @@ pub const SERVER_NAME: &str = "fastctx";
 /// app-server.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ThreadSpec {
+    /// Resume a native thread with its own recorded settings, adding only MCP identity.
+    #[serde(default)]
+    pub native_resume: bool,
     #[serde(default)]
     pub user_mcp: std::collections::BTreeSet<String>,
     /// The resident whose user pictures this thread can address.
@@ -468,7 +471,7 @@ impl CodexHost {
         let mut state = self.lock();
         let entry = state.threads.entry(thread.to_string()).or_default();
         entry.configuration_changed |= entry.spec.as_ref().is_some_and(|old| {
-            old.config != spec.config
+            old.native_resume != spec.native_resume || old.config != spec.config
                 || old.cwd != spec.cwd
                 || old.developer_instructions != spec.developer_instructions
         });
@@ -601,10 +604,10 @@ impl CodexHost {
         let mut params = json!({
             "threadId": thread,
             "input": [],
-            // A remote client may have selected a local environment since
-            // our last turn. Restore the World's empty default for this turn.
-            "environments": [],
         });
+        if !self.lock().threads.get(thread).and_then(|entry|entry.spec.as_ref()).is_some_and(|spec|spec.native_resume) {
+            params["environments"] = json!([]);
+        }
         if let Some(client) = client {
             params["clientUserMessageId"] = json!(client);
         }
@@ -821,8 +824,13 @@ impl CodexHost {
     /// No turn runs and every reported end has been retained or applied by
     /// the node. A host becoming idle alone does not make handoff safe.
     /// Whether this host started or adopted `thread`.
+    /// The exact OS lifetime this host controls, when its server is running.
+    pub fn process(&self) -> Option<fastctx_types::ProcessIdentity> {
+        self.lock().server.as_ref().and_then(|(server,_)|server.process())
+    }
+
     pub fn holds(&self, thread: &str) -> bool {
-        self.lock().threads.keys().any(|held| held == thread)
+        self.lock().threads.get(thread).is_some_and(|entry|entry.spec.is_some())
     }
 
     pub fn settled(&self) -> bool {
@@ -900,21 +908,14 @@ impl CodexHost {
             entry.spec.clone().ok_or_else(|| format!("how the Codex thread {thread} was started is not known"))?
         };
         let selection = controls::Selection::read(&spec.choices)?;
-        let effective = user_config::effective(server, &spec, self.assisted.is_some()).await?;
-        let answer = server
-            .request(
-                "thread/resume",
-                json!({
-                    "threadId": thread,
-                    "cwd": spec.cwd,
-                    "approvalPolicy": "never",
-                    "sandbox": "danger-full-access",
-                    "developerInstructions": effective.developer_instructions,
-                    "config": effective.config,
-                    "excludeTurns": true,
-                }),
-            )
-            .await?;
+        let params = if spec.native_resume {
+            json!({"threadId":thread,"excludeTurns":true,"config":spec.config})
+        } else {
+            let effective = user_config::effective(server, &spec, self.assisted.is_some()).await?;
+            json!({"threadId":thread,"cwd":spec.cwd,"approvalPolicy":"never","sandbox":"danger-full-access",
+                "developerInstructions":effective.developer_instructions,"config":effective.config,"excludeTurns":true})
+        };
+        let answer = server.request("thread/resume",params).await?;
         let mut state = self.lock();
         if !matches!(&state.server, Some((current, _)) if Arc::ptr_eq(current, server)) {
             return Err("the app-server stopped while loading the thread".to_string());
@@ -923,10 +924,14 @@ impl CodexHost {
         // Another client may have started a turn while resume's reply was
         // in flight. Preserve any turn already reported by a notification.
         entry.configuration_changed = entry.spec.as_ref().is_some_and(|current| {
-            current.config != spec.config
+            current.native_resume != spec.native_resume || current.config != spec.config
                 || current.developer_instructions != spec.developer_instructions
                 || current.cwd != spec.cwd
         });
+        if spec.native_resume && let Some(cwd) = answer.get("cwd").and_then(Value::as_str)
+            && let Some(stored) = entry.spec.as_mut() {
+            stored.cwd = PathBuf::from(cwd);
+        }
         entry.loaded = true;
         entry.subscribed = true;
         entry.selection = selection;
@@ -1794,4 +1799,11 @@ pub fn world_tools(binary: &Path, env: &[(String, String)], tools: &[&str], budg
             "tools": limits,
         }},
     })
+}
+
+/// The World MCP server's identity without overriding native model, permissions,
+/// instructions, environment selection or built-in tools.
+pub fn native_tools(binary: &Path, env: &[(String,String)], tools: &[&str], budget: usize) -> Value {
+    let mut config=world_tools(binary,env,tools,budget);
+    json!({"mcp_servers":config["mcp_servers"].take()})
 }

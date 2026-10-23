@@ -158,7 +158,7 @@ fn host_of(node: &Node, resident: &ResidentId) -> Result<&'static str, Failure> 
         .residents
         .about(resident)
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))?;
-    match (about.host.agent.as_str(), about.world_started, &about.session) {
+    match (about.host.agent.as_str(), about.world_managed(), &about.session) {
         ("codex", true, Some(_)) => Ok("Codex"),
         ("claude", _, _) => Ok("Claude"),
         _ => Err(Failure::new(format!("{resident} is a session the World does not hold; do this where it is open"))),
