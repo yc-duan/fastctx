@@ -5,9 +5,10 @@
 export type GoalStatus = "active" | "paused" | "blocked" | "complete";
 
 /** Who put a goal on pause: the user, the agent at the user's word, the
- *  World when the login's quota ran out or when the goal's sentinel found
- *  nothing more to do at a stop. */
-export type PausedBy = "user" | "agent" | "quota" | "sentinel";
+ *  World when the login's quota ran out, or the World stopping it for the
+ *  user to decide: the goal's sentinel found a stop sound, no sentinel could
+ *  look, or the assistance it ran under ended. */
+export type PausedBy = "user" | "agent" | "quota" | "world";
 
 export interface SentinelLook {
   /** When it looked, in milliseconds since the epoch. */

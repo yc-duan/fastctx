@@ -1,10 +1,9 @@
 // A conversation's goal, read and written through the host's World
 // (`world-goal.md`). The goal is one account record; only its live view is
-// pushed. The sentinel's reading of a stop comes from the sentinel runtime
-// and is left absent until it is wired.
+// pushed, the goal's sentinel's last reading of a stop with it.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { GoalShown, GoalStatus, PausedBy } from "../side/types";
+import type { GoalShown, GoalStatus, PausedBy, SentinelLook } from "../side/types";
 import type { ResidentId, Timestamp } from "./wire";
 
 type StopKind = "user" | "claimed" | "quota" | "assistance" | "review" | "retry_exhausted" | "context";
@@ -15,6 +14,11 @@ interface GoalStop {
   resume_at?: Timestamp | null;
 }
 
+type Verdict =
+  | { verdict: "sound"; reason: string }
+  | { verdict: "advice"; looked: string; saw: string; thinks: string }
+  | { verdict: "failed"; reason: string };
+
 interface GoalRecord {
   objective: string;
   status: GoalStatus;
@@ -23,6 +27,7 @@ interface GoalRecord {
   stop?: GoalStop | null;
   /** The agent's account of it done or blocked. */
   statement?: string | null;
+  runtime?: { last_review?: { at: Timestamp; verdict: Verdict } | null };
 }
 
 interface GoalPending {
@@ -72,11 +77,25 @@ export function watchGoal(owner: ResidentId, onPiece: (piece: GoalPiece) => void
   return invoke<{ id: number; view: GoalView }>("goal_watch", { residentId: owner, pieces });
 }
 
-/** Which stop paused the goal, in the interface's terms. */
+/** Which stop paused the goal, in the interface's terms: the agent pauses
+ *  only at the user's word; a review or an ended assistance is the World's,
+ *  left for the user to decide. */
 function pausedBy(kind: StopKind | undefined): PausedBy {
   if (kind === "user") return "user";
   if (kind === "quota") return "quota";
+  if (kind === "review" || kind === "assistance") return "world";
   return "agent";
+}
+
+/** What the goal's sentinel last made of a stop; nothing where it could not judge. */
+function lookOf(goal: GoalRecord): SentinelLook | null {
+  const review = goal.runtime?.last_review;
+  const at = review ? Date.parse(review.at) : NaN;
+  if (!review || !Number.isFinite(at)) return null;
+  const verdict = review.verdict;
+  if (verdict.verdict === "sound") return { at, sound: true, reason: verdict.reason };
+  if (verdict.verdict === "advice") return { at, sound: false, looked: verdict.looked, saw: verdict.saw, thinks: verdict.thinks };
+  return null;
 }
 
 /** The goal as the panel shows it, from the World's view. A locally observed
@@ -99,7 +118,7 @@ export function goalShown(view: GoalView): GoalShown | null {
     since,
     paused: null,
     statement: goal.statement ?? null,
-    sentinel: null,
+    sentinel: lookOf(goal),
   };
   if (status === "paused") {
     const until = goal.stop?.resume_at ? Date.parse(goal.stop.resume_at) : NaN;

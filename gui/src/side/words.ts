@@ -81,7 +81,7 @@ export const zhSide: SideWords = {
     bar: { active: "进行中的目标", paused: "已暂停", blocked: "阻碍", complete: "已完成" },
     states: { active: "进行中", paused: "已暂停", blocked: "阻碍", complete: "已完成" },
     paused: (by, until) =>
-      by === "quota" ? (until ? `额度用完，${until} 接着` : "额度用完") : by === "sentinel" ? "停下了，等你定" : by === "agent" ? "照你的话停下" : "你停下的",
+      by === "quota" ? (until ? `额度用完，${until} 接着` : "额度用完") : by === "world" ? "停下了，等你定" : by === "agent" ? "照你的话停下" : "你停下的",
     pause: "暂停",
     resume: "接着",
     clear: "清掉",
@@ -136,7 +136,7 @@ export const enSide: SideWords = {
         ? until
           ? `Out of quota, goes on at ${until}`
           : "Out of quota"
-        : by === "sentinel"
+        : by === "world"
           ? "Stopped, for you to decide"
           : by === "agent"
             ? "Paused at your word"
