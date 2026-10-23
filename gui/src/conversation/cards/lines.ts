@@ -92,12 +92,12 @@ function cardSaid(card: Card, words: Words): Said {
       const end = card.on?.end;
       const ended = end?.kind === "stopped" ? `<span class="row-outcome">${escape(deeds.ended(end))}</span>` : end?.kind === "lost" || end?.kind === "not_run" ? outcome(deeds.ended(end)) : "";
       const lead = card.on?.piped ? `<span class="row-fed" title="${escape(deeds.fed)}">${glyph("fed", 12)}</span>` : "";
-      return plainSaid("command", verbs.run, shortCommand(card.command), { outcome: ended, lead });
+      return plainSaid("command", card.running ? words.act("command", "running") : verbs.run, shortCommand(card.command), { outcome: ended, lead });
     }
     case "fan": {
       const bad = card.deed.steps.filter((step) => troubled(step.end)).length;
       const many = `<span class="row-machine">${glyph("group", 12)}${escape(deeds.machines(card.deed.steps.length))}</span>`;
-      return plainSaid("command", verbs.run, shortCommand(card.deed.command), { outcome: bad ? outcome(deeds.troubled(bad)) : "", where: many });
+      return plainSaid("command", card.running ? words.act("command", "running") : verbs.run, shortCommand(card.deed.command), { outcome: bad ? outcome(deeds.troubled(bad)) : "", where: many });
     }
     case "copy": {
       const from = [...new Set(card.from.map((one) => one.machine ?? ""))].filter(Boolean);

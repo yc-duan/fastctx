@@ -96,7 +96,7 @@ export function cardsOf(entry: ToolEntry, deedsOf: (entry: Entry) => Deed[] | nu
       commandCards(entry, tool.does, cards, next, deeds, jobOf);
       // A run still going is at the command it is on: one sent elsewhere
       // that has not ended, or else its last.
-      if (running && deeds) {
+      if (running) {
         const going = (card: Card) => (card.kind === "command" && !!card.on?.going) || (card.kind === "fan" && card.deed.steps.some((step) => step.ended === undefined));
         const any = cards.some(going);
         cards.forEach((card, index) => (card.running = any ? going(card) : index === cards.length - 1));
