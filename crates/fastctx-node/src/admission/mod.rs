@@ -144,8 +144,7 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
     }
     // Login management belongs to holders (`world-network.md`, 共享机器与智能体协助).
     if agents_here {
-        view.authorize(&caller.account, fastctx_net::authorization::Action::Hold(&here))
-            .map_err(Failure::from)?;
+        view.authorize(&caller.account, fastctx_net::authorization::Action::Hold(&here)).map_err(Failure::from)?;
     }
     // Updates use general machine management authority (`world-upgrade.md`, 谁来更新).
     if matches!(call, RemoteCall::UpdateWorld | RemoteCall::Updates { .. }) && !view.may_update(&caller.account, &here)

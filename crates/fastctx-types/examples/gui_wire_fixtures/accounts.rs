@@ -39,7 +39,10 @@ fn hub() -> HubAccounts {
         me: Some("desktop".parse().unwrap()),
         hub_machine: Some("server".parse().unwrap()),
         machine_notices: vec![fastctx_types::sharing::Notice {
-            id: 42, at: at(), account: "ada".parse().unwrap(), machine: "laptop".parse().unwrap(),
+            id: 42,
+            at: at(),
+            account: "ada".parse().unwrap(),
+            machine: "laptop".parse().unwrap(),
             by: Some("bo".parse().unwrap()),
             action: fastctx_types::sharing::Change::Rename { to: "workstation".parse().unwrap() },
         }],

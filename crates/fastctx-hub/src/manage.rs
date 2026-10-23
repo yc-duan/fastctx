@@ -860,8 +860,7 @@ fn held_machine(
     account: &AccountName,
     machine: &MachineName,
 ) -> Result<AccountName, String> {
-    directory.authorize(account, fastctx_net::authorization::Action::Hold(machine))
-        .map_err(|denial| denial.message)?;
+    directory.authorize(account, fastctx_net::authorization::Action::Hold(machine)).map_err(|denial| denial.message)?;
     Ok(directory.member(machine).and_then(|member| member.home.clone()).expect("holder has a machine"))
 }
 

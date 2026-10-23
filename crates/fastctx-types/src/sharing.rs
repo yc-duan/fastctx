@@ -22,10 +22,20 @@ pub struct Notice {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Change {
-    Rename { to: crate::MachineName },
-    Updated { from: String, to: String },
-    Remove { then: Option<crate::uninstall::Then> },
-    Share { to: crate::AccountName, shared: bool },
+    Rename {
+        to: crate::MachineName,
+    },
+    Updated {
+        from: String,
+        to: String,
+    },
+    Remove {
+        then: Option<crate::uninstall::Then>,
+    },
+    Share {
+        to: crate::AccountName,
+        shared: bool,
+    },
     Assist {
         to: crate::AccountName,
         agent: crate::AgentName,

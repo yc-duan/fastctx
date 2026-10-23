@@ -106,11 +106,7 @@ pub(super) fn owns_here(node: &Node, acting: &Acting) -> Result<(), Failure> {
     }
     for link in node.links() {
         let view = link.view();
-        if node
-            .accounts_on(&link, acting)
-            .iter()
-            .any(|account| view.holds(account, &view.me))
-        {
+        if node.accounts_on(&link, acting).iter().any(|account| view.holds(account, &view.me)) {
             return Ok(());
         }
     }
@@ -177,8 +173,7 @@ fn owned(
         if view.account(&identity.account).is_none_or(|account| account.locked) {
             return Err(Failure::refused("the upload account is absent or locked"));
         }
-        for member in view.machines().filter(|member| view.holds(&identity.account, &member.name) && member.online)
-        {
+        for member in view.machines().filter(|member| view.holds(&identity.account, &member.name) && member.online) {
             if view.admits(from, &identity.account, &member.name, Purpose::Hands).is_err() {
                 continue;
             }

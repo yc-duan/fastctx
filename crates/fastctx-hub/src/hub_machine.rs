@@ -2,7 +2,10 @@
 //! the same store lock as sharing and moving, so those operations cannot race.
 
 use crate::{Hub, store::Store};
-use fastctx_types::{MachineName, machine_log::{Action, Actor, Outcome}};
+use fastctx_types::{
+    MachineName,
+    machine_log::{Action, Actor, Outcome},
+};
 
 pub(crate) fn current(hub: &Hub, store: &Store) -> Option<MachineName> {
     let directory = &store.book.directory;
@@ -10,7 +13,8 @@ pub(crate) fn current(hub: &Hub, store: &Store) -> Option<MachineName> {
     if let Some(incoming) = store.moves.last() {
         return directory.member(&incoming.to).map(|member| member.name.clone());
     }
-    directory.machines()
+    directory
+        .machines()
         .find(|member| crate::updates::running_of(hub, &member.key).is_some_and(|running| running.hub_here))
         .map(|member| member.name.clone())
 }
@@ -26,9 +30,10 @@ pub(crate) fn protected(hub: &Hub, store: &Store, machine: &MachineName) -> bool
 pub(crate) fn settle(hub: &Hub) -> Result<(), String> {
     let mut store = hub.store();
     let Some(machine) = current(hub, &store) else { return Ok(()) };
-    let shares: Vec<_> = store.book.directory.shares.iter()
-        .filter(|share| share.machine == machine).cloned().collect();
-    if shares.is_empty() { return Ok(()) }
+    let shares: Vec<_> = store.book.directory.shares.iter().filter(|share| share.machine == machine).cloned().collect();
+    if shares.is_empty() {
+        return Ok(());
+    }
     let before = store.book.clone();
     store.book.directory.shares.retain(|share| share.machine != machine);
     store.book.directory.settle_acting();
@@ -40,7 +45,10 @@ pub(crate) fn settle(hub: &Hub) -> Result<(), String> {
                 crate::machine_log::effects(&mut store, &before.directory, &actor, &action)?;
             }
             let accounts = store.book.directory.accounts.clone();
-            store.book.machine_log.push(&before.directory, &accounts, actor.clone(), action, Outcome::Done)
+            store
+                .book
+                .machine_log
+                .push(&before.directory, &accounts, actor.clone(), action, Outcome::Done)
                 .map_err(|error| error.to_string())?;
         }
         store.save_book().map_err(|error| error.to_string())

@@ -138,9 +138,8 @@ pub(crate) fn view_for(
         machine_log: true,
         hub: store.hub.id.clone(),
         hub_name: store.hub.name.clone(),
-        hub_machine: crate::hub_machine::current(hub, store).filter(|machine| {
-            whole || mine.iter().any(|account| all.rights(account, machine).hands)
-        }),
+        hub_machine: crate::hub_machine::current(hub, store)
+            .filter(|machine| whole || mine.iter().any(|account| all.rights(account, machine).hands)),
         machine_notices: store.book.machine_log.notices(all, me),
         me: me.clone(),
         self_registration: store.hub.self_registration,
@@ -237,9 +236,7 @@ fn cut(all: &Directory, me: &MachineName, mine: &BTreeSet<AccountName>) -> Direc
     // What concerns this member: given to the accounts it sees, of itself,
     // or of a machine one of its accounts holds (whole-machine sharing).
     let concerns = |account: &AccountName, machine: &MachineName| {
-        accounts.contains(account)
-            || machine == me
-            || mine.iter().any(|account| all.holds(account, machine))
+        accounts.contains(account) || machine == me || mine.iter().any(|account| all.holds(account, machine))
     };
     let shares: Vec<_> = all.shares.iter().filter(|share| concerns(&share.account, &share.machine)).cloned().collect();
     let assists: Vec<_> =

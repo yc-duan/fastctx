@@ -93,20 +93,31 @@ impl History {
         outcome: Outcome,
     ) -> io::Result<()> {
         let notified = if outcome == Outcome::Done {
-            notification(&actor, &action).map(|(machine, by, _)| {
-                let machine = directory.canonical(machine);
-                let owner = directory.member(machine).and_then(|member| member.home.as_ref());
-                let mut recipients: BTreeSet<_> = owner.into_iter().cloned().collect();
-                recipients.extend(directory.shares.iter().filter(|share| share.machine == *machine)
-                    .map(|share| share.account.clone()));
-                if let Action::Share { to, .. } = &action {
-                    recipients.insert(to.clone());
-                }
-                recipients.into_iter().filter(|account| Some(account) != by)
-                    .filter_map(|name| directory.account(&name).map(|account| (name, account.opened)))
-                    .collect()
-            }).unwrap_or_default()
-        } else { BTreeMap::new() };
+            notification(&actor, &action)
+                .map(|(machine, by, _)| {
+                    let machine = directory.canonical(machine);
+                    let owner = directory.member(machine).and_then(|member| member.home.as_ref());
+                    let mut recipients: BTreeSet<_> = owner.into_iter().cloned().collect();
+                    recipients.extend(
+                        directory
+                            .shares
+                            .iter()
+                            .filter(|share| share.machine == *machine)
+                            .map(|share| share.account.clone()),
+                    );
+                    if let Action::Share { to, .. } = &action {
+                        recipients.insert(to.clone());
+                    }
+                    recipients
+                        .into_iter()
+                        .filter(|account| Some(account) != by)
+                        .filter_map(|name| directory.account(&name).map(|account| (name, account.opened)))
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            BTreeMap::new()
+        };
         let mut accounts: BTreeSet<AccountName> = actor.account.iter().cloned().collect();
         accounts.extend(notified.keys().cloned());
         let mut names: BTreeSet<MachineName> = BTreeSet::new();
@@ -274,7 +285,12 @@ impl History {
                     .map(|account| (name, account.opened))
             })
             .collect();
-        self.records.push(Kept { record: Record { id: self.next, at, actor, action, outcome }, accounts, members, notified });
+        self.records.push(Kept {
+            record: Record { id: self.next, at, actor, action, outcome },
+            accounts,
+            members,
+            notified,
+        });
         Ok(())
     }
 
@@ -285,15 +301,24 @@ impl History {
         let now = Timestamp::now();
         let mut notices = Vec::new();
         for kept in &self.records {
-            if kept.record.at.checked_add(RETENTION).expect("timestamp in range") <= now { continue; }
+            if kept.record.at.checked_add(RETENTION).expect("timestamp in range") <= now {
+                continue;
+            }
             let Some((machine, by, action)) = notification(&kept.record.actor, &kept.record.action) else { continue };
             for account in &member.logins {
-                if !directory.account(account).is_some_and(|found| {
-                    !found.locked && kept.notified.get(account) == Some(&found.opened)
-                }) { continue; }
+                if !directory
+                    .account(account)
+                    .is_some_and(|found| !found.locked && kept.notified.get(account) == Some(&found.opened))
+                {
+                    continue;
+                }
                 notices.push(fastctx_types::sharing::Notice {
-                    id: kept.record.id, at: kept.record.at, account: account.clone(),
-                    machine: machine.clone(), by: by.cloned(), action: action.clone(),
+                    id: kept.record.id,
+                    at: kept.record.at,
+                    account: account.clone(),
+                    machine: machine.clone(),
+                    by: by.cloned(),
+                    action: action.clone(),
                 });
             }
         }
@@ -357,19 +382,30 @@ impl History {
     }
 }
 
-fn notification<'a>(actor: &'a Actor, action: &'a Action)
-    -> Option<(&'a MachineName, Option<&'a AccountName>, fastctx_types::sharing::Change)>
-{
+fn notification<'a>(
+    actor: &'a Actor,
+    action: &'a Action,
+) -> Option<(&'a MachineName, Option<&'a AccountName>, fastctx_types::sharing::Change)> {
     use fastctx_types::sharing::Change as Notice;
     let by = actor.account.as_ref();
     Some(match action {
         Action::Rename { machine, to } => (machine, by, Notice::Rename { to: to.clone() }),
-        Action::Updated { machine, from, to, by } => (machine, Some(by), Notice::Updated { from: from.clone(), to: to.clone() }),
+        Action::Updated { machine, from, to, by } => {
+            (machine, Some(by), Notice::Updated { from: from.clone(), to: to.clone() })
+        }
         Action::Remove { name, then, .. } => (name, by, Notice::Remove { then: *then }),
         Action::Share { machine, to, shared } => (machine, by, Notice::Share { to: to.clone(), shared: *shared }),
-        Action::Assist { machine, to, agent, home, assisting, until, .. } => (machine, by, Notice::Assist {
-            to: to.clone(), agent: agent.clone(), home: home.clone(), assisting: *assisting, until: *until,
-        }),
+        Action::Assist { machine, to, agent, home, assisting, until, .. } => (
+            machine,
+            by,
+            Notice::Assist {
+                to: to.clone(),
+                agent: agent.clone(),
+                home: home.clone(),
+                assisting: *assisting,
+                until: *until,
+            },
+        ),
         _ => return None,
     })
 }
@@ -482,7 +518,10 @@ pub(crate) fn keep(
     // An unrelated login can still remove just its login from a device. That
     // does not remove the machine and must not tell its holders that it did.
     let login_only = matches!(&action, Action::Remove { name, .. } if store.book.directory.member(name).is_some());
-    store.book.machine_log.push(directory, &store.book.directory.accounts, actor, action, outcome)
+    store
+        .book
+        .machine_log
+        .push(directory, &store.book.directory.accounts, actor, action, outcome)
         .map_err(|error| format!("the hub could not keep the machine log: {error}"))?;
     if login_only && let Some(kept) = store.book.machine_log.records.last_mut() {
         kept.notified.clear();
