@@ -81,7 +81,8 @@ pub(crate) fn requests(node: &Node, resident: &ResidentId, work: &str) -> bool {
     })
 }
 
-/// Called only for actual input or a new turn, never for retry/status chatter.
+/// Called for actual input, a new turn, or completion of initial conversation setup.
+/// Retry and status chatter do not count as work becoming ready.
 pub(crate) fn input_changed(node: &Node, id: &ResidentId) {
     let changed = {
         let mut inputs = node.goals.engine.inputs.lock().expect("goal inputs");

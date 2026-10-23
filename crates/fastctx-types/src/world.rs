@@ -26,6 +26,9 @@ impl crate::tolerant::Tolerant for Form {
 pub struct MachineFacts {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub goal_runtime: bool,
+    /// Opens a colleague's goal before its first input, without an ordinary initial-turn reply.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub goal_colleagues: bool,
     /// Receives colleague questions without waking an idle conversation.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub goal_questions: bool,

@@ -20,8 +20,28 @@ pub(crate) fn ready(node: &Node) -> Result<(), Failure> {
     Ok(())
 }
 
+/// Older nodes can accept Ask yet create a colleague without an autonomous goal.
+pub(crate) async fn require_remote(
+    node: &Arc<Node>,
+    acting: &fastctx_types::access::Acting,
+    machine: &fastctx_types::access::Written,
+) -> Result<(), Failure> {
+    use fastctx_types::{
+        access::Purpose,
+        remote::{RemoteCall, RemoteReply},
+    };
+    let answer = node
+        .call(acting, machine, Purpose::Look, RemoteCall::Facts)
+        .await
+        .map_err(|error| Failure::new(error.to_string()))??;
+    if matches!(answer, RemoteReply::Facts(facts) if facts.goal_colleagues) {
+        Ok(())
+    } else {
+        Err(Failure::not_run(words::COLLEAGUE_OLDER_NODE))
+    }
+}
+
 /// Open the birth goal once. Retrying creation never replaces or resumes an existing goal.
-#[allow(dead_code, reason = "The collaboration provider calls this seam when its implementation is integrated.")]
 pub(crate) async fn open(
     node: &Arc<Node>,
     resident: &ResidentId,

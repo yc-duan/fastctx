@@ -8,8 +8,19 @@ pub(crate) const NATIVE_CODEX: &str = "Goals are available only in Codex convers
 pub(crate) const REQUESTER_PAUSED: &str = "The requesting conversation paused the goal.";
 pub(crate) const REPORT_CHANGED: &str = "The goal conclusion differs from its immutable report identity.";
 pub(crate) const REPORT_MISSING: &str = "The settled goal has no conclusion text.";
-pub(crate) const REPORT_OLDER_NODE: &str = "The requester's node is too old to receive goal conclusions; update it first.";
+pub(crate) const REPORT_OLDER_NODE: &str =
+    "The requester's node is too old to receive goal conclusions; update it first.";
 pub(crate) const QUESTION_OLDER_NODE: &str = "The requester's node is too old to receive a question without waking it.";
+pub(crate) const COLLEAGUE_OLDER_NODE: &str =
+    "The callee's node is too old to start a colleague with a goal; update it first.";
+
+pub(crate) fn birth_goal_failed(id: &fastctx_types::ResidentId, why: &str) -> String {
+    format!("Colleague {id} was created, but opening its goal failed: {why}")
+}
+
+pub(crate) fn birth_input_failed(id: &fastctx_types::ResidentId, why: &str) -> String {
+    format!("Colleague {id} has a goal, but keeping its first request failed: {why}")
+}
 
 const BLOCK: &str = r#"THE GOAL
 The user set a goal for this conversation, and it is on:

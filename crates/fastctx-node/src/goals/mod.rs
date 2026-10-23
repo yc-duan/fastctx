@@ -21,6 +21,7 @@ mod state;
 pub(crate) mod watch;
 mod watching;
 mod words;
+pub(crate) use words::{birth_goal_failed, birth_input_failed};
 
 use crate::Node;
 use fastctx_types::access::HubAccount;

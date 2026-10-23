@@ -10,7 +10,10 @@ use fastctx_types::layout::Here;
 use std::sync::Arc;
 
 pub(super) async fn quiet(node: &Arc<Node>, id: &ResidentId) -> Result<bool, Failure> {
-    if crate::control_queue::busy(node, id)? || crate::composer::input_busy(node, id).await? {
+    if crate::here::being_born(node, id)
+        || crate::control_queue::busy(node, id)?
+        || crate::composer::input_busy(node, id).await?
+    {
         return Ok(false);
     }
     let (pending, uncertain) = crate::inbox::input_states(&node.world.conversation(id)).map_err(failure)?;
