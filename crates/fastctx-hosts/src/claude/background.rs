@@ -111,6 +111,26 @@ pub fn wake_args(session: &str, words: &str) -> Vec<OsString> {
 /// returns what it printed, or why it failed: past its deadline (`within`)
 /// the command is ended and that is said (`specs/world-concurrency.md`).
 pub fn claude(program: &Path, args: &[OsString], cwd: &Path, env: &[(OsString, OsString)]) -> Result<String, String> {
+    invoke(program, args, cwd, env, within(args)).map_err(|failure| failure.message)
+}
+
+/// A CLI error is retryable only when the process was never started.
+/// A nonzero exit can follow an accepted prompt, including a trust refusal.
+#[derive(Debug)]
+pub struct CommandFailure {
+    pub message: String,
+    pub started: bool,
+}
+
+/// Runs a host operation with an explicit deadline and preserves whether
+/// it crossed the process boundary. Callers reconcile started failures.
+pub fn invoke(
+    program: &Path,
+    args: &[OsString],
+    cwd: &Path,
+    env: &[(OsString, OsString)],
+    deadline: std::time::Duration,
+) -> Result<String, CommandFailure> {
     let mut command = Command::new(program);
     command.args(args).current_dir(cwd).env_clear().envs(env.iter().map(|(name, value)| (name, value)));
     command.stdin(Stdio::null());
@@ -121,19 +141,23 @@ pub fn claude(program: &Path, args: &[OsString], cwd: &Path, env: &[(OsString, O
         command.creation_flags(0x0800_0000);
     }
     let what = format!("`claude {}`", first(args));
-    let output = fastctx_platform::bounded::output(command, &what, within(args)).map_err(|error| {
-        if fastctx_platform::bounded::ran_late(&error) {
-            format!("Claude Code did not answer {what} within {} s", within(args).as_secs())
+    let output = fastctx_platform::bounded::output_tracked(command, &what, deadline).map_err(|failure| {
+        let message = if fastctx_platform::bounded::ran_late(&failure.error) {
+            format!("Claude Code did not answer {what} within {} s", deadline.as_secs())
         } else {
-            format!("running {}: {error}", program.display())
-        }
+            format!("running {}: {}", program.display(), failure.error)
+        };
+        CommandFailure { message, started: failure.started }
     })?;
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     if output.status.success() {
         Ok(stdout)
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("claude {} ({}): {}", first(args), output.status, format!("{stdout}{stderr}").trim()))
+        Err(CommandFailure {
+            message: format!("claude {} ({}): {}", first(args), output.status, format!("{stdout}{stderr}").trim()),
+            started: true,
+        })
     }
 }
 
@@ -153,9 +177,8 @@ fn within(args: &[OsString]) -> std::time::Duration {
 /// Whether the background session `session` has a running process, from
 /// `claude agents --json --all`.
 pub fn running(agents_json: &str, session: &str) -> Result<bool, String> {
-    let agents: serde_json::Value =
+    let list: Vec<serde_json::Value> =
         serde_json::from_str(agents_json).map_err(|error| format!("reading `claude agents --json`: {error}"))?;
-    let list = agents.as_array().cloned().unwrap_or_default();
     // A session is named by its id, or by the short id `claude --bg` printed
     // until its mod reported the whole of it.
     let named =
