@@ -23,7 +23,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 RELEASES = "https://downloads.claude.ai/claude-code-releases"
-CHECKED = ["2.1.303"]
+CHECKED = ["2.1.303", "2.1.310"]
 
 
 def oldest():
