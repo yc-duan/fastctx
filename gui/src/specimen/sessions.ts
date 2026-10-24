@@ -8,6 +8,7 @@ import { steps } from "./steps";
 import { trips } from "./trips";
 import { deeds } from "./deeds";
 import type { SessionEvent, Speaker } from "../world/events";
+import type { JsonValue } from "../world/wire";
 import { cut, hunk, leftOut, noted, printed, put, ran, same, wrote } from "./run-facts";
 import { tour } from "./tour";
 
@@ -957,4 +958,36 @@ function asking(): Specimen {
   };
 }
 
-export const specimens: Record<string, () => Specimen> = { claude, codex, asking, steps, trips, tour, deeds };
+/** A Claude conversation's commands as the World tells them: a compaction
+ *  done, one whose outcome nobody can tell, and one that failed. */
+function controls(): Specimen {
+  const s = new Script("2026-10-24T13:40:00Z");
+  s.heard("t1", user, "把 ingest 的迁移说明整理一下，写进 MIGRATING.md。");
+  s.started("t1");
+  s.say("t1", "message", "写好了：`MIGRATING.md` 里按顺序列了三步，回滚的办法放在最后。", 4);
+  s.ended("t1", "completed");
+  const row = (id: number, name: string, state: "completed" | "uncertain" | "failed", error: string | null) =>
+    s.push({
+      event: "changed",
+      turn: null,
+      change: {
+        kind: "metadata",
+        metadata: {
+          fastctx_control: {
+            id: `control-1792843104777-${id}-0`,
+            control: { do: "command", name, args: "" },
+            at: "2026-10-24T13:41:00Z",
+            state,
+            result: state === "completed" ? { kind: "done", said: null } : null,
+            error,
+          },
+        } as unknown as JsonValue,
+      },
+    }, 3);
+  row(1, "compact", "completed", null);
+  row(2, "compact", "uncertain", "the Claude activation ended without a receipt; the control's outcome is unknown and it will not be repeated");
+  row(3, "init", "failed", "AGENTS.md could not be written: the specimen writes nothing");
+  return { title: "迁移说明", agent: "claude", resident: "claude-c0ntrols", machine: "laptop", model: "claude-opus-5-5", town: "ingest", here: "desktop", events: s.recent() };
+}
+
+export const specimens: Record<string, () => Specimen> = { claude, codex, asking, steps, trips, tour, deeds, controls };

@@ -1154,7 +1154,7 @@ export class ConversationView {
     const cross = glyph("cross", 14);
     if (row.state === "running") return line(words.commandRunning(name), `<span class="pulse"></span>`, false);
     if (row.state === "failed") return line(words.commandFailed(name), cross, true, row.error ?? "");
-    if (row.state === "uncertain") return line(words.commandUnsure(name), cross, true, row.error ?? "");
+    if (row.state === "uncertain") return line(words.commandUnsure(name), glyph("minus", 14), false, row.error ?? "");
     if (row.state !== "completed") return "";
     const result = row.result;
     const control = row.control;

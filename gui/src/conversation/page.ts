@@ -1953,7 +1953,8 @@ export class ConversationPage {
     } catch (error) {
       // One the node told in the conversation is said there.
       const failure = typeof error === "object" && error !== null ? (error as { code?: unknown }) : null;
-      if (told && failure?.code === "told") this.say("");
+      if (told && (failure?.code === "told" || failure?.code === "control_uncertain")) this.say("");
+      else if (failure?.code === "control_uncertain") this.say(words.unknownOutcome(command.name), detailOf(error));
       else this.say(words.failed(detailOf(error)), detailOf(error), true);
       return false;
     }

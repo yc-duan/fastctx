@@ -1456,7 +1456,7 @@ function specimenTalk(address: Address): KeepablePage {
   const name = address.resident;
   const sample: Specimen & { later?: SessionEvent[]; rate?: number; timed?: boolean } = name.startsWith("stream")
     ? streamSpecimen(params)
-    : (specimens[name === "codex-a51c" ? "asking" : name === "claude-5teps" ? "steps" : name === "trips-1" ? "trips" : name === "deeds-1" ? "deeds" : name === "claude-t0ur" ? "tour" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
+    : (specimens[name === "codex-a51c" ? "asking" : name === "claude-5teps" ? "steps" : name === "trips-1" ? "trips" : name === "deeds-1" ? "deeds" : name === "claude-t0ur" ? "tour" : name === "claude-c0ntrols" ? "controls" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
   const conversation = new Conversation();
   conversation.thoughtWords = sample.agent !== "codex";
   // A specimen keeps its whole history as a shell would, and its page holds
