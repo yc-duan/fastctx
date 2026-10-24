@@ -107,6 +107,20 @@ async function controlCompact($, state, instructions) {
   } finally { state.compacting = false }
 }
 
+const sideAnswerInstruction = "Answer the user's side question using the retained conversation supplied as JSON. Do not continue its tasks."
+
+async function controlSideAnswer($, state, question) {
+  const forked = await $.model.fork({ prompt: question })
+  if (forked.isAnswered !== false || forked.reason !== 'nothing-to-fork') return forked
+  // A resumed process has no cached main request to fork. This native result
+  // proves no request ran; complete once against its retained public context.
+  const conversation = await $.session.messages({ as: 'api' })
+  const reply = await $.model.complete({ model: state.selection.model ?? await $.session.model(),
+    ...(state.selection.effort == null ? {} : { effort: state.selection.effort }),
+    system: sideAnswerInstruction, prompt: JSON.stringify({ conversation, question }) })
+  return { ...reply, context_source: 'retained_conversation' }
+}
+
 async function controlConfig($, args) {
   const rows = await $.config.list()
   if (!args.trim()) return { kind: 'done', said: JSON.stringify(rows) }
@@ -143,7 +157,7 @@ async function controlCommand($, state, control) {
   if (command.route === 'model') return controlSelection($, state, args.trim(), null)
   if (command.route === 'config') return controlConfig($, args)
   if (command.route === 'compact') return controlCompact($, state, args, control.receipt)
-  if (command.route === 'side_answer') return { kind: 'side_answer', reply: await $.model.fork({ prompt: args }) }
+  if (command.route === 'side_answer') return { kind: 'side_answer', reply: await controlSideAnswer($, state, args) }
   if (command.route === 'editor' || command.route === 'output_style') {
     const key = command.route === 'editor' ? 'editor' : 'outputStyle'
     const row = (await $.config.list()).find((row) => row.key === key)
