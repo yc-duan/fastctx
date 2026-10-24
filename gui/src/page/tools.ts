@@ -36,14 +36,8 @@ export interface Tools {
       name: string;
       what: string;
       machines: string[];
-      journals: { journal: string; description: string | null; entries: number; latest: string | null }[];
       pages: { page: string; title: string; description: string | null }[];
     };
-  };
-  /** A journal's entries, newest first, a page of them at a time. */
-  "journal.read": {
-    args: { journal: string; before?: string };
-    answer: { entries: { id: string; at: string; by: string; text: string }[]; more: boolean };
   };
   /** A file on a machine, whole or its end. */
   "file.read": {
@@ -80,11 +74,6 @@ export interface Tools {
   say: {
     args: { resident: string; machine: string; text: string };
     answer: { delivered: boolean };
-  };
-  /** Adds an entry to a journal the page declared, by the page. */
-  "journal.add": {
-    args: { journal: string; text: string };
-    answer: { id: string };
   };
 }
 

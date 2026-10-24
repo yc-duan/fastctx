@@ -84,6 +84,10 @@ pub(super) async fn account(server: &AppServer) -> Fact<AgentAccount> {
     };
     let account = &answer["account"];
     match account["type"].as_str() {
+        // A configured provider that needs no OpenAI login works with none.
+        None if account.is_null() && answer["requiresOpenaiAuth"].as_bool() == Some(false) => {
+            Fact::known(AgentAccount::default())
+        }
         None if account.is_null() => Fact::unavailable("no one is logged in to this Codex home"),
         Some("chatgpt") => Fact::known(AgentAccount {
             email: account["email"].as_str().map(str::to_string),

@@ -25,13 +25,6 @@ export const answers: Record<string, (args: Record<string, unknown>) => unknown>
       { resident: "claude-2b91", machine: "laptop", agent: "Claude", project: "mark50", title: "整理调参记录", state: "idle", since: new Date(Date.now() - 4 * 60_000).toISOString(), last: "写了一条手记 tuning" },
     ],
   }),
-  "journal.read": () => ({
-    entries: [
-      { id: "20261004T150300Z-lab", at: "2026-10-04T15:03:00Z", by: "Codex · lab", text: "第 7 组学习率 3e-4 收敛最快，验证损失在 2400 步后停在 0.41 附近；第 9 组学习率减半后震荡小了，但慢了约 30%。" },
-      { id: "20261004T120000Z-laptop", at: "2026-10-04T12:00:00Z", by: "Claude · laptop", text: "把 12 组的超参与最终指标并成一张表，放在 runs.csv；重复的 3 组已剔除。" },
-    ],
-    more: true,
-  }),
   "file.read": (args) => {
     const text = String(args.path).endsWith(".csv")
       ? "run,lr,batch,val_loss,acc\n7,0.0003,64,0.412,0.884\n8,0.001,64,0.455,0.861\n9,0.00015,64,0.418,0.879\n10,0.0003,128,0.426,0.872\n"

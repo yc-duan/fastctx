@@ -15,7 +15,7 @@ import { Card, Grid, Stat } from "./elements/layout";
 import { Run, Say } from "./elements/acts";
 import { Table } from "./elements/table";
 import { Code, Markdown } from "./elements/text";
-import { Agent, FileView, Job, Journal, Machine } from "./elements/world";
+import { Agent, FileView, Job, Machine } from "./elements/world";
 import { connect, type Face } from "./mcp";
 import { themed } from "./themed";
 
@@ -38,7 +38,6 @@ const ELEMENTS: [string, CustomElementConstructor][] = [
   ["w-code", Code],
   ["w-machine", Machine],
   ["w-agent", Agent],
-  ["w-journal", Journal],
   ["w-file", FileView],
   ["w-job", Job],
   ["w-run", Run],

@@ -23,7 +23,7 @@ import type { UsageReport } from "./usage";
 import type { HubMoveReply, HubMoveRequest } from "./hub-move";
 import type { MachineStats, StatsSeen } from "./stats";
 import type { Looked, RemoteHub, RemoteKey, RemoteServer, RemoteStep } from "../app/remote-world";
-import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
+import type { LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
 
 /** A development build asked for its specimen (`?specimen`) draws it even
  *  inside the app's shell, so a phone's own WebView can be tried with real
@@ -304,11 +304,6 @@ export function project(town: string): Promise<{ map: MapView; who: WorldWho }> 
   return invoke("project", { town });
 }
 
-/** A journal's latest entries that fit, or those before an entry. */
-export function journal(town: string, name: string, before: string | null): Promise<JournalView> {
-  return invoke("journal", { town, journal: name, before });
-}
-
 /** A text file on a machine, or a piece of it, read for the user; `held`
  *  lets go of it and hears how it goes. */
 export function readText(machine: MachineName, path: string, range: FileRange, held?: HeldRead): Promise<TextRead> {
@@ -443,15 +438,6 @@ export function projectNew(name: string, fields: RecordFields, account: string |
 
 export function projectEdit(name: string, fields: RecordFields): Promise<TownRecord> {
   return invoke("project_edit", { name, fields });
-}
-
-export function journals(name: string): Promise<JournalSummary[]> {
-  return invoke("journals", { name });
-}
-
-/** An entry the user writes; returns its id. */
-export function journalAdd(name: string, journal: string, text: string, description: string | null): Promise<string> {
-  return invoke("journal_add", { name, journal, text, description });
 }
 
 /** A login, and on a computer what came of keeping it connected. */

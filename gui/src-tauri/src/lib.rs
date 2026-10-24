@@ -60,11 +60,11 @@ use fastctx_client::Conversation;
 use fastctx_client::World;
 use fastctx_types::file_search::{FileSearchReply, FileSearchRequest};
 use fastctx_types::management::{Managed, Management};
-use fastctx_types::project::{JournalSummary, JournalView, MapView, Record, RecordFields, Stamp};
+use fastctx_types::project::{MapView, Record, RecordFields, Stamp};
 use fastctx_types::residents::Landed;
 use fastctx_types::session::control::{Control, Controlled, Offers};
 use fastctx_types::town::{LookedUp, WorldWho};
-use fastctx_types::{Address, AgentName, EntryId, JournalName, ResidentId, TownName};
+use fastctx_types::{Address, AgentName, ResidentId, TownName};
 use serde::Serialize;
 use tauri::Manager as _;
 use tauri::async_runtime::JoinHandle;
@@ -544,20 +544,6 @@ async fn project(shell: tauri::State<'_, Shell>, town: String) -> Result<Project
     Ok(Project { map: map.map_err(|error| error.to_string())?, who: who.map_err(|error| error.to_string())? })
 }
 
-/// A journal's latest entries that fit, or those before `before`.
-#[fastctx_gui_command::command]
-async fn journal(
-    shell: tauri::State<'_, Shell>,
-    town: String,
-    journal: String,
-    before: Option<String>,
-) -> Result<JournalView, String> {
-    let town = TownName::try_from(town).map_err(|error| error.to_string())?;
-    let journal = JournalName::try_from(journal).map_err(|error| error.to_string())?;
-    let before = before.map(|id| EntryId::try_from(id).map_err(|error| error.to_string())).transpose()?;
-    shell.world().journal(Some(town), journal, before).await.map_err(|error| error.to_string())
-}
-
 /// Asks an agent into the World for the user: on a machine, in a town,
 /// with the user's words as the first it hears.
 // Each argument is a named field of the page's call; a struct would only
@@ -994,33 +980,6 @@ async fn project_edit(
     Ok(TownRecord { town: made.town, record: made.record, opened: made.opened })
 }
 
-#[fastctx_gui_command::command]
-async fn journals(shell: tauri::State<'_, Shell>, name: String) -> Result<Vec<JournalSummary>, String> {
-    Ok(shell.world().journals(Some(town(name)?)).await.map_err(|error| error.to_string())?.1)
-}
-
-/// An entry the user writes in a journal, starting the journal when it has
-/// no description yet and one is given.
-#[fastctx_gui_command::command]
-async fn journal_add(
-    shell: tauri::State<'_, Shell>,
-    name: String,
-    journal: String,
-    text: String,
-    description: Option<String>,
-) -> Result<String, String> {
-    let journal = JournalName::try_from(journal).map_err(|error| error.to_string())?;
-    let reply = shell
-        .world()
-        .add_entry(Some(town(name)?), journal, text, description, Vec::new(), Vec::new(), None)
-        .await
-        .map_err(|error| error.to_string())?;
-    match reply {
-        fastctx_types::Reply::EntryAdded { id, .. } => Ok(id.to_string()),
-        other => Err(format!("the node answered {other:?}")),
-    }
-}
-
 /// Opens a resident on this computer in its own official interface, in a
 /// terminal window of its own; resolves when that window's attach ends.
 #[cfg(desktop)]
@@ -1280,9 +1239,6 @@ pub fn run() {
             since,
             agents,
             project,
-            journal,
-            journals,
-            journal_add,
             project_new,
             project_edit,
             watch,

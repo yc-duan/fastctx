@@ -175,7 +175,7 @@ import type { Seed } from "./conversation/starting";
 import { watched } from "./conversation/source";
 import { redrawDiagrams } from "./conversation/diagrams";
 import { HomePage } from "./home/page";
-import type { Away, Happening, WorldState } from "./home/model";
+import type { Away, WorldState } from "./home/model";
 import { happeningsOf } from "./home/since";
 import type { SinceEvent } from "./world/since";
 import { enHome, zhHome } from "./home/words";
@@ -270,7 +270,6 @@ import {
   remoteOpen,
   remoteProbe,
   remoteWithdraw,
-  journal as readJournal,
   projectEdit,
   projectNew,
   agents,
@@ -1173,39 +1172,15 @@ function stateOf(world: WorldNow, away: Away | null): WorldState {
 }
 
 /** The parts of the World's present whose change leaves something behind
- *  to tell: a turn ending, a job going, a machine coming or going, a
- *  journal growing, someone arriving. */
+ *  to tell: a turn ending, a job going, a machine coming or going, someone
+ *  arriving. */
 function shapeOf(world: WorldNow): string {
   return JSON.stringify([
     residentsOf(world).map((r) => [r.about.id, r.about.machine, r.now?.activity ?? null, r.now?.turn ?? null, r.town]),
     jobsOf(world).map((job) => job.job),
     machinesOf(world).map((machine) => [machine.written, machine.online]),
-    world.towns.map((town) => [town.town, town.journals]),
+    world.towns.map((town) => town.town),
   ]);
-}
-
-/** The first line of each journal entry in the chronicle, read from the
- *  journal on this machine; where it cannot be read, the line goes
- *  without it. */
-async function withFirstLines(happenings: Happening[]): Promise<Happening[]> {
-  const journals = new Map<string, Promise<Map<string, string>>>();
-  const firsts = (town: string, name: string) => {
-    const key = `${town}/${name}`;
-    let read = journals.get(key);
-    if (!read) {
-      read = readJournal(town, name, null).then(
-        (view) => new Map(view.entries.map((entry) => [entry.stamp.id, entry.text.trim().split("\n")[0] ?? ""])),
-        () => new Map<string, string>(),
-      );
-      journals.set(key, read);
-    }
-    return read;
-  };
-  return Promise.all(
-    happenings.map(async (happening) =>
-      happening.kind === "journal" ? { ...happening, first: (await firsts(happening.town, happening.journal)).get(happening.entry) ?? null } : happening,
-    ),
-  );
 }
 
 const focusWords = english ? enFocus : zhFocus;
@@ -1426,7 +1401,7 @@ function home(): Page {
       heard = whole && Number.isFinite(began) ? { events, machines, from: new Date(Math.max(lastVisit.getTime(), began - 2000)) } : null;
       if (known && known.machines !== machines) again = true;
       const read = happeningsOf({ ...answer, events: [...events.values()].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)) });
-      away = { happenings: await withFirstLines(read.happenings), unasked: read.unasked, trouble: null };
+      away = { happenings: read.happenings, unasked: read.unasked, trouble: null };
     } catch (error) {
       away = { happenings: away?.happenings ?? [], unasked: [], trouble: String(error) };
     }
