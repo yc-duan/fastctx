@@ -637,6 +637,11 @@ pub enum Call {
     Attach {
         resident: ResidentId,
     },
+    /// Keeps a local official host interface attached until this connection
+    /// closes. Advertised by `HostCommand::hold`; older callers omit it.
+    HoldHost {
+        resident: ResidentId,
+    },
     /// What waits to be handed to a resident with the answer of a World
     /// tool, oldest first, with what it is to be told of where it is. It is
     /// handed to no other answer meanwhile.
@@ -1139,6 +1144,9 @@ pub struct Attach {
 /// what to start, with which arguments and which variables set.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HostCommand {
+    /// The node supports a connection-scoped HoldHost for this conversation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<ResidentId>,
     pub program: std::path::PathBuf,
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,

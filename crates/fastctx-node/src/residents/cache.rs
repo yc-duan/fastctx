@@ -121,7 +121,7 @@ impl Cache {
             .filter(|(_, live)| {
                 !here(live)
                     || (live.connections == 0
-                        && !live.claude_here
+                        && !live.host_present
                         && live.now.as_ref().is_none_or(|now| now.activity != fastctx_types::residents::Activity::Busy))
             })
             .map(|(id, _)| id.clone())

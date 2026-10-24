@@ -6,6 +6,18 @@ use serde_json::json;
 use std::sync::Arc;
 
 impl CodexHost {
+    /// Subscription can be released only after the node has acknowledged
+    /// every terminal report and no host interaction remains answerable.
+    pub fn releasable(&self, thread: &str) -> bool {
+        self.lock().threads.get(thread).is_some_and(|entry| {
+            entry.subscribed
+                && entry.turn.is_none()
+                && !entry.submitted
+                && entry.unsettled.is_empty()
+                && entry.requests.is_empty()
+        })
+    }
+
     pub fn loaded(&self, thread: &str) -> bool {
         self.lock().threads.get(thread).is_some_and(|entry| entry.loaded)
     }

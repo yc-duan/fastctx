@@ -48,7 +48,7 @@ pub async fn command(node: &Arc<Node>, resident: &ResidentId) -> Result<HostComm
             let user_home = fastctx_platform::user_home().map_err(|error| Failure::new(error.to_string()))?;
             let home = about.home.clone().unwrap_or_else(|| crate::homes::claude_default(&environment, &user_home));
             let env = vec![("CLAUDE_CONFIG_DIR".to_string(), home.to_string_lossy().into_owned())];
-            Ok(HostCommand { program, args: vec!["attach".to_string(), short], env })
+            Ok(HostCommand { hold: Some(resident.clone()), program, args: vec!["attach".to_string(), short], env })
         }
         // The official Codex joins the World's own app-server on its socket,
         // with the thread loaded under the World's settings first.
@@ -56,6 +56,7 @@ pub async fn command(node: &Arc<Node>, resident: &ResidentId) -> Result<HostComm
             let codex = node.codex.of(node, &about)?;
             let (program, address, codex_home) = codex.attachable(&session).await.map_err(Failure::new)?;
             Ok(HostCommand {
+                hold: Some(resident.clone()),
                 program,
                 args: vec!["--remote".to_string(), address, "resume".to_string(), session],
                 env: vec![("CODEX_HOME".to_string(), codex_home.to_string_lossy().into_owned())],

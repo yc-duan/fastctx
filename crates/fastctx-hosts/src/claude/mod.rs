@@ -22,6 +22,7 @@ mod content;
 mod context;
 pub mod control;
 pub mod exchange;
+pub mod lifecycle;
 pub mod models;
 mod oldest;
 pub mod pricing;

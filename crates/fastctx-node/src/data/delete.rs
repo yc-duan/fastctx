@@ -232,13 +232,10 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
             && crate::forks::has_dependents(node, id).map_err(|error| Stop::Failed(error.to_string()))?
         {
             crate::forks::keep(node, &resident.about).map_err(|error| Stop::Failed(error.to_string()))?;
-            if let Some(session) = &resident.about.session {
-                node.codex
-                    .of(node, &resident.about)
-                    .map_err(|error| Stop::Failed(error.message))?
-                    .archive(session)
+            if resident.about.session.is_some() {
+                crate::lifecycle::release_locked(node, &resident.about, crate::lifecycle::ReleaseReason::Archive, None)
                     .await
-                    .map_err(Stop::Failed)?;
+                    .map_err(|error| Stop::Failed(error.message))?;
             }
             host_kept = measured.host.bytes;
         } else {
@@ -432,10 +429,10 @@ async fn measure(node: &Arc<Node>, name: &str) -> Result<Measured, Stop> {
 async fn host(node: &Arc<Node>, about: &About, measured: &Measured) -> Result<(), Stop> {
     match about.host.agent.as_str() {
         "codex" => {
-            let Some(session) = &about.session else { return Ok(()) };
-            let codex = node.codex.of(node, about).map_err(|failure| Stop::Failed(failure.message))?;
-            let deleted = codex
-                .delete(session)
+            if about.session.is_none() {
+                return Ok(());
+            }
+            let deleted = crate::lifecycle::release_locked(node, about, crate::lifecycle::ReleaseReason::Delete, None)
                 .await
                 .map_err(|error| Stop::Failed(format!("Codex did not delete its record: {error}")))?;
             // Codex no longer knows the thread, as when an earlier try
@@ -451,12 +448,12 @@ async fn host(node: &Arc<Node>, about: &About, measured: &Measured) -> Result<()
             }
         }
         "claude" => {
-            if about.world_managed()
-                && let Some(session) = &about.session
-            {
-                crate::claude::management::retire(node, about.home.as_deref(), &about.id, session).await.map_err(
-                    |failure| Stop::Failed(format!("Claude Code's background session: {}", failure.message)),
-                )?;
+            if about.world_managed() && about.session.is_some() {
+                crate::lifecycle::release_locked(node, about, crate::lifecycle::ReleaseReason::Delete, None)
+                    .await
+                    .map_err(|failure| {
+                        Stop::Failed(format!("Claude Code's background session: {}", failure.message))
+                    })?;
             }
             let files = measured.host_files.clone();
             tokio::task::spawn_blocking(move || -> std::io::Result<()> {

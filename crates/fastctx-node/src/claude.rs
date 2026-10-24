@@ -34,6 +34,7 @@ mod resume;
 pub(crate) use image_records::paths as image_records;
 mod image_flush;
 pub(crate) use image_flush::wait_for_image;
+pub(crate) mod lifecycle;
 pub mod management;
 mod oldest;
 pub(crate) mod pairing;
@@ -874,12 +875,7 @@ async fn ended_for_process(
     )
     .await?;
     if current {
-        let departed = node.residents.set_claude_here(resident, false);
-        node.residents.change_now(&node.world, resident, |now| {
-            now.activity = Activity::Asleep;
-            now.since = Timestamp::now();
-            now.turn = None;
-        })?;
+        let departed = crate::lifecycle::observed(node, resident, false, "activation ended");
         if departed && reason.as_deref() != Some("clear") {
             crate::colleagues::left(node, resident.clone());
         }
@@ -1037,7 +1033,7 @@ async fn pair(node: &Arc<Node>, session: &str) {
                 return;
             }
         };
-        node.residents.set_claude_here(&resident, present);
+        crate::lifecycle::observed(node, &resident, present, "activation registered");
     }
     // What waited for the resident before its mod was there goes to the mod,
     // and stays kept until the mod says which turn took it.

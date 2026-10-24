@@ -136,6 +136,7 @@ fn reached<'a>(node: &Node, call: &'a Call) -> Option<&'a ResidentId> {
         }
         Call::Forget { resident, machine } if node.is_here(machine) => Some(resident),
         Call::Attach { resident }
+        | Call::HoldHost { resident }
         | Call::TurnEvidence { resident, .. }
         | Call::CompactBetweenTurns { resident } => Some(resident),
         Call::Upload { target, node: machine, .. } => {

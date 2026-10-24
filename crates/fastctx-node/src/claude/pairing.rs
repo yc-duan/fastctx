@@ -114,7 +114,7 @@ pub(crate) async fn directory(
                 &serde_json::to_vec(&registration).map_err(io::Error::other)?,
                 Permissions::Private,
             )?;
-            node.residents.set_claude_here(&id, true);
+            crate::lifecycle::observed(node, &id, true, "session claimed");
         }
         let mut state = node.claude.state.lock().expect("never poisoned");
         if state

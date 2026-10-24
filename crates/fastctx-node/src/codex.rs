@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use fastctx_hosts::codex::HostEvent;
 use fastctx_types::ResidentId;
-use fastctx_types::residents::Activity;
+
 use fastctx_types::session::SessionEvent;
 use tokio::sync::mpsc;
 
@@ -78,15 +78,7 @@ pub async fn adopt(node: &Arc<Node>) {
                 continue;
             }
         }
-        if resident.now.as_ref().is_some_and(|now| now.activity == Activity::Idle) {
-            let slept = node.residents.change_now(&node.world, &about.id, |now| {
-                now.activity = Activity::Asleep;
-                now.since = jiff::Timestamp::now();
-            });
-            if let Err(error) = slept {
-                node.log.line(format_args!("recording that {} sleeps: {error}", about.id));
-            }
-        }
+        crate::lifecycle::observed(node, &about.id, false, "node restarted");
     }
 }
 
@@ -401,10 +393,8 @@ async fn drain(node: &Arc<Node>, thread: &str) {
                     .about(&id)
                     .is_some_and(|(about, _)| !node.codex.of(node, &about).is_ok_and(|codex| codex.loaded(thread)))
                 {
-                    node.residents.change_now(&node.world, &id, |now| {
-                        now.activity = Activity::Asleep;
-                        now.since = jiff::Timestamp::now();
-                    })
+                    crate::lifecycle::observed(node, &id, false, "thread unloaded");
+                    Ok(())
                 } else {
                     Ok(())
                 }
