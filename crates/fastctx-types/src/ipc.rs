@@ -210,6 +210,8 @@ pub enum FailureCode {
     /// A control's failure, told in its conversation already
     /// (`Offers::controls_told`): the conversation says it.
     Told,
+    /// A host control may have executed, but its result could not be established.
+    ControlUncertain,
     /// A code of a newer version, which this one does not know.
     #[serde(other)]
     Unknown,
@@ -218,6 +220,14 @@ pub enum FailureCode {
 impl Failure {
     pub fn new(message: impl Into<String>) -> Self {
         Self { denial: None, message: message.into(), not_run: false, code: None }
+    }
+
+    pub fn control_uncertain(message: impl Into<String>) -> Self {
+        Self { denial: None, message: message.into(), not_run: false, code: Some(FailureCode::ControlUncertain) }
+    }
+
+    pub fn is_control_uncertain(&self) -> bool {
+        self.code == Some(FailureCode::ControlUncertain)
     }
 
     pub fn not_run(message: impl Into<String>) -> Self {

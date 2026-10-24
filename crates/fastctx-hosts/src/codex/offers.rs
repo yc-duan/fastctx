@@ -239,6 +239,7 @@ impl CodexHost {
             pending_controls: Vec::new(),
             control_queue: false,
             controls_told: false,
+            control_reply_envelope: false,
             checkpoints: None,
             history_limits: None,
             automatic_model: None,
@@ -305,7 +306,11 @@ impl CodexHost {
         pages(&server, "mcpServerStatus/list", json!({"threadId":thread,"detail":"full"})).await.map(|data| json!(data))
     }
 
-    pub async fn review(self: &Arc<Self>, thread: &str, args: &str) -> Result<Value, String> {
+    pub async fn review(
+        self: &Arc<Self>,
+        thread: &str,
+        args: &str,
+    ) -> Result<Value, super::control_error::ControlError> {
         self.prepare(thread).await?;
         if self.running_turn(thread).is_some() {
             return Err("start a review between turns".into());

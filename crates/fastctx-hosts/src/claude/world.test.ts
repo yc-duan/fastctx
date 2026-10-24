@@ -5,6 +5,7 @@ function fixtureUi(on: On, lines: string[] = []) {
   on('ui.log', (_, e) => { lines.push(e.text); return { value: undefined } })
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
+  on('ui.invalidate', () => ({ value: undefined }))
   return lines
 }
 
@@ -289,7 +290,8 @@ test('World failures preserve native operations before and after initialization'
     yield { kind: 'text', index: 0, text: 'native response' }
     return { turnId: e.turnId, index: e.index, answer: 'native response', toolUses: [], stopReason: 'end_turn', usage: null }
   })
-  on('tool.check', () => ({ decision: 'ask', reason: 'native permission' }))
+  let invokingNativeTool = false
+  on('tool.check', () => ({ decision: invokingNativeTool ? 'allow' : 'ask', reason: 'native permission' }))
   on('session.compact', () => { compactions++; return { messages: [{ role: 'user', text: 'native summary', toolUses: [] }] } })
   on('prompt.section', () => ({ text: 'native environment' }))
   on('classic.Elicitation', () => { classics.push('Elicitation'); return {} })
@@ -307,7 +309,9 @@ test('World failures preserve native operations before and after initialization'
     await $.session.start({ cwd: '/fixture', surface: 'terminal', isInteractive: true })
     unavailable = true
     await $.turn.start({ turnId: sessionId, text: 'native prompt' })
+    invokingNativeTool = true
     expect((await $.tool.call({ tool: 'Read', path: '/fixture/file' })).result).toEqual({ native: true })
+    invokingNativeTool = false
     expect((await $.tool.check({ tool: 'Read', tool_use_id: sessionId, input: { path: '/fixture/file' } })).decision).toBe('ask')
     expect(await $.agent.spawn({ prompt: 'native task', description: 'native', subagentType: 'Explore' }))
       .toEqual({ model: 'native-model', agentId: 'native-agent' })

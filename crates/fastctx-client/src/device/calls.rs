@@ -381,7 +381,12 @@ impl Device {
             }
             Call::Control { resident, machine, control } => {
                 let machine = self.find(&resident, machine).await?;
-                (machine, RemoteCall::Control { resident: resident.clone(), control }, Some(resident))
+
+                (
+                    machine,
+                    RemoteCall::Control { resident: resident.clone(), control, reply_envelope: true },
+                    Some(resident),
+                )
             }
             Call::Offers { resident, machine } => {
                 let machine = self.find(&resident, machine).await?;
@@ -530,6 +535,27 @@ impl Device {
         if needs_profile {
             super::mcp::supports(&session.link, &account, &machine).await?;
         }
+        if let RemoteCall::Control {
+            resident,
+            control: fastctx_types::session::control::Control::Command { name, .. },
+            ..
+        } = &remote
+            && name == "btw"
+        {
+            let offered = session
+                .link
+                .call(&machine, &account, purpose, RemoteCall::Offers { resident: resident.clone() })
+                .await
+                .map_err(|error| {
+                    Error::from(crate::CallError::Failed(fastctx_types::ipc::Failure::unanswered(error.to_string())))
+                })?
+                .map_err(|failure| Error::from(crate::CallError::Failed(failure)))?;
+            if !matches!(offered, RemoteReply::Offers(offers) if offers.control_reply_envelope) {
+                return Err(Error::from(crate::CallError::Failed(fastctx_types::ipc::Failure::not_run(
+                    "The conversation's Fastctx is too old to return /btw; update it before running this command.",
+                ))));
+            }
+        }
         let answer = if matches!(
             &remote,
             RemoteCall::Thumbnail { .. } | RemoteCall::AttachmentThumbnail { .. } | RemoteCall::Lines { .. }
@@ -541,7 +567,7 @@ impl Device {
         .map_err(|error| {
             crate::Error::from(crate::CallError::Failed(fastctx_types::ipc::Failure::unanswered(error.to_string())))
         })?
-        .map_err(failed)?;
+        .map_err(|failure| Error::from(crate::CallError::Failed(failure)))?;
         let address = resident.map(|resident| Address { machine: machine.clone(), resident });
         let reply = match (remote, answer) {
             (RemoteCall::Goal { .. }, RemoteReply::Goal { updated }) => Reply::Goal { updated },
@@ -590,10 +616,12 @@ impl Device {
             (RemoteCall::Manage { .. }, RemoteReply::Managed(managed)) => {
                 Reply::Managed { resident: address.expect("manage resident"), managed }
             }
-            (RemoteCall::Control { .. }, RemoteReply::Controlled(controlled)) => {
-                Reply::Controlled { resident: address.expect("control resident"), controlled }
-            }
-            (RemoteCall::Offers { .. }, RemoteReply::Offers(offers)) => {
+            (
+                RemoteCall::Control { .. },
+                RemoteReply::Controlled(controlled) | RemoteReply::ControlResult { controlled },
+            ) => Reply::Controlled { resident: address.expect("control resident"), controlled },
+            (RemoteCall::Offers { .. }, RemoteReply::Offers(mut offers)) => {
+                offers.control_reply_envelope = false;
                 Reply::Offers { resident: address.expect("offers resident"), offers }
             }
             (RemoteCall::ItemDetail { .. }, RemoteReply::ItemDetail { detail }) => {

@@ -90,17 +90,18 @@ async function controlOpen($, sessions, sessionId) {
     const host = {
       session: sessionId, process: identity.process, parent: identity.parent,
       command_contract: 2,
+      handoff_contract: 1,
       assisted: await assistedSession($),
       // Persisted before polling: even a reload in the same clock tick or
       // after a clock rollback gets a different answer address.
       instance: String(Math.max(Date.now(), Number(prior?.instance ?? 0) + 1)),
     }
-    const state = { directory, host, closed: false, busy: false, turn: null, looking: false,
+    const state = { directory, host, closed: false, ready: false, busy: false, turn: null, looking: false,
       selection: files.includes('selection.json') ? JSON.parse(await $.fs.read(directory + '/selection.json')) : {},
       routing: files.includes('routing.json') ? JSON.parse(await $.fs.read(directory + '/routing.json')) : null,
       checkpoints: files.includes('checkpoints.json') ? await readReport($, directory + '/checkpoints') : { messages: [], turns: {}, full: false, uuids: [] },
       rewind: null, compacting: false, automaticModel: false,
-      sequence: 0, calls: new Map(), replies: new Map(), handled: new Set(), pending: new Map(), timer: null, guard,
+      sequence: 0, calls: new Map(), replies: new Map(), handled: new Set(), pending: new Map(), starting: new Set(), timer: null, guard,
       heard: header.slice(header.indexOf('\n') + 1), again: false }
     const closed = await controlNames($, directory + '/closed')
     state.lastUuid = state.checkpoints.last_uuid ?? undefined
@@ -188,12 +189,30 @@ async function controlPoll($, state) {
     do {
       state.again = false
       if (await $.session.id() !== state.host.session) return
+      if (!state.ready) {
+        const usage = await $.session.usage({ breakdown: 'summary' })
+        const tools = usage.context.breakdown?.mcpTools ?? []
+        let server = 'fastctx'
+        if (!state.host.assisted) {
+          const connected = await $.mcp.connect('fastctx')
+          if (!connected.isConnected) { controlRetry($, state); return }
+          server = connected.server
+        }
+        const owned = server.replace(/[^A-Za-z0-9_-]/g, '_')
+        if (!tools.some((tool) => tool.isLoaded && tool.serverName.replace(/[^A-Za-z0-9_-]/g, '_') === owned)) {
+          controlRetry($, state)
+          return
+        }
+        await controlWrite($, state.directory + '/ready-' + state.host.instance + '.json', { instance: state.host.instance, mcp: true })
+        await $.fs.write(state.directory + '/ready-' + state.host.instance + '.done', '')
+        state.ready = true
+      }
       const present = (await controlNames($, state.directory + '/inbox')).sort()
       state.handled = new Set([...state.handled].filter((file) => present.includes(file)))
       for (const file of present) {
         if (!file.endsWith('.json') || state.handled.has(file)) continue
         const request = await readReport($, state.directory + '/inbox/' + file.slice(0, -5))
-        if (request.instance !== state.host.instance) continue
+        if (request.instance !== state.host.instance && request.handoff_contract !== 1) continue
         state.handled.add(file)
         // The scanner alone is serialized. A command waiting in the host must
         // not hold the scanner, offers, config writes or question answers.
@@ -213,15 +232,77 @@ async function controlPoll($, state) {
   }
 }
 
+async function controlRelease($, state, file, request) {
+  const releasing = $.process.spawn({ argv: [FASTCTX, 'claude-control-claim', WORLD],
+    input: JSON.stringify({ key: file.slice(0, -5), host: state.host, controller: request.controller, release: true }) })
+  let stdout = '', stderr = ''
+  for await (const piece of releasing) {
+    if (piece.stream === 'stdout') stdout += piece.text
+    else stderr += piece.text
+  }
+  if ((await releasing.result).code !== 0 || !JSON.parse(stdout).claimed) {
+    const error = new Error('The unstarted control claim could not be released: ' + stderr)
+    error.uncertain = true
+    throw error
+  }
+}
+
 async function controlReply($, state, file, request) {
   let reply = state.replies.get(file)
   if (reply === undefined) {
+    if (state.closed) return
+    let finishStarting, entered = false, claimed = false
+    const starting = new Promise(resolve => { finishStarting = resolve })
+    state.starting.add(starting)
     try {
+      const nativeContext = nativeGoalContexts.get(state.host.session)
+      if (nativeContext && !nativeContext.busy) {
+        try { await clearNativeGoal($, nativeContext) }
+        catch (error) { throw controlRefusal(String(error)) }
+        if (!nativeContext.nativeGoalCleared) throw controlRefusal('Claude native goal cleanup did not finish; the control was not sent')
+      }
       const owner = await $.process.run([FASTCTX, 'claude-control-owner', WORLD])
       if (owner.exitCode !== 0) throw new Error('checking the World node: ' + owner.stderr)
       if (!controlSame(JSON.parse(owner.stdout), request.controller)) throw new Error('the World node that requested this control exited')
-      reply = { ok: await controlExecute($, state, request.control) }
-    } catch (error) { reply = { error: String(error) } }
+      if (request.handoff_contract === 1) {
+        if (state.closed) return
+        const claiming = $.process.spawn({ argv: [FASTCTX, 'claude-control-claim', WORLD],
+          input: JSON.stringify({ key: file.slice(0, -5), host: state.host, controller: request.controller }) })
+        let stdout = '', stderr = ''
+        for await (const piece of claiming) {
+          if (piece.stream === 'stdout') stdout += piece.text
+          else stderr += piece.text
+        }
+        if ((await claiming.result).code !== 0) {
+          state.handled.delete(file)
+          controlRetry($, state)
+          $.ui.log('claiming the Claude control: ' + stderr, { to: 'debug' })
+          return
+        }
+        if (!JSON.parse(stdout).claimed) { state.handled.delete(file); return }
+        claimed = true
+        if (state.closed) { await controlRelease($, state, file, request); return }
+      }
+      if (state.closed) return
+      entered = true
+      const executing = controlExecute($, state, { ...request.control, controller: request.controller, receipt: request.handoff_contract === 1 ? file.slice(0, -5) : undefined }, request.handoff_contract === 1)
+      // These commands can enter session.end while their own call is pending.
+      if (request.control.do === 'command' && ['exit', 'quit', 'reload-plugins'].includes(request.control.name)) finishStarting()
+      reply = { ok: await executing }
+    } catch (error) {
+      // qp() rejects these native entry points before invoking the operation.
+      // A session can unbind just before its session.end hook reaches us.
+      const unbound = String(error).includes('is not available in this mode: no session is bound in this process')
+        && /\$\.(config\.(list|set)|command\.(list|run)|session\.(model|usage|messages|compact|append)|model\.(fork|complete)|agent\.list) is not available/.test(String(error))
+      if (claimed && unbound) { await controlRelease($, state, file, request); return }
+      if (state.closed && !entered && error.uncertain !== true) return
+      reply = { error: String(error) }
+      if (request.handoff_contract === 1 && error.notRun === true) reply.not_run = true
+      if (request.handoff_contract === 1 && error.uncertain === true) reply.uncertain = true
+    } finally {
+      finishStarting()
+      state.starting.delete(starting)
+    }
   }
   // A failed publication retries only publication, never the host operation.
   state.replies.set(file, reply)
@@ -236,14 +317,14 @@ async function controlReply($, state, file, request) {
   }
 }
 
-async function controlExecute($, state, control) {
+async function controlExecute($, state, control, handoff = false) {
   if (state.closed) throw new Error('this Claude conversation ended')
   if (control.do === 'usage') return $.session.usage({ breakdown: 'summary' })
   if (control.do === 'goal_compact') {
     const automatic = (await $.config.list()).find((row) => row.key === 'autoCompact')
     if (!automatic) return { kind: 'refused', said: 'Claude did not report its automatic compaction setting.' }
     if (automatic.value === false) return { kind: 'refused', said: 'Automatic compaction is disabled.' }
-    return controlCompact($, state)
+    return controlCompact($, state, undefined, control)
   }
   if (control.do === 'offers') {
     const commands = await controlCatalog($, state)
@@ -270,14 +351,14 @@ async function controlExecute($, state, control) {
     return offered
   }
   if (control.do === 'compact') {
-    return controlCompact($, state)
+    return controlCompact($, state, undefined, control)
   }
   if (control.do === 'command') {
     return controlCommand($, state, control)
   }
   if (control.do === 'rename') {
     if (!control.name.trim()) throw new Error('a conversation name cannot be empty')
-    return controlCommand($, state, { name: 'rename', args: control.name })
+    return controlCommand($, state, { name: 'rename', args: control.name, receipt: control.receipt })
   }
   if (control.do === 'model') {
     if (control.model != null || control.effort != null) return controlSelection($, state, control.model, control.effort)
@@ -295,6 +376,7 @@ async function controlExecute($, state, control) {
     return { hashes: state.checkpoints.messages.slice(0, count), retained_until: state.checkpoints.turns[control.through].after_uuid }
   }
   if (control.do === 'checkpoint_export') {
+    if (handoff) return controlExportCheckpoint($, state)
     await controlCheckpoint($, state, null, true)
     return state.checkpoints.full === true ? state.checkpoints : null
   }
@@ -306,8 +388,18 @@ async function controlExecute($, state, control) {
     return { kind: 'done', said: null }
   }
   if (control.do === 'checkpoint_import') {
-    const current = await $.session.messages()
-    const hashes = await messageFingerprints(current)
+    const retained = handoff ? await controlRetained($, state) : null
+    const current = retained?.messages ?? await $.session.messages()
+    const hashes = retained?.hashes ?? await messageFingerprints(current)
+    if (retained?.policy.synthetic_tail === true
+      && retained.policy.retained_messages === control.checkpoints.messages.length + 1) {
+      const inherited = hashes.slice(0, -1)
+      const expectedPrefix = control.checkpoints.messages.slice(-inherited.length)
+      if (inherited.every((hash, index) => expectedPrefix[index] === hash)) {
+        control.checkpoints.messages.push(hashes[hashes.length - 1])
+        control.checkpoints.uuids.push(null)
+      }
+    }
     // A compaction's result that no transcript row anchors stays in the
     // source's memory, and a fork, rebuilt from the transcript, does not
     // carry it (2.1.303). Only such leading messages may be missing; the
@@ -320,12 +412,15 @@ async function controlExecute($, state, control) {
     const expected = control.checkpoints.messages
     const expectedTail = current.length >= 4096 ? expected.slice(-hashes.length) : expected
     if (hashes.length !== expectedTail.length || !hashes.every((hash, index) => expectedTail[index] === hash)) throw new Error('the fork does not carry the same retained message context')
-    const policy = $.process.spawn({ argv: [FASTCTX, 'claude-session-policy', WORLD, state.host.session, '--messages', String(expected.length)],
-      input: JSON.stringify({ tail: current.map(messageProjection) }) })
-    let stdout = '', stderr = ''
-    for await (const piece of policy) { if (piece.stream === 'stdout') stdout += piece.text; else stderr += piece.text }
-    if ((await policy.result).code !== 0) throw new Error('reading the fork context: ' + stderr)
-    const observed = JSON.parse(stdout)
+    let observed = retained?.policy
+    if (observed === undefined) {
+      const policy = $.process.spawn({ argv: [FASTCTX, 'claude-session-policy', WORLD, state.host.session, '--messages', String(expected.length)],
+        input: JSON.stringify({ tail: current.map(messageProjection) }) })
+      let stdout = '', stderr = ''
+      for await (const piece of policy) { if (piece.stream === 'stdout') stdout += piece.text; else stderr += piece.text }
+      if ((await policy.result).code !== 0) throw new Error('reading the fork context: ' + stderr)
+      observed = JSON.parse(stdout)
+    }
     if (observed.context_uuids == null || observed.context_uuids.length !== expected.length) throw new Error('the fork has not persisted its retained context')
     state.checkpoints = control.checkpoints
     for (const point of Object.values(state.checkpoints.turns)) {
@@ -456,10 +551,14 @@ async function completeControlTurn($, e) {
 }
 
 async function endControls($, e) {
+    nativeGoalContexts.delete(e.sessionId)
     const state = sessions.get(e.sessionId)
     if (state) {
       state.closed = true
       state.timer?.cancel()
+      // Native precondition refusals release their claim before its witness
+      // ends. Self-ending commands remove themselves before invoking the end.
+      await Promise.all([...state.starting])
       try {
         await controlWrite($, state.directory + '/closed/' + state.host.instance + '.json', { reason: e.reason })
       } finally {

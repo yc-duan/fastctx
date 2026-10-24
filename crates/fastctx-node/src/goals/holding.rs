@@ -56,6 +56,7 @@ fn publish_mode(node: &Node, id: &ResidentId, view: &View, refreeze: bool) -> Re
     if let (Some(exchange), Some(bridge)) = (exchange, &local.bridge)
         && exchange.is_dir()
     {
+        let exchange = std::fs::canonicalize(exchange).map_err(failure)?;
         files::write(&exchange.join("goal.json"), bridge).map_err(failure)?;
     }
     Ok(())
@@ -73,6 +74,7 @@ pub(crate) fn registered(node: &Node, id: &ResidentId, exchange: &std::path::Pat
         local.bridge = Some(bridge_state(node, id, &local.view, prior, false)?);
         files::write(&path, &local).map_err(failure)?;
     }
+    let exchange = std::fs::canonicalize(exchange).map_err(failure)?;
     files::write(&exchange.join("goal.json"), local.bridge.as_ref().expect("known Claude goal state")).map_err(failure)
 }
 

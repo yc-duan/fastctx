@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use super::control_outcome;
 use fastctx_hosts::claude::control::{self as files, Answer, Host, Waiting};
 use fastctx_types::ResidentId;
 use fastctx_types::ipc::Failure;
@@ -11,20 +12,14 @@ use fastctx_types::session::control::{Control, ControlKind, Controlled, Offers};
 use fastctx_types::session::{Happened, SessionChange, SessionEvent};
 use jiff::Timestamp;
 use serde_json::{Value, json};
-use tokio::sync::oneshot;
 
 use crate::Node;
 
 #[derive(Default)]
 pub struct Bridge {
-    calls: Mutex<HashMap<String, Invocation>>,
+    calls: Mutex<HashSet<String>>,
     requests: Mutex<HashMap<String, Request>>,
     observed: Mutex<HashSet<(String, String, fastctx_types::ProcessIdentity)>>,
-}
-
-struct Invocation {
-    host: Host,
-    sender: oneshot::Sender<Result<Value, String>>,
 }
 
 #[derive(Clone)]
@@ -32,7 +27,7 @@ struct Request {
     resident: ResidentId,
     directory: PathBuf,
     waiting: Waiting,
-    completed: Arc<tokio::sync::watch::Sender<Option<Answer>>>,
+    completed: Arc<tokio::sync::watch::Sender<Option<Result<Answer, Failure>>>>,
 }
 
 pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
@@ -46,22 +41,11 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
     {
         return Err(Failure::not_run(fastctx_hosts::claude::assisted::COMMAND_REFUSED));
     }
-    // A model chosen for a conversation whose session is not running is kept
-    // where its mod reads it when the session runs again: nothing is woken
-    // for a choice its next turn takes.
-    if let Control::Model { model, effort } = &control
-        && node.residents.about(resident).is_some_and(|(about, _)| about.session.is_some())
-        && !running(node, resident)?
-    {
-        return keep_selection(node, resident, model.clone(), effort.clone());
-    }
-    if !matches!(control, Control::Answer { .. }) {
-        super::resume::ready(node, resident).await?;
-    }
+    super::resume::ready(node, resident).await?;
     match control {
         Control::Fork { through } => super::fork::fork(node, resident, through).await,
         Control::Answer { request, answer } => answer_request(node, resident, request, answer).await,
-        Control::Rewind { .. } if cannot_replace_prefix(node, resident) => Err(Failure::new(
+        Control::Rewind { .. } if cannot_replace_prefix(node, resident) => Err(Failure::not_run(
             "This Claude Code skips a plugin's own compaction handler, so rewind cannot keep the chosen turns; fork through the selected turn instead",
         )),
         Control::Rewind { from } => {
@@ -120,59 +104,6 @@ pub(super) fn running(node: &Node, resident: &ResidentId) -> Result<bool, Failur
             && host.command_contract == Some(files::COMMAND_CONTRACT)),
         None => Ok(false),
     }
-}
-
-/// The reasoning efforts Claude Code takes, as its mod checks them.
-const EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
-
-fn keep_selection(
-    node: &Node,
-    resident: &ResidentId,
-    model: Option<String>,
-    effort: Option<String>,
-) -> Result<Controlled, Failure> {
-    if model.as_deref().is_some_and(|model| model.trim().is_empty()) {
-        return Err(Failure::new("a model cannot be empty"));
-    }
-    if let Some(effort) = &effort
-        && !EFFORTS.contains(&effort.as_str())
-    {
-        return Err(Failure::new(format!("unknown Claude reasoning effort: {effort}")));
-    }
-    let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
-    let session = about.session.ok_or_else(|| Failure::new("Claude has not identified this conversation yet"))?;
-    let directory = files::directory(node.world.path(), &session);
-    let mut selection = files::read::<Value>(&directory.join("selection.json")).map_err(failure)?.unwrap_or(json!({}));
-    if !selection.is_object() {
-        selection = json!({});
-    }
-    if let Some(model) = &model {
-        selection["model"] = json!(model);
-    }
-    if let Some(effort) = &effort {
-        selection["effort"] = json!(effort);
-    }
-    let write = |name: &str, value: &Value| {
-        fastctx_platform::ensure_private_dir(&directory)
-            .and_then(|()| {
-                fastctx_platform::publish(
-                    &directory.join(name),
-                    &serde_json::to_vec(value).map_err(std::io::Error::other)?,
-                    fastctx_platform::Permissions::Private,
-                )
-            })
-            .map_err(failure)
-    };
-    write("selection.json", &selection)?;
-    // A model chosen by the user stops following the engine's own routing,
-    // as the mod does when it takes the choice itself.
-    if model.is_some() {
-        write("routing.json", &Value::Null)?;
-    }
-    Ok(Controlled::Selected {
-        model: selection["model"].as_str().map(str::to_owned),
-        effort: selection["effort"].as_str().map(str::to_owned),
-    })
 }
 
 pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, Failure> {
@@ -371,26 +302,25 @@ pub(super) async fn selection(
 }
 
 async fn invoke_action(node: &Arc<Node>, resident: &ResidentId, control: Value) -> Result<Value, Failure> {
-    match invoke(node, resident, control.clone()).await {
-        Err(error) if error.not_run => {
-            super::resume::ready(node, resident).await?;
-            invoke(node, resident, control).await
-        }
-        result => result,
-    }
+    invoke(node, resident, control).await
 }
 
 pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Value) -> Result<Value, Failure> {
-    let (directory, host) = live_host(node, resident)?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
+    let (directory, host) = loop {
+        match live_host(node, resident) {
+            Err(error) if error.not_run && control["do"] != "offers" && tokio::time::Instant::now() < deadline => {
+                super::resume::ready(node, resident).await?;
+            }
+            result => break result?,
+        }
+    };
     let key = crate::speech::new_id("control").to_string();
     let path = directory.join("inbox").join(format!("{key}.json"));
-    let (sender, receiver) = oneshot::channel();
-    node.claude
-        .bridge
-        .calls
-        .lock()
-        .expect("never poisoned")
-        .insert(key.clone(), Invocation { host: host.clone(), sender });
+    let handoff = host.handoff_contract == Some(1);
+    let mut evidence = control_outcome::Evidence::capture(&directory, &control)
+        .map_err(|error| Failure::not_run(format!("preparing Claude control evidence: {error}")))?;
+    node.claude.bridge.calls.lock().expect("never poisoned").insert(key.clone());
     struct Pending<'a> {
         node: &'a Node,
         key: &'a str,
@@ -400,25 +330,93 @@ pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Val
             let mut calls = self.node.claude.bridge.calls.lock().expect("never poisoned");
             calls.remove(self.key);
             if calls.is_empty() {
-                *calls = HashMap::new();
+                *calls = HashSet::new();
             }
         }
     }
     let _pending = Pending { node, key: &key };
     let result = fastctx_platform::current_identity().and_then(|controller| {
-        files::write_message(&path, &json!({"instance":host.instance,"controller":controller,"control":control}))
+        files::write_message(&path, &json!({"instance":host.instance,"controller":controller,"control":control,"handoff_contract":if handoff {1} else {0}}))
     });
     if let Err(error) = result {
         node.claude.bridge.calls.lock().expect("never poisoned").remove(&key);
         return Err(failure(error));
     }
-    // The activation's process stream also ends when its plugin unloads.
-    // Its exit, a clear or reload, or the reply settles this one-shot.
-    let reply = receiver.await.map_err(|_| {
-        Failure::new("the Claude control bridge stopped before confirming this control; its outcome is unknown")
-    })?;
-    collect_invocation(&directory, &key).map_err(failure)?;
-    reply.map_err(Failure::new)
+    let within = if control_outcome::compacts(&control) {
+        crate::control_queue::COMPACTING
+    } else {
+        std::time::Duration::from_secs(120)
+    };
+    let began = std::time::Instant::now();
+    let _outside = fastctx_platform::doing::waiting_outside("Claude control receipt", within);
+    loop {
+        if handoff
+            && files::read::<files::Claim>(&directory.join("claims").join(format!("{key}.json")))
+                .map_err(|error| control_outcome::unknown(&format!("reading Claude's control claim: {error}")))?
+                .filter(|claim| !claim.released)
+                .is_none()
+            && !running(node, resident).map_err(|error| control_outcome::unknown(&error.message))?
+        {
+            super::resume::ready(node, resident).await.map_err(|error| {
+                control_outcome::unknown(&format!("reconnecting the submitted Claude control: {}", error.message))
+            })?;
+        }
+        let result = {
+            let gate = super::reading(node, &host.session);
+            let _reading = gate.lock().await;
+            let reply = directory.join("replies").join(format!("{key}.json"));
+            let claimed = files::read::<files::Claim>(&directory.join("claims").join(format!("{key}.json")))
+                .map_err(|error| control_outcome::unknown(&format!("reading Claude's control claim: {error}")))?
+                .filter(|claim| !claim.released);
+            if let Some(claim) = &claimed {
+                evidence.executing(claim).map_err(|error| {
+                    control_outcome::unknown(&format!("reading Claude's claimed evidence: {error}"))
+                })?;
+            }
+            let executing = claimed.as_ref().map(|claim| &claim.host).unwrap_or(&host);
+            let result = if reply.with_extension("done").exists() {
+                Some(
+                    files::read_message(&reply)
+                        .map_err(|error| control_outcome::unknown(&format!("reading Claude's receipt: {error}")))
+                        .and_then(control_outcome::reply),
+                )
+            } else if handoff && claimed.is_none() {
+                None
+            } else if directory.join("closed").join(format!("{}.json", executing.instance)).exists()
+                || !fastctx_platform::is_alive(&executing.process)
+                    .map_err(|error| control_outcome::unknown(&error.to_string()))?
+            {
+                match evidence.recovered(&directory, &key, executing) {
+                    Ok(Some(result)) => Some(Ok(result)),
+                    Err(error) => {
+                        Some(Err(control_outcome::unknown(&format!("checking Claude's control evidence: {error}"))))
+                    }
+                    Ok(None)
+                        if evidence.may_finish().map_err(|error| control_outcome::unknown(&error.to_string()))? =>
+                    {
+                        None
+                    }
+                    Ok(None) => Some(Err(control_outcome::unknown("the Claude activation ended without a receipt"))),
+                }
+            } else {
+                None
+            };
+            if result.is_some()
+                && let Err(error) = collect_invocation(&directory, &key)
+            {
+                node.log
+                    .line(format_args!("collecting Claude control {key} after its outcome was established: {error}"));
+            }
+            result
+        };
+        if let Some(result) = result {
+            return result;
+        }
+        if began.elapsed() >= within {
+            return Err(control_outcome::unknown("Claude did not confirm the control before its deadline"));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
 }
 
 async fn answer_request(
@@ -436,7 +434,7 @@ async fn answer_request(
         .get(&address.to_string())
         .filter(|request| &request.resident == resident)
         .cloned()
-        .ok_or_else(|| Failure::new("this Claude request is no longer waiting, or belongs to another resident"))?;
+        .ok_or_else(|| Failure::not_run("this Claude request is no longer waiting, or belongs to another resident"))?;
     let mut completed = request.completed.subscribe();
     let question = &request.waiting.question;
     let directory = files::directory(node.world.path(), &question.host.session);
@@ -445,9 +443,9 @@ async fn answer_request(
         || request.directory.join("resolved.json").exists()
         || request.directory.join("cancel.json").exists()
     {
-        return Err(Failure::new("Claude already finished or cancelled this request"));
+        return Err(Failure::not_run("Claude already finished or cancelled this request"));
     }
-    files::validate_answer(question, &answer).map_err(Failure::new)?;
+    files::validate_answer(question, &answer).map_err(Failure::not_run)?;
     files::answer(&request.directory, &Answer::Answer { answer: answer.clone() }).map_err(|error| {
         if error.kind() == std::io::ErrorKind::AlreadyExists {
             Failure::new("this Claude request already has an answer")
@@ -457,7 +455,7 @@ async fn answer_request(
     })?;
     loop {
         if let Some(resolution) = completed.borrow_and_update().clone() {
-            return match resolution {
+            return match resolution? {
                 Answer::Answer { answer: received } if received == answer => Ok(Controlled::Done { said: None }),
                 Answer::Pass { reason } => {
                     Err(Failure::new(format!("Claude stopped waiting before taking this answer: {reason}")))
@@ -465,7 +463,10 @@ async fn answer_request(
                 _ => Err(Failure::new("Claude took a different answer")),
             };
         }
-        completed.changed().await.map_err(|_| Failure::new("the Claude request bridge stopped"))?;
+        completed
+            .changed()
+            .await
+            .map_err(|_| control_outcome::unknown("the Claude request bridge stopped before confirming this answer"))?;
     }
 }
 
@@ -479,34 +480,11 @@ pub async fn look(node: &Arc<Node>, resident: &ResidentId, session_directory: &P
         return Ok(());
     }
     observe_activation(node, &host, session_directory);
-    {
-        let mut calls = node.claude.bridge.calls.lock().expect("never poisoned");
-        let keys: Vec<_> =
-            calls.iter().filter(|(_, call)| call.host.session == host.session).map(|(key, _)| key.clone()).collect();
-        for key in keys {
-            let path = directory.join("replies").join(format!("{key}.json"));
-            let result = if path.with_extension("done").exists() {
-                let reply = files::read_message(&path)?;
-                Some(if let Some(error) = reply.get("error").and_then(Value::as_str) {
-                    Err(error.to_string())
-                } else {
-                    reply.get("ok").cloned().ok_or_else(|| "Claude control reply has neither ok nor error".to_string())
-                })
-            } else if calls[&key].host != host || !files::active(&directory, &host)? {
-                Some(Err("the Claude activation ended before confirming the control; it will not be repeated".into()))
-            } else {
-                None
-            };
-            if let Some(result) = result {
-                let call = calls.remove(&key).expect("held invocation");
-                let _ = call.sender.send(result);
-            }
-        }
-    }
+
     for path in crate::retention::entries(&directory.join("replies"))? {
         if path.extension().is_some_and(|extension| extension == "done")
             && let Some(key) = path.file_stem().and_then(|key| key.to_str())
-            && !node.claude.bridge.calls.lock().expect("never poisoned").contains_key(key)
+            && !node.claude.bridge.calls.lock().expect("never poisoned").contains(key)
         {
             super::goal_compaction::capture(node, resident, &directory, key)?;
             collect_invocation(&directory, key)?;
@@ -538,7 +516,7 @@ pub async fn look(node: &Arc<Node>, resident: &ResidentId, session_directory: &P
             || !files::active(&directory, &host)?
             || !fastctx_platform::is_alive(&waiting.process)?
         {
-            resolved(node, &key, Answer::Pass { reason: "the Claude request's process or activation ended".into() })?;
+            unconfirmed(node, &key, &path, "the Claude request's process or activation ended")?;
             continue;
         }
         let (completed, _) = tokio::sync::watch::channel(None);
@@ -570,7 +548,7 @@ pub async fn look(node: &Arc<Node>, resident: &ResidentId, session_directory: &P
 }
 
 pub(super) fn collect_invocation(directory: &Path, key: &str) -> std::io::Result<()> {
-    for side in ["inbox", "replies", "retained"] {
+    for side in ["inbox", "replies", "retained", "started"] {
         for extension in ["json", "done", "parts"] {
             match fastctx_platform::owned_directory::delete(&directory.join(side).join(format!("{key}.{extension}"))) {
                 Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
@@ -661,16 +639,29 @@ fn supervise(node: &Arc<Node>, key: String, request: Request) {
                 }
             }
         }
-        let result = files::read::<Answer>(&request.directory.join("resolved.json"))
-            .map(|answer| answer.unwrap_or(Answer::Pass { reason: "Claude stopped waiting for this request".into() }))
-            .and_then(|answer| resolved(&node, &key, answer));
+        let result = unconfirmed(&node, &key, &request.directory, "Claude stopped waiting for this request");
         if let Err(error) = result {
             node.log.line(format_args!("settling Claude's request: {error}"));
         }
     });
 }
 
+fn unconfirmed(node: &Node, key: &str, directory: &Path, reason: &str) -> std::io::Result<()> {
+    let answer = match files::read::<Answer>(&directory.join("resolved.json"))? {
+        Some(answer) => Ok(answer),
+        None if matches!(files::read::<Answer>(&directory.join("answer.json"))?, Some(Answer::Answer { .. })) => {
+            Err(control_outcome::unknown(reason))
+        }
+        None => Ok(Answer::Pass { reason: reason.into() }),
+    };
+    settled(node, key, answer)
+}
+
 fn resolved(node: &Node, key: &str, answer: Answer) -> std::io::Result<()> {
+    settled(node, key, Ok(answer))
+}
+
+fn settled(node: &Node, key: &str, answer: Result<Answer, Failure>) -> std::io::Result<()> {
     let request = {
         let mut requests = node.claude.bridge.requests.lock().expect("never poisoned");
         let request = requests.remove(key);
@@ -686,7 +677,10 @@ fn resolved(node: &Node, key: &str, answer: Answer) -> std::io::Result<()> {
             &request,
             SessionChange::Resolved {
                 id: request.waiting.question.address(),
-                resolution: serde_json::to_value(answer).expect("answer serializes"),
+                resolution: match answer {
+                    Ok(answer) => serde_json::to_value(answer).expect("answer serializes"),
+                    Err(error) => json!({"kind":"unknown", "reason":error.message}),
+                },
             },
         );
         waiting_state(node, &request.resident)?;
@@ -732,16 +726,7 @@ fn changed(node: &Node, request: &Request, change: SessionChange) {
 
 pub fn ended(node: &Node, session: &str) {
     node.claude.changed.notify_waiters();
-    let mut calls = node.claude.bridge.calls.lock().expect("never poisoned");
-    let keys: Vec<_> =
-        calls.iter().filter(|(_, call)| call.host.session == session).map(|(key, _)| key.clone()).collect();
-    for key in keys {
-        let call = calls.remove(&key).expect("held invocation");
-        let _ = call
-            .sender
-            .send(Err("the Claude session ended before confirming the control; it will not be repeated".into()));
-    }
-    drop(calls);
+
     let requests: Vec<_> = node
         .claude
         .bridge
@@ -759,7 +744,7 @@ pub fn ended(node: &Node, session: &str) {
         {
             node.log.line(format_args!("releasing Claude's answer helper: {error}"));
         }
-        if let Err(error) = resolved(node, &key, answer) {
+        if let Err(error) = unconfirmed(node, &key, &request.directory, "the Claude conversation ended") {
             node.log.line(format_args!("settling Claude's interrupted request: {error}"));
         }
     }

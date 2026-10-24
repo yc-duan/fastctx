@@ -33,6 +33,7 @@ pub fn fixtures() -> Fixtures {
         ],
         controlled: vec![
             Controlled::Done { said: None },
+            Controlled::SideAnswer { reply: json!({"isAnswered":true,"text":"Side answer"}) },
             Controlled::Done { said: Some("Conversation rewound. Files have not been restored.".into()) },
             Controlled::Forked { resident: "codex-ab12@desktop".parse().unwrap() },
             Controlled::Reported { said: Some("Host output without a success flag".into()), queued: None },
@@ -56,6 +57,7 @@ pub fn fixtures() -> Fixtures {
                 }],
                 control_queue: true,
                 controls_told: true,
+                control_reply_envelope: false,
                 checkpoints: None,
                 history_limits: None,
                 automatic_model: None,

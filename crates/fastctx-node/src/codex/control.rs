@@ -167,7 +167,7 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
         node.handoff.start_turn().ok_or_else(|| Failure::new(crate::handoff::Handoff::waiting_why(node)))?;
     match control {
         Control::Compact => {
-            codex.compact(&thread).await.map_err(Failure::new)?;
+            codex.compact(&thread).await.map_err(|error| error.failure())?;
             done("Compaction started; its completion appears in the conversation.")
         }
         Control::Model { model, effort } => {
@@ -178,7 +178,7 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
             if name.trim().is_empty() {
                 return Err(Failure::new("a conversation name cannot be empty"));
             }
-            codex.rename(&thread, &name).await.map_err(Failure::new)?;
+            codex.rename(&thread, &name).await.map_err(|error| error.failure())?;
             Ok(Controlled::Done { said: None })
         }
         Control::Fork { through } => {
@@ -186,13 +186,13 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
             fork(node, resident, &codex, &thread, through).await
         }
         Control::Rewind { from } => {
-            codex.rewind(&thread, &from).await.map_err(Failure::new)?;
+            codex.rewind(&thread, &from).await.map_err(|error| error.failure())?;
             drop(speaking);
             codex.flush_events(&thread).await.map_err(Failure::new)?;
             done("Conversation rewound. Files changed by discarded turns have not been restored.")
         }
         Control::Command { name, args, path: None } if name == "review" => {
-            let answer = codex.review(&thread, &args).await.map_err(Failure::new)?;
+            let answer = codex.review(&thread, &args).await.map_err(|error| error.failure())?;
             done(&format!(
                 "Review started using Codex's current review/default settings. Pending model choices apply to the next ordinary turn. {answer}"
             ))
@@ -274,7 +274,7 @@ async fn fork(
             .await?;
     // Until it is claimed below, reports of threads nobody claims are kept.
     let _starting = crate::codex::starting(node);
-    let (fork, model) = codex.fork(thread, through.as_deref(), spec).await.map_err(Failure::new)?;
+    let (fork, model) = codex.fork(thread, through.as_deref(), spec).await.map_err(|error| error.failure())?;
     let at = Timestamp::now();
     let about = About {
         forked_from: Some(Address { machine: node.machine(), resident: parent.clone() }),

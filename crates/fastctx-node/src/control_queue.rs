@@ -105,7 +105,7 @@ fn settle(node: &Arc<Node>, id: &ResidentId, mut row: PendingControl, result: &R
             row.result = Some(Box::new(done.clone()));
         }
         Err(error) => {
-            row.state = ControlState::Failed;
+            row.state = if error.is_control_uncertain() { ControlState::Uncertain } else { ControlState::Failed };
             row.error = Some(error.message.clone());
         }
     }
@@ -138,11 +138,14 @@ fn after_compaction(node: Arc<Node>, id: ResidentId, mut row: PendingControl) {
                     row.state = ControlState::Completed;
                     row.result = Some(Box::new(Controlled::Done { said: None }));
                 } else {
-                    row.state = ControlState::Failed;
-                    row.error =
-                        Some(now.trouble.map(|trouble| trouble.text).unwrap_or_else(|| {
-                            "the compaction's turn ended without compacting the conversation".into()
-                        }));
+                    // A process exit can synthesize the turn's end before its
+                    // compaction receipt arrives. No boundary is no proof of failure.
+                    row.state = ControlState::Uncertain;
+                    row.error = Some(
+                        now.trouble
+                            .map(|trouble| trouble.text)
+                            .unwrap_or_else(|| "the compaction's turn ended without confirming its outcome".into()),
+                    );
                 }
                 break;
             }

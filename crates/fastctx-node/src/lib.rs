@@ -28,6 +28,8 @@ mod attachments;
 mod authorization;
 mod books;
 mod claude;
+pub mod claude_control_claim;
+pub mod claude_native_goal;
 pub mod claude_request;
 mod codex;
 mod codex_title;

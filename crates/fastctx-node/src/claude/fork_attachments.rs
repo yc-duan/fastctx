@@ -46,9 +46,17 @@ pub(super) async fn inherit(
             let copied = read(path).await?;
             // 2026-10-20: creating the transcript precedes asynchronously saving
             // the copied rows. Grant only the attachments in the confirmed context.
+            let inherited = if copied.synthetic_tail && copied.context_messages.len() == expected.len() + 1 {
+                &copied.context_messages[..expected.len()]
+            } else {
+                copied.context_messages.as_slice()
+            };
             if copied.problems.is_empty()
-                && copied.context_messages.len() == expected.len()
-                && copied.message_tail_matches(expected)
+                && inherited.len() == expected.len()
+                && inherited
+                    .iter()
+                    .zip(expected)
+                    .all(|(actual, expected)| fastctx_hosts::claude::transcript::same_projection(actual, expected))
             {
                 return crate::attachments::inherit_texts(node, parent, child, &copied.context_messages);
             }

@@ -21314,6 +21314,13 @@
         "said": null
       },
       {
+        "kind": "side_answer",
+        "reply": {
+          "isAnswered": true,
+          "text": "Side answer"
+        }
+      },
+      {
         "kind": "done",
         "said": "Conversation rewound. Files have not been restored."
       },

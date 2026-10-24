@@ -28,6 +28,8 @@ pub struct Transcript {
     pub context_tail: Option<String>,
     pub context_times: Vec<Timestamp>,
     pub context_messages: Vec<Value>,
+    /// An idle native fork may close a trailing user summary without a model request.
+    pub synthetic_tail: bool,
     pub events: Vec<SessionEvent>,
     pub problems: Vec<String>,
     /// Every record's UUID the file holds, shown or not: whether a record
@@ -38,6 +40,10 @@ pub struct Transcript {
     beside: subagents::Beside,
     /// The agents its Agent calls started, by their ids.
     agents: HashMap<String, HostAgentStart>,
+}
+
+pub fn same_projection(left: &Value, right: &Value) -> bool {
+    super::context::same(left, right)
 }
 
 impl Transcript {
@@ -149,6 +155,7 @@ fn read_rows(path: &Path, cuts: &[HistoryCut], agent: Option<&str>) -> io::Resul
         context_tail: None,
         context_times: Vec::new(),
         context_messages: Vec::new(),
+        synthetic_tail: false,
         events: Vec::new(),
         problems: Vec::new(),
         uuids: HashSet::new(),
@@ -258,6 +265,18 @@ fn read_rows(path: &Path, cuts: &[HistoryCut], agent: Option<&str>) -> io::Resul
         .map(|&index| &rows[index])
         .find_map(|row| row.value["uuid"].as_str())
         .map(str::to_owned);
+
+    transcript.synthetic_tail = context_order
+        .iter()
+        .rev()
+        .map(|&index| &rows[index])
+        .find(|row| matches!(row.kind(), Some("user" | "assistant")))
+        .is_some_and(|row| {
+            row.kind() == Some("assistant")
+                && row.value.pointer("/message/model").and_then(Value::as_str) == Some("<synthetic>")
+                && row.value.pointer("/message/content")
+                    == Some(&json!([{"type":"text","text":"No response requested."}]))
+        });
 
     let mut cut_rows = HashSet::new();
     for cut in cuts {

@@ -8,6 +8,7 @@ use fastctx_platform::{Permissions, ensure_private_dir, publish};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use super::control_error::ControlError;
 use super::{CodexHost, ThreadSpec};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -98,15 +99,15 @@ impl CodexHost {
         Ok(())
     }
 
-    pub async fn rename(self: &Arc<Self>, thread: &str, name: &str) -> Result<(), String> {
+    pub async fn rename(self: &Arc<Self>, thread: &str, name: &str) -> Result<(), ControlError> {
         let server = self.server().await?;
         self.ensure_loaded(&server, thread).await?;
-        server.request("thread/name/set", json!({"threadId":thread,"name":name})).await?;
+        server.ask("thread/name/set", json!({"threadId":thread,"name":name})).await?;
         Ok(())
     }
 
     /// Starts compaction. Completion remains a normal turn/item event.
-    pub async fn compact(self: &Arc<Self>, thread: &str) -> Result<(), String> {
+    pub async fn compact(self: &Arc<Self>, thread: &str) -> Result<(), ControlError> {
         self.prepare(thread).await?;
         if self.running_turn(thread).is_some() {
             return Err("Codex can be compacted only between turns".into());
@@ -121,7 +122,7 @@ impl CodexHost {
         source: &str,
         through: Option<&str>,
         spec: ThreadSpec,
-    ) -> Result<(String, Option<String>), String> {
+    ) -> Result<(String, Option<String>), ControlError> {
         let server = self.server().await?;
         self.ensure_loaded(&server, source).await?;
         let selection = {
@@ -139,7 +140,7 @@ impl CodexHost {
             config["model_reasoning_effort"] = json!(effort);
         }
         let answer = server
-            .request(
+            .ask(
                 "thread/fork",
                 json!({
                     "threadId": source, "lastTurnId": through, "cwd": spec.cwd,
@@ -175,7 +176,7 @@ impl CodexHost {
         Ok((thread, model))
     }
 
-    pub async fn rewind(self: &Arc<Self>, thread: &str, from: &str) -> Result<(), String> {
+    pub async fn rewind(self: &Arc<Self>, thread: &str, from: &str) -> Result<(), ControlError> {
         let server = self.server().await?;
         self.ensure_loaded(&server, thread).await?;
         let previous = {
@@ -187,7 +188,7 @@ impl CodexHost {
             entry.tools_settled = false;
             previous
         };
-        let answer = match server.request("thread/revert", json!({"threadId":thread,"beforeTurnId":from})).await {
+        let answer = match server.ask("thread/revert", json!({"threadId":thread,"beforeTurnId":from})).await {
             Ok(answer) => answer,
             Err(error) => {
                 let mut state = self.lock();
@@ -199,7 +200,7 @@ impl CodexHost {
                         entry.usage = previous.3;
                     }
                 }
-                return Err(error);
+                return Err(error.into());
             }
         };
         let mut state = self.lock();
