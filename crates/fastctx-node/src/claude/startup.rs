@@ -372,24 +372,38 @@ pub(super) fn retry_untaken(
 }
 
 /// Whether the transcript at `path` holds, at or after `since`, words
-/// submitted to the session: a prompt, or one queued for it.
+/// submitted to the session: a prompt, or one queued for it. Its lines are in
+/// the order they were written. One that cannot be read, as a row cut short
+/// when the host was killed, may hold an accepted prompt: it counts as
+/// submitted, which makes the delivery uncertain rather than repeated, unless
+/// a later line was written before `since`. A row damaged long ago therefore
+/// does not make every later wake of the session uncertain.
 fn submitted_since(path: &std::path::Path, since: jiff::Timestamp) -> std::io::Result<bool> {
     use std::io::BufRead as _;
-    let file = std::fs::File::open(path)?;
-    for line in std::io::BufReader::new(file).lines() {
-        // A partial row can contain an accepted prompt. It makes delivery
-        // uncertain, but must not prevent the dead activation from ending.
-        let Ok(entry) = serde_json::from_str::<serde_json::Value>(&line?) else { return Ok(true) };
+    let since = since.as_millisecond();
+    let mut unreadable = false;
+    for line in std::io::BufReader::new(std::fs::File::open(path)?).split(b'\n') {
+        let line = line?;
+        if line.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        let Ok(entry) = serde_json::from_slice::<serde_json::Value>(&line) else {
+            unreadable = true;
+            continue;
+        };
+        let at = entry["timestamp"].as_str().and_then(|at| at.parse::<jiff::Timestamp>().ok());
+        if at.is_some_and(|at| at.as_millisecond() < since) {
+            unreadable = false;
+        }
         if matches!(entry["type"].as_str(), Some("user" | "queue-operation")) {
-            let Some(at) = entry["timestamp"].as_str().and_then(|at| at.parse::<jiff::Timestamp>().ok()) else {
-                return Ok(true);
-            };
-            if at.as_millisecond() >= since.as_millisecond() {
-                return Ok(true);
+            match at {
+                Some(at) if at.as_millisecond() >= since => return Ok(true),
+                Some(_) => {}
+                None => unreadable = true,
             }
         }
     }
-    Ok(false)
+    Ok(unreadable)
 }
 
 async fn failed(
