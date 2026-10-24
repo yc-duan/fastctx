@@ -101,7 +101,7 @@ async function controlOpen($, sessions, sessionId) {
       routing: files.includes('routing.json') ? JSON.parse(await $.fs.read(directory + '/routing.json')) : null,
       checkpoints: files.includes('checkpoints.json') ? await readReport($, directory + '/checkpoints') : { messages: [], turns: {}, full: false, uuids: [] },
       rewind: null, compacting: false, automaticModel: false,
-      sequence: 0, calls: new Map(), replies: new Map(), handled: new Set(), pending: new Map(), timer: null, guard,
+      sequence: 0, calls: new Map(), replies: new Map(), handled: new Set(), pending: new Map(), starting: new Set(), timer: null, guard,
       heard: header.slice(header.indexOf('\n') + 1), again: false }
     const closed = await controlNames($, directory + '/closed')
     state.lastUuid = state.checkpoints.last_uuid ?? undefined
@@ -232,9 +232,28 @@ async function controlPoll($, state) {
   }
 }
 
+async function controlRelease($, state, file, request) {
+  const releasing = $.process.spawn({ argv: [FASTCTX, 'claude-control-claim', WORLD],
+    input: JSON.stringify({ key: file.slice(0, -5), host: state.host, controller: request.controller, release: true }) })
+  let stdout = '', stderr = ''
+  for await (const piece of releasing) {
+    if (piece.stream === 'stdout') stdout += piece.text
+    else stderr += piece.text
+  }
+  if ((await releasing.result).code !== 0 || !JSON.parse(stdout).claimed) {
+    const error = new Error('The unstarted control claim could not be released: ' + stderr)
+    error.uncertain = true
+    throw error
+  }
+}
+
 async function controlReply($, state, file, request) {
   let reply = state.replies.get(file)
   if (reply === undefined) {
+    if (state.closed) return
+    let finishStarting, entered = false, claimed = false
+    const starting = new Promise(resolve => { finishStarting = resolve })
+    state.starting.add(starting)
     try {
       const nativeContext = nativeGoalContexts.get(state.host.session)
       if (nativeContext && !nativeContext.busy) {
@@ -246,6 +265,7 @@ async function controlReply($, state, file, request) {
       if (owner.exitCode !== 0) throw new Error('checking the World node: ' + owner.stderr)
       if (!controlSame(JSON.parse(owner.stdout), request.controller)) throw new Error('the World node that requested this control exited')
       if (request.handoff_contract === 1) {
+        if (state.closed) return
         const claiming = $.process.spawn({ argv: [FASTCTX, 'claude-control-claim', WORLD],
           input: JSON.stringify({ key: file.slice(0, -5), host: state.host, controller: request.controller }) })
         let stdout = '', stderr = ''
@@ -259,13 +279,29 @@ async function controlReply($, state, file, request) {
           $.ui.log('claiming the Claude control: ' + stderr, { to: 'debug' })
           return
         }
-        if (!JSON.parse(stdout).claimed) return
+        if (!JSON.parse(stdout).claimed) { state.handled.delete(file); return }
+        claimed = true
+        if (state.closed) { await controlRelease($, state, file, request); return }
       }
-      reply = { ok: await controlExecute($, state, { ...request.control, controller: request.controller, receipt: request.handoff_contract === 1 ? file.slice(0, -5) : undefined }, request.handoff_contract === 1) }
+      if (state.closed) return
+      entered = true
+      const executing = controlExecute($, state, { ...request.control, controller: request.controller, receipt: request.handoff_contract === 1 ? file.slice(0, -5) : undefined }, request.handoff_contract === 1)
+      // These commands can enter session.end while their own call is pending.
+      if (request.control.do === 'command' && ['exit', 'quit', 'reload-plugins'].includes(request.control.name)) finishStarting()
+      reply = { ok: await executing }
     } catch (error) {
+      // qp() rejects these native entry points before invoking the operation.
+      // A session can unbind just before its session.end hook reaches us.
+      const unbound = String(error).includes('is not available in this mode: no session is bound in this process')
+        && /\$\.(config\.(list|set)|command\.(list|run)|session\.(model|usage|messages|compact|append)|model\.(fork|complete)|agent\.list) is not available/.test(String(error))
+      if (claimed && unbound) { await controlRelease($, state, file, request); return }
+      if (state.closed && !entered && error.uncertain !== true) return
       reply = { error: String(error) }
       if (request.handoff_contract === 1 && error.notRun === true) reply.not_run = true
       if (request.handoff_contract === 1 && error.uncertain === true) reply.uncertain = true
+    } finally {
+      finishStarting()
+      state.starting.delete(starting)
     }
   }
   // A failed publication retries only publication, never the host operation.
@@ -520,6 +556,9 @@ async function endControls($, e) {
     if (state) {
       state.closed = true
       state.timer?.cancel()
+      // Native precondition refusals release their claim before its witness
+      // ends. Self-ending commands remove themselves before invoking the end.
+      await Promise.all([...state.starting])
       try {
         await controlWrite($, state.directory + '/closed/' + state.host.instance + '.json', { reason: e.reason })
       } finally {

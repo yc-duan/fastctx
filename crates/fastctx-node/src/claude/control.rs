@@ -353,6 +353,7 @@ pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Val
         if handoff
             && files::read::<files::Claim>(&directory.join("claims").join(format!("{key}.json")))
                 .map_err(|error| control_outcome::unknown(&format!("reading Claude's control claim: {error}")))?
+                .filter(|claim| !claim.released)
                 .is_none()
             && !running(node, resident).map_err(|error| control_outcome::unknown(&error.message))?
         {
@@ -365,7 +366,8 @@ pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Val
             let _reading = gate.lock().await;
             let reply = directory.join("replies").join(format!("{key}.json"));
             let claimed = files::read::<files::Claim>(&directory.join("claims").join(format!("{key}.json")))
-                .map_err(|error| control_outcome::unknown(&format!("reading Claude's control claim: {error}")))?;
+                .map_err(|error| control_outcome::unknown(&format!("reading Claude's control claim: {error}")))?
+                .filter(|claim| !claim.released);
             if let Some(claim) = &claimed {
                 evidence.executing(claim).map_err(|error| {
                     control_outcome::unknown(&format!("reading Claude's claimed evidence: {error}"))

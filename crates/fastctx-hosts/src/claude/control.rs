@@ -34,6 +34,9 @@ pub struct Host {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Claim {
     pub host: Host,
+    /// The activation closed before entering the control's implementation.
+    #[serde(default)]
+    pub released: bool,
     pub process: Option<ProcessIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence: Option<Value>,

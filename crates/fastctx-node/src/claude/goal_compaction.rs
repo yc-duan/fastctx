@@ -122,6 +122,7 @@ pub(crate) async fn run(
         if handoff
             && files::read::<files::Claim>(&directory.join("claims").join(format!("{key}.json")))
                 .map_err(uncertain)?
+                .filter(|claim| !claim.released)
                 .is_none()
             && crate::goals::engine::requests(node, resident, key)
             && !super::control::running(node, resident).map_err(uncertain)?
@@ -146,7 +147,8 @@ pub(crate) async fn run(
                 return result(&ticket, receipt);
             }
             let claimed = files::read::<files::Claim>(&directory.join("claims").join(format!("{key}.json")))
-                .map_err(uncertain)?;
+                .map_err(uncertain)?
+                .filter(|claim| !claim.released);
             if let Some(claim) = &claimed {
                 evidence.executing(claim).map_err(|error| {
                     super::control_outcome::unknown(&format!("reading goal compaction claim: {error}"))
