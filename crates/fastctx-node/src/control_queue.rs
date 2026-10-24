@@ -79,17 +79,111 @@ pub(crate) fn begin(node: &Node, id: &ResidentId, control: &Control) -> Result<P
 
 /// Tells how a control told as begun ended, and gives its result back, a
 /// failure marked as told there.
-pub(crate) fn end(
+pub(crate) async fn end(
     node: &Arc<Node>,
     id: &ResidentId,
     row: PendingControl,
     result: Result<Controlled, Failure>,
 ) -> Result<Controlled, Failure> {
+    if let Err(error) = &result
+        && error.code == Some(FailureCode::HostUnavailable)
+    {
+        defer_host(node, id, &row, &error.message).await?;
+        return Ok(Controlled::Reported { said: None, queued: Some(row.id) });
+    }
+    {
+        let _transaction = crate::resident_storage::lock();
+        let mut rows = read(node, id)?;
+        rows.retain(|saved| saved.id != row.id);
+        save(node, id, &rows)?;
+    }
+    crate::composer::forget_command(node, id, &row.id).await?;
+    crate::lifecycle::retry::clear(node, id, &control_key(&row)?).map_err(failure)?;
     settle(node, id, row, &result);
+    node.watchers.changed.notify_one();
     result.map_err(|mut failure| {
         failure.code.get_or_insert(FailureCode::Told);
         failure
     })
+}
+
+fn control_key(row: &PendingControl) -> Result<fastctx_types::NoticeId, Failure> {
+    row.id.parse().map_err(|error| Failure::new(format!("invalid control identity: {error}")))
+}
+
+/// The durable row stays Waiting while its host is being prepared. A restart
+/// must not confuse that phase with a control that might have executed.
+pub(crate) async fn prepare(node: &Arc<Node>, id: &ResidentId, row: &PendingControl) -> Result<(), Failure> {
+    let mut waiting = row.clone();
+    waiting.state = ControlState::Waiting;
+    {
+        let _transaction = crate::resident_storage::lock();
+        let mut rows = read(node, id)?;
+        if !rows.iter().any(|saved| saved.id == row.id) {
+            rows.push(waiting);
+        }
+        save(node, id, &rows)?;
+    }
+    crate::composer::place_command(node, id, &control_key(row)?).await?;
+    ready(node, id, row).await
+}
+
+async fn ready(node: &Arc<Node>, id: &ResidentId, row: &PendingControl) -> Result<(), Failure> {
+    let key = control_key(row)?;
+    if crate::lifecycle::retry::progress(node, id, &key)
+        .map_err(failure)?
+        .is_some_and(|progress| progress.next > jiff::Timestamp::now())
+    {
+        return Err(Failure::host_unavailable("the host retry is waiting for its next attempt"));
+    }
+    let gate = node.residents.management(id)?;
+    let _reading = crate::gate_waits::shared(node, id, &gate).await?;
+    crate::lifecycle::wake::wake(node, id, crate::lifecycle::wake::Source::Control, None)
+        .await
+        .map_err(|error| Failure::host_unavailable(error.failure.message))?;
+    let _transaction = crate::resident_storage::lock();
+    let mut rows = read(node, id)?;
+    if let Some(saved) = rows.iter_mut().find(|saved| saved.id == row.id) {
+        saved.state = ControlState::Running;
+    }
+    save(node, id, &rows)
+}
+
+async fn defer_host(node: &Arc<Node>, id: &ResidentId, row: &PendingControl, why: &str) -> Result<(), Failure> {
+    let key = control_key(row)?;
+    {
+        let _transaction = crate::resident_storage::lock();
+        let mut rows = read(node, id)?;
+        let mut waiting = row.clone();
+        waiting.state = ControlState::Waiting;
+        if let Some(saved) = rows.iter_mut().find(|saved| saved.id == row.id) {
+            *saved = waiting;
+        } else {
+            rows.push(waiting);
+        }
+        save(node, id, &rows)?;
+    }
+    crate::composer::place_command(node, id, &key).await?;
+    crate::lifecycle::retry::failed(node, id, &key, why)?;
+    crate::lifecycle::retry::kick(node, id);
+    Ok(())
+}
+
+pub(crate) fn waiting_for_host(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
+    for row in pending(node, id)? {
+        if row.state == ControlState::Waiting
+            && crate::lifecycle::retry::progress(node, id, &control_key(&row)?).map_err(failure)?.is_some()
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+pub(crate) async fn run_pending(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
+    let actions = gate(node, id);
+    let _action = actions.lock().await;
+    drain(node, id).await
 }
 
 /// Tells how a control ended: at once, or, for a Codex compaction, which
@@ -283,27 +377,29 @@ pub(crate) fn drain<'a>(
             if words_ahead(node, id, Some(first.at))? {
                 return Ok(());
             }
-            let row = {
-                let _transaction = crate::resident_storage::lock();
-                let mut rows = read(node, id)?;
-                let Some(row) = rows.iter_mut().find(|row| row.id == next && row.state == ControlState::Waiting) else {
-                    continue;
-                };
-                row.state = ControlState::Running;
-                let row = row.clone();
-                save(node, id, &rows)?;
-                row
-            };
+            let key = control_key(first)?;
+            if crate::lifecycle::retry::progress(node, id, &key)
+                .map_err(failure)?
+                .is_some_and(|progress| progress.next > jiff::Timestamp::now())
+            {
+                return Ok(());
+            }
+            if let Err(error) = ready(node, id, first).await {
+                if error.code == Some(FailureCode::HostUnavailable) {
+                    defer_host(node, id, first, &error.message).await?;
+                    return Ok(());
+                }
+                return Err(error);
+            }
+            let mut row = first.clone();
+            row.state = ControlState::Running;
             event(node, id, &row)?;
             let result = Box::pin(crate::control::execute(node, id, row.control.clone())).await;
-            {
-                let _transaction = crate::resident_storage::lock();
-                let mut rows = read(node, id)?;
-                rows.retain(|saved| saved.id != row.id);
-                save(node, id, &rows)?;
+            let deferred = result.as_ref().err().is_some_and(|error| error.code == Some(FailureCode::HostUnavailable));
+            let _ = end(node, id, row, result).await?;
+            if deferred {
+                return Ok(());
             }
-            crate::composer::forget_command(node, id, &row.id).await?;
-            settle(node, id, row, &result);
         }
     })
 }

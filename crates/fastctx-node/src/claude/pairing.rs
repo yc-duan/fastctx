@@ -304,7 +304,12 @@ pub(super) fn present(node: &Node, registration: &Registration) -> io::Result<bo
     {
         return Ok(false);
     }
-    registration.process.as_ref().map(fastctx_platform::is_alive).transpose().map(|alive| alive.unwrap_or(false))
+    registration
+        .process
+        .as_ref()
+        .map(|process| fastctx_platform::has_ended(process).map(|ended| !ended))
+        .transpose()
+        .map(|alive| alive.unwrap_or(false))
 }
 
 fn same_activation(a: &Registration, b: &Registration) -> bool {

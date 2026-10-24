@@ -52,10 +52,23 @@ pub(crate) fn held(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
 
 async fn consider(node: &Arc<Node>, id: &ResidentId, periodic: bool) -> Result<(), Failure> {
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
-    if !about.world_started || node.residents.removed(id).is_some() || held(node, id)? {
+    if !about.world_started || node.residents.removed(id).is_some() {
         return Ok(());
     }
     let Some(adapter) = Adapter::for_conversation(&about) else { return Ok(()) };
+    if node.watchers.watched(id) && adapter.needs_subscription(node, &about)? {
+        let actions = crate::control_queue::gate(node, id);
+        let _action = actions.lock().await;
+        let management = node.residents.management(id)?;
+        let _reading = management.read().await;
+        if node.watchers.watched(id) && node.residents.active(id).is_ok() {
+            super::wake::wake(node, id, super::wake::Source::View, None).await.map_err(|error| error.failure)?;
+        }
+        return Ok(());
+    }
+    if held(node, id)? {
+        return Ok(());
+    }
     if adapter.delayed() && !periodic {
         return Ok(());
     }
@@ -92,16 +105,13 @@ pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
     tokio::spawn(async move {
         let running = Arc::new(Mutex::new(HashSet::new()));
-        let mut changes = node.residents.changes();
+
         let mut timer = tokio::time::interval(SWEEP);
         loop {
             let periodic = tokio::select! {
                 _ = timer.tick() => true,
                 () = node.watchers.changed.notified() => false,
-                result = changes.changed() => {
-                    if result.is_err() { return; }
-                    false
-                }
+
             };
             // Coalesce reports before scanning. No gate or registry lock is held.
             tokio::time::sleep(Duration::from_millis(100)).await;

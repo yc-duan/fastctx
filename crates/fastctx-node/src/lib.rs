@@ -203,6 +203,7 @@ pub(crate) struct Node {
     desk: desk::Desk,
     watchers: watch::Watchers,
     attached: lifecycle::attached::Attached,
+    retrying: lifecycle::retry::Retrying,
     composers: composer::Composers,
     actions: control_queue::Actions,
     file_searches: file_search::Searches,
@@ -600,6 +601,7 @@ pub async fn run_prepared(
         desk: desk::Desk::default(),
         watchers: watch::Watchers::default(),
         attached: Default::default(),
+        retrying: Default::default(),
         composers: composer::Composers::default(),
         actions: Default::default(),
         file_searches: file_search::Searches::default(),
@@ -687,6 +689,7 @@ pub async fn run_prepared(
     control_queue::recover(&node);
     node.effects_ready.store(true, std::sync::atomic::Ordering::Release);
     node.effects_changed.notify_waiters();
+    stops::recover(&node);
     composer::resume(&node);
     lifecycle::start(&node);
     recovery::start(&node, jobs_reconciled);

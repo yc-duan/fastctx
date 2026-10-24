@@ -910,11 +910,14 @@ impl CodexHost {
             if entry.loaded && entry.subscribed {
                 return Ok(());
             }
-            // Resuming starts the thread's tool servers again; what they say
-            // from here on counts.
-            entry.tools_settled = false;
-            entry.tools_missing = None;
-            entry.accounting.reloaded();
+            // Subscribing to a still-loaded runtime does not restart its MCP
+            // servers. Their previous startup receipt remains authoritative.
+            // thread/closed is broadcast even to unsubscribed connections.
+            if !entry.loaded || entry.configuration_changed {
+                entry.tools_settled = false;
+                entry.tools_missing = None;
+                entry.accounting.reloaded();
+            }
             entry.spec.clone().ok_or_else(|| format!("how the Codex thread {thread} was started is not known"))?
         };
         let selection = controls::Selection::read(&spec.choices)?;

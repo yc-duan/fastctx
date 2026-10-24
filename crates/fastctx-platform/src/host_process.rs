@@ -98,7 +98,8 @@ fn wait_until_exit(identity: &ProcessIdentity, within: Option<Duration>) -> io::
         INFINITE, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, WaitForSingleObject,
     };
     // A bounded wait never reaches INFINITE, which would make it unbounded.
-    let wait = within.map_or(INFINITE, |within| u32::try_from(within.as_millis()).unwrap_or(INFINITE - 1).min(INFINITE - 1));
+    let wait =
+        within.map_or(INFINITE, |within| u32::try_from(within.as_millis()).unwrap_or(INFINITE - 1).min(INFINITE - 1));
     // SAFETY: the query/synchronize handle is owned here and always closed.
     unsafe {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE, 0, identity.pid);
@@ -133,12 +134,14 @@ fn wait_until_exit(identity: &ProcessIdentity, within: Option<Duration>) -> io::
             // Linux opens a process as a descriptor from 5.3 on. An older
             // kernel, or a sandbox that refuses the call, is asked again
             // and again.
-            Some(libc::ENOSYS | libc::EPERM) => poll_until_exit(identity, deadline),
+            // A PID can remain visible while pidfd_open can no longer find
+            // its task. Poll the exact identity through that exit window.
+            Some(libc::ENOSYS | libc::EPERM | libc::EINVAL) => poll_until_exit(identity, deadline),
             _ => Err(error),
         };
     }
     let result = (|| {
-        if !crate::is_alive(identity)? {
+        if crate::has_ended(identity)? {
             return Ok(true);
         }
         let mut poll = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
@@ -170,7 +173,7 @@ fn wait_until_exit(identity: &ProcessIdentity, within: Option<Duration>) -> io::
 fn poll_until_exit(identity: &ProcessIdentity, deadline: Option<std::time::Instant>) -> io::Result<bool> {
     const PAUSE: Duration = Duration::from_millis(20);
     loop {
-        if !crate::is_alive(identity)? {
+        if crate::has_ended(identity)? {
             return Ok(true);
         }
         let pause = match deadline {
@@ -190,7 +193,7 @@ fn poll_until_exit(identity: &ProcessIdentity, deadline: Option<std::time::Insta
 fn wait_until_exit(identity: &ProcessIdentity, within: Option<Duration>) -> io::Result<bool> {
     let deadline = within.map(|within| std::time::Instant::now() + within);
     let Some(queue) = exit_queue(identity.pid)? else { return Ok(true) };
-    if !crate::is_alive(identity)? {
+    if crate::has_ended(identity)? {
         return Ok(true);
     }
     use std::os::fd::AsRawFd as _;

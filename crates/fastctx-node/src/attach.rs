@@ -14,6 +14,8 @@ use crate::Node;
 
 /// The command that opens `resident` in its host's own interface.
 pub async fn command(node: &Arc<Node>, resident: &ResidentId) -> Result<HostCommand, Failure> {
+    let actions = crate::control_queue::gate(node, resident);
+    let _action = actions.lock().await;
     let gate = node.residents.management(resident)?;
     let _reading = crate::gate_waits::shared(node, resident, &gate).await?;
     node.residents.active(resident)?;
@@ -53,6 +55,9 @@ pub async fn command(node: &Arc<Node>, resident: &ResidentId) -> Result<HostComm
         // The official Codex joins the World's own app-server on its socket,
         // with the thread loaded under the World's settings first.
         "codex" => {
+            crate::lifecycle::wake::wake(node, resident, crate::lifecycle::wake::Source::HostInterface, None)
+                .await
+                .map_err(|error| error.failure)?;
             let codex = node.codex.of(node, &about)?;
             let (program, address, codex_home) = codex.attachable(&session).await.map_err(Failure::new)?;
             Ok(HostCommand {

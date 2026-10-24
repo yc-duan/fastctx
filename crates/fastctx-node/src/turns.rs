@@ -364,11 +364,13 @@ async fn finish_at(
 
     let trouble = match (&finished.end.how, &finished.end.reason) {
         (TurnHow::Completed, _) => None,
+        (TurnHow::Interrupted, _) if crate::stops::requested_turn(node, id, turn)? => None,
         (how, Some(reason)) => Some(Trouble { at: finished.at, text: format!("turn {how}: {reason}") }),
         (how, None) => Some(Trouble { at: finished.at, text: format!("turn {how}") }),
     };
     node.residents.take_owed(&node.world, id, turn, &node.machine(), trouble)?;
     crate::turn_evidence::ended(node, id, turn);
+    node.watchers.changed.notify_one();
     for handover in &accepted {
         for input in &handover.inputs {
             crate::speech::heard(node, id, &input.delivery, turn);

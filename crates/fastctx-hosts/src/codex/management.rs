@@ -18,6 +18,10 @@ impl CodexHost {
         })
     }
 
+    pub fn subscribed(&self, thread: &str) -> bool {
+        self.lock().threads.get(thread).is_some_and(|entry| entry.subscribed)
+    }
+
     pub fn loaded(&self, thread: &str) -> bool {
         self.lock().threads.get(thread).is_some_and(|entry| entry.loaded)
     }

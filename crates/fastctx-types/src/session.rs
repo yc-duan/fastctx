@@ -225,6 +225,16 @@ pub enum Watched {
 pub struct KeptWords {
     pub id: crate::NoticeId,
     pub state: WordsState,
+    /// Present only after a minute of unsuccessful host startup. The input
+    /// is still being sent; this is not a failed delivery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_retry: Option<HostRetry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostRetry {
+    pub since: Timestamp,
+    pub reason: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

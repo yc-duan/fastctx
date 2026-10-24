@@ -53,6 +53,34 @@ pub(super) fn observe(node: &Arc<Node>, resident: &ResidentId, id: NoticeId, com
     });
 }
 
+/// An unanswered launch is reconciled, never offered a second time. Reports
+/// already flushed by the host win over the CLI's missing receipt.
+pub(super) fn unknown(node: &Arc<Node>, resident: &ResidentId, id: &NoticeId, why: String) {
+    if !node.claude.state.lock().expect("never poisoned").starting.insert(resident.clone()) {
+        return;
+    }
+    let (node, resident, id) = (node.clone(), resident.clone(), id.clone());
+    tokio::spawn(async move {
+        let mut again = crate::again::Again::default();
+        tokio::time::sleep(fastctx_hosts::claude::MOD_LOOK).await;
+        loop {
+            super::replay(&node).await;
+            if node.residents.about(&resident).is_none() {
+                break;
+            }
+            let directory = node.world.conversation(&resident);
+            match super::failed_wake(&node, &resident, &directory, &id, Failure::new(why.clone())).await {
+                Ok(_) => break,
+                Err(error) => node
+                    .log
+                    .line(format_args!("lifecycle {resident}: reconciling launch; retrying observation: {error}")),
+            }
+            tokio::time::sleep(again.next()).await;
+        }
+        node.claude.state.lock().expect("never poisoned").starting.remove(&resident);
+    });
+}
+
 /// A node restart must resume observing births and wakes whose words are
 /// still crossing the host boundary. No prompt is submitted a second time.
 pub(super) fn recover(node: &Arc<Node>) {
@@ -75,6 +103,24 @@ pub(super) fn recover(node: &Arc<Node>) {
                 continue;
             }
         };
+        for input in kept.iter().filter(|input| input.state == PendingState::Handed) {
+            let (node, about, input) = (node.clone(), about.clone(), input.clone());
+            tokio::spawn(async move {
+                node.ready().await;
+                let Some(session) = about.session.as_deref() else { return };
+                let actions = crate::control_queue::gate(&node, &about.id);
+                let _action = actions.lock().await;
+                let Ok(gate) = node.residents.management(&about.id) else { return };
+                let _reading = gate.read().await;
+                if node.residents.active(&about.id).is_err() {
+                    return;
+                }
+                let directory = node.world.conversation(&about.id);
+                if let Err(error) = super::into_inbox(&node, &about.id, session, &directory, &input).await {
+                    node.log.line(format_args!("reconciling {}'s plugin handover: {error}", about.id));
+                }
+            });
+        }
         let Some(first) = kept.into_iter().find(|pending| pending.state == PendingState::Waking) else {
             // Born and stopped before its first words were kept: no session
             // was asked for, and nothing will end the work it was shown at.
@@ -94,6 +140,33 @@ pub(super) fn recover(node: &Arc<Node>) {
             }
             continue;
         };
+        match crate::lifecycle::retry::progress(node, &about.id, &first.delivery.id) {
+            Ok(Some(progress)) if !progress.attempted => {
+                if let Err(error) = crate::lifecycle::retry::defer(
+                    node,
+                    &about.id,
+                    &first.delivery.id,
+                    "the node restarted before the host launch",
+                ) {
+                    node.log.line(format_args!("recovering host preflight: {error}"));
+                }
+                continue;
+            }
+            Ok(Some(progress)) if !progress.accepted => {
+                unknown(
+                    node,
+                    &about.id,
+                    &first.delivery.id,
+                    "the node restarted before the host launch receipt; acceptance requires reconciliation".into(),
+                );
+                continue;
+            }
+            Err(error) => {
+                unknown(node, &about.id, &first.delivery.id, format!("host launch progress cannot be read: {error}"));
+                continue;
+            }
+            _ => {}
+        }
         if about.session.is_none() {
             let node = node.clone();
             tokio::spawn(async move {
@@ -207,17 +280,11 @@ fn settled(command: &super::Command, short: &str) -> bool {
 /// How much of the end of Claude Code's daemon log is read for a session.
 const DAEMON_TAIL: u64 = 256 * 1024;
 
-/// How many times words wake a session that ends before taking them, and
-/// how much longer each next time waits first, for its daemon to free what
-/// it was short of.
-const WAKES: u32 = 3;
-const WAKE_AGAIN: std::time::Duration = std::time::Duration::from_secs(3);
-
 /// Whether nothing took the words `id` that woke the session `session`:
 /// they still wait as waking, no turn is recorded for them, and the
 /// session's transcript holds nothing submitted since they were sent.
 /// Anything unread or unknown counts as taken, so words never go in twice.
-fn untaken(
+pub(super) fn untaken(
     node: &Node,
     session: &str,
     directory: &fastctx_types::layout::ConversationDir,
@@ -227,37 +294,62 @@ fn untaken(
         return Ok(false);
     }
     let Some(since) = crate::inbox::read(directory, id)?
-        .filter(|pending| pending.state == PendingState::Waking)
+        .filter(|pending| matches!(pending.state, PendingState::Waking | PendingState::Handed))
         .and_then(|pending| pending.since)
     else {
         return Ok(false);
     };
-    let Ok(Some(transcript)) = exchange::transcript(&exchange::sessions(node.world.path()).join(session)) else {
+    let host_directory = exchange::sessions(node.world.path()).join(session);
+    if host_directory.join("receipts").join(id.as_str()).try_exists()? {
+        return Ok(false);
+    }
+    let Ok(Some(transcript)) = exchange::transcript(&host_directory) else {
         return Ok(false);
     };
     Ok(matches!(submitted_since(&transcript, since), Ok(false)))
 }
 
+/// The activation ended and `untaken` proved no submission. Remove its old
+/// plugin envelope before retrying through the CLI, so the new activation
+/// cannot receive both the old envelope and the resume prompt.
+pub(super) fn retry_untaken(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    session: &str,
+    id: &NoticeId,
+) -> std::io::Result<()> {
+    let directory = exchange::sessions(node.world.path()).join(session);
+    for path in [directory.join("inbox").join(format!("{id}.json")), directory.join("attempts").join(id.as_str())] {
+        match std::fs::remove_file(path) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+    }
+    crate::lifecycle::retry::defer(node, resident, id, "the host ended before taking the input")
+        .map(|_| ())
+        .map_err(std::io::Error::other)
+}
+
 /// Whether the transcript at `path` holds, at or after `since`, words
 /// submitted to the session: a prompt, or one queued for it.
 fn submitted_since(path: &std::path::Path, since: jiff::Timestamp) -> std::io::Result<bool> {
-    use std::io::{Read as _, Seek as _};
-    let mut file = std::fs::File::open(path)?;
-    let length = file.metadata()?.len();
-    file.seek(std::io::SeekFrom::Start(length.saturating_sub(TRANSCRIPT_TAIL)))?;
-    let mut tail = Vec::new();
-    file.read_to_end(&mut tail)?;
-    Ok(String::from_utf8_lossy(&tail).lines().filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok()).any(
-        |entry| {
-            matches!(entry["type"].as_str(), Some("user" | "queue-operation"))
-                && entry["timestamp"].as_str().and_then(|at| at.parse::<jiff::Timestamp>().ok()).is_some_and(|at| at >= since)
-        },
-    ))
+    use std::io::BufRead as _;
+    let file = std::fs::File::open(path)?;
+    for line in std::io::BufReader::new(file).lines() {
+        let entry: serde_json::Value = serde_json::from_str(&line?).map_err(std::io::Error::other)?;
+        if matches!(entry["type"].as_str(), Some("user" | "queue-operation")) {
+            let at = entry["timestamp"]
+                .as_str()
+                .ok_or_else(|| std::io::Error::other("a submitted entry has no timestamp"))?
+                .parse::<jiff::Timestamp>()
+                .map_err(std::io::Error::other)?;
+            if at.as_millisecond() >= since.as_millisecond() {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
-
-/// How much of the end of a session's transcript is read for what was
-/// submitted lately.
-const TRANSCRIPT_TAIL: u64 = 256 * 1024;
 
 async fn failed(
     node: &Arc<Node>,
@@ -314,8 +406,7 @@ async fn watch(
     // A cached list from before this birth cannot establish that its job
     // is missing. Concurrent births share a list begun after their starts.
     let mut after = Some(Instant::now());
-    // How many times the words have woken the session.
-    let mut woken = 1;
+
     loop {
         let changed = node.claude.changed.notified();
         tokio::pin!(changed);
@@ -353,7 +444,7 @@ async fn watch(
                         Err(error) => node.log.line(format_args!("observing Claude startup process {pid}: {error}")),
                     }
                 }
-                if job.ended() || (job.blocked() && !blocked) {
+                if (job.ended() && (job.pid.is_none() || process_ended)) || (job.blocked() && !blocked) {
                     if job.ended()
                         && process
                             .as_ref()
@@ -400,31 +491,10 @@ async fn watch(
                         // them wake it again: Claude Code's daemon, short of
                         // memory, retires the very worker it just claimed
                         // for them as one long idle.
-                        let mut why = why;
-                        if waking && woken < WAKES && untaken(node, &session, &directory, id)? {
+                        if waking && untaken(node, &session, &directory, id)? {
                             drop(births);
-                            node.log.line(format_args!(
-                                "waking {resident} again: its session ended before taking the words that woke it ({woken} of {WAKES}): {why}"
-                            ));
-                            tokio::time::sleep(WAKE_AGAIN * woken).await;
-                            if !pending(node, resident, id, waking)? {
-                                return Ok(());
-                            }
-                            match super::wake_again(node, resident, &session, id, command).await {
-                                Ok(()) => {
-                                    woken += 1;
-                                    (process, exited, code, process_ended) = (None, None, None, false);
-                                    (reported_exit, blocked, last_problem) = (None, false, None);
-                                    after = Some(Instant::now());
-                                    continue;
-                                }
-                                Err(error) => why.push_str(&format!("; waking it again failed: {}", error.message)),
-                            }
-                            let _births = node.claude.births.write().await;
-                            if !pending(node, resident, id, waking)? {
-                                return Ok(());
-                            }
-                            return failed(node, resident, &directory, id, why).await;
+                            retry_untaken(node, resident, &session, id)?;
+                            return Ok(());
                         }
                         return failed(node, resident, &directory, id, why).await;
                     }

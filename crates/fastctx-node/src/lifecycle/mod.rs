@@ -5,6 +5,8 @@
 mod adapters;
 pub(crate) mod attached;
 mod retention;
+pub(crate) mod retry;
+pub(crate) mod wake;
 
 pub(crate) use retention::start;
 

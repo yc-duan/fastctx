@@ -8,6 +8,15 @@ use std::time::Duration;
 
 /// The caller holds the conversation action gate, also used by word delivery.
 pub(super) async fn ready(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
+    let gate = node.residents.management(id)?;
+    let _reading = crate::gate_waits::shared(node, id, &gate).await?;
+    crate::lifecycle::wake::wake(node, id, crate::lifecycle::wake::Source::Control, None)
+        .await
+        .map(|_| ())
+        .map_err(|error| Failure::host_unavailable(error.failure.message))
+}
+
+pub(crate) async fn connect(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     if ready_activation(node, id)? {
         return isolated(node, id, false);
     }
@@ -26,8 +35,6 @@ pub(super) async fn ready(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failu
         tokio::time::sleep(Duration::from_millis(100)).await;
     };
     crate::homes::available(node, &about)?;
-    let gate = node.residents.management(id)?;
-    let _reading = crate::gate_waits::shared(node, id, &gate).await?;
     let session =
         about.session.as_deref().ok_or_else(|| Failure::new("Claude has not identified this conversation yet"))?;
 

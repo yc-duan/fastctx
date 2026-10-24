@@ -64,7 +64,11 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
     if matches!(action, Management::Archive) && node.residents.removed(id).is_none() {
         crate::talk::stop_and_wait(node, id).await?;
     }
-    let _exclusive = crate::gate_waits::alone(node, id, &gate).await?;
+    let (_shared, _exclusive) = if matches!(action, Management::Wake) {
+        (Some(crate::gate_waits::shared(node, id, &gate).await?), None)
+    } else {
+        (None, Some(crate::gate_waits::alone(node, id, &gate).await?))
+    };
     if !matches!(action, Management::Archive | Management::Restore) {
         node.residents.active(id)?;
     }
@@ -227,7 +231,7 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                     "The World cannot unload or restart this user-opened session; use the host where it is open."
                         .into(),
                 );
-            } else if let Some(session) = &about.session {
+            } else if about.session.is_some() {
                 let effect: Result<bool, Failure> = match (about.host.agent.as_str(), sleeping) {
                     ("codex", true) => match node.codex.of(node, &about) {
                         Ok(_) => {
@@ -236,21 +240,28 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                         }
                         Err(failure) => Err(failure),
                     },
-                    ("codex", false) => match node.codex.of(node, &about)?.prepare(session).await {
-                        Ok(missing) => {
-                            if let Some(why) = missing {
-                                step(&mut result, "tools", Outcome::Failed, why);
+                    ("codex", false) => {
+                        match crate::lifecycle::wake::wake(node, id, crate::lifecycle::wake::Source::Management, None)
+                            .await
+                        {
+                            Ok(missing) => {
+                                if let Some(why) = missing {
+                                    step(&mut result, "tools", Outcome::Failed, why);
+                                }
+                                Ok(true)
                             }
-                            Ok(true)
+                            Err(error) => Err(error.failure),
                         }
-                        Err(error) => Err(Failure::new(error)),
-                    },
+                    }
                     ("claude", true) => {
                         crate::lifecycle::release_locked(node, &about, crate::lifecycle::ReleaseReason::Sleep, None)
                             .await
                     }
                     ("claude", false) => {
-                        crate::claude::management::wake(node, about.home.as_deref(), session).await.map(|()| true)
+                        crate::lifecycle::wake::wake(node, id, crate::lifecycle::wake::Source::Management, None)
+                            .await
+                            .map(|_| true)
+                            .map_err(|error| error.failure)
                     }
                     _ => {
                         step(

@@ -474,6 +474,15 @@ async fn drain(node: &Arc<Node>, thread: &str) {
             }
         }
         node.codex.acknowledge(&applied);
+        if matches!(
+            &applied,
+            HostEvent::Happened {
+                event: SessionEvent { happened: fastctx_types::session::Happened::TurnEnded { .. }, .. },
+                ..
+            } | HostEvent::Gone { .. }
+        ) {
+            node.watchers.changed.notify_one();
+        }
         node.handoff.changed();
     }
 }
