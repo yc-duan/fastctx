@@ -439,6 +439,9 @@ pub enum RemoteCall {
     Control {
         resident: ResidentId,
         control: Control,
+        /// Reads a nested control result, whose fields cannot collide with the reply tag.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        reply_envelope: bool,
     },
     /// Manage this resident as the user, on its own machine.
     Manage {
@@ -717,6 +720,9 @@ pub enum RemoteReply {
     },
     Managed(Managed),
     Controlled(Controlled),
+    ControlResult {
+        controlled: Controlled,
+    },
     Offers(Box<Offers>),
     ItemDetail {
         detail: Option<serde_json::Value>,

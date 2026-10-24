@@ -168,6 +168,10 @@ pub struct Offers {
     /// it ends, there for every device (`fastctx_control` metadata).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub controls_told: bool,
+    /// Remote controls can return a nested result without colliding with the
+    /// transport's reply tag (notably a side answer's own `reply` field).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub control_reply_envelope: bool,
     /// Controls accepted for later execution, including one currently executing.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_controls: Vec<PendingControl>,

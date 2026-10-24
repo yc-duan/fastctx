@@ -978,8 +978,22 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::Manage { resident, action } => {
                     crate::management::here(&node, &resident, action).await.map(RemoteReply::Managed)
                 }
-                RemoteCall::Control { resident, control } => {
-                    crate::control::control_here(&node, &resident, control).await.map(RemoteReply::Controlled)
+                RemoteCall::Control { resident, control, reply_envelope } => {
+                    if !reply_envelope
+                        && matches!(&control, fastctx_types::session::control::Control::Command { name, .. } if name == "btw")
+                    {
+                        Err(Failure::not_run(
+                            "This client's control reply format is too old for /btw; update the requesting Fastctx before running it.",
+                        ))
+                    } else {
+                        crate::control::control_here(&node, &resident, control).await.map(|controlled| {
+                            if reply_envelope {
+                                RemoteReply::ControlResult { controlled }
+                            } else {
+                                RemoteReply::Controlled(controlled)
+                            }
+                        })
+                    }
                 }
                 RemoteCall::Composer { resident, request } => crate::composer::here(&node, &from, &resident, request)
                     .await

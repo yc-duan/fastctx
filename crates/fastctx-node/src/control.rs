@@ -27,13 +27,23 @@ pub async fn control(
         let controlled = control_here(node, &resident, control).await?;
         return Ok((Address { machine: machine.name, resident }, controlled));
     }
-    let call = RemoteCall::Control { resident: resident.clone(), control };
+    if matches!(&control, Control::Command { name, .. } if name == "btw") {
+        let (_, offered) = offers(node, resident.clone(), Some(machine.clone())).await?;
+        if !offered.control_reply_envelope {
+            return Err(Failure::not_run(
+                "The conversation's Fastctx is too old to return /btw; update it before running this command.",
+            ));
+        }
+    }
+    let call = RemoteCall::Control { resident: resident.clone(), control, reply_envelope: true };
     match node
         .call(&Acting::Here, &machine, Purpose::Agents, call)
         .await
         .map_err(|failure| Failure::new(failure.to_string()))?
     {
-        Ok(RemoteReply::Controlled(controlled)) => Ok((Address { machine: machine.name, resident }, controlled)),
+        Ok(RemoteReply::Controlled(controlled) | RemoteReply::ControlResult { controlled }) => {
+            Ok((Address { machine: machine.name, resident }, controlled))
+        }
         Ok(_) => Err(Failure::new(format!("{machine} answered something other than what was done"))),
         Err(failure) => Err(failure),
     }
@@ -100,7 +110,13 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
 
 /// Whether `control` may be done here: an assisting agent's conversation
 /// takes its host's own commands only where they are safe for the owner.
-fn allowed(node: &Arc<Node>, resident: &ResidentId, about: &fastctx_types::residents::About, host: &str, control: &Control) -> Result<(), Failure> {
+fn allowed(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    about: &fastctx_types::residents::About,
+    host: &str,
+    control: &Control,
+) -> Result<(), Failure> {
     if crate::assists::assisting(node, &about.acting) {
         crate::assists::host::require(node, resident)?;
         if let Control::Command { name, path, .. } = control {
@@ -148,6 +164,7 @@ pub async fn offers_here(node: &Arc<Node>, resident: &ResidentId) -> Result<Offe
     offers.pending_controls = crate::control_queue::pending(node, resident)?;
     offers.control_queue = true;
     offers.controls_told = true;
+    offers.control_reply_envelope = true;
     Ok(offers)
 }
 

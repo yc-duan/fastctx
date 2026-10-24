@@ -239,6 +239,7 @@ impl CodexHost {
             pending_controls: Vec::new(),
             control_queue: false,
             controls_told: false,
+            control_reply_envelope: false,
             checkpoints: None,
             history_limits: None,
             automatic_model: None,
