@@ -20,7 +20,7 @@ pub use status::*;
 pub const ASKED_SINCE: &str = "1.0.1-beta.3";
 
 /// The first release with the standalone repair entry point.
-pub const REPAIR_SINCE: &str = "1.0.1-beta.11";
+pub const REPAIR_SINCE: &str = "1.0.1-beta.12";
 
 /// The repository whose releases are Fastctx's.
 pub const REPOSITORY: &str = "yc-duan/fastctx";

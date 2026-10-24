@@ -142,7 +142,7 @@ async function specimen(state: string): Promise<never> {
   const words = language() === "en" ? enStartup : zhStartup;
   const page = new StartupPage(words, { retry: () => {}, repair: () => {} });
   const steps: RepairStep[] = [
-    { layer: "package", outcome: "unchanged", detail: "1.0.1-beta.11 verified", actions: [] },
+    { layer: "package", outcome: "unchanged", detail: "1.0.1-beta.12 verified", actions: [] },
     { layer: "records", outcome: "unchanged", detail: "", actions: [] },
     { layer: "program", outcome: "repaired", detail: "replaced the damaged program", actions: ["installed"] },
     { layer: "service", outcome: state === "broken" ? "failed" : state === "repairing" ? "checking" : "unchanged", detail: state === "broken" ? "the service would not start" : "", actions: [] },
