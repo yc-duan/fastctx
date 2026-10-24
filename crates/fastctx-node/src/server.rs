@@ -1227,9 +1227,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::Offers { resident, machine } => {
             users_voice(node, peer)?;
-            crate::control::offers(node, resident, machine)
-                .await
-                .map(|(resident, offers)| Reply::Offers { resident, offers: Box::new(offers) })
+            crate::control::offers(node, resident, machine).await.map(|(resident, mut offers)| {
+                offers.control_reply_envelope = false;
+                Reply::Offers { resident, offers: Box::new(offers) }
+            })
         }
         Call::Attach { resident } => {
             users_voice(node, peer)?;

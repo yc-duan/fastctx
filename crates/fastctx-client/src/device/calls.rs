@@ -381,15 +381,7 @@ impl Device {
             }
             Call::Control { resident, machine, control } => {
                 let machine = self.find(&resident, machine).await?;
-                if matches!(&control, fastctx_types::session::control::Control::Command { name, .. } if name == "btw") {
-                    let (offered, _) =
-                        self.call(Call::Offers { resident: resident.clone(), machine: Some(machine.clone()) }).await?;
-                    if !matches!(offered, Reply::Offers { offers, .. } if offers.control_reply_envelope) {
-                        return Err(Error::from(crate::CallError::Failed(fastctx_types::ipc::Failure::not_run(
-                            "The conversation's Fastctx is too old to return /btw; update it before running this command.",
-                        ))));
-                    }
-                }
+
                 (
                     machine,
                     RemoteCall::Control { resident: resident.clone(), control, reply_envelope: true },
@@ -543,6 +535,27 @@ impl Device {
         if needs_profile {
             super::mcp::supports(&session.link, &account, &machine).await?;
         }
+        if let RemoteCall::Control {
+            resident,
+            control: fastctx_types::session::control::Control::Command { name, .. },
+            ..
+        } = &remote
+            && name == "btw"
+        {
+            let offered = session
+                .link
+                .call(&machine, &account, purpose, RemoteCall::Offers { resident: resident.clone() })
+                .await
+                .map_err(|error| {
+                    Error::from(crate::CallError::Failed(fastctx_types::ipc::Failure::unanswered(error.to_string())))
+                })?
+                .map_err(|failure| Error::from(crate::CallError::Failed(failure)))?;
+            if !matches!(offered, RemoteReply::Offers(offers) if offers.control_reply_envelope) {
+                return Err(Error::from(crate::CallError::Failed(fastctx_types::ipc::Failure::not_run(
+                    "The conversation's Fastctx is too old to return /btw; update it before running this command.",
+                ))));
+            }
+        }
         let answer = if matches!(
             &remote,
             RemoteCall::Thumbnail { .. } | RemoteCall::AttachmentThumbnail { .. } | RemoteCall::Lines { .. }
@@ -607,7 +620,8 @@ impl Device {
                 RemoteCall::Control { .. },
                 RemoteReply::Controlled(controlled) | RemoteReply::ControlResult { controlled },
             ) => Reply::Controlled { resident: address.expect("control resident"), controlled },
-            (RemoteCall::Offers { .. }, RemoteReply::Offers(offers)) => {
+            (RemoteCall::Offers { .. }, RemoteReply::Offers(mut offers)) => {
+                offers.control_reply_envelope = false;
                 Reply::Offers { resident: address.expect("offers resident"), offers }
             }
             (RemoteCall::ItemDetail { .. }, RemoteReply::ItemDetail { detail }) => {
