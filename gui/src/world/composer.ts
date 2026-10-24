@@ -67,6 +67,9 @@ export interface ComposerEdit {
 export interface ComposerUpdated {
   readonly composer: ComposerSnapshot;
   readonly landed: Landed | null;
+  /** The id the words this change sent are kept under on their way in, as
+   *  the conversation's `now` names them; older nodes do not say. */
+  readonly delivery?: NoticeId;
 }
 
 export type ComposerChange =

@@ -9,6 +9,7 @@ import { followSwitches } from "./app/segment-slide";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { Attachment, FilePlace, UploadTarget } from "./world/attachments";
 import type { AssistantFiles } from "./conversation/node-tray";
+import { standsUnder } from "./conversation/landing";
 import "katex/dist/katex.min.css";
 import "./design/fonts.css";
 import "./design/tokens.css";
@@ -1451,8 +1452,21 @@ function specimenTalk(address: Address): KeepablePage {
   let toldHere = 0;
   // The shared input kept in the page; `?queued` puts two in its queue.
   let shared: SpecimenComposer | null = null;
+  // `?retrying=<ms>`: words sent at rest wait for a host that does not
+  // start, and after the delay their node says so, as it does after a minute.
+  const retrying = params.has("retrying")
+    ? (id: string) =>
+        setTimeout(() => {
+          const reason =
+            sample.agent === "claude"
+              ? `Claude Code is not installed on ${sample.machine}: no claude command`
+              : "Codex is not installed on this machine: neither the ChatGPT desktop app nor a codex command was found";
+          conversation.now(false, null, [{ id, state: "handing", host_retry: { since: new Date(Date.now() - 60_000).toISOString(), reason } }]);
+          page.update();
+        }, Number(params.get("retrying") || 1500))
+    : undefined;
   const sharedInput = () =>
-    (shared ??= specimenComposer(address, () => conversation.turning(), params.has("queued") ? (english ? ["Then run the overflow test on lab", "And write the result into the journal"] : ["然后在 lab 上跑溢出测试", "再把结果写进手记"]) : []));
+    (shared ??= specimenComposer(address, () => conversation.turning(), params.has("queued") ? (english ? ["Then run the overflow test on lab", "And write the result into the journal"] : ["然后在 lab 上跑溢出测试", "再把结果写进手记"]) : [], retrying));
   const name = address.resident;
   const sample: Specimen & { later?: SessionEvent[]; rate?: number; timed?: boolean } = name.startsWith("stream")
     ? streamSpecimen(params)
@@ -1489,6 +1503,7 @@ function specimenTalk(address: Address): KeepablePage {
       machine: sample.machine,
       model: sample.model,
       project: sample.town,
+      heldByWorld: true,
       // A specimen with none listed is pointed at its own machine.
       focus: focusOf(known ?? null) ?? { machines: [{ machine: sample.machine, folders: [] }] },
     },
@@ -1736,6 +1751,7 @@ function someoneOf(world: ReturnType<typeof store.world.peek>, address: Address)
     focus: known.removed ? null : focusOf(known),
     model: known.about.model ?? null,
     project: known.town ? (world?.towns.find((t) => t.town === known.town)?.record.name ?? known.town) : null,
+    heldByWorld: known.about.world_started,
   };
 }
 
@@ -1872,7 +1888,7 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
           conversation.named(key, delivery ?? null);
           // Words in a turn take their place when the session hears them;
           // words in no turn yet say where they are.
-          if (landed.kind === "waiting" || landed.kind === "sent" || landed.kind === "uncertain") {
+          if (standsUnder(landed, someone.heldByWorld === true)) {
             const why = "why" in landed ? landed.why : null;
             conversation.sent(key, { state: "landed", how: landed.kind, machine: to.machine, why });
             page.update();

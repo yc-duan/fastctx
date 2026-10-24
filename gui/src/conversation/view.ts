@@ -88,6 +88,9 @@ export interface Context {
   /** The machine the resident lives on: where the agents it starts work,
    *  which name a machine only where they worked elsewhere. */
   residentMachine: MachineName;
+  /** The agent by the name it goes by ("Claude", "Codex"), where it is
+   *  known: words whose host does not start name it. */
+  agent?: string | undefined;
   /** The region the conversation scrolls in. */
   scroller: HTMLElement;
   /** Opens one of the host's agents in the panel beside the conversation,
@@ -1528,6 +1531,10 @@ export class ConversationView {
       if (sending?.state === "waiting") note = `<div class="bubble-note" title="${escape(sending.why)}">${escape(words.waitingToSend)}</div>`;
       if (sending?.state === "landed") {
         note = `<div class="bubble-note"${sending.why ? ` title="${escape(sending.why)}"` : ""}>${escape(words.landed(sending.how, sending.machine, sending.why ?? null))}</div>`;
+      }
+      // Still on their way: their host has not started for a minute.
+      if (sending?.state === "going" && sending.retry) {
+        note = `<div class="bubble-note" title="${escape(words.hostRetryWhy(sending.retry))}">${escape(words.hostRetrying(this.context.agent))}</div>`;
       }
       // A long message shows its first lines, the rest a press away.
       if (key && longWords(text)) {

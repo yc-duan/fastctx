@@ -19,7 +19,9 @@ function empty(epoch: number): ComposerDraft {
 /** The input, and the places it keeps for commands waiting among its words. */
 export type SpecimenComposer = ComposerTransport & { place(id: string): void; forget(id: string): void };
 
-export function specimenComposer(who: Address, busy: () => boolean, queued: string[] = []): SpecimenComposer {
+/** `retrying`, where given, is told the id of words sent while the agent is
+ *  idle, which then wait for their host to start as a node keeps them. */
+export function specimenComposer(who: Address, busy: () => boolean, queued: string[] = [], retrying?: (delivery: string) => void): SpecimenComposer {
   let serial = 0;
   const draftOf = (text: string, epoch: number): ComposerDraft => {
     serial += 1;
@@ -117,6 +119,12 @@ export function specimenComposer(who: Address, busy: () => boolean, queued: stri
             serial += 1;
             const item: ComposerQueued = { id: `queued-${Date.now()}-${serial}-0`, from: who.machine, draft: snapshot.draft, editing: false, sending: false, error: null };
             return Promise.resolve(changed({ draft: next, queue: [...snapshot.queue, item] }));
+          }
+          if (retrying) {
+            serial += 1;
+            const delivery = `words-${Date.now()}-${serial}`;
+            retrying(delivery);
+            return Promise.resolve({ ...changed({ draft: next }, { kind: "waiting", why: null, answered: true }), delivery });
           }
           return Promise.resolve(changed({ draft: next }, { kind: "new_turn", turn: "specimen" }));
         }
