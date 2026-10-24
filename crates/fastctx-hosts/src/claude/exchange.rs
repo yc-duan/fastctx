@@ -22,6 +22,9 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod damaged;
+pub use damaged::recover_readable;
+
 /// Where the sessions' directories are.
 pub fn sessions(world: &Path) -> PathBuf {
     world.join("claude")
@@ -203,6 +206,7 @@ enum ModEvent {
     },
     Session {
         at: Option<Timestamp>,
+        #[serde(deserialize_with = "observed_happened")]
         happened: Happened,
     },
     ToolStored {
@@ -217,6 +221,7 @@ enum ModEvent {
         declined: bool,
         #[serde(default)]
         cut: bool,
+        #[serde(default, deserialize_with = "elapsed_milliseconds")]
         ms: Option<u64>,
         detail: Value,
     },
@@ -236,6 +241,7 @@ enum ModEvent {
         refusal: Option<Refusal>,
         #[serde(default)]
         error: Option<Value>,
+        #[serde(default, deserialize_with = "elapsed_milliseconds")]
         ms: Option<u64>,
         answer: Option<String>,
         #[serde(default)]
@@ -269,7 +275,7 @@ enum ModEvent {
         failed: bool,
         #[serde(default)]
         declined: bool,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "elapsed_milliseconds")]
         ms: Option<u64>,
     },
     Trouble {
@@ -294,6 +300,28 @@ enum ModEvent {
     Replaced {
         deliveries: Vec<String>,
     },
+}
+
+// Claude uses its wall clock for some durations. A clock correction can
+// invalidate that measurement without invalidating the terminal event.
+fn elapsed_milliseconds<'de, D: serde::Deserializer<'de>>(input: D) -> Result<Option<u64>, D::Error> {
+    Ok(Option::<serde_json::Number>::deserialize(input)?.and_then(|number| number.as_u64()))
+}
+
+fn observed_happened<'de, D: serde::Deserializer<'de>>(input: D) -> Result<Happened, D::Error> {
+    let mut value = Value::deserialize(input)?;
+    let duration = match value["event"].as_str() {
+        Some("turn_ended") => value.pointer_mut("/end/duration_ms"),
+        Some("changed") if value["change"]["kind"] == "agent_ended" => value.pointer_mut("/change/end/duration_ms"),
+        _ => None,
+    };
+    if let Some(duration) = duration
+        && duration.is_number()
+        && duration.as_u64().is_none()
+    {
+        *duration = Value::Null;
+    }
+    serde_json::from_value(value).map_err(serde::de::Error::custom)
 }
 
 #[derive(Deserialize)]

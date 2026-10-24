@@ -342,13 +342,13 @@ fn submitted_since(path: &std::path::Path, since: jiff::Timestamp) -> std::io::R
     use std::io::BufRead as _;
     let file = std::fs::File::open(path)?;
     for line in std::io::BufReader::new(file).lines() {
-        let entry: serde_json::Value = serde_json::from_str(&line?).map_err(std::io::Error::other)?;
+        // A partial row can contain an accepted prompt. It makes delivery
+        // uncertain, but must not prevent the dead activation from ending.
+        let Ok(entry) = serde_json::from_str::<serde_json::Value>(&line?) else { return Ok(true) };
         if matches!(entry["type"].as_str(), Some("user" | "queue-operation")) {
-            let at = entry["timestamp"]
-                .as_str()
-                .ok_or_else(|| std::io::Error::other("a submitted entry has no timestamp"))?
-                .parse::<jiff::Timestamp>()
-                .map_err(std::io::Error::other)?;
+            let Some(at) = entry["timestamp"].as_str().and_then(|at| at.parse::<jiff::Timestamp>().ok()) else {
+                return Ok(true);
+            };
             if at.as_millisecond() >= since.as_millisecond() {
                 return Ok(true);
             }

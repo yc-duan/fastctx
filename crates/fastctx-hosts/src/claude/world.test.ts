@@ -6,6 +6,7 @@ function fixtureUi(on: On, lines: string[] = []) {
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
   on('ui.invalidate', () => ({ value: undefined }))
+  on('command.list', () => ({ value: [] }))
   return lines
 }
 
@@ -13,13 +14,13 @@ const worldTool = 'mcp__configured_World_alias__run'
 // What connect answers; the tools carry its tool-name spelling.
 const serverName = 'configured:World alias'
 const spelledName = 'configured_World_alias'
-function usage(): SessionUsage {
+function usage(loaded = false): SessionUsage {
   return { startedAt: 0, rateLimits: [], context: { window: 200000, breakdown: {
     categories: [], totalTokens: 0, maxTokens: 200000, rawMaxTokens: 200000,
     autocompactSource: 'model-default', percentage: 0, gridRows: [], model: 'fixture',
     memoryFiles: [], agents: [], isAutoCompactEnabled: false, apiUsage: null,
     mcpTools: [
-      { name: worldTool, serverName: spelledName, tokens: 1, isLoaded: false },
+      { name: worldTool, serverName: spelledName, tokens: 1, isLoaded: loaded },
       { name: 'mcp__github__run', serverName: 'GitHub', tokens: 1, isLoaded: true },
       { name: 'mcp__plugin_fastctx-world_fastctx__lookalike', serverName: 'Other', tokens: 1, isLoaded: true },
     ],
@@ -43,7 +44,7 @@ test('loads, streams without waiting for disk, and retains the old session after
   mock.env(on, {})
   fixtureUi(on)
   on('mcp.connect', () => ({ value: { isConnected: true, server: serverName } }))
-  on('session.usage', () => ({ value: usage() }))
+  on('session.usage', () => ({ value: usage(true) }))
   on('config.list', () => ({ value: [] }))
   on('session.messages', () => ({ value: [] }))
   const files = new Map<string, string>()

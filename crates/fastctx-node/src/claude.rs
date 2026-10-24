@@ -251,6 +251,18 @@ pub(crate) fn reading(node: &Node, session: &str) -> crate::leases::Lease<String
 
 pub async fn replay(node: &Arc<Node>) {
     let directory = exchange::sessions(node.world.path());
+    if let Ok(entries) = std::fs::read_dir(&directory) {
+        for entry in entries {
+            let result = entry.and_then(|entry| exchange::recover_readable(&entry.path()));
+            match result {
+                Ok(0) => {}
+                Ok(count) => {
+                    node.log.line(format_args!("recovered {count} Claude reports the current decoder can read"))
+                }
+                Err(error) => node.log.line(format_args!("reconsidering retained Claude reports: {error}")),
+            }
+        }
+    }
     look_all(node, &directory).await;
 }
 
@@ -1075,6 +1087,15 @@ async fn pair(node: &Arc<Node>, session: &str) {
             {
                 crate::lifecycle::retry::kick(node, &resident);
             }
+            if present
+                && newer
+                && kept
+                    .iter()
+                    .any(|pending| pending.state == PendingState::Waiting && pending.delivery.notice.along().is_some())
+            {
+                let (node, resident) = (node.clone(), resident.clone());
+                tokio::spawn(async move { crate::speech::along(&node, &resident).await });
+            }
         }
         Ok(Err(error)) => node.log.line(format_args!("reading what waits for {resident}: {error}")),
         Err(_) => {}
@@ -1229,6 +1250,7 @@ async fn failed_wake(
     let _speaking = speaking.lock().await;
     if let Some(turn) = crate::delivery::input_turn(directory, id).map_err(|error| Failure::new(error.to_string()))? {
         node.log.line(format_args!("the Claude command failed after its turn was identified: {error}"));
+        crate::lifecycle::retry::clear(node, resident, id).map_err(|error| Failure::new(error.to_string()))?;
         return Ok(Landed::NewTurn { turn });
     }
     let why = format!("the Claude command failed before identifying a consuming turn: {error}");

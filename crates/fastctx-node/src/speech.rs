@@ -269,6 +269,16 @@ pub async fn hand_over(
     hand_over_locked(node, to, about, directory, pending).await
 }
 
+/// Closed foreground sessions leave facts for the next visit. Those facts
+/// cannot stand in front of a user request that is allowed to resume it.
+pub(crate) fn ready_for_delivery(node: &Node, about: &About, pending: &Pending) -> bool {
+    about.world_started
+        || node.residents.host_present(&about.id)
+        || matches!(pending.delivery.notice, Notice::Words { from: Speaker::User { .. }, .. } | Notice::Attached { .. })
+        || crate::lifecycle::retry::progress(node, &about.id, &pending.delivery.id)
+            .map_or(true, |progress| progress.is_some())
+}
+
 async fn hand_over_locked(
     node: &Arc<Node>,
     to: &ResidentId,
@@ -309,9 +319,17 @@ async fn hand_over_locked(
             return Ok(Landed::Waiting { why: None, answered: answered(node, to, about) });
         }
         let waiting = crate::inbox::pending(directory).map_err(|error| Failure::new(error.to_string()))?;
-        if let Some(first) =
-            waiting.iter().find(|row| row.state == PendingState::Waiting && row.delivery.notice.along().is_none())
-        {
+        // The CLI's resume prompt has not reached a consuming turn yet.
+        // A ready plugin can submit a later envelope ahead of that prompt.
+        if waiting.iter().any(|row| row.state == PendingState::Waking && row.delivery.id != pending.delivery.id) {
+            crate::lifecycle::retry::kick(node, to);
+            return Ok(Landed::Waiting { why: None, answered: answered(node, to, about) });
+        }
+        if let Some(first) = waiting.iter().find(|row| {
+            row.state == PendingState::Waiting
+                && row.delivery.notice.along().is_none()
+                && ready_for_delivery(node, about, row)
+        }) {
             let delayed = crate::lifecycle::retry::progress(node, to, &first.delivery.id)
                 .map_err(|error| Failure::new(error.to_string()))?
                 .is_some_and(|progress| progress.next > jiff::Timestamp::now());
@@ -476,6 +494,7 @@ async fn submit_thread(
         && (node.residents.now(id).is_some_and(|now| now.activity == fastctx_types::residents::Activity::Busy)
             || codex.running_turn(thread).is_some())
     {
+        crate::inbox::withdraw(directory, &pending.delivery.id).map_err(|error| Failure::new(error.to_string()))?;
         return Ok(None);
     }
     // A node handing the World on starts no turn; the words wait for its
@@ -702,6 +721,7 @@ pub async fn bind(
         crate::lifecycle::retry::clear(node, id, &input.delivery.id)
             .map_err(|error| Failure::new(error.to_string()))?;
     }
+    crate::lifecycle::retry::changed(node, id);
     Ok(())
 }
 

@@ -9,7 +9,7 @@ use fastctx_types::{
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     io,
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -17,7 +17,7 @@ use std::{
 };
 
 #[derive(Default)]
-pub(crate) struct Retrying(Mutex<HashSet<ResidentId>>);
+pub(crate) struct Retrying(Mutex<HashMap<ResidentId, Arc<tokio::sync::Notify>>>);
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Progress {
@@ -129,14 +129,30 @@ pub(crate) fn clear(node: &Node, id: &ResidentId, input: &NoticeId) -> io::Resul
 }
 
 pub(crate) fn kick(node: &Arc<Node>, id: &ResidentId) {
-    if !node.retrying.0.lock().expect("never poisoned").insert(id.clone()) {
-        return;
-    }
+    let signal = {
+        let mut workers = node.retrying.0.lock().expect("never poisoned");
+        let std::collections::hash_map::Entry::Vacant(entry) = workers.entry(id.clone()) else { return };
+        let signal = Arc::new(tokio::sync::Notify::new());
+        entry.insert(signal.clone());
+        signal
+    };
     let (node, id) = (node.clone(), id.clone());
-    tokio::spawn(run(node, id));
+    tokio::spawn(run(node, id, signal));
 }
 
-fn run(node: Arc<Node>, id: ResidentId) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+/// Host readiness and consuming-turn receipts release waiting arrivals
+/// immediately. A retry request itself does not notify its own worker.
+pub(crate) fn changed(node: &Node, id: &ResidentId) {
+    if let Some(signal) = node.retrying.0.lock().expect("never poisoned").get(id) {
+        signal.notify_one();
+    }
+}
+
+fn run(
+    node: Arc<Node>,
+    id: ResidentId,
+    signal: Arc<tokio::sync::Notify>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
     Box::pin(async move {
         node.ready().await;
         let mut trouble = None;
@@ -144,9 +160,14 @@ fn run(node: Arc<Node>, id: ResidentId) -> std::pin::Pin<Box<dyn std::future::Fu
             if node.residents.active(&id).is_err() {
                 break;
             }
+            let Some((about, _)) = node.residents.about(&id) else { break };
             let directory = node.world.conversation(&id);
             let next = crate::inbox::pending(&directory).map(|rows| {
-                rows.into_iter().find(|row| row.state == PendingState::Waiting && row.delivery.notice.along().is_none())
+                rows.into_iter().find(|row| {
+                    row.state == PendingState::Waiting
+                        && row.delivery.notice.along().is_none()
+                        && crate::speech::ready_for_delivery(&node, &about, row)
+                })
             });
             let input = match next {
                 Ok(Some(input)) => input,
@@ -204,14 +225,27 @@ fn run(node: Arc<Node>, id: ResidentId) -> std::pin::Pin<Box<dyn std::future::Fu
                     node.log.line(format_args!("lifecycle {id}: handover needs reconciliation: {error}"));
                 }
             }
-            tokio::time::sleep(Duration::from_secs(3)).await;
+            if crate::inbox::read(&directory, &input.delivery.id)
+                .is_ok_and(|row| row.is_some_and(|row| row.state == PendingState::Waiting))
+            {
+                tokio::select! {
+                    () = signal.notified() => {},
+                    () = tokio::time::sleep(Duration::from_secs(3)) => {},
+                }
+            }
         }
         node.retrying.0.lock().expect("never poisoned").remove(&id);
         // An arrival racing the final empty read either starts its own worker
         // after this removal, or is picked up by this recheck.
         if node.residents.active(&id).is_ok()
             && (crate::inbox::pending(&node.world.conversation(&id)).is_ok_and(|rows| {
-                rows.iter().any(|row| row.state == PendingState::Waiting && row.delivery.notice.along().is_none())
+                node.residents.about(&id).is_some_and(|(about, _)| {
+                    rows.iter().any(|row| {
+                        row.state == PendingState::Waiting
+                            && row.delivery.notice.along().is_none()
+                            && crate::speech::ready_for_delivery(&node, &about, row)
+                    })
+                })
             }) || crate::control_queue::waiting_for_host(&node, &id).unwrap_or(false))
         {
             kick(&node, &id);

@@ -1,5 +1,9 @@
 import { taskSteps } from './steps.js'
 
+export function observedMilliseconds(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : null
+}
+
 // How words the World handed over begin, as `claude::is_framed` knows them:
 // its own telling, before 2026-10-09 and since, and the user's words sent
 // into a running turn.
@@ -50,7 +54,7 @@ export function presentation(reserve, currentTurn) {
       content: content ?? null,
       failed: stored.block.is_error === true,
       declined: result?.deny !== undefined,
-      ms: call.ms,
+      ms: observedMilliseconds(call.ms),
       detail: { returned: result, stored: { uuid: stored.uuid, block: header }, requested: requests.get(call.id)?.block },
     })
     tools.delete(call.id)
@@ -293,7 +297,7 @@ export function presentation(reserve, currentTurn) {
           await reports.event('tool_stored', {
             turn, item: call.id, tool: call.tool, input: call.input, started_at: call.started_at,
             content: null, failed: call.result?.isError === true || call.thrown !== undefined,
-            declined: call.result?.deny !== undefined, cut: true, ms: call.ms,
+            declined: call.result?.deny !== undefined, cut: true, ms: observedMilliseconds(call.ms),
             detail: { returned: call.result, error: call.thrown, missing_stored_result: true },
           })
           tools.delete(call.id)
@@ -336,7 +340,7 @@ function notified(text) {
     end: {
       how,
       reason: how === 'failed' ? tag('summary') : null,
-      duration_ms: number(usage, 'duration_ms'),
+      duration_ms: observedMilliseconds(number(usage, 'duration_ms')),
       tokens: number(usage, 'subagent_tokens') ?? number(usage, 'total_tokens'),
       tools: number(usage, 'tool_uses'),
       answer: tag('result') || null,

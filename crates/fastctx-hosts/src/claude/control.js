@@ -125,9 +125,25 @@ async function controlOpen($, sessions, sessionId) {
     void controlPoll($, state)
     return state
   } catch (error) {
+    const partial = sessions.get(sessionId)
+    if (partial?.guard === guard) {
+      partial.closed = true
+      partial.timer?.cancel()
+      restartControls($, partial)
+    }
     await guard.return()
     throw error
   }
+}
+
+function restartControls($, state) {
+  if (gone.seen || sessions.get(state.host.session) !== state) return
+  state.timer = $.clock.after(LOOK_MS, async () => {
+    state.timer = null
+    if (gone.seen || sessions.get(state.host.session) !== state || await $.session.id() !== state.host.session) return
+    try { await controlBegin($, sessions) }
+    catch (error) { worldFailure($, 'control restart', error); restartControls($, state) }
+  })
 }
 
 async function controlWatchGuard($, state) {
@@ -143,8 +159,10 @@ async function controlWatchGuard($, state) {
   } finally {
     // The node observes the child itself. No filesystem call from an
     // already-unloaded module is needed to release its pending controls.
+    const lost = !state.closed && !gone.seen
     state.closed = true
     state.timer?.cancel()
+    if (lost) restartControls($, state)
   }
 }
 
@@ -331,11 +349,11 @@ async function controlExecute($, state, control, handoff = false) {
     const rows = await $.config.list()
     const usage = await $.session.usage({ breakdown: 'summary' })
     // Availability is independent of the current turn or process lifetime.
-    const controls = ['command', 'compact', 'rewind', 'model', 'agents', 'agent_messages']
+    const controls = ['command', 'compact', 'model', 'agents', 'agent_messages']
     if (commands.some((command) => command.name === 'rename')) controls.push('rename')
     const offered = {
       checkpoints: Object.entries(state.checkpoints.turns).map(([turn, point]) => ({ turn,
-        rewind: point.before > 0 && point.before_uuid != null, fork: point.after > 0 && point.after_uuid != null })),
+        rewind: false, fork: point.after > 0 && point.after_uuid != null })),
       history_limits: { files_restored: false, compacted_turns_reachable: false, empty_prefix_allowed: false, complete_prefix: state.checkpoints.full === true },
       controls, commands: commands.map((command) => ({ name: command.name, description: command.description,
         args: command.args, argument_forms: command.argument_forms, arguments: command.arguments, source: command.source })),

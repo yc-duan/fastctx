@@ -1,4 +1,4 @@
-import { presentation } from './presentation.js'
+import { presentation, observedMilliseconds } from './presentation.js'
 
 // The World's mod for Claude Code.
 //
@@ -129,6 +129,7 @@ function conversation(sessionId, previous) {
   context.shown = presentation(() => reserved(context), () => context.turn)
   return context
 }
+
 
 function chunks(text) {
   const parts = []
@@ -862,14 +863,14 @@ async function completeTurn($, context, e, next) {
     const how = e.isAborted ? 'interrupted' : e.reason === 'error' || e.reason === 'refusal' ? 'failed' : 'completed'
     await agentPresentation(context, e.agentId).end(reported, e.turnId)
     await reported.event('session', { happened: { event: 'turn_ended', turn: e.turnId,
-      end: { how, reason: e.reason, duration_ms: e.durationMs, last_message: e.answer, error: null } } })
+      end: { how, reason: e.reason, duration_ms: observedMilliseconds(e.durationMs), last_message: e.answer, error: null } } })
     // Its tokens as Claude Code counts an agent's in its Agent call's answer:
     // the last request's input, cached and fresh, and its output.
     const usage = e.usage
     const tokens = usage == null ? null : ['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens']
       .reduce((sum, key) => sum + (typeof usage[key] === 'number' ? usage[key] : 0), 0)
     await event($, context, 'session', { happened: { event: 'changed', turn: null, change: { kind: 'agent_ended', agent_id: e.agentId,
-      end: { how, reason: how === 'completed' ? null : e.reason, duration_ms: e.durationMs ?? null, tokens, tools: null,
+      end: { how, reason: how === 'completed' ? null : e.reason, duration_ms: observedMilliseconds(e.durationMs), tokens, tools: null,
         answer: e.answer ?? null, task: null, told: false } } } })
     await observeAgents($, context)
     return next(e)
@@ -892,7 +893,7 @@ async function completeTurn($, context, e, next) {
     reason: e.reason,
     refusal: e.reason === 'refusal' ? e.refusal : null,
     error: completedFailure(context, e),
-    ms: e.durationMs,
+    ms: observedMilliseconds(e.durationMs),
     answer: e.answer ?? null,
     streamed: true,
   })

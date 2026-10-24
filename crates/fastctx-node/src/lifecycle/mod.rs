@@ -60,6 +60,9 @@ use fastctx_types::ResidentId;
 pub(crate) fn observed(node: &Node, id: &ResidentId, present: bool, reason: &str) -> bool {
     let changed = node.residents.host_present(id) != present;
     let departed = node.residents.set_host_present(id, present);
+    if present {
+        retry::changed(node, id);
+    }
     if changed {
         node.log.line(format_args!("lifecycle {id}: host {} ({reason})", if present { "present" } else { "absent" }));
     }
