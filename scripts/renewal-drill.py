@@ -14,15 +14,19 @@ what each guardian said and the logs are shown.
 
     python scripts/renewal-drill.py bump VERSION
     python scripts/renewal-drill.py run PROGRAM LATER VERSION
-    python scripts/renewal-drill.py earlier EARLIER PROGRAM VERSION
+    python scripts/renewal-drill.py earlier EARLIER PROGRAM VERSION [PACKAGE]
 
 `bump` prints a version later than VERSION and sets it as the workspace's, for building the later
 release; `run` drills with this release's PROGRAM and the LATER one of VERSION, its signature beside
 it, and beside that `decoy.sig`, the same release's signature of something else. `earlier` keeps
 the World of the EARLIER release's program by its startup service and hands this release's PROGRAM,
-at VERSION, its signature beside it where it has one, to its renewal as the application does.
+at VERSION, its signature beside it where it has one, to its renewal as the application does; then
+the machine, healthy now, is repaired twice, and nothing may change. A release's repair checks
+itself by its release: PACKAGE is this machine's signed package of PROGRAM, its signature beside
+it, which a stand-in for GitHub here offers. A development build's repair checks no release.
 """
 import hashlib
+import http.server
 import json
 import os
 import re
@@ -31,6 +35,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import uuid
 import zipfile
 from pathlib import Path
@@ -238,7 +243,7 @@ def run(program, later, version):
     return 0 if passed == len(RESULTS) else 1
 
 
-def earlier(old, program, version):
+def earlier(old, program, version, package=None):
     """The World program of an earlier release, its node kept by the startup service (a system
     service with its protected guardian, a systemd unit of the user, a LaunchAgent), is replaced by
     this release as the application hands its carried program over, its signature beside it, and
@@ -330,6 +335,7 @@ def earlier(old, program, version):
 
         until("the service's own node runs this release, and no other serves", serving_this, 180)
         check("the renewal kept no error", not renewal().get("error"), renewal())
+        healthy_repair(lab, home, program, version, package and Path(package).resolve(), renewal, status)
     finally:
         if not all(RESULTS):
             print("\n--- the renewal", flush=True)
@@ -351,14 +357,85 @@ def earlier(old, program, version):
     return 0 if passed == len(RESULTS) else 1
 
 
+def healthy_repair(lab, home, program, version, package, renewal, status):
+    """A repair of the machine the renewal left healthy (`world-upgrade.md`, 修复), twice, by this
+    release's program as the application runs the one it carries: the first brings the release's
+    package to check itself by, the second finds it kept, and each finds every layer right and
+    changes nothing; the service's own node serves throughout."""
+    env = lab.env("alpha")
+    if package:
+        env["FASTCTX_UPDATE_RELEASES"] = release_source(version, package)
+    else:
+        del env["FASTCTX_UPDATE_RELEASES"]
+    installed = home / "bin" / program.name
+    world = home / "world"
+
+    def held():
+        files = [installed, Path(f"{installed}.sig"), world / "machine.json", world / "device.key", world / "seal.key"]
+        return {"node": (renewal().get("node") or {}).get("process"), "service": status().get("state"),
+                **{path.name: (sha256(path), path.stat().st_mtime_ns if path.exists() else None) for path in files}}
+
+    before = held()
+    for first in (True, False):
+        done = subprocess.run([str(program), "renew", "repair", "--dir", str(home)], env=env, capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", timeout=900)
+        try:
+            report = json.loads(done.stdout.strip().splitlines()[-1])
+        except (IndexError, ValueError):
+            report = {}
+        steps = report.get("steps") or []
+        said = done.stdout + done.stderr
+        check("a repair of the healthy machine finds every layer right and changes nothing" if first
+              else "repaired again, it still changes nothing",
+              done.returncode == 0 and report.get("success") and report.get("unchanged") and len(steps) == 6
+              and all(step.get("outcome") == "unchanged" for step in steps), said)
+        if package:
+            detail = next((step.get("detail", "") for step in steps if step.get("layer") == "package"), "")
+            check("it brought the release's package to check itself by" if first
+                  else "it found the package it brought kept", detail.startswith("brought ") == first, detail)
+    check("the service's node served throughout; the program and the World's identity are as they were",
+          held() == before, {"before": before, "after": held()})
+
+
+def release_source(version, package):
+    """A stand-in for GitHub on this computer, listing the one release `version` with this
+    computer's signed `package` in its manifest; where its listing is."""
+    triple = package.name.removeprefix("fastctx-").removesuffix(".zip").removesuffix(".tar.gz")
+    files = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_GET(self):
+            body = files.get(self.path)
+            self.send_response(200 if body is not None else 404)
+            self.send_header("Content-Length", str(len(body or b"")))
+            self.end_headers()
+            self.wfile.write(body or b"")
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    signature = Path(f"{package}.sig").read_text(encoding="utf-8").strip()
+    manifest = {"version": version, "platforms": {}, "fastctx": {
+        triple: {"url": f"{base}/download/{package.name}", "signature": signature, "size": package.stat().st_size}}}
+    files["/releases"] = json.dumps([{"tag_name": f"v{version}", "draft": False, "prerelease": "-" in version,
+                                      "assets": [{"name": "latest.json",
+                                                  "browser_download_url": f"{base}/download/latest.json"}]}]).encode()
+    files["/download/latest.json"] = json.dumps(manifest).encode()
+    files[f"/download/{package.name}"] = package.read_bytes()
+    return f"{base}/releases"
+
+
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == "bump":
         bump(sys.argv[2])
         return 0
     if len(sys.argv) == 5 and sys.argv[1] == "run":
         return run(sys.argv[2], sys.argv[3], sys.argv[4])
-    if len(sys.argv) == 5 and sys.argv[1] == "earlier":
-        return earlier(sys.argv[2], sys.argv[3], sys.argv[4])
+    if len(sys.argv) in (5, 6) and sys.argv[1] == "earlier":
+        return earlier(*sys.argv[2:])
     print(__doc__, file=sys.stderr)
     return 2
 

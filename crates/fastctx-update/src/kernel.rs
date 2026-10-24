@@ -81,6 +81,48 @@ pub fn signature(archive: &Path) -> Result<Option<String>, String> {
     Ok(said)
 }
 
+/// Whether the program `archive` carries is, byte for byte, the file at
+/// `executable`: where a release signs only its packages, a checked package
+/// vouches for a program this way.
+pub fn carries(archive: &Path, executable: &Path) -> Result<bool, String> {
+    let name = program();
+    let mut file = std::fs::File::open(executable).map_err(|error| format!("{}: {error}", executable.display()))?;
+    let mut same = None;
+    each(archive, &mut |entry, reader| {
+        if entry == name {
+            same =
+                Some(equal(reader, &mut file).map_err(|error| format!("comparing {}: {error}", executable.display()))?);
+        }
+        Ok(())
+    })?;
+    same.ok_or_else(|| format!("{} has no {name}", archive.display()))
+}
+
+fn equal(left: &mut dyn std::io::Read, right: &mut dyn std::io::Read) -> std::io::Result<bool> {
+    let (mut a, mut b) = (vec![0; 64 * 1024], vec![0; 64 * 1024]);
+    loop {
+        let (n, m) = (fill(left, &mut a)?, fill(right, &mut b)?);
+        if a[..n] != b[..m] {
+            return Ok(false);
+        }
+        if n == 0 {
+            return Ok(true);
+        }
+    }
+}
+
+/// Reads until `buffer` is full or the input ends.
+fn fill(input: &mut dyn std::io::Read, buffer: &mut [u8]) -> std::io::Result<usize> {
+    let mut filled = 0;
+    while filled < buffer.len() {
+        match input.read(&mut buffer[filled..])? {
+            0 => break,
+            count => filled += count,
+        }
+    }
+    Ok(filled)
+}
+
 /// Hands each file at the top of `archive`, a `.zip` or a `.tar.gz`, to
 /// `take` by its name.
 fn each(

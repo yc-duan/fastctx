@@ -217,7 +217,10 @@ pub async fn repair(
     );
     let manifest = super::package::manifest(root, &build.version).await?;
     let installer = super::package::obtain(root, &manifest, &app.app.target, journal).await?;
-    install(root, &app, &installer, &manifest).await?;
+    if installer.brought {
+        journal.action(format!("obtain and verify {}", installer.path.display()))?;
+    }
+    install(root, &app, &installer.path, &manifest).await?;
     check(root, &app, build)?;
     app.app.version = build.version.clone();
     crate::renewal::write_json(&path, &app)?;

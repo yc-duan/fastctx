@@ -162,6 +162,7 @@ fn run_inner(args: RepairArgs) -> anyhow::Result<()> {
     } else {
         None
     };
+    let mut brought = None;
     let checked = (|| -> anyhow::Result<Option<PathBuf>> {
         if let Some(manifest) = &manifest {
             let target = fastctx_update::kernel::target();
@@ -170,15 +171,24 @@ fn run_inner(args: RepairArgs) -> anyhow::Result<()> {
                 fastctx_update::verify::file(path, signature, &version).map_err(anyhow::Error::msg)?;
                 path.clone()
             } else {
-                runtime.block_on(package::obtain(&root, manifest, &target, &mut journal))?
+                let obtained = runtime.block_on(package::obtain(&root, manifest, &target, &mut journal))?;
+                brought = obtained.brought.then(|| obtained.path.clone());
+                obtained.path
             };
             if version == build.version {
-                let signature = fastctx_update::kernel::signature(&archive)
-                    .map_err(anyhow::Error::msg)?
-                    .context("repair package has no executable signature")?;
-                fastctx_update::verify::file(&source, &signature, &version)
-                    .map_err(anyhow::Error::msg)
-                    .with_context(|| format!("checking repair program {} against its release", source.display()))?;
+                // A Windows package carries the program's own signature, which
+                // its boot guardian takes it by; elsewhere the package's
+                // signature, checked above, vouches for the program inside.
+                match fastctx_update::kernel::signature(&archive).map_err(anyhow::Error::msg)? {
+                    Some(signature) => fastctx_update::verify::file(&source, &signature, &version)
+                        .map_err(anyhow::Error::msg)
+                        .with_context(|| format!("checking repair program {} against its release", source.display()))?,
+                    None => ensure!(
+                        fastctx_update::kernel::carries(&archive, &source).map_err(anyhow::Error::msg)?,
+                        "repair program {} differs from the program its release carries",
+                        source.display()
+                    ),
+                }
             }
             Ok(Some(archive))
         } else {
@@ -187,12 +197,11 @@ fn run_inner(args: RepairArgs) -> anyhow::Result<()> {
     })();
     let archive = match checked {
         Ok(archive) => {
-            journal.end(Ok(if distributed {
-                "package signature and version checked"
-            } else {
-                "development executable; no release acquisition"
-            }
-            .into()))?;
+            journal.end(Ok(match (&archive, &brought) {
+                (Some(_), Some(path)) => format!("brought {}; package signature and version checked", path.display()),
+                (Some(_), None) => "package signature and version checked".into(),
+                (None, _) => "development executable; no release acquisition".into(),
+            }))?;
             archive
         }
         Err(error) => {
@@ -363,20 +372,20 @@ fn program(
             std::thread::sleep(Duration::from_millis(250));
         }
     }
-    if fastctx_platform::RELEASED || archive.is_some() {
+    // A Windows program keeps its own signature beside it, which the boot
+    // guardian takes it by; a release elsewhere signs only its packages.
+    if let Some(archive) = archive {
         let signed = store::signature_of(&installed);
         let valid = std::fs::read_to_string(&signed)
             .is_ok_and(|sig| fastctx_update::verify::file(&installed, &sig, &build.version).is_ok());
-        if !valid {
-            let signature = if let Some(archive) = archive {
-                fastctx_update::kernel::signature(archive).map_err(anyhow::Error::msg)?
-            } else {
-                std::fs::read_to_string(store::signature_of(source)).ok()
+        match fastctx_update::kernel::signature(archive).map_err(anyhow::Error::msg)? {
+            Some(signature) if !valid => {
+                fastctx_update::verify::file(&installed, &signature, &build.version).map_err(anyhow::Error::msg)?;
+                journal.action(format!("restore program signature {}", signed.display()))?;
+                store::write_signature(&signed, &signature)?;
             }
-            .context("verified program signature is missing")?;
-            fastctx_update::verify::file(&installed, &signature, &build.version).map_err(anyhow::Error::msg)?;
-            journal.action(format!("restore program signature {}", signed.display()))?;
-            store::write_signature(&signed, &signature)?;
+            Some(_) => {}
+            None => ensure!(!cfg!(windows), "{} carries no program signature", archive.display()),
         }
     }
     let _ = runtime;

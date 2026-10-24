@@ -170,7 +170,7 @@ fn prepare(root: &Path) -> Result<Prepared, String> {
             .prefix("shell-repair-")
             .tempdir_in(root.join("updates"))
             .map_err(|e| format!("preparing repair executable under {}: {e}", root.display()))?;
-        let program = fastctx_update::kernel::unpack(&package, directory.path())?;
+        let program = fastctx_update::kernel::unpack(&package.path, directory.path())?;
         Ok(Prepared { program, id: Some(journal.report.id.clone()), _directory: Some(directory) })
     })();
     match result {

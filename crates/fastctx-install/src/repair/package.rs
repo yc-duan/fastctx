@@ -23,12 +23,19 @@ pub async fn manifest(root: &Path, version: &str) -> anyhow::Result<Manifest> {
         .with_context(|| format!("finding repair manifest for {version}"))
 }
 
+/// A checked package of a release, and whether it had to be brought: a
+/// cache without it is not broken, so bringing it is no repair of its own.
+pub struct Obtained {
+    pub path: PathBuf,
+    pub brought: bool,
+}
+
 pub async fn obtain(
     root: &Path,
     manifest: &Manifest,
     target: &str,
     journal: &mut super::Journal,
-) -> anyhow::Result<PathBuf> {
+) -> anyhow::Result<Obtained> {
     let cache = cache(root);
     let package =
         manifest.package(target).with_context(|| format!("{} has no package for {target}", manifest.version))?;
@@ -36,14 +43,13 @@ pub async fn obtain(
     clear_incomplete(root, &cache, &manifest.version, target, journal)?;
     if path.try_exists()? {
         match fastctx_update::verify::file(&path, &package.signature, &manifest.version) {
-            Ok(()) => return Ok(path),
+            Ok(()) => return Ok(Obtained { path, brought: false }),
             Err(why) => {
                 journal.action(format!("delete invalid package {}: {why}", path.display()))?;
                 std::fs::remove_file(&path).with_context(|| format!("deleting invalid package {}", path.display()))?;
             }
         }
     }
-    journal.action(format!("obtain and verify {}", path.display()))?;
     // A live node owns its numeric partial names and may clear them on startup.
     // Standalone acquisition must not enter that inventory until it is complete.
     let temporary = tempfile::Builder::new()
@@ -72,7 +78,7 @@ pub async fn obtain(
     output.commit().with_context(|| format!("publishing verified package {}", path.display()))?;
     drop(input);
     temporary.close().context("removing isolated package acquisition")?;
-    Ok(path)
+    Ok(Obtained { path, brought: true })
 }
 
 fn clear_incomplete(

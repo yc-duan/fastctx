@@ -4,7 +4,10 @@ use super::Journal;
 use crate::renewal as store;
 use anyhow::{Context as _, ensure};
 use fastctx_platform::FileLock;
-use fastctx_types::{ProcessIdentity, renewal::Build};
+use fastctx_types::{
+    ProcessIdentity,
+    renewal::{Build, Phase},
+};
 use std::path::Path;
 
 pub fn check_version(root: &Path, offered: &Build) -> anyhow::Result<()> {
@@ -64,10 +67,21 @@ pub fn clean(root: &Path, source: &Path, build: &Build, journal: &mut Journal) -
         })?
         .with_context(|| format!("{} is held by a handover not proved superseded", entry.display()))?,
     };
+    let plan = store::read(root)?;
     for item in std::fs::read_dir(&directory)? {
         let item = item?;
         let name = item.file_name().to_string_lossy().into_owned();
-        if !(name.starts_with("coordinator-") || name.starts_with("prepared-")) || !name.ends_with(".json") {
+        let Some(digest) = name
+            .strip_prefix("coordinator-")
+            .or_else(|| name.strip_prefix("prepared-"))
+            .and_then(|rest| rest.strip_suffix(".json"))
+        else {
+            continue;
+        };
+        // An ended handover's record, once its renewal is complete or for
+        // another program, is left for the program collection to clear in its
+        // course: a healthy machine keeps them, and they block nothing.
+        if plan.as_ref().is_none_or(|plan| plan.phase == Phase::Complete || plan.candidate.build.digest != digest) {
             continue;
         }
         if let Some(identity) = store::read_json::<ProcessIdentity>(&item.path())?
