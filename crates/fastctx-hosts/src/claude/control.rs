@@ -23,9 +23,20 @@ pub struct Host {
     /// hot reload. They remain request bridges, but do not offer controls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command_contract: Option<u32>,
+    /// Unclaimed controls can be taken by a replacement activation under a durable claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff_contract: Option<u32>,
     /// The settings flag observed by this activation, retained across cold resume.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assisted: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Claim {
+    pub host: Host,
+    pub process: Option<ProcessIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

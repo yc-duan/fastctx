@@ -20,7 +20,7 @@
 pub(crate) mod calls;
 mod catalog;
 pub(crate) mod control;
-mod control_outcome;
+pub(crate) mod control_outcome;
 mod fork;
 mod fork_attachments;
 mod fork_history;

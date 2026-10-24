@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use super::control_outcome;
 use fastctx_hosts::claude::control::{self as files, Answer, Host, Waiting};
 use fastctx_types::ResidentId;
 use fastctx_types::ipc::Failure;
@@ -11,7 +12,6 @@ use fastctx_types::session::control::{Control, ControlKind, Controlled, Offers};
 use fastctx_types::session::{Happened, SessionChange, SessionEvent};
 use jiff::Timestamp;
 use serde_json::{Value, json};
-use super::control_outcome;
 
 use crate::Node;
 
@@ -21,7 +21,6 @@ pub struct Bridge {
     requests: Mutex<HashMap<String, Request>>,
     observed: Mutex<HashSet<(String, String, fastctx_types::ProcessIdentity)>>,
 }
-
 
 #[derive(Clone)]
 struct Request {
@@ -42,18 +41,7 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
     {
         return Err(Failure::not_run(fastctx_hosts::claude::assisted::COMMAND_REFUSED));
     }
-    // A model chosen for a conversation whose session is not running is kept
-    // where its mod reads it when the session runs again: nothing is woken
-    // for a choice its next turn takes.
-    if let Control::Model { model, effort } = &control
-        && node.residents.about(resident).is_some_and(|(about, _)| about.session.is_some())
-        && !running(node, resident)?
-    {
-        return keep_selection(node, resident, model.clone(), effort.clone());
-    }
-    if !matches!(control, Control::Answer { .. }) {
-        super::resume::ready(node, resident).await?;
-    }
+    super::resume::ready(node, resident).await?;
     match control {
         Control::Fork { through } => super::fork::fork(node, resident, through).await,
         Control::Answer { request, answer } => answer_request(node, resident, request, answer).await,
@@ -116,59 +104,6 @@ pub(super) fn running(node: &Node, resident: &ResidentId) -> Result<bool, Failur
             && host.command_contract == Some(files::COMMAND_CONTRACT)),
         None => Ok(false),
     }
-}
-
-/// The reasoning efforts Claude Code takes, as its mod checks them.
-const EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
-
-fn keep_selection(
-    node: &Node,
-    resident: &ResidentId,
-    model: Option<String>,
-    effort: Option<String>,
-) -> Result<Controlled, Failure> {
-    if model.as_deref().is_some_and(|model| model.trim().is_empty()) {
-        return Err(Failure::new("a model cannot be empty"));
-    }
-    if let Some(effort) = &effort
-        && !EFFORTS.contains(&effort.as_str())
-    {
-        return Err(Failure::new(format!("unknown Claude reasoning effort: {effort}")));
-    }
-    let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
-    let session = about.session.ok_or_else(|| Failure::new("Claude has not identified this conversation yet"))?;
-    let directory = files::directory(node.world.path(), &session);
-    let mut selection = files::read::<Value>(&directory.join("selection.json")).map_err(failure)?.unwrap_or(json!({}));
-    if !selection.is_object() {
-        selection = json!({});
-    }
-    if let Some(model) = &model {
-        selection["model"] = json!(model);
-    }
-    if let Some(effort) = &effort {
-        selection["effort"] = json!(effort);
-    }
-    let write = |name: &str, value: &Value| {
-        fastctx_platform::ensure_private_dir(&directory)
-            .and_then(|()| {
-                fastctx_platform::publish(
-                    &directory.join(name),
-                    &serde_json::to_vec(value).map_err(std::io::Error::other)?,
-                    fastctx_platform::Permissions::Private,
-                )
-            })
-            .map_err(failure)
-    };
-    write("selection.json", &selection)?;
-    // A model chosen by the user stops following the engine's own routing,
-    // as the mod does when it takes the choice itself.
-    if model.is_some() {
-        write("routing.json", &Value::Null)?;
-    }
-    Ok(Controlled::Selected {
-        model: selection["model"].as_str().map(str::to_owned),
-        effort: selection["effort"].as_str().map(str::to_owned),
-    })
 }
 
 pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, Failure> {
@@ -380,7 +315,8 @@ pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Val
     let (directory, host) = live_host(node, resident)?;
     let key = crate::speech::new_id("control").to_string();
     let path = directory.join("inbox").join(format!("{key}.json"));
-    let evidence = control_outcome::Evidence::capture(&directory, &control)
+    let handoff = host.handoff_contract == Some(1);
+    let mut evidence = control_outcome::Evidence::capture(&directory, &control)
         .map_err(|error| Failure::not_run(format!("preparing Claude control evidence: {error}")))?;
     node.claude.bridge.calls.lock().expect("never poisoned").insert(key.clone());
     struct Pending<'a> {
@@ -398,7 +334,7 @@ pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Val
     }
     let _pending = Pending { node, key: &key };
     let result = fastctx_platform::current_identity().and_then(|controller| {
-        files::write_message(&path, &json!({"instance":host.instance,"controller":controller,"control":control}))
+        files::write_message(&path, &json!({"instance":host.instance,"controller":controller,"control":control,"handoff_contract":if handoff {1} else {0}}))
     });
     if let Err(error) = result {
         node.claude.bridge.calls.lock().expect("never poisoned").remove(&key);
@@ -406,35 +342,67 @@ pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Val
     }
     let within = if control_outcome::compacts(&control) {
         crate::control_queue::COMPACTING
-    } else { std::time::Duration::from_secs(120) };
+    } else {
+        std::time::Duration::from_secs(120)
+    };
     let began = std::time::Instant::now();
     let _outside = fastctx_platform::doing::waiting_outside("Claude control receipt", within);
     loop {
+        if handoff
+            && files::read::<files::Claim>(&directory.join("claims").join(format!("{key}.json")))
+                .map_err(failure)?
+                .is_none()
+            && !running(node, resident)?
+        {
+            super::resume::ready(node, resident).await.map_err(|error| {
+                control_outcome::unknown(&format!("reconnecting the submitted Claude control: {}", error.message))
+            })?;
+        }
         let result = {
             let gate = super::reading(node, &host.session);
             let _reading = gate.lock().await;
             let reply = directory.join("replies").join(format!("{key}.json"));
+            let claimed = files::read::<files::Claim>(&directory.join("claims").join(format!("{key}.json")))
+                .map_err(|error| control_outcome::unknown(&format!("reading Claude's control claim: {error}")))?;
+            if let Some(claim) = &claimed {
+                evidence.executing(claim).map_err(|error| {
+                    control_outcome::unknown(&format!("reading Claude's claimed evidence: {error}"))
+                })?;
+            }
+            let executing = claimed.as_ref().map(|claim| &claim.host).unwrap_or(&host);
             let result = if reply.with_extension("done").exists() {
-                Some(files::read_message(&reply).map_err(|error| control_outcome::unknown(&format!("reading Claude's receipt: {error}")))
-                    .and_then(control_outcome::reply))
-            } else if directory.join("closed").join(format!("{}.json", host.instance)).exists()
-                || !fastctx_platform::is_alive(&host.process).map_err(failure)?
+                Some(
+                    files::read_message(&reply)
+                        .map_err(|error| control_outcome::unknown(&format!("reading Claude's receipt: {error}")))
+                        .and_then(control_outcome::reply),
+                )
+            } else if handoff && claimed.is_none() {
+                None
+            } else if directory.join("closed").join(format!("{}.json", executing.instance)).exists()
+                || !fastctx_platform::is_alive(&executing.process).map_err(failure)?
             {
                 match evidence.completed() {
                     Ok(true) => Some(Ok(control_outcome::done())),
-                    Err(error) => Some(Err(control_outcome::unknown(&format!("checking Claude's control evidence: {error}")))),
+                    Err(error) => {
+                        Some(Err(control_outcome::unknown(&format!("checking Claude's control evidence: {error}"))))
+                    }
                     Ok(false) if evidence.may_finish().map_err(failure)? => None,
                     Ok(false) => Some(Err(control_outcome::unknown("the Claude activation ended without a receipt"))),
                 }
-            } else { None };
+            } else {
+                None
+            };
             if result.is_some()
                 && let Err(error) = collect_invocation(&directory, &key)
             {
-                node.log.line(format_args!("collecting Claude control {key} after its outcome was established: {error}"));
+                node.log
+                    .line(format_args!("collecting Claude control {key} after its outcome was established: {error}"));
             }
             result
         };
-        if let Some(result) = result { return result; }
+        if let Some(result) = result {
+            return result;
+        }
         if began.elapsed() >= within {
             return Err(control_outcome::unknown("Claude did not confirm the control before its deadline"));
         }

@@ -11,9 +11,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 #[derive(Clone, Default, Deserialize, Serialize)]
-pub(super) struct Evidence {
+pub(crate) struct Evidence {
     compact: bool,
     process: Option<ProcessIdentity>,
+    #[serde(default)]
+    ended: Option<PathBuf>,
     transcript: Option<Boundary>,
 }
 
@@ -25,15 +27,19 @@ struct Boundary {
 }
 
 pub(super) fn compacts(control: &Value) -> bool {
-    matches!(control["do"].as_str(), Some("compact" | "goal_compact"))
-        || (control["do"] == "command" && control["name"] == "compact")
+    matches!(control["do"].as_str(), Some("compact" | "goal_compact")) || (control["do"] == "command" && control["name"] == "compact")
 }
 
 impl Evidence {
-    pub(super) fn capture(directory: &Path, control: &Value) -> io::Result<Self> {
+    pub(crate) fn capture(directory: &Path, control: &Value) -> io::Result<Self> {
         let compact = compacts(control);
         let session = directory.parent().expect("control directory");
-        let process = exchange::registration(session)?.and_then(|registration| registration.process);
+        let registration = exchange::registration(session)?;
+        let ended = registration
+            .as_ref()
+            .and_then(|registration| registration.instance.as_ref())
+            .map(|instance| session.join("closed").join(instance));
+        let process = registration.and_then(|registration| registration.process);
         let transcript = if compact {
             exchange::transcript(session)?
                 .map(|path| -> io::Result<_> {
@@ -59,7 +65,7 @@ impl Evidence {
         } else {
             None
         };
-        Ok(Self { compact, process, transcript })
+        Ok(Self { compact, process, ended, transcript })
     }
 
     /// A replacement boundary must consume the context this request saw. A
@@ -95,7 +101,18 @@ impl Evidence {
         }
     }
 
+    pub(super) fn executing(&mut self, claim: &fastctx_hosts::claude::control::Claim) -> io::Result<()> {
+        if let Some(value) = &claim.evidence {
+            *self = serde_json::from_value(value.clone()).map_err(io::Error::other)?;
+        }
+        self.process = claim.process.clone();
+        Ok(())
+    }
+
     pub(super) fn may_finish(&self) -> io::Result<bool> {
+        if self.ended.as_ref().map(|path| path.try_exists()).transpose()?.unwrap_or(false) {
+            return Ok(false);
+        }
         if !self.compact || self.transcript.is_none() {
             return Ok(false);
         }

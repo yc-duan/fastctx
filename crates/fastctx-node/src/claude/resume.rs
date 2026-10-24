@@ -8,7 +8,7 @@ use std::time::Duration;
 
 /// The caller holds the conversation action gate, also used by word delivery.
 pub(super) async fn ready(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
-    if super::control::running(node, id)? {
+    if ready_activation(node, id)? {
         return isolated(node, id, false);
     }
     let naming = tokio::time::Instant::now() + Duration::from_secs(120);
@@ -19,7 +19,7 @@ pub(super) async fn ready(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failu
             break about;
         }
         if tokio::time::Instant::now() >= naming {
-            return Err(Failure::new(
+            return Err(Failure::not_run(
                 "Claude did not identify the conversation within 120 seconds; the command was not sent",
             ));
         }
@@ -35,17 +35,16 @@ pub(super) async fn ready(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failu
         let (current, _) = node.residents.about(id).ok_or_else(crate::authorization::no_subject)?;
         crate::homes::listed(node, current.host.agent.as_str(), current.home.as_deref())?;
         crate::assists::may_turn(node, id, &current)?;
-        crate::profile::session::claude(node, id, false)?;
         super::management::wake(node, about.home.as_deref(), session).await?;
     }
     let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
     loop {
         node.residents.active(id)?;
-        if super::control::running(node, id)? {
+        if ready_activation(node, id)? {
             return isolated(node, id, true);
         }
         if tokio::time::Instant::now() >= deadline {
-            return Err(Failure::new(
+            return Err(Failure::not_run(
                 "Claude's conversation did not connect its current control plugin within 120 seconds; the command was not sent",
             ));
         }
@@ -54,6 +53,25 @@ pub(super) async fn ready(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failu
             () = tokio::time::sleep(Duration::from_millis(100)) => {},
         }
     }
+}
+
+fn ready_activation(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
+    let Some(session) = node.residents.about(id).and_then(|(about, _)| about.session) else { return Ok(false) };
+    let directory = files::directory(node.world.path(), &session);
+    let Some(host) = files::host(&directory).map_err(|error| Failure::new(error.to_string()))? else {
+        return Ok(false);
+    };
+    if host.command_contract != Some(files::COMMAND_CONTRACT) {
+        return Ok(false);
+    }
+    // host.done identifies the activation before its asynchronous catalog and
+    // control scanner are initialized. Wait for the latter's committed receipt.
+    let receipt = if host.handoff_contract == Some(1) { "ready" } else { "catalog" };
+    Ok(directory
+        .join(format!("{receipt}-{}.done", host.instance))
+        .try_exists()
+        .map_err(|error| Failure::new(error.to_string()))?
+        && files::active(&directory, &host).map_err(|error| Failure::new(error.to_string()))?)
 }
 
 fn isolated(node: &Node, id: &ResidentId, resumed: bool) -> Result<(), Failure> {
@@ -71,7 +89,7 @@ fn isolated(node: &Node, id: &ResidentId, resumed: bool) -> Result<(), Failure> 
     // An already-running older mod predates this report; its recorded birth
     // still proves isolation. A fresh resume must confirm its actual settings.
     if reported == Some(false) || (resumed && reported != Some(true)) {
-        return Err(Failure::new(
+        return Err(Failure::not_run(
             "Claude's control plugin did not confirm assisted host isolation; the command was not sent",
         ));
     }

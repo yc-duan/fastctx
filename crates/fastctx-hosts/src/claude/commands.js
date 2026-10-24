@@ -74,7 +74,15 @@ async function controlCompact($, state, instructions) {
   state.compacting = true
   try {
     const parent = state.lastRawUuid
-    const result = await $.session.compact(instructions === undefined ? undefined : { instructions })
+    let result
+    try { result = await $.session.compact(instructions === undefined ? undefined : { instructions }) }
+    catch (error) {
+      // The public method throws this native no-op instead of returning skip.
+      if (String(error).endsWith('$.session.compact: Not enough messages to compact.')) {
+        return { kind: 'reported', said: 'Not enough messages to compact.' }
+      }
+      throw error
+    }
     if (result.skip !== undefined) return { kind: 'refused', said: result.skip }
     // The host skips this plugin's own compact hook for this public method.
     await compactedCheckpoint($, state, result.messages, parent)
