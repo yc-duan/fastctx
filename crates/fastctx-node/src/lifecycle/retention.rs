@@ -43,11 +43,12 @@ pub(crate) fn held(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
     {
         return Ok(true);
     }
-    // Even facts that ride with the next turn are kept work. A runtime is
-    // not retired while its plugin might be acknowledging any of them.
-    Ok(!crate::inbox::pending(&node.world.conversation(id))
+    // Context that rides with the next turn does not itself require a runtime.
+    // Untaken plugin envelopes return to Waiting when that activation ends.
+    Ok(crate::inbox::pending(&node.world.conversation(id))
         .map_err(|error| Failure::new(error.to_string()))?
-        .is_empty())
+        .iter()
+        .any(|row| row.delivery.notice.along().is_none()))
 }
 
 async fn consider(node: &Arc<Node>, id: &ResidentId, periodic: bool) -> Result<(), Failure> {

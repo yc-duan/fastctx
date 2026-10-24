@@ -36,11 +36,11 @@ pub fn output_tracked(command: Command, what: &str, within: Duration) -> Result<
     output_inner(command, what, within, &mut started).map_err(|error| OutputFailure { error, started })
 }
 
-fn output_inner(mut command: Command, what: &str, within: Duration, started: &mut bool) -> io::Result<Output> {
+fn output_inner(mut command: Command, what: &str, within: Duration, spawned: &mut bool) -> io::Result<Output> {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let _waiting = crate::doing::waiting_outside(what, within);
     let mut child = command.spawn()?;
-    *started = true;
+    *spawned = true;
     let stdout = child.stdout.take().map(read);
     let stderr = child.stderr.take().map(read);
     let started = Instant::now();

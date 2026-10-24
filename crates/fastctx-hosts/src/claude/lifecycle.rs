@@ -21,9 +21,9 @@ struct InFlight {
     kinds: Vec<String>,
 }
 
-/// Missing, unreadable or unfamiliar evidence is an error, never permission
-/// to retire. `queued` is deliberately ignored: Claude can leave a stale
-/// queue snapshot after settling a turn (2.1.310).
+/// Unreadable or unfamiliar evidence is an error, never permission to retire.
+/// An absent pins file means no pins, as in the supervisor. `queued` is
+/// ignored because Claude can leave a stale queue snapshot after settling.
 pub fn idle_worker(home: &Path, session: &str, listed: &str) -> Result<Option<IdleWorker>, String> {
     let rows: Vec<serde_json::Value> = serde_json::from_str(listed).map_err(|error| error.to_string())?;
     let mut matching =
@@ -43,7 +43,14 @@ pub fn idle_worker(home: &Path, session: &str, listed: &str) -> Result<Option<Id
         return Ok(None);
     };
     let job: Job = read(&home.join("jobs").join(id).join("state.json"))?;
-    let pins: Vec<String> = read(&home.join("jobs/pins.json"))?;
+    let pins_path = home.join("jobs/pins.json");
+    let pins: Vec<String> = match std::fs::read(&pins_path) {
+        Ok(bytes) => {
+            serde_json::from_slice(&bytes).map_err(|error| format!("reading {}: {error}", pins_path.display()))?
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(format!("reading {}: {error}", pins_path.display())),
+    };
     if job.in_flight.tasks != 0
         || job.in_flight.kinds.iter().any(|kind| kind == "session_cron")
         || pins.iter().any(|pin| pin == id)

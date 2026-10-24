@@ -11,6 +11,9 @@ const PROBE: Duration = Duration::from_secs(3);
 const STOP: Duration = Duration::from_secs(5);
 
 pub(crate) async fn idle(node: &Arc<Node>, about: &About) -> Result<Option<IdleWorker>, Failure> {
+    if !node.residents.host_present(&about.id) {
+        return Ok(None);
+    }
     let Some(session) = &about.session else { return Ok(None) };
     let command = super::command(node, about.home.as_deref())?;
     let home = command
