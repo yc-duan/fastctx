@@ -38,6 +38,7 @@ pub(super) async fn ready(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failu
         super::management::wake(node, about.home.as_deref(), session).await?;
     }
     let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+    let mut probe = tokio::time::Instant::now() + Duration::from_secs(1);
     loop {
         node.residents.active(id)?;
         if ready_activation(node, id)? {
@@ -47,6 +48,17 @@ pub(super) async fn ready(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failu
             return Err(Failure::not_run(
                 "Claude's conversation did not connect its current control plugin within 120 seconds; the command was not sent",
             ));
+        }
+        // A host can still be exiting at the first liveness check, or end
+        // during plugin startup. Recheck until the ready receipt arrives.
+        if tokio::time::Instant::now() >= probe {
+            if !super::alive(node, about.home.as_deref(), session).await? {
+                let (current, _) = node.residents.about(id).ok_or_else(crate::authorization::no_subject)?;
+                crate::homes::listed(node, current.host.agent.as_str(), current.home.as_deref())?;
+                crate::assists::may_turn(node, id, &current)?;
+                super::management::wake(node, about.home.as_deref(), session).await?;
+            }
+            probe = tokio::time::Instant::now() + Duration::from_secs(1);
         }
         tokio::select! {
             () = node.claude.changed.notified() => {},
