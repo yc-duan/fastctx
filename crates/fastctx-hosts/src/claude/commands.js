@@ -107,7 +107,40 @@ async function controlCompact($, state, instructions) {
   } finally { state.compacting = false }
 }
 
-const sideAnswerInstruction = "Answer the user's side question using the retained conversation supplied as JSON. Do not continue its tasks."
+const sideAnswerInstruction = "The user asks a side question about the conversation below without adding it to that conversation. Answer it from the conversation. Do not continue the conversation's work and do not call tools."
+// How much of the retained conversation a side question carries, the latest kept.
+const SIDE_ANSWER_CHARS = 300000
+
+function sideAnswerClip(text, limit) {
+  return text.length > limit ? text.slice(0, limit) + ' [...]' : text
+}
+
+function sideAnswerResult(content) {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content.map((block) => block?.type === 'text' ? block.text ?? '' : block?.type === 'image' ? '(an image)' : '').filter(Boolean).join('\n')
+}
+
+// The retained conversation as a model reads a transcript: each one's words in
+// order, a tool's use and its result in brief, a picture named. Too long, its
+// earliest part is left out, and that is said.
+function sideAnswerTranscript(messages) {
+  const lines = []
+  for (const message of Array.isArray(messages) ? messages : []) {
+    const who = message?.role === 'assistant' ? 'Assistant' : 'User'
+    const blocks = typeof message?.content === 'string' ? [{ type: 'text', text: message.content }] : Array.isArray(message?.content) ? message.content : []
+    for (const block of blocks) {
+      // The host's own reminders inside a user's message are not the conversation.
+      const said = block?.type === 'text' ? (block.text ?? '').replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim() : ''
+      if (said) lines.push(who + ': ' + said)
+      else if (block?.type === 'tool_use') lines.push('Assistant used ' + block.name + ': ' + sideAnswerClip(JSON.stringify(block.input ?? {}), 400))
+      else if (block?.type === 'tool_result') lines.push('Result: ' + sideAnswerClip(sideAnswerResult(block.content).trim(), 800))
+      else if (block?.type === 'image') lines.push(who + ': (an image)')
+    }
+  }
+  const text = lines.join('\n\n')
+  return text.length > SIDE_ANSWER_CHARS ? '(The earlier part of the conversation is left out.)\n\n' + text.slice(text.length - SIDE_ANSWER_CHARS) : text
+}
 
 async function controlSideAnswer($, state, question) {
   const forked = await $.model.fork({ prompt: question })
@@ -117,7 +150,7 @@ async function controlSideAnswer($, state, question) {
   const conversation = await $.session.messages({ as: 'api' })
   const reply = await $.model.complete({ model: state.selection.model ?? await $.session.model(),
     ...(state.selection.effort == null ? {} : { effort: state.selection.effort }),
-    system: sideAnswerInstruction, prompt: JSON.stringify({ conversation, question }) })
+    system: sideAnswerInstruction, prompt: '<conversation>\n' + sideAnswerTranscript(conversation) + '\n</conversation>\n\nSide question: ' + question })
   return { ...reply, context_source: 'retained_conversation' }
 }
 
