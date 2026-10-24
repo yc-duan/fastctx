@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use fastctx_hosts::claude::exchange;
+use fastctx_hosts::claude::{control as files, exchange};
 use fastctx_types::ProcessIdentity;
 use fastctx_types::ipc::Failure;
 use serde::{Deserialize, Serialize};
@@ -12,6 +12,8 @@ use serde_json::{Value, json};
 
 #[derive(Clone, Default, Deserialize, Serialize)]
 pub(crate) struct Evidence {
+    #[serde(default)]
+    control: Value,
     compact: bool,
     process: Option<ProcessIdentity>,
     #[serde(default)]
@@ -40,7 +42,7 @@ impl Evidence {
             .and_then(|registration| registration.instance.as_ref())
             .map(|instance| session.join("closed").join(instance));
         let process = registration.and_then(|registration| registration.process);
-        let transcript = if compact {
+        let transcript = if compact || rename(control).is_some() {
             exchange::transcript(session)?
                 .map(|path| -> io::Result<_> {
                     let mut reader = BufReader::new(File::open(&path)?);
@@ -54,7 +56,11 @@ impl Evidence {
                             break;
                         }
                         let row: Value = serde_json::from_str(&line).map_err(io::Error::other)?;
-                        if let Some(uuid) = row["uuid"].as_str() {
+                        if row["isSidechain"] != true
+                            && row.get("agentId").is_none_or(Value::is_null)
+                            && matches!(row["type"].as_str(), Some("user" | "assistant" | "attachment" | "system"))
+                            && let Some(uuid) = row["uuid"].as_str()
+                        {
                             parent = Some(uuid.to_owned());
                         }
                         offset += size as u64;
@@ -65,7 +71,16 @@ impl Evidence {
         } else {
             None
         };
-        Ok(Self { compact, process, ended, transcript })
+        let control = if rename(control).is_some()
+            || control["do"] == "model"
+            || (control["do"] == "command"
+                && matches!(control["name"].as_str(), Some("model" | "reload-plugins" | "exit" | "quit")))
+        {
+            control.clone()
+        } else {
+            Value::Null
+        };
+        Ok(Self { control, compact, process, ended, transcript })
     }
 
     /// A replacement boundary must consume the context this request saw. A
@@ -101,6 +116,73 @@ impl Evidence {
         }
     }
 
+    pub(super) fn recovered(&self, directory: &Path, key: &str, host: &files::Host) -> io::Result<Option<Value>> {
+        if self.compact {
+            return Ok(self.completed()?.then(done));
+        }
+        if let Some(name) = rename(&self.control)
+            && self.renamed(name)?
+        {
+            return Ok(Some(done()));
+        }
+        let selected = if self.control["do"] == "model" {
+            Some((self.control["model"].as_str(), self.control["effort"].as_str()))
+        } else if self.control["do"] == "command" && self.control["name"] == "model" {
+            self.control["args"].as_str().map(|args| (Some(args.trim()), None))
+        } else {
+            None
+        };
+        if let Some((model, effort)) = selected
+            && (model.is_some() || effort.is_some())
+            && let Some(selection) = files::read_mod::<Value>(&directory.join("selection.json"))?
+            && model.is_none_or(|model| selection["model"] == model)
+            && effort.is_none_or(|effort| selection["effort"] == effort)
+            && (model.is_none() || files::read_mod::<Value>(&directory.join("routing.json"))? == Some(Value::Null))
+        {
+            return Ok(Some(json!({"kind":"selected", "model":selection["model"], "effort":selection["effort"]})));
+        }
+        let path = directory.join("started").join(format!("{key}.json"));
+        if path.with_extension("done").try_exists()?
+            && let Some(started) = files::read_mod::<Value>(&path)?.filter(|value| value["instance"] == host.instance)
+        {
+            if started["action"] == "reload-plugins"
+                && files::host(directory)?
+                    .is_some_and(|current| current.session == host.session && current.instance != host.instance)
+            {
+                return Ok(Some(done()));
+            }
+            if matches!(started["action"].as_str(), Some("exit" | "quit"))
+                && directory.join("closed").join(format!("{}.json", host.instance)).try_exists()?
+            {
+                return Ok(Some(done()));
+            }
+        }
+        Ok(None)
+    }
+
+    fn renamed(&self, name: &str) -> io::Result<bool> {
+        let Some(boundary) = &self.transcript else { return Ok(false) };
+        let mut file = File::open(&boundary.path)?;
+        if file.metadata()?.len() < boundary.offset {
+            return Ok(false);
+        }
+        file.seek(SeekFrom::Start(boundary.offset))?;
+        let mut reader = BufReader::new(file);
+        let mut title = None;
+        let mut line = String::new();
+        loop {
+            line.clear();
+            if reader.read_line(&mut line)? == 0 || !line.ends_with('\n') {
+                break;
+            }
+            let row: Value = serde_json::from_str(&line).map_err(io::Error::other)?;
+            if row["type"] == "custom-title" {
+                title = row["customTitle"].as_str().map(str::to_owned);
+            }
+        }
+        Ok(title.as_deref() == Some(name))
+    }
+
     pub(super) fn executing(&mut self, claim: &fastctx_hosts::claude::control::Claim) -> io::Result<()> {
         if let Some(value) = &claim.evidence {
             *self = serde_json::from_value(value.clone()).map_err(io::Error::other)?;
@@ -113,10 +195,25 @@ impl Evidence {
         if self.ended.as_ref().map(|path| path.try_exists()).transpose()?.unwrap_or(false) {
             return Ok(false);
         }
-        if !self.compact || self.transcript.is_none() {
+        let reconcilable = (self.compact && self.transcript.is_some())
+            || rename(&self.control).is_some()
+            || self.control["do"] == "model"
+            || (self.control["do"] == "command"
+                && matches!(self.control["name"].as_str(), Some("model" | "reload-plugins" | "exit" | "quit")));
+        if !reconcilable {
             return Ok(false);
         }
         self.process.as_ref().map(fastctx_platform::is_alive).transpose().map(|alive| alive.unwrap_or(false))
+    }
+}
+
+fn rename(control: &Value) -> Option<&str> {
+    if control["do"] == "rename" {
+        control["name"].as_str()
+    } else if control["do"] == "command" && control["name"] == "rename" {
+        control["args"].as_str().map(str::trim).filter(|name| !name.is_empty())
+    } else {
+        None
     }
 }
 

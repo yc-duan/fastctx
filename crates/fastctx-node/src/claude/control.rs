@@ -27,7 +27,7 @@ struct Request {
     resident: ResidentId,
     directory: PathBuf,
     waiting: Waiting,
-    completed: Arc<tokio::sync::watch::Sender<Option<Answer>>>,
+    completed: Arc<tokio::sync::watch::Sender<Option<Result<Answer, Failure>>>>,
 }
 
 pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
@@ -45,7 +45,7 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
     match control {
         Control::Fork { through } => super::fork::fork(node, resident, through).await,
         Control::Answer { request, answer } => answer_request(node, resident, request, answer).await,
-        Control::Rewind { .. } if cannot_replace_prefix(node, resident) => Err(Failure::new(
+        Control::Rewind { .. } if cannot_replace_prefix(node, resident) => Err(Failure::not_run(
             "This Claude Code skips a plugin's own compaction handler, so rewind cannot keep the chosen turns; fork through the selected turn instead",
         )),
         Control::Rewind { from } => {
@@ -302,17 +302,19 @@ pub(super) async fn selection(
 }
 
 async fn invoke_action(node: &Arc<Node>, resident: &ResidentId, control: Value) -> Result<Value, Failure> {
-    match invoke(node, resident, control.clone()).await {
-        Err(error) if error.not_run => {
-            super::resume::ready(node, resident).await?;
-            invoke(node, resident, control).await
-        }
-        result => result,
-    }
+    invoke(node, resident, control).await
 }
 
 pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Value) -> Result<Value, Failure> {
-    let (directory, host) = live_host(node, resident)?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
+    let (directory, host) = loop {
+        match live_host(node, resident) {
+            Err(error) if error.not_run && control["do"] != "offers" && tokio::time::Instant::now() < deadline => {
+                super::resume::ready(node, resident).await?;
+            }
+            result => break result?,
+        }
+    };
     let key = crate::speech::new_id("control").to_string();
     let path = directory.join("inbox").join(format!("{key}.json"));
     let handoff = host.handoff_contract == Some(1);
@@ -350,9 +352,9 @@ pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Val
     loop {
         if handoff
             && files::read::<files::Claim>(&directory.join("claims").join(format!("{key}.json")))
-                .map_err(failure)?
+                .map_err(|error| control_outcome::unknown(&format!("reading Claude's control claim: {error}")))?
                 .is_none()
-            && !running(node, resident)?
+            && !running(node, resident).map_err(|error| control_outcome::unknown(&error.message))?
         {
             super::resume::ready(node, resident).await.map_err(|error| {
                 control_outcome::unknown(&format!("reconnecting the submitted Claude control: {}", error.message))
@@ -379,15 +381,20 @@ pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Val
             } else if handoff && claimed.is_none() {
                 None
             } else if directory.join("closed").join(format!("{}.json", executing.instance)).exists()
-                || !fastctx_platform::is_alive(&executing.process).map_err(failure)?
+                || !fastctx_platform::is_alive(&executing.process)
+                    .map_err(|error| control_outcome::unknown(&error.to_string()))?
             {
-                match evidence.completed() {
-                    Ok(true) => Some(Ok(control_outcome::done())),
+                match evidence.recovered(&directory, &key, executing) {
+                    Ok(Some(result)) => Some(Ok(result)),
                     Err(error) => {
                         Some(Err(control_outcome::unknown(&format!("checking Claude's control evidence: {error}"))))
                     }
-                    Ok(false) if evidence.may_finish().map_err(failure)? => None,
-                    Ok(false) => Some(Err(control_outcome::unknown("the Claude activation ended without a receipt"))),
+                    Ok(None)
+                        if evidence.may_finish().map_err(|error| control_outcome::unknown(&error.to_string()))? =>
+                    {
+                        None
+                    }
+                    Ok(None) => Some(Err(control_outcome::unknown("the Claude activation ended without a receipt"))),
                 }
             } else {
                 None
@@ -425,7 +432,7 @@ async fn answer_request(
         .get(&address.to_string())
         .filter(|request| &request.resident == resident)
         .cloned()
-        .ok_or_else(|| Failure::new("this Claude request is no longer waiting, or belongs to another resident"))?;
+        .ok_or_else(|| Failure::not_run("this Claude request is no longer waiting, or belongs to another resident"))?;
     let mut completed = request.completed.subscribe();
     let question = &request.waiting.question;
     let directory = files::directory(node.world.path(), &question.host.session);
@@ -434,9 +441,9 @@ async fn answer_request(
         || request.directory.join("resolved.json").exists()
         || request.directory.join("cancel.json").exists()
     {
-        return Err(Failure::new("Claude already finished or cancelled this request"));
+        return Err(Failure::not_run("Claude already finished or cancelled this request"));
     }
-    files::validate_answer(question, &answer).map_err(Failure::new)?;
+    files::validate_answer(question, &answer).map_err(Failure::not_run)?;
     files::answer(&request.directory, &Answer::Answer { answer: answer.clone() }).map_err(|error| {
         if error.kind() == std::io::ErrorKind::AlreadyExists {
             Failure::new("this Claude request already has an answer")
@@ -446,7 +453,7 @@ async fn answer_request(
     })?;
     loop {
         if let Some(resolution) = completed.borrow_and_update().clone() {
-            return match resolution {
+            return match resolution? {
                 Answer::Answer { answer: received } if received == answer => Ok(Controlled::Done { said: None }),
                 Answer::Pass { reason } => {
                     Err(Failure::new(format!("Claude stopped waiting before taking this answer: {reason}")))
@@ -454,7 +461,10 @@ async fn answer_request(
                 _ => Err(Failure::new("Claude took a different answer")),
             };
         }
-        completed.changed().await.map_err(|_| Failure::new("the Claude request bridge stopped"))?;
+        completed
+            .changed()
+            .await
+            .map_err(|_| control_outcome::unknown("the Claude request bridge stopped before confirming this answer"))?;
     }
 }
 
@@ -504,7 +514,7 @@ pub async fn look(node: &Arc<Node>, resident: &ResidentId, session_directory: &P
             || !files::active(&directory, &host)?
             || !fastctx_platform::is_alive(&waiting.process)?
         {
-            resolved(node, &key, Answer::Pass { reason: "the Claude request's process or activation ended".into() })?;
+            unconfirmed(node, &key, &path, "the Claude request's process or activation ended")?;
             continue;
         }
         let (completed, _) = tokio::sync::watch::channel(None);
@@ -536,7 +546,7 @@ pub async fn look(node: &Arc<Node>, resident: &ResidentId, session_directory: &P
 }
 
 pub(super) fn collect_invocation(directory: &Path, key: &str) -> std::io::Result<()> {
-    for side in ["inbox", "replies", "retained"] {
+    for side in ["inbox", "replies", "retained", "started"] {
         for extension in ["json", "done", "parts"] {
             match fastctx_platform::owned_directory::delete(&directory.join(side).join(format!("{key}.{extension}"))) {
                 Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
@@ -627,16 +637,29 @@ fn supervise(node: &Arc<Node>, key: String, request: Request) {
                 }
             }
         }
-        let result = files::read::<Answer>(&request.directory.join("resolved.json"))
-            .map(|answer| answer.unwrap_or(Answer::Pass { reason: "Claude stopped waiting for this request".into() }))
-            .and_then(|answer| resolved(&node, &key, answer));
+        let result = unconfirmed(&node, &key, &request.directory, "Claude stopped waiting for this request");
         if let Err(error) = result {
             node.log.line(format_args!("settling Claude's request: {error}"));
         }
     });
 }
 
+fn unconfirmed(node: &Node, key: &str, directory: &Path, reason: &str) -> std::io::Result<()> {
+    let answer = match files::read::<Answer>(&directory.join("resolved.json"))? {
+        Some(answer) => Ok(answer),
+        None if matches!(files::read::<Answer>(&directory.join("answer.json"))?, Some(Answer::Answer { .. })) => {
+            Err(control_outcome::unknown(reason))
+        }
+        None => Ok(Answer::Pass { reason: reason.into() }),
+    };
+    settled(node, key, answer)
+}
+
 fn resolved(node: &Node, key: &str, answer: Answer) -> std::io::Result<()> {
+    settled(node, key, Ok(answer))
+}
+
+fn settled(node: &Node, key: &str, answer: Result<Answer, Failure>) -> std::io::Result<()> {
     let request = {
         let mut requests = node.claude.bridge.requests.lock().expect("never poisoned");
         let request = requests.remove(key);
@@ -652,7 +675,10 @@ fn resolved(node: &Node, key: &str, answer: Answer) -> std::io::Result<()> {
             &request,
             SessionChange::Resolved {
                 id: request.waiting.question.address(),
-                resolution: serde_json::to_value(answer).expect("answer serializes"),
+                resolution: match answer {
+                    Ok(answer) => serde_json::to_value(answer).expect("answer serializes"),
+                    Err(error) => json!({"kind":"unknown", "reason":error.message}),
+                },
             },
         );
         waiting_state(node, &request.resident)?;
@@ -716,7 +742,7 @@ pub fn ended(node: &Node, session: &str) {
         {
             node.log.line(format_args!("releasing Claude's answer helper: {error}"));
         }
-        if let Err(error) = resolved(node, &key, answer) {
+        if let Err(error) = unconfirmed(node, &key, &request.directory, "the Claude conversation ended") {
             node.log.line(format_args!("settling Claude's interrupted request: {error}"));
         }
     }

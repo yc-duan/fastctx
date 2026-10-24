@@ -192,7 +192,13 @@ async function controlPoll($, state) {
       if (!state.ready) {
         const usage = await $.session.usage({ breakdown: 'summary' })
         const tools = usage.context.breakdown?.mcpTools ?? []
-        const owned = state.host.assisted ? 'fastctx' : 'plugin_fastctx-world_fastctx'
+        let server = 'fastctx'
+        if (!state.host.assisted) {
+          const connected = await $.mcp.connect('fastctx')
+          if (!connected.isConnected) { controlRetry($, state); return }
+          server = connected.server
+        }
+        const owned = server.replace(/[^A-Za-z0-9_-]/g, '_')
         if (!tools.some((tool) => tool.isLoaded && tool.serverName.replace(/[^A-Za-z0-9_-]/g, '_') === owned)) {
           controlRetry($, state)
           return
@@ -249,8 +255,11 @@ async function controlReply($, state, file, request) {
         }
         if (!JSON.parse(stdout).claimed) return
       }
-      reply = { ok: await controlExecute($, state, request.control) }
-    } catch (error) { reply = { error: String(error) } }
+      reply = { ok: await controlExecute($, state, { ...request.control, receipt: request.handoff_contract === 1 ? file.slice(0, -5) : undefined }, request.handoff_contract === 1) }
+    } catch (error) {
+      reply = { error: String(error) }
+      if (request.handoff_contract === 1 && error.notRun === true) reply.not_run = true
+    }
   }
   // A failed publication retries only publication, never the host operation.
   state.replies.set(file, reply)
@@ -265,7 +274,7 @@ async function controlReply($, state, file, request) {
   }
 }
 
-async function controlExecute($, state, control) {
+async function controlExecute($, state, control, handoff = false) {
   if (state.closed) throw new Error('this Claude conversation ended')
   if (control.do === 'usage') return $.session.usage({ breakdown: 'summary' })
   if (control.do === 'goal_compact') {
@@ -306,7 +315,7 @@ async function controlExecute($, state, control) {
   }
   if (control.do === 'rename') {
     if (!control.name.trim()) throw new Error('a conversation name cannot be empty')
-    return controlCommand($, state, { name: 'rename', args: control.name })
+    return controlCommand($, state, { name: 'rename', args: control.name, receipt: control.receipt })
   }
   if (control.do === 'model') {
     if (control.model != null || control.effort != null) return controlSelection($, state, control.model, control.effort)
@@ -324,6 +333,7 @@ async function controlExecute($, state, control) {
     return { hashes: state.checkpoints.messages.slice(0, count), retained_until: state.checkpoints.turns[control.through].after_uuid }
   }
   if (control.do === 'checkpoint_export') {
+    if (handoff) return controlExportCheckpoint($, state)
     await controlCheckpoint($, state, null, true)
     return state.checkpoints.full === true ? state.checkpoints : null
   }
@@ -335,8 +345,18 @@ async function controlExecute($, state, control) {
     return { kind: 'done', said: null }
   }
   if (control.do === 'checkpoint_import') {
-    const current = await $.session.messages()
-    const hashes = await messageFingerprints(current)
+    const retained = handoff ? await controlRetained($, state) : null
+    const current = retained?.messages ?? await $.session.messages()
+    const hashes = retained?.hashes ?? await messageFingerprints(current)
+    if (retained?.policy.synthetic_tail === true
+      && retained.policy.retained_messages === control.checkpoints.messages.length + 1) {
+      const inherited = hashes.slice(0, -1)
+      const expectedPrefix = control.checkpoints.messages.slice(-inherited.length)
+      if (inherited.every((hash, index) => expectedPrefix[index] === hash)) {
+        control.checkpoints.messages.push(hashes[hashes.length - 1])
+        control.checkpoints.uuids.push(null)
+      }
+    }
     // A compaction's result that no transcript row anchors stays in the
     // source's memory, and a fork, rebuilt from the transcript, does not
     // carry it (2.1.303). Only such leading messages may be missing; the
@@ -349,12 +369,15 @@ async function controlExecute($, state, control) {
     const expected = control.checkpoints.messages
     const expectedTail = current.length >= 4096 ? expected.slice(-hashes.length) : expected
     if (hashes.length !== expectedTail.length || !hashes.every((hash, index) => expectedTail[index] === hash)) throw new Error('the fork does not carry the same retained message context')
-    const policy = $.process.spawn({ argv: [FASTCTX, 'claude-session-policy', WORLD, state.host.session, '--messages', String(expected.length)],
-      input: JSON.stringify({ tail: current.map(messageProjection) }) })
-    let stdout = '', stderr = ''
-    for await (const piece of policy) { if (piece.stream === 'stdout') stdout += piece.text; else stderr += piece.text }
-    if ((await policy.result).code !== 0) throw new Error('reading the fork context: ' + stderr)
-    const observed = JSON.parse(stdout)
+    let observed = retained?.policy
+    if (observed === undefined) {
+      const policy = $.process.spawn({ argv: [FASTCTX, 'claude-session-policy', WORLD, state.host.session, '--messages', String(expected.length)],
+        input: JSON.stringify({ tail: current.map(messageProjection) }) })
+      let stdout = '', stderr = ''
+      for await (const piece of policy) { if (piece.stream === 'stdout') stdout += piece.text; else stderr += piece.text }
+      if ((await policy.result).code !== 0) throw new Error('reading the fork context: ' + stderr)
+      observed = JSON.parse(stdout)
+    }
     if (observed.context_uuids == null || observed.context_uuids.length !== expected.length) throw new Error('the fork has not persisted its retained context')
     state.checkpoints = control.checkpoints
     for (const point of Object.values(state.checkpoints.turns)) {

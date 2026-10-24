@@ -73,6 +73,46 @@ async function controlCheckpoint($, state, turn, before) {
   return hashes.length
 }
 
+// The public history includes messages discarded by compaction. Bind its
+// retained suffix to the native context before exporting or importing a fork.
+async function controlRetained($, state) {
+  const publicMessages = await $.session.messages()
+  const child = $.process.spawn({ argv: [FASTCTX, 'claude-session-policy', WORLD, state.host.session, '--messages', String(publicMessages.length)],
+    input: JSON.stringify({ retained: true, tail: publicMessages.map(messageProjection) }) })
+  let stdout = '', stderr = ''
+  for await (const piece of child) { if (piece.stream === 'stdout') stdout += piece.text; else stderr += piece.text }
+  if ((await child.result).code !== 0) throw new Error('reading the retained fork context: ' + stderr)
+  const policy = JSON.parse(stdout)
+  if (policy.context_contract !== 1) throw new Error('the World node is too old to identify the retained fork context')
+  const messages = publicMessages.slice(Math.max(0, publicMessages.length - policy.retained_messages))
+  return { messages, hashes: await messageFingerprints(messages), policy }
+}
+
+async function controlExportCheckpoint($, state) {
+  const retained = await controlRetained($, state)
+  let hashes = retained.hashes
+  const policy = retained.policy
+  const previous = state.checkpoints
+  if (policy.retained_messages > hashes.length) {
+    const tail = previous.messages.slice(-hashes.length)
+    if (previous.full !== true || previous.messages.length !== policy.retained_messages
+      || !hashes.every((hash, index) => tail[index] === hash)) return null
+    hashes = previous.messages
+  }
+  const offset = previous.messages.length - hashes.length
+  if (previous.full === true && offset >= 0 && hashes.every((hash, index) => previous.messages[offset + index] === hash)) {
+    state.checkpoints = checkpointsFrom(previous, offset)
+  } else state.checkpoints = { messages: hashes, turns: {}, full: true, uuids: [] }
+  state.checkpoints.uuids = policy.context_uuids
+  state.lastUuid = policy.last_uuid ?? undefined
+  state.lastRawUuid = policy.context_tail ?? undefined
+  state.checkpoints.last_uuid = state.lastUuid ?? null
+  state.checkpoints.last_raw_uuid = state.lastRawUuid ?? null
+  delete state.checkpoints.compacted_parent
+  await saveCheckpoints($, state)
+  return state.checkpoints
+}
+
 async function saveCheckpoints($, state) {
   await writeReport($, state.directory + '/checkpoints', JSON.stringify(state.checkpoints))
 }

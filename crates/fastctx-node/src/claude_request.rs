@@ -185,7 +185,9 @@ pub fn policy(world: &Path, session: &str, messages: Option<usize>, after_compac
                 }
                 match fastctx_hosts::claude::transcript::read(&path) {
                     Ok(read)
-                        if read.context_uuids.len() == messages
+                        if (read.context_uuids.len() == messages
+                            || (expected.as_ref().is_some_and(|value| value["retained"] == true)
+                                && (read.context_uuids.len() <= messages || messages == 4096)))
                             && after_compact.is_none_or(|parent| read.context_parent.as_deref() == Some(parent)) =>
                     {
                         if !read.problems.is_empty() {
@@ -195,6 +197,12 @@ pub fn policy(world: &Path, session: &str, messages: Option<usize>, after_compac
                             .as_ref()
                             .and_then(|value| value["tail"].as_array())
                             .ok_or_else(|| io::Error::other("the mod omitted its observed message projection"))?;
+                        let retained = expected.as_ref().is_some_and(|value| value["retained"] == true);
+                        let tail = if retained && tail.len() >= read.context_uuids.len() {
+                            &tail[tail.len() - read.context_uuids.len()..]
+                        } else {
+                            tail.as_slice()
+                        };
                         if !read.message_tail_matches(tail) {
                             return Err(io::Error::other(
                                 "the native file does not match the mod's current message projection",
@@ -203,6 +211,9 @@ pub fn policy(world: &Path, session: &str, messages: Option<usize>, after_compac
                         policy["last_uuid"] =
                             serde_json::to_value(read.context_uuids.last()).map_err(io::Error::other)?;
                         policy["context_tail"] = serde_json::to_value(read.context_tail).map_err(io::Error::other)?;
+                        policy["context_contract"] = json!(1);
+                        policy["retained_messages"] = json!(read.context_uuids.len());
+                        policy["synthetic_tail"] = json!(read.synthetic_tail);
                         policy["context_uuids"] = serde_json::to_value(read.context_uuids).map_err(io::Error::other)?;
                         return output(&policy);
                     }

@@ -8,6 +8,7 @@ test('uses the public controls and request return types through the official eng
   on('ui.log', () => ({ value: undefined }))
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
+  on('ui.invalidate', () => ({ value: undefined }))
   const files = new Map<string, string>()
   const markers = new Map<string, () => void>()
   const normalize = (path: string) => path.replaceAll('\\', '/')
@@ -23,7 +24,7 @@ test('uses the public controls and request return types through the official eng
   let cancelledQuestions = 0
   // The control helper says `look` when the node leaves the session something.
   let wakeGuard = () => {}
-  on('mcp.connect', () => ({ value: { isConnected: false, reason: 'disabled', message: 'fixture' } }))
+  on('mcp.connect', () => ({ value: { isConnected: true, server: 'fixture:world' } }))
   on('session.id', () => ({ value: 'control-fixture' }))
   on('session.cwd', () => ({ value: '/fixture' }))
   on('settings.read', () => ({ value: {} }))
@@ -59,7 +60,7 @@ test('uses the public controls and request return types through the official eng
   ] }))
   on('config.list', () => ({ value: [{ key: 'model', label: 'Model', kind: 'choice', value: 'opus', options: ['default', 'opus', 'sonnet'], provider: { plugin: 'engine', tier: 'core' }, isLocked: false }] }))
   on('config.set', (_, e) => { if (e.key === 'model') model = String(e.value); return { value: e.value } })
-  on('session.usage', () => ({ value: { startedAt: 1, context: { tokens: 123, window: 200000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 12.5, resetsAt: '2026-10-04T17:00:00Z' }], cost: { usd: 0.125 } } }))
+  on('session.usage', () => ({ value: { startedAt: 1, context: { tokens: 123, window: 200000, breakdown: { mcpTools: [{ name: 'mcp__fixture_world__run', serverName: 'fixture_world', isLoaded: true, tokens: 1 }] } }, rateLimits: [{ kind: 'five_hour', percentUsed: 12.5, resetsAt: '2026-10-04T17:00:00Z' }], cost: { usd: 0.125 } } }))
   on('command.run', (_, e) => {
     expect(e.origin).toEqual(expect.objectContaining({ kind: 'plugin' }))
     commands.push({ command: e.command, args: e.args })
@@ -91,7 +92,7 @@ test('uses the public controls and request return types through the official eng
     yield { stream: 'stdout', text: text.slice(7) }
     return { value: { code: 0, signal: null } }
   })
-  on('tool.check', () => ({ decision: 'ask' }))
+  on('tool.check', (_, e) => ({ decision: e.tool === 'permission-tool' ? 'ask' : 'allow' }))
   on('tool.call', async (_, e, next) => {
     if (e.tool === 'permission-tool') {
       const decision = await $.classic.PermissionRequest({ tool_name: e.tool, tool_input: { path: '/file' } })

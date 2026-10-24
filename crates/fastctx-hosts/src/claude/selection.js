@@ -12,8 +12,8 @@ function modelOffers(rows) {
 }
 
 async function controlSelection($, state, model, effort) {
-  if (model !== null && model !== undefined && !model.trim()) throw new Error('a model cannot be empty')
-  if (effort !== null && effort !== undefined && !effortLevels.includes(effort)) throw new Error('unknown Claude reasoning effort: ' + effort)
+  if (model !== null && model !== undefined && !model.trim()) throw controlRefusal('a model cannot be empty')
+  if (effort !== null && effort !== undefined && !effortLevels.includes(effort)) throw controlRefusal('unknown Claude reasoning effort: ' + effort)
   const updated = (state.selecting ?? Promise.resolve()).then(async () => {
     const selection = { ...state.selection }
     if (model !== null && model !== undefined) selection.model = model
