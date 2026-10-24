@@ -1,7 +1,7 @@
 {
   "name": "fastctx-gui",
   "private": true,
-  "version": "1.0.1-beta.11",
+  "version": "1.0.1-beta.12",
   "description": "The World's graphical interface: one conversation surface for every agent on every machine",
   "license": "Apache-2.0",
   "type": "module",
