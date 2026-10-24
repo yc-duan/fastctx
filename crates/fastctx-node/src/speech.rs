@@ -526,26 +526,11 @@ async fn submit_thread(
             })),
         };
     }
-    // The user's words go alone, but for what rides with the next turn.
-    if single {
-        batch.retain(|kept| kept.delivery.id == pending.delivery.id || kept.delivery.notice.along().is_some());
-    }
-    // The user's words go in as typed and first: the World's telling after
-    // them begins with a head note, so none of it reads as theirs, while
-    // their words after it would read as its end. Other words they typed go
-    // in the next message.
-    let first = if typed(&pending.delivery.notice) {
-        Some(pending.delivery.id.clone())
-    } else {
-        batch.iter().find(|kept| typed(&kept.delivery.notice)).map(|kept| kept.delivery.id.clone())
-    };
-    let (mut taken, left): (Vec<Pending>, Vec<Pending>) =
-        batch.into_iter().partition(|kept| !typed(&kept.delivery.notice) || Some(&kept.delivery.id) == first.as_ref());
-    if let Some(at) = taken.iter().position(|kept| Some(&kept.delivery.id) == first.as_ref()) {
-        let words = taken.remove(at);
-        taken.insert(0, words);
-    }
-    let mut batch = taken;
+    // The first arrival starts or steers the turn. Later arrivals are sent
+    // separately, preserving both order and each message's speaker framing.
+    // Facts that only ride with a turn may precede its first actual input.
+    let count = batch.iter().position(|kept| kept.delivery.notice.along().is_none()).map_or(batch.len(), |at| at + 1);
+    let left = batch.split_off(count);
     let audience = if batch.iter().any(|pending| pending.working)
         && crate::goals::replies::inherits(node, id).map_err(|error| Failure::new(error.to_string()))?
     {
@@ -653,7 +638,13 @@ async fn submit_thread(
     if let Some(next) = left.into_iter().next() {
         hand_over_later(node.clone(), id.clone(), about, directory.clone(), next);
     }
-    Ok(Some(if sent.joined { Landed::JoinedTurn { turn: sent.turn } } else { Landed::NewTurn { turn: sent.turn } }))
+    Ok(Some(if !batch.iter().any(|kept| kept.delivery.id == pending.delivery.id) {
+        Landed::Waiting { why: None, answered: true }
+    } else if sent.joined {
+        Landed::JoinedTurn { turn: sent.turn }
+    } else {
+        Landed::NewTurn { turn: sent.turn }
+    }))
 }
 
 /// Hands `pending` over in a task of its own.
@@ -672,11 +663,6 @@ fn said(notice: &Notice) -> String {
         Notice::Words { from: Speaker::User { .. }, text, .. } => text.clone(),
         notice => told::told(notice),
     }
-}
-
-/// Whether a notice is the user's words, which go in as typed.
-fn typed(notice: &Notice) -> bool {
-    matches!(notice, Notice::Words { from: Speaker::User { .. }, .. })
 }
 
 /// Commits the consuming turn for the entire batch before changing either
@@ -958,7 +944,7 @@ pub fn resume(node: &Arc<Node>, runtime: &tokio::runtime::Handle) {
         if resident.removed.is_some() {
             continue;
         }
-        if !resident.about.world_managed() || resident.about.host.agent.as_str() != "codex" {
+        if !resident.about.world_managed() {
             continue;
         }
         let node = node.clone();

@@ -595,6 +595,8 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
 #[derive(Serialize)]
 struct Inbox<'a> {
     id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    at: Option<Timestamp>,
     text: &'a str,
     /// Words the user typed, which go in as the user's.
     as_user: bool,
@@ -611,6 +613,7 @@ struct Inbox<'a> {
 /// next turn in place of what it replaces.
 #[derive(Default)]
 pub struct Delivering<'a> {
+    pub at: Option<Timestamp>,
     pub as_user: bool,
     pub along: Option<&'a str>,
     pub replaces: &'a [String],
@@ -619,10 +622,10 @@ pub struct Delivering<'a> {
 /// Puts something in the session's inbox for its mod to hand over. The same
 /// id twice is the same thing and is written once.
 pub fn deliver(directory: &Path, id: &str, text: &str, how: Delivering<'_>) -> io::Result<()> {
-    let Delivering { as_user, along, replaces } = how;
+    let Delivering { at, as_user, along, replaces } = how;
     let inbox = directory.join("inbox");
     ensure_private_dir(&inbox)?;
-    let mut bytes = serde_json::to_vec(&Inbox { id, text, as_user, along, replaces }).expect("strings serialize");
+    let mut bytes = serde_json::to_vec(&Inbox { id, at, text, as_user, along, replaces }).expect("strings serialize");
     // Claude Code 2.1.287's fs API accepts at most 4 MiB per operation.
     const FILE_BYTES: usize = 4 * 1024 * 1024;
     if bytes.len() > FILE_BYTES {
@@ -650,6 +653,9 @@ pub fn deliver(directory: &Path, id: &str, text: &str, how: Delivering<'_>) -> i
             count += 1;
         }
         let mut value = serde_json::json!({ "id": id, "text": "", "text_parts": count, "as_user": as_user });
+        if let Some(at) = at {
+            value["at"] = serde_json::to_value(at).map_err(io::Error::other)?;
+        }
         if let Some(along) = along {
             value["along"] = along.into();
         }

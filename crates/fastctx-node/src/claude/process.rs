@@ -13,6 +13,24 @@ fn unobserve(node: &Node, process: &fastctx_types::ProcessIdentity) {
     }
 }
 
+/// An observation error is not an exit. Keep observing, independently of
+/// the notification subscription, until the exact process identity ends.
+pub(super) async fn wait(node: &Node, process: &fastctx_types::ProcessIdentity) {
+    let mut problem = None;
+    loop {
+        let result = fastctx_platform::host_process::exited(process).await;
+        if result.is_ok() || fastctx_platform::has_ended(process).is_ok_and(|ended| ended) {
+            return;
+        }
+        let error = result.expect_err("an unsuccessful observation").to_string();
+        if problem.as_ref() != Some(&error) {
+            node.log.line(format_args!("watching a Claude host process; retrying: {error}"));
+            problem = Some(error);
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    }
+}
+
 pub(super) fn observe(node: &Arc<Node>, process: Option<fastctx_types::ProcessIdentity>) {
     let Some(process) = process else { return };
     if !node.claude.state.lock().expect("never poisoned").observed.insert(process.clone()) {
@@ -20,40 +38,28 @@ pub(super) fn observe(node: &Arc<Node>, process: Option<fastctx_types::ProcessId
     }
     let node = node.clone();
     tokio::spawn(async move {
-        let mut problem = None;
+        let exited = wait(&node, &process);
+        tokio::pin!(exited);
         loop {
-            let exited = fastctx_platform::host_process::exited(&process);
-            tokio::pin!(exited);
-            let result = loop {
-                let changed = node.claude.changed.notified();
-                tokio::pin!(changed);
-                changed.as_mut().enable();
-                if !node
-                    .claude
-                    .state
-                    .lock()
-                    .expect("never poisoned")
-                    .sessions
-                    .values()
-                    .any(|session| session.registration.process.as_ref() == Some(&process))
-                {
-                    unobserve(&node, &process);
-                    return;
-                }
-                tokio::select! {
-                    result = &mut exited => break result,
-                    () = changed => {},
-                }
-            };
-            if result.is_ok() || fastctx_platform::has_ended(&process).is_ok_and(|ended| ended) {
-                break;
+            let changed = node.claude.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if !node
+                .claude
+                .state
+                .lock()
+                .expect("never poisoned")
+                .sessions
+                .values()
+                .any(|session| session.registration.process.as_ref() == Some(&process))
+            {
+                unobserve(&node, &process);
+                return;
             }
-            let error = result.expect_err("an unsuccessful observation").to_string();
-            if problem.as_ref() != Some(&error) {
-                node.log.line(format_args!("watching a Claude host process; retrying: {error}"));
-                problem = Some(error);
+            tokio::select! {
+                () = &mut exited => break,
+                () = changed => {},
             }
-            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         }
         let sessions: Vec<(String, ResidentId)> = {
             let state = node.claude.state.lock().expect("never poisoned");

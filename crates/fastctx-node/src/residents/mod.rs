@@ -299,6 +299,12 @@ impl Residents {
             let mut now = now;
             if let Some(now) = &mut now {
                 now.desk = false;
+                // Older nodes projected a retired host as a sleeping user
+                // conversation. Preserve its last activity time during migration.
+                if about.world_started && matches!(about.origin, Origin::User) && now.activity == Activity::Asleep {
+                    now.activity = Activity::Idle;
+                    records::write_now(directory, now)?;
+                }
                 // A departure may have been committed before the node stopped
                 // halfway through putting its idle colleagues to sleep.
                 if removed.is_none()
@@ -307,7 +313,6 @@ impl Residents {
                     && state.departed.get(asked_by)?
                 {
                     now.activity = Activity::Asleep;
-                    now.since = Timestamp::now();
                     records::write_now(directory, now)?;
                 }
             }
@@ -958,7 +963,6 @@ impl State {
                     &colleague,
                     |_, now| {
                         now.activity = Activity::Asleep;
-                        now.since = Timestamp::now();
                     },
                     false,
                 )

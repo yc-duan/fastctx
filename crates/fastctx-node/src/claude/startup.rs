@@ -11,7 +11,7 @@ use std::time::Instant;
 use fastctx_hosts::claude::{background, exchange, startup};
 use fastctx_types::ipc::Failure;
 use fastctx_types::residents::{Activity, PendingState};
-use fastctx_types::session::{Health, HealthKind};
+
 use fastctx_types::{NoticeId, ProcessIdentity, ResidentId};
 
 use crate::Node;
@@ -28,7 +28,7 @@ pub(super) struct Listed {
 
 /// `waking`: the session paired before, and these words wake it; it is
 /// settled once the session that came up takes them, not by its pairing.
-pub(super) fn observe(node: &Arc<Node>, resident: &ResidentId, id: NoticeId, command: super::Command, waking: bool) {
+pub(super) fn observe(node: &Arc<Node>, resident: &ResidentId, id: NoticeId, waking: bool) {
     if !waking && super::paired(node, resident) {
         return;
     }
@@ -41,8 +41,21 @@ pub(super) fn observe(node: &Arc<Node>, resident: &ResidentId, id: NoticeId, com
         // Tried again after waits that double up to a minute, told once for
         // each new reason.
         let (mut again, mut told) = (crate::again::Again::default(), None);
-        while let Err(error) = watch(&node, &resident, &id, &command, waking).await {
+        loop {
+            let result = async {
+                if !pending(&node, &resident, &id, waking)? {
+                    return Ok(());
+                }
+                let home = node.residents.about(&resident).and_then(|(about, _)| about.home);
+                let command = super::command(&node, home.as_deref()).map_err(std::io::Error::other)?;
+                watch(&node, &resident, &id, &command, waking).await
+            }
+            .await;
+            let Err(error) = result else { break };
             let error = error.to_string();
+            if let Err(error) = report(&node, &resident, &id, error.clone()) {
+                node.log.line(format_args!("keeping startup observation: {error}"));
+            }
             if told.as_ref() != Some(&error) {
                 node.log.line(format_args!("observing Claude startup {resident}; will retry: {error}"));
                 told = Some(error);
@@ -197,14 +210,7 @@ pub(super) fn recover(node: &Arc<Node>) {
             });
             continue;
         }
-        match super::command(node, about.home.as_deref()) {
-            Ok(command) => observe(node, &about.id, first.delivery.id, command, waking),
-            Err(error) => {
-                if let Err(error) = report(node, &about.id, error.message) {
-                    node.log.line(format_args!("recording Claude startup problem for {}: {error}", about.id));
-                }
-            }
-        }
+        observe(node, &about.id, first.delivery.id, waking);
     }
 }
 
@@ -444,6 +450,13 @@ async fn watch(
                         Err(error) => node.log.line(format_args!("observing Claude startup process {pid}: {error}")),
                     }
                 }
+                if !process_ended
+                    && exited.is_none()
+                    && let Some(identity) = process.clone()
+                {
+                    exited =
+                        Some(Box::pin(async move { fastctx_platform::host_process::exit_status(&identity).await }));
+                }
                 if (job.ended() && (job.pid.is_none() || process_ended)) || (job.blocked() && !blocked) {
                     if job.ended()
                         && process
@@ -501,7 +514,7 @@ async fn watch(
                     // The host's watchdog and a real setup dialog produce the
                     // same blocked state. Preserve the fact without declaring
                     // a slow but successful birth failed.
-                    report(node, resident, why)?;
+                    report(node, resident, id, why)?;
                 } else if process_ended && reported_exit != process {
                     let identity = process.as_ref().expect("an observed process exited");
                     let mut why = format!(
@@ -517,7 +530,7 @@ async fn watch(
                     if !pending(node, resident, id, waking)? {
                         return Ok(());
                     }
-                    report(node, resident, why)?;
+                    report(node, resident, id, why)?;
                     reported_exit = process.clone();
                 }
                 blocked = job.blocked();
@@ -531,7 +544,7 @@ async fn watch(
                 let why =
                     format!("Claude Code does not list background session {short}; its startup outcome is unknown");
                 if last_problem.as_ref() != Some(&why) {
-                    report(node, resident, why.clone())?;
+                    report(node, resident, id, why.clone())?;
                     last_problem = Some(why);
                 }
             }
@@ -541,7 +554,7 @@ async fn watch(
                     return Ok(());
                 }
                 if last_problem.as_ref() != Some(&error) {
-                    report(node, resident, error.clone())?;
+                    report(node, resident, id, error.clone())?;
                     last_problem = Some(error);
                 }
             }
@@ -574,6 +587,6 @@ async fn watch(
     }
 }
 
-fn report(node: &Arc<Node>, resident: &ResidentId, text: String) -> std::io::Result<()> {
-    crate::turns::health(node, resident, None, Health { kind: HealthKind::Warning, text })
+fn report(node: &Arc<Node>, resident: &ResidentId, id: &NoticeId, text: String) -> std::io::Result<()> {
+    crate::lifecycle::retry::observing(node, resident, id, text).map_err(std::io::Error::other)
 }

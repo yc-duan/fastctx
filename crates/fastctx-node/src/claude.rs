@@ -1312,7 +1312,7 @@ async fn into_inbox(
             .collect(),
         None => Vec::new(),
     };
-    let how = exchange::Delivering { as_user, along, replaces: &replaces };
+    let how = exchange::Delivering { at: Some(pending.delivery.at), as_user, along, replaces: &replaces };
     // Commit the intent and its timestamp before the plugin can consume it.
     // Replaying a Handed intent republishes the same id and preserves its time.
     if pending.state != PendingState::Handed {
@@ -1378,7 +1378,7 @@ pub(crate) async fn wake(
     let mut launching = command(node, home)?;
     launching.cwd = resume_dir(node, session);
     oldest::check(node, &launching).await?;
-    let observing = launching.clone();
+
     let Command { program, cwd, env } = launching;
     if let Some(resident) = node.residents.resident_of_thread(session) {
         crate::profile::session::claude(node, &resident, false)?;
@@ -1402,7 +1402,7 @@ pub(crate) async fn wake(
     })??;
     // Claude Code took the words; the session that takes them may still end
     // before the World's plugin pairs, which only watching it tells.
-    startup::observe(node, resident, id.clone(), observing, true);
+    startup::observe(node, resident, id.clone(), true);
     Ok(Landed::Handed { id })
 }
 
@@ -1627,7 +1627,7 @@ pub async fn open_here(
         .map_err(|error| Failure::new(format!("recording which session {id} is: {error}")))?;
     drop(_birth);
     replay(node).await;
-    startup::observe(node, &id, first.delivery.id.clone(), launching, false);
+    startup::observe(node, &id, first.delivery.id.clone(), false);
     Ok((id, Landed::Handed { id: first.delivery.id }))
 }
 

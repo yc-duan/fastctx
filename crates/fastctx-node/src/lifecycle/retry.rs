@@ -108,6 +108,19 @@ pub(crate) fn failed(node: &Arc<Node>, id: &ResidentId, input: &NoticeId, reason
     Ok(())
 }
 
+/// Records a startup observation without granting permission to resubmit.
+pub(crate) fn observing(node: &Node, id: &ResidentId, input: &NoticeId, reason: String) -> Result<(), Failure> {
+    begin(node, id, input)?;
+    let _transaction = crate::resident_storage::lock();
+    let mut kept = progress(node, id, input).map_err(failure)?.ok_or_else(|| failure("missing host progress"))?;
+    if kept.reason.as_ref() != Some(&reason) {
+        node.log.line(format_args!("lifecycle {id}: observing startup: {reason}"));
+        kept.reason = Some(reason);
+        keep(node, id, input, &kept).map_err(failure)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn clear(node: &Node, id: &ResidentId, input: &NoticeId) -> io::Result<()> {
     match std::fs::remove_file(path(node, id, input)) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),

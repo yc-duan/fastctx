@@ -569,7 +569,7 @@ fn observe_activation(node: &Arc<Node>, host: &Host, directory: &Path) {
     let node = node.clone();
     let directory = directory.to_path_buf();
     tokio::spawn(async move {
-        let exited = fastctx_platform::host_process::exited(&process);
+        let exited = super::process::wait(&node, &process);
         tokio::pin!(exited);
         let result = loop {
             let changed = node.claude.changed.notified();
@@ -590,7 +590,7 @@ fn observe_activation(node: &Arc<Node>, host: &Host, directory: &Path) {
                 Ok(true) => {}
                 Err(error) => break Err(error),
             }
-            tokio::select! { result = &mut exited => break result, () = changed => {} }
+            tokio::select! { () = &mut exited => break Ok(()), () = changed => {} }
         };
         match result {
             Ok(()) => super::look(&node, &directory).await,
@@ -615,16 +615,12 @@ fn supervise(node: &Arc<Node>, key: String, request: Request) {
     let node = node.clone();
     tokio::spawn(async move {
         let process = request.waiting.process.clone();
-        let exited = fastctx_platform::host_process::exited(&process);
+        let exited = super::process::wait(&node, &process);
         let mut completed = request.completed.subscribe();
         tokio::pin!(exited);
         tokio::select! {
             _ = async { let _ = completed.wait_for(Option::is_some).await; } => return,
-            result = &mut exited => {
-                if let Err(error) = result {
-                    node.log.line(format_args!("observing Claude's answer helper: {error}"));
-                }
-            }
+            () = &mut exited => {}
             () = node.watchers.unwatched(&request.resident), if !request.waiting.question.native_wait => {
                 let pass = Answer::Pass { reason: "no one is watching this conversation in the World".into() };
                 if let Err(error) = files::answer(&request.directory, &pass)
@@ -632,9 +628,7 @@ fn supervise(node: &Arc<Node>, key: String, request: Request) {
                     node.log.line(format_args!("returning Claude's request to its host: {error}"));
                 }
                 tokio::select! {
-                    result = &mut exited => if let Err(error) = result {
-                        node.log.line(format_args!("observing Claude's answer helper: {error}"));
-                    },
+                    () = &mut exited => {},
                     _ = async { let _ = completed.wait_for(Option::is_some).await; } => return,
                 }
             }
