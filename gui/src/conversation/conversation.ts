@@ -609,6 +609,13 @@ export class Conversation {
   unsend(key: string): void {
     this.live.unsend(key);
   }
+  /** `Fold.heardMark`, `Fold.heardAlready`. */
+  heardMark(): number {
+    return this.live.heardMark();
+  }
+  heardAlready(text: string, mark: number | null): boolean {
+    return this.live.heardAlready(text, mark);
+  }
   failedToStart(why: string): void {
     this.live.failedToStart(why);
   }

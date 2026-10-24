@@ -231,6 +231,12 @@ export class Fold {
   private current = 0;
   /** Words sent from here, numbered apart: they outlive a reading. */
   private sends = 0;
+  /** The user's words heard as they came that no words of this window's
+   *  queue have yet been told apart by, numbered as they came: the words
+   *  a shared queue says are on their way may have been heard first. */
+  private heardSeq = 0;
+  private unclaimed: { key: string; text: string; seq: number }[] = [];
+  private claimedHeard = new Set<string>();
   /** Entries by key, and by their turn and item; tools by their call. */
   private byKey = new Map<string, Entry>();
   private byItem = new Map<string, Keyed>();
@@ -484,9 +490,10 @@ export class Fold {
               : turnKey
                 ? `h:${turnKey}:${ordinal}`
                 : `h:${this.scope}@${this.current}`;
+          const shown = this.byKey.has(key) ? `${key}:${this.scope}@${this.current}` : key;
           this.add({
             kind: "heard",
-            key: this.byKey.has(key) ? `${key}:${this.scope}@${this.current}` : key,
+            key: shown,
             stamp: 0,
             at: 0,
             from: heard.from,
@@ -496,6 +503,10 @@ export class Fold {
             ...(event.event === "heard" && event.notice ? { notice: event.notice } : {}),
             ...(reply ? { reply: { item: reply.item, answers: reply.answers.map((one) => one.answer) } } : {}),
           });
+          if (!this.replaying && heard.from?.kind === "user") {
+            this.unclaimed.push({ key: shown, text: heard.text.trim(), seq: ++this.heardSeq });
+            if (this.unclaimed.length > 64) this.unclaimed.shift();
+          }
         }
         return;
       }
@@ -1078,6 +1089,33 @@ export class Fold {
         recorded: picture.source,
       })),
     ];
+  }
+
+  /** How far the user's words heard so far reach: words that join the
+   *  queue now are heard after this. */
+  heardMark(): number {
+    return this.heardSeq;
+  }
+
+  /** Whether the agent already heard these words, which the queue says are
+   *  only now on their way: heard after `mark`, the place they joined the
+   *  queue, or, with no mark, as the newest words the user said. A bubble
+   *  for them would show them twice. The words heard are taken for these
+   *  ones, once. */
+  heardAlready(text: string, mark: number | null): boolean {
+    const said = text.trim();
+    let key: string | undefined;
+    if (mark === null) {
+      const newest = [...this.entries].reverse().find((entry): entry is Heard => entry.kind === "heard" && entry.sending === undefined && entry.from?.kind === "user");
+      if (newest && newest.text.trim() === said && !newest.key.startsWith("s:")) key = newest.key;
+    } else {
+      key = this.unclaimed.find((one) => one.seq > mark && one.text === said)?.key;
+    }
+    if (key === undefined || this.claimedHeard.has(key)) return false;
+    this.claimedHeard.add(key);
+    this.unclaimed = this.unclaimed.filter((one) => one.key !== key);
+    if (this.claimedHeard.size > 256) this.claimedHeard.delete(this.claimedHeard.values().next().value as string);
+    return true;
   }
 
   /** Words the user is sending, shown at once; returns their key. */

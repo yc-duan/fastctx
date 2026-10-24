@@ -252,6 +252,11 @@ export class ConversationPage {
   /** Words of the shared queue on their way into the turn, by queue item,
    *  as the conversation shows them meanwhile. */
   private readonly onTheirWay = new Map<string, string>();
+  /** Where the words heard reached as each queue item was first seen
+   *  here, null for one first seen already on its way; and the items that
+   *  have left the queue, each shown once at most. */
+  private readonly joinedAt = new Map<string, number | null>();
+  private readonly departed = new Set<string>();
   private gone: string | null = null;
   /** Why the watch ended or broke, in the kernel's words, for the hover. */
   private goneWhy = "";
@@ -1028,7 +1033,13 @@ export class ConversationPage {
 
   /** Shows words of the queue on their way as said, once each. */
   private onItsWay(id: string, text: string, attachments: readonly { name: string; size: number; media_type: string }[]): void {
-    if (this.onTheirWay.has(id)) return;
+    if (this.onTheirWay.has(id) || this.departed.has(id)) return;
+    // The queue and what the agent heard come by two ways: words the agent
+    // heard before the queue said they were going stand already.
+    if (this.joinedAt.has(id) && this.options.conversation.heardAlready(text, this.joinedAt.get(id) ?? null)) {
+      this.onTheirWay.set(id, "");
+      return;
+    }
     const shown = attachments.map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null }));
     this.onTheirWay.set(id, this.options.conversation.sending(text, this.options.here || null, shown));
   }
@@ -1038,12 +1049,20 @@ export class ConversationPage {
    *  queue, or whose arrival nobody can tell, leave it. */
   private showOnTheirWay(composer: ComposerSnapshot | undefined): void {
     if (!composer) return;
+    for (const item of composer.queue) {
+      if (!this.joinedAt.has(item.id)) this.joinedAt.set(item.id, item.sending ? null : this.options.conversation.heardMark());
+    }
+    for (const id of this.joinedAt.keys()) if (!composer.queue.some((item) => item.id === id)) this.joinedAt.delete(id);
     for (const item of composer.queue) if (item.sending) this.onItsWay(item.id, item.draft.text, item.draft.attachments);
     for (const [id, key] of this.onTheirWay) {
       if (composer.queue.some((item) => item.id === id && item.sending)) continue;
       const back = composer.queue.some((item) => item.id === id) || composer.unobserved.some((item) => item.id === id);
-      if (back) this.options.conversation.unsend(key);
+      if (back && key) this.options.conversation.unsend(key);
       this.onTheirWay.delete(id);
+      if (!back) {
+        this.departed.add(id);
+        if (this.departed.size > 256) this.departed.delete(this.departed.values().next().value as string);
+      }
     }
     this.update();
   }
