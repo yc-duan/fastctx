@@ -16,6 +16,8 @@ struct Ticket {
     key: String,
     host: Host,
     controller: ProcessIdentity,
+    #[serde(default)]
+    evidence: super::control_outcome::Evidence,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -90,8 +92,11 @@ pub(crate) async fn run(
             });
         }
         let (directory, host) = super::control::live_host(node, resident)?;
-        let prepared =
-            Ticket { key: key.into(), host, controller: fastctx_platform::current_identity().map_err(failure)? };
+        let evidence = super::control_outcome::Evidence::capture(&directory, &json!({"do":"goal_compact"}))
+            .map_err(|error| Failure::not_run(format!("preparing Claude compaction evidence: {error}")))?;
+        let prepared = Ticket {
+            key: key.into(), host, controller: fastctx_platform::current_identity().map_err(failure)?, evidence,
+        };
         files::write(&ticket_path, &prepared).map_err(failure)?;
         files::write(&directory.join("retained").join(format!("{key}.json")), &prepared).map_err(failure)?;
         files::write_message(
@@ -119,7 +124,14 @@ pub(crate) async fn run(
                 return result(&ticket, receipt);
             }
             if !files::active(&directory, &ticket.host).map_err(failure)? {
-                return Err(Failure::new("the Claude activation ended without confirming its goal compaction"));
+                if ticket.evidence.completed().map_err(|error| super::control_outcome::unknown(&format!("checking goal compaction evidence: {error}")))? {
+                    let receipt = Receipt { host: ticket.host.clone(), reply: json!({"ok":super::control_outcome::done()}) };
+                    files::write(&receipt_path, &receipt).map_err(failure)?;
+                    return result(&ticket, receipt);
+                }
+                if !ticket.evidence.may_finish().map_err(failure)? {
+                    return Err(super::control_outcome::unknown("the Claude activation ended without confirming its goal compaction"));
+                }
             }
         }
         if !crate::goals::engine::requests(node, resident, key) {
@@ -129,7 +141,7 @@ pub(crate) async fn run(
             });
         }
         if began.elapsed() >= crate::control_queue::COMPACTING {
-            return Err(Failure::new("Claude did not confirm goal compaction within thirty minutes"));
+            return Err(super::control_outcome::unknown("Claude did not confirm goal compaction within thirty minutes"));
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
@@ -153,11 +165,8 @@ fn result(ticket: &Ticket, receipt: Receipt) -> Result<Controlled, Failure> {
     if receipt.host != ticket.host {
         return Err(Failure::new("the goal compaction receipt belongs to another activation"));
     }
-    if let Some(error) = receipt.reply.get("error").and_then(Value::as_str) {
-        return Err(Failure::new(error));
-    }
-    let value = receipt.reply.get("ok").ok_or_else(|| Failure::new("the goal compaction receipt has no result"))?;
-    serde_json::from_value(value.clone()).map_err(failure)
+    let value = super::control_outcome::reply(receipt.reply)?;
+    serde_json::from_value(value).map_err(failure)
 }
 
 fn failure(error: impl std::fmt::Display) -> Failure {

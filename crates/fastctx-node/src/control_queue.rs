@@ -105,7 +105,7 @@ fn settle(node: &Arc<Node>, id: &ResidentId, mut row: PendingControl, result: &R
             row.result = Some(Box::new(done.clone()));
         }
         Err(error) => {
-            row.state = ControlState::Failed;
+            row.state = if error.is_control_uncertain() { ControlState::Uncertain } else { ControlState::Failed };
             row.error = Some(error.message.clone());
         }
     }

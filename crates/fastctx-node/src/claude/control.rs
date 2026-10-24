@@ -11,21 +11,17 @@ use fastctx_types::session::control::{Control, ControlKind, Controlled, Offers};
 use fastctx_types::session::{Happened, SessionChange, SessionEvent};
 use jiff::Timestamp;
 use serde_json::{Value, json};
-use tokio::sync::oneshot;
+use super::control_outcome;
 
 use crate::Node;
 
 #[derive(Default)]
 pub struct Bridge {
-    calls: Mutex<HashMap<String, Invocation>>,
+    calls: Mutex<HashSet<String>>,
     requests: Mutex<HashMap<String, Request>>,
     observed: Mutex<HashSet<(String, String, fastctx_types::ProcessIdentity)>>,
 }
 
-struct Invocation {
-    host: Host,
-    sender: oneshot::Sender<Result<Value, String>>,
-}
 
 #[derive(Clone)]
 struct Request {
@@ -384,13 +380,9 @@ pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Val
     let (directory, host) = live_host(node, resident)?;
     let key = crate::speech::new_id("control").to_string();
     let path = directory.join("inbox").join(format!("{key}.json"));
-    let (sender, receiver) = oneshot::channel();
-    node.claude
-        .bridge
-        .calls
-        .lock()
-        .expect("never poisoned")
-        .insert(key.clone(), Invocation { host: host.clone(), sender });
+    let evidence = control_outcome::Evidence::capture(&directory, &control)
+        .map_err(|error| Failure::not_run(format!("preparing Claude control evidence: {error}")))?;
+    node.claude.bridge.calls.lock().expect("never poisoned").insert(key.clone());
     struct Pending<'a> {
         node: &'a Node,
         key: &'a str,
@@ -400,7 +392,7 @@ pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Val
             let mut calls = self.node.claude.bridge.calls.lock().expect("never poisoned");
             calls.remove(self.key);
             if calls.is_empty() {
-                *calls = HashMap::new();
+                *calls = HashSet::new();
             }
         }
     }
@@ -412,13 +404,42 @@ pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Val
         node.claude.bridge.calls.lock().expect("never poisoned").remove(&key);
         return Err(failure(error));
     }
-    // The activation's process stream also ends when its plugin unloads.
-    // Its exit, a clear or reload, or the reply settles this one-shot.
-    let reply = receiver.await.map_err(|_| {
-        Failure::new("the Claude control bridge stopped before confirming this control; its outcome is unknown")
-    })?;
-    collect_invocation(&directory, &key).map_err(failure)?;
-    reply.map_err(Failure::new)
+    let within = if control_outcome::compacts(&control) {
+        crate::control_queue::COMPACTING
+    } else { std::time::Duration::from_secs(120) };
+    let began = std::time::Instant::now();
+    let _outside = fastctx_platform::doing::waiting_outside("Claude control receipt", within);
+    loop {
+        let result = {
+            let gate = super::reading(node, &host.session);
+            let _reading = gate.lock().await;
+            let reply = directory.join("replies").join(format!("{key}.json"));
+            let result = if reply.with_extension("done").exists() {
+                Some(files::read_message(&reply).map_err(|error| control_outcome::unknown(&format!("reading Claude's receipt: {error}")))
+                    .and_then(control_outcome::reply))
+            } else if directory.join("closed").join(format!("{}.json", host.instance)).exists()
+                || !fastctx_platform::is_alive(&host.process).map_err(failure)?
+            {
+                match evidence.completed() {
+                    Ok(true) => Some(Ok(control_outcome::done())),
+                    Err(error) => Some(Err(control_outcome::unknown(&format!("checking Claude's control evidence: {error}")))),
+                    Ok(false) if evidence.may_finish().map_err(failure)? => None,
+                    Ok(false) => Some(Err(control_outcome::unknown("the Claude activation ended without a receipt"))),
+                }
+            } else { None };
+            if result.is_some()
+                && let Err(error) = collect_invocation(&directory, &key)
+            {
+                node.log.line(format_args!("collecting Claude control {key} after its outcome was established: {error}"));
+            }
+            result
+        };
+        if let Some(result) = result { return result; }
+        if began.elapsed() >= within {
+            return Err(control_outcome::unknown("Claude did not confirm the control before its deadline"));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
 }
 
 async fn answer_request(
@@ -479,34 +500,11 @@ pub async fn look(node: &Arc<Node>, resident: &ResidentId, session_directory: &P
         return Ok(());
     }
     observe_activation(node, &host, session_directory);
-    {
-        let mut calls = node.claude.bridge.calls.lock().expect("never poisoned");
-        let keys: Vec<_> =
-            calls.iter().filter(|(_, call)| call.host.session == host.session).map(|(key, _)| key.clone()).collect();
-        for key in keys {
-            let path = directory.join("replies").join(format!("{key}.json"));
-            let result = if path.with_extension("done").exists() {
-                let reply = files::read_message(&path)?;
-                Some(if let Some(error) = reply.get("error").and_then(Value::as_str) {
-                    Err(error.to_string())
-                } else {
-                    reply.get("ok").cloned().ok_or_else(|| "Claude control reply has neither ok nor error".to_string())
-                })
-            } else if calls[&key].host != host || !files::active(&directory, &host)? {
-                Some(Err("the Claude activation ended before confirming the control; it will not be repeated".into()))
-            } else {
-                None
-            };
-            if let Some(result) = result {
-                let call = calls.remove(&key).expect("held invocation");
-                let _ = call.sender.send(result);
-            }
-        }
-    }
+
     for path in crate::retention::entries(&directory.join("replies"))? {
         if path.extension().is_some_and(|extension| extension == "done")
             && let Some(key) = path.file_stem().and_then(|key| key.to_str())
-            && !node.claude.bridge.calls.lock().expect("never poisoned").contains_key(key)
+            && !node.claude.bridge.calls.lock().expect("never poisoned").contains(key)
         {
             super::goal_compaction::capture(node, resident, &directory, key)?;
             collect_invocation(&directory, key)?;
@@ -732,16 +730,7 @@ fn changed(node: &Node, request: &Request, change: SessionChange) {
 
 pub fn ended(node: &Node, session: &str) {
     node.claude.changed.notify_waiters();
-    let mut calls = node.claude.bridge.calls.lock().expect("never poisoned");
-    let keys: Vec<_> =
-        calls.iter().filter(|(_, call)| call.host.session == session).map(|(key, _)| key.clone()).collect();
-    for key in keys {
-        let call = calls.remove(&key).expect("held invocation");
-        let _ = call
-            .sender
-            .send(Err("the Claude session ended before confirming the control; it will not be repeated".into()));
-    }
-    drop(calls);
+
     let requests: Vec<_> = node
         .claude
         .bridge
