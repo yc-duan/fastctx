@@ -6,7 +6,7 @@
 use std::collections::VecDeque;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use fastctx_types::residents::{Activity, Origin};
+use fastctx_types::residents::{Activity, Landed, Origin};
 use fastctx_types::session::{Happened, SessionChange};
 use fastctx_types::town::ResidentNow;
 use fastctx_types::{Address, MachineName, TownName};
@@ -43,6 +43,9 @@ pub struct TalkPage {
     /// What its host last reported it doing, and since when.
     state: Option<(Activity, Timestamp)>,
     waiting_for_user: bool,
+    /// The World started it, and brings its host back itself: words to it
+    /// never wait for its next call of a World tool (`world-lifecycle.md`).
+    held_by_world: bool,
     transcript: Transcript,
     editor: Editor,
     /// The first row shown, when the view is not following the end.
@@ -84,6 +87,7 @@ impl TalkPage {
         page.model = resident.about.model.clone();
         page.state = state;
         page.waiting_for_user = resident.now.as_ref().is_some_and(|now| now.waiting_for_user);
+        page.held_by_world = resident.about.world_started;
         page
     }
 
@@ -99,9 +103,19 @@ impl TalkPage {
         let mut page = Self::bare(said.to.clone(), agent, project, Some(here.clone()));
         page.town = town;
         page.origin = Some(Origin::User);
+        page.held_by_world = true;
         let local = page.transcript.sending(first, Some(here));
-        page.transcript.landed(local, said.landed, said.to.machine);
+        if page.stands(&said.landed) {
+            page.transcript.landed(local, said.landed, said.to.machine);
+        }
         page
+    }
+
+    /// Whether what the World said of words sent stands under them. Words a
+    /// conversation the World started waits on its host for, with no reason
+    /// given, stay on their way while the World brings the host back.
+    fn stands(&self, landed: &Landed) -> bool {
+        !(self.held_by_world && matches!(landed, Landed::Waiting { why: None, .. }))
     }
 
     fn bare(address: Address, agent: String, project: Option<String>, here: Option<MachineName>) -> Self {
@@ -117,6 +131,7 @@ impl TalkPage {
             picked: None,
             state: None,
             waiting_for_user: false,
+            held_by_world: false,
             editor: Editor::multi(),
             top: None,
             watching: Watching::Starting,
@@ -207,7 +222,9 @@ impl TalkPage {
             }
             Data::Done { job, result } => match (job, result) {
                 (Job::Talk { .. }, Ok(Done::Said(said))) => {
-                    if let Some(local) = self.pending.pop_front() {
+                    if let Some(local) = self.pending.pop_front()
+                        && self.stands(&said.landed)
+                    {
                         self.transcript.landed(local, said.landed, said.to.machine);
                     }
                 }
