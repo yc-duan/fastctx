@@ -7,10 +7,10 @@ async function readGoal($, context) {
       report = JSON.parse(await $.fs.read(context.dir + '/goal-stop.json')).report
       if (typeof report !== 'string') throw new Error('the goal stop report is invalid')
     }
-    let stopping = context.goalStopping === true
+    let goalStopping = context.goalStopping === true
     if (report && context.goalStopAcknowledged !== report) {
       const applied = await $.fs.list(context.dir + '/applied')
-      stopping = !applied.some((entry) => entry.name === report)
+      goalStopping = !applied.some((entry) => entry.name === report)
     }
     // The node freezes queued input before acknowledging an interrupted turn.
     // Read its state after the acknowledgment so a stale active view cannot flush it.
@@ -23,8 +23,8 @@ async function readGoal($, context) {
       if (state.held !== undefined && state.held !== null && (!Array.isArray(state.held) || state.held.some((id) => typeof id !== 'string'))) throw new Error('the goal held inputs are invalid')
     }
     context.goal = state
-    context.goalStopping = stopping
-    if (report && !stopping) {
+    context.goalStopping = goalStopping
+    if (report && !goalStopping) {
       context.goalStopAcknowledged = report
       context.goalStopReport = null
     }
