@@ -13,6 +13,7 @@ mod ask;
 mod attach;
 mod claude_session_directory;
 mod claude_subagents;
+mod command_guard;
 mod copy;
 mod data;
 mod first_program;
@@ -109,6 +110,8 @@ enum Command {
     /// Identifies the process invoking the World mod helper.
     #[command(hide = true)]
     ParentProcess,
+    #[command(name = "command-guard", hide = true)]
+    Guard(command_guard::Args),
     #[command(hide = true)]
     ClaudeSubagents {
         #[arg(value_parser = paths::parser())]
@@ -438,6 +441,7 @@ fn main() -> ExitCode {
             | Command::Unapply(_)
             | Command::Supervise { .. }
             | Command::ParentProcess
+            | Command::Guard(_)
             | Command::ClaudeSessionDirectory { .. }
             | Command::ClaudeSubagents { .. }
             | Command::ClaudeRequest { .. }
@@ -480,6 +484,7 @@ fn main() -> ExitCode {
         Command::TurnFacts(args) => turn_facts::run(args),
         Command::HostChange(args) => host_change::run(args),
         Command::ParentProcess => parent_process(),
+        Command::Guard(args) => command_guard::run(args),
         Command::ClaudeSubagents { world, session } => claude_subagents::run(&world, session),
         Command::ClaudeSessionDirectory { world, session, previous, cwd, conversation } => {
             claude_session_directory::run(&world, session, previous, cwd, conversation)

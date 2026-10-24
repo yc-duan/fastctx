@@ -31,6 +31,7 @@ pub(crate) mod goal_compaction;
 pub(crate) mod history;
 mod image_records;
 pub(crate) mod resume;
+mod retire_command;
 pub(crate) use image_records::paths as image_records;
 mod image_flush;
 pub(crate) use image_flush::wait_for_image;

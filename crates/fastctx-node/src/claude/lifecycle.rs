@@ -43,9 +43,10 @@ pub(crate) async fn collect(node: &Arc<Node>, about: &About, worker: &IdleWorker
     let command = super::command(node, about.home.as_deref())?;
     let id = worker.id.clone();
     let session = about.session.clone().ok_or_else(|| Failure::new("the host session is unknown"))?;
+    let stopping_node = node.clone();
     let running = tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         let args: Vec<OsString> = vec!["stop".into(), id.into()];
-        background::invoke(&command.program, &args, &command.cwd, &command.env, STOP).map_err(|error| error.message)?;
+        super::retire_command::run(&stopping_node, &command, &args, STOP)?;
         let listed = background::invoke(
             &command.program,
             &["agents".into(), "--json".into(), "--all".into()],
