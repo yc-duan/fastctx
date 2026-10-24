@@ -1061,6 +1061,7 @@ export function register(on) {
     // and in its context.
     await refreshAccountAgents($, context)
     context.heardAccountAgents = context.accountAgentRevision
+    nativeGoalContexts.set(context.sessionId, context)
     await startControls($)
     scheduleNativeGoalClear($, context)
     return next(e)

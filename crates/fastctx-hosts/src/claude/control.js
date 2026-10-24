@@ -236,6 +236,12 @@ async function controlReply($, state, file, request) {
   let reply = state.replies.get(file)
   if (reply === undefined) {
     try {
+      const nativeContext = nativeGoalContexts.get(state.host.session)
+      if (nativeContext && !nativeContext.busy) {
+        try { await clearNativeGoal($, nativeContext) }
+        catch (error) { throw controlRefusal(String(error)) }
+        if (!nativeContext.nativeGoalCleared) throw controlRefusal('Claude native goal cleanup did not finish; the control was not sent')
+      }
       const owner = await $.process.run([FASTCTX, 'claude-control-owner', WORLD])
       if (owner.exitCode !== 0) throw new Error('checking the World node: ' + owner.stderr)
       if (!controlSame(JSON.parse(owner.stdout), request.controller)) throw new Error('the World node that requested this control exited')
@@ -255,10 +261,11 @@ async function controlReply($, state, file, request) {
         }
         if (!JSON.parse(stdout).claimed) return
       }
-      reply = { ok: await controlExecute($, state, { ...request.control, receipt: request.handoff_contract === 1 ? file.slice(0, -5) : undefined }, request.handoff_contract === 1) }
+      reply = { ok: await controlExecute($, state, { ...request.control, controller: request.controller, receipt: request.handoff_contract === 1 ? file.slice(0, -5) : undefined }, request.handoff_contract === 1) }
     } catch (error) {
       reply = { error: String(error) }
       if (request.handoff_contract === 1 && error.notRun === true) reply.not_run = true
+      if (request.handoff_contract === 1 && error.uncertain === true) reply.uncertain = true
     }
   }
   // A failed publication retries only publication, never the host operation.
@@ -281,7 +288,7 @@ async function controlExecute($, state, control, handoff = false) {
     const automatic = (await $.config.list()).find((row) => row.key === 'autoCompact')
     if (!automatic) return { kind: 'refused', said: 'Claude did not report its automatic compaction setting.' }
     if (automatic.value === false) return { kind: 'refused', said: 'Automatic compaction is disabled.' }
-    return controlCompact($, state)
+    return controlCompact($, state, undefined, control)
   }
   if (control.do === 'offers') {
     const commands = await controlCatalog($, state)
@@ -308,7 +315,7 @@ async function controlExecute($, state, control, handoff = false) {
     return offered
   }
   if (control.do === 'compact') {
-    return controlCompact($, state)
+    return controlCompact($, state, undefined, control)
   }
   if (control.do === 'command') {
     return controlCommand($, state, control)
@@ -508,6 +515,7 @@ async function completeControlTurn($, e) {
 }
 
 async function endControls($, e) {
+    nativeGoalContexts.delete(e.sessionId)
     const state = sessions.get(e.sessionId)
     if (state) {
       state.closed = true

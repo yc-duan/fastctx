@@ -95,7 +95,10 @@ pub(crate) async fn run(
         let evidence = super::control_outcome::Evidence::capture(&directory, &json!({"do":"goal_compact"}))
             .map_err(|error| Failure::not_run(format!("preparing Claude compaction evidence: {error}")))?;
         let prepared = Ticket {
-            key: key.into(), host, controller: fastctx_platform::current_identity().map_err(failure)?, evidence,
+            key: key.into(),
+            host,
+            controller: fastctx_platform::current_identity().map_err(failure)?,
+            evidence,
         };
         files::write(&ticket_path, &prepared).map_err(failure)?;
         files::write(&directory.join("retained").join(format!("{key}.json")), &prepared).map_err(failure)?;
@@ -103,6 +106,7 @@ pub(crate) async fn run(
             &directory.join("inbox").join(format!("{key}.json")),
             &json!({
                 "instance":prepared.host.instance, "controller":prepared.controller, "control":{"do":"goal_compact"},
+                "handoff_contract": if prepared.host.handoff_contract == Some(1) { 1 } else { 0 },
             }),
         )
         .map_err(failure)?;
@@ -112,25 +116,56 @@ pub(crate) async fn run(
     let ticket = ticket.expect("a prepared or published request");
     let directory = files::directory(node.world.path(), &ticket.host.session);
     let began = Instant::now();
+    let handoff = ticket.host.handoff_contract == Some(1);
+    let mut evidence = ticket.evidence.clone();
     loop {
+        if handoff
+            && files::read::<files::Claim>(&directory.join("claims").join(format!("{key}.json")))
+                .map_err(uncertain)?
+                .is_none()
+            && crate::goals::engine::requests(node, resident, key)
+            && !super::control::running(node, resident).map_err(uncertain)?
+        {
+            let gate = crate::control_queue::gate(node, resident);
+            let _action = gate.lock().await;
+            super::resume::ready(node, resident).await.map_err(|error| {
+                super::control_outcome::unknown(&format!(
+                    "reconnecting the submitted goal compaction: {}",
+                    error.message
+                ))
+            })?;
+        }
         {
             let gate = super::reading(node, &ticket.host.session);
             let _reading = gate.lock().await;
-            if directory.join("replies").join(format!("{key}.done")).try_exists().map_err(failure)? {
-                capture(node, resident, &directory, key).map_err(failure)?;
-                super::control::collect_invocation(&directory, key).map_err(failure)?;
+            if directory.join("replies").join(format!("{key}.done")).try_exists().map_err(uncertain)? {
+                capture(node, resident, &directory, key).map_err(uncertain)?;
+                super::control::collect_invocation(&directory, key).map_err(uncertain)?;
             }
-            if let Some(receipt) = files::read::<Receipt>(&receipt_path).map_err(failure)? {
+            if let Some(receipt) = files::read::<Receipt>(&receipt_path).map_err(uncertain)? {
                 return result(&ticket, receipt);
             }
-            if !files::active(&directory, &ticket.host).map_err(failure)? {
-                if ticket.evidence.completed().map_err(|error| super::control_outcome::unknown(&format!("checking goal compaction evidence: {error}")))? {
-                    let receipt = Receipt { host: ticket.host.clone(), reply: json!({"ok":super::control_outcome::done()}) };
-                    files::write(&receipt_path, &receipt).map_err(failure)?;
+            let claimed = files::read::<files::Claim>(&directory.join("claims").join(format!("{key}.json")))
+                .map_err(uncertain)?;
+            if let Some(claim) = &claimed {
+                evidence.executing(claim).map_err(|error| {
+                    super::control_outcome::unknown(&format!("reading goal compaction claim: {error}"))
+                })?;
+            }
+            let executing = claimed.as_ref().map(|claim| &claim.host).unwrap_or(&ticket.host);
+            if (!handoff || claimed.is_some()) && !files::active(&directory, executing).map_err(uncertain)? {
+                if evidence.completed().map_err(|error| {
+                    super::control_outcome::unknown(&format!("checking goal compaction evidence: {error}"))
+                })? {
+                    let receipt =
+                        Receipt { host: ticket.host.clone(), reply: json!({"ok":super::control_outcome::done()}) };
+                    files::write(&receipt_path, &receipt).map_err(uncertain)?;
                     return result(&ticket, receipt);
                 }
-                if !ticket.evidence.may_finish().map_err(failure)? {
-                    return Err(super::control_outcome::unknown("the Claude activation ended without confirming its goal compaction"));
+                if !evidence.may_finish().map_err(uncertain)? {
+                    return Err(super::control_outcome::unknown(
+                        "the Claude activation ended without confirming its goal compaction",
+                    ));
                 }
             }
         }
@@ -141,7 +176,9 @@ pub(crate) async fn run(
             });
         }
         if began.elapsed() >= crate::control_queue::COMPACTING {
-            return Err(super::control_outcome::unknown("Claude did not confirm goal compaction within thirty minutes"));
+            return Err(super::control_outcome::unknown(
+                "Claude did not confirm goal compaction within thirty minutes",
+            ));
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
@@ -163,12 +200,17 @@ pub(crate) async fn release(node: &Node, resident: &ResidentId, key: &str) -> Re
 
 fn result(ticket: &Ticket, receipt: Receipt) -> Result<Controlled, Failure> {
     if receipt.host != ticket.host {
-        return Err(Failure::new("the goal compaction receipt belongs to another activation"));
+        return Err(super::control_outcome::unknown("the goal compaction receipt belongs to another activation"));
     }
     let value = super::control_outcome::reply(receipt.reply)?;
-    serde_json::from_value(value).map_err(failure)
+    serde_json::from_value(value)
+        .map_err(|error| super::control_outcome::unknown(&format!("reading the goal compaction result: {error}")))
 }
 
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
+}
+
+fn uncertain(error: impl std::fmt::Display) -> Failure {
+    super::control_outcome::unknown(&format!("observing submitted goal compaction: {error}"))
 }

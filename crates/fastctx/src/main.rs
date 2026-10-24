@@ -145,6 +145,15 @@ enum Command {
         #[arg(value_parser = paths::parser())]
         world: PathBuf,
     },
+    /// Observes the native goal cleanup before controls consume its context.
+    #[command(hide = true)]
+    ClaudeNativeGoal {
+        #[arg(value_parser = paths::parser())]
+        world: PathBuf,
+        session: String,
+        #[arg(long)]
+        after: Option<u64>,
+    },
     /// Identifies the node lifetime that may issue queued Claude controls.
     #[command(hide = true)]
     ClaudeControlOwner {
@@ -435,6 +444,7 @@ fn main() -> ExitCode {
             | Command::ClaudeElicitation { .. }
             | Command::ClaudeControlOwner { .. }
             | Command::ClaudeControlClaim { .. }
+            | Command::ClaudeNativeGoal { .. }
             | Command::ClaudeControlGuard { .. }
             | Command::ClaudeSessionPolicy { .. }
             | Command::Uninstall(_)
@@ -480,6 +490,9 @@ fn main() -> ExitCode {
         Command::ClaudeElicitation { world } => fastctx_node::claude_request::run(&world, true).map_err(Into::into),
         Command::ClaudeControlOwner { world } => fastctx_node::claude_request::owner(&world).map_err(Into::into),
         Command::ClaudeControlClaim { world } => fastctx_node::claude_control_claim::run(&world).map_err(Into::into),
+        Command::ClaudeNativeGoal { world, session, after } => {
+            fastctx_node::claude_native_goal::run(&world, &session, after).map_err(Into::into)
+        }
         Command::ClaudeControlGuard { watch, root } => {
             fastctx_node::claude_request::guard(watch.as_deref().zip(root.as_deref())).map_err(Into::into)
         }
