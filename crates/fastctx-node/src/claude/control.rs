@@ -241,9 +241,11 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
     Ok(offers)
 }
 
-// 2026-10-24: public session.compact skips its caller's hook. Invoking the
-// command runs it, but native cold forks then duplicate retained assistant
-// messages. A preserving public entrance is required before offering rewind.
+/// Claude Code has no entrance that rewinds in place and keeps the context:
+/// `session.compact` from a plugin skips that plugin's own compaction
+/// handler and asks the model to compact, and running the compact command
+/// reaches the handler, but a native cold fork of the result repeats the
+/// assistant's retained messages. Rewind is offered once one keeps it whole.
 const REWIND_SUPPORTED: bool = false;
 
 pub(super) fn live_host(node: &Node, resident: &ResidentId) -> Result<(PathBuf, Host), Failure> {
