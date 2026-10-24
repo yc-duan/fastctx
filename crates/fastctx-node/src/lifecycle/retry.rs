@@ -28,6 +28,8 @@ pub(crate) struct Progress {
     pub attempted: bool,
     #[serde(default)]
     pub accepted: bool,
+    #[serde(default)]
+    pub after_activation: Option<String>,
 }
 
 fn path(node: &Node, id: &ResidentId, input: &NoticeId) -> PathBuf {
@@ -58,11 +60,34 @@ pub(crate) fn begin(node: &Node, id: &ResidentId, input: &NoticeId) -> Result<()
             node,
             id,
             input,
-            &Progress { began: now, next: now, failures: 0, reason: None, attempted: false, accepted: false },
+            &Progress {
+                began: now,
+                next: now,
+                failures: 0,
+                reason: None,
+                attempted: false,
+                accepted: false,
+                after_activation: None,
+            },
         )
         .map_err(failure)?;
     }
     Ok(())
+}
+
+/// The next activation, not a late report from the previous one, must consume
+/// this wake. Commit that boundary before publishing the Waking state.
+pub(crate) fn begin_after(
+    node: &Node,
+    id: &ResidentId,
+    input: &NoticeId,
+    activation: Option<String>,
+) -> Result<(), Failure> {
+    begin(node, id, input)?;
+    let _transaction = crate::resident_storage::lock();
+    let mut kept = progress(node, id, input).map_err(failure)?.ok_or_else(|| failure("missing host preflight"))?;
+    kept.after_activation = activation;
+    keep(node, id, input, &kept).map_err(failure)
 }
 
 /// Commits the boundary before a command capable of accepting the input runs.

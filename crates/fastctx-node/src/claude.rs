@@ -428,10 +428,12 @@ async fn look(node: &Arc<Node>, directory: &Path) {
                         let _speaking = speaking.lock().await;
                         uncertain_inputs(node, &resident, &session, Some(&ids), text, None).await?;
                     }
-                    exchange::Reported::Happened(event) => {
+                    exchange::Reported::Happened(event, activation) => {
                         if let Happened::TurnStarted { turn } = &event.happened {
-                            taken(node, &resident, &session, turn, |pending| pending.state == PendingState::Waking)
-                                .await?;
+                            taken(node, &resident, &session, turn, |pending| {
+                                startup::takes_wake(node, &resident, &session, event.at, activation.as_deref(), pending)
+                            })
+                            .await?;
                         }
                         let current = node
                             .residents
@@ -459,7 +461,7 @@ async fn look(node: &Arc<Node>, directory: &Path) {
                         }
                         crate::inbox::reclaim(&node.world.conversation(&resident), &ids)?;
                         taken(node, &resident, &session, &turn, |pending| {
-                            ids.iter().any(|id| id == pending.delivery.id.as_str())
+                            Ok(ids.iter().any(|id| id == pending.delivery.id.as_str()))
                         })
                         .await?;
                         exchange::acknowledge_handover(directory, &ids, &turn)?;
@@ -522,7 +524,7 @@ async fn look(node: &Arc<Node>, directory: &Path) {
                     node.log.line(format_args!("taking back the doubt about {id}: {error}"));
                 }
                 if let Err(error) =
-                    taken(node, &resident, &session, &turn, |pending| pending.delivery.id.as_str() == id).await
+                    taken(node, &resident, &session, &turn, |pending| Ok(pending.delivery.id.as_str() == id)).await
                 {
                     node.log.line(format_args!("applying the receipt for {id}: {error}"));
                     return;
@@ -695,7 +697,7 @@ async fn taken(
     resident: &ResidentId,
     session: &str,
     turn: &str,
-    which: impl Fn(&Pending) -> bool,
+    which: impl Fn(&Pending) -> std::io::Result<bool>,
 ) -> std::io::Result<()> {
     if !node.residents.knows(resident) {
         return Ok(());
@@ -704,11 +706,12 @@ async fn taken(
     let Some(speaking) = node.residents.speaking(resident) else { return Ok(()) };
     let _speaking = speaking.lock().await;
     crate::delivery::remember_session(&directory, turn, session)?;
-    let mut kept: Vec<Pending> = crate::inbox::pending(&directory)?
-        .into_iter()
-        .filter(|pending| pending.session.as_deref().is_none_or(|bound| bound == session))
-        .filter(which)
-        .collect();
+    let mut kept = Vec::new();
+    for pending in crate::inbox::pending(&directory)? {
+        if pending.session.as_deref().is_none_or(|bound| bound == session) && which(&pending)? {
+            kept.push(pending);
+        }
+    }
     if kept.is_empty() {
         return Ok(());
     }
@@ -1192,23 +1195,33 @@ pub async fn deliver(
             if as_user {
                 node.claude.handing(to, &text);
             }
-            if let Err(error) = crate::lifecycle::retry::begin(node, to, &pending.delivery.id) {
-                return Some(Err(error));
-            }
-            let claimed: std::io::Result<bool> = (|| {
-                let taking = node.taking.lock().expect("never poisoned");
-                if taking.contains(&(to.clone(), pending.delivery.id.clone())) {
-                    return Ok(false);
-                }
-                let Some(current) = crate::inbox::read(directory, &pending.delivery.id)? else {
-                    return Ok(false);
+            let claimed: std::io::Result<bool> = {
+                let Some(speaking) = node.residents.speaking(to) else {
+                    return Some(Err(crate::authorization::no_subject()));
                 };
-                if current.state != PendingState::Waiting {
-                    return Ok(false);
-                }
-                crate::inbox::set_state(directory, &pending.delivery.id, PendingState::Waking)?;
-                Ok(true)
-            })();
+                let _speaking = speaking.lock().await;
+
+                (|| {
+                    let taking = node.taking.lock().expect("never poisoned");
+                    if taking.contains(&(to.clone(), pending.delivery.id.clone())) {
+                        return Ok(false);
+                    }
+                    let Some(current) = crate::inbox::read(directory, &pending.delivery.id)? else {
+                        return Ok(false);
+                    };
+                    if current.state != PendingState::Waiting {
+                        return Ok(false);
+                    }
+                    // Ended runtimes can have left the in-memory registry.
+                    // Their durable registration still identifies the predecessor.
+                    let previous = exchange::registration(&exchange::sessions(node.world.path()).join(&session))?
+                        .and_then(|registration| registration.instance);
+                    crate::lifecycle::retry::begin_after(node, to, &pending.delivery.id, previous)
+                        .map_err(std::io::Error::other)?;
+                    crate::inbox::set_state(directory, &pending.delivery.id, PendingState::Waking)?;
+                    Ok(true)
+                })()
+            };
             match claimed {
                 Ok(true) => {
                     match crate::lifecycle::wake::wake(

@@ -26,6 +26,41 @@ pub(super) struct Listed {
     answer: Result<String, String>,
 }
 
+/// Only a turn of the replacement activation can consume a CLI wake. Old
+/// starts can arrive after the next wake was kept, even after a node restart.
+pub(super) fn takes_wake(
+    node: &Node,
+    resident: &ResidentId,
+    session: &str,
+    at: jiff::Timestamp,
+    activation: Option<&str>,
+    pending: &fastctx_types::residents::Pending,
+) -> std::io::Result<bool> {
+    if pending.state != PendingState::Waking {
+        return Ok(false);
+    }
+    let registration = exchange::registration(&exchange::sessions(node.world.path()).join(session))?;
+    let current = registration.as_ref().and_then(|registration| registration.instance.as_deref());
+    if activation.is_some() && current.is_none() {
+        return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "the activation registration is not complete"));
+    }
+    if activation.is_some_and(|activation| current != Some(activation)) {
+        return Ok(false);
+    }
+    let prior = crate::lifecycle::retry::progress(node, resident, &pending.delivery.id)?
+        .and_then(|progress| progress.after_activation);
+    Ok(match (activation, prior.as_deref()) {
+        (Some(activation), Some(prior)) => activation != prior,
+        // Legacy reports still must follow both the wake and the current
+        // registration, and cannot consume it before the predecessor changes.
+        _ => {
+            prior.as_deref().is_none_or(|prior| current != Some(prior))
+                && registration.and_then(|registration| registration.at).is_none_or(|registered| registered <= at)
+                && pending.since.unwrap_or(pending.delivery.at) <= at
+        }
+    })
+}
+
 /// `waking`: the session paired before, and these words wake it; it is
 /// settled once the session that came up takes them, not by its pairing.
 pub(super) fn observe(node: &Arc<Node>, resident: &ResidentId, id: NoticeId, waking: bool) {

@@ -152,7 +152,7 @@ pub enum Reported {
         ids: Vec<String>,
         text: String,
     },
-    Happened(SessionEvent),
+    Happened(SessionEvent, Option<String>),
     /// The conversation ended, including /clear or resume within the process.
     Ended {
         reason: Option<String>,
@@ -232,6 +232,8 @@ enum ModEvent {
     TurnStart {
         turn: Option<String>,
         at: Option<Timestamp>,
+        #[serde(default)]
+        activation: Option<String>,
     },
     TurnComplete {
         turn: Option<String>,
@@ -466,24 +468,28 @@ fn read_report(path: &Path) -> io::Result<Vec<u8>> {
 }
 
 fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
-    let happened =
-        |at: Option<Timestamp>, happened| Reported::Happened(SessionEvent { at: at.unwrap_or(recorded_at), happened });
+    let happened = |at: Option<Timestamp>, happened| {
+        Reported::Happened(SessionEvent { at: at.unwrap_or(recorded_at), happened }, None)
+    };
     let turn_of = |turn: Option<String>| turn.unwrap_or_default();
     match event {
         ModEvent::Agent { agent_id, report } => translate(*report, recorded_at)
             .into_iter()
             .filter_map(|report| {
-                if let Reported::Happened(event) = report {
-                    Some(Reported::Happened(SessionEvent {
-                        at: event.at,
-                        happened: Happened::Changed {
-                            turn: None,
-                            change: fastctx_types::session::SessionChange::AgentEvent {
-                                agent_id: agent_id.clone(),
-                                happened: Box::new(event.happened),
+                if let Reported::Happened(event, _) = report {
+                    Some(Reported::Happened(
+                        SessionEvent {
+                            at: event.at,
+                            happened: Happened::Changed {
+                                turn: None,
+                                change: fastctx_types::session::SessionChange::AgentEvent {
+                                    agent_id: agent_id.clone(),
+                                    happened: Box::new(event.happened),
+                                },
                             },
                         },
-                    }))
+                        None,
+                    ))
                 } else {
                     None
                 }
@@ -528,7 +534,10 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
             vec![happened(at, Happened::Finished { turn: turn_of(turn), item })]
         }
         ModEvent::Uncertain { deliveries, text } => vec![Reported::Uncertain { ids: deliveries, text }],
-        ModEvent::TurnStart { turn, at } => vec![happened(at, Happened::TurnStarted { turn: turn_of(turn) })],
+        ModEvent::TurnStart { turn, at, activation } => vec![Reported::Happened(
+            SessionEvent { at: at.unwrap_or(recorded_at), happened: Happened::TurnStarted { turn: turn_of(turn) } },
+            activation,
+        )],
         ModEvent::TurnComplete { turn, at, aborted, reason, refusal, error, ms, answer, streamed, spent } => {
             let turn = turn_of(turn);
             let mut reported = Vec::new();

@@ -104,7 +104,7 @@ async fn settle_stopped(node: &Arc<Node>, resident: &ResidentId, session: &str) 
     }
     for report in reports {
         for event in report.events {
-            if let exchange::Reported::Happened(event) = event
+            if let exchange::Reported::Happened(event, _) = event
                 && matches!(event.happened, fastctx_types::session::Happened::TurnEnded { .. })
             {
                 crate::turns::apply(node, resident, event)

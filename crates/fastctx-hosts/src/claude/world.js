@@ -847,7 +847,7 @@ async function startTurn($, context, e, next) {
   // So did what rode in beside its prompt (`alongPrompt`).
   const along = context.alongTaken.splice(0, context.alongTaken.length)
   if (along.length > 0) took.push(along)
-  const started = event($, context, 'turn_start', { turn: context.turn })
+  const started = event($, context, 'turn_start', { turn: context.turn, activation: context.registration.instance })
   const saved = activity($, context)
   await Promise.all([started, saved])
   for (const deliveries of took) await submitted($, context, deliveries, e.turnId)
