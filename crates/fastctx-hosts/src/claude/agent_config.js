@@ -53,12 +53,12 @@ async function agentsHeard($, context) {
 }
 
 // At a process's start: what an earlier process of this session told the
-// model, or, for a new session, what its first message is about to carry.
+// model. Without a receipt, no revision is known to have reached it.
 async function agentsHeardBefore($, context) {
   try {
     context.heardAccountAgents = JSON.parse(await $.fs.read(context.dir + '/agents-heard.json')).revision ?? undefined
   } catch (error) {
-    context.heardAccountAgents = context.accountAgentRevision
+    context.heardAccountAgents = undefined
   }
 }
 
@@ -67,7 +67,7 @@ async function agentsHeardBefore($, context) {
 // told in a note ahead of the World's words.
 async function accountAgentsBeforeSubmit($, context) {
   await refreshAccountAgents($, context)
-  if (context.accountAgentRevision === undefined || context.heardAccountAgents === context.accountAgentRevision) return
+  if (context.contextFresh === true || context.accountAgentRevision === undefined || context.heardAccountAgents === context.accountAgentRevision) return
   const rows = [...(context.accountAgents?.values() ?? [])].map((entry) => '- ' + entry.full + ': ' + JSON.parse(entry.encoded).description)
   const listing = rows.length ? rows.join('\n') : '(none)'
   const text = "The account's Claude subagents now listed below replace its previous subagent list:\n" + listing
