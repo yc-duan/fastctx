@@ -21,7 +21,10 @@ pub(crate) fn speaks(node: &Node, id: &ResidentId) -> bool {
         && node
             .residents
             .about(id)
-            .is_some_and(|(about, _)| about.world_started && matches!(about.origin, Origin::User))
+            .map_or_else(
+                || crate::here::born_for_user(node, id),
+                |(about, _)| about.world_started && matches!(about.origin, Origin::User),
+            )
 }
 
 /// Keeps `message` as what `id` last told the user.

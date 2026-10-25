@@ -35,7 +35,12 @@ type Went = (Written, Option<TownName>);
 /// it lists then must already be theirs, as Codex does not list them again
 /// (`world-colleagues.md`, 同事从哪里来、能去哪里).
 #[derive(Default)]
-pub struct Births(Mutex<HashMap<ResidentId, Acting>>);
+pub struct Births(Mutex<HashMap<ResidentId, Born>>);
+
+struct Born {
+    acting: Acting,
+    user_started: bool,
+}
 
 /// A resident whose initial setup is in progress; dropping it ends the birth,
 /// whether setup succeeded or failed.
@@ -52,8 +57,9 @@ impl Drop for Birth {
 }
 
 /// `id` is being born here, working for `acting`.
-pub(crate) fn born(node: &Arc<Node>, id: &ResidentId, acting: Acting) -> Birth {
-    node.births.0.lock().expect("never poisoned").insert(id.clone(), acting);
+pub(crate) fn born(node: &Arc<Node>, id: &ResidentId, acting: Acting, origin: &fastctx_types::residents::Origin) -> Birth {
+    let user_started = matches!(origin, fastctx_types::residents::Origin::User);
+    node.births.0.lock().expect("never poisoned").insert(id.clone(), Born { acting, user_started });
     Birth { node: node.clone(), id: id.clone() }
 }
 
@@ -62,12 +68,17 @@ pub(crate) fn being_born(node: &Node, id: &ResidentId) -> bool {
     node.births.0.lock().expect("never poisoned").contains_key(id)
 }
 
+/// Whether the World is starting this conversation for the user, before its host identifies it.
+pub(crate) fn born_for_user(node: &Node, id: &ResidentId) -> bool {
+    node.births.0.lock().expect("never poisoned").get(id).is_some_and(|born| born.user_started)
+}
+
 /// Whom `id` works for, as its record says, or as its birth does until the
 /// record is written.
 pub(crate) fn acting(node: &Node, id: &ResidentId) -> Option<Acting> {
     match node.residents.about(id) {
         Some((about, _)) => Some(about.acting),
-        None => node.births.0.lock().expect("never poisoned").get(id).cloned(),
+        None => node.births.0.lock().expect("never poisoned").get(id).map(|born| born.acting.clone()),
     }
 }
 

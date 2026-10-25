@@ -1525,7 +1525,7 @@ pub async fn open_here(
     oldest::check(node, &launching).await?;
     let agent = AgentName::try_from("claude").expect("a valid agent name");
     let (id, _opening) = crate::attachments::opening(node, &agent, &opened.acting, town.as_ref(), &attachments).await?;
-    let _birth = crate::here::born(node, &id, opened.acting.clone());
+    let _birth = crate::here::born(node, &id, opened.acting.clone(), &Origin::User);
     let Command { program, env, .. } = launching.clone();
     // A login assisting another account starts without the browser of this
     // machine (`background::Start::assisting`).
