@@ -38,6 +38,12 @@ pub(crate) fn say(
     if message.trim().is_empty() {
         return Err(Failure::not_run("the message is empty"));
     }
+    if attachments.len() > fastctx_types::voice::ATTACHMENTS_MOST {
+        return Err(Failure::not_run(format!("at most {} attachments", fastctx_types::voice::ATTACHMENTS_MOST)));
+    }
+    if attachments.iter().any(|attachment| attachment.machine.trim().is_empty() || attachment.path.trim().is_empty()) {
+        return Err(Failure::not_run("each attachment names its machine and its path"));
+    }
     let at = Timestamp::now();
     let told = Told {
         id: format!("told-{}", at.as_nanosecond()),
