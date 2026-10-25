@@ -450,7 +450,7 @@ async function alongBefore($, context) {
 // that starts it; the turn it starts takes it (`startTurn`).
 async function alongPrompt($, context, e, next) {
   if (e.turnId !== undefined || e.command !== undefined || context.closed) return next(e)
-  await refreshAccountAgents($, context)
+  await accountAgentsBeforeSubmit($, context)
   await readGoal($, context)
   const { along, texts, keep, stopped } = alongNext(context)
   if (texts.length === 0) return next(e)

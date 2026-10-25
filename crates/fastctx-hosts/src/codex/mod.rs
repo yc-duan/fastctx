@@ -1836,6 +1836,7 @@ pub fn world_tools(binary: &Path, env: &[(String, String)], tools: &[&str], budg
             "shell_tool": false,
             "view_image": false,
             "goals": false,
+            "send_message_to_user_async": false,
         },
         "tools": { "update_plan": { "enabled": false } },
         "tool_output_token_limit": limit,

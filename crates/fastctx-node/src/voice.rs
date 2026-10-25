@@ -21,7 +21,10 @@ pub(crate) fn speaks(node: &Node, id: &ResidentId) -> bool {
         && node
             .residents
             .about(id)
-            .is_some_and(|(about, _)| about.world_started && matches!(about.origin, Origin::User))
+            .map_or_else(
+                || crate::here::born_for_user(node, id),
+                |(about, _)| about.world_started && matches!(about.origin, Origin::User),
+            )
 }
 
 /// Keeps `message` as what `id` last told the user.
@@ -37,6 +40,12 @@ pub(crate) fn say(
     }
     if message.trim().is_empty() {
         return Err(Failure::not_run("the message is empty"));
+    }
+    if attachments.len() > fastctx_types::voice::ATTACHMENTS_MOST {
+        return Err(Failure::not_run(format!("at most {} attachments", fastctx_types::voice::ATTACHMENTS_MOST)));
+    }
+    if attachments.iter().any(|attachment| attachment.machine.trim().is_empty() || attachment.path.trim().is_empty()) {
+        return Err(Failure::not_run("each attachment names its machine and its path"));
     }
     let at = Timestamp::now();
     let told = Told {

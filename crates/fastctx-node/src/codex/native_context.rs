@@ -34,10 +34,14 @@ pub(crate) async fn observe(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
     if about.world_started || about.host.agent.as_str() != "codex" {
         return Ok(());
     }
-    let Some(thread) = about.session else { return Ok(()) };
-    let gate = super::working(node, &thread);
+    let Some(thread) = about.session.as_ref() else { return Ok(()) };
+    // A loaded runtime reports compactions directly; its later rollout flush must not reset them twice (2026-10-25).
+    if node.codex.of(node, &about)?.loaded(thread) {
+        return Ok(());
+    }
+    let gate = super::working(node, thread);
     let _observing = gate.lock().await;
-    let path = node.codex.home(about.home.as_deref())?.rollout(&thread).await.map_err(Failure::new)?;
+    let path = node.codex.home(about.home.as_deref())?.rollout(thread).await.map_err(Failure::new)?;
     let Some(path) = path else {
         return Err(Failure::new(crate::context::words::CODEX_PENDING));
     };
@@ -80,6 +84,7 @@ pub(crate) async fn observe(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
             revision =
                 revision.checked_add(1).ok_or_else(|| io::Error::other(crate::context::words::REVISION_EXHAUSTED))?;
             crate::context::compacted(&node_read, &id_read, &format!("native:{revision}"))?;
+            node_read.residents.restore_opening_heard(&id_read);
         }
         if previous.is_none() || changed {
             let _transaction = crate::resident_storage::lock();

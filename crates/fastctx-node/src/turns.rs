@@ -146,7 +146,7 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
             }
             if matches!(item.what, fastctx_types::session::What::Compaction)
                 && about.host.agent.as_str() == "codex"
-                && about.world_started
+                && about.world_managed()
             {
                 crate::context::compacted(node, id, &item.id)?;
             }

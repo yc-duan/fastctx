@@ -221,7 +221,7 @@ pub async fn ask_here(
         },
     )?;
     let origin = Origin::Colleague { asked_by: asker.clone(), label };
-    let _birth = crate::here::born(node, &id, acting.clone());
+    let _birth = crate::here::born(node, &id, acting.clone(), &origin);
     let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref(), &acting, home.as_deref()).await?;
     // Until it is claimed below, reports of threads nobody claims are kept.
     let _starting = crate::codex::starting(node);
@@ -475,7 +475,7 @@ pub(crate) async fn instructions(
         heard_now(node, town).map_err(|error| Failure::new(format!("reading the town's ledger: {error}")))?;
     let words = words(id, town, origin, record);
     let (context, receipt) = crate::context::prepare(node, id, town, origin, acting).await?;
-    heard.context = Some(receipt);
+    heard.context = record.then_some(receipt);
     let text = if record && !context.is_empty() { format!("{words}\n\n{context}") } else { words };
     Ok((text, heard))
 }
