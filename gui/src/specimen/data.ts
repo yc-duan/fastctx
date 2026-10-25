@@ -97,11 +97,6 @@ export async function specimenData(call: DataCall): Promise<DataReply> {
     }
     case "list":
       return { data: "listed", ...space() };
-    case "clear_cache": {
-      const bytes = cached;
-      cached = 0;
-      return { data: "cache_cleared", bytes };
-    }
     case "output_days":
       outputDays = call.days ?? 7;
       return { data: "output_days", days: outputDays };
