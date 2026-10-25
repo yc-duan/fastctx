@@ -29,7 +29,9 @@ import type { PendingControl } from "../world/control";
 export type Use = "done" | "failed" | "declined" | "cut" | "unknown";
 
 export type SendState =
-  | { state: "going" }
+  /** On their way. `retry` is set once their host has failed to start for
+   *  a minute and is being started again: why it did not start. */
+  | { state: "going"; retry?: string }
   /** No answer came yet; they are said again, under the same id, until one
    *  does: why the last try got none. */
   | { state: "waiting"; why: string }
@@ -46,6 +48,9 @@ export type SendState =
 export interface KeptWords {
   id: string;
   state: "waiting" | "handing" | "unknown";
+  /** Present once their host has failed to start for a minute; they are
+   *  still on their way (`world-lifecycle.md`, 用户看到的只是在发送). */
+  host_retry?: { since: string; reason: string };
 }
 
 /** Something the user attached to their words, as it is shown with them. */
@@ -1356,20 +1361,21 @@ export class Fold {
    *  一句话从发出到落定): whether it works, on which turn, and which words it
    *  keeps on their way in. What shows under way here gives way to it: a
    *  turn it runs is under way; when none runs, nothing shown is; words the
-   *  World answered for stand as it keeps them, or, kept no more, as said. */
+   *  World answered for stand as it keeps them, or, kept no more, as said.
+   *  Words whose host has not started for a minute say why on their way. */
   now(busy: boolean, turn: string | null, kept: KeptWords[]): void {
     if (busy && turn) this.underWay(turn, Date.now());
     if (!busy) this.noTurnRuns();
-    const keeping = new Map(kept.map((words) => [words.id, words.state]));
+    const keeping = new Map(kept.map((words) => [words.id, words]));
     for (const entry of this.entries) {
       if (entry.kind !== "heard" || !entry.sending || entry.delivery === undefined) continue;
       const settling = entry.sending.state === "going" || (entry.sending.state === "landed" && entry.sending.how === "kept");
       if (!settling) continue;
-      const state = entry.delivery === null ? undefined : keeping.get(entry.delivery);
+      const words = entry.delivery === null ? undefined : keeping.get(entry.delivery);
       let next: SendState | null = null;
-      if (state === "waiting") next = { state: "landed", how: "kept", machine: entry.from?.kind === "user" ? entry.from.machine : "" };
-      else if (state === undefined && !busy) next = { state: "settled" };
-      else if (state !== undefined) next = { state: "going" };
+      if (words?.state === "waiting") next = { state: "landed", how: "kept", machine: entry.from?.kind === "user" ? entry.from.machine : "" };
+      else if (words === undefined && !busy) next = { state: "settled" };
+      else if (words !== undefined) next = words.host_retry ? { state: "going", retry: words.host_retry.reason } : { state: "going" };
       if (next && JSON.stringify(next) !== JSON.stringify(entry.sending)) {
         entry.sending = next;
         this.touch(entry);

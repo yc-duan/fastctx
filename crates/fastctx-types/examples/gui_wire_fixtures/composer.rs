@@ -43,6 +43,6 @@ pub fn fixtures() -> Fixtures {
                 change: Change::FilesOn { target: Target::Queued { id }, epoch: 0, files_on: None },
             },
         ],
-        updated: Updated { composer, landed: None },
+        updated: Updated { composer, landed: None, delivery: Some("queued-cd34".parse().unwrap()) },
     }
 }

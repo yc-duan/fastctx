@@ -8,7 +8,18 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub(super) async fn run(node: &Arc<Node>, home: Option<&Path>, args: Vec<OsString>) -> Result<String, Failure> {
-    run_command(super::command(node, home)?, args).await
+    let command = super::command(node, home)?;
+    if args.first().is_some_and(|arg| arg == "stop" || arg == "rm") {
+        let node = node.clone();
+        return tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+            super::retire_command::run(&node, &command, &args, std::time::Duration::from_secs(60))
+        }))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(Failure::new);
+    }
+    run_command(command, args).await
+
 }
 
 async fn run_command(command: super::Command, args: Vec<OsString>) -> Result<String, Failure> {
@@ -93,7 +104,7 @@ async fn settle_stopped(node: &Arc<Node>, resident: &ResidentId, session: &str) 
     }
     for report in reports {
         for event in report.events {
-            if let exchange::Reported::Happened(event) = event
+            if let exchange::Reported::Happened(event, _) = event
                 && matches!(event.happened, fastctx_types::session::Happened::TurnEnded { .. })
             {
                 crate::turns::apply(node, resident, event)

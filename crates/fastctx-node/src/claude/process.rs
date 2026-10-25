@@ -13,6 +13,24 @@ fn unobserve(node: &Node, process: &fastctx_types::ProcessIdentity) {
     }
 }
 
+/// An observation error is not an exit. Keep observing, independently of
+/// the notification subscription, until the exact process identity ends.
+pub(super) async fn wait(node: &Node, process: &fastctx_types::ProcessIdentity) {
+    let mut problem = None;
+    loop {
+        let result = fastctx_platform::host_process::exited(process).await;
+        if result.is_ok() || fastctx_platform::has_ended(process).is_ok_and(|ended| ended) {
+            return;
+        }
+        let error = result.expect_err("an unsuccessful observation").to_string();
+        if problem.as_ref() != Some(&error) {
+            node.log.line(format_args!("watching a Claude host process; retrying: {error}"));
+            problem = Some(error);
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    }
+}
+
 pub(super) fn observe(node: &Arc<Node>, process: Option<fastctx_types::ProcessIdentity>) {
     let Some(process) = process else { return };
     if !node.claude.state.lock().expect("never poisoned").observed.insert(process.clone()) {
@@ -20,34 +38,27 @@ pub(super) fn observe(node: &Arc<Node>, process: Option<fastctx_types::ProcessId
     }
     let node = node.clone();
     tokio::spawn(async move {
-        let exited = fastctx_platform::host_process::exited(&process);
+        let exited = wait(&node, &process);
         tokio::pin!(exited);
-        let result = loop {
+        loop {
             let changed = node.claude.changed.notified();
             tokio::pin!(changed);
             changed.as_mut().enable();
+            if !node
+                .claude
+                .state
+                .lock()
+                .expect("never poisoned")
+                .sessions
+                .values()
+                .any(|session| session.registration.process.as_ref() == Some(&process))
             {
-                let mut state = node.claude.state.lock().expect("never poisoned");
-                if !state.sessions.values().any(|session| session.registration.process.as_ref() == Some(&process)) {
-                    // A new activation must see either this observer or an absent entry.
-                    state.observed.remove(&process);
-                    if state.observed.is_empty() {
-                        state.observed = Default::default();
-                    }
-                    return;
-                }
+                unobserve(&node, &process);
+                return;
             }
             tokio::select! {
-                result = &mut exited => break result,
+                () = &mut exited => break,
                 () = changed => {},
-            }
-        };
-        match result {
-            Ok(()) => {}
-            error => {
-                unobserve(&node, &process);
-                node.log.line(format_args!("watching a Claude host process: {error:?}"));
-                return;
             }
         }
         let sessions: Vec<(String, ResidentId)> = {
@@ -61,19 +72,31 @@ pub(super) fn observe(node: &Arc<Node>, process: Option<fastctx_types::ProcessId
         };
         for (session, resident) in sessions {
             let directory = exchange::sessions(node.world.path()).join(&session);
-            // A final flushed just before death wins over inferred interruption.
-            super::look(&node, &directory).await;
-            if let Err(error) = super::ended_for_process(
-                &node,
-                &resident,
-                &session,
-                Some("its host process exited".to_string()),
-                Some(&process),
-                None,
-            )
-            .await
-            {
-                node.log.line(format_args!("settling the dead Claude session {session}: {error}"));
+            let mut problem = None;
+            loop {
+                // A final flushed just before death wins over inferred interruption.
+                super::look(&node, &directory).await;
+                match super::ended_for_process(
+                    &node,
+                    &resident,
+                    &session,
+                    Some("its host process exited".to_string()),
+                    Some(&process),
+                    None,
+                )
+                .await
+                {
+                    Ok(()) => break,
+                    Err(error) => {
+                        let error = error.to_string();
+                        if problem.as_ref() != Some(&error) {
+                            node.log
+                                .line(format_args!("settling the dead Claude session {session}; retrying: {error}"));
+                            problem = Some(error);
+                        }
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             }
         }
         unobserve(&node, &process);

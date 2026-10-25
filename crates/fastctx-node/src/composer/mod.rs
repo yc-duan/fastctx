@@ -4,6 +4,8 @@ mod commands;
 mod idle;
 pub(crate) use idle::input_busy;
 mod receipts;
+mod rejected;
+pub(crate) use rejected::rejected;
 mod state;
 mod storage;
 mod submissions;
@@ -102,7 +104,7 @@ pub async fn here(node: &Arc<Node>, from: &MachineName, id: &ResidentId, request
     let mut cell = cell.lock().await;
     load(node, id, &mut cell)?;
     if matches!(request, Request::Read) {
-        return Ok(Updated { composer: cell.as_ref().expect("loaded").view(), landed: None });
+        return Ok(Updated { composer: cell.as_ref().expect("loaded").view(), landed: None, delivery: None });
     }
     let Request::Mutate { mutation } = request else { unreachable!() };
     let mutation = *mutation;
@@ -120,7 +122,11 @@ pub async fn here(node: &Arc<Node>, from: &MachineName, id: &ResidentId, request
         if let Some(error) = &receipt.failure {
             return Err(Failure::new(error.clone()));
         }
-        return Ok(Updated { composer: state.view(), landed: receipt.landed.clone() });
+        return Ok(Updated {
+            composer: state.view(),
+            landed: receipt.landed.clone(),
+            delivery: receipt.delivery.clone(),
+        });
     }
     if let Change::Attach { attachment, .. } = &mutation.change {
         crate::attachments::resolve(node, id, std::slice::from_ref(attachment)).await?;
@@ -178,7 +184,7 @@ pub async fn here(node: &Arc<Node>, from: &MachineName, id: &ResidentId, request
     }
     next.receipts.insert(
         mutation.operation.clone(),
-        Receipt { from: from.clone(), mutation: mutation.clone(), landed: None, failure: None },
+        Receipt { from: from.clone(), mutation: mutation.clone(), landed: None, delivery: None, failure: None },
     );
     let forsaken = uploads::forsaken(state, &next);
     publish(node, id, &mut cell, next)?;
@@ -188,8 +194,9 @@ pub async fn here(node: &Arc<Node>, from: &MachineName, id: &ResidentId, request
     drop(_reading);
     let Some(flight) = flight else {
         schedule(node, id);
-        return Ok(Updated { composer: view, landed: None });
+        return Ok(Updated { composer: view, landed: None, delivery: None });
     };
+    let delivery = flight.delivery.id.clone();
     let (sending_node, sending_id) = (node.clone(), id.clone());
     let delivered =
         tokio::spawn(async move { dispatch(&sending_node, &sending_id, flight).await }).await.map_err(failure)?;
@@ -200,12 +207,13 @@ pub async fn here(node: &Arc<Node>, from: &MachineName, id: &ResidentId, request
     let receipt = receipts::receipt(node, id, &next, &mutation.operation)?.expect("kept receipt");
     let receipt = next.receipts.entry(mutation.operation.clone()).or_insert(receipt);
     receipt.landed = delivered.as_ref().ok().cloned().flatten();
+    receipt.delivery = Some(delivery.clone());
     receipt.failure = delivered.as_ref().err().map(|error| error.message.clone());
     publish(node, id, &mut cell, next)?;
     let composer = cell.as_ref().expect("loaded").view();
     drop(cell);
     schedule(node, id);
-    delivered.map(|landed| Updated { composer, landed })
+    delivered.map(|landed| Updated { composer, landed, delivery: Some(delivery) })
 }
 
 pub fn changed(node: &Arc<Node>, id: &ResidentId) {

@@ -154,6 +154,9 @@ pub struct Receipt {
     pub from: MachineName,
     pub mutation: Mutation,
     pub landed: Option<Landed>,
+    /// The id the words it sent went under, told again with a repeated answer.
+    #[serde(default)]
+    pub delivery: Option<NoticeId>,
     pub failure: Option<String>,
 }
 

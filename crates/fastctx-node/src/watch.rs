@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 #[derive(Default)]
 pub struct Watchers {
     watching: Arc<Mutex<HashMap<ResidentId, Watching>>>,
+    pub(crate) changed: Arc<tokio::sync::Notify>,
 }
 
 #[derive(Default)]
@@ -21,6 +22,14 @@ struct Watching {
 }
 
 impl Watchers {
+    pub(crate) fn watched(&self, id: &ResidentId) -> bool {
+        self.watching
+            .lock()
+            .expect("never poisoned")
+            .get(id)
+            .is_some_and(|session| session.senders.iter().any(|sender| !sender.is_closed()))
+    }
+
     /// A projection of the same in-flight items delivered to a joining watcher.
     pub fn tools(&self, id: &ResidentId) -> Vec<fastctx_types::town::CurrentTool> {
         use fastctx_types::session::Happened;
@@ -81,9 +90,12 @@ impl Watchers {
             sender.send(snapshot.clone()).expect("receiver is still here");
         }
         session.senders.push(sender.clone());
+        self.changed.notify_one();
+        let changed = self.changed.clone();
         let (registry, id) = (Arc::downgrade(&self.watching), id.clone());
         tokio::spawn(async move {
             sender.closed().await;
+            changed.notify_one();
             if let Some(registry) = registry.upgrade() {
                 let mut watching = registry.lock().expect("never poisoned");
                 if let Some(session) = watching.get_mut(&id) {

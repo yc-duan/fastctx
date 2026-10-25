@@ -36,6 +36,18 @@ pub(super) async fn run(node: &Arc<Node>, id: &ResidentId, work: &Work) -> Resul
     let path = path(node, id, work);
     let prior = fastctx_hosts::claude::control::read::<Attempt>(&path).map_err(failure)?;
     let fresh = prior.is_none();
+    if fresh {
+        let action = crate::control_queue::gate(node, id);
+        let _action = action.lock().await;
+        let management = node.residents.management(id)?;
+        let _reading = management.read().await;
+        if let Err(error) = crate::lifecycle::retry::prepare_work(node, id, &work.id).await {
+            if error.code == Some(fastctx_types::ipc::FailureCode::HostUnavailable) {
+                return Err(error);
+            }
+            return Ok(Compacted::Refused { reason: error.message });
+        }
+    }
     let mut attempt = match prior {
         Some(attempt) => attempt,
         None => {
@@ -60,7 +72,7 @@ pub(super) async fn run(node: &Arc<Node>, id: &ResidentId, work: &Work) -> Resul
     };
     if attempt.outcome.is_none() {
         let outcome = if attempt.retained || fresh {
-            crate::turn_evidence::compact::recorded(node, id, work.id.as_str()).await
+            crate::turn_evidence::compact::recorded(node, id, work.id.as_str()).await?
         } else if let Some(boundary) = &attempt.codex {
             if completed(node, id, boundary).await? {
                 Compacted::Done

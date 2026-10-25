@@ -21,7 +21,7 @@ pub(crate) async fn prepare(node: &Arc<Node>) -> Result<(), Failure> {
             Ok(None) => {}
             Ok(Some(_)) => {
                 if let Err(error) =
-                    crate::claude::management::stop(node, about.home.as_deref(), &about.id, &session, false).await
+                    crate::lifecycle::release(node, &about.id, crate::lifecycle::ReleaseReason::Uninstall).await
                 {
                     failures.push(format!("{}: {error}", about.id));
                 }

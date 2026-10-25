@@ -85,8 +85,10 @@ pub async fn exited(identity: &ProcessIdentity) -> io::Result<()> {
             // Linux opens a process as a descriptor from 5.3 on. An older
             // kernel, or a sandbox that refuses the call, is asked again
             // and again.
-            Some(libc::ENOSYS | libc::EPERM) => {
-                while crate::is_alive(identity)? {
+            // EINVAL also occurs while Linux retires a PID's task. Confirm
+            // the identity's exit through procfs instead of losing the watch.
+            Some(libc::ENOSYS | libc::EPERM | libc::EINVAL) => {
+                while !crate::has_ended(identity)? {
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
                 Ok(())
@@ -96,7 +98,7 @@ pub async fn exited(identity: &ProcessIdentity) -> io::Result<()> {
     }
     // SAFETY: fd was just opened successfully and has no other owner.
     let fd = unsafe { OwnedFd::from_raw_fd(fd) };
-    if !crate::is_alive(identity)? {
+    if crate::has_ended(identity)? {
         return Ok(());
     }
     let watched = tokio::io::unix::AsyncFd::new(fd)?;
@@ -109,7 +111,7 @@ pub async fn exited(identity: &ProcessIdentity) -> io::Result<()> {
 #[cfg(target_os = "macos")]
 pub async fn exited(identity: &ProcessIdentity) -> io::Result<()> {
     let Some(queue) = super::exit_queue(identity.pid)? else { return Ok(()) };
-    if !crate::is_alive(identity)? {
+    if crate::has_ended(identity)? {
         return Ok(());
     }
     let watched = tokio::io::unix::AsyncFd::with_interest(queue, tokio::io::Interest::READABLE)?;

@@ -54,6 +54,7 @@ pub fn keep(directory: &ConversationDir, pending: &Pending) -> io::Result<bool> 
 pub(crate) fn knows(directory: &ConversationDir, id: &NoticeId) -> io::Result<bool> {
     let _transaction = crate::resident_storage::lock();
     Ok(delivered_here(directory, id)?
+        || directory.book("host-refusals").join(format!("{id}.json")).try_exists()?
         || path(directory, id).try_exists()?
         || directory.uncertain().join(format!("{id}.json")).try_exists()?)
 }
@@ -366,7 +367,9 @@ fn parse_pending(directory: &ConversationDir, path: &Path, bytes: &[u8]) -> io::
         Notice::Words { from: fastctx_types::session::Speaker::Resident { address }, .. } => {
             (vec![address.clone()], false)
         }
-        Notice::Words { from: fastctx_types::session::Speaker::User { .. }, .. } | Notice::Sentinel { .. } => (Vec::new(), false),
+        Notice::Words { from: fastctx_types::session::Speaker::User { .. }, .. } | Notice::Sentinel { .. } => {
+            (Vec::new(), false)
+        }
         _ => (Vec::new(), true),
     };
     let about: fastctx_types::residents::About = parse(&directory.about(), &std::fs::read(directory.about())?)?;
@@ -398,7 +401,9 @@ pub fn owe_job(record_path: &Path) -> io::Result<JobRecord> {
 /// has and the resident is owed that word.
 pub async fn tell_if_ended(node: &Arc<Node>, record_path: &Path, record: &JobRecord) -> io::Result<()> {
     if record.is_sentinel() {
-        if record.end.is_none() { crate::job_watch::restore(node,record_path,record)?; }
+        if record.end.is_none() {
+            crate::job_watch::restore(node, record_path, record)?;
+        }
         return Ok(());
     }
     let Some(owner) = record.owner.resident() else { return Ok(()) };

@@ -723,15 +723,26 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
     use fastctx_types::residents::PendingState;
     use fastctx_types::session::{KeptWords, WordsState};
     let directory = node.world.conversation(resident);
+    let managed = node.residents.about(resident).is_some_and(|(about, _)| about.world_started);
     let Ok(pending) = crate::inbox::pending(&directory) else { return Vec::new() };
     pending
         .into_iter()
-        .map(|pending| KeptWords {
-            id: pending.delivery.id,
-            state: match pending.state {
-                PendingState::Waiting => WordsState::Waiting,
-                PendingState::Sending | PendingState::Handed | PendingState::Waking => WordsState::Handing,
-            },
+        .map(|pending| {
+            let progress = crate::lifecycle::retry::progress(node, resident, &pending.delivery.id).ok().flatten();
+            let retrying = progress.is_some();
+            let host_retry = progress
+                .filter(|progress| Timestamp::now().as_second().saturating_sub(progress.began.as_second()) >= 60)
+                .and_then(|progress| {
+                    progress.reason.map(|reason| fastctx_types::session::HostRetry { since: progress.began, reason })
+                });
+            KeptWords {
+                id: pending.delivery.id,
+                state: match pending.state {
+                    PendingState::Waiting if !retrying && !managed => WordsState::Waiting,
+                    _ => WordsState::Handing,
+                },
+                host_retry,
+            }
         })
         .collect()
 }
@@ -987,6 +998,9 @@ pub(crate) async fn stop_here_as(
     if let Some(turn) = &targeted {
         crate::turn_evidence::remember(node, resident, turn, source)
             .map_err(|error| Failure::new(format!("recording why the turn is stopped: {error}")))?;
+        if source == fastctx_types::turn_evidence::StopSource::User {
+            crate::stops::mark_turn(node, resident, turn).map_err(|error| Failure::new(error.to_string()))?;
+        }
     }
     let (about, _) = node
         .residents
@@ -1008,7 +1022,7 @@ pub(crate) async fn stop_here_as(
         .filter(|pending| pending.delivery.notice.along().is_none())
         .map(|pending| pending.delivery.id)
         .collect();
-    if targeted.is_none() && node.stops.coming(node, resident, coming, source) {
+    if targeted.is_none() && node.stops.coming(node, resident, coming, source).map_err(|error| Failure::new(error.to_string()))? {
         return Ok(true);
     }
     let current = node.residents.now(resident).and_then(|now| now.turn);
@@ -1019,6 +1033,9 @@ pub(crate) async fn stop_here_as(
     if let Some(turn) = &targeted {
         crate::turn_evidence::remember(node, resident, turn, source)
             .map_err(|error| Failure::new(format!("recording why the turn is stopped: {error}")))?;
+        if source == fastctx_types::turn_evidence::StopSource::User {
+            crate::stops::mark_turn(node, resident, turn).map_err(|error| Failure::new(error.to_string()))?;
+        }
     }
     match (about.host.agent.as_str(), about.world_managed(), &about.session) {
         ("codex", true, Some(thread)) => match targeted {

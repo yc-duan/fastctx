@@ -47,6 +47,7 @@ import { headline } from "./tool";
 import { ConversationView, modelName } from "./view";
 import { departureOf } from "./flight";
 import { detailOf } from "../app/problem";
+import { standsUnder } from "./landing";
 import { DraftFit } from "./fit-draft";
 import { Popover } from "./popover";
 import { Steady } from "../app/steady";
@@ -82,6 +83,9 @@ export interface Someone {
   model: string | null;
   /** The project it is in, by the name the user gave it. */
   project: string | null;
+  /** Whether the World started it, and so brings its host back itself:
+   *  words to it never wait for it to come back. */
+  heldByWorld?: boolean;
 }
 
 /** What came of words sent: a turn this conversation will see end; taken,
@@ -470,6 +474,7 @@ export class ConversationPage {
       },
       here: options.here,
       residentMachine: someone.machine,
+      agent: someone.agent,
       link: options.link,
       asks: controls && {
         words: controls.words.asks,
@@ -1171,10 +1176,10 @@ export class ConversationPage {
         }
         const landed = updated.landed;
         // The node has them: what they wait on is for its telling of now
-        // to say (`Fold.now`).
-        if (landed) conversation.named(key, null);
+        // to say (`Fold.now`), by the id it keeps them under.
+        if (landed) conversation.named(key, updated.delivery ?? (landed.kind === "handed" ? landed.id : null));
         if (!landed) conversation.unsend(key);
-        else if (landed.kind === "waiting" || landed.kind === "sent" || landed.kind === "uncertain") {
+        else if (standsUnder(landed, this.options.someone.heldByWorld === true)) {
           conversation.sent(key, { state: "landed", how: landed.kind, machine: this.options.someone.machine, why: "why" in landed ? landed.why : null });
         }
         this.update();

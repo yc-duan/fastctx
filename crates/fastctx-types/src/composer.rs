@@ -167,4 +167,8 @@ pub enum Request {
 pub struct Updated {
     pub composer: Composer,
     pub landed: Option<Landed>,
+    /// The id the words this change sent are kept under on their way in,
+    /// as `Watched::Now` names them. Older nodes do not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<NoticeId>,
 }

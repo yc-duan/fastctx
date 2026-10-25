@@ -136,6 +136,25 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             writer.send(&json(&NodeFrame::Reply { id, reply: ended })).await?;
             continue;
         }
+        if let Call::HoldHost { resident } = call {
+            let lease = match users_voice(node, &hello.peer) {
+                Ok(()) => crate::lifecycle::attached::hold(node, &resident).await,
+                Err(error) => Err(error),
+            };
+            match lease {
+                Ok(_lease) => {
+                    writer.send(&json(&NodeFrame::Reply { id, reply: Ok(Reply::Done) })).await?;
+                    writer.drain().await?;
+                    let _ = reader.recv().await;
+                    node.log.line(format_args!("lifecycle {resident}: official interface detached"));
+                    return Ok(());
+                }
+                Err(error) => {
+                    writer.send(&json(&NodeFrame::Reply { id, reply: Err(error) })).await?;
+                    continue;
+                }
+            }
+        }
         if let Call::WatchTools { resident: watched } = call {
             // A session's MCP server lists its tools again when told; it
             // keeps this connection for as long as it serves.
@@ -1236,6 +1255,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             crate::attach::command(node, &resident).await.map(Reply::Attachable)
         }
+        Call::HoldHost { .. } => Err(Failure::new("a host lease uses its own connection")),
         Call::Watch { .. } => Err(Failure::new("a watch is answered as it goes, not at once")),
         Call::On { .. } => Err(Failure::new("an on is answered as it goes, not at once")),
         Call::ReadFile { .. } => Err(Failure::new("a file read is answered as a byte stream")),

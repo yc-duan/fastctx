@@ -647,8 +647,8 @@ pub enum PendingState {
     /// It is being put into a Codex thread; the app-server's answer says
     /// which turn took it.
     Sending,
-    /// The World's plugin in a Claude session has it, and says which turn
-    /// takes it.
+    /// It is being handed to the World's plugin in a Claude session. The
+    /// plugin's receipt identifies the turn that takes it.
     Handed,
     /// A Claude session stopped by its supervisor was started again with it
     /// as its first words: the session's next turn takes it.

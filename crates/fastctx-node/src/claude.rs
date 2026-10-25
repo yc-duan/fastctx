@@ -30,10 +30,12 @@ pub(crate) mod garbage;
 pub(crate) mod goal_compaction;
 pub(crate) mod history;
 mod image_records;
-mod resume;
+pub(crate) mod resume;
+mod retire_command;
 pub(crate) use image_records::paths as image_records;
 mod image_flush;
 pub(crate) use image_flush::wait_for_image;
+pub(crate) mod lifecycle;
 pub mod management;
 mod oldest;
 pub(crate) mod pairing;
@@ -249,6 +251,18 @@ pub(crate) fn reading(node: &Node, session: &str) -> crate::leases::Lease<String
 
 pub async fn replay(node: &Arc<Node>) {
     let directory = exchange::sessions(node.world.path());
+    if let Ok(entries) = std::fs::read_dir(&directory) {
+        for entry in entries {
+            let result = entry.and_then(|entry| exchange::recover_readable(&entry.path()));
+            match result {
+                Ok(0) => {}
+                Ok(count) => {
+                    node.log.line(format_args!("recovered {count} Claude reports the current decoder can read"))
+                }
+                Err(error) => node.log.line(format_args!("reconsidering retained Claude reports: {error}")),
+            }
+        }
+    }
     look_all(node, &directory).await;
 }
 
@@ -414,10 +428,12 @@ async fn look(node: &Arc<Node>, directory: &Path) {
                         let _speaking = speaking.lock().await;
                         uncertain_inputs(node, &resident, &session, Some(&ids), text, None).await?;
                     }
-                    exchange::Reported::Happened(event) => {
+                    exchange::Reported::Happened(event, activation) => {
                         if let Happened::TurnStarted { turn } = &event.happened {
-                            taken(node, &resident, &session, turn, |pending| pending.state == PendingState::Waking)
-                                .await?;
+                            taken(node, &resident, &session, turn, |pending| {
+                                startup::takes_wake(node, &resident, &session, event.at, activation.as_deref(), pending)
+                            })
+                            .await?;
                         }
                         let current = node
                             .residents
@@ -445,7 +461,7 @@ async fn look(node: &Arc<Node>, directory: &Path) {
                         }
                         crate::inbox::reclaim(&node.world.conversation(&resident), &ids)?;
                         taken(node, &resident, &session, &turn, |pending| {
-                            ids.iter().any(|id| id == pending.delivery.id.as_str())
+                            Ok(ids.iter().any(|id| id == pending.delivery.id.as_str()))
                         })
                         .await?;
                         exchange::acknowledge_handover(directory, &ids, &turn)?;
@@ -508,7 +524,7 @@ async fn look(node: &Arc<Node>, directory: &Path) {
                     node.log.line(format_args!("taking back the doubt about {id}: {error}"));
                 }
                 if let Err(error) =
-                    taken(node, &resident, &session, &turn, |pending| pending.delivery.id.as_str() == id).await
+                    taken(node, &resident, &session, &turn, |pending| Ok(pending.delivery.id.as_str() == id)).await
                 {
                     node.log.line(format_args!("applying the receipt for {id}: {error}"));
                     return;
@@ -681,7 +697,7 @@ async fn taken(
     resident: &ResidentId,
     session: &str,
     turn: &str,
-    which: impl Fn(&Pending) -> bool,
+    which: impl Fn(&Pending) -> std::io::Result<bool>,
 ) -> std::io::Result<()> {
     if !node.residents.knows(resident) {
         return Ok(());
@@ -690,11 +706,12 @@ async fn taken(
     let Some(speaking) = node.residents.speaking(resident) else { return Ok(()) };
     let _speaking = speaking.lock().await;
     crate::delivery::remember_session(&directory, turn, session)?;
-    let mut kept: Vec<Pending> = crate::inbox::pending(&directory)?
-        .into_iter()
-        .filter(|pending| pending.session.as_deref().is_none_or(|bound| bound == session))
-        .filter(which)
-        .collect();
+    let mut kept = Vec::new();
+    for pending in crate::inbox::pending(&directory)? {
+        if pending.session.as_deref().is_none_or(|bound| bound == session) && which(&pending)? {
+            kept.push(pending);
+        }
+    }
     if kept.is_empty() {
         return Ok(());
     }
@@ -749,10 +766,23 @@ async fn uncertain_inputs(
         .filter(|pending| ids.is_none_or(|ids| ids.iter().any(|id| id == pending.delivery.id.as_str())))
         .filter(|pending| had(pending, ended))
         .collect::<Vec<_>>();
-    if pending.is_empty() {
+    let mut unresolved = Vec::new();
+    for input in pending {
+        if matches!(input.state, PendingState::Waking | PendingState::Handed)
+            && (input.state == PendingState::Handed
+                || crate::lifecycle::retry::progress(node, resident, &input.delivery.id)?
+                    .is_none_or(|progress| progress.accepted))
+            && startup::untaken(node, session, &directory, &input.delivery.id)?
+        {
+            startup::retry_untaken(node, resident, session, &input.delivery.id)?;
+        } else {
+            unresolved.push(input);
+        }
+    }
+    if unresolved.is_empty() {
         return Ok(());
     }
-    let mut handover = crate::delivery::begin(&directory, pending)?;
+    let mut handover = crate::delivery::begin(&directory, unresolved)?;
     if let Some(turn) = handover.turn.clone() {
         crate::speech::bind(node, resident, &directory, &mut handover, &turn)
             .await
@@ -779,6 +809,7 @@ async fn uncertain_inputs(
 /// tell; words kept before this was recorded go with the session.
 fn had(pending: &Pending, registered: Option<Timestamp>) -> bool {
     match (pending.state, pending.since, registered) {
+        (PendingState::Waiting, _, _) => false,
         (PendingState::Waking, Some(since), Some(registered)) => since <= registered,
         (PendingState::Handed, Some(since), Some(registered)) => since >= registered,
         _ => true,
@@ -827,14 +858,8 @@ async fn ended_for_process(
     {
         return Ok(());
     }
-    // An activation is settled once: the next one registering finds the
-    // previous already ended, as when its process was retired idle.
-    if let Some(registration) = &registration
-        && pairing::ended_already(node, registration)?
-    {
-        control::ended(node, session);
-        return Ok(());
-    }
+    // Terminal records are idempotent. Reconcile late inbox entries too:
+    // an older node could hand them to an activation it had already ended.
     control::ended(node, session);
     let Some((about, _)) = node.residents.about(resident) else { return Ok(()) };
     let directory = node.world.conversation(resident);
@@ -874,12 +899,7 @@ async fn ended_for_process(
     )
     .await?;
     if current {
-        let departed = node.residents.set_claude_here(resident, false);
-        node.residents.change_now(&node.world, resident, |now| {
-            now.activity = Activity::Asleep;
-            now.since = Timestamp::now();
-            now.turn = None;
-        })?;
+        let departed = crate::lifecycle::observed(node, resident, false, "activation ended");
         if departed && reason.as_deref() != Some("clear") {
             crate::colleagues::left(node, resident.clone());
         }
@@ -1029,15 +1049,16 @@ async fn pair(node: &Arc<Node>, session: &str) {
     // record are written. A failed write can then be retried on the next look.
     node.claude.state.lock().expect("never poisoned").sessions.get_mut(session).expect("looked up above").resident =
         Some(resident.clone());
+    let present = match pairing::present(node, &registration) {
+        Ok(present) => present,
+        Err(error) => {
+            node.log.line(format_args!("checking Claude presence: {error}"));
+            process::observe(node, registration.process);
+            return;
+        }
+    };
     if newer {
-        let present = match pairing::present(node, &registration) {
-            Ok(present) => present,
-            Err(error) => {
-                node.log.line(format_args!("checking Claude presence: {error}"));
-                return;
-            }
-        };
-        node.residents.set_claude_here(&resident, present);
+        crate::lifecycle::observed(node, &resident, present, "activation registered");
     }
     // What waited for the resident before its mod was there goes to the mod,
     // and stays kept until the mod says which turn took it.
@@ -1061,16 +1082,22 @@ async fn pair(node: &Arc<Node>, session: &str) {
                     return;
                 }
             }
-            for pending in kept.into_iter().filter(|pending| {
-                pending.state == PendingState::Waiting
-                    && match pending.session.as_deref() {
-                        Some(bound) => bound == session,
-                        None => newer,
-                    }
-            }) {
-                if let Err(failure) = into_inbox(node, &resident, session, &directory, &pending) {
-                    node.log.line(format_args!("handing {} to {resident}'s session: {failure}", pending.delivery.id));
-                }
+            // Registration records identity, not a second delivery path.
+            // A fresh admission checks the activation after taking the action
+            // gate, so a final report cannot feed a process that just exited.
+            if kept.iter().any(|pending| pending.state == PendingState::Waiting)
+                && (present || node.residents.about(&resident).is_some_and(|(about, _)| about.world_started))
+            {
+                crate::lifecycle::retry::kick(node, &resident);
+            }
+            if present
+                && newer
+                && kept
+                    .iter()
+                    .any(|pending| pending.state == PendingState::Waiting && pending.delivery.notice.along().is_some())
+            {
+                let (node, resident) = (node.clone(), resident.clone());
+                tokio::spawn(async move { crate::speech::along(&node, &resident).await });
             }
         }
         Ok(Err(error)) => node.log.line(format_args!("reading what waits for {resident}: {error}")),
@@ -1092,18 +1119,30 @@ pub async fn deliver(
 ) -> Option<Result<Landed, Failure>> {
     let delivering = node.claude.delivering.get_or_insert_with(to, || crate::ranked::delivering(to));
     let _delivering = delivering.lock().await;
+    match crate::inbox::read(directory, &pending.delivery.id) {
+        Ok(Some(current)) if current.state == PendingState::Waiting => {}
+        Ok(_) => return Some(Ok(Landed::Handed { id: pending.delivery.id.clone() })),
+        Err(error) => return Some(Err(Failure::new(error.to_string()))),
+    }
     match fork_ready::pending(node, to) {
         Ok(Some(why)) => return Some(Ok(Landed::Waiting { why: Some(why), answered: true })),
         Err(error) => return Some(Err(error)),
         Ok(None) => {}
     }
-    let session: String = node.claude.state.lock().expect("never poisoned").paired.get(to)?;
+    let session: String = node
+        .claude
+        .state
+        .lock()
+        .expect("never poisoned")
+        .paired
+        .get(to)
+        .or_else(|| (about.host.agent.as_str() == "claude").then(|| about.session.clone()).flatten())?;
     if let Err(error) = crate::inbox::target(directory, &pending.delivery.id, &session) {
         return Some(Err(Failure::new(error.to_string())));
     }
     let alive = match alive(node, about.home.as_deref(), &session).await {
         Ok(alive) => alive,
-        Err(error) => return Some(Err(error)),
+        Err(error) => return Some(crate::lifecycle::retry::defer(node, to, &pending.delivery.id, &error.message)),
     };
     let stopped_background = if !about.world_started && !alive {
         match management::background_session(node, about.home.as_deref(), &session).await {
@@ -1117,57 +1156,88 @@ pub async fn deliver(
         Some((about, _)) => about,
         None => return Some(Err(crate::authorization::no_subject())),
     };
-    if let Err(failure) =
-        crate::homes::available(node, &current).and_then(|()| crate::assists::may_turn(node, to, &current))
-    {
-        return Some(Ok(Landed::Waiting { why: Some(failure.message), answered: true }));
+    if let Err(error) = crate::lifecycle::wake::check(node, to, &current) {
+        return Some(crate::lifecycle::retry::unavailable(node, to, &pending.delivery.id, error).await);
     }
     let user_action =
         matches!(pending.delivery.notice, Notice::Words { from: Speaker::User { .. }, .. } | Notice::Attached { .. });
     if !about.world_started && !stopped_background && !user_action && !pending.delivery.notice.wakes_closed() {
-        // Unscheduled facts, and a sentinel's, wait for a closed foreground session.
-        return Some(into_inbox(node, to, &session, directory, pending));
+        // Unscheduled facts wait until the foreground session is opened again.
+        return Some(if alive {
+            into_inbox(node, to, &session, directory, pending).await
+        } else {
+            Ok(Landed::Waiting { why: None, answered: true })
+        });
     }
     Some(match alive {
-        true => into_inbox(node, to, &session, directory, pending),
+        true => into_inbox(node, to, &session, directory, pending).await,
         // What rides with the next turn wakes nobody: it waits for the turn
         // that wakes it, and goes in then (`speech::along`).
         false if pending.delivery.notice.along().is_some() => Ok(Landed::Waiting { why: None, answered: true }),
         // Its supervisor stopped it: the words wake it, as they are, and its
         // next turn takes them.
         false => {
+            match crate::inbox::pending(directory) {
+                Ok(rows)
+                    if rows
+                        .iter()
+                        .any(|row| row.state == PendingState::Waking && row.delivery.id != pending.delivery.id) =>
+                {
+                    crate::lifecycle::retry::kick(node, to);
+                    return Some(Ok(Landed::Waiting { why: None, answered: true }));
+                }
+                Err(error) => return Some(Err(Failure::new(error.to_string()))),
+                _ => {}
+            }
             let (text, as_user) = words(&pending.delivery.notice);
             if as_user {
                 node.claude.handing(to, &text);
             }
-            let claimed: std::io::Result<bool> = (|| {
-                let taking = node.taking.lock().expect("never poisoned");
-                if taking.contains(&(to.clone(), pending.delivery.id.clone())) {
-                    return Ok(false);
-                }
-                let Some(current) = crate::inbox::read(directory, &pending.delivery.id)? else {
-                    return Ok(false);
+            let claimed: std::io::Result<bool> = {
+                let Some(speaking) = node.residents.speaking(to) else {
+                    return Some(Err(crate::authorization::no_subject()));
                 };
-                if current.state != PendingState::Waiting {
-                    return Ok(false);
-                }
-                crate::inbox::set_state(directory, &pending.delivery.id, PendingState::Waking)?;
-                Ok(true)
-            })();
+                let _speaking = speaking.lock().await;
+
+                (|| {
+                    let taking = node.taking.lock().expect("never poisoned");
+                    if taking.contains(&(to.clone(), pending.delivery.id.clone())) {
+                        return Ok(false);
+                    }
+                    let Some(current) = crate::inbox::read(directory, &pending.delivery.id)? else {
+                        return Ok(false);
+                    };
+                    if current.state != PendingState::Waiting {
+                        return Ok(false);
+                    }
+                    // Ended runtimes can have left the in-memory registry.
+                    // Their durable registration still identifies the predecessor.
+                    let previous = exchange::registration(&exchange::sessions(node.world.path()).join(&session))?
+                        .and_then(|registration| registration.instance);
+                    crate::lifecycle::retry::begin_after(node, to, &pending.delivery.id, previous)
+                        .map_err(std::io::Error::other)?;
+                    crate::inbox::set_state(directory, &pending.delivery.id, PendingState::Waking)?;
+                    Ok(true)
+                })()
+            };
             match claimed {
                 Ok(true) => {
-                    match wake(
+                    match crate::lifecycle::wake::wake(
                         node,
                         to,
-                        about.home.as_deref(),
-                        &session,
-                        if as_user { text } else { claude::framed(&text) },
-                        pending.delivery.id.clone(),
+                        crate::lifecycle::wake::Source::of(&pending.delivery.notice),
+                        Some((pending.delivery.id.clone(), if as_user { text } else { claude::framed(&text) })),
                     )
                     .await
                     {
-                        Ok(landed) => Ok(landed),
-                        Err(error) => failed_wake(node, to, directory, &pending.delivery.id, error).await,
+                        Ok(_) => Ok(Landed::Handed { id: pending.delivery.id.clone() }),
+                        Err(error) if !error.attempted => {
+                            crate::lifecycle::retry::unavailable(node, to, &pending.delivery.id, error).await
+                        }
+                        Err(error) => {
+                            startup::unknown(node, to, &pending.delivery.id, error.failure.message);
+                            Ok(Landed::Handed { id: pending.delivery.id.clone() })
+                        }
                     }
                 }
                 Ok(false) => Ok(Landed::Waiting {
@@ -1191,6 +1261,7 @@ async fn failed_wake(
     let _speaking = speaking.lock().await;
     if let Some(turn) = crate::delivery::input_turn(directory, id).map_err(|error| Failure::new(error.to_string()))? {
         node.log.line(format_args!("the Claude command failed after its turn was identified: {error}"));
+        crate::lifecycle::retry::clear(node, resident, id).map_err(|error| Failure::new(error.to_string()))?;
         return Ok(Landed::NewTurn { turn });
     }
     let why = format!("the Claude command failed before identifying a consuming turn: {error}");
@@ -1214,13 +1285,31 @@ async fn failed_wake(
 
 /// Puts something kept into the mod's inbox; it is kept until the mod says
 /// which turn took it.
-fn into_inbox(
-    node: &Node,
+async fn into_inbox(
+    node: &Arc<Node>,
     resident: &ResidentId,
     session: &str,
     directory: &ConversationDir,
     pending: &Pending,
 ) -> Result<Landed, Failure> {
+    let speaking = node.residents.speaking(resident).ok_or_else(crate::authorization::no_subject)?;
+    let _speaking = speaking.lock().await;
+    let session_directory = exchange::sessions(node.world.path()).join(session);
+    let registration = exchange::registration(&session_directory).map_err(|error| Failure::new(error.to_string()))?;
+    let live = registration
+        .as_ref()
+        .map(|registration| pairing::present(node, registration))
+        .transpose()
+        .map_err(|error| Failure::new(error.to_string()))?
+        .unwrap_or(false);
+    if !live {
+        if let Some(registration) = registration {
+            process::observe(node, registration.process);
+        }
+        crate::lifecycle::retry::begin(node, resident, &pending.delivery.id)?;
+        crate::lifecycle::retry::kick(node, resident);
+        return Ok(Landed::Waiting { why: None, answered: true });
+    }
     if let Some(why) = fork_ready::pending(node, resident)? {
         return Ok(Landed::Waiting { why: Some(why), answered: true });
     }
@@ -1257,9 +1346,14 @@ fn into_inbox(
             .collect(),
         None => Vec::new(),
     };
-    let how = exchange::Delivering { as_user, along, replaces: &replaces };
+    let how = exchange::Delivering { at: Some(pending.delivery.at), as_user, along, replaces: &replaces };
+    // Commit the intent and its timestamp before the plugin can consume it.
+    // Replaying a Handed intent republishes the same id and preserves its time.
+    if pending.state != PendingState::Handed {
+        crate::inbox::set_state(directory, &pending.delivery.id, PendingState::Handed)
+            .map_err(|error| Failure::new(error.to_string()))?;
+    }
     exchange::deliver(&session_directory, pending.delivery.id.as_str(), &text, how)
-        .and_then(|()| crate::inbox::set_state(directory, &pending.delivery.id, PendingState::Handed))
         .map(|()| Landed::Handed { id: pending.delivery.id.clone() })
         .map_err(|error| Failure::new(format!("handing it to the session's plugin: {error}")))
 }
@@ -1307,66 +1401,45 @@ async fn running(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Result
     .map_err(Failure::new)
 }
 
-async fn wake(
+pub(crate) async fn wake(
     node: &Arc<Node>,
     resident: &ResidentId,
     home: Option<&Path>,
     session: &str,
     words: String,
     id: fastctx_types::NoticeId,
-) -> Result<Landed, Failure> {
+) -> Result<Landed, crate::lifecycle::wake::WakeFailure> {
     let mut launching = command(node, home)?;
     launching.cwd = resume_dir(node, session);
     oldest::check(node, &launching).await?;
-    let observing = launching.clone();
+
     let Command { program, cwd, env } = launching;
     if let Some(resident) = node.residents.resident_of_thread(session) {
         crate::profile::session::claude(node, &resident, false)?;
     }
     let args = background::wake_args(session, &words);
-    // Not tried twice: a resume refused for trust may already have queued
-    // the words.
+    let (launch_node, launch_resident, launch_id) = (node.clone(), resident.clone(), id.clone());
     tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
-        trust(&[cwd.as_path()], &env).and_then(|()| background::claude(&program, &args, &cwd, &env))
+        use crate::lifecycle::wake::WakeFailure;
+        trust(&[cwd.as_path()], &env).map_err(Failure::new)?;
+        crate::lifecycle::retry::attempting(&launch_node, &launch_resident, &launch_id)?;
+        background::invoke(&program, &args, &cwd, &env, std::time::Duration::from_secs(120)).map_err(|error| {
+            WakeFailure { failure: Failure::new(error.message), attempted: error.started, permanent: false }
+        })?;
+        crate::lifecycle::retry::accepted(&launch_node, &launch_resident, &launch_id)
+            .map_err(|failure| WakeFailure { failure, attempted: true, permanent: false })?;
+        Ok::<(), WakeFailure>(())
     }))
     .await
-    .map_err(|error| Failure::new(format!("waking the session: {error}")))?
-    .map_err(Failure::new)?;
+    .map_err(|error| crate::lifecycle::wake::WakeFailure {
+        failure: Failure::new(format!("waking the session: {error}")),
+        attempted: true,
+        permanent: false,
+    })??;
     // Claude Code took the words; the session that takes them may still end
     // before the World's plugin pairs, which only watching it tells.
-    startup::observe(node, resident, id.clone(), observing, true);
+    startup::observe(node, resident, id.clone(), true);
     Ok(Landed::Handed { id })
-}
-
-/// Sends the words `id` that woke `resident` again, as they were first
-/// sent, once the session they woke ended before taking them (`startup`).
-async fn wake_again(
-    node: &Arc<Node>,
-    resident: &ResidentId,
-    session: &str,
-    id: &fastctx_types::NoticeId,
-    command: &Command,
-) -> Result<(), Failure> {
-    node.residents.active(resident)?;
-    crate::focus::refresh(node, resident).await?;
-    let (about, _) = node.residents.about(resident).ok_or_else(crate::authorization::no_subject)?;
-    crate::homes::listed(node, about.host.agent.as_str(), about.home.as_deref())?;
-    crate::assists::may_turn(node, resident, &about)?;
-    let directory = node.world.conversation(resident);
-    let pending = crate::inbox::read(&directory, id)
-        .map_err(|error| Failure::new(format!("reading what wakes {resident}: {error}")))?
-        .ok_or_else(|| Failure::new(format!("the words that woke {resident} are no longer kept")))?;
-    let (text, as_user) = words(&pending.delivery.notice);
-    let args = background::wake_args(session, &if as_user { text } else { claude::framed(&text) });
-    crate::profile::session::claude(node, resident, false)?;
-    let Command { program, cwd, env } = command.clone();
-    tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
-        trust(&[cwd.as_path()], &env).and_then(|()| background::claude(&program, &args, &cwd, &env))
-    }))
-    .await
-    .map_err(|error| Failure::new(format!("waking the session again: {error}")))?
-    .map_err(Failure::new)?;
-    Ok(())
 }
 
 /// Where a session is resumed from: the directory it was opened in, as its
@@ -1474,7 +1547,7 @@ pub async fn open_here(
         origin: Origin::User,
         session: None,
         world_started: true,
-            native_resumed: false,
+        native_resumed: false,
         model: None,
         acting: opened.acting,
         focus: opened.focus,
@@ -1591,7 +1664,7 @@ pub async fn open_here(
         .map_err(|error| Failure::new(format!("recording which session {id} is: {error}")))?;
     drop(_birth);
     replay(node).await;
-    startup::observe(node, &id, first.delivery.id.clone(), launching, false);
+    startup::observe(node, &id, first.delivery.id.clone(), false);
     Ok((id, Landed::Handed { id: first.delivery.id }))
 }
 

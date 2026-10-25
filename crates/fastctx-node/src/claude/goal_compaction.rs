@@ -84,7 +84,12 @@ pub(crate) async fn run(
         if crate::control_queue::busy(node, resident)? {
             return Err(Failure::not_run("goal compaction is waiting for the current turn"));
         }
-        super::resume::ready(node, resident).await?;
+        {
+            let management = node.residents.management(resident)?;
+            let _reading = management.read().await;
+            let input = key.parse().map_err(failure)?;
+            crate::lifecycle::retry::prepare_work(node, resident, &input).await?;
+        }
         if !crate::goals::engine::requests(node, resident, key) {
             return Ok(Controlled::Refused {
                 said: "The goal no longer requests this compaction.".into(),

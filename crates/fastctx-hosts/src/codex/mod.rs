@@ -21,6 +21,7 @@ pub use accounting::recorded_turn_facts;
 mod agents;
 mod answers;
 mod cache;
+mod children;
 mod commands;
 mod compaction_history;
 #[cfg(test)]
@@ -377,6 +378,10 @@ struct Thread {
     #[serde(default)]
     configuration_changed: bool,
     subscribed: bool,
+    #[serde(default)]
+    children: HashSet<String>,
+    #[serde(default)]
+    host_active: bool,
     /// The turn running now: reported started, or named in the answer to
     /// the words that started it.
     turn: Option<String>,
@@ -879,6 +884,11 @@ impl CodexHost {
 
     async fn ensure_loaded(&self, server: &Arc<AppServer>, thread: &str) -> Result<(), String> {
         let _loading = self.loading.lock().await;
+        self.load_thread(server, thread).await?;
+        self.resume_children(server, thread).await
+    }
+
+    async fn load_thread(&self, server: &Arc<AppServer>, thread: &str) -> Result<(), String> {
         let reload = self
             .lock()
             .threads
@@ -894,7 +904,7 @@ impl CodexHost {
             }
             // An idle, unsubscribed runtime is a cache entry. Resume with
             // changed overrides replaces it; waiting for its idle eviction
-            // would otherwise take thirty minutes (app-server 0.160).
+            // would otherwise take the host's full idle delay.
             if let Some(entry) = self.lock().threads.get_mut(thread) {
                 entry.subscribed = false;
             }
@@ -910,11 +920,14 @@ impl CodexHost {
             if entry.loaded && entry.subscribed {
                 return Ok(());
             }
-            // Resuming starts the thread's tool servers again; what they say
-            // from here on counts.
-            entry.tools_settled = false;
-            entry.tools_missing = None;
-            entry.accounting.reloaded();
+            // Subscribing to a still-loaded runtime does not restart its MCP
+            // servers. Their previous startup receipt remains authoritative.
+            // thread/closed is broadcast even to unsubscribed connections.
+            if !entry.loaded || entry.configuration_changed {
+                entry.tools_settled = false;
+                entry.tools_missing = None;
+                entry.accounting.reloaded();
+            }
             entry.spec.clone().ok_or_else(|| format!("how the Codex thread {thread} was started is not known"))?
         };
         let selection = controls::Selection::read(&spec.choices)?;
@@ -1028,6 +1041,7 @@ impl CodexHost {
                 thread.loaded = false;
                 thread.subscribed = false;
                 thread.turn = None;
+                thread.host_active = false;
                 thread.requests.clear();
                 thread.usage = None;
             }
@@ -1168,6 +1182,7 @@ impl CodexHost {
             }
         }
         self.observe_controls(method, params);
+        self.observe_children(method, params);
         let revision = {
             let mut state = self.lock();
             state.notification_sequence += 1;
@@ -1503,6 +1518,7 @@ impl CodexHost {
                 if let Some(entry) = self.lock().threads.get_mut(&thread) {
                     entry.loaded = false;
                     entry.subscribed = false;
+                    entry.host_active = false;
                 }
                 let _ = self.events.send(HostEvent::Unloaded { thread });
             }
@@ -1591,6 +1607,7 @@ impl CodexHost {
             let mut facts = Vec::new();
             for (thread, entry) in &mut state.threads {
                 entry.loaded = false;
+                entry.host_active = false;
                 entry.requests.clear();
                 if let Some(turn) = entry.turn.take() {
                     entry.started.remove(&turn);

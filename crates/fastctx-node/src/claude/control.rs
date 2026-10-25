@@ -45,8 +45,8 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
     match control {
         Control::Fork { through } => super::fork::fork(node, resident, through).await,
         Control::Answer { request, answer } => answer_request(node, resident, request, answer).await,
-        Control::Rewind { .. } if cannot_replace_prefix(node, resident) => Err(Failure::not_run(
-            "This Claude Code skips a plugin's own compaction handler, so rewind cannot keep the chosen turns; fork through the selected turn instead",
+        Control::Rewind { .. } if !REWIND_SUPPORTED => Err(Failure::not_run(
+            "Claude Code has no supported in-place rewind; fork through the selected turn instead",
         )),
         Control::Rewind { from } => {
             super::history::wait_stored(
@@ -213,7 +213,7 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
             ..Default::default()
         }
     };
-    if cannot_replace_prefix(node, resident) {
+    if !REWIND_SUPPORTED {
         offers.controls.retain(|control| *control != ControlKind::Rewind);
         if let Some(points) = &mut offers.checkpoints {
             for point in points {
@@ -241,18 +241,12 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
     Ok(offers)
 }
 
-/// The first Claude Code that skips a plugin's own `session.compact` handler
-/// when the plugin compacts, so a rewind would run the model's compaction
-/// instead of replacing the prefix (seen in 2.1.303).
-const SKIPS_OWN_COMPACTION: &str = "2.1.303";
-
-/// A version it cannot read is taken for a later one.
-fn cannot_replace_prefix(node: &Node, resident: &ResidentId) -> bool {
-    let skips = fastctx_types::update::release(SKIPS_OWN_COMPACTION).expect("a release version");
-    node.residents.about(resident).is_some_and(|(about, _)| {
-        fastctx_types::update::release(&about.host.version).is_none_or(|version| version >= skips)
-    })
-}
+/// Claude Code has no entrance that rewinds in place and keeps the context:
+/// `session.compact` from a plugin skips that plugin's own compaction
+/// handler and asks the model to compact, and running the compact command
+/// reaches the handler, but a native cold fork of the result repeats the
+/// assistant's retained messages. Rewind is offered once one keeps it whole.
+const REWIND_SUPPORTED: bool = false;
 
 pub(super) fn live_host(node: &Node, resident: &ResidentId) -> Result<(PathBuf, Host), Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
@@ -569,7 +563,7 @@ fn observe_activation(node: &Arc<Node>, host: &Host, directory: &Path) {
     let node = node.clone();
     let directory = directory.to_path_buf();
     tokio::spawn(async move {
-        let exited = fastctx_platform::host_process::exited(&process);
+        let exited = super::process::wait(&node, &process);
         tokio::pin!(exited);
         let result = loop {
             let changed = node.claude.changed.notified();
@@ -590,7 +584,7 @@ fn observe_activation(node: &Arc<Node>, host: &Host, directory: &Path) {
                 Ok(true) => {}
                 Err(error) => break Err(error),
             }
-            tokio::select! { result = &mut exited => break result, () = changed => {} }
+            tokio::select! { () = &mut exited => break Ok(()), () = changed => {} }
         };
         match result {
             Ok(()) => super::look(&node, &directory).await,
@@ -615,16 +609,12 @@ fn supervise(node: &Arc<Node>, key: String, request: Request) {
     let node = node.clone();
     tokio::spawn(async move {
         let process = request.waiting.process.clone();
-        let exited = fastctx_platform::host_process::exited(&process);
+        let exited = super::process::wait(&node, &process);
         let mut completed = request.completed.subscribe();
         tokio::pin!(exited);
         tokio::select! {
             _ = async { let _ = completed.wait_for(Option::is_some).await; } => return,
-            result = &mut exited => {
-                if let Err(error) = result {
-                    node.log.line(format_args!("observing Claude's answer helper: {error}"));
-                }
-            }
+            () = &mut exited => {}
             () = node.watchers.unwatched(&request.resident), if !request.waiting.question.native_wait => {
                 let pass = Answer::Pass { reason: "no one is watching this conversation in the World".into() };
                 if let Err(error) = files::answer(&request.directory, &pass)
@@ -632,9 +622,7 @@ fn supervise(node: &Arc<Node>, key: String, request: Request) {
                     node.log.line(format_args!("returning Claude's request to its host: {error}"));
                 }
                 tokio::select! {
-                    result = &mut exited => if let Err(error) = result {
-                        node.log.line(format_args!("observing Claude's answer helper: {error}"));
-                    },
+                    () = &mut exited => {},
                     _ = async { let _ = completed.wait_for(Option::is_some).await; } => return,
                 }
             }

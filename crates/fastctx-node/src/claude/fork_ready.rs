@@ -74,15 +74,8 @@ pub(super) async fn finish(node: &Arc<Node>, resident: &ResidentId) -> Result<()
             }
         })
         .map_err(failure)?;
-    // Registration may already have seen queued input while the barrier was up.
-    let directory = node.world.conversation(resident);
-    if let Some(session) = node.residents.about(resident).and_then(|(about, _)| about.session) {
-        for pending in crate::inbox::pending(&directory).map_err(failure)? {
-            if pending.state == fastctx_types::residents::PendingState::Waiting {
-                super::into_inbox(node, resident, &session, &directory, &pending)?;
-            }
-        }
-    }
+    // Release waiting input through ordinary admission once the fork is whole.
+    crate::lifecycle::retry::kick(node, resident);
     Ok(())
 }
 

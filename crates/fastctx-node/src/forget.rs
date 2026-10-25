@@ -279,12 +279,11 @@ async fn stop_turn(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
         Err(_) => format!("its turn did not stop within {} seconds of being asked", TURN_STOPS.as_secs()),
     };
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
-    let Some(session) =
-        about.session.as_deref().filter(|_| about.world_started && about.host.agent.as_str() == "claude")
+    let Some(_) = about.session.as_deref().filter(|_| about.world_started && about.host.agent.as_str() == "claude")
     else {
         return Err(asked);
     };
-    crate::claude::management::stop(node, about.home.as_deref(), id, session, false)
+    crate::lifecycle::release(node, id, crate::lifecycle::ReleaseReason::StopForDelete)
         .await
         .map_err(|failure| format!("{asked}; stopping its Claude Code session: {}", failure.message))?;
     if node.residents.now(id).is_some_and(|now| now.turn.is_some()) {

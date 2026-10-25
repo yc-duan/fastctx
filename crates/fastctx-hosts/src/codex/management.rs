@@ -6,6 +6,20 @@ use serde_json::json;
 use std::sync::Arc;
 
 impl CodexHost {
+    /// Subscription can be released only after the node has acknowledged
+    /// every terminal report and no host interaction remains answerable.
+    pub fn releasable(&self, thread: &str) -> bool {
+        let mut state = self.lock();
+        state.threads.get(thread).is_some_and(|entry| entry.subscribed)
+            && super::children::family(&mut state, thread)
+                .iter()
+                .all(|id| state.threads.get(id).is_some_and(super::children::idle))
+    }
+
+    pub fn subscribed(&self, thread: &str) -> bool {
+        self.lock().threads.get(thread).is_some_and(|entry| entry.subscribed)
+    }
+
     pub fn loaded(&self, thread: &str) -> bool {
         self.lock().threads.get(thread).is_some_and(|entry| entry.loaded)
     }
@@ -15,23 +29,37 @@ impl CodexHost {
     pub async fn sleep(self: &Arc<Self>, thread: &str) -> Result<bool, String> {
         let server = self.server().await?;
         let _loading = self.loading.lock().await;
-        if self.lock().threads.get(thread).is_some_and(|entry| entry.turn.is_some() || entry.submitted) {
-            return Err("this Codex thread is running a turn and cannot sleep".into());
-        }
-        let answer = server.request("thread/unsubscribe", json!({"threadId":thread})).await?;
-        let status = answer.get("status").and_then(serde_json::Value::as_str);
-        if !matches!(status, Some("unsubscribed" | "notSubscribed" | "notLoaded")) {
-            return Err(format!("thread/unsubscribe returned an unknown result: {answer}"));
-        }
-        let mut state = self.lock();
-        if let Some(entry) = state.threads.get_mut(thread) {
-            entry.subscribed = false;
-            if status == Some("notLoaded") {
-                entry.loaded = false;
+        let family = {
+            let mut state = self.lock();
+            let family = super::children::family(&mut state, thread);
+            if family.iter().any(|id| state.threads.get(id).is_some_and(|entry| !super::children::idle(entry))) {
+                return Err("this Codex thread or one of its agents still has work and cannot sleep".into());
             }
-            return Ok(!entry.loaded);
+            family
+        };
+        let mut absent = false;
+        // Idle children are automatic subscriptions too. Let those go first;
+        // the parent stays available if any native operation fails.
+        for id in family.into_iter().rev() {
+            let answer = server.request("thread/unsubscribe", json!({"threadId":id})).await?;
+            let status = answer.get("status").and_then(serde_json::Value::as_str);
+            if !matches!(status, Some("unsubscribed" | "notSubscribed" | "notLoaded")) {
+                return Err(format!("thread/unsubscribe returned an unknown result: {answer}"));
+            }
+            let mut state = self.lock();
+            if let Some(entry) = state.threads.get_mut(&id) {
+                entry.subscribed = false;
+                if status == Some("notLoaded") {
+                    entry.loaded = false;
+                }
+                if id == thread {
+                    absent = !entry.loaded;
+                }
+            } else if id == thread {
+                absent = status == Some("notLoaded");
+            }
         }
-        Ok(status == Some("notLoaded"))
+        Ok(absent)
     }
 
     /// Deletes a thread with everything Codex keeps of it: its records, its

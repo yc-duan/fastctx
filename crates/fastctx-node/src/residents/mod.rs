@@ -173,8 +173,9 @@ struct Live {
     inbox: Option<String>,
     /// Open connections the resident arrived on.
     connections: usize,
-    /// Presence reported by a Claude mod, independent of its MCP connections.
-    claude_here: bool,
+    /// Observed host runtime, independent of the conversation's availability.
+    #[serde(default, alias = "claude_here")]
+    host_present: bool,
     now: Option<Now>,
     /// For each turn running, whose words went into it.
     owed: HashMap<String, BTreeSet<Address>>,
@@ -206,7 +207,7 @@ impl Live {
             places,
             inbox: None,
             connections: 0,
-            claude_here: false,
+            host_present: false,
             now,
             owed,
             heard: None,
@@ -232,7 +233,7 @@ pub struct OnRecord {
 
 impl Residents {
     pub(crate) fn host_open(&self, id: &ResidentId) -> bool {
-        self.lock().live.get(id).is_some_and(|live| live.claude_here || live.connections > 0)
+        self.lock().live.get(id).is_some_and(|live| live.host_present || live.connections > 0)
     }
     /// Reads every resident this machine has a record of. A record that
     /// cannot be read is reported and left as it is.
@@ -298,6 +299,12 @@ impl Residents {
             let mut now = now;
             if let Some(now) = &mut now {
                 now.desk = false;
+                // Older nodes projected a retired host as a sleeping user
+                // conversation. Preserve its last activity time during migration.
+                if about.world_started && matches!(about.origin, Origin::User) && now.activity == Activity::Asleep {
+                    now.activity = Activity::Idle;
+                    records::write_now(directory, now)?;
+                }
                 // A departure may have been committed before the node stopped
                 // halfway through putting its idle colleagues to sleep.
                 if removed.is_none()
@@ -306,7 +313,6 @@ impl Residents {
                     && state.departed.get(asked_by)?
                 {
                     now.activity = Activity::Asleep;
-                    now.since = Timestamp::now();
                     records::write_now(directory, now)?;
                 }
             }
@@ -569,11 +575,15 @@ impl Residents {
         }
     }
 
-    /// Updates mod presence and says whether a user-opened resident left.
-    pub fn set_claude_here(&self, id: &ResidentId, present: bool) -> bool {
+    pub(crate) fn host_present(&self, id: &ResidentId) -> bool {
+        self.lock().live.get(id).is_some_and(|live| live.host_present)
+    }
+
+    /// Updates host presence and says whether a user-opened resident left.
+    pub(crate) fn set_host_present(&self, id: &ResidentId, present: bool) -> bool {
         if let Some(live) = self.lock().live.get_mut(id) {
             let was_here = here(live);
-            live.claude_here = present;
+            live.host_present = present;
             return was_here && !here(live) && !live.about.world_managed();
         }
         false
@@ -953,7 +963,6 @@ impl State {
                     &colleague,
                     |_, now| {
                         now.activity = Activity::Asleep;
-                        now.since = Timestamp::now();
                     },
                     false,
                 )
@@ -1002,7 +1011,7 @@ fn here(live: &Live) -> bool {
     if live.about.world_managed() {
         (live.about.native_resumed && live.connections > 0) || live.now.as_ref().is_none_or(|now| now.activity != Activity::Asleep)
     } else {
-        live.claude_here || live.connections > 0
+        live.host_present || live.connections > 0
     }
 }
 

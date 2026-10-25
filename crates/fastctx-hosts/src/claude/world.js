@@ -1,4 +1,4 @@
-import { presentation } from './presentation.js'
+import { presentation, observedMilliseconds } from './presentation.js'
 
 // The World's mod for Claude Code.
 //
@@ -119,7 +119,8 @@ function conversation(sessionId, previous) {
     unsettled: false,
     stopped: null,
     // The user stopped the last turn, which the next one is to hear.
-    toldStopped: false,
+    toldStopped: [],
+    stopTaken: [],
     writing: Promise.resolve(),
     streamBatch: null,
     unwritten: new Map(),
@@ -128,6 +129,7 @@ function conversation(sessionId, previous) {
   context.shown = presentation(() => reserved(context), () => context.turn)
   return context
 }
+
 
 function chunks(text) {
   const parts = []
@@ -410,13 +412,13 @@ function alongNext(context) {
   const along = context.held.filter((delivery) => delivery.along !== undefined && goalPermits(context, delivery))
   for (const delivery of along) context.held.splice(context.held.indexOf(delivery), 1)
   const stopped = context.toldStopped
-  context.toldStopped = false
-  const texts = [...(stopped ? [framed({ text: STOPPED })] : []), ...along.map(framed)]
+  context.toldStopped = []
+  const texts = [...(stopped.length > 0 ? [framed({ text: STOPPED })] : []), ...along.map(framed)]
   const keep = () => {
     context.held.unshift(...along)
-    if (stopped) context.toldStopped = true
+    context.toldStopped.unshift(...stopped)
   }
-  return { along, texts, keep }
+  return { along, texts, keep, stopped }
 }
 
 // What waits to ride with the next turn goes in as a row of its own just
@@ -424,7 +426,7 @@ function alongNext(context) {
 // (`startTurn`), and the model reads both in the one request.
 async function alongBefore($, context) {
   await readGoal($, context)
-  const { along, texts, keep } = alongNext(context)
+  const { along, texts, keep, stopped } = alongNext(context)
   if (texts.length === 0) return
   let appended
   try {
@@ -438,7 +440,10 @@ async function alongBefore($, context) {
     context.appending = false
   }
   if (appended.deny !== undefined) keep()
-  else context.alongTaken.push(...along)
+  else {
+    context.alongTaken.push(...along)
+    context.stopTaken.push(...stopped)
+  }
 }
 
 // What waits to ride with the next turn goes in beside a prompt someone typed
@@ -447,7 +452,7 @@ async function alongPrompt($, context, e, next) {
   if (e.turnId !== undefined || e.command !== undefined || context.closed) return next(e)
   await refreshAccountAgents($, context)
   await readGoal($, context)
-  const { along, texts, keep } = alongNext(context)
+  const { along, texts, keep, stopped } = alongNext(context)
   if (texts.length === 0) return next(e)
   let result
   try {
@@ -457,7 +462,10 @@ async function alongPrompt($, context, e, next) {
     throw error
   }
   if (result.drop !== undefined) keep()
-  else context.alongTaken.push(...along)
+  else {
+    context.alongTaken.push(...along)
+    context.stopTaken.push(...stopped)
+  }
   return result
 }
 
@@ -560,7 +568,7 @@ async function stopping($, context) {
   context.stopped = asked
   try {
     await $.turn.abort({ turnId: asked })
-    context.toldStopped = true
+    context.toldStopped.push(asked)
   } catch (error) {
     // Claude Code refuses an abort only for a turn that is not running: the
     // turn held as running had ended unseen, and is ended here.
@@ -635,6 +643,15 @@ async function looked($, context) {
     }
     read.push([name, delivery])
   }
+  // Arrival time is independent of the producer's ID prefix. Legacy node
+  // envelopes retain their previous filename order before dated arrivals.
+  read.sort(([nameA, a], [nameB, b]) => {
+    const [secondA, fractionA = ''] = (a.at ?? '').replace('Z', '').split('.')
+    const [secondB, fractionB = ''] = (b.at ?? '').replace('Z', '').split('.')
+    const atA = secondA + '.' + fractionA.padEnd(9, '0')
+    const atB = secondB + '.' + fractionB.padEnd(9, '0')
+    return atA < atB ? -1 : atA > atB ? 1 : nameA < nameB ? -1 : nameA > nameB ? 1 : 0
+  })
   // What the World told again before it went in replaces what it told
   // before: only the latest goes in.
   const replacing = new Set(read.flatMap(([, delivery]) => delivery.replaces ?? []))
@@ -734,6 +751,15 @@ async function startSession($, context) {
   context.hostProcess = registration.process
   await initializeAccounting($, context)
   const files = (await $.fs.list(context.dir)).map((entry) => entry.name)
+  // A stopped turn remains the next turn's context across host retirement.
+  await $.fs.write(context.dir + '/told-stops/.created', '')
+  if (files.includes('stop.json')) {
+    const requestedStop = JSON.parse(await $.fs.read(context.dir + '/stop.json')).turn
+    const stopReceipts = new Set((await $.fs.list(context.dir + '/told-stops')).map((entry) => entry.name))
+    if (typeof requestedStop === 'string' && !stopReceipts.has(encodeURIComponent(requestedStop))) {
+      context.toldStopped.push(requestedStop)
+    }
+  }
   if (files.includes('activity.json')) {
     const previous = JSON.parse(await $.fs.read(context.dir + '/activity.json'))
     if (previous.process && previous.process.pid === context.hostProcess.pid && previous.process.token === context.hostProcess.token) {
@@ -821,10 +847,12 @@ async function startTurn($, context, e, next) {
   // So did what rode in beside its prompt (`alongPrompt`).
   const along = context.alongTaken.splice(0, context.alongTaken.length)
   if (along.length > 0) took.push(along)
-  const started = event($, context, 'turn_start', { turn: context.turn })
+  const started = event($, context, 'turn_start', { turn: context.turn, activation: context.registration.instance })
   const saved = activity($, context)
   await Promise.all([started, saved])
   for (const deliveries of took) await submitted($, context, deliveries, e.turnId)
+  for (const prior of context.stopTaken) await $.fs.write(context.dir + '/told-stops/' + encodeURIComponent(prior), '')
+  context.stopTaken = []
   return next(e)
 }
 
@@ -835,14 +863,14 @@ async function completeTurn($, context, e, next) {
     const how = e.isAborted ? 'interrupted' : e.reason === 'error' || e.reason === 'refusal' ? 'failed' : 'completed'
     await agentPresentation(context, e.agentId).end(reported, e.turnId)
     await reported.event('session', { happened: { event: 'turn_ended', turn: e.turnId,
-      end: { how, reason: e.reason, duration_ms: e.durationMs, last_message: e.answer, error: null } } })
+      end: { how, reason: e.reason, duration_ms: observedMilliseconds(e.durationMs), last_message: e.answer, error: null } } })
     // Its tokens as Claude Code counts an agent's in its Agent call's answer:
     // the last request's input, cached and fresh, and its output.
     const usage = e.usage
     const tokens = usage == null ? null : ['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens']
       .reduce((sum, key) => sum + (typeof usage[key] === 'number' ? usage[key] : 0), 0)
     await event($, context, 'session', { happened: { event: 'changed', turn: null, change: { kind: 'agent_ended', agent_id: e.agentId,
-      end: { how, reason: how === 'completed' ? null : e.reason, duration_ms: e.durationMs ?? null, tokens, tools: null,
+      end: { how, reason: how === 'completed' ? null : e.reason, duration_ms: observedMilliseconds(e.durationMs), tokens, tools: null,
         answer: e.answer ?? null, task: null, told: false } } } })
     await observeAgents($, context)
     return next(e)
@@ -865,7 +893,7 @@ async function completeTurn($, context, e, next) {
     reason: e.reason,
     refusal: e.reason === 'refusal' ? e.refusal : null,
     error: completedFailure(context, e),
-    ms: e.durationMs,
+    ms: observedMilliseconds(e.durationMs),
     answer: e.answer ?? null,
     streamed: true,
   })

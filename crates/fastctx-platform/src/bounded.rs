@@ -18,10 +18,29 @@ const LOOK: Duration = Duration::from_millis(20);
 /// Runs `command` with its output piped, for at most `within`; `what` names
 /// it in the error past the deadline and in what the process says it waits
 /// for. Its standard input is the caller's to set.
-pub fn output(mut command: Command, what: &str, within: Duration) -> io::Result<Output> {
+pub fn output(command: Command, what: &str, within: Duration) -> io::Result<Output> {
+    output_tracked(command, what, within).map_err(|failure| failure.error)
+}
+
+/// A failed invocation, with evidence of whether the process was started.
+#[derive(Debug)]
+pub struct OutputFailure {
+    pub error: io::Error,
+    pub started: bool,
+}
+
+/// Like `output`, preserving the spawn boundary for callers that must not
+/// repeat a possibly accepted side effect.
+pub fn output_tracked(command: Command, what: &str, within: Duration) -> Result<Output, OutputFailure> {
+    let mut started = false;
+    output_inner(command, what, within, &mut started).map_err(|error| OutputFailure { error, started })
+}
+
+fn output_inner(mut command: Command, what: &str, within: Duration, spawned: &mut bool) -> io::Result<Output> {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let _waiting = crate::doing::waiting_outside(what, within);
     let mut child = command.spawn()?;
+    *spawned = true;
     let stdout = child.stdout.take().map(read);
     let stderr = child.stderr.take().map(read);
     let started = Instant::now();

@@ -92,6 +92,10 @@ fn wake(parent: &ProcessIdentity, session: &Path, root: &Path) -> io::Result<()>
         return say("removed");
     }
     let mut out = io::stdout();
+    // Inputs can arrive after the mod's first scan and before this watch is
+    // installed. A scan after installation closes that notification gap.
+    writeln!(out, "look")?;
+    out.flush()?;
     loop {
         let mut woken = receiver.recv().map_err(io::Error::other)?;
         // Changes that came together wake the mod once.

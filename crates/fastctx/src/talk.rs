@@ -158,7 +158,7 @@ fn gone(said: &Said) -> String {
         Landed::Waiting { why, answered } => {
             let wait = match why {
                 Some(why) => format!("your words wait for {to}: {why}"),
-                None => format!("your words wait for {to} to take them, with its next call of a World tool"),
+                None => format!("your words wait to be handed to {to}"),
             };
             if *answered {
                 format!("{wait}; the turn they go into can be followed with fastctx talk {to}")

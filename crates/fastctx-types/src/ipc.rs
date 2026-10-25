@@ -212,6 +212,8 @@ pub enum FailureCode {
     Told,
     /// A host control may have executed, but its result could not be established.
     ControlUncertain,
+    /// The requested action has not entered the host; the node retains it for retry.
+    HostUnavailable,
     /// A code of a newer version, which this one does not know.
     #[serde(other)]
     Unknown,
@@ -228,6 +230,10 @@ impl Failure {
 
     pub fn is_control_uncertain(&self) -> bool {
         self.code == Some(FailureCode::ControlUncertain)
+    }
+
+    pub fn host_unavailable(message: impl Into<String>) -> Self {
+        Self { denial: None, message: message.into(), not_run: true, code: Some(FailureCode::HostUnavailable) }
     }
 
     pub fn not_run(message: impl Into<String>) -> Self {

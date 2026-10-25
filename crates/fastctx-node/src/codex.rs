@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use fastctx_hosts::codex::HostEvent;
 use fastctx_types::ResidentId;
-use fastctx_types::residents::Activity;
+
 use fastctx_types::session::SessionEvent;
 use tokio::sync::mpsc;
 
@@ -20,8 +20,8 @@ use crate::Node;
 pub mod control;
 mod directories;
 pub mod hosts;
-pub(crate) mod native_context;
 pub(crate) mod native;
+pub(crate) mod native_context;
 pub(crate) mod native_lifetime;
 pub mod spawned;
 pub mod watch;
@@ -32,16 +32,13 @@ pub async fn adopt(node: &Arc<Node>) {
     for resident in node.residents.everyone() {
         let about = &resident.about;
         if about.native_resumed && resident.removed.is_none() {
-            if let Some(thread)=&about.session {
-                match node.codex.of(node,about) {
-                    Ok(host)=>host.adopt(thread,native::spec(node,about)),
-                    Err(error)=>node.log.line(format_args!("{} cannot be resumed: {error}",about.id)),
+            if let Some(thread) = &about.session {
+                match node.codex.of(node, about) {
+                    Ok(host) => host.adopt(thread, native::spec(node, about)),
+                    Err(error) => node.log.line(format_args!("{} cannot be resumed: {error}", about.id)),
                 }
             }
-            if resident.now.as_ref().is_some_and(|now|now.activity == Activity::Idle)
-                && let Err(error)=node.residents.change_now(&node.world,&about.id,|now| {now.activity=Activity::Asleep;now.since=jiff::Timestamp::now();}) {
-                node.log.line(format_args!("recording that {} sleeps: {error}",about.id));
-            }
+            crate::lifecycle::observed(node, &about.id, false, "node restarted");
             continue;
         }
         if !about.world_started || resident.removed.is_some() {
@@ -78,15 +75,7 @@ pub async fn adopt(node: &Arc<Node>) {
                 continue;
             }
         }
-        if resident.now.as_ref().is_some_and(|now| now.activity == Activity::Idle) {
-            let slept = node.residents.change_now(&node.world, &about.id, |now| {
-                now.activity = Activity::Asleep;
-                now.since = jiff::Timestamp::now();
-            });
-            if let Err(error) = slept {
-                node.log.line(format_args!("recording that {} sleeps: {error}", about.id));
-            }
-        }
+        crate::lifecycle::observed(node, &about.id, false, "node restarted");
     }
 }
 
@@ -401,10 +390,8 @@ async fn drain(node: &Arc<Node>, thread: &str) {
                     .about(&id)
                     .is_some_and(|(about, _)| !node.codex.of(node, &about).is_ok_and(|codex| codex.loaded(thread)))
                 {
-                    node.residents.change_now(&node.world, &id, |now| {
-                        now.activity = Activity::Asleep;
-                        now.since = jiff::Timestamp::now();
-                    })
+                    crate::lifecycle::observed(node, &id, false, "thread unloaded");
+                    Ok(())
                 } else {
                     Ok(())
                 }
@@ -484,6 +471,15 @@ async fn drain(node: &Arc<Node>, thread: &str) {
             }
         }
         node.codex.acknowledge(&applied);
+        if matches!(
+            &applied,
+            HostEvent::Happened {
+                event: SessionEvent { happened: fastctx_types::session::Happened::TurnEnded { .. }, .. },
+                ..
+            } | HostEvent::Gone { .. }
+        ) {
+            node.watchers.changed.notify_one();
+        }
         node.handoff.changed();
     }
 }

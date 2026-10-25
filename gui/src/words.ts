@@ -300,6 +300,12 @@ export interface Words {
    *  call of a World tool, gone as a letter, or handed over without knowing
    *  whether they went in. */
   landed(how: string, machine: string, why: string | null): string;
+  /** Words on their way whose agent has not started for a minute and is
+   *  being started again; the agent by the name it goes by. */
+  hostRetrying(agent: string | undefined): string;
+  /** Why it did not start, for the pointer to rest on: in plain words where
+   *  the interface knows them, else as its machine said it. */
+  hostRetryWhy(reason: string): string;
   /** A job the resident started has ended, on that machine. */
   jobEnded(job: string, machine: string): string;
   /** The user moved it to another project through the World. */
@@ -670,6 +676,8 @@ export const zh: Words = {
         : how === "kept"
           ? "排着，等这一轮结束"
           : "等它下次用世界的工具时送到",
+  hostRetrying: (agent) => (agent ? `${agent} 未能启动，正在重试` : "未能启动，正在重试"),
+  hostRetryWhy: (reason) => known(reason, zhProblems) ?? reason,
   jobEnded: (_job, machine) => `后台命令在 ${machine} 上结束`,
   movedTo: (town) => `已移到项目 ${town}`,
   movedOut: "已移出项目",
@@ -1001,6 +1009,8 @@ export const en: Words = {
         : how === "kept"
           ? "Queued until this turn ends"
           : "Arrives when it next uses a Fastctx tool",
+  hostRetrying: (agent) => (agent ? `${agent} couldn't start; retrying` : "Couldn't start; retrying"),
+  hostRetryWhy: (reason) => known(reason, enProblems) ?? reason,
   jobEnded: (_job, machine) => `Background command on ${machine} ended`,
   movedTo: (town) => `Moved to project ${town}`,
   movedOut: "Removed from project",

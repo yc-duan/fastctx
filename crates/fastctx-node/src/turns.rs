@@ -211,6 +211,7 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
                         return Ok(());
                     }
                     node.residents.turn_started(&node.world, id, turn, event.at)?;
+                    node.idle_probes.touched(id);
                     crate::turn_evidence::observe(node, id, &event)?;
                     // What waited to ride with the next turn goes into this one.
                     let (node, id) = (node.clone(), id.clone());
@@ -364,11 +365,14 @@ async fn finish_at(
 
     let trouble = match (&finished.end.how, &finished.end.reason) {
         (TurnHow::Completed, _) => None,
+        (TurnHow::Interrupted, _) if crate::stops::requested_turn(node, id, turn)? => None,
         (how, Some(reason)) => Some(Trouble { at: finished.at, text: format!("turn {how}: {reason}") }),
         (how, None) => Some(Trouble { at: finished.at, text: format!("turn {how}") }),
     };
     node.residents.take_owed(&node.world, id, turn, &node.machine(), trouble)?;
     crate::turn_evidence::ended(node, id, turn);
+    node.idle_probes.touched(id);
+    node.watchers.changed.notify_one();
     for handover in &accepted {
         for input in &handover.inputs {
             crate::speech::heard(node, id, &input.delivery, turn);

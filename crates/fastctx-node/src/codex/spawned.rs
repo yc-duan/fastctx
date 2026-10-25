@@ -158,6 +158,9 @@ fn tell(
         HostEvent::Desk { .. } | HostEvent::Unloaded { .. } | HostEvent::Synchronized { .. } => Vec::new(),
     };
     node.codex.acknowledge(&event);
+    if told.iter().any(|event| matches!(event.happened, Happened::TurnEnded { .. })) {
+        node.watchers.changed.notify_one();
+    }
     for mut event in told {
         if let Happened::Changed { change: SessionChange::Usage { usage }, .. } = &mut event.happened
             && let Some(counted) = usage.get_mut("counted")

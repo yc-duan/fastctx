@@ -22,6 +22,9 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod damaged;
+pub use damaged::recover_readable;
+
 /// Where the sessions' directories are.
 pub fn sessions(world: &Path) -> PathBuf {
     world.join("claude")
@@ -149,7 +152,7 @@ pub enum Reported {
         ids: Vec<String>,
         text: String,
     },
-    Happened(SessionEvent),
+    Happened(SessionEvent, Option<String>),
     /// The conversation ended, including /clear or resume within the process.
     Ended {
         reason: Option<String>,
@@ -203,6 +206,7 @@ enum ModEvent {
     },
     Session {
         at: Option<Timestamp>,
+        #[serde(deserialize_with = "observed_happened")]
         happened: Happened,
     },
     ToolStored {
@@ -217,6 +221,7 @@ enum ModEvent {
         declined: bool,
         #[serde(default)]
         cut: bool,
+        #[serde(default, deserialize_with = "elapsed_milliseconds")]
         ms: Option<u64>,
         detail: Value,
     },
@@ -227,6 +232,8 @@ enum ModEvent {
     TurnStart {
         turn: Option<String>,
         at: Option<Timestamp>,
+        #[serde(default)]
+        activation: Option<String>,
     },
     TurnComplete {
         turn: Option<String>,
@@ -236,6 +243,7 @@ enum ModEvent {
         refusal: Option<Refusal>,
         #[serde(default)]
         error: Option<Value>,
+        #[serde(default, deserialize_with = "elapsed_milliseconds")]
         ms: Option<u64>,
         answer: Option<String>,
         #[serde(default)]
@@ -269,7 +277,7 @@ enum ModEvent {
         failed: bool,
         #[serde(default)]
         declined: bool,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "elapsed_milliseconds")]
         ms: Option<u64>,
     },
     Trouble {
@@ -294,6 +302,28 @@ enum ModEvent {
     Replaced {
         deliveries: Vec<String>,
     },
+}
+
+// Claude uses its wall clock for some durations. A clock correction can
+// invalidate that measurement without invalidating the terminal event.
+fn elapsed_milliseconds<'de, D: serde::Deserializer<'de>>(input: D) -> Result<Option<u64>, D::Error> {
+    Ok(Option::<serde_json::Number>::deserialize(input)?.and_then(|number| number.as_u64()))
+}
+
+fn observed_happened<'de, D: serde::Deserializer<'de>>(input: D) -> Result<Happened, D::Error> {
+    let mut value = Value::deserialize(input)?;
+    let duration = match value["event"].as_str() {
+        Some("turn_ended") => value.pointer_mut("/end/duration_ms"),
+        Some("changed") if value["change"]["kind"] == "agent_ended" => value.pointer_mut("/change/end/duration_ms"),
+        _ => None,
+    };
+    if let Some(duration) = duration
+        && duration.is_number()
+        && duration.as_u64().is_none()
+    {
+        *duration = Value::Null;
+    }
+    serde_json::from_value(value).map_err(serde::de::Error::custom)
 }
 
 #[derive(Deserialize)]
@@ -438,24 +468,28 @@ fn read_report(path: &Path) -> io::Result<Vec<u8>> {
 }
 
 fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
-    let happened =
-        |at: Option<Timestamp>, happened| Reported::Happened(SessionEvent { at: at.unwrap_or(recorded_at), happened });
+    let happened = |at: Option<Timestamp>, happened| {
+        Reported::Happened(SessionEvent { at: at.unwrap_or(recorded_at), happened }, None)
+    };
     let turn_of = |turn: Option<String>| turn.unwrap_or_default();
     match event {
         ModEvent::Agent { agent_id, report } => translate(*report, recorded_at)
             .into_iter()
             .filter_map(|report| {
-                if let Reported::Happened(event) = report {
-                    Some(Reported::Happened(SessionEvent {
-                        at: event.at,
-                        happened: Happened::Changed {
-                            turn: None,
-                            change: fastctx_types::session::SessionChange::AgentEvent {
-                                agent_id: agent_id.clone(),
-                                happened: Box::new(event.happened),
+                if let Reported::Happened(event, _) = report {
+                    Some(Reported::Happened(
+                        SessionEvent {
+                            at: event.at,
+                            happened: Happened::Changed {
+                                turn: None,
+                                change: fastctx_types::session::SessionChange::AgentEvent {
+                                    agent_id: agent_id.clone(),
+                                    happened: Box::new(event.happened),
+                                },
                             },
                         },
-                    }))
+                        None,
+                    ))
                 } else {
                     None
                 }
@@ -500,7 +534,10 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
             vec![happened(at, Happened::Finished { turn: turn_of(turn), item })]
         }
         ModEvent::Uncertain { deliveries, text } => vec![Reported::Uncertain { ids: deliveries, text }],
-        ModEvent::TurnStart { turn, at } => vec![happened(at, Happened::TurnStarted { turn: turn_of(turn) })],
+        ModEvent::TurnStart { turn, at, activation } => vec![Reported::Happened(
+            SessionEvent { at: at.unwrap_or(recorded_at), happened: Happened::TurnStarted { turn: turn_of(turn) } },
+            activation,
+        )],
         ModEvent::TurnComplete { turn, at, aborted, reason, refusal, error, ms, answer, streamed, spent } => {
             let turn = turn_of(turn);
             let mut reported = Vec::new();
@@ -595,6 +632,8 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
 #[derive(Serialize)]
 struct Inbox<'a> {
     id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    at: Option<Timestamp>,
     text: &'a str,
     /// Words the user typed, which go in as the user's.
     as_user: bool,
@@ -611,6 +650,7 @@ struct Inbox<'a> {
 /// next turn in place of what it replaces.
 #[derive(Default)]
 pub struct Delivering<'a> {
+    pub at: Option<Timestamp>,
     pub as_user: bool,
     pub along: Option<&'a str>,
     pub replaces: &'a [String],
@@ -619,10 +659,10 @@ pub struct Delivering<'a> {
 /// Puts something in the session's inbox for its mod to hand over. The same
 /// id twice is the same thing and is written once.
 pub fn deliver(directory: &Path, id: &str, text: &str, how: Delivering<'_>) -> io::Result<()> {
-    let Delivering { as_user, along, replaces } = how;
+    let Delivering { at, as_user, along, replaces } = how;
     let inbox = directory.join("inbox");
     ensure_private_dir(&inbox)?;
-    let mut bytes = serde_json::to_vec(&Inbox { id, text, as_user, along, replaces }).expect("strings serialize");
+    let mut bytes = serde_json::to_vec(&Inbox { id, at, text, as_user, along, replaces }).expect("strings serialize");
     // Claude Code 2.1.287's fs API accepts at most 4 MiB per operation.
     const FILE_BYTES: usize = 4 * 1024 * 1024;
     if bytes.len() > FILE_BYTES {
@@ -650,6 +690,9 @@ pub fn deliver(directory: &Path, id: &str, text: &str, how: Delivering<'_>) -> i
             count += 1;
         }
         let mut value = serde_json::json!({ "id": id, "text": "", "text_parts": count, "as_user": as_user });
+        if let Some(at) = at {
+            value["at"] = serde_json::to_value(at).map_err(io::Error::other)?;
+        }
         if let Some(along) = along {
             value["along"] = along.into();
         }

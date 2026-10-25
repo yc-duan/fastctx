@@ -79,7 +79,7 @@ pub async fn prior(
             let guard = Guard { node: node.clone(), id: id.clone(), scope: scope.clone(), armed: true };
             return Ok(Prior::Again(Box::new(record.attachment), guard));
         }
-        Outcome::Attached => Ok(Updated { composer: state.view(), landed: None }),
+        Outcome::Attached => Ok(Updated { composer: state.view(), landed: None, delivery: None }),
         Outcome::Detached { why } => Err(Failure::new(why.clone())),
     };
     crate::attachments::resolve(node, id, std::slice::from_ref(&record.attachment)).await?;
@@ -166,7 +166,7 @@ pub async fn complete(
     let record = receipts::upload(node, id, &next, &scope.operation)?
         .ok_or_else(|| failure("the upload has no shared-input record"))?;
     if matches!(record.outcome, Outcome::Attached) && record.attachment == *attachment && record.scope == *scope {
-        return Ok(Updated { composer: next.view(), landed: None });
+        return Ok(Updated { composer: next.view(), landed: None, delivery: None });
     }
     let mut expected = record.attachment.clone();
     if expected.path.is_empty() {
@@ -197,7 +197,7 @@ pub async fn complete(
     let composer = cell.as_ref().expect("loaded").view();
     drop(cell);
     schedule(node, id);
-    applied.map(|()| Updated { composer, landed: None })
+    applied.map(|()| Updated { composer, landed: None, delivery: None })
 }
 
 pub async fn failed(node: &Arc<Node>, id: &ResidentId, scope: &UploadScope, why: &str) -> Result<(), Failure> {

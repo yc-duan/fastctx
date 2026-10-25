@@ -64,7 +64,11 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
     if matches!(action, Management::Archive) && node.residents.removed(id).is_none() {
         crate::talk::stop_and_wait(node, id).await?;
     }
-    let _exclusive = crate::gate_waits::alone(node, id, &gate).await?;
+    let (_shared, _exclusive) = if matches!(action, Management::Wake) {
+        (Some(crate::gate_waits::shared(node, id, &gate).await?), None)
+    } else {
+        (None, Some(crate::gate_waits::alone(node, id, &gate).await?))
+    };
     if !matches!(action, Management::Archive | Management::Restore) {
         node.residents.active(id)?;
     }
@@ -99,15 +103,27 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                 ("codex", Some(thread), _) => {
                     crate::codex::claim(node, thread, id).await;
                     match node.codex.of(node, &about) {
-                        Ok(codex) => codex.archive(thread).await.map_err(Failure::new),
+                        Ok(_) => crate::lifecycle::release_locked(
+                            node,
+                            &about,
+                            crate::lifecycle::ReleaseReason::Archive,
+                            None,
+                        )
+                        .await
+                        .map(|_| ()),
                         Err(failure) => Err(failure),
                     }
                 }
                 ("claude", Some(session), _) => {
                     match crate::claude::management::background_session(node, about.home.as_deref(), session).await {
-                        Ok(Some(_)) => {
-                            crate::claude::management::stop(node, about.home.as_deref(), id, session, false).await
-                        }
+                        Ok(Some(_)) => crate::lifecycle::release_locked(
+                            node,
+                            &about,
+                            crate::lifecycle::ReleaseReason::Archive,
+                            None,
+                        )
+                        .await
+                        .map(|_| ()),
                         Ok(None) => {
                             step(&mut result, "host", Outcome::Unsupported, "Claude Code exposes no background management ID for this session; its window remains open.".into());
                             Ok(())
@@ -215,26 +231,37 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                     "The World cannot unload or restart this user-opened session; use the host where it is open."
                         .into(),
                 );
-            } else if let Some(session) = &about.session {
+            } else if about.session.is_some() {
                 let effect: Result<bool, Failure> = match (about.host.agent.as_str(), sleeping) {
                     ("codex", true) => match node.codex.of(node, &about) {
-                        Ok(codex) => codex.sleep(session).await.map_err(Failure::new),
+                        Ok(_) => {
+                            crate::lifecycle::release_locked(node, &about, crate::lifecycle::ReleaseReason::Sleep, None)
+                                .await
+                        }
                         Err(failure) => Err(failure),
                     },
-                    ("codex", false) => match node.codex.of(node, &about)?.prepare(session).await {
-                        Ok(missing) => {
-                            if let Some(why) = missing {
-                                step(&mut result, "tools", Outcome::Failed, why);
+                    ("codex", false) => {
+                        match crate::lifecycle::wake::wake(node, id, crate::lifecycle::wake::Source::Management, None)
+                            .await
+                        {
+                            Ok(missing) => {
+                                if let Some(why) = missing {
+                                    step(&mut result, "tools", Outcome::Failed, why);
+                                }
+                                Ok(true)
                             }
-                            Ok(true)
+                            Err(error) => Err(error.failure),
                         }
-                        Err(error) => Err(Failure::new(error)),
-                    },
-                    ("claude", true) => crate::claude::management::stop(node, about.home.as_deref(), id, session, true)
-                        .await
-                        .map(|()| true),
+                    }
+                    ("claude", true) => {
+                        crate::lifecycle::release_locked(node, &about, crate::lifecycle::ReleaseReason::Sleep, None)
+                            .await
+                    }
                     ("claude", false) => {
-                        crate::claude::management::wake(node, about.home.as_deref(), session).await.map(|()| true)
+                        crate::lifecycle::wake::wake(node, id, crate::lifecycle::wake::Source::Management, None)
+                            .await
+                            .map(|_| true)
+                            .map_err(|error| error.failure)
                     }
                     _ => {
                         step(
@@ -248,17 +275,9 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                 };
                 match effect {
                     Ok(true) => {
-                        if about.host.agent.as_str() == "claude" {
-                            node.residents.set_claude_here(id, !sleeping);
-                        }
+                        crate::lifecycle::observed(node, id, !sleeping, "user management");
                         step(&mut result, "host", Outcome::Done, if sleeping { "The host session is unloaded or stopped." } else { "The original session is present; no message was submitted." }.into());
-                        let recorded = node.residents.change_now(&node.world, id, |now| {
-                            if now.turn.is_none() {
-                                now.activity = if sleeping { Activity::Asleep } else { Activity::Idle };
-                                now.since = Timestamp::now();
-                            }
-                        }).map_err(|error| Failure::new(error.to_string()));
-                        completed(&mut result, "records", recorded, "Presence recorded.");
+                        completed(&mut result, "records", Ok(()), "Presence recorded.");
                     }
                     Ok(false) => step(&mut result, "host", Outcome::Pending, "Codex unsubscribed this connection. The thread is still loaded: its idle delay or another client's subscription prevents unloading. Presence changes only when Codex reports thread/closed; speaking or waking subscribes again.".into()),
                     Err(error) => step(&mut result, "host", Outcome::Failed, error.message),

@@ -114,7 +114,7 @@ pub(crate) async fn directory(
                 &serde_json::to_vec(&registration).map_err(io::Error::other)?,
                 Permissions::Private,
             )?;
-            node.residents.set_claude_here(&id, true);
+            crate::lifecycle::observed(node, &id, true, "session claimed");
         }
         let mut state = node.claude.state.lock().expect("never poisoned");
         if state
@@ -304,7 +304,12 @@ pub(super) fn present(node: &Node, registration: &Registration) -> io::Result<bo
     {
         return Ok(false);
     }
-    registration.process.as_ref().map(fastctx_platform::is_alive).transpose().map(|alive| alive.unwrap_or(false))
+    registration
+        .process
+        .as_ref()
+        .map(|process| fastctx_platform::has_ended(process).map(|ended| !ended))
+        .transpose()
+        .map(|alive| alive.unwrap_or(false))
 }
 
 fn same_activation(a: &Registration, b: &Registration) -> bool {

@@ -85,7 +85,7 @@ async fn send(node: &Arc<Node>, notification: &Notification) -> Result<(), Strin
     };
     let identity = crate::speech::fixed_id("sentinel", &[&notification.id]);
     let acting = Acting::one(scope.hub.clone(), scope.account.clone());
-    crate::speech::tell_at(
+    let result = crate::speech::tell_at(
         node,
         &acting,
         &definition.owner,
@@ -94,7 +94,13 @@ async fn send(node: &Arc<Node>, notification: &Notification) -> Result<(), Strin
         notice,
         crate::speech::Owed::Nobody,
     )
-    .await
-    .map_err(|e| e.message)?;
-    Ok(())
+    .await;
+    match result {
+        Err(error) if crate::lifecycle::refused::reported(&error) => {
+            super::report(node, &format!("delivery {}", definition.owner.resident), Some(error.message));
+            Ok(())
+        }
+        Err(error) => Err(error.message),
+        Ok(_) => Ok(()),
+    }
 }

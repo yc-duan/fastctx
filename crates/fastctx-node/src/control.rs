@@ -85,7 +85,7 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
             return Err(failure);
         }
         let row = crate::control_queue::begin(node, resident, &control)?;
-        return crate::control_queue::end(node, resident, row, Err(failure));
+        return crate::control_queue::end(node, resident, row, Err(failure)).await;
     }
     if let Control::CancelControl { id } = &control {
         return crate::control_queue::cancel(node, resident, id).await;
@@ -104,8 +104,11 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
         return execute(node, resident, control).await;
     }
     let row = crate::control_queue::begin(node, resident, &control)?;
-    let result = execute(node, resident, control).await;
-    crate::control_queue::end(node, resident, row, result)
+    let result = match crate::control_queue::prepare(node, resident, &row).await {
+        Ok(()) => execute(node, resident, control).await,
+        Err(error) => Err(error),
+    };
+    crate::control_queue::end(node, resident, row, result).await
 }
 
 /// Whether `control` may be done here: an assisting agent's conversation
