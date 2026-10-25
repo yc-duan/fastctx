@@ -425,6 +425,24 @@ mod desktop {
             return;
         }
         crate::setup::take_carried();
+        forget_downloads(app);
+    }
+
+    /// The updater keeps each installer it downloaded in a folder of its own
+    /// under the temporary directory, named after the application and the
+    /// version it brought; once an update has started this version, none of
+    /// them is needed again. One still held by an installer finishing stays
+    /// until the next update.
+    fn forget_downloads(app: &tauri::AppHandle) {
+        let prefix = format!("{}-", app.package_info().name);
+        let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else { return };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with(&prefix) && name.contains("-updater-") && entry.path().is_dir() {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
     }
 }
 
