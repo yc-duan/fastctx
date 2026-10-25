@@ -62,6 +62,13 @@ pub(super) async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), F
     if goal.retired.is_some() || goal.status == Status::Complete {
         return Ok(());
     }
+    if goal.active()
+        && let Some((about, _)) = node.residents.about(id)
+        && let Err(error) = crate::assists::check_turn(node, id, &about)
+        && error.permanent
+    {
+        return commit(node, &view, policy::host_refused(goal, error.failure.message)).await;
+    }
     timing(node, id, &view)?;
     let restarted = checkpoint::restore(node, &mut goal)?;
     if goal.runtime.pending.as_ref().is_some_and(|work| matches!(work.task, Task::Compact)) {

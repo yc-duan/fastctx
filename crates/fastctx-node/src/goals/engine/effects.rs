@@ -51,7 +51,11 @@ pub(crate) async fn fire(node: &Arc<Node>, store: &Store, timer: &Timer) -> Resu
     if matches!(work.task, Task::Tell { .. } | Task::Retry { .. })
         && crate::inbox::knows(&node.world.conversation(id), &work.id).map_err(failure)?
     {
-        if let Some(decision) = policy::delivered(&goal, &work.id) {
+        let decision = match crate::lifecycle::refused::get(node, id, &work.id).map_err(failure)? {
+            Some(error) => Some(policy::host_refused(goal.clone(), error.message)),
+            None => policy::delivered(&goal, &work.id),
+        };
+        if let Some(decision) = decision {
             commit(node, &view, decision).await?;
         }
         store.complete(&timer).map_err(failure)?;
@@ -230,8 +234,14 @@ async fn tell(node: &Arc<Node>, view: &View, work: &Work, timer: &Timer, text: &
         at: timer.fired_at.expect("begun timer"),
         notice: Notice::Words { from: Speaker::World, text: text.into(), goal_report: None, goal_question: None },
     };
-    crate::speech::tell_here_locked(node, id, delivery, crate::speech::Owed::Nobody).await?;
+    let result = crate::speech::tell_here_locked(node, id, delivery, crate::speech::Owed::Nobody).await;
     drop(_reading);
+    if let Err(error) = result {
+        if crate::lifecycle::refused::reported(&error) {
+            return commit(node, view, policy::host_refused(goal.clone(), error.message)).await;
+        }
+        return Err(error);
+    }
     if let Some(decision) = policy::delivered(goal, &work.id) {
         commit(node, view, decision).await?;
     }

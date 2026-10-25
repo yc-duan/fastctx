@@ -127,6 +127,12 @@ pub(super) fn failed(mut goal: Goal, stopped: StopReason, clock: &Clock, id: Not
     decision(goal, "retry_scheduled", reason)
 }
 
+pub(super) fn host_refused(mut goal: Goal, reason: String) -> Decision {
+    goal.runtime.retry = None;
+    stop(&mut goal, Status::Blocked, StopKind::Assistance, reason.clone());
+    decision(goal, "host_refused", reason)
+}
+
 /// Resume the cadence after downtime; only a failed turn or a due retry checks the limit.
 pub(super) fn retry_resumed(current: &Goal, clock: &Clock, id: NoticeId) -> Option<Decision> {
     if !current.active() {

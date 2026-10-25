@@ -155,11 +155,7 @@ pub(crate) async fn tell_here_locked(
     {
         return crate::lifecycle::refused::reject(node, to, &delivery.id, error).await;
     }
-    if let Err(error) = crate::assists::check_turn(node, to, &about)
-        && error.permanent
-    {
-        return Err(error.failure);
-    }
+
     let working = matches!(owed, Owed::Working);
     let readers = match owed {
         Owed::Speaker(address) => vec![address],
@@ -459,7 +455,10 @@ pub async fn send_composer(
             session: None,
             since: None,
         };
-        crate::inbox::keep(&directory, &pending).map_err(|error| Failure::new(error.to_string()))?;
+        if crate::inbox::keep(&directory, &pending).map_err(|error| Failure::new(error.to_string()))? {
+            node.idle_probes.touched(id);
+            crate::goals::engine::input_changed(node, id);
+        }
         return submit_thread(node, id, thread, &directory, pending, true, idle_only).await;
     }
     if idle_only && node.residents.now(id).is_some_and(|now| now.activity == fastctx_types::residents::Activity::Busy) {

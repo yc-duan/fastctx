@@ -41,7 +41,12 @@ pub(super) async fn run(node: &Arc<Node>, id: &ResidentId, work: &Work) -> Resul
         let _action = action.lock().await;
         let management = node.residents.management(id)?;
         let _reading = management.read().await;
-        crate::lifecycle::retry::prepare_work(node, id, &work.id).await?;
+        if let Err(error) = crate::lifecycle::retry::prepare_work(node, id, &work.id).await {
+            if error.code == Some(fastctx_types::ipc::FailureCode::HostUnavailable) {
+                return Err(error);
+            }
+            return Ok(Compacted::Refused { reason: error.message });
+        }
     }
     let mut attempt = match prior {
         Some(attempt) => attempt,

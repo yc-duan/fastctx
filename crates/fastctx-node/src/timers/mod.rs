@@ -27,7 +27,8 @@ pub(crate) fn table(node: &Node) -> Result<&Arc<Store>, Failure> {
 pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Failure> {
     let store = table(node)?;
     if let TimerCall::List { owner } = call {
-        let timers = store.list(owner.as_ref()).into_iter().filter(|timer| !matches!(timer.action, Action::Sentinel { .. }));
+        let timers =
+            store.list(owner.as_ref()).into_iter().filter(|timer| !matches!(timer.action, Action::Sentinel { .. }));
         return Ok(Reply::Timers { timers: timers.collect() });
     }
     let resident = match &call {
@@ -48,7 +49,9 @@ pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Fai
         TimerCall::Cancel { id } => match store.get(id) {
             Some(timer) => match timer.action {
                 Action::Tell { resident, .. } => resident,
-                Action::Sentinel { .. } => return Err(Failure::refused("sentinel timers are managed by their sentinel")),
+                Action::Sentinel { .. } => {
+                    return Err(Failure::refused("sentinel timers are managed by their sentinel"));
+                }
                 Action::Goal { .. } => return Err(Failure::refused("goal timers are managed by the goal runtime")),
             },
             None => return Ok(Reply::Done),
@@ -170,9 +173,14 @@ async fn execute(node: &Arc<Node>, store: &Store, timer: &Timer) -> Result<(), S
                     goal_question: None,
                 },
             };
-            crate::speech::tell_here_locked(node, resident, delivery, crate::speech::Owed::Nobody)
-                .await
-                .map_err(|error| error.message)?;
+            if let Err(error) =
+                crate::speech::tell_here_locked(node, resident, delivery, crate::speech::Owed::Nobody).await
+            {
+                if !crate::lifecycle::refused::reported(&error) {
+                    return Err(error.message);
+                }
+                node.log.line(format_args!("timer {} was not delivered: {error}", timer.id));
+            }
             store.complete(&timer).map_err(|error| error.to_string())?;
             Ok(())
         }

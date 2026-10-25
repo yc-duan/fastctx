@@ -22,7 +22,8 @@ fn path(node: &Node, id: &ResidentId, input: &NoticeId) -> std::path::PathBuf {
 }
 
 pub(crate) fn get(node: &Node, id: &ResidentId, input: &NoticeId) -> io::Result<Option<Failure>> {
-    fastctx_hosts::claude::control::read::<Refused>(&path(node, id, input)).map(|row| row.map(|row| row.failure))
+    fastctx_hosts::claude::control::read::<Refused>(&path(node, id, input))
+        .map(|row| row.map(|row| marked(row.failure)))
 }
 
 /// The caller proves that no host command capable of consuming this input ran.
@@ -61,7 +62,18 @@ pub(crate) async fn reject(
     crate::inbox::set_state(&directory, input, fastctx_types::residents::PendingState::Waiting).map_err(failure)?;
     crate::inbox::withdraw(&directory, input).map_err(failure)?;
     super::retry::clear(node, id, input).map_err(failure)?;
-    Err(refused.failure)
+    Err(marked(refused.failure))
+}
+
+/// The destination recorded a final preflight failure using the existing told contract.
+pub(crate) fn reported(error: &Failure) -> bool {
+    error.not_run && error.code == Some(fastctx_types::ipc::FailureCode::Told)
+}
+
+fn marked(mut error: Failure) -> Failure {
+    error.not_run = true;
+    error.code = Some(fastctx_types::ipc::FailureCode::Told);
+    error
 }
 
 fn failure(error: impl std::fmt::Display) -> Failure {
