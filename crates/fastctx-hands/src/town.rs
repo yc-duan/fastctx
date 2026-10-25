@@ -30,6 +30,12 @@ pub fn record_of(town: &TownName, record: &Record, opened: &Stamp) -> String {
             text.push_str(&format!("  {}: {} {}\n", place.what, place.location.machine, place.location.path));
         }
     }
+    // A project holds several lines of work, each a conversation of its own
+    // (`world-projects.md`). The colleague tools are not every session's, so
+    // only the command that every session has is named.
+    text.push_str(
+        "Other conversations may work in this project too, each on its own line of work; `fastctx w` shows what each is doing. Where your work would change theirs, ask them first.\n",
+    );
     text.push_str(&format!("Opened by {} on {}, {}", writer(&opened.by, &opened.on), opened.on, day(opened.at)));
     if record.version > 1 {
         text.push_str(&format!(
