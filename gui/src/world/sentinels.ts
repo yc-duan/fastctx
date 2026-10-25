@@ -72,6 +72,12 @@ export function sentinelList(owner: { machine: string; resident: string }): Prom
   return invoke<{ kind: "listed"; sentinels: SentinelSummary[] }>("sentinel_list", { owner }).then((listed) => listed.sentinels);
 }
 
+/** Every sentinel of the accounts this device acts for: what a project's
+ *  page draws as the eyes its conversations keep. */
+export function sentinelListAll(): Promise<SentinelSummary[]> {
+  return invoke<{ kind: "listed"; sentinels: SentinelSummary[] }>("sentinel_list", {}).then((listed) => listed.sentinels);
+}
+
 /** Withdraws one; its definition is gone even while its home has yet to confirm. */
 export function sentinelStop(id: string, home: string): Promise<void> {
   return invoke("sentinel_stop", { id, home }).then(() => undefined);

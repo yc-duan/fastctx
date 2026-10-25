@@ -190,7 +190,10 @@ import { MemoryPage } from "./project/memory-page";
 import { enMemory, zhMemory } from "./project/memory-words";
 import { memory as memorySeam, type MemoryAuthor } from "./world/memory";
 import { specimenCatalog, specimenDocument } from "./specimen/memory";
-import { sentinelList, sentinelStop, sentinels as liveSentinels, type SentinelSummary } from "./world/sentinels";
+import { sentinelList, sentinelListAll, sentinelStop, sentinels as liveSentinels, type SentinelSummary } from "./world/sentinels";
+import { planRead } from "./world/plan";
+import { sawTold, toldSeen } from "./app/told-seen";
+import { specimenHubPlans, specimenHubSenses } from "./specimen/hub";
 import type { Job as PanelJob } from "./conversation/jobs-panel";
 import { specimenSentinels } from "./specimen/sentinels";
 import { JournalForm } from "./project/journal-form";
@@ -224,7 +227,7 @@ import { act as pageAct, consent as pageConsent, pageHistory, readPage, restore 
 import { specimenPageTools, specimenPageWorld } from "./specimen/pages";
 import type { Address, SessionEvent } from "./world/events";
 import type { MachineLogins } from "./world/logins";
-import { ownerResident, type ResidentNow } from "./world/world";
+import { ownerResident, type ResidentNow, type WorldWho } from "./world/world";
 import { agentName, titleOf } from "./world/names";
 import { liveSide, specimenSide } from "./side/live";
 import { enSide, zhSide } from "./side/words";
@@ -1691,17 +1694,26 @@ function specimenTalk(address: Address): KeepablePage {
   }
   // Archived or deleted from its "⋯", as a live page follows it.
   const listedEver = { ever: false };
+  let suspended = false;
   const following = effect(() => {
     const now = store.world.get();
     talkActs.changed.get();
     if (!left) page.presence(presenceOf(now, address, listedEver));
+    if (!left && !suspended) noteTold(now, address);
   });
   return {
     element: page.element,
     title: sample.title,
-    suspend: () => page.suspend(),
+    suspend: () => {
+      suspended = true;
+      page.suspend();
+    },
     reach: (turn: string) => page.showTurn(turn),
-    resume: () => page.resume(),
+    resume: () => {
+      suspended = false;
+      noteTold(store.world.peek(), address);
+      page.resume();
+    },
     leave() {
       left = true;
       runningJobs();
@@ -2016,6 +2028,7 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
   // its project and model as they change; asleep or not.
   let shown = listed;
   const listedEver = { ever: false };
+  let suspended = false;
   const named = !world
     ? effect(() => {
         if (!store.world.get()) return;
@@ -2033,6 +2046,7 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
         if (!left && presence === "deleted") queueMicrotask(gone);
         const known = residentAt(now, address);
         const who = someoneOf(now, address);
+        if (!left && !suspended) noteTold(now, address);
         if (
           !left &&
           !nowTold &&
@@ -2053,9 +2067,16 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
   return {
     element: page.element,
     title: `${someone.agent} ${someone.machine}`,
-    suspend: () => page.suspend(),
+    suspend: () => {
+      suspended = true;
+      page.suspend();
+    },
     reach: (turn: string) => page.showTurn(turn),
-    resume: () => page.resume(),
+    resume: () => {
+      suspended = false;
+      noteTold(store.world.peek(), address);
+      page.resume();
+    },
     leave() {
       left = true;
       named();
@@ -2066,6 +2087,13 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
       reading.close();
     },
   };
+}
+
+/** What a conversation told the user counts as seen while its page is in
+ *  view on this device (`world-voice.md`, 要紧的事). */
+function noteTold(world: ReturnType<typeof store.world.peek>, address: Address): void {
+  const told = residentAt(world, address)?.now?.told;
+  if (told && document.visibilityState === "visible") sawTold(talkKey(address), told.id);
 }
 
 /** Opens what one of the world's ids names: a conversation, or a job's
@@ -2145,6 +2173,9 @@ function projectPage(town: string): Page {
       write: (town) => journalForm.open(town),
       writer: (author) => memoryWriter(author).name,
     },
+    machineLink: (name) => link({ kind: "machine", name }),
+    phase: (phase) => words.sentinelPhase(phase),
+    seenTold: toldSeen,
     more: {
       label: projectActsWords.more,
       shown: (town) => projectActs.acts(town).length > 0,
@@ -2181,11 +2212,44 @@ function projectPage(town: string): Page {
   void followMemory();
   if (!live) {
     const map = specimenMap();
+    page.showPlans(specimenHubPlans());
+    page.showSenses(specimenHubSenses());
     page.update(map, { machine: specimen.world.here, scope: { kind: "town", town, record: null }, machines: specimen.world.who.machines.map((machine) => machine.kind === "answered" ? { ...machine, reply: { ...machine.reply, residents: machine.reply.residents.filter((r) => r.town === town) } } : machine) }, specimen.now);
     return { element: page.element, title: map.record.name };
   }
   let timer = 0;
   let left = false;
+  // Each conversation's plan, read again when the conversation first shows
+  // or its state moves (its plan is written as it works), and the senses
+  // its conversations keep, listed again every half minute.
+  const plans = new Map<string, string | null>();
+  const planMoments = new Map<string, string>();
+  const readPlans = async (who: WorldWho) => {
+    const own = who.machines
+      .flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : []))
+      .filter((r) => !r.removed && r.about.origin.kind === "user");
+    const stale = own.filter((r) => planMoments.get(talkKey({ resident: r.about.id, machine: r.about.machine })) !== `${r.now?.activity}@${r.now?.since}`);
+    if (!stale.length) return;
+    await Promise.all(
+      stale.map(async (r) => {
+        const key = talkKey({ resident: r.about.id, machine: r.about.machine });
+        planMoments.set(key, `${r.now?.activity}@${r.now?.since}`);
+        const read = await planRead(r.about.id).catch(() => null);
+        plans.set(key, read?.body?.markdown ?? null);
+      }),
+    );
+    if (!left) page.showPlans(new Map(plans));
+  };
+  let sensesTimer = 0;
+  const readSenses = async () => {
+    if (left) return;
+    if (document.visibilityState === "visible") {
+      const listed = await sentinelListAll().catch(() => null);
+      if (listed && !left) page.showSenses(listed);
+    }
+    if (!left) sensesTimer = window.setTimeout(readSenses, 30_000);
+  };
+  void readSenses();
   // Asked again every two seconds while in view, as the World is.
   const refresh = async () => {
     if (left) return;
@@ -2195,6 +2259,7 @@ function projectPage(town: string): Page {
         if (!left) {
           shell.retitle(map.record.name);
           page.update(map, who, new Date());
+          void readPlans(who);
         }
       } catch (error) {
         if (!left) page.unreachable(String(error));
@@ -2211,6 +2276,7 @@ function projectPage(town: string): Page {
       memoryLeft = true;
       if (memoryWatch !== null) void unwatch(memoryWatch);
       clearTimeout(timer);
+      clearTimeout(sensesTimer);
     },
   };
 }

@@ -111,20 +111,21 @@
   color: var(--caution);
 }
 
-/* Tabs, on a narrow screen only: the sections one at a time. */
+/* The page's two views, chosen above the board: the work now, drawn
+   (`hub.css`), and what the project keeps. */
 .tabs {
   flex: none;
   display: flex;
   gap: var(--space-1);
   width: var(--board);
-  margin: var(--space-5) auto 0;
+  margin: var(--space-4) auto 0;
   overflow-x: auto;
   scrollbar-width: none;
 }
 
 .tab {
   flex: none;
-  height: 30px;
+  height: 32px;
   padding: 0 var(--space-3);
   border-radius: var(--radius-full);
   color: var(--text-3);
@@ -141,12 +142,18 @@
   background: var(--hairline);
 }
 
+@media (pointer: coarse) {
+  .tab {
+    height: 44px;
+  }
+}
+
 .project-board {
   position: relative;
   flex: 1;
   min-height: 0;
   width: var(--board);
-  margin: var(--space-3) auto 0;
+  margin: var(--space-2) auto 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
@@ -154,21 +161,31 @@
   mask-image: linear-gradient(to bottom, transparent, black var(--space-3), black calc(100% - var(--space-8)), transparent);
 }
 
-.project-board .board-column {
-  display: contents;
-}
-
-.project-board .home-section {
+.project-board[data-view="now"] .ph-reference,
+.project-board[data-view="reference"] .ph-now {
   display: none;
-  padding: var(--space-3) 0 var(--space-10);
 }
 
-.project-board .home-section.chosen {
-  display: block;
+/* What the project keeps: one column scrolling on a narrow screen, two
+   side by side where there is room, each scrolling on its own. */
+.ph-reference {
+  padding: var(--space-4) 0 var(--space-10);
 }
 
-.project-board .home-section .section-title {
-  display: none;
+.ph-reference .project-facts {
+  margin: 0 0 var(--space-5);
+}
+
+.ph-reference .home-section {
+  padding: 0 0 var(--space-8);
+}
+
+/* A decision, a journal or a page: its name and one line of what it is;
+   who wrote it and when, where the pointer rests. */
+.ph-reference .page-link-about {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @container (min-width: 920px) {
@@ -176,20 +193,24 @@
     --board: min(100% - 2 * var(--gutter), 1080px);
   }
 
-  .tabs {
-    display: none;
-  }
-
-  .project-board {
-    margin-top: var(--space-6);
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    column-gap: var(--space-12);
+  .project-board[data-view="reference"] {
     overflow: hidden;
   }
 
-  .project-board .board-column {
-    display: block;
+  .ph-reference {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    column-gap: var(--space-12);
+    height: 100%;
+    padding-bottom: 0;
+  }
+
+  .ph-reference .project-facts {
+    grid-column: 1 / -1;
+  }
+
+  .ph-reference .board-column {
     min-width: 0;
     margin: 0 calc(-1 * var(--space-3));
     padding: var(--space-3) var(--space-3) var(--space-10);
@@ -198,14 +219,8 @@
     scrollbar-width: thin;
   }
 
-  .project-board .home-section,
-  .project-board .home-section .section-title {
-    display: block;
+  .ph-reference .home-section {
     padding: 0;
-  }
-
-  .project-board .home-section .section-title {
-    display: flex;
   }
 }
 

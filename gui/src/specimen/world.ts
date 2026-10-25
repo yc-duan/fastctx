@@ -176,6 +176,62 @@ function voicing(): ResidentNow[] {
   ];
 }
 
+/** With `?s=project`, mark50's other conversations (`hub.ts`): one that
+ *  worked through the night and told the user something urgent, one that
+ *  asks the user, and one asleep on the desktop with something told that
+ *  can wait. */
+function hubbing(machine: "laptop" | "desktop"): ResidentNow[] {
+  if (new URLSearchParams(location.search).get("s") !== "project") return [];
+  if (machine === "desktop") {
+    return [
+      resident("codex-4c1e", "desktop", codex(), "mark50", "gpt-6.1-sol", "09:30:00", {
+        now: {
+          owed: {},
+          answering: [],
+          activity: "asleep",
+          since: at("12:40:00"),
+          turn: null,
+          trouble: null,
+          desk: false,
+          waiting_for_user: false,
+          title: "CAN 帧时间戳",
+          told: { id: "told-4c1e-2", at: at("12:38:00"), status: "info", text: "驱动层打戳改好了，应用层的去重删掉了；回放 42 帧，时间戳全部单调。", turn: "t6" },
+        },
+      }),
+    ];
+  }
+  return [
+    resident("claude-v01c", "laptop", claude(), "mark50", "claude-opus-5-5", "02:10:00", {
+      now: {
+        owed: {},
+        answering: [],
+        activity: "idle",
+        since: at("04:58:20"),
+        turn: null,
+        trouble: null,
+        desk: false,
+        waiting_for_user: false,
+        title: "夜里的回归与训练",
+        told: { id: "told-v01c-3", at: at("04:41:30"), status: "urgent", text: "训练在 11,200 步之后发散了，loss 从 0.31 升到 4.7。我停了它，从第 11k 步的检查点把学习率减半重跑（run3b），前一千步正常。要不要把这个学习率写进默认配置，等你定。", turn: "t3" },
+      },
+    }),
+    resident("claude-a7e2", "laptop", claude(), "mark50", "claude-opus-5-5", "10:05:00", {
+      now: {
+        owed: {},
+        answering: [],
+        activity: "idle",
+        since: at("13:12:00"),
+        turn: null,
+        trouble: null,
+        desk: false,
+        waiting_for_user: false,
+        title: "真机验证",
+        asked: { id: "ask-a7e2-1", at: at("13:12:00"), waits: false, what: "answer", text: "周五借实验室的真机跑 50 次，还是先在台架上跑？", options: ["周五借真机", "先上台架"] },
+      },
+    }),
+  ];
+}
+
 function many(): Node[] {
   return manyOnes().map((one, index) => {
     const linux = index % 3 !== 0;
@@ -371,6 +427,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
             }),
             ...touring(),
             ...voicing(),
+            ...hubbing("laptop"),
             resident("codex-7f3a", "laptop", codex(), "ingest", "gpt-6.1-sol", "08:40:00", {
               focus: { machines: [{ machine: "lab", folders: ["/srv/ingest", "/srv/ingest/fixtures"] }, { machine: "laptop", folders: [] }] },
               now: {
@@ -418,6 +475,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
               forked_from: { machine: "desktop", resident: "codex-5a11" },
               now: { owed: {}, answering: [], activity: "idle", since: at("11:20:00"), turn: null, trouble: null, desk: false, waiting_for_user: false, title: "图标导出" },
             }),
+            ...hubbing("desktop"),
           ],
           jobs: [],
         },

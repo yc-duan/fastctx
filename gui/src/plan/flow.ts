@@ -12,7 +12,7 @@ import type { Point } from "../pen/shapes";
 import { escape } from "../conversation/prose";
 import type { Flow } from "./source";
 
-interface Stop {
+export interface Stop {
   label: string;
   note: string;
   /** Set in under a fork, one of the steps that may follow it. */
@@ -24,7 +24,7 @@ interface Stop {
 
 /** The flow's steps in the order they are walked: by the longest way in
  *  from the start, a loop cut where it closes. */
-function stops(flow: Flow): Stop[] {
+export function stops(flow: Flow): Stop[] {
   const index = new Map(flow.nodes.map((node, at) => [node.key, at]));
   const rank = flow.nodes.map(() => 0);
   for (let round = 0; round < flow.nodes.length; round += 1) {
