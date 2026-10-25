@@ -1,11 +1,11 @@
 // The World's front page: what the reader finds on coming back
-// (`world-gui.md`, 回来时). Above, the drawing of the World as it is, each
-// machine on it a way to its page. Under it, side by side where there is
-// room: what needs the reader, each conversation by what it asks, answered
-// here where it offers its answers, or by what it told them that they have
-// not seen (`world-voice.md`, 送到哪里), and what came back while the
-// reader was away, a line a conversation by what it last said, along a line
-// of the time away; then what is at work now, the conversations and the
+// (`world-gui.md`, 回来时), in two views. Now: the drawing of the World as
+// it is, each machine on it a way to its page, and under it what needs the
+// reader, each conversation by what it asks, answered here where it offers
+// its answers, or by what it told them that they have not seen
+// (`world-voice.md`, 送到哪里). Lately: what came back while the reader was
+// away, a line a conversation by what it last said, along a line of the
+// time away, and beside it what is at work now, the conversations and the
 // commands running. A part with nothing in it is not drawn. Every line is a
 // fact the World holds; nothing is summarised by a model.
 
@@ -73,6 +73,29 @@ interface Came {
 }
 
 const keyOf = (address: Address) => `${address.machine}\n${address.resident}`;
+
+/** The page's two views: what needs the reader now, under the drawing; and
+ *  what came back lately and is at work. */
+type View = "now" | "lately";
+
+const VIEW_KEY = "front-view";
+
+function storedView(): View {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "lately" ? "lately" : "now";
+  } catch {
+    return "now";
+  }
+}
+
+function keepView(view: View): void {
+  try {
+    if (view === "lately") localStorage.setItem(VIEW_KEY, view);
+    else localStorage.removeItem(VIEW_KEY);
+  } catch {
+    // Not kept: the page opens on now next time.
+  }
+}
 const addressOf = (r: ResidentNow): Address => ({ machine: r.about.machine, resident: r.about.id });
 
 export class HomePage {
@@ -89,17 +112,35 @@ export class HomePage {
   private confirming: string | null = null;
   private stopping = new Set<string>();
   private readonly notStopped = new Map<string, string>();
+  private view: View = storedView();
+  /** Whether there is a network to draw. */
+  private drawable = true;
 
   /** Shows the drawing of the World, or leaves the page to the board where
    *  there is no network to draw. */
   showDrawing(shown: boolean): void {
-    this.element.querySelector<HTMLElement>(".front-map")!.hidden = !shown;
+    this.drawable = shown;
+    this.element.querySelector<HTMLElement>(".front-map")!.hidden = !shown || this.view !== "now";
   }
 
   constructor(private readonly options: HomeOptions) {
     this.element = document.createElement("div");
     this.element.className = "front-page";
     this.element.innerHTML = `${options.head}<div class="front-body"><div class="front-map"></div><div class="front-board arriving"></div></div>`;
+    // The two views are chosen in the head, where the page has no title.
+    const views = document.createElement("div");
+    views.className = "front-views";
+    views.setAttribute("role", "tablist");
+    views.innerHTML = `<button class="tab" type="button" role="tab" data-view="now">${escape(options.words.nowView)}</button><button class="tab" type="button" role="tab" data-view="lately">${escape(options.words.latelyView)}</button>`;
+    this.element.querySelector(".page-head-title")!.append(views);
+    views.addEventListener("click", (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLElement>("[data-view]");
+      if (!button) return;
+      this.view = button.dataset.view as View;
+      keepView(this.view);
+      this.choose();
+      this.redraw();
+    });
     this.element.querySelector<HTMLElement>(".front-map")!.append(options.drawing);
     this.board = this.element.querySelector<HTMLElement>(".front-board")!;
     // On a phone the page scrolls whole: once it has, its head stands on the
@@ -135,6 +176,16 @@ export class HomePage {
     // What is on the board rises into place when the page opens, and only
     // then: later changes appear where they are.
     setTimeout(() => this.board.classList.remove("arriving"), 1600);
+    this.choose();
+  }
+
+  private choose(): void {
+    for (const button of this.element.querySelectorAll<HTMLElement>(".front-views [data-view]")) {
+      const chosen = button.dataset.view === this.view;
+      button.classList.toggle("chosen", chosen);
+      button.setAttribute("aria-selected", String(chosen));
+    }
+    this.element.querySelector<HTMLElement>(".front-map")!.hidden = !this.drawable || this.view !== "now";
   }
 
   /** Shows the World as it now stands; when nothing shown has changed, the
@@ -161,7 +212,13 @@ export class HomePage {
       .sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at));
     const came = this.came(asks);
 
-    const first = [asking.length || telling.length ? this.asks(asking, telling) : "", this.away(came)].join("");
+    if (this.view === "now") {
+      // Nothing waits: the drawing alone, and a line that says so.
+      const needs = asking.length || telling.length ? this.asks(asking, telling) : `<p class="front-quiet front-calm">${escape(this.options.words.nothingNeeds)}</p>`;
+      this.draw(`<div class="front-column">${needs}</div>`, false);
+      return;
+    }
+    const first = this.away(came);
     const second = this.working(busy, jobs);
     const html = first ? `<div class="front-column">${first}</div><div class="front-column">${second}</div>` : `<div class="front-column">${second}</div>`;
     this.draw(html, !!first);

@@ -40,6 +40,10 @@ export interface HomeWords {
   /** What came back while the reader was away. */
   away: string;
   nothingAway: string;
+  /** The page's two views, and what now says when nothing needs the user. */
+  nowView: string;
+  latelyView: string;
+  nothingNeeds: string;
   /** The end of the line of the time away. */
   present: string;
   /** A turn that ended in an error, and why. */
@@ -126,6 +130,9 @@ export const zhHome: HomeWords = {
   begin: "新对话",
   away: "离开期间",
   nothingAway: "没有新动态",
+  nowView: "此刻",
+  latelyView: "近况",
+  nothingNeeds: "没有在等你的事",
   present: "现在",
   failed: (reason) => `出错：${reason}`,
   compacted: "对话已压缩",
@@ -181,6 +188,9 @@ export const enHome: HomeWords = {
   nobodyWorking: "No agents working",
   begin: "New conversation",
   away: "While you were away",
+  nowView: "Now",
+  latelyView: "Lately",
+  nothingNeeds: "Nothing needs you",
   nothingAway: "Nothing new",
   present: "now",
   failed: (reason) => `Error: ${reason}`,
